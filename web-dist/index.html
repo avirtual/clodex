@@ -26630,6 +26630,9 @@ ${i3.join("\n")}
   // renderer/lib/args-model.js
   var require_args_model = __commonJS({
     "renderer/lib/args-model.js"(exports, module) {
+      function isModelFlag(t) {
+        return t === "--model" || t === "-m" || typeof t === "string" && t.startsWith("--model=");
+      }
       function splitModelArg(argv) {
         const a = Array.isArray(argv) ? argv : [];
         let model = "";
@@ -26637,6 +26640,10 @@ ${i3.join("\n")}
         let taken = false;
         for (let i = 0; i < a.length; i++) {
           if (!taken && (a[i] === "--model" || a[i] === "-m") && a[i + 1] !== void 0) {
+            if (isModelFlag(a[i + 1])) {
+              taken = true;
+              continue;
+            }
             model = a[i + 1];
             i++;
             taken = true;
@@ -26656,11 +26663,11 @@ ${i3.join("\n")}
         const m = (model || "").trim();
         if (!m) return a.slice();
         let rest = a;
-        let hit;
+        let before;
         do {
-          hit = splitModelArg(rest);
-          rest = hit.rest;
-        } while (hit.model !== "");
+          before = rest.length;
+          rest = splitModelArg(rest).rest;
+        } while (rest.length < before);
         return ["--model", m, ...rest];
       }
       module.exports = { splitModelArg, withModelArg };
@@ -27119,7 +27126,14 @@ ${i3.join("\n")}
       function teamNamePrefill(slug, taken) {
         const base = String(slug || "").replace(/^\.+/, "").slice(0, TEAM_NAME_MAX);
         if (!base) return "";
-        return bumpDefaultName(base, taken).slice(0, TEAM_NAME_MAX);
+        const set = taken instanceof Set ? taken : new Set(taken || []);
+        let stem = base;
+        let name = bumpDefaultName(stem, set);
+        while (name.length > TEAM_NAME_MAX) {
+          stem = stem.slice(0, Math.max(0, TEAM_NAME_MAX - (name.length - stem.length)));
+          name = bumpDefaultName(stem, /* @__PURE__ */ new Set([...set, stem]));
+        }
+        return name;
       }
       module.exports = { bumpDefaultName, teamNamePrefill, TEAM_NAME_MAX };
     }
@@ -27506,9 +27520,11 @@ ${i3.join("\n")}
       async function decideNewSessionFocus({
         name,
         focused = null,
+        wasFocused = null,
         agentInitiated = false,
         queryDraftOpen = null
       } = {}) {
+        if (wasFocused && wasFocused === name) return name;
         let focusedDraftOpen = false;
         if (focused && focused !== name && typeof queryDraftOpen === "function") {
           try {
@@ -27556,7 +27572,8 @@ ${i3.join("\n")}
       var MODAL_OVERLAY_CLASSES = [
         "prompt-modal-overlay",
         "plugin-overlay",
-        "clx-modal-bg"
+        "clx-modal-bg",
+        "dock-sheet"
       ];
       function openOverlayIds({ byId, byClass }) {
         const open = [];
@@ -27645,7 +27662,7 @@ ${i3.join("\n")}
       function envRowView(v, defaults) {
         const key = v && v.key ? String(v.key) : "";
         const secret = !!(v && v.secret);
-        const value = secret ? "" : String(v && v.value == null ? "" : v.value);
+        const value = secret ? "" : String(v && v.value != null ? v.value : "");
         const rec = defaults && Object.prototype.hasOwnProperty.call(defaults, key) ? defaults[key] : null;
         const shipped = !!rec && !secret && value === String(rec.value == null ? "" : rec.value);
         const note = rec && rec.note ? String(rec.note) : "";
@@ -27726,6 +27743,7 @@ ${i3.join("\n")}
       var ENV_KEY = "CLAUDE_CONFIG_DIR";
       var DEFAULT_LABEL = "default";
       var CUSTOM_LABEL = "custom";
+      var RESERVED_LABELS = /* @__PURE__ */ new Set([DEFAULT_LABEL, CUSTOM_LABEL]);
       function normDir(p) {
         const s = String(p == null ? "" : p);
         if (!s) return "";
@@ -27829,6 +27847,7 @@ ${i3.join("\n")}
         ENV_KEY,
         DEFAULT_LABEL,
         CUSTOM_LABEL,
+        RESERVED_LABELS,
         abbrevHome,
         accountFromEnv,
         envWithAccount,
@@ -28354,6 +28373,9 @@ ${String(body || "").trim()}
       function collectAppendChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
+      function appendRepaintTicks(container, opened) {
+        return /* @__PURE__ */ new Set([...Array.isArray(opened) ? opened : [], ...collectAppendChecklist(container)]);
+      }
       var BUNDLE_KINDS = {
         skills: { field: "skills", promptKind: null },
         agents: { field: "agents", promptKind: null },
@@ -28393,7 +28415,7 @@ ${String(body || "").trim()}
       function appendBundleSections(container, kind, seat, checkedSet = null) {
         for (const sec of seatBundleSections(kind, seat)) {
           const head = document.createElement("div");
-          head.className = "check-group";
+          head.className = "check-group bundle-group";
           head.textContent = sec.name;
           container.appendChild(head);
           for (const n of sec.names) {
@@ -28415,7 +28437,7 @@ ${String(body || "").trim()}
         }
       }
       function repaintBundleSections(container, kind, seat, checkedSet = null) {
-        container.querySelectorAll(".check-group, .bundle-row").forEach((n) => n.remove());
+        container.querySelectorAll(".bundle-group, .bundle-row").forEach((n) => n.remove());
         container.querySelectorAll(".hint-text").forEach((n) => n.remove());
         appendBundleSections(container, kind, seat, checkedSet);
         if (!container.children.length && BUNDLE_EMPTY_HINT[kind]) {
@@ -28690,6 +28712,7 @@ ${String(body || "").trim()}
       module.exports = {
         renderAppendChecklist,
         collectAppendChecklist,
+        appendRepaintTicks,
         mergeUnrendered,
         renderAgentChecklist,
         collectAgentChecklist,
@@ -30763,7 +30786,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function classifyText(raw) {
         if (FILED_POINTER_RE.test(cleanLine(raw))) return "filed";
         if (!looksLikeIntent(raw)) return null;
-        return parseIntent(raw) ? "fire" : "inert";
+        const parsed = parseIntent(raw);
+        if (parsed && parsed.type === "end") return null;
+        return parsed ? "fire" : "inert";
       }
       function intentSpan(text) {
         const at = text.indexOf("[agent:");
@@ -31379,6 +31404,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let release = null;
         let stopping = false;
         let stopFails = 0;
+        let disposed = false;
         const note = (line) => {
           try {
             trace(line);
@@ -31440,6 +31466,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
         const armQuiet = () => {
+          if (disposed) return;
           cancelQuiet();
           quiet = timerSet(() => {
             quiet = null;
@@ -31457,6 +31484,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           cancelRelease();
         };
         const armRelease = () => {
+          if (disposed) return;
           cancelRelease();
           if (!(releaseMs > 0)) return;
           note(`release deadline armed ${releaseMs}ms`);
@@ -31470,7 +31498,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }, releaseMs);
         };
         const stopFailed = () => {
-          if (!stopping) return;
+          if (disposed || !stopping) return;
           stopping = false;
           stopFails++;
           if (stopFails < VOICE_STOP_TRIES) {
@@ -31510,6 +31538,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (stopped && typeof stopped.then === "function") {
             stopped.then((ok) => {
+              if (disposed) return;
               note(`onVoiceStop resolved ${ok}`);
               if (ok === false) stopFailed();
               else if (ok === true && stopping) {
@@ -31556,6 +31585,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             trigger.reset();
           },
           dispose() {
+            disposed = true;
+            stopping = false;
             cancelQuiet();
             cancelRelease();
             composer.removeEventListener("input", onInput);
@@ -45914,13 +45945,13 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       }
       function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
         const local = typeof cwd === "string" ? cwd : "";
-        if (!local || !farPlatform || !platform || farPlatform === platform) {
+        if (!local || !farPlatform || farPlatform === platform) {
           return { cwd: local, note: null };
         }
         const root = FAR_HOME_ROOT[farPlatform];
         const home = typeof homedir === "string" ? homedir : "";
         const note = `The peer runs ${farPlatform}; the folder was guessed from yours \u2014 check it exists there.`;
-        if (!root || !home || !username) return { cwd: local, note };
+        if (!platform || !root || !home || !username) return { cwd: local, note };
         const prefix = home.endsWith("/") ? home : `${home}/`;
         if (local !== home && !local.startsWith(prefix)) return { cwd: local, note };
         const rest = local === home ? "" : local.slice(prefix.length);
@@ -48151,7 +48182,7 @@ ${detail}` });
       var { composerReadlineEdit, composerHeightFor } = require_composer_keys();
       var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -48563,6 +48594,7 @@ ${detail}` });
       var editingTemplateBundle = null;
       var editingTemplateTeam = null;
       var editingTemplateAppendPrev = [];
+      var newSessionAppendOpened = [];
       var templatesDrawerRefresh = null;
       var templatesDrawerOpenTeam = null;
       var closePromptEditor = () => {
@@ -50627,10 +50659,14 @@ ${detail}` });
         if (ptyComposerShown(entry)) entry.composerEl.focus();
         else entry.terminal.focus();
       }
+      var respawnFocus = /* @__PURE__ */ new Set();
       async function switchToNewSession(name, { agentInitiated = false } = {}) {
+        const wasFocused = respawnFocus.has(name) ? name : null;
+        respawnFocus.clear();
         const { focus } = await planNewSession({
           name,
           focused: activeSession,
+          wasFocused,
           agentInitiated,
           queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null
         });
@@ -51000,6 +51036,7 @@ ${detail}` });
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setPromptLibCache(libraryPromptCache(cat.prompts));
         fillSystemPromptSelect(inputSystemPrompt, "", newSessionSeat());
+        newSessionAppendOpened = [];
         renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
         setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
       }
@@ -51043,6 +51080,7 @@ ${detail}` });
       async function refreshSystemPromptDropdown() {
         await loadPromptLib();
         fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, newSessionSeat());
+        newSessionAppendOpened = [];
         renderAppendChecklist(inputAppendList, /* @__PURE__ */ new Set(), newSessionSeat());
       }
       async function refreshTemplatesDropdown() {
@@ -51212,7 +51250,7 @@ ${detail}` });
           inputAppendList,
           "prompts/append",
           seat,
-          new Set(collectAppendChecklist(inputAppendList))
+          appendRepaintTicks(inputAppendList, newSessionAppendOpened)
         );
         fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
       }
@@ -51618,7 +51656,8 @@ ${detail}` });
         if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
         if (agentType) {
           fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || "", newSessionSeat());
-          renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
+          newSessionAppendOpened = t.appendPromptFiles || [];
+          renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat());
         }
         if (tplCaps.agents) {
           renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
@@ -51962,7 +52001,8 @@ ${detail}` });
         if (agentType) {
           fillSystemPromptSelect(inputSystemPrompt, tpl && tpl.systemPromptFile || "", newSessionSeat());
           const teamAppendRows = editingTemplateTeam ? (await window.api.listPrompts() || []).filter((p) => p && p.kind === "append" && p.team === editingTemplateTeam) : [];
-          renderAppendChecklist(inputAppendList, new Set(tpl && tpl.appendPromptFiles || []), newSessionSeat(), teamAppendRows);
+          newSessionAppendOpened = tpl && tpl.appendPromptFiles || [];
+          renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat(), teamAppendRows);
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
         }
@@ -52201,6 +52241,7 @@ ${detail}` });
         const archivedEntry = archivingSessions.get(name);
         const movedFailedEntry = movingFailed.get(name);
         const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
+        if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.add(name);
         removeSession(name);
         if (archivedEntry) {
           archivingSessions.delete(name);
@@ -56502,7 +56543,7 @@ ${res.stderr}` : "");
             argsAppendList,
             "prompts/append",
             seat,
-            new Set(collectAppendChecklist(argsAppendList))
+            appendRepaintTicks(argsAppendList, argsAppendPersisted)
           );
           fillSystemPromptSelect(argsSystemPrompt, argsSystemPrompt.value, seat);
         });

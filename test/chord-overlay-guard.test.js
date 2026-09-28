@@ -136,6 +136,18 @@ test('the less obvious overlays are consulted too', () => {
   }
 });
 
+test('with the web dock up as a full-viewport sheet, the close chord archives nothing', () => {
+  const rule = /#dock\.dock-sheet\s*\{([^}]*)\}/.exec(read('renderer/styles.css'));
+  assert.ok(rule && /position:\s*fixed/.test(rule[1]) && /inset:\s*0/.test(rule[1]),
+    'ENTER: #dock.dock-sheet is still a fixed inset:0 backdrop');
+  assert.match(read('renderer/dock.js'), /classList\.toggle\('dock-sheet'/,
+    'ENTER: the dock still signals the sheet by toggling the dock-sheet class');
+  const [calls, actions] = spies();
+  const result = performCloseChord({ ...localSession, ...fakeDom(['dock-sheet']) }, actions);
+  assert.deepStrictEqual(calls.archived, []);
+  assert.strictEqual(result, 'overlay-open-nothing-closed');
+});
+
 // ── modals that exist only at runtime (r1) ─────────────────────────────────
 //
 // The gap the first round shipped: the population was derived from index.html,

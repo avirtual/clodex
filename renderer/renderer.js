@@ -54,7 +54,7 @@ const { dropText } = require('./lib/drop-paths');
 const { composerReadlineEdit, composerHeightFor } = require('./lib/composer-keys');
 const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -445,6 +445,7 @@ let editingTemplateId = null;
 let editingTemplateBundle = null;
 let editingTemplateTeam = null;
 let editingTemplateAppendPrev = [];
+let newSessionAppendOpened = [];
 let templatesDrawerRefresh = null;
 let templatesDrawerOpenTeam = null;
 let closePromptEditor = () => {};
@@ -2572,14 +2573,18 @@ function focusPtySeat(entry) {
   else entry.terminal.focus();
 }
 
+const respawnFocus = new Set();
+
 // The activation step for a session that has just been CREATED — never for a
 // switch the operator asked for, which is always honoured.
 //
 // Not focusing still leaves the sidebar row, so a background seat is visible
 // and one click away; the only thing withheld is the keyboard.
 async function switchToNewSession(name, { agentInitiated = false } = {}) {
+  const wasFocused = respawnFocus.has(name) ? name : null;
+  respawnFocus.clear();
   const { focus } = await planNewSession({
-    name, focused: activeSession, agentInitiated,
+    name, focused: activeSession, wasFocused, agentInitiated,
     queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null,
   });
   // Re-checked because the query above yields: the new session may have died
@@ -2937,6 +2942,7 @@ function populateChecklistsFromCatalogs(cat) {
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache(libraryPromptCache(cat.prompts));
   fillSystemPromptSelect(inputSystemPrompt, '', newSessionSeat());
+  newSessionAppendOpened = [];
   renderAppendChecklist(inputAppendList, new Set(), newSessionSeat());
   setProxyControls(inputProxyMode, inputProxyUrl, null, cat.proxyUrl);
 }
@@ -2995,6 +3001,7 @@ function fillSystemPromptSelect(selectEl, current, seat = null) {
 async function refreshSystemPromptDropdown() {
   await loadPromptLib();
   fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, newSessionSeat());
+  newSessionAppendOpened = [];
   renderAppendChecklist(inputAppendList, new Set(), newSessionSeat());
 }
 
@@ -3185,7 +3192,7 @@ function repaintNewSessionBundleRows() {
   if (caps.agents) repaintBundleSections(inputAgentsList, 'agents', seat);
   if (caps.injectSkills) repaintBundleSections(inputInjectSkillsList, 'skills', seat);
   repaintBundleSections(inputAppendList, 'prompts/append', seat,
-    new Set(collectAppendChecklist(inputAppendList)));
+    appendRepaintTicks(inputAppendList, newSessionAppendOpened));
   fillSystemPromptSelect(inputSystemPrompt, inputSystemPrompt.value, seat);
 }
 
@@ -3605,7 +3612,8 @@ inputTemplate.addEventListener('change', async () => {
   if (tplCaps.injectSkills) await refreshNewSessionInjectSkills(new Set(t.injectSkills || []));
   if (agentType) {
     fillSystemPromptSelect(inputSystemPrompt, t.systemPromptFile || '', newSessionSeat());
-    renderAppendChecklist(inputAppendList, new Set(t.appendPromptFiles || []), newSessionSeat());
+    newSessionAppendOpened = t.appendPromptFiles || [];
+    renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat());
   }
   if (tplCaps.agents) {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
@@ -3975,7 +3983,8 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
       ? ((await window.api.listPrompts()) || [])
         .filter((p) => p && p.kind === 'append' && p.team === editingTemplateTeam)
       : [];
-    renderAppendChecklist(inputAppendList, new Set((tpl && tpl.appendPromptFiles) || []), newSessionSeat(), teamAppendRows);
+    newSessionAppendOpened = (tpl && tpl.appendPromptFiles) || [];
+    renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat(), teamAppendRows);
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
   }
@@ -4204,6 +4213,7 @@ window.api.onSessionExit((name, code, meta) => {
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
+  if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.add(name);
   removeSession(name);
   if (archivedEntry) {
     archivingSessions.delete(name);
@@ -5248,8 +5258,6 @@ function openCreateTeamDialog() {
     rootInput.addEventListener('input', () => {
       if (nameTouched) return;
       const base = pathBasename(rootInput.value.trim());
-      // dedupe lives in teamNamePrefill (it clamps AFTER the suffix); this dialog
-      // only supplies the slug and the taken set.
       nameInput.value = base ? teamNamePrefill(slugifyTeamName(base), dialogTeamNames) : '';
     });
 
@@ -8667,7 +8675,7 @@ if (argsPluginList) {
       repaintBundleSections(argsInjectSkillsList, 'skills', seat);
     }
     repaintBundleSections(argsAppendList, 'prompts/append', seat,
-      new Set(collectAppendChecklist(argsAppendList)));
+      appendRepaintTicks(argsAppendList, argsAppendPersisted));
     fillSystemPromptSelect(argsSystemPrompt, argsSystemPrompt.value, seat);
   });
 }

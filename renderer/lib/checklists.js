@@ -138,6 +138,9 @@ function mergeUnrendered(previous, renderedNames, checked) {
 function collectAppendChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
+function appendRepaintTicks(container, opened) {
+  return new Set([...(Array.isArray(opened) ? opened : []), ...collectAppendChecklist(container)]);
+}
 
 const BUNDLE_KINDS = {
   skills: { field: 'skills', promptKind: null },
@@ -181,7 +184,7 @@ function hasBundleRows(kind, seat) {
 function appendBundleSections(container, kind, seat, checkedSet = null) {
   for (const sec of seatBundleSections(kind, seat)) {
     const head = document.createElement('div');
-    head.className = 'check-group';
+    head.className = 'check-group bundle-group';
     head.textContent = sec.name;
     container.appendChild(head);
     for (const n of sec.names) {
@@ -206,7 +209,7 @@ function appendBundleSections(container, kind, seat, checkedSet = null) {
 }
 
 function repaintBundleSections(container, kind, seat, checkedSet = null) {
-  container.querySelectorAll('.check-group, .bundle-row').forEach((n) => n.remove());
+  container.querySelectorAll('.bundle-group, .bundle-row').forEach((n) => n.remove());
   container.querySelectorAll('.hint-text').forEach((n) => n.remove());
   appendBundleSections(container, kind, seat, checkedSet);
   if (!container.children.length && BUNDLE_EMPTY_HINT[kind]) {
@@ -562,7 +565,7 @@ function collectSkillChecklist(container) {
 }
 
 module.exports = {
-  renderAppendChecklist, collectAppendChecklist, mergeUnrendered,
+  renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered,
   renderAgentChecklist, collectAgentChecklist,
   bundleSectionsOf, repaintBundleSections,
   renderExecChecklist, collectExecChecklist,

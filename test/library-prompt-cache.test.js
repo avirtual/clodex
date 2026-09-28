@@ -31,7 +31,7 @@ function el(tag) {
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
-      if (sel === '.check-group, .bundle-row') return [];
+      if (sel === '.bundle-group, .bundle-row') return [];
       return flat.filter((c) => c.tagName === 'input' && c.type === 'checkbox' && c.checked);
     },
     remove() { const i = e.parent ? e.parent.children.indexOf(e) : -1; if (i >= 0) e.parent.children.splice(i, 1); },

@@ -36,9 +36,9 @@ function el(tag) {
       const flat = [];
       const walk = (n) => { for (const c of n.children) { flat.push(c); walk(c); } };
       walk(e);
-      if (sel === '.check-group, .bundle-row') {
-        return flat.filter((c) => c.className === 'check-group'
-          || String(c.className).split(' ').includes('bundle-row'));
+      if (sel === '.bundle-group, .bundle-row') {
+        return flat.filter((c) => String(c.className).split(' ')
+          .some((k) => k === 'bundle-group' || k === 'bundle-row'));
       }
       if (sel === '.hint-text') return flat.filter((c) => String(c.className).split(' ').includes('hint-text'));
       if (sel === 'input[type="checkbox"]') {

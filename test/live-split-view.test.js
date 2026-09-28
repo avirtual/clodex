@@ -97,10 +97,9 @@ test('a prose row marks each intent token and leaves the prose around it as plai
   const nodes = render([prose('Reply\n[agent:dm bob] hi\n[agent:end]')]);
   assert.deepStrictEqual(marked(nodes), [
     { text: '[agent:dm bob]', style: '', cls: 'intent-mark intent-mark-fire' },
-    { text: '[agent:end]', style: '', cls: 'intent-mark intent-mark-fire' },
   ]);
   assert.strictEqual(plain(nodes), 'Reply\n[agent:dm bob] hi\n[agent:end]');
-  assert.deepStrictEqual(nodes.filter((n) => !n.cls).map((n) => n.text).join('|'), 'Reply|\n| hi|\n');
+  assert.deepStrictEqual(nodes.filter((n) => !n.cls).map((n) => n.text).join('|'), 'Reply|\n| hi|\n|[agent:end]');
 });
 
 test('a start-of-line intent in a prose row or a prompt head is classified, not missed', () => {

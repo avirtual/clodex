@@ -18,7 +18,7 @@ list. Bundle rows are `checked` (the CLI loads them with the plugin), and
 
 ## repaintBundleSections
 
-Swaps only `.check-group` / `.bundle-row` (headers included, or an emptied
+Swaps only `.bundle-group` / `.bundle-row` (headers included, or an emptied
 section strands its header) plus `.hint-text`, restored via
 `BUNDLE_EMPTY_HINT[kind]` if nothing else is left — a plugin tick would
 otherwise re-render the whole checklist, dropping scroll and focus mid-list.

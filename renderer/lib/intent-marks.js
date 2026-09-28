@@ -51,7 +51,9 @@ function classifyText(raw) {
   // No second copy of the near-miss rule: parseIntent returning null IS the
   // near miss, and a private guard would be free to disagree with the scan
   // this predicts.
-  return parseIntent(raw) ? 'fire' : 'inert';
+  const parsed = parseIntent(raw);
+  if (parsed && parsed.type === 'end') return null;
+  return parsed ? 'fire' : 'inert';
 }
 
 // The `[agent:…]` token inside one row's text, as { offset, length } in STRING

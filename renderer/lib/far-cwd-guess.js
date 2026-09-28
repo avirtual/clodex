@@ -15,13 +15,13 @@ function localFromHome(homedir) {
 
 function farCwdGuess({ cwd, farPlatform, platform, homedir, username } = {}) {
   const local = typeof cwd === 'string' ? cwd : '';
-  if (!local || !farPlatform || !platform || farPlatform === platform) {
+  if (!local || !farPlatform || farPlatform === platform) {
     return { cwd: local, note: null };
   }
   const root = FAR_HOME_ROOT[farPlatform];
   const home = typeof homedir === 'string' ? homedir : '';
   const note = `The peer runs ${farPlatform}; the folder was guessed from yours — check it exists there.`;
-  if (!root || !home || !username) return { cwd: local, note };
+  if (!platform || !root || !home || !username) return { cwd: local, note };
   const prefix = home.endsWith('/') ? home : `${home}/`;
   if (local !== home && !local.startsWith(prefix)) return { cwd: local, note };
   const rest = local === home ? '' : local.slice(prefix.length);

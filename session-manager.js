@@ -3247,7 +3247,7 @@ function createSessionManager(deps) {
       if (!s || s.io !== 'stream') return null;
       return {
         rev: s._outboxRev || 0,
-        items: (s.outbox || []).map((q) => ({ text: q.wire ? q.wire.method : q.text, origin: q.origin, images: q.images.length })),
+        items: (s.outbox || []).map((q) => ({ text: q.wire ? q.wire.method : (typeof q.produce === 'function' ? 'pending mail' : q.text), origin: q.origin, images: q.images.length })),
       };
     }
 

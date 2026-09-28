@@ -59,13 +59,19 @@ test('teamNamePrefill clamps so the DEFAULT lead seat still fits', () => {
   assert.strictEqual(teamNamePrefill('a'.repeat(200), []).length, 59, 'and anything longer is cut to it');
 });
 
-test('teamNamePrefill clamps AFTER the dedupe suffix, not before', () => {
-  // The suffix is appended to an already-clamped base, so a name that just fits
-  // must not be pushed back over the limit by its own `-2`.
+test('teamNamePrefill never proposes a taken name, even when the dedupe suffix is what the clamp would cut', () => {
   const base = 'a'.repeat(59);
+  assert.strictEqual(base.length, TEAM_NAME_MAX, 'ENTER: the base sits exactly at the limit');
   const out = teamNamePrefill(base, [base]);
+  assert.notStrictEqual(out, base);
   assert.ok(out.length <= TEAM_NAME_MAX, `dedupe must not overflow the limit, got ${out.length}`);
-  // ENTER: the dedupe really ran — without it this test would pass on a plain clamp.
-  assert.notStrictEqual(teamNamePrefill('proj', ['proj']), 'proj', 'a taken name is still bumped');
-  assert.strictEqual(teamNamePrefill('proj', ['proj']), 'proj-2');
+  assert.strictEqual(out, `${'a'.repeat(57)}-2`);
+
+  const d = `${'a'.repeat(58)}9`;
+  const taken = [d, `${'a'.repeat(58)}1`];
+  const out2 = teamNamePrefill(d, taken);
+  assert.ok(!taken.includes(out2), `a taken name was proposed: ${out2}`);
+  assert.ok(out2.length <= TEAM_NAME_MAX, `dedupe must not overflow the limit, got ${out2.length}`);
+
+  assert.strictEqual(teamNamePrefill('proj', ['proj']), 'proj-2', 'a short taken name is still bumped');
 });

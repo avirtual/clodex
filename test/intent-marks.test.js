@@ -56,6 +56,14 @@ test('an escaped intent is left unmarked', () => {
   assert.strictEqual(classifyText('\\[agent:who]'), null);
 });
 
+test('the body terminator `[agent:end]` is not marked as firing — it is never dispatched', () => {
+  assert.deepStrictEqual(parseIntent('[agent:end]'), { type: 'end' }, 'ENTER: the terminator parses truthy');
+  assert.strictEqual(classifyText('[agent:end]'), null);
+  const marks = classifyRows(rows('[agent:dm bob] hi', 'body', '[agent:end]'));
+  assert.ok(marks.some((m) => m.start === 0 && m.kind === 'fire'), 'ENTER: the dm head above it still fires');
+  assert.deepStrictEqual(marks.filter((m) => m.start === 2), []);
+});
+
 test('a line with no intent at all is left unmarked', () => {
   assert.strictEqual(classifyText('just some ordinary prose'), null);
   assert.strictEqual(classifyText(''), null);

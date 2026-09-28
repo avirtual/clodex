@@ -110,6 +110,20 @@ test('a duplicate label is rejected, and `default` cannot be added at all', () =
   assert.deepStrictEqual(accounts.list().map((a) => a.label), ['default', 'sub-2']);
 });
 
+test('`custom` is reserved like `default`: add() and mint() refuse it and a hand-edited row is dropped on load', () => {
+  const { accounts, clodexHome } = fixture();
+  assert.throws(() => accounts.add({ label: 'custom', plan: 'max', configDir: '/tmp/c' }), /reserved/);
+  assert.throws(() => accounts.mint('custom'), /invalid account label/);
+  fs.mkdirSync(clodexHome, { recursive: true });
+  fs.writeFileSync(path.join(clodexHome, 'accounts.json'), JSON.stringify({
+    accounts: [
+      { label: 'custom', configDir: '/tmp/c', plan: 'max' },
+      { label: 'sub-2', configDir: '/tmp/x', plan: 'max' },
+    ],
+  }));
+  assert.deepStrictEqual(accounts.list().map((a) => a.label), ['default', 'sub-2']);
+});
+
 test('`default` is always first in list() and is NEVER written to the file', () => {
   const { accounts, clodexHome, claudeHome } = fixture();
   accounts.add({ label: 'aaa-first-alphabetically', plan: 'max', configDir: '/tmp/x' });

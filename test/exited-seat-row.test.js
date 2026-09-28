@@ -227,6 +227,8 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     streamSeatNames: new Set(),
     archivingSessions: new Map(),
     movingFailed: new Map(),
+    activeSession: null,
+    respawnFocus: new Set(),
     dialogOverlay: { classList: { contains: () => true } },
     isToolInstallSession: () => false,
     removeSession: (name) => { calls.push(['removeSession', name]); const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
