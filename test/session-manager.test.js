@@ -6951,6 +6951,7 @@ test('t82 the status NOTICES stay passive: done and cancel must not wake a seat'
   assert.strictEqual(f.urgents[0], false, 'a done-report rides passively — it reaches the lead with their next turn');
   // cancel: lead → assignee.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec three' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: cancel delivered to the assignee');
@@ -7218,6 +7219,23 @@ test('task done: a dead lead ({error}) keeps the ticket OPEN and bounces (MF3 pa
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
   assert.strictEqual(f.one('t1').state, 'open', 'not closed — report went nowhere');
   assert.ok(f.injected.some((x) => /report NOT delivered, ticket kept open/.test(x)));
+});
+
+test('a held re-close with an unreachable lead does not claim the ticket is open', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const ts = f.load();
+  Object.assign(ts[0], { state: 'done', closedAt: 2, closedBy: 'team-hand', loopStep: 'verify',
+    verifyHold: { step: 'verify: diff', recovery: 'hand' } });
+  f.tstore.save(f.team.root, ts);
+  f.m._gatedDeliver = () => ({ error: 'x' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  const r = f.injected.find((x) => /report NOT delivered/.test(x));
+  assert.ok(r, `ENTER: the re-close reached the delivery and bounced: ${JSON.stringify(f.injected)}`);
+  assert.ok(!/kept open/.test(r), 'the ticket is done and held, not open');
+  assert.match(r, /verify: diff/, 'the reply names the hold step');
 });
 
 test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
@@ -7605,7 +7623,7 @@ test('task reject: rejecting a non-DONE ticket is bounced', () => {
   assert.ok(f.injected.some((x) => /reject reopens a DONE ticket; t1 is open/.test(x)));
 });
 
-test('task cancel: works on an assigned ticket (reason to assignee) and a backlog ticket', () => {
+test('task cancel: works on an assigned ticket and a backlog ticket', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'assigned one' });
@@ -7613,11 +7631,22 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'not needed' });
   assert.strictEqual(f.one('t1').state, 'cancelled');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 cancelled] not needed' }]);
+  assert.deepStrictEqual(f.gated, [], 'an unstarted role ticket resolves to no seat, so the reason goes to nobody');
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
   assert.strictEqual(f.one('t2').state, 'cancelled', 'backlog ticket cancels too');
   assert.deepStrictEqual(f.gated, [], 'no reason + no live assignee → no delivery');
+});
+
+test('cancelling an unstarted role ticket tells no sibling', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed for later' });
+  assert.strictEqual(f.one('t1').startedAt, null, 'ENTER: t1 is unstarted');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'not needed' });
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+  assert.deepStrictEqual(f.gated, [], 'the first live hand is working something else and was never told about t1');
 });
 
 // ---------------------------------------------------------------------------
@@ -8326,8 +8355,7 @@ test('t351: cancelling an UNSTARTED backlog ticket delivers nothing to a seat mi
 
   assert.deepStrictEqual(f.gated.filter((g) => /in flight/.test(g.body)), [],
     'the seat`s own in-flight spec must not come back at it — a hand reading a fresh dispatch compacts and starts over, discarding the work');
-  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [['team-hand', '[ticket t2 cancelled] never mind']],
-    'only the cancellation notice goes out');
+  assert.deepStrictEqual(f.gated, [], 'nothing goes out — the unstarted ticket was never the seat`s');
   assert.ok(!f.injected.some((x) => /next:/.test(x)), 'and the lead is not told a hand-off happened');
 });
 
@@ -18873,6 +18901,40 @@ test('task accept: a spawn seat is ARCHIVED, and the reply says so', async () =>
   assert.ok(!/nothing was torn down/.test(said[0]),
     'and must NOT claim nothing was torn down — a reply that lies about an archive is the class of bug this fixes');
   assert.ok(f.one('t1').closedOut, 'terminal: there is no branch to merge and no second accept to invite');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('a second accept on a no-branch ticket changes nothing', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
+  f.m.destroy = async () => ({ ok: true });
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done');
+
+  const said = [];
+  const accept = () => f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
+  await accept();
+  const first = f.one('t1');
+  assert.ok(first.closedOut && first.acceptedAt, 'ENTER: the first accept closed the ticket out');
+  const acceptedAt = first.acceptedAt;
+  await accept();
+
+  const t = f.one('t1');
+  assert.strictEqual((t.events || []).filter((e) => e.kind === 'accept').length, 1, 'one accept event, not two');
+  assert.strictEqual(t.acceptedAt, acceptedAt, 'acceptedAt is not re-stamped');
+  assert.deepStrictEqual(archived, ['team-hand-1'], 'no second archive');
+  assert.strictEqual(said.length, 2, 'ENTER: two replies');
+  assert.match(said[1], /already accepted/, 'the second reply says the ticket was already accepted');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 

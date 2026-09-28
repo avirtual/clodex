@@ -408,3 +408,17 @@ test('team path unchanged: a non-lead still cannot open a ticket', () => {
     'the lead gate still refuses where a team exists');
   assert.strictEqual(f.tstore.load(root).length, 0, 'nothing written');
 });
+
+test('solo: a spec the seat never turned on is redelivered at the deadline', () => {
+  const f = mkSolo();
+  const s = f.seat('solo');
+  const worker = f.seat('worker');
+  f.m._handleTask(s, { type: 'task', sub: 'add', who: null, id: null, body: 'work' });
+  f.m._handleTask(s, { type: 'task', sub: 'assign', who: 'worker', id: 't1', body: '' });
+  assert.strictEqual(f.deps.resolveTeam(worker.cwd), null, 'PRECONDITION: no team');
+  worker._specUnconfirmed = { ticketId: 't1', kind: 'spec', retried: false, since: 0 };
+  f.gated.length = 0;
+  f.m._checkSpecConfirm(worker);
+  assert.ok(f.gated.some((g) => g.target === 'worker' && /REPLAY/.test(g.body)),
+    `the spec is redelivered to the seat: ${JSON.stringify(f.gated)}`);
+});
