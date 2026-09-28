@@ -49403,6 +49403,8 @@ ${detail}` });
             }
             delete v.statusMigrated;
             sidebarView = { ...sidebarView, ...v };
+          } else if (res && res.ok && !res.view) {
+            window.api.setSidebarView({ statusMigrated: true });
           }
         } catch {
         }
@@ -54481,7 +54483,10 @@ ${res.stderr}` : "");
       document.getElementById("btn-peers-cancel").addEventListener("click", closePeersDialog);
       document.getElementById("btn-peers-save").addEventListener("click", async () => {
         const collected = collectPeers();
-        if (!collected.ok) return;
+        if (!collected.ok) {
+          if (collected.row && collected.row.parentElement) collected.row.parentElement.classList.remove("collapsed");
+          return;
+        }
         const fresh = await window.api.getSettings();
         const boxIds = await boxPeerIds();
         const boxPeers = (fresh.peers || []).filter((p) => p && boxIds.has(p.id)).map(({ hasToken, ...rest }) => rest);
@@ -55875,7 +55880,10 @@ ${res.stderr}` : "");
         }
         if (!prefsCtxModels) return;
         const overrides = s.ctxReminderThresholds || {};
-        const rows = (Array.isArray(shipped.models) ? shipped.models : []).map((m) => {
+        const shippedModels = Array.isArray(shipped.models) ? shipped.models : [];
+        const shippedFamilies = new Set(shippedModels.map((m) => m.family));
+        const extra = Object.keys(overrides).filter((f) => f !== "default" && !shippedFamilies.has(f)).sort().map((family) => ({ family }));
+        const rows = [...shippedModels, ...extra].map((m) => {
           const o = overrides[m.family];
           const v = o || m;
           return `${m.family}: ${v.nudge.toLocaleString()} / ${v.escalate.toLocaleString()}` + (o ? " (your override)" : "");

@@ -1584,6 +1584,8 @@ async function initSidebarView() {
       }
       delete v.statusMigrated; // marker stays in the store, not in live view state
       sidebarView = { ...sidebarView, ...v };
+    } else if (res && res.ok && !res.view) {
+      window.api.setSidebarView({ statusMigrated: true });
     }
   } catch {}
   if (sbGroup) sbGroup.value = sidebarView.group;
@@ -6882,7 +6884,10 @@ function closePeersDialog() { peersOverlay.classList.add('hidden'); }
 document.getElementById('btn-peers-cancel').addEventListener('click', closePeersDialog);
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
   const collected = collectPeers();
-  if (!collected.ok) return;   // invalid port/folder — keep the dialog open
+  if (!collected.ok) {
+    if (collected.row && collected.row.parentElement) collected.row.parentElement.classList.remove('collapsed');
+    return;
+  }
   // Re-merge the managed box peers FRESH at write time, never from a dialog-open stash: a box
   // Rebuild since open re-registers its peer with a new url/token, and setSettings replaces the
   // whole peers array. Strip hasToken (derived); omitted tokens carry forward by id.
@@ -8255,8 +8260,6 @@ function setTerminalReports(value) {
   }
 }
 
-// Baseline only. Editing them is a settings-file edit, and the store's merge keeps
-// such a row across a Save from here.
 function setCtxThresholds(s) {
   const shipped = s.ctxThresholdDefaults || {};
   const base = shipped.default || {};
@@ -8271,7 +8274,13 @@ function setCtxThresholds(s) {
   }
   if (!prefsCtxModels) return;
   const overrides = s.ctxReminderThresholds || {};
-  const rows = (Array.isArray(shipped.models) ? shipped.models : []).map((m) => {
+  const shippedModels = Array.isArray(shipped.models) ? shipped.models : [];
+  const shippedFamilies = new Set(shippedModels.map((m) => m.family));
+  const extra = Object.keys(overrides)
+    .filter((f) => f !== 'default' && !shippedFamilies.has(f))
+    .sort()
+    .map((family) => ({ family }));
+  const rows = [...shippedModels, ...extra].map((m) => {
     const o = overrides[m.family];
     const v = o || m;
     return `${m.family}: ${v.nudge.toLocaleString()} / ${v.escalate.toLocaleString()}`
