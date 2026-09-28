@@ -378,7 +378,7 @@ test('sweep: a move to `default` DELETES CLAUDE_CONFIG_DIR rather than writing ~
 
 test('sweep: a seat pinned to an EXPLICIT ~/.claude is healed onto `default` with no CLAUDE_CONFIG_DIR', async () => {
   const fx = sweepFixture();
-  fx.entries['fable-idle'].env = { MY_KEY: 'keep-me', CLAUDE_CONFIG_DIR: '/home/u/.claude/' };
+  fx.entries['fable-idle'].env = { MY_KEY: 'keep-me', CLAUDE_CONFIG_DIR: '/home/u/.claude' };
   const res = await fx.run({ label: 'default', configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) });
   assert.deepStrictEqual(res.moved, ['fable-idle']);
   assert.deepStrictEqual(fx.restarts[0].patch.env, { MY_KEY: 'keep-me' });

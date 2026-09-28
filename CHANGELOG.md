@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
 - Accounts: moving a seat back to the default account no longer pins it to a second copy of the Keychain credentials; a dangling `~/.claude/settings.json` symlink no longer orphans a half-created account dir and blocks the label; a seat whose config dir differs only by a trailing slash is no longer restarted onto a different store; a dangling shared-dir target is no longer linked into a new account; an account seat's inherited `CLAUDE_CONFIG_DIR` survives the marker scrub and its settings are read from that dir; muse's bypass posture is detected however its two options are ordered or `=`-joined; a codex `-mNAME` model flag is stripped when a model template is derived.
 
 - Peers: a peer seat's context menu now offers Edit Skills and hides Reload (fresh) on bash seats, matching a local seat; taking control of a peer seat that was detached mid-request no longer saves a stale claim; the peer New Session dialog no longer acts on a different dialog opened while the create was in flight.

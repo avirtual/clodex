@@ -189,6 +189,8 @@ test('m0: hasBypass matches every posture.bypass option anywhere in argv', () =>
     [two, ['--y', '--a', '--b'], true],
     [two, ['--a'], false],
     [two, ['--b', '--a'], true],
+    [claude, ['--dangerously-skip-permissions=false'], false],
+    [ADAPTERS.codex, ['--dangerously-bypass-approvals-and-sandbox=1'], false],
     [claude, undefined, false],
     [claude, null, false],
     [claude, '--dangerously-skip-permissions', false],
@@ -271,6 +273,7 @@ test('postureOf recognises muse bypass regardless of option order or `=` form', 
     [ADAPTERS.muse, ['--disable-sandbox', '--approval-mode', 'never'], 'bypass'],
     [ADAPTERS.muse, ['--approval-mode=never', '--disable-sandbox'], 'bypass'],
     [ADAPTERS.muse, ['--approval-mode', 'never'], 'default'],
+    [ADAPTERS.muse, ['--approval-mode', 'never', '--disable-sandbox=false'], 'default'],
     [ADAPTERS.muse, ['--approval-mode', 'never', '--approval-mode', 'ask', '--disable-sandbox'], 'default'],
   ];
   for (const [adapter, argv, want] of rows) {

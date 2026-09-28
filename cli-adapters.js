@@ -187,7 +187,7 @@ function hasBypass(adapter, argv) {
   const want = adapter && adapter.posture && adapter.posture.bypass;
   if (!Array.isArray(want) || want.length === 0 || !Array.isArray(argv)) return false;
   const norm = normalizeArgv(argv, {});
-  return want.every((opt) => (opt.length === 1 ? norm.includes(opt[0]) : lastValueOf(norm, opt[0]) === opt[1]));
+  return want.every((opt) => (opt.length === 1 ? argv.includes(opt[0]) : lastValueOf(norm, opt[0]) === opt[1]));
 }
 
 function hasReadOnlyCap(adapter, argv) {
