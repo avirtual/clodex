@@ -559,3 +559,21 @@ test('sweep selects on the EFFECTIVE model: flag, else the config dir\'s setting
   assert.deepStrictEqual(res.skipped, rows.filter((r) => !r.moves).map((r) => ({ name: r.name, reason: r.reason })));
   assert.deepStrictEqual(restarted, ['flag-fable', 'settings-fable'], 'and only those two PTYs were killed');
 });
+
+test('add: a dangling settings.json symlink in claudeHome is skipped, and the account is still registered', () => {
+  const { accounts, claudeHome } = fixture();
+  fs.rmSync(path.join(claudeHome, 'settings.json'));
+  fs.symlinkSync('/nonexistent-clx', path.join(claudeHome, 'settings.json'));
+  assert.ok(fs.lstatSync(path.join(claudeHome, 'settings.json')).isSymbolicLink());
+  accounts.add({ label: 'sub-2' });
+  assert.deepStrictEqual(accounts.list().map((a) => a.label), ['default', 'sub-2']);
+  assert.strictEqual(fs.existsSync(path.join(accounts.configDirFor('sub-2'), 'settings.json')), false);
+});
+
+test('mint: a claudeHome entry that is itself a dangling symlink is skipped like a missing one', () => {
+  const { accounts, claudeHome } = fixture({ withPlugins: false });
+  fs.symlinkSync('/nonexistent-clx', path.join(claudeHome, 'plugins'));
+  const dir = accounts.mint('sub-2');
+  assert.ok(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink());
+  assert.throws(() => fs.lstatSync(path.join(dir, 'plugins')), /ENOENT/);
+});

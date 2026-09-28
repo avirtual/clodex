@@ -78,22 +78,23 @@ test('every adapter entry carries the whole entry key set', () => {
     assert.deepStrictEqual(Object.keys(entry.effort), ['values', 'apply']);
     assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript', 'warmth']);
     assert.deepStrictEqual(Object.keys(entry.transcript), ['reader', 'link']);
-    assert.deepStrictEqual(Object.keys(entry.posture), ['bypassArgs']);
+    assert.deepStrictEqual(Object.keys(entry.posture), ['bypassArgs', 'bypass']);
     assert.ok(Array.isArray(entry.posture.bypassArgs) && entry.posture.bypassArgs.length > 0
       && entry.posture.bypassArgs.every((t) => typeof t === 'string'), `${type}: bypassArgs is a non-empty string array`);
+    assert.deepStrictEqual(entry.posture.bypass.flat(), entry.posture.bypassArgs, `${type}: bypass options spell out bypassArgs`);
   }
 });
 
 test('m0: the table rows declare posture, cwdDir, transcript and warmth literally', () => {
-  assert.deepStrictEqual(ADAPTERS.claude.posture, { bypassArgs: ['--dangerously-skip-permissions'] });
-  assert.deepStrictEqual(ADAPTERS.codex.posture, { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'] });
+  assert.deepStrictEqual(ADAPTERS.claude.posture, { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']] });
+  assert.deepStrictEqual(ADAPTERS.codex.posture, { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'], bypass: [['--dangerously-bypass-approvals-and-sandbox']] });
   assert.strictEqual(ADAPTERS.claude.cwdDir, null);
   assert.strictEqual(ADAPTERS.codex.cwdDir, '.codex');
   assert.deepStrictEqual(ADAPTERS.claude.transcript, { reader: 'claude', link: 'hook' });
   assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'clodex' });
   assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true });
   assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false });
-  assert.deepStrictEqual(ADAPTERS.muse.posture, { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] });
+  assert.deepStrictEqual(ADAPTERS.muse.posture, { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'], bypass: [['--approval-mode', 'never'], ['--disable-sandbox']] });
   assert.strictEqual(ADAPTERS.muse.cwdDir, null);
   assert.deepStrictEqual(ADAPTERS.muse.transcript, { reader: 'muse', link: 'clodex' });
   assert.deepStrictEqual(ADAPTERS.muse.caps, { park: false, transcript: true, warmth: false });
@@ -106,7 +107,7 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     cmd: 'muse',
     model: { flags: ['--model'], aliases: {}, idRe: ADAPTERS.claude.model.idRe },
     effort: { values: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'], apply: 'flag' },
-    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
+    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'], bypass: [['--approval-mode', 'never'], ['--disable-sandbox']] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,
     readOnlyCap: {
@@ -176,18 +177,20 @@ test('t1090: skills is null on claude and codex; muse declares the list command 
   }
 });
 
-test('m0: hasBypass is a contiguous-subsequence match on posture.bypassArgs', () => {
+test('m0: hasBypass matches every posture.bypass option anywhere in argv', () => {
   const claude = ADAPTERS.claude;
-  const two = { posture: { bypassArgs: ['--a', '--b'] } };
+  const two = { posture: { bypassArgs: ['--a', '--b'], bypass: [['--a'], ['--b']] } };
   const rows = [
     [claude, [], false],
     [claude, ['--dangerously-skip-permissions'], true],
     [claude, ['--model', 'x', '--dangerously-skip-permissions', '--foo'], true],
     [claude, ['--dangerously-bypass-approvals-and-sandbox'], false],
-    [two, ['--a', '--x', '--b'], false],
+    [two, ['--a', '--x', '--b'], true],
     [two, ['--y', '--a', '--b'], true],
     [two, ['--a'], false],
-    [two, ['--b', '--a'], false],
+    [two, ['--b', '--a'], true],
+    [claude, ['--dangerously-skip-permissions=false'], false],
+    [ADAPTERS.codex, ['--dangerously-bypass-approvals-and-sandbox=1'], false],
     [claude, undefined, false],
     [claude, null, false],
     [claude, '--dangerously-skip-permissions', false],
@@ -262,6 +265,25 @@ test('seatType: the template decides when present, the opener only when there is
   assert.strictEqual(seatType(null, null), 'claude');
   assert.throws(() => seatType({ type: 'sh' }, null), /unknown seat type "sh".*claude, codex/);
   assert.throws(() => seatType(null, { type: 'sh' }), /unknown seat type "sh"/);
+});
+
+test('postureOf recognises muse bypass regardless of option order or `=` form', () => {
+  assert.strictEqual(postureOf(ADAPTERS.muse, ['--approval-mode', 'never', '--disable-sandbox']), 'bypass', 'ENTER: the canonical order');
+  const rows = [
+    [ADAPTERS.muse, ['--disable-sandbox', '--approval-mode', 'never'], 'bypass'],
+    [ADAPTERS.muse, ['--approval-mode=never', '--disable-sandbox'], 'bypass'],
+    [ADAPTERS.muse, ['--approval-mode', 'never'], 'default'],
+    [ADAPTERS.muse, ['--approval-mode', 'never', '--disable-sandbox=false'], 'default'],
+    [ADAPTERS.muse, ['--approval-mode', 'never', '--approval-mode', 'ask', '--disable-sandbox'], 'default'],
+  ];
+  for (const [adapter, argv, want] of rows) {
+    assert.strictEqual(postureOf(adapter, argv), want, JSON.stringify(argv));
+  }
+});
+
+test('stripModelArgs strips a codex short model flag with an attached value', () => {
+  assert.deepStrictEqual(stripModelArgs('codex', ['-mgpt-5', '--foo']), ['--foo']);
+  assert.deepStrictEqual(stripModelArgs('claude', ['-mfoo']), ['-mfoo']);
 });
 
 test('stripModelArgs strips every model flag the adapter declares, and only those', () => {

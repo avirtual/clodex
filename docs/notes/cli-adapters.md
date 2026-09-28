@@ -7,8 +7,9 @@ switches on. Every entry carries the same keys, pinned whole-object by
 `test/cli-adapters.test.js`: `id` (the key), `label` (UI name), `cmd` (the
 binary), `model` (`flags` the CLI takes a model on, `aliases` short names →
 ids, `idRe` the id shape), `posture` (`bypassArgs`, the permission-bypass
-argv tokens as an array; `hasBypass(adapter, argv)` is true only when that
-array occurs contiguously in `argv`), `account` (`envKey` the config-dir env
+argv tokens spawned as an array; `bypass`, the same tokens as options —
+`[flag]` or `[flag, value]` — and `hasBypass(adapter, argv)` is true when every
+option is present in any order, a valued one `=`-joined or not, last-wins), `account` (`envKey` the config-dir env
 var, which `create()` resolves the account dir through for every type that
 names one; `bootstrap` names the mechanism the call site with fs runs, `null`
 when none), `cwdDir` (the directory the CLI writes into the seat's cwd, which
