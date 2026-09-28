@@ -537,6 +537,30 @@ test('uiSettings: an explicit empty token clears it; a dropped row drops its tok
   } finally { cleanup(); }
 });
 
+test('uiSettings: duplicate peer ids collapse, so a token-less save cannot cross-wire tokens', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [
+      { id: 'a', sshHost: 'h1', token: 'T1' },
+      { id: 'a', sshHost: 'h2', token: 'T2' },
+    ] });
+    uiSettings.set({ peers: [{ id: 'a', sshHost: 'h1', label: 'x' }, { id: 'a', sshHost: 'h2' }] });
+    const peers = uiSettings.get().peers;
+    assert.strictEqual(peers.some((p) => p.sshHost === 'h1' && p.token === 'T2'), false);
+    assert.strictEqual(peers.length, 1);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a label-less az peer is named by its target, not its bastion', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ peers: [{ id: 'a', az: { bastion: 'b', resourceGroup: 'g', target: 'vm1' } }] });
+    assert.strictEqual(uiSettings.get().peers[0].label, 'vm1');
+  } finally { cleanup(); }
+});
+
 test('persistence: setHoldUntil round-trips and clears to an ABSENT key', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -813,6 +837,16 @@ test('templates: save() renames in place, unlinking the old file (no orphan)', (
     const list = stores.templates.list();
     assert.strictEqual(list.length, 1); // renamed, not duplicated
     assert.strictEqual(list[0].id, 'new-name');
+  } finally { cleanup(); }
+});
+
+test('templates: a case-only rename keeps exactly one template, under the new casing', (t) => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.saveByName({ name: 'Foo', type: 'claude', cwd: '/a' });
+    if (!fs.existsSync(tplFile(registryDir, 'FOO'))) { t.skip('case-sensitive filesystem'); return; }
+    stores.templates.save({ id: 'Foo', name: 'foo', type: 'claude', cwd: '/a' });
+    assert.deepStrictEqual(stores.templates.list().map((x) => x.name), ['foo']);
   } finally { cleanup(); }
 });
 
@@ -2836,6 +2870,16 @@ test('agentDefaults: strip get/set and the deny-floor tri-state', () => {
   } finally { cleanup(); }
 });
 
+test('agentDefaults: a seat named __proto__ cannot reach Object.prototype', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const d = stores.agentDefaults;
+    d.setStrip('__proto__', 2);
+    assert.strictEqual(({}).strip, undefined);
+    assert.strictEqual(d.getStrip('other'), 0);
+  } finally { delete Object.prototype.strip; cleanup(); }
+});
+
 test('agentDefaults: the skill and built-in deny tri-states, and what each one filters', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3675,6 +3719,16 @@ test('uiSettings: a box config\'s mounts survive the sanitizer round-trip (M6a w
       { host: '/Users/me/proj', ro: false },
       { host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' },
     ]);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a fallback box config never shares its mounts array with the module default', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ boxes: [{ id: 'a', label: 'a' }] }).boxes[0].config.mounts.push({ host: '/poison', ro: false });
+    uiSettings.set({ boxes: [{ id: 'b', label: 'b' }] });
+    assert.deepStrictEqual(uiSettings.get().boxes[0].config.mounts, []);
   } finally { cleanup(); }
 });
 
