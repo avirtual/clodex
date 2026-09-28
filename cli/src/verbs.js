@@ -609,7 +609,8 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   let stream = null;
   let settled = false;
   let hardTimer = null;
-  let sinceSeq = 0;
+  let sinceSeq = null;
+  let dmSent = false;
   const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
     const finish = (fn, v) => { if (settled) return; settled = true; if (hardTimer) clearTimeout(hardTimer); fn(v); };
@@ -624,10 +625,11 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
           const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
           sinceSeq = lastSeqOf(before.messages) + 1;
           await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
+          dmSent = true;
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
       onEvent: (event, data) => {
-        if (event !== 'activity' || !data || data.name !== name || !data.turnEnd) return;
+        if (!dmSent || event !== 'activity' || !data || data.name !== name || !data.turnEnd) return;
         finish(resolve, { timedOut: false });
       },
       onError: (e) => finish(reject, e),
@@ -657,7 +659,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   const refetchDeadline = setTimeout(() => { graceExpired = true; try { refetchAc.abort(); } catch {} }, graceMs);
   let fresh = [];
   try {
-    while (!graceExpired) {
+    while (!graceExpired && sinceSeq != null) {
       let after;
       try {
         after = await client.get(`${transcriptPath(name)}?since=${sinceSeq}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
@@ -723,7 +725,8 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
   let token = null;
   let settled = false;
 
-  const clearTimers = () => { if (quietTimer) clearTimeout(quietTimer); if (hardTimer) clearTimeout(hardTimer); quietTimer = null; hardTimer = null; };
+  const clearTimers = () => { if (quietTimer) clearTimeout(quietTimer); quietTimer = null; };
+  const ac = new AbortController();
 
   const outcome = await new Promise((resolve) => {
     const finish = (o) => { if (settled) return; settled = true; clearTimers(); resolve(o); };
@@ -733,13 +736,13 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
       quietTimer = setTimeout(() => finish({ ok: true }), quietMs);
     };
 
+    hardTimer = setTimeout(() => { try { ac.abort(); } catch {} finish({ ok: false, timedOut: true }); }, timeoutMs);
     stream = client.openEventStream(`/api/sessions/${encodeURIComponent(name)}/attach`, 'exec (attach)', {
       onOpen: async () => {
-        hardTimer = setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs);
         try {
-          const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' });
+          const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' }, { signal: ac.signal });
           token = acq.token;
-          await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'exec (input)', { token, data: cmd + '\r' });
+          await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'exec (input)', { token, data: cmd + '\r' }, { signal: ac.signal });
           inputSent = true;
           armQuiet(); // in case output already arrived before the input resolved
         } catch (e) { finish({ ok: false, error: e }); }
@@ -754,7 +757,8 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
     });
   });
 
-  try { if (token) await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (release control)', { action: 'release', token }); } catch {}
+  try { if (token) await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (release control)', { action: 'release', token }, { signal: ac.signal }); } catch {}
+  clearTimeout(hardTimer);
   try { if (stream) stream.close(); } catch {}
 
   const raw = Buffer.concat(chunks).toString('utf8');

@@ -52,6 +52,7 @@ function stub(opts = {}) {
         if (opts.onEventsOpen) opts.onEventsOpen(state, seen);
         return; // held open — turnEnd only if the test pushes it
       }
+      if (/^\/api\/sessions\/[^/]+\/attach$/.test(p) && opts.attachHangs) { held.push(res); return; }
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         const verdict = opts.transcript ? opts.transcript(seen) : [];
         if (verdict === 'hang') { held.push(res); return; }   // wedge: never respond
@@ -125,6 +126,18 @@ test('exec: a WEDGED snapshot GET (timer would never arm inside onOpen) → stil
   assert.match(stderr, /no end-of-turn within 1s/);
   assert.ok(elapsed < 5000, `the ceiling fired despite a hung snapshot (took ${elapsed}ms)`);
   close();
+});
+
+test('exec (pty mode): an attach stream that never reaches 200 still exits by the --timeout ceiling', { timeout: 10_000 }, async () => {
+  const { server, close } = stub({ sessions: [{ name: 'sh', type: 'bash' }], attachHangs: true });
+  const port = await listen(server);
+  const t0 = Date.now();
+  const { code, stderr } = await cli(['exec', 'sh', 'ls', '--timeout', '1'], port);
+  const elapsed = Date.now() - t0;
+  close();
+  assert.strictEqual(code, 1);
+  assert.match(stderr, /no quiet within 1s/);
+  assert.ok(elapsed < 5000, `the ceiling fired before the attach stream opened (took ${elapsed}ms)`);
 });
 
 test('exec: no turnEnd but the reply IS in the transcript at timeout → prints it, THEN the honest timeout error', async () => {
