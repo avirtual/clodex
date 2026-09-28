@@ -359,7 +359,8 @@ let dialogTeamName = null;   // resolved team name in join mode
 let dialogTeamNames = [];    // existing team names, for the create dup pre-check
 let dialogReservedNames = new Set(); // globally taken session names (live + persisted/archived), for the auto-suffix
 let dialogReservedSets = reservedSets(null);
-let lastTeamAutoName = null; // the last <team>-<role> suggestion we wrote to inputName
+let lastTeamAutoName = null;
+let lastTeamNameAuto = null;
 const nameHint = document.getElementById('name-hint');
 let dialogNameState = { ok: true, kind: 'free', message: '' };
 let dialogToolGate = { ok: true, disabled: false, notice: null };
@@ -2752,7 +2753,6 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     teamRow.style.display = 'none';
     if (teamToggle) teamToggle.checked = false;
     if (teamFields) teamFields.style.display = 'none';
-    lastTeamAutoName = null;
     if (!authoring) refreshTeamForCwd();
   }
 }
@@ -3350,8 +3350,10 @@ async function refreshTeamForCwd() {
     if (teamJoinFields) teamJoinFields.style.display = 'none';
     if (teamCreateFields) teamCreateFields.style.display = '';
     try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
-    if (teamNameInput && !teamNameInput.value.trim()) {
+    if (token !== teamForCwdToken) return;
+    if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
       teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+      lastTeamNameAuto = teamNameInput.value;
     }
   }
 }
@@ -3435,6 +3437,7 @@ async function openDialog(prefill = null) {
   }
   if (teamToggle) teamToggle.checked = false;
   if (teamNameInput) teamNameInput.value = '';
+  lastTeamNameAuto = null;
   if (teamRoleSelect) teamRoleSelect.value = 'hand';
   if (teamFields) teamFields.style.display = 'none';
   dialogTeamMode = null;
@@ -3474,6 +3477,7 @@ async function openDialog(prefill = null) {
   dialogReservedNames = reservedUnion(dialogReservedSets);
   if (!prefill && inputName.value === defaultName) {
     inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
+    lastTeamAutoName = inputName.value;
   }
   refreshNameValidity();
   dialogHostSettings = settings;
@@ -3599,7 +3603,7 @@ inputTemplate.addEventListener('change', async () => {
   {
     const { model, rest } = splitModelArg(t.extraArgs || []);
     inputModel.value = model;
-    inputArgs.value = rest.join(' ');
+    inputArgs.value = formatArgs(rest);
     if (inputEffort) fillEffort(inputEffort, t.type, (typeof t.effort === 'string' && t.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[t.type] || '';
@@ -3663,12 +3667,16 @@ function closeDialog() {
 
 function parseArgs(str) {
   const out = [];
-  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  const re = /(?:"[^"]*"|'[^']*'|[^\s"']+|["'])+/g;
   let m;
   while ((m = re.exec(str)) !== null) {
-    out.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+    out.push(m[0].replace(/"([^"]*)"|'([^']*)'/g, (_, d, q) => (d !== undefined ? d : q)));
   }
   return out;
+}
+
+function formatArgs(rest) {
+  return rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
 }
 
 function expandPath(p) {
@@ -3901,7 +3909,11 @@ async function pickSandboxCwd(hostDir) {
 }
 
 dialogOverlay.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') submitDialog();
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+  const tag = e.target && e.target.tagName;
+  if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SUMMARY') return;
+  e.preventDefault();
+  submitDialog();
 });
 dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOverlay) closeDialog(); });
 
@@ -3935,7 +3947,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   {
     const { model, rest } = splitModelArg((tpl && tpl.extraArgs) || []);
     inputModel.value = model;
-    inputArgs.value = rest.join(' ');
+    inputArgs.value = formatArgs(rest);
     if (inputEffort) fillEffort(inputEffort, inputType.value, (tpl && typeof tpl.effort === 'string' && tpl.effort) || '');
   }
   argsHint.textContent = ARGS_HINTS[inputType.value] || '';
@@ -3988,47 +4000,54 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   setTimeout(() => inputName.select(), 50);
 }
 
+let templateSaveInFlight = false;
 async function saveTemplateFromForm() {
-  const name = inputName.value.trim();
-  if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-    inputName.style.borderColor = '#e94560';
-    return;
-  }
-  const cfg = collectFormConfig();
-  if (editingTemplateTeam) {
-    const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
-    if (res && res.ok === false) {
-      alert(`Could not save into team ${editingTemplateTeam}: ${res.error || 'unknown error'}`);
+  if (templateSaveInFlight) return;
+  templateSaveInFlight = true;
+  try {
+    const name = inputName.value.trim();
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
+      inputName.style.borderColor = '#e94560';
       return;
+    }
+    const cfg = collectFormConfig();
+    if (editingTemplateTeam) {
+      const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+      if (res && res.ok === false) {
+        alert(`Could not save into team ${editingTemplateTeam}: ${res.error || 'unknown error'}`);
+        return;
+      }
+      closeDialog();
+      await refreshTemplatesDropdown();
+      if (templatesDrawerRefresh) templatesDrawerRefresh();
+      return;
+    }
+    if (editingTemplateBundle) {
+      const res = await window.api.writePluginBundleFile(
+        editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
+      if (res && res.ok === false) {
+        alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || 'unknown error'}`);
+        return;
+      }
+      closeDialog();
+      await refreshTemplatesDropdown();
+      if (templatesDrawerRefresh) templatesDrawerRefresh();
+      return;
+    }
+    if (editingTemplateId) {
+      const list = (await window.api.listTemplates()).filter((t) => !t.team);
+      const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
+      if (clash) { inputName.style.borderColor = '#e94560'; return; }
+      await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
+    } else {
+      await window.api.saveTemplateByName({ ...cfg, name });
     }
     closeDialog();
     await refreshTemplatesDropdown();
     if (templatesDrawerRefresh) templatesDrawerRefresh();
-    return;
+  } finally {
+    templateSaveInFlight = false;
   }
-  if (editingTemplateBundle) {
-    const res = await window.api.writePluginBundleFile(
-      editingTemplateBundle.id, 'templates', name, JSON.stringify({ ...cfg, name }, null, 2));
-    if (res && res.ok === false) {
-      alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || 'unknown error'}`);
-      return;
-    }
-    closeDialog();
-    await refreshTemplatesDropdown();
-    if (templatesDrawerRefresh) templatesDrawerRefresh();
-    return;
-  }
-  if (editingTemplateId) {
-    const list = (await window.api.listTemplates()).filter((t) => !t.team);
-    const clash = list.find(t => t.id !== editingTemplateId && (t.name || '').toLowerCase() === name.toLowerCase());
-    if (clash) { inputName.style.borderColor = '#e94560'; return; }
-    await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name }); // rename-in-place
-  } else {
-    await window.api.saveTemplateByName({ ...cfg, name });
-  }
-  closeDialog();
-  await refreshTemplatesDropdown();
-  if (templatesDrawerRefresh) templatesDrawerRefresh();
 }
 
 
@@ -8657,7 +8676,7 @@ async function openArgsDialog(name, argsSource = null) {
   {
     const { model, rest } = splitModelArg(res.extraArgs || []);
     argsModel.value = model;
-    argsInput.value = rest.map(a => /\s/.test(a) ? `"${a}"` : a).join(' ');
+    argsInput.value = formatArgs(rest);
   }
   if (argsEffort) fillEffort(argsEffort, res.type, (typeof res.effort === 'string' && res.effort) || '');
   const isAgent = isAgentType(res.type);

@@ -48136,6 +48136,7 @@ ${detail}` });
       var dialogReservedNames = /* @__PURE__ */ new Set();
       var dialogReservedSets = reservedSets(null);
       var lastTeamAutoName = null;
+      var lastTeamNameAuto = null;
       var nameHint = document.getElementById("name-hint");
       var dialogNameState = { ok: true, kind: "free", message: "" };
       var dialogToolGate = { ok: true, disabled: false, notice: null };
@@ -50438,7 +50439,6 @@ ${detail}` });
           teamRow.style.display = "none";
           if (teamToggle) teamToggle.checked = false;
           if (teamFields) teamFields.style.display = "none";
-          lastTeamAutoName = null;
           if (!authoring) refreshTeamForCwd();
         }
       }
@@ -51041,8 +51041,10 @@ ${detail}` });
           } catch {
             dialogTeamNames = [];
           }
-          if (teamNameInput && !teamNameInput.value.trim()) {
+          if (token !== teamForCwdToken) return;
+          if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
             teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+            lastTeamNameAuto = teamNameInput.value;
           }
         }
       }
@@ -51125,6 +51127,7 @@ ${detail}` });
         }
         if (teamToggle) teamToggle.checked = false;
         if (teamNameInput) teamNameInput.value = "";
+        lastTeamNameAuto = null;
         if (teamRoleSelect) teamRoleSelect.value = "hand";
         if (teamFields) teamFields.style.display = "none";
         dialogTeamMode = null;
@@ -51160,6 +51163,7 @@ ${detail}` });
         dialogReservedNames = reservedUnion(dialogReservedSets);
         if (!prefill && inputName.value === defaultName) {
           inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
+          lastTeamAutoName = inputName.value;
         }
         refreshNameValidity();
         dialogHostSettings = settings;
@@ -51261,7 +51265,7 @@ ${detail}` });
         {
           const { model, rest } = splitModelArg(t.extraArgs || []);
           inputModel.value = model;
-          inputArgs.value = rest.join(" ");
+          inputArgs.value = formatArgs(rest);
           if (inputEffort) fillEffort(inputEffort, t.type, typeof t.effort === "string" && t.effort || "");
         }
         argsHint.textContent = ARGS_HINTS[t.type] || "";
@@ -51321,12 +51325,15 @@ ${detail}` });
       }
       function parseArgs(str) {
         const out = [];
-        const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+        const re = /(?:"[^"]*"|'[^']*'|[^\s"']+|["'])+/g;
         let m;
         while ((m = re.exec(str)) !== null) {
-          out.push(m[1] !== void 0 ? m[1] : m[2] !== void 0 ? m[2] : m[3]);
+          out.push(m[0].replace(/"([^"]*)"|'([^']*)'/g, (_, d, q) => d !== void 0 ? d : q));
         }
         return out;
+      }
+      function formatArgs(rest) {
+        return rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
       }
       function expandPath(p) {
         if (!p) return p;
@@ -51543,7 +51550,11 @@ ${detail}` });
         showToast(`"${hostDir}" isn't reachable in the sandbox \u2014 type a container path, or mount the folder from the Sandboxes panel.`, { kind: "warn", duration: 9e3 });
       }
       dialogOverlay.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") submitDialog();
+        if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+        const tag = e.target && e.target.tagName;
+        if (tag === "TEXTAREA" || tag === "BUTTON" || tag === "SUMMARY") return;
+        e.preventDefault();
+        submitDialog();
       });
       dialogOverlay.addEventListener("mousedown", (e) => {
         if (e.target === dialogOverlay) closeDialog();
@@ -51576,7 +51587,7 @@ ${detail}` });
         {
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
           inputModel.value = model;
-          inputArgs.value = rest.join(" ");
+          inputArgs.value = formatArgs(rest);
           if (inputEffort) fillEffort(inputEffort, inputType.value, tpl && typeof tpl.effort === "string" && tpl.effort || "");
         }
         argsHint.textContent = ARGS_HINTS[inputType.value] || "";
@@ -51623,54 +51634,61 @@ ${detail}` });
         dialogOverlay.classList.remove("hidden");
         setTimeout(() => inputName.select(), 50);
       }
+      var templateSaveInFlight = false;
       async function saveTemplateFromForm() {
-        const name = inputName.value.trim();
-        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-          inputName.style.borderColor = "#e94560";
-          return;
-        }
-        const cfg = collectFormConfig();
-        if (editingTemplateTeam) {
-          const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
-          if (res && res.ok === false) {
-            alert(`Could not save into team ${editingTemplateTeam}: ${res.error || "unknown error"}`);
-            return;
-          }
-          closeDialog();
-          await refreshTemplatesDropdown();
-          if (templatesDrawerRefresh) templatesDrawerRefresh();
-          return;
-        }
-        if (editingTemplateBundle) {
-          const res = await window.api.writePluginBundleFile(
-            editingTemplateBundle.id,
-            "templates",
-            name,
-            JSON.stringify({ ...cfg, name }, null, 2)
-          );
-          if (res && res.ok === false) {
-            alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || "unknown error"}`);
-            return;
-          }
-          closeDialog();
-          await refreshTemplatesDropdown();
-          if (templatesDrawerRefresh) templatesDrawerRefresh();
-          return;
-        }
-        if (editingTemplateId) {
-          const list = (await window.api.listTemplates()).filter((t) => !t.team);
-          const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
-          if (clash) {
+        if (templateSaveInFlight) return;
+        templateSaveInFlight = true;
+        try {
+          const name = inputName.value.trim();
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             inputName.style.borderColor = "#e94560";
             return;
           }
-          await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
-        } else {
-          await window.api.saveTemplateByName({ ...cfg, name });
+          const cfg = collectFormConfig();
+          if (editingTemplateTeam) {
+            const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+            if (res && res.ok === false) {
+              alert(`Could not save into team ${editingTemplateTeam}: ${res.error || "unknown error"}`);
+              return;
+            }
+            closeDialog();
+            await refreshTemplatesDropdown();
+            if (templatesDrawerRefresh) templatesDrawerRefresh();
+            return;
+          }
+          if (editingTemplateBundle) {
+            const res = await window.api.writePluginBundleFile(
+              editingTemplateBundle.id,
+              "templates",
+              name,
+              JSON.stringify({ ...cfg, name }, null, 2)
+            );
+            if (res && res.ok === false) {
+              alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || "unknown error"}`);
+              return;
+            }
+            closeDialog();
+            await refreshTemplatesDropdown();
+            if (templatesDrawerRefresh) templatesDrawerRefresh();
+            return;
+          }
+          if (editingTemplateId) {
+            const list = (await window.api.listTemplates()).filter((t) => !t.team);
+            const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
+            if (clash) {
+              inputName.style.borderColor = "#e94560";
+              return;
+            }
+            await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
+          } else {
+            await window.api.saveTemplateByName({ ...cfg, name });
+          }
+          closeDialog();
+          await refreshTemplatesDropdown();
+          if (templatesDrawerRefresh) templatesDrawerRefresh();
+        } finally {
+          templateSaveInFlight = false;
         }
-        closeDialog();
-        await refreshTemplatesDropdown();
-        if (templatesDrawerRefresh) templatesDrawerRefresh();
       }
       window.api.onTranscriptChanged((name) => {
         for (const cb of [...transcriptChangedSubs]) cb(name);
@@ -56141,7 +56159,7 @@ ${res.stderr}` : "");
         {
           const { model, rest } = splitModelArg(res.extraArgs || []);
           argsModel.value = model;
-          argsInput.value = rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
+          argsInput.value = formatArgs(rest);
         }
         if (argsEffort) fillEffort(argsEffort, res.type, typeof res.effort === "string" && res.effort || "");
         const isAgent = isAgentType(res.type);
