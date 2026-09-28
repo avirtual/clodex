@@ -296,3 +296,29 @@ test('validateExecDef takes a sane statusEveryMs and refuses the rest', () => {
   assert.strictEqual(validateExecDef({ ...base, statusEveryMs: '3m' }).ok, false,
     'a duration string is authored as a typo, not honoured as a unit');
 });
+
+test('a narrow def replies its LAST stderr line even after 2KB of progress output', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { m, session, replies, children, cleanup } = harness(SHORT);
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+    for (let i = 0; i < 3; i++) children[0].stderr.emit('data', `progress ${i} ${'.'.repeat(1400)}\n`);
+    children[0].stderr.emit('data', 'DIGEST 42 passed\n');
+    children[0].emit('exit', 0, null);
+    assert.match(replies.at(-1), /DIGEST 42 passed$/);
+  } finally { cleanup(); }
+});
+
+test('a narrow def that fails replies its LAST stderr line even after 2KB of progress output', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { m, session, replies, children, cleanup } = harness(SHORT);
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+    for (let i = 0; i < 3; i++) children[0].stderr.emit('data', `progress ${i} ${'.'.repeat(1400)}\n`);
+    children[0].stderr.emit('data', 'DIGEST 3 failed\n');
+    children[0].emit('exit', 1, null);
+    assert.match(replies.at(-1), /exit 1: DIGEST 3 failed$/);
+  } finally { cleanup(); }
+});

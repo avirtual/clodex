@@ -92,19 +92,29 @@ test('${TEAM_ROOT} resolves from the CALLING session, so one def serves every te
   } finally { fs.rmSync(REGISTRY_DIR, { recursive: true, force: true }); }
 });
 
-test('a seat in no team leaves ${TEAM_ROOT} empty rather than substituting a wrong root', async () => {
+test('a seat in no team is refused rather than substituting a wrong root for ${TEAM_ROOT}', async () => {
   // Substituting SOMETHING here (the app root, the session cwd) would silently
   // run a different project's script — the exact class of bug the placeholder
-  // exists to kill. An unresolved relative path fails loudly at spawn instead.
-  const { m, spawned, REGISTRY_DIR } = harness({ resolveTeam: () => null, entry: DEF });
+  // exists to kill.
+  const { m, spawned, replies, REGISTRY_DIR } = harness({ resolveTeam: () => null, entry: DEF });
   try {
     m._handleExecIntent({ name: 'a', agentType: 'claude', cwd: '/somewhere/else' }, 'digest', '{}');
     await settle();
-    assert.strictEqual(spawned.length, 1);
-    assert.deepStrictEqual(spawned[0].args, ['/scripts/test-digest.sh'],
-      'the token expands to empty, leaving a path that cannot be mistaken for a real project');
-    assert.ok(!spawned[0].args[0].startsWith('/somewhere/else'),
-      'the session cwd must NOT be used as a fallback root');
+    assert.strictEqual(spawned.length, 0, 'the def is refused rather than run with an empty root');
+    assert.ok(replies.some((r) => r.includes('${TEAM_ROOT}')), JSON.stringify(replies));
+  } finally { fs.rmSync(REGISTRY_DIR, { recursive: true, force: true }); }
+});
+
+test('a def using ${TEAM_ROOT} on a teamless seat is refused, not run', async () => {
+  const { m, spawned, replies, REGISTRY_DIR } = harness({
+    resolveTeam: () => null,
+    entry: { ...DEF, argv: ['/bin/sh', '/s.sh'], cwd: '${TEAM_ROOT}' },
+  });
+  try {
+    m._handleExecIntent({ name: 'a', agentType: 'claude', cwd: '/somewhere/else' }, 'digest', '{}');
+    await settle();
+    assert.strictEqual(spawned.length, 0, `spawned ${JSON.stringify(spawned)}`);
+    assert.ok(replies.some((r) => r.includes('${TEAM_ROOT}')), JSON.stringify(replies));
   } finally { fs.rmSync(REGISTRY_DIR, { recursive: true, force: true }); }
 });
 
@@ -113,7 +123,7 @@ test('a throwing resolveTeam degrades to empty instead of killing the exec path'
   // take out an unrelated command.
   const { m, spawned, REGISTRY_DIR } = harness({
     resolveTeam: () => { throw new Error('broken manifest'); },
-    entry: DEF,
+    entry: { ...DEF, argv: ['/bin/sh', '/s.sh'], cwd: undefined },
   });
   try {
     m._handleExecIntent({ name: 'a', agentType: 'claude', cwd: '/proj/alpha' }, 'digest', '{}');

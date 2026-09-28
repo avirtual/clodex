@@ -377,7 +377,7 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
       // The handle is minted BY THE HOST — this is the seam the whole test is
       // about, so it is the real one.
       getPluginHooks: () => engine.hooks,
-      fs, log: () => {},
+      fs, log: { info() {}, warn() {}, error() {}, debug() {} },
     });
     const m = new SessionManager();
     m._injectText = () => {};
@@ -406,6 +406,53 @@ test('an intent handler is called handler(SessionHandle, intent) — argument OR
       'the reversed signature must not survive anywhere in the document');
   } finally {
     engine.deactivate('demo2');
+    intentRegistry._resetPluginRows();
+    cleanup();
+  }
+});
+
+test('a throwing plugin intent handler replies error to the seat under the host log shape', async () => {
+  const { createSessionManager } = require('../session-manager');
+  const intentRegistry = require('../intent-registry');
+  const { intentEnabled } = require('../intent-catalog');
+  const { engine, cleanup } = realEngineHost();
+  engine.register('demo3', {
+    activate(h) {
+      h.intents.register({
+        verb: 'shape',
+        parse: (l) => (l === '[agent:shape]' ? {} : null),
+        handler: () => { throw new Error('boom'); },
+      });
+    },
+  }, { hostApi: HOST_API_VERSION }, { shipped: true });
+  try {
+    const SessionManager = createSessionManager({
+      knownSkillNames: () => [],
+      getRemoteServer: () => null,
+      getUiSettings: () => ({ get: () => ({}) }),
+      getPersistence: () => ({ list: () => [], get: () => ({ intents: ['shape'] }) }),
+      notifyOS: () => {},
+      intentEnabled,
+      fencedLines: require('../intent-scanner').fencedLines,
+      bodyModeFor: intentRegistry.bodyModeFor,
+      intentEnabledFor: intentRegistry.intentEnabledFor,
+      intentEnabledForSeat: intentRegistry.intentEnabledForSeat,
+      pluginRowFor: intentRegistry.pluginRowFor,
+      validIntentNames: intentRegistry.validIntentNames,
+      getPluginHooks: () => engine.hooks,
+      fs, log: { info() {}, warn() {}, error() {}, debug() {} },
+    });
+    const m = new SessionManager();
+    const injected = [];
+    m._injectText = (_s, t) => injected.push(t);
+    m._broadcast = () => {};
+    m.sessions.set('seat', { name: 'seat', agentType: 'claude', type: 'claude', cwd: '/repo', workspaceId: 'ws-1' });
+
+    await m._handleIntent('seat', { type: 'shape' });
+
+    assert.ok(injected.some((t) => /\[agent:shape\] error: boom/.test(t)), JSON.stringify(injected));
+  } finally {
+    engine.deactivate('demo3');
     intentRegistry._resetPluginRows();
     cleanup();
   }

@@ -162,7 +162,7 @@ const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } =
 // global namespace, so an unrelated seat that happens to be called `team` makes
 // `team` look answerable and every seat on the box gets told to reply to it.
 // Keep in sync with the senderName literals at the _deliver* call sites.
-const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop', 'user']);
+const SYSTEM_SENDERS = new Set(['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'ticket-loop', 'user', 'ticket-watchdog', 'terminal']);
 
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
@@ -5430,7 +5430,7 @@ function createSessionManager(deps) {
     _scanPtyOutput(session, data) {
       session.lineBuffer += data;
       const lines = session.lineBuffer.split(/\r?\n/);
-      session.lineBuffer = lines.pop() || '';
+      session.lineBuffer = (lines.pop() || '').slice(-64 * 1024);
 
       // Deliberately NOT fence-aware (unlike _extractIntents): this path is
       // line-at-a-time over an unbounded terminal stream, so fence state
@@ -6511,10 +6511,10 @@ function createSessionManager(deps) {
       try {
         const r = row.handler(handle, intent);
         if (r && typeof r.then === 'function') {
-          log(`[plugin:${row.source}] intent handler for ${intent.type} returned a promise — handlers must be synchronous; result ignored`);
+          log.warn('plugin', `[plugin:${row.source}] intent handler for ${intent.type} returned a promise — handlers must be synchronous; result ignored`);
         }
       } catch (e) {
-        log(`[plugin:${row.source}] intent handler for ${intent.type} threw: ${(e && e.message) || e}`);
+        log.warn('plugin', `[plugin:${row.source}] intent handler for ${intent.type} threw: ${(e && e.message) || e}`);
         this._injectText(session, `[agent:${intent.type}] error: ${(e && e.message) || e}`, { parkable: true });
       }
     }
@@ -6624,9 +6624,7 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
       reply('reboot queued — restarting once every session and the keyboard are idle; sessions resume on relaunch');
-      this._voidScratchMark(session,
-        'you queued a reboot inside the episode, and no mark survives the restart — every mark is gone '
-        + 'and nothing can be cut. Your summary is in your own turn above; carry on from it.');
+      let relaunched = false;
       try {
         // The host decides WHEN. Under Electron the restart waits for a sustained
         // all-idle window, so this seat's own turn finishes and flushes first —
@@ -6643,11 +6641,17 @@ function createSessionManager(deps) {
         // wait, so a kill + same-name recreate is reachable, not theoretical.
         const born = this._bornFor(who);
         if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why, born, now) });
+        relaunched = true;
       } catch (e) {
         log.error('intent', `reboot relaunch failed: ${e.message}`);
         reply(`relaunch failed: ${e.message}`);
-        try { store.set({ pendingRebootNotice: null }); }
+        try { store.set({ lastRebootAt: 0, pendingRebootNotice: null }); }
         catch (e2) { log.error('intent', `reboot notice clear failed: ${e2.message}`); }
+      }
+      if (relaunched) {
+        this._voidScratchMark(session,
+          'you queued a reboot inside the episode, and no mark survives the restart — every mark is gone '
+          + 'and nothing can be cut. Your summary is in your own turn above; carry on from it.');
       }
     }
 
@@ -7095,13 +7099,17 @@ function createSessionManager(deps) {
       // the green result looks like its own. Resolved per CALLING SESSION, so one
       // def serves every team. Empty when the seat's cwd is in no team's root:
       // substituting a wrong root would reintroduce exactly the bug, so a def
-      // using the token fails loudly instead (spawn ENOENT on a relative path).
+      // using the token fails loudly instead.
       const teamRoot = (team && team.root) || '';
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
         .split('${CLODEX_HOME}').join(REGISTRY_DIR)
         .split('${TEAM_ROOT}').join(teamRoot);
       const argv = entry.argv.map(expandVars);
+      if (!teamRoot && [...entry.argv, entry.cwd || ''].some((a) => String(a).includes('${TEAM_ROOT}'))) {
+        fail('refused: ${TEAM_ROOT} is unresolved — this seat\'s cwd is in no team\'s root, so the def has no root to run in');
+        return;
+      }
       const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());
       const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
       const payloadJson = JSON.stringify(v.value);
@@ -7245,7 +7253,7 @@ function createSessionManager(deps) {
             // line — those commands end with their digest.
             const body = entry.replyStderr !== true ? ''
               : replyMax ? clamp(stderr, replyMax, { truncated: stderrTruncated })
-                : (stderr.trim().split('\n').pop() || '').slice(0, 200);
+                : (stderrRecent.trim().split('\n').pop() || '').slice(0, 200);
             endRun('ok', body ? `${runTag}${body}` : '');
             if (body) {
               reply(`${cmd}: ${runTag}${body}`);
@@ -7259,7 +7267,7 @@ function createSessionManager(deps) {
             return;
           }
           const how = signal ? `killed (${signal})` : `exit ${code}`;
-          const tail = stderr.trim().split('\n').pop() || '';
+          const tail = stderrRecent.trim().split('\n').pop() || '';
           const body = `${runTag}${tail ? `${how}: ${tail.slice(0, 200)}` : how}`;
           endRun('failed', body);
           fail(body);
@@ -7483,11 +7491,16 @@ function createSessionManager(deps) {
         }
         try {
           const unit = memoryStore.remember(agent, { scope, tags, text, source: agent, pinned });
-          refreshDigest();
-          getPersistence().markDigested(agent, session.sessionId);
           this._memoryAck(session, `[agent:memory] remembered ${unit.id}${scope ? ` [${scope}]` : ''}${pinned ? ' (pinned)' : ''}`);
         } catch (e) {
           this._injectText(session, `[agent:memory] could not remember: ${e.message}`, { parkable: true });
+          return;
+        }
+        try {
+          refreshDigest();
+          getPersistence().markDigested(agent, session.sessionId);
+        } catch (e) {
+          log.warn('intent', `memory remember by ${agent}: digest refresh failed: ${e.message}`);
         }
         return;
       }
@@ -8421,7 +8434,7 @@ function createSessionManager(deps) {
       if (this._movingNames.has(name)) {
         reply(`[agent:scratch] ${verb} refused: this seat is being moved or renamed right now, and cutting `
           + `across that would race two respawns under one name. Nothing was cut; the mark ${mark.nonce} `
-          + 'is still open — re-emit end when the move is done.');
+          + `is still open — re-emit ${verb} when the move is done.`);
         return refused('moving', v1.stats);
       }
       this._movingNames.add(name);
@@ -8487,7 +8500,7 @@ function createSessionManager(deps) {
           await this._injectAfterBoot(fresh,
             `[agent:scratch] the cut FAILED while writing: ${err.message}. The transcript was restored from `
             + `backup and your seat respawned WITHOUT cutting; the mark ${mark.nonce} is still open, so you `
-            + 'can re-emit end. Your summary is in your own turn above.',
+            + `can re-emit ${closing.verb || 'end'}. Your summary is in your own turn above.`,
             { logPrefix: '[agent:scratch]', dropBody: 'scratch → write-failure notice NOT injected' });
         }
         return {

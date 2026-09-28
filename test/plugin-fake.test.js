@@ -1031,7 +1031,7 @@ function makeWiredPair({ intents = ['fake-note'], noHost = false } = {}) {
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => ({ intents }) }),
     notifyOS: () => {},
-    log: () => {},
+    log: { info() {}, warn() {}, error() {}, debug() {} },
     intentEnabled,
     withoutPrivilegedIntentsFor: intentRegistry.withoutPrivilegedIntentsFor,
     fencedLines,
