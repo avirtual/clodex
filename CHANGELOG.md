@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Peers: a peer seat's context menu now offers Edit Skills and hides Reload (fresh) on bash seats, matching a local seat; taking control of a peer seat that was detached mid-request no longer saves a stale claim; the peer New Session dialog no longer acts on a different dialog opened while the create was in flight.
 - Sessions: a failed move-to-peer of a seat that was not running here no longer starts it; moving a stopped seat to another workspace now removes its row from the source window; renaming a seat carries its memory load log along instead of leaving it for the next seat of that name; an exec whose process fails to start is reported as failed, not "started (pid undefined)"; the exec status reply stays under its 400-character cap without splitting an emoji.
 
 - Tickets: the slow-test gate now counts a branch's `cli/test/` changes as owned tests, so a CLI-only branch is no longer sent through the full suite twice; a spec-confirm probe survives a transcript repoint (a hand that /clear'd right after dispatch is no longer read as never having confirmed); a tracked `.codex/.gitignore` in a ticket tree is left alone instead of overwritten (Codex ticket trees no longer start dirty); a briefed `team create` keeps every kit role, not just lead/hand/reviewer.
