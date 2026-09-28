@@ -121,9 +121,7 @@ function openUrl(webPort) {
   return `http://localhost:${webPort}`;
 }
 
-// The effective-ports line shown while a box runs (M6b bug #4 follow-on). Ports are
-// engine-managed (collision-bumped at Start) with no editable field, so there's no
-// "configured vs bumped" to reconcile — just state what the box IS listening on.
+// The effective-ports line shown while a box runs (M6b bug #4 follow-on).
 // `effective` is status.ports ({web,wirescope,wire} or a subset) or null when
 // stopped/absent → '' (the caller hides the line, nothing true to say).
 function portsLineText(effective, asked) {

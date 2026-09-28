@@ -8026,19 +8026,22 @@ function portInputValue(el) {
 }
 
 function collectSandboxConfig() {
-  return {
+  const cfg = {
     workDir: sbWorkdir.value.trim() || null,
     ref: sbRef.value.trim() || null,
     autoStart: sbAutoStart.checked,
-    webPort: portInputValue(sbWebPort),
-    wirescopePort: portInputValue(sbWirescopePort),
-    wirePort: portInputValue(sbWirePort),
   };
+  if (!sbWebPort.disabled) {
+    cfg.webPort = portInputValue(sbWebPort);
+    cfg.wirescopePort = portInputValue(sbWirescopePort);
+    cfg.wirePort = portInputValue(sbWirePort);
+  }
+  return cfg;
 }
 
 async function saveSandboxConfig() {
   const cfg = collectSandboxConfig();
-  const bad = sandboxValidatePorts({ web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort });
+  const bad = 'webPort' in cfg && sandboxValidatePorts({ web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort });
   if (bad) {
     showToast(bad, { kind: 'error', duration: 10000 });
     return false;
