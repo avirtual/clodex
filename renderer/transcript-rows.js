@@ -356,11 +356,9 @@ function tokensText(n) {
 }
 
 function durationText(ms) {
-  const s = ms / 1000;
-  if (s < 10) return `${s.toFixed(1)}s`;
-  if (s < 60) return `${Math.round(s)}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${Math.round(s - m * 60)}s`;
+  if (ms < 9950) return `${(ms / 1000).toFixed(1)}s`;
+  const t = Math.round(ms / 1000);
+  return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${t % 60}s`;
 }
 
 function baseName(p) {
@@ -530,14 +528,18 @@ function replyRow(doc, rec, ctx, attached, boxed) {
   return withTime(doc, row, rec);
 }
 
+function attachedLead(rec) {
+  const cut = rec.attached ? rec.text.indexOf('Message (') : -1;
+  return cut < 0 ? rec.text : rec.text.slice(0, cut);
+}
+
 function inboundRow(doc, rec, ctx, boxed) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
   if (!boxed) text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
-    const cut = rec.text.indexOf('Message (');
-    const lead = (cut < 0 ? rec.text : rec.text.slice(0, cut)).trim();
+    const lead = attachedLead(rec).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
@@ -635,7 +637,7 @@ function internalBox(doc, rec, row, opened, att, opens) {
 
 function ticketParts(rec) {
   const { id, tag } = rec.ticket;
-  const text = rec.attached ? rec.text.slice(0, rec.text.indexOf('Message (')) : rec.text;
+  const text = attachedLead(rec);
   if (rec.kind !== 'reply') return { chip: tag ? `${id} ${tag}` : id, message: text.replace(/^\[ticket [^\]]*\]\s*/, '') };
   const m = /^ticket t\d+[ \t]*([^\s:]*):?[ \t]*/.exec(text);
   const state = m ? m[1] : '';
