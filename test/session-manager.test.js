@@ -23257,7 +23257,7 @@ test('a relay from a spoke whose configured label is a URL still carries a sende
   assert.strictEqual(require('../relay-protocol').isQualifiedSender(dm[0].from), true);
 });
 
-test('re-setting a label whose rewind is still pending refuses the re-mark and keeps the pending rewind', (t) => {
+test('_scratchMark: re-setting a label whose rewind is still pending refuses the re-mark and keeps the pending rewind', (t) => {
   const f = mkScratch();
   const tape = scratchPrefix(f);
   scratchNamed(f, tape, 'a');
@@ -23272,7 +23272,7 @@ test('re-setting a label whose rewind is still pending refuses the re-mark and k
   assert.ok(f.injected[f.injected.length - 1].startsWith('[agent:scratch] mark refused'), f.injected[f.injected.length - 1]);
 });
 
-test('after the init watchdog fires, a second composer send queues behind the kept item instead of overtaking it', async (t) => {
+test('_streamEnqueue: after the init watchdog fires, a second composer send queues behind the kept item instead of overtaking it', async (t) => {
   const c = mkStalledInitSeat(t);
   await c.create('si-f4');
   const s = c.h.m.sessions.get('si-f4');
@@ -23306,7 +23306,7 @@ test('a team create still classifying its root is on the open mark before the sa
   assert.ok(seen[0].includes('X'), JSON.stringify(seen));
 });
 
-test('a detached seat\'s buffer trimmed at the cap does not begin inside an escape sequence', () => {
+test('escapeSafeTail: a detached seat\'s buffer trimmed at the cap does not begin inside an escape sequence', () => {
   const m = mk();
   m.windowForSession = () => null;
   m.sessions.set('a', { name: 'a', workspaceId: 'w' });
@@ -23321,7 +23321,7 @@ test('a detached seat\'s buffer trimmed at the cap does not begin inside an esca
   assert.strictEqual(s.pendingOutput, tail);
 });
 
-test('a detached seat\'s buffer trimmed at the cap does not begin on half a surrogate pair', () => {
+test('escapeSafeTail: a detached seat\'s buffer trimmed at the cap does not begin on half a surrogate pair', () => {
   const m = mk();
   m.windowForSession = () => null;
   m.sessions.set('a', { name: 'a', workspaceId: 'w' });
