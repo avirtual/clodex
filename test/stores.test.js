@@ -3367,6 +3367,65 @@ test('uiSettings: peers are sanitized (junk dropped, empty-visible kept)', () =>
   } finally { cleanup(); }
 });
 
+test('uiSettings: sanitizeBoxRef rows through a box config ref', () => {
+  const rows = [
+    ['a b', null],
+    ['$(x)', null],
+    ['x'.repeat(129), null],
+    ['feature/x', 'feature/x'],
+    [' master ', 'master'],
+  ];
+  for (const [ref, want] of rows) {
+    const { stores, cleanup } = freshStores();
+    try {
+      stores.uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config: { ref } }] });
+      assert.strictEqual(stores.uiSettings.get().boxes[0].config.ref, want, JSON.stringify(ref));
+    } finally { cleanup(); }
+  }
+});
+
+test('uiSettings: sanitizeSidePaneWidth rows', () => {
+  const rows = [[319, null], [10001, null], [480.5, null], [320, 320], [10000, 10000]];
+  for (const [px, want] of rows) {
+    const { stores, cleanup } = freshStores();
+    try {
+      stores.uiSettings.set({ sidePaneWidth: px });
+      assert.strictEqual(stores.uiSettings.get().sidePaneWidth, want, String(px));
+    } finally { cleanup(); }
+  }
+});
+
+test('uiSettings: sanitizeRecentCwdsByWorkspace caps at 12 strings, drops non-array lists, and a top-level array loads as {}', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    const cwds = Array.from({ length: 13 }, (_, i) => `/c${i}`);
+    stores.uiSettings.set({ recentCwdsByWorkspace: { ws: [...cwds.slice(0, 5), 7, ...cwds.slice(5)], other: 'nope' } });
+    assert.deepStrictEqual(stores.uiSettings.get().recentCwdsByWorkspace, {
+      ws: ['/c0', '/c1', '/c2', '/c3', '/c4', '/c5', '/c6', '/c7', '/c8', '/c9', '/c10', '/c11'],
+    });
+    stores.uiSettings.set({ recentCwdsByWorkspace: ['/c0'] });
+    assert.deepStrictEqual(Object.keys(stores.uiSettings.get().recentCwdsByWorkspace), ['ws']);
+    const file = path.join(userData, 'ui-settings.json');
+    fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf-8')), recentCwdsByWorkspace: ['/c0'] }));
+    assert.deepStrictEqual(stores.uiSettings.get().recentCwdsByWorkspace, {});
+  } finally { cleanup(); }
+});
+
+test('uiSettings: sanitizePeerNameMap drops bad names; an emptied list is dropped for peerAttached, kept for peerVisible', () => {
+  const rows = [
+    ['peerAttached', { p: ['ok', '..', 'a/b', 'x'.repeat(65)] }, { p: ['ok'] }],
+    ['peerAttached', { p: ['..'] }, {}],
+    ['peerVisible', { p: ['..'] }, { p: [] }],
+  ];
+  for (const [key, input, want] of rows) {
+    const { stores, cleanup } = freshStores();
+    try {
+      stores.uiSettings.set({ [key]: input });
+      assert.deepStrictEqual(stores.uiSettings.get()[key], want, `${key} ${JSON.stringify(input)}`);
+    } finally { cleanup(); }
+  }
+});
+
 test('uiSettings: peer disabled flag round-trips (strict true only)', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -4308,6 +4367,30 @@ for (const st of LOADED_STORES) {
       assert.notDeepStrictEqual(fs.readFileSync(file), before, 'a readable file re-arms saves');
     } finally {
       try { fs.chmodSync(file, 0o600); } catch {}
+      cleanup();
+    }
+  });
+}
+
+for (const st of LOADED_STORES) {
+  test(`${st.name}: a corrupt ${st.file} whose quarantine rename fails reads empty, is left in place, and refuses saves`, { skip: isRoot && 'chmod does not bind root' }, () => {
+    const { stores, cleanup, userData } = freshStores();
+    const file = path.join(userData, st.file);
+    try {
+      fs.writeFileSync(file, '{bad');
+      fs.chmodSync(userData, 0o500);
+      let got;
+      const errs = captureConsoleError(() => { got = st.read(stores); });
+      assert.deepStrictEqual(got, st.empty);
+      assert.ok(errs.some((l) => l.includes('could not be parsed nor moved aside')), errs.join('\n'));
+      assert.deepStrictEqual(fs.readdirSync(userData).filter((n) => n.startsWith(`${st.file}.corrupt-`)), []);
+      assert.strictEqual(fs.readFileSync(file, 'utf-8'), '{bad');
+      captureConsoleError(() => {
+        assert.throws(() => st.write(stores), /refusing to save/);
+      });
+      assert.strictEqual(fs.readFileSync(file, 'utf-8'), '{bad');
+    } finally {
+      try { fs.chmodSync(userData, 0o700); } catch {}
       cleanup();
     }
   });
