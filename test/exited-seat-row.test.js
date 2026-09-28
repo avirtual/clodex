@@ -254,7 +254,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'),
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'),
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
     `return { restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
@@ -317,7 +317,7 @@ test('clicking the exited row resumes through retrySpawnSession and mounts the s
   assert.deepStrictEqual(h.calls[3], ['markSeatEffort', 'cx', 'high']);
   assert.deepStrictEqual(h.calls[4], ['markSeatPosture', 'cx', 'bypass']);
   assert.deepStrictEqual(h.calls[0], ['markSeatIo', 'cx', 'stream']);
-  assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false]);
+  assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false, null, null]);
 });
 
 test('✕ on the exited row forgets the record', async () => {
