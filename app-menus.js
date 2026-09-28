@@ -74,9 +74,7 @@ function tildePath(p) {
 function deleteTeamDetail(dir, check) {
   if (!check.loaded) {
     return `The manifest under ${tildePath(dir)} does not load (${check.error}), so seats and tickets cannot be checked. `
-      + (check.sandboxed
-        ? `Removes the directory, stops and removes box ${check.boxId}, its state under ~/.clodex/boxes/${check.boxId}/ and its peer entry.`
-        : 'Removes the directory; nothing else is touched.');
+      + 'Removes the directory; nothing else is touched.';
   }
   if (check.sandboxed) {
     return `Removes ${tildePath(dir)} (the pointer manifest), stops and removes box ${check.boxId}, `

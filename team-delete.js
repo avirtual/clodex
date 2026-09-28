@@ -1,25 +1,12 @@
 'use strict';
 
-const path = require('path');
-
-function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager, teamsDir = null, fs = require('fs') }) {
-  function pointerBoxId(name) {
-    if (!teamsDir) return null;
-    try {
-      const rec = JSON.parse(fs.readFileSync(path.join(teamsDir, name, 'sandbox.json'), 'utf8'));
-      return rec && typeof rec.boxId === 'string' && rec.boxId ? rec.boxId : null;
-    } catch {
-      return null;
-    }
-  }
-
+function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager }) {
   function deleteCheck(name) {
     let team;
     try {
       team = loadManifest(name);
     } catch (err) {
-      const boxId = pointerBoxId(name);
-      return { ok: true, loaded: false, error: err.message, ...(boxId ? { sandboxed: true, boxId } : {}) };
+      return { ok: true, loaded: false, error: err.message };
     }
     const used = getManager()._teamInUse(team);
     const sandboxed = team.sandboxed === true;

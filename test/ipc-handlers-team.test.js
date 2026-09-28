@@ -248,7 +248,7 @@ test('t1104: team:addRole with no account logs the role line with the literal "a
 
 function mkDeleteDoor({
   manifest = 'ok', sessions = [], tickets = [], persisted = [],
-  sandboxed = false, removeResult = { ok: true }, sandboxManager, refreshThrows = false, files = {},
+  sandboxed = false, removeResult = { ok: true }, sandboxManager, refreshThrows = false,
 } = {}) {
   const home = mkTmpRoot('ipc-del-home-');
   const root = mkTmpRoot('ipc-del-root-');
@@ -258,7 +258,6 @@ function mkDeleteDoor({
   fs.writeFileSync(path.join(dir, 'team.json'), manifest === 'ok'
     ? JSON.stringify({ root, lead: 'l', ...(sandboxed ? { sandboxed: true } : {}), roles: { lead: {}, hand: {} } }, null, 2)
     : manifest);
-  for (const [rel, body] of Object.entries(files)) fs.writeFileSync(path.join(dir, rel), body);
 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const tstore = createTicketsStore({ fs, path, clodexHome: home });
@@ -286,7 +285,7 @@ function mkDeleteDoor({
     : sandboxManager;
   const { deleteCheck, deleteGated } = createTeamDelete({
     loadManifest: tm.loadManifest, deleteTeam: tm.deleteTeam, getManager: () => manager,
-    getSandboxManager: () => mgr, teamsDir: tm.teamsDir,
+    getSandboxManager: () => mgr,
   });
   const refreshed = [];
   const handlers = new Map();
@@ -304,7 +303,7 @@ function mkDeleteDoor({
     skillLibrary: { save: (name) => [name] },
   });
   return {
-    root, dir, manager, refreshed, calls, sandboxManager: mgr, handlers, deleteCheck,
+    root, dir, manager, refreshed, calls, sandboxManager: mgr, handlers,
     check: () => handlers.get('team:deleteCheck')(null, 't'),
     del: () => handlers.get('team:delete')(null, 't'),
     exists: () => fs.existsSync(dir),
@@ -422,33 +421,6 @@ test('t863: an ALREADY-GONE box does not block — the pointer is the leftover',
     assert.strictEqual(res.ok, true, `expected the delete to proceed (got: ${JSON.stringify(res)})`);
     assert.deepStrictEqual(d.calls, ['team-t']);
     assert.ok(!d.exists(), 'the pointer dir is gone');
-  } finally { d.cleanup(); }
-});
-
-test('t863: deleting a sandboxed team whose manifest does not load still removes its box', async () => {
-  const d = mkDeleteDoor({
-    manifest: '{not json',
-    files: { 'sandbox.json': JSON.stringify({ boxId: 'team-t' }) },
-  });
-  try {
-    assert.ok(d.exists());
-    const check = d.deleteCheck('t');
-    assert.strictEqual(check.loaded, false);
-    assert.strictEqual(check.boxId, 'team-t');
-    const res = await d.del();
-    assert.strictEqual(res.ok, true, res.error);
-    assert.deepStrictEqual(d.calls, ['team-t']);
-    assert.ok(!d.exists());
-  } finally { d.cleanup(); }
-});
-
-test('t863: an unloadable team with no sandbox pointer never touches the sandbox manager', async () => {
-  const d = mkDeleteDoor({ manifest: '{not json' });
-  try {
-    assert.strictEqual(d.deleteCheck('t').sandboxed, undefined);
-    assert.strictEqual((await d.del()).ok, true);
-    assert.deepStrictEqual(d.calls, []);
-    assert.ok(!d.exists());
   } finally { d.cleanup(); }
 });
 

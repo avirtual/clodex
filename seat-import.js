@@ -3,7 +3,7 @@
 const path = require('path');
 const crypto = require('crypto');
 
-const { SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
+const { SEAT_KINDS, seatDirFor, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { ensureSeatLink, renameTargets, pathInUse } = require('./seat-layout');
 
 const SEAT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
@@ -153,18 +153,6 @@ function createSeatImport({
     return kid.startsWith(base.endsWith(path.sep) ? base : `${base}${path.sep}`);
   }
 
-  function realish(p) {
-    const rest = [];
-    let cur = path.resolve(p);
-    for (;;) {
-      try { return path.join(fs.realpathSync(cur), ...rest); } catch {}
-      const up = path.dirname(cur);
-      if (up === cur) return path.resolve(p);
-      rest.unshift(path.basename(cur));
-      cur = up;
-    }
-  }
-
   function cwdRefusal(cwd) {
     const parent = path.dirname(cwd);
     let parentStat = null;
@@ -175,10 +163,8 @@ function createSeatImport({
     let own = null;
     try { own = fs.statSync(cwd); } catch { own = null; }
     if (own && !own.isDirectory()) return `far path is a file, not a folder: ${cwd}`;
-    const realCwd = realish(cwd);
     for (const under of (Array.isArray(refuseUnder) ? refuseUnder : [])) {
       if (isUnder(cwd, under)) return `far path is inside Clodex's own data: ${cwd}`;
-      if (typeof under === 'string' && under && isUnder(realCwd, realish(under))) return `far path is inside Clodex's own data: ${cwd}`;
     }
     return null;
   }
@@ -196,12 +182,7 @@ function createSeatImport({
     const badCwd = cwdRefusal(record.cwd);
     if (badCwd) return fail(badCwd);
 
-    sweep();
     for (const other of listStagings()) {
-      if (failureReason(other)) {
-        rmStaging(other);
-        continue;
-      }
       const m = readManifest(other);
       if (m && m.name === name) return fail(`import of ${name} already in progress`);
     }
@@ -276,26 +257,6 @@ function createSeatImport({
     return removed;
   }
 
-  function removeLanded(p, { linkOnly = false } = {}) {
-    if (!p) return null;
-    try {
-      if (linkOnly && !fs.lstatSync(p).isSymbolicLink()) return null;
-    } catch { return null; }
-    try { fs.rmSync(p, { recursive: true, force: true }); } catch {}
-    return exists(p) ? p : null;
-  }
-
-  function rollbackInstall(name, installed) {
-    const left = { transcript: null, seatDir: null, pending: null, loadlog: null, reminders: installed.reminders };
-    left.loadlog = removeLanded(installed.loadlog);
-    left.pending = removeLanded(installed.pending);
-    for (const kind of IMPORTABLE_KINDS) removeLanded(legacySeatPathFor(root, name, kind), { linkOnly: true });
-    left.seatDir = removeLanded(seatDirFor(root, name));
-    if (installed.transcript && installed.transcript !== 'identical') left.transcript = removeLanded(installed.transcript);
-    const landed = left.transcript || left.seatDir || left.pending || left.loadlog || left.reminders;
-    return landed ? left : null;
-  }
-
   function commit({ id } = {}) {
     if (typeof id !== 'string' || !ID_RE.test(id)) return fail(`unknown staging '${id}'`);
     const manifest = readManifest(id);
@@ -359,13 +320,8 @@ function createSeatImport({
       } else {
         fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
         const tmpTarget = `${transcriptTarget}.import-${id}`;
-        try {
-          fs.copyFileSync(stagedTranscript, tmpTarget);
-          fs.renameSync(tmpTarget, transcriptTarget);
-        } catch (e) {
-          try { fs.rmSync(tmpTarget, { force: true }); } catch {}
-          throw e;
-        }
+        fs.copyFileSync(stagedTranscript, tmpTarget);
+        fs.renameSync(tmpTarget, transcriptTarget);
         installed.transcript = transcriptTarget;
       }
 
@@ -413,11 +369,7 @@ function createSeatImport({
         if (refused) dropped.push(`reminders.refused:${refused}`);
       }
     } catch (e) {
-      const left = rollbackInstall(name, installed);
-      rmStaging(id);
-      const out = { ok: false, error: `install failed: ${e.message}` };
-      if (left) out.installed = left;
-      return out;
+      return { ok: false, error: `install failed: ${e.message}`, installed };
     }
 
     if (record.env && record.env.CLAUDE_CONFIG_DIR) dropped.push('account');

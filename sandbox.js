@@ -137,10 +137,6 @@ function mountTargetsConflict(a, b) {
   return under(a, b) || under(b, a);
 }
 
-function canonicalMountTarget(target) {
-  return path.posix.normalize(target).replace(/(.)\/+$/, '$1');
-}
-
 function normalizeMounts(rawMounts) {
   const out = [];
   const taken = new Set();
@@ -152,7 +148,6 @@ function normalizeMounts(rawMounts) {
     let target = String((m && m.container) || '').trim();
     if (target) {
       if (!path.posix.isAbsolute(target)) return { error: `Mount target must be an absolute path: ${target}` };
-      target = canonicalMountTarget(target);
     } else {
       target = defaultMountTarget(host);
       if (taken.has(target)) {
@@ -255,8 +250,8 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`    hostname: ${boxHostname}`);
   if (image.kind === 'build') {
     L.push('    build:');
-    L.push(`      context: ${yamlQuote(image.context)}`);
-    L.push(`      dockerfile: ${yamlQuote(image.dockerfile)}`);
+    L.push(`      context: ${image.context}`);
+    L.push(`      dockerfile: ${image.dockerfile}`);
   } else {
     L.push(`    image: ${image.image}`);
   }
@@ -546,7 +541,7 @@ function createSandbox(deps = {}) {
       if (checked.error) return { ok: false, error: checked.error };
       next.ref = checked.ref;
     }
-    if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
+    writeBoxConfig(next);
     return getConfig();
   }
 
@@ -562,7 +557,7 @@ function createSandbox(deps = {}) {
       } catch { return { error: `Mount source does not exist: ${host}` }; }
       const entry = { host, ro: !!(m && m.ro) };
       const target = String((m && m.container) || '').trim();
-      if (target) entry.container = canonicalMountTarget(target);
+      if (target) entry.container = target;
       clean.push(entry);
     }
     return { mounts: clean };
@@ -641,15 +636,10 @@ function createSandbox(deps = {}) {
 
   async function buildBusySet(config, ownPorts) {
     const own = new Set(ownPorts || []);
-    let ownLive = null;
-    const isOwnLive = async () => {
-      if (ownLive === null) ownLive = parseComposeState((await runCompose(['ps', '--format', 'json'])).stdout) === 'running';
-      return ownLive;
-    };
     const set = new Set(siblingPorts());
     for (const start of [config.webPort, config.wirescopePort, config.wirePort]) {
       for (let p = start; p < start + PORT_SCAN_WINDOW; p++) {
-        try { if (!set.has(p) && await isPortInUse(p) && !(own.has(p) && await isOwnLive())) set.add(p); } catch { /* treat as free */ }
+        try { if (!set.has(p) && await isPortInUse(p) && !own.has(p)) set.add(p); } catch { /* treat as free */ }
       }
     }
     return set;
@@ -941,10 +931,9 @@ function createSandboxManager(deps = {}) {
       writeBoxConfig: (next) => {
         const boxes = listBoxes().map((b) => ({ ...b }));
         const row = boxes.find((b) => b && b.id === boxId);
-        if (!row) return false;
-        row.config = next;
+        if (row) row.config = next;
+        else boxes.push({ id: boxId, label: box.label || boxId, config: next });
         getUiSettings().set({ boxes });
-        return true;
       },
     });
   }
@@ -985,11 +974,7 @@ function createSandboxManager(deps = {}) {
 
   // Best-effort down: a stop failure is surfaced but does not block removal of
   // the registry row.
-  function remove(rawId) {
-    return serialize(() => removeNow(rawId));
-  }
-
-  async function removeNow(rawId) {
+  async function remove(rawId) {
     const boxId = String(rawId || '').trim();
     const box = listBoxes().find((b) => b && b.id === boxId);
     if (!box) return { ok: false, error: `no such sandbox: ${boxId}` };
@@ -1002,10 +987,6 @@ function createSandboxManager(deps = {}) {
       const dir = inst.stateDir();
       if (path.basename(path.dirname(dir)) === 'boxes' && path.basename(dir) === boxId) {
         try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-      }
-      const own = inst.sandboxDir();
-      if (path.dirname(own) === deps.getUserDataPath() && path.basename(own) === subdirFor(boxId)) {
-        try { fs.rmSync(own, { recursive: true, force: true }); } catch {}
       }
     }
     inst.unregisterPeer();
