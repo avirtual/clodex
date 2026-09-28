@@ -329,7 +329,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 ### Hazards
 
-- `getPeerManager` style getters handed to remote-wiring close over `let`s declared after the call (the peer and tunnel managers, the sandbox manager, the drawer ptys), so invoking one during construction hits the temporal dead zone.
+- `getPeerManager` style getters handed to remote-wiring close over bindings declared after the call (the peer and tunnel managers are `let`s, the sandbox manager and drawer ptys `const`s — the temporal dead zone applies to both), so invoking one during construction hits the temporal dead zone.
 - `getSandboxManager` exposing a manager on a headless host hands docker and container lifecycle to a web client, which is why headless-main.js turns `enableSandbox` off inside a box.
 - `getCtlService` must stay the only route to the ctl service, because selectionArm resolves its scrubber through `ctlService` per call and a second token list would drift.
 

@@ -507,7 +507,7 @@
 | `on:session:focused` | records the seat the operator is looking at, with the strictly resolved sender window | focused seat via manager | manager.noteFocusedSession, manager.windowForWorkspace | external-tap-trigger.test.js |
 
 ### Invariants
-- `handle:seat:send`, `handle:seat:commands`, `handle:seat:control`, `handle:seat:permission`, `handle:seat:interrupt` and `on:seat:draft` refuse unless `surfaceOfSender` answers desktop; `handle:seat:image-upload` is the exception, gated on the sender's workspace and agent type only, because the web shim uploads through it.
+- `handle:seat:send`, `handle:seat:commands`, `handle:seat:control`, `handle:seat:permission`, `handle:seat:interrupt` and `on:seat:draft` refuse unless `surfaceOfSender` answers desktop, and every one also checks the seat is in the sender's workspace; `handle:seat:image-upload` drops only the surface gate — it keeps the workspace and agent-type checks — because the web shim uploads through it.
 - `on:voice:markOrigin` and `on:voice:unmarkOrigin` carry no text or id, so a doctored payload cannot choose what the agent is told or which hint is cleared.
 - `on:voice:recording` and `on:voice:draft` carry no timestamp; main stamps its own clock so a renderer cannot hold injection open.
 - `on:session:focused` resolves the sender strictly, so a dying window's last report maps to no window instead of the default workspace's.
