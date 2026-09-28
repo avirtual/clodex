@@ -118,7 +118,7 @@ test('whichBin: an explicit path to a directory is not a binary', () => {
   const path = require('node:path');
   const { createEngine } = require('../engine');
   const { mkTmpRoot } = require('./lib/tmp-roots');
-  const tmp = mkTmpRoot('clx-which-dir-');
+  const tmp = mkTmpRoot('clx-diag-dir-');
   const { whichBin } = createEngine({
     userDataPath: tmp,
     seams: { registryDir: path.join(tmp, 'clodex-home') },

@@ -229,7 +229,7 @@ test("a spilled body's header states its size in bytes", () => {
 for (const [ch, want] of [['é', 1200], ['a', 600]]) {
   test(`a spilled pointer's byte count matches the header's for 600 × ${JSON.stringify(ch)}`, () => {
     const { createEngine } = require('../engine');
-    const tmp = mkTmpRoot('clx-spill-ptr-');
+    const tmp = mkTmpRoot('clx-spill-bytes-');
     const registryDir = path.join(tmp, 'clodex-home');
     const eng = createEngine({
       userDataPath: tmp,

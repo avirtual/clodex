@@ -155,7 +155,7 @@ test('readSessionMeta counts operator prompts, not tool_result lines', () => {
 
 test('readSessionMeta parses only user lines that mention tool_result', () => {
   const { createEngine } = require('../engine');
-  const tmp = mkTmpRoot('clodex-meta-parse-');
+  const tmp = mkTmpRoot('clodex-meta-turns-');
   const eng = createEngine({
     userDataPath: tmp,
     seams: { registryDir: path.join(tmp, 'clodex-home') },
