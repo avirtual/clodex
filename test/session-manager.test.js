@@ -4542,7 +4542,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null } = {}) {
   const root = mkTmpRoot('clodex-hint-');
   const registered = [];
   const hints = [];
@@ -4627,6 +4627,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     log: { info() {}, warn: (scope, msg) => warns.push(msg), error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     ...(pluginHooks ? { getPluginHooks: () => pluginHooks } : {}),
+    ...(isAlive ? { isAlive } : {}),
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -4822,7 +4823,9 @@ test('a corrupt agent.json at the name collision falls back to the pid-only verd
   const registers = [];
   const unregisters = [];
   let first = true;
+  const probed = [];
   const { m, spawn, root } = mkHintProbe({
+    isAlive: (pid) => { probed.push(pid); return false; },
     registry: {
       register: (n) => {
         registers.push(n);
@@ -4835,6 +4838,7 @@ test('a corrupt agent.json at the name collision falls back to the pid-only verd
   fsReal.writeFileSync(pathForReal(root, 'seat', 'registry'), '{not json');
   await spawn('seat', {});
   assert.deepStrictEqual(registers, ['seat', 'seat'], 'ENTER: the EEXIST arm re-registered');
+  assert.deepStrictEqual(probed, [undefined], 'the verdict came from the pid check alone');
   assert.deepStrictEqual(unregisters, ['seat'], 'a pid-less record is stale by the pid-only verdict');
   assert.ok(m.sessions.has('seat'));
 });
