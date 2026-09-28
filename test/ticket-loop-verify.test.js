@@ -5709,6 +5709,21 @@ test('t1235: a review-spawn escalation that PARKED keeps loopStep; one that was 
     'the escalation asks to park behind a queued unit rather than be written into the turn that unit starts');
 });
 
+test('an escalation parked after the queue returns keeps the hold', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.m._gatedDeliver = (t, s, b, u, tag, onWrite) => { setImmediate(() => onWrite('parked')); return { queued: true }; };
+  f.m._escalateTicket(f.team, 't1', 'verify: diff', 'e', 't');
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one().loopStep, 'verify',
+    'a delivery the fire-time divert parked has not been seen, so the hold stays');
+  const lead = f.m.sessions.get('lead');
+  assert.ok(lead._parkedEscalations && lead._parkedEscalations.has('t1'),
+    'and it is watched for release once the lead drains it');
+});
+
 test('t1246: an escalation the turn-start window diverts with an EMPTY queue parks and keeps loopStep', () => {
   const repo = mkRepo();
   const pending = mkTmpRoot('clodex-loop-');
@@ -5759,4 +5774,85 @@ test('t1240: a parked escalation releases loopStep once the lead has drained it,
     + 'the way an injected escalation releases it, so the stall sweep does not nudge about a ticket already seen');
   assert.strictEqual(f.logs.filter((l) => /t1 parked escalation drained by lead/.test(l.msg)).length, 1,
     'one log line says so');
+});
+
+test('a verify loop superseded by reject and re-close does not act on the new close', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const calls = [];
+  f.m._runTicketSuite = () => new Promise((resolve) => { calls.push(resolve); });
+  const red = { ran: true, green: false, slowOnly: false, slow: [], code: 1, failing: 'a fails', summary: '1 fail', output: 'a fails\n' };
+  const until = async (pred) => { for (let i = 0; i < 120 && !pred(); i++) await new Promise((r) => setTimeout(r, 25)); };
+
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'r' });
+  await until(() => calls.length >= 1);
+  assert.strictEqual(calls.length, 1, 'ENTER: loop A is inside its first suite run');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'reject', id: 't1', who: null, body: 'fix the bound' });
+  assert.strictEqual(f.one().state, 'open', 'ENTER: the reject reopened the ticket');
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
+  await until(() => calls.length >= 2);
+  assert.strictEqual(calls.length, 2, 'ENTER: loop B is inside its own suite run');
+  calls[1]({ ran: false, green: false, slowOnly: false, slow: [], error: 'lock' });
+  await until(() => !!f.one().verifyHold);
+  assert.ok(f.one().verifyHold, 'ENTER: loop B stamped its infra hold');
+
+  calls[0](red);
+  for (let i = 0; i < 20 && calls.length < 3; i++) await new Promise((r) => setImmediate(r));
+  if (calls[2]) calls[2](red);
+  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 10));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'done', 'loop A\'s red result must not reopen the re-closed ticket');
+  assert.strictEqual(t.reworkRound, 1, 'and must not count a rework round nobody asked for');
+  assert.strictEqual(t.loopStep, 'verify', 'the newer loop\'s step stays');
+  assert.ok(t.verifyHold, 'and the stale loop\'s exit does not clear the newer loop\'s hold');
+});
+
+test('a red run followed by a slow-only run records the first run\'s failures', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo });
+  const runs = [
+    { ran: true, green: false, slowOnly: false, slow: [], code: 1, failing: 'a fails', summary: '1 fail', output: '' },
+    { ran: true, green: false, slowOnly: true, slow: ['s'], code: 1, failing: '', summary: 'slow', output: '' },
+  ];
+  f.m._runTicketSuite = async () => runs.shift();
+  f.m._slowTestsOwned = async () => [];
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.loopStep, 'review', 'ENTER: the unowned slow result reached review');
+  assert.ok(t.suiteRemeasured && String(t.suiteRemeasured.firstFailing).includes('a fails'),
+    'the first run\'s failures are recorded for the reviewer\'s SUITE RE-MEASURED note');
+});
+
+test('a dependency trunk added after the fork is not blamed on the branch', async () => {
+  const repo = mkRepo();
+  const pkg = (deps) => JSON.stringify({ name: 'root', dependencies: deps }, null, 2);
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), pkg({ ws: '^8.0.0' }));
+  git(repo.dir, ['add', 'package.json']);
+  git(repo.dir, ['commit', '-q', '-m', 'pkg']);
+  const baseSha = git(repo.dir, ['rev-parse', 'HEAD']);
+  git(repo.dir, ['branch', '-f', 'tl-1', baseSha]);
+  const f = mkLoop({ repo: { dir: repo.dir, baseSha }, suite: 'green' });
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'package.json'), pkg({ ws: '^8.0.0' }));
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'package.json'), pkg({ ws: '^8.0.0', 'left-pad': '^1.3.0' }));
+  git(repo.dir, ['add', 'package.json']);
+  git(repo.dir, ['commit', '-q', '-m', 'trunk adds left-pad']);
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'node_modules')), 'ENTER: the root has a node_modules to link');
+
+  const out = await f.m._runTicketSuite(f.team, f.one());
+  assert.doesNotMatch(String(out.error || ''), /changes package.json dependencies/,
+    'a dependency only trunk changed is not the branch\'s difference');
+  assert.ok(out.ran, 'and the suite ran');
+
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'package.json'), pkg({ ws: '^8.0.0', 'is-odd': '^3.0.0' }));
+  const own = await f.m._runTicketSuite(f.team, f.one());
+  assert.match(String(own.error || ''), /\+is-odd@\^3\.0\.0 \(added by the branch\)/,
+    'a dependency the branch itself added still escalates');
+  assert.doesNotMatch(String(own.error || ''), /left-pad/, 'without blaming the one trunk added');
 });
