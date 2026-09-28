@@ -346,19 +346,27 @@ function createSeatImport({
 
       if (reminderRows) {
         let ticketBound = 0;
+        let refused = 0;
         for (const row of reminderRows) {
           if (row.ticket) ticketBound += 1;
-          reminders.add({
-            agent: name,
-            kind: row.kind,
-            spec: row.spec,
-            body: typeof row.body === 'string' ? row.body : '',
-            nextFireAt: typeof row.nextFireAt === 'number' ? row.nextFireAt : null,
-            ticket: null,
-          });
+          try {
+            reminders.add({
+              agent: name,
+              kind: row.kind,
+              spec: row.spec,
+              body: typeof row.body === 'string' ? row.body : '',
+              nextFireAt: typeof row.nextFireAt === 'number' ? row.nextFireAt : null,
+              ticket: null,
+            });
+          } catch (e) {
+            refused += 1;
+            if (log) log.info('seat-import', `reminder row refused for ${name}: ${e && e.message}`);
+            continue;
+          }
           installed.reminders += 1;
         }
         if (ticketBound) dropped.push(`reminders.ticket-bound:${ticketBound}`);
+        if (refused) dropped.push(`reminders.refused:${refused}`);
       }
     } catch (e) {
       return { ok: false, error: `install failed: ${e.message}`, installed };

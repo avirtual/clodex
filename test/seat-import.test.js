@@ -404,3 +404,29 @@ test('claudeProjectSlug flattens both separators and engine composes through it'
   assert.doesNotMatch(fn, /\.replace\(/);
   assert.match(src, /claudeProjectSlug[^\n]*\}\s*=\s*require\('\.\/clodex-paths'\)/);
 });
+
+test('commit counts a reminder row the store refuses as dropped instead of failing the install', () => {
+  const lines = [];
+  const reminders = {
+    added: [],
+    add(row) {
+      if (row.spec === 'bad') throw new Error('invalid spec');
+      this.added.push(row);
+      return { id: `r${this.added.length}`, ...row };
+    },
+  };
+  const { imp } = mkImport({ reminders, log: { info: (tag, msg) => lines.push(`${tag}: ${msg}`) } });
+  const { id } = imp.begin({ name: 'ana', record: record() });
+  put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+  put(imp, id, 'reminders.json', JSON.stringify([
+    { kind: 'every', spec: '30m', body: 'ping' },
+    { kind: 'every', spec: 'bad', body: 'nope' },
+  ]));
+
+  const res = imp.commit({ id });
+  assert.strictEqual(res.ok, true, res.error);
+  assert.strictEqual(res.installed.reminders, 1);
+  assert.deepStrictEqual(reminders.added.map((r) => r.spec), ['30m']);
+  assert.deepStrictEqual(res.dropped, ['reminders.refused:1']);
+  assert.ok(lines.some((l) => /^seat-import: reminder row refused for ana: invalid spec$/.test(l)), lines.join('\n'));
+});
