@@ -759,7 +759,7 @@ test('a pane created in Conversation mode hides a markerless ticket-loop inbound
   assert.strictEqual(isHidden(boxOf(m, 'i2')), false);
 });
 
-test('in Conversation mode a turn with no conversation row is hidden, and a turn headed by a reminder stays visible, folded, for its prose or API error', () => {
+test('in Conversation mode a turn with no conversation row is hidden, and a turn headed by a reminder stays visible, folded for its prose and open for its API error', () => {
   const m = mount();
   m.render([
     { id: 'p1', kind: 'prompt', ts: null, turn: 1, text: 'run it', source: 'typed' },
@@ -776,7 +776,7 @@ test('in Conversation mode a turn with no conversation row is hidden, and a turn
   const turns = () => m.pane.childNodes.map((n) => [rowsOf(n).map((c) => c.dataset.id || c.className).join(','), isHidden(n)]);
   m.rows.setMode('conversation');
   const fold = 'tr-row tr-turn-fold';
-  assert.deepStrictEqual(turns(), [['p1,i0', false], [fold, true], [fold, false], [fold, false], [fold, false]]);
+  assert.deepStrictEqual(turns(), [['p1,i0', false], [fold, true], [fold, false], [fold, false], ['m5,a5', false]]);
   m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
@@ -971,14 +971,14 @@ test('runs: the expander merges stats across the run, summing turn-end durations
   assert.strictEqual(findCls(turnOf(m, 'm2'), 'tr-turn-fold-stats')[0].textContent, '11s · 1 tool · 1 injected');
 });
 
-test('runs: reminder→prose and reminder→apiError turns stay visible, each folded to its head, with no run expander', () => {
+test('runs: a reminder→prose turn folds to its head and a reminder→apiError turn stays open, both visible', () => {
   const m = mount({ mode: 'conversation' });
   m.render([
     inb('m1', 1, 'reminder', 'continue'), talk('a1', 1, 'carrying on'),
     inb('m2', 2, 'reminder', 'continue'), { id: 'a2', kind: 'assistant', ts: null, turn: 2, apiError: true, text: 'API Error: 500' },
   ]);
-  assert.deepStrictEqual(togglesOf(m), []);
-  assert.deepStrictEqual([shown(turnOf(m, 'm1')), shown(turnOf(m, 'm2'))], [['tr-row tr-turn-fold'], ['tr-row tr-turn-fold']]);
+  assert.deepStrictEqual(shown(turnOf(m, 'm1')), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turnOf(m, 'm2')), ['tr-row tr-notice tr-notice-error', 'tr-row tr-footer tr-run-toggle']);
   assert.deepStrictEqual([isHidden(turnOf(m, 'm1')), isHidden(turnOf(m, 'm2'))], [false, false]);
 });
 

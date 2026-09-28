@@ -45,7 +45,7 @@ function detectNotice(detect) {
 const GATED_ACTIONS = ['start', 'rebuild', 'boxStart', 'boxCreate'];
 function sandboxActionGate(detect) {
   const d = detect || {};
-  const notice = detectNotice(d);
+  const notice = detectNotice(detect);
   const running = !!d.running && d.compose !== false;
   return {
     running,
