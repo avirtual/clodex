@@ -85,15 +85,26 @@ test('fmtMinutes: whole minutes, never "0m"', () => {
   assert.strictEqual(F.fmtMinutes(1), '1m');
 });
 
-test('shortPath: ~-collapses home and elides to last 2 segments', () => {
-  const home = os.homedir();
-  assert.strictEqual(F.shortPath(''), '');
-  // home collapses to ~; ≤2 segments pass through
-  assert.strictEqual(F.shortPath(path.join(home, 'projects')), '~/projects');
-  // >2 segments elide to …/last2 (the ~ counts as a segment, so it drops out)
-  assert.strictEqual(F.shortPath(path.join(home, 'projects', 'clodex')), '…/projects/clodex');
-  // more than 2 segments under an absolute path keeps the leading /
-  assert.strictEqual(F.shortPath('/var/log/app/sub/deep'), '/…/sub/deep');
-  // two-or-fewer segments pass through
-  assert.strictEqual(F.shortPath('/etc/hosts'), '/etc/hosts');
+test('shortPath is gone: it had no caller and a latent ~-prefix bug', () => {
+  assert.strictEqual('shortPath' in F, false);
+});
+
+test('fmtTokens / fmtBustTokens: values that round up to the next unit render in that unit', () => {
+  assert.strictEqual(F.fmtTokens(999600), '1M');
+  assert.strictEqual(F.fmtTokens(1999999), '2M');
+  assert.strictEqual(F.fmtTokens(999400), '999k');
+  assert.strictEqual(F.fmtBustTokens(9960), '10k');
+  assert.strictEqual(F.fmtBustTokens(9940), '9.9k');
+});
+
+test('fmtAgo / fmtDur / fmtBytes: a value that rounds up to the next unit is shown in that unit', (t) => {
+  t.mock.method(Date, 'now', () => 1e12);
+  assert.strictEqual(F.fmtAgo(1e12 - 3570e3), '1h ago');
+  assert.strictEqual(F.fmtAgo(1e12 - 3540e3), '59m ago');
+  assert.strictEqual(F.fmtAgo(1e12 - 86100e3), '1d ago');
+  assert.strictEqual(F.fmtAgo(1e12 - 84000e3), '23h ago');
+  assert.strictEqual(F.fmtDur(3599), '1.0h');
+  assert.strictEqual(F.fmtDur(59.6), '1m');
+  assert.strictEqual(F.fmtBytes(1048575), '1.0 MB');
+  assert.strictEqual(F.fmtBytes(1023.6), '1.0 KB');
 });
