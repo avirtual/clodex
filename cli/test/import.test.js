@@ -224,6 +224,19 @@ test('create node --import (e2e): writes contexts, human report, no token values
   assert.strictEqual((fs.statSync(cf).mode & 0o777), 0o600);
 });
 
+test('create node --import (e2e): the local token comes from the injected env, never the process CLODEX_REMOTE_TOKEN', async () => {
+  const dir = fixture({ ui: { remotePort: 7900 }, remoteToken: 'fileSecret' });
+  const cf = tmpCtxFile();
+  const saved = process.env.CLODEX_REMOTE_TOKEN;
+  process.env.CLODEX_REMOTE_TOKEN = 'leak';
+  try {
+    assert.strictEqual((await cli(['create', 'node', '--import', '--data-dir', dir], cf)).code, 0);
+  } finally {
+    if (saved === undefined) delete process.env.CLODEX_REMOTE_TOKEN; else process.env.CLODEX_REMOTE_TOKEN = saved;
+  }
+  assert.strictEqual(JSON.parse(fs.readFileSync(cf, 'utf8')).contexts.local.token, 'fileSecret');
+});
+
 test('create node --import --dry-run writes nothing', async () => {
   const dir = fixture({ ui: { remotePort: 7900 }, remoteToken: 't' });
   const cf = tmpCtxFile();

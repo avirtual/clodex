@@ -121,6 +121,17 @@ test('resolve: the local engine falls back to remote.env for the token and 7900 
   assert.deepStrictEqual(C.resolve(EMPTY(), { env }), { url: 'http://127.0.0.1:7900', token: 'filetok', name: '(local engine)' });
 });
 
+test('resolve: the local engine reads the injected env, never the process CLODEX_REMOTE_TOKEN', () => {
+  const env = { CLODEX_DATA_DIR: emptyDataDir({ 'remote.env': 'CLODEX_REMOTE_TOKEN=filetok\n' }) };
+  const saved = process.env.CLODEX_REMOTE_TOKEN;
+  process.env.CLODEX_REMOTE_TOKEN = 'leak';
+  try {
+    assert.strictEqual(C.resolve(EMPTY(), { env }).token, 'filetok');
+  } finally {
+    if (saved === undefined) delete process.env.CLODEX_REMOTE_TOKEN; else process.env.CLODEX_REMOTE_TOKEN = saved;
+  }
+});
+
 test('resolve: a current context beats the local engine', () => {
   const env = { CLODEX_REMOTE_TOKEN: 'abc', CLODEX_DATA_DIR: emptyDataDir() };
   const r = C.resolve({ current: 'foo', contexts: { foo: { url: 'http://x.example' } } }, { env });

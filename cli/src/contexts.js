@@ -186,7 +186,7 @@ function resolve(store, { ctxName = null, env = process.env, flags = {}, platfor
   if (flags.token) { entry = { ...(entry || {}), token: String(flags.token) }; if (!label) label = '(flags)'; }
   if (flags.remotePort && entry && entry.ssh && !flags.ssh) entry.remotePort = flags.remotePort;
 
-  if (entry && entry.url && !entry.token) {
+  if (entry && entry.url && !entry.token && isLoopbackUrl(entry.url)) {
     const local = localEngineEntry({ env, platform, home });
     if (local && targetsLocalEngine(entry.url, local.url)) entry.token = local.token;
   }
@@ -212,6 +212,11 @@ function urlHostPort(url) {
   return { host: u.hostname.toLowerCase(), port };
 }
 
+function isLoopbackUrl(url) {
+  const target = urlHostPort(url);
+  return target != null && LOOPBACK_HOSTS.has(target.host);
+}
+
 function targetsLocalEngine(url, engineUrl) {
   const target = urlHostPort(url);
   const engine = urlHostPort(engineUrl);
@@ -223,7 +228,7 @@ function localEngineEntry({ env, platform, home }) {
   try { dataDir = resolveDataDir({ env, platform, home }).dir; } catch (e) {
     if (!(e instanceof CliError) || e.exitCode !== EXIT.NOTFOUND) throw e;
   }
-  const found = dataDir ? localEngine(dataDir) : { url: `http://127.0.0.1:${DEFAULT_REMOTE_PORT}`, token: null };
+  const found = dataDir ? localEngine(dataDir, undefined, env) : { url: `http://127.0.0.1:${DEFAULT_REMOTE_PORT}`, token: null };
   const envToken = env[SANDBOX_TOKEN_KEY] && String(env[SANDBOX_TOKEN_KEY]).trim();
   const token = envToken || found.token;
   return token ? { url: found.url, token } : null;
