@@ -195,17 +195,22 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
   let realKill = null;
   let realSetTimeout = null;
   const realRename = m.rename.bind(m);
+  let depth = 0;
   m.rename = async (...args) => {
-    realKill = process.kill;
-    realSetTimeout = global.setTimeout;
-    process.kill = (pid, sig) => { kills.push({ pid, sig }); };
-    global.setTimeout = (cb, ms) => {
-      if (ms === 5000) return { unref() {}, close() {} };
-      return realSetTimeout(cb, ms);
-    };
+    if (depth++ === 0) {
+      realKill = process.kill;
+      realSetTimeout = global.setTimeout;
+      process.kill = (pid, sig) => { kills.push({ pid, sig }); };
+      global.setTimeout = (cb, ms) => {
+        if (ms === 5000) return { unref() {}, close() {} };
+        return realSetTimeout(cb, ms);
+      };
+    }
     try { return await realRename(...args); } finally {
-      process.kill = realKill;
-      global.setTimeout = realSetTimeout;
+      if (--depth === 0) {
+        process.kill = realKill;
+        global.setTimeout = realSetTimeout;
+      }
     }
   };
 

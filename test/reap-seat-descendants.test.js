@@ -220,6 +220,7 @@ for (const { verb, run } of RESPAWNS) {
       const { mkTmpRoot } = require('./lib/tmp-roots');
       const m = mkManager(null, {
         REGISTRY_DIR: mkTmpRoot('clodex-reap-respawn-'),
+        path: require('node:path'),
         resolveTeam: () => null,
         findProjectRoot: () => null,
         enqueueNotice: () => {},
