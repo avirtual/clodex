@@ -112,3 +112,16 @@ test('a rename that resolves after its header span was replaced does not write i
   assert.strictEqual(first.textContent, 'Old', 'the detached span was written after the await');
   assert.strictEqual(api.current(), 'New');
 });
+
+test('escaping a rename opened while an earlier one was in flight shows the name that was saved', async () => {
+  let resolve;
+  const api = load(() => new Promise((r) => { resolve = r; }));
+  rename(api, 'New');
+  api.start();
+  const second = world.header;
+  assert.strictEqual(second.tag, 'input', 'ENTER: the second rename is open');
+  resolve(true);
+  await flush();
+  second.handlers.keydown({ key: 'Escape', stopPropagation() {} });
+  assert.strictEqual(world.header.textContent, 'New');
+});

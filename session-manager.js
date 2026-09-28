@@ -105,7 +105,7 @@ function execRunStatusReply(execRuns, rawBody, now) {
       if (cmds[i].length && (widest < 0 || cmds[i].length > cmds[widest].length)) widest = i;
     }
     if (widest < 0) break;
-    cmds[widest] = dropLast(cmds[widest]);
+    cmds[widest] = dropLast(cmds[widest], over);
     clipped[widest] = true;
     over = render().length - EXEC_STATUS_REPLY_MAX;
   }

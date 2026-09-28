@@ -25838,6 +25838,7 @@ ${i3.join("\n")}
           }
           const eq = tok.startsWith("--") ? tok.indexOf("=") : -1;
           if (eq > 2) norm.push(tok.slice(0, eq), tok.slice(eq + 1));
+          else if (tok.length > 2 && tok[0] === "-" && tok[1] !== "-" && Object.prototype.hasOwnProperty.call(short, tok.slice(0, 2))) norm.push(short[tok.slice(0, 2)], tok.slice(2));
           else norm.push(Object.prototype.hasOwnProperty.call(short, tok) ? short[tok] : tok);
         }
         return norm;
@@ -48517,7 +48518,7 @@ ${detail}` });
           newSpan.id = "workspace-name";
           newSpan.className = "workspace-name";
           newSpan.dataset.tip = "Double-click to rename workspace";
-          newSpan.textContent = current;
+          newSpan.textContent = currentWorkspaceName;
           input.replaceWith(newSpan);
           if (!commit || newName === current) return;
           try {
@@ -51669,7 +51670,7 @@ ${detail}` });
           }
           if (!applyCreateResult(nameFieldEls(), result)) {
             if (worktree) {
-              const rm = await window.api.removeWorktree(worktree.path, worktree.base !== null ? { deleteBranch: worktree.branch } : null);
+              const rm = await window.api.removeWorktree(worktree.path, worktree.base !== null ? { repo: worktree.repo, deleteBranch: worktree.branch } : null);
               if (!rm || !rm.ok) showToast(`Session was not created and its worktree could not be removed: ${worktree.path} (${rm && rm.error || "unknown error"})`, { kind: "error", duration: 1e4 });
               else if (rm.branchError) showToast(`Session was not created; worktree removed but branch ${worktree.branch} was kept: ${rm.branchError}`, { kind: "error", duration: 1e4 });
               worktree = null;

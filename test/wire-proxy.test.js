@@ -3,6 +3,8 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const { WireProxy } = require('../wire/proxy');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -557,6 +559,8 @@ test('chatgpt-backend mode tees an application/json Responses stream as SSE', as
   const home = process.env.HOME;
   process.env.HOME = mkTmpRoot('clx-home-');
   t.after(() => { process.env.HOME = home; });
+  fs.mkdirSync(path.join(process.env.HOME, '.codex'));
+  fs.writeFileSync(path.join(process.env.HOME, '.codex', 'auth.json'), JSON.stringify({ tokens: { access_token: 'fake-t' } }));
   const seen = [];
   const server = http.createServer((req, res) => {
     seen.push(req.headers);
@@ -581,7 +585,7 @@ test('chatgpt-backend mode tees an application/json Responses stream as SSE', as
   assert.equal(events.response.length, 1);
   assert.equal(events.response[0].sse, true);
   assert.equal(seen.length, 1);
-  assert.equal(seen[0].authorization, undefined, 'the fake upstream never receives a codex token read from the real ~/.codex/auth.json');
+  assert.equal(seen[0].authorization, 'Bearer fake-t', 'the token comes from the stubbed HOME, never the real ~/.codex/auth.json');
 });
 
 test('malformed SSE degrades to an empty receipt, session unbroken', async (tc) => {

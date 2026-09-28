@@ -2,7 +2,7 @@
 
 const path = require('path');
 
-const TEAM_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const { NAME_RE: TEAM_NAME_RE } = require('./team-manifest');
 
 function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxManager, teamsDir, fs = require('fs') }) {
   if (typeof teamsDir !== 'string' || !teamsDir) throw new Error('createTeamDelete: teamsDir is required');
