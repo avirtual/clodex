@@ -515,7 +515,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   const host = engine.register('evil', { activate() {} });
   // Declared before the delegation loop below, which must skip them.
   const WITHHELD_KEYS = new Set([
-    'deleteBranch', 'isMerged', 'diffText', 'diffNames', 'fileAt', 'mergeNoFf', 'revertCommit',
+    'deleteBranch', 'isMerged', 'diffText', 'diffNames', 'mergeBase', 'fileAt', 'mergeNoFf', 'revertCommit',
     'initRepo', 'hasCommit', 'checkoutDetached', 'headSha', 'headShaSync', 'headLogSync',
     'defaultBranchSync', 'mergeTargetFor', 'mergeTargetForSync', 'localBranches', 'revParse',
   ]);

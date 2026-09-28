@@ -7778,9 +7778,18 @@ function createTicketMethods(deps, shared) {
       const wanted = (names || []).map((n) => String(n)).filter(Boolean);
       if (!wanted.length) return [];
       const wt = (ticket && ticket.worktree) || {};
-      const base = wt.baseSha;
       const branch = wt.branch;
-      if (!base || !branch) return [];
+      if (!branch) return [];
+      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      const mb = target
+        ? await gitWorktree.mergeBase(team.root, target, branch).catch((e) => ({ ok: false, error: e.message }))
+        : { ok: false, error: 'no merge target resolved' };
+      let base = mb && mb.ok ? mb.sha : null;
+      if (!base) {
+        base = wt.baseSha || null;
+        log.info('ticket', `slow gate: no merge-base of ${target || '(no trunk)'} and ${branch} (${(mb && mb.error) || 'unknown'}) — scoping ${ticket && ticket.id} by recorded base ${base || '(none)'}`);
+      }
+      if (!base) return [];
       const d = await gitWorktree.diffNames(team.root, base, branch, ['test/'])
         .catch(() => ({ ok: false, names: null }));
       if (!d || !d.ok || !Array.isArray(d.names) || !d.names.length) return [];

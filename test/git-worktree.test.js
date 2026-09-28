@@ -749,3 +749,23 @@ test('hasCommit: false on a freshly init\'d repo, true after one commit', { skip
   run('commit', '-q', '--allow-empty', '-m', 'init');
   assert.strictEqual(await wt.hasCommit(dir), true);
 });
+
+test('mergeBase: returns the fork point of two branches', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { encoding: 'utf8' }).trim();
+  const trunk = run('rev-parse', '--abbrev-ref', 'HEAD');
+  const fork = run('rev-parse', 'HEAD');
+  run('checkout', '-qb', 'side');
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+  run('add', 'b.txt');
+  run('commit', '-qm', 'side');
+  run('checkout', '-q', trunk);
+  fs.writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+  run('add', 'c.txt');
+  run('commit', '-qm', 'trunk');
+  const r = await wt.mergeBase(repo, trunk, 'side');
+  assert.deepStrictEqual(r, { ok: true, sha: run('merge-base', trunk, 'side'), error: null });
+  assert.strictEqual(r.sha, fork);
+  const bad = await wt.mergeBase(repo, trunk, 'no-such-branch');
+  assert.strictEqual(bad.ok, false);
+});
