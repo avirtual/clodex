@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket loop: a verify run superseded by a reject and a re-close no longer acts on the new close (it used to reopen already-fixed work or review a stale snapshot); a red suite followed by a slow-only re-measure keeps the first run's failures for the reviewer; a dependency added on trunk after the branch was cut is no longer blamed on the branch; an escalation that gets parked after delivery keeps the ticket held instead of counting as reached.
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.
