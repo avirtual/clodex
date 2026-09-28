@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Messaging: a dm from the `monitor`, `exec` or `wirescope` system senders no longer carries a "(no reply path)" marker; the system-sender list the delivery trailer and the transcript glyphs use is now one shared module instead of two hand-kept copies.
 - Seats: a wire keeper stops on any failure after it starts, a seat that exits during its own spawn reports the exit after the create (never before), a stream seat that comes up without a pid is unwound like any other failed spawn, and a corrupt agent.json no longer breaks a name-collision check.
 - Tests: full-engine fixtures no longer seed the shipped skill, prompt and template libraries into every temp registry (a test-only createEngine seam), which is what pushed unrelated restart tests past the slow gate whenever several suites ran at once.
 - Messaging and stores: a spilled message's pointer now reports the same byte count as the file's header (non-ASCII bodies used to disagree); an env key named __proto__, constructor or prototype is refused like the matching scope names; the History menu no longer parses every user line of every transcript; a directory on an explicit path is no longer taken for a binary; a session save that failed on disk reports false.

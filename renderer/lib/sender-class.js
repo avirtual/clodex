@@ -1,18 +1,6 @@
 'use strict';
 
-const SYSTEM_GLYPHS = {
-  reminder: '◷',
-  reboot: '↻',
-  'ticket-loop': '⇄',
-  'ticket-watchdog': '◉',
-  monitor: '▣',
-  memory: '◈',
-  exec: '▸',
-  terminal: '▤',
-  team: '⊞',
-  'clodex-team': '⊞',
-  wirescope: '∿',
-};
+const { SYSTEM_SENDER_GLYPHS: SYSTEM_GLYPHS } = require('../../system-senders');
 
 const SEAT_SHAPE = /^([A-Za-z0-9]+)-([A-Za-z]+)((?:-\d+)?(?:-r\d+)?)$/;
 

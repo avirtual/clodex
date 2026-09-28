@@ -201,7 +201,7 @@ test('system senders ticket-watchdog and terminal carry no no-reply marker', () 
     getPersistence: () => ({ list: () => [], get: (n) => (n === 'lead' ? { intents: receiverIntents } : null) }),
   });
   const target = { name: 'lead', agentType: 'claude' };
-  for (const sender of ['ticket-watchdog', 'terminal']) {
+  for (const sender of ['ticket-watchdog', 'terminal', 'monitor', 'exec', 'wirescope']) {
     const m = mkOne(undefined);
     const text = m._buildDeliveryText(target, sender, 'x', 'dm');
     assert.doesNotMatch(text, /\(no reply path\)/, `${sender}: ${text}`);
