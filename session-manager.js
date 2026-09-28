@@ -2824,7 +2824,7 @@ function createSessionManager(deps) {
 
       if (ptyProc) ptyProc.onData((data) => {
         session._lastPtyDataAt = Date.now();
-        if (typeof session._bootNudgeEcho === 'string' && session._bootNudgeEcho.length < BOOT_NUDGE_ECHO_CAP) session._bootNudgeEcho += data;
+        if (typeof session._bootNudgeEcho === 'string') session._bootNudgeEcho = (session._bootNudgeEcho + data).slice(-BOOT_NUDGE_ECHO_CAP);
         session.scrollback = ((session.scrollback || '') + data);
         if (session.scrollback.length > SCROLLBACK_MAX) {
           session.scrollback = session.scrollback.slice(-SCROLLBACK_MAX);
@@ -6051,7 +6051,7 @@ function createSessionManager(deps) {
         if (!session.pty) return;
         if (!session.firstInputAt) session.firstInputAt = Date.now();
         try { session.pty.write('\r'); } catch {}
-        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, its echo seen, sent Enter`);
+        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, echo seen, last output at +${session._lastPtyDataAt - wroteAt}ms, sent Enter`);
       };
       arm(BOOT_NUDGE_MS);
     }

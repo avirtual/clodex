@@ -15063,7 +15063,7 @@ test('t771: no Enter while the seat has been silent since the write — the nudg
   p.fireData(DRAIN_ECHO);
   await tickUntil(t, () => writes.length >= 4);
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the echo arrived and went quiet — ONE Enter');
-  assert.ok(p.logged.some((l) => /boot-drain nudge for nudge-silent .*its echo seen/.test(l)));
+  assert.ok(p.logged.some((l) => /boot-drain nudge for nudge-silent .*echo seen, last output at \+\d+ms/.test(l)));
   await tickFor(t, 150);
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'and it stays exactly one');
   assert.strictEqual(s._bootNudgeTimer, null);
@@ -15076,6 +15076,16 @@ test('t771: a seat that stays SILENT gives up at bootNudgeMaxWaitMs with no Ente
   await tickUntil(t, () => s._bootNudgeTimer === null, 4000);
   assert.deepStrictEqual(writes, DRAINED, 'gave up without writing');
   assert.strictEqual(p.logged.some((l) => l.includes('boot-drain nudge for nudge-giveup')), false);
+  t.mock.timers.reset();
+});
+
+test('t771: an echo arriving after a history flush larger than the capture still counts — the capture keeps the tail', async (t) => {
+  const p = mkNudgeProbe({ bootNudgeMs: 40, bootNudgeQuietMs: 10 });
+  const { writes } = await drainOnlyMocked(t, p, 'nudge-tail');
+  p.fireData('.'.repeat(70000));
+  p.fireData(DRAIN_ECHO);
+  await tickUntil(t, () => writes.length >= 4);
+  assert.deepStrictEqual(writes, [...DRAINED, '\r']);
   t.mock.timers.reset();
 });
 
