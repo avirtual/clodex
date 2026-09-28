@@ -14,12 +14,10 @@ blocks a release.
 ## Unreleased
 
 - Docs: docs/map/renderer.md — a symbol-level map of renderer/renderer.js (19 regions, 134 rows), gated by test/module-map-fresh.test.js.
-
 - Docs: docs/map/session-manager.md — a symbol-level map of session-manager.js (20 regions, 197 rows), gated by test/module-map-fresh.test.js.
+- Docs: docs/map/team-tickets.md — a symbol-level map of team-tickets.js (20 regions, 133 rows), gated by test/module-map-fresh.test.js.
 - clodexctl inside a box: the sandbox image and the ssh installer put `clodexctl` on PATH, and with no node configured it talks to the box's own engine (the wire token from CLODEX_REMOTE_TOKEN or the engine's remote.env, on the engine's remote port) — `clodexctl get sessions` works on a fresh sandbox with zero setup. On an ssh-installed node the wire token sits in the service's systemd drop-in, so pass `--token`/CLODEX_TOKEN or create a node once. An explicit node, CLODEX_URL/CLODEX_TOKEN, or --url/--token still win.
-
 - Docs: a symbol-level module map format (docs/map/, README there) with a suite gate — a mapped symbol that is renamed, a function of 40+ lines nobody mapped, a pin that names a test which does not mention the symbol, or regions listed out of file order all fail test/module-map-fresh.test.js. scripts/symbol-index.js (acorn) is the shared extractor and the map author's tool. No maps ship yet; the six giants follow one ticket each.
-
 - Injection: a message delivered into a seat that is still loading its transcript (a big --resume) is now submitted once the CLI has actually read it, instead of sitting in the composer until someone presses Enter — the boot Enter nudge waits for the seat's echo and gives up after 2 minutes, not 20 seconds.
 - Team popover: a role row's Save button now lights up only when a field on that row has changed and goes quiet again once saved (it used to look inactive at all times, so an account change seemed not to register); closing the popover with unsaved role edits asks first.
 

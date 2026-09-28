@@ -25,7 +25,7 @@ const EXPECTED_MAPS = [
 
   // 'stores.md',
 
-  // 'team-tickets.md',
+  'team-tickets.md',
 ];
 
 const WHY_EMPTY_IS_NOT_VACUOUS = 'no maps ship with the gate; each giant lands in its own ticket, which appends its file to EXPECTED_MAPS. '
@@ -201,9 +201,76 @@ test('format: a malformed region heading, a missing H1 and a module path that do
   assert.match(res.failures[0].detail, /fixture\.js does not exist/);
 });
 
+test('format: a second table inside one region fails', () => {
+  const head = [...HEAD, '| symbol | purpose | state | calls | pins |', '|---|---|---|---|---|', '| alpha | again | none | - | unpinned |', ''];
+  const failures = run(fixtureMap({ head }));
+  assert.deepStrictEqual(failures.map((f) => f.kind), ['format']);
+  assert.match(failures[0].detail, /second table/);
+});
+
+test('pin: a pin naming a directory under test/ yields one pin failure instead of throwing', () => {
+  const dir = fixtureTestDir();
+  fs.mkdirSync(path.join(dir, 'lib'));
+  const head = HEAD.map((l) => l.replace('| alpha.test.js |', '| lib |'));
+  const failures = run(fixtureMap({ head }), dir);
+  assert.deepStrictEqual(failures.map((f) => [f.kind, f.symbol]), [['pin', 'alpha']]);
+  assert.match(failures[0].detail, /lib .*is not a file/);
+});
+
+const PARENT_SRC = [
+  'class Alpha {',
+  '  run() {',
+  filler(44),
+  '  }',
+  '}',
+  'class Beta {',
+  '  run() {',
+  filler(44),
+  '  }',
+  '}',
+  'class Gamma {',
+  '  stop() { return 0; }',
+  '}',
+  'handle(\'x:y\', () => 1);',
+  '',
+].join('\n');
+
+function runParent(rows, testDir = fixtureTestDir()) {
+  const text = ['# fixture.js', '', '## All — Alpha … Gamma', '', '| symbol | purpose | state | calls | pins |', '|---|---|---|---|---|', ...rows, '', '## EXEMPT', '', '- Alpha — fixture class', '- Beta — fixture class', ''].join('\n');
+  const extracted = extractFile(PARENT_SRC);
+  assert.ok(!extracted.error, extracted.error);
+  return checkMap({ map: parseMap(text), extracted, testDir }).failures;
+}
+
+test('forward: parent.method picks one of two same-named methods, a bare name covers both, and a parent without it fails', () => {
+  assert.deepStrictEqual(runParent(['| Beta.run | b | none | - | unpinned |']).map((f) => [f.kind, f.detail.split(' ')[0]]), [['reverse', 'Alpha.run']]);
+  assert.deepStrictEqual(runParent(['| run | both | none | - | unpinned |']), []);
+  assert.deepStrictEqual(runParent(['| run | both | none | - | unpinned |', '| Gamma.run | none | none | - | unpinned |']).map((f) => [f.kind, f.symbol]), [['forward', 'Gamma.run']]);
+});
+
+test('pin: a handler row is matched by its channel string, not by the word handle', () => {
+  const dir = fixtureTestDir();
+  fs.writeFileSync(path.join(dir, 'chan.test.js'), "invoke('x:y');\n");
+  fs.writeFileSync(path.join(dir, 'word.test.js'), 'handle();\n');
+  const rows = ['| run | both | none | - | unpinned |'];
+  assert.deepStrictEqual(runParent([...rows, '| handle:x:y | h | none | - | chan.test.js |'], dir), []);
+  const failures = runParent([...rows, '| handle:x:y | h | none | - | word.test.js |'], dir);
+  assert.deepStrictEqual(failures.map((f) => [f.kind, f.symbol]), [['pin', 'handle:x:y']]);
+});
+
+function mapFilesIn(dir) {
+  return fs.readdirSync(dir).filter((f) => f !== 'README.md' && f.endsWith('.md')).sort();
+}
+
+test('real maps listing ignores README.md and anything that is not a .md file', () => {
+  const dir = mkTmpRoot('module-map-fresh-');
+  for (const f of ['README.md', 'a.md', '.DS_Store', '.a.md.swp', 'b.md~']) fs.writeFileSync(path.join(dir, f), '');
+  assert.deepStrictEqual(mapFilesIn(dir), ['a.md']);
+});
+
 test('real maps: docs/map holds exactly EXPECTED_MAPS, and each checks with zero failures', () => {
   assert.ok(fs.existsSync(path.join(MAP_DIR, 'README.md')), 'ENTER: docs/map/README.md is not on disk');
-  const listed = fs.readdirSync(MAP_DIR).filter((f) => f !== 'README.md').sort();
+  const listed = mapFilesIn(MAP_DIR);
   assert.deepStrictEqual(listed, [...EXPECTED_MAPS].sort(), WHY_EMPTY_IS_NOT_VACUOUS);
   for (const file of listed) {
     const map = parseMap(fs.readFileSync(path.join(MAP_DIR, file), 'utf8'));
