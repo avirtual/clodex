@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sidebar rows: restarting, moving, renaming, reattaching or resuming a seat keeps its fix chip, label, team group, effort/posture badges and stream/wire-off markers instead of dropping them until the next reload; resuming an archived seat that fails to spawn leaves it archived instead of silently un-archiving the record; double-clicking a labelled row's name and clicking away no longer renames the seat to its label.
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Codex seats: the conversation history menu now resolves rollouts by session id and this project's cwd instead of reading one day directory of the shared rollout store, so older conversations are no longer shown as missing and another project's same-day rollout is never offered for resume; the session context menu shows Prompts, Move Session… and Export as Template… for every agent type, including muse.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.

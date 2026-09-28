@@ -75,6 +75,7 @@ function mkRenderer(extra = {}) {
   const body = [
     slice('const seatIoKind', '\n}\n'),
     fnSrc('markSeatEffort'), fnSrc('markSeatPosture'),
+    fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'),
     fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
@@ -431,6 +432,8 @@ test('a restart keeps the row\'s label, team, wire-off flag, effort and posture'
   const h = mkRenderer({ window: { api } });
   api.restartSession = async (n) => { h.env.removeSession(n); return { ok: true }; };
   h.addSessionToSidebar('s', 'claude', '/w', 'lab', null, 'T', true);
+  const byClass = h.rows[0].querySelector;
+  h.rows[0].querySelector = (sel) => (sel === '.session-name' ? { textContent: 'lab' } : byClass(sel));
   h.markSeatEffort('s', 'xhigh');
   h.markSeatPosture('s', 'bypass');
   await h.restartSessionWithReattach('s');
