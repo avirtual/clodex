@@ -8,7 +8,7 @@ const { localFromHome } = require('../renderer/lib/far-cwd-guess');
 
 const LOCAL = localFromHome(os.homedir());
 
-function mkEl(id) {
+function mkEl(id, { stubQueries = false } = {}) {
   const el = {
     id,
     value: '',
@@ -24,13 +24,14 @@ function mkEl(id) {
       contains(c) { return this._set.has(c); },
     },
     children: [],
-    addEventListener() {},
+    listeners: {},
+    addEventListener(type, fn) { (el.listeners[type] = el.listeners[type] || []).push(fn); },
     removeEventListener() {},
     appendChild(c) { el.children.push(c); return c; },
     removeChild() {},
     remove() {},
     focus() {},
-    querySelector() { return null; },
+    querySelector() { return stubQueries ? mkEl('<query>', { stubQueries }) : null; },
     querySelectorAll() { return []; },
     closest() { return null; },
     insertAdjacentHTML() {},
@@ -42,7 +43,7 @@ function mkEl(id) {
   return el;
 }
 
-function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }) } = {}) {
+function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }), api: apiOverrides = {} } = {}) {
   const els = new Map();
   const byId = (id) => {
     if (!els.has(id)) els.set(id, mkEl(id));
@@ -50,7 +51,11 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }) } = {}) {
   };
   const doc = {
     getElementById: byId,
-    createElement: (tag) => mkEl(`<${tag}>`),
+    createElement: (tag) => {
+      const el = mkEl(`<${tag}>`, { stubQueries: true });
+      el.innerHTML = '';
+      return el;
+    },
     addEventListener() {},
     removeEventListener() {},
     querySelector() { return null; },
@@ -58,32 +63,46 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }) } = {}) {
     body: mkEl('body'),
   };
   const noop = () => {};
+  const calls = [];
+  const handlers = {};
   const api = new Proxy({}, {
-    get: () => (() => Promise.resolve(null)),
+    get: (_, prop) => (...args) => {
+      calls.push({ fn: prop, args });
+      if (typeof prop === 'string' && /^on[A-Z]/.test(prop) && typeof args[0] === 'function') {
+        handlers[prop] = args[0];
+      }
+      if (apiOverrides[prop]) return apiOverrides[prop](...args);
+      return Promise.resolve(null);
+    },
   });
 
   const win = { api, addEventListener: noop, removeEventListener: noop, setTimeout, clearTimeout };
-  const withDom = (fn) => {
+  const install = () => {
     const prev = [global.document, global.window, global.requestAnimationFrame, global.CSS];
     global.document = doc;
     global.window = win;
     global.requestAnimationFrame = (f) => { f(); return 0; };
     global.CSS = { escape: (s) => String(s) };
-    try { return fn(); } finally {
-      [global.document, global.window, global.requestAnimationFrame, global.CSS] = prev;
-    }
+    return () => { [global.document, global.window, global.requestAnimationFrame, global.CSS] = prev; };
   };
+  const withDom = (fn) => {
+    const restore = install();
+    try { return fn(); } finally { restore(); }
+  };
+  const sessions = new Map();
+  const peerStatuses = new Map();
+  const sessionList = mkEl('session-list');
 
   const ui = withDom(() => {
     delete require.cache[require.resolve('../renderer/peers-ui')];
     const { initPeersUi } = require('../renderer/peers-ui');
     return initPeersUi({
-      sessions: new Map(), sessionList: mkEl('session-list'),
+      sessions, sessionList,
       getActiveSession: () => null,
       createTerminal: noop, switchSession: noop, removeSession: noop,
       updateSidebarActive: noop, showToast: noop, appendIpcEntry: noop,
       remeasureReadonlyPeer: noop,
-      peerStatuses: new Map(), peerTunnels: new Map(), peerWebTunnels: new Map(),
+      peerStatuses, peerTunnels: new Map(), peerWebTunnels: new Map(),
       getOurAppVersion: () => '0.0.0', syncSeatAvailability: noop,
       getDeployLineHandlers: () => [],
       proxyState: new Map(), ctxPct: new Map(), ctxTokens: new Map(),
@@ -104,7 +123,18 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }) } = {}) {
   return { ui: {
     openPeerSessionDialog: (...a) => withDom(() => ui.openPeerSessionDialog(...a)),
     closePeerSessionDialog: (...a) => withDom(() => ui.closePeerSessionDialog(...a)),
-  }, byId, shape, doc, withDom };
+    typeToTakeControl: (...a) => withDom(() => ui.typeToTakeControl(...a)),
+  }, byId, shape, doc, withDom, install, calls, handlers, sessions, peerStatuses, sessionList };
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+async function settle() {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
 }
 
 test('a move-mode open locks the name, hides the type row and shows the note', () => {
@@ -178,4 +208,73 @@ test('a create-mode open after a move needs no close to be clean', () => {
     title: 'New Session on murmurfi',
   });
   assert.strictEqual(byId('peer-input-name').value, '', 'and the moved seat name is not left behind');
+});
+
+for (const row of [
+  { type: 'claude', expectEditSkills: true, expectReloadFresh: true },
+  { type: 'codex', expectEditSkills: false, expectReloadFresh: true },
+  { type: 'bash', expectEditSkills: false, expectReloadFresh: false },
+]) {
+  test(`a ${row.type} peer row's context menu carries the far session's type, so main gates Edit Skills and Reload (fresh) as for a local seat`, () => {
+    const h = mkPeersUi();
+    const status = { online: true, caps: ['args', 'create'], sessions: [{ name: 'a', type: row.type, cwd: '/x' }] };
+    h.withDom(() => h.handlers.onPeerState('p1', status));
+    const item = h.sessionList.children.find((c) => c.dataset.name === 'a@p1');
+    assert.ok(item, 'ENTER: the peer row was rendered');
+    h.withDom(() => item.listeners.contextmenu.forEach((fn) => fn({ preventDefault() {} })));
+    const sent = h.calls.filter((c) => c.fn === 'showPeerContextMenu');
+    assert.strictEqual(sent.length, 1, 'ENTER: the row menu was requested');
+    const { type } = sent[0].args[0];
+    assert.strictEqual(type, row.type);
+    assert.strictEqual(type === 'claude', row.expectEditSkills, 'ipc-handlers peer:context-menu offers Edit Skills only for claude');
+    assert.strictEqual(type !== 'bash', row.expectReloadFresh, 'ipc-handlers peer:context-menu hides Reload (fresh) only for bash');
+  });
+}
+
+test('a control acquire that resolves after its tab was detached releases the far control instead of adopting it', async () => {
+  const pending = deferred();
+  const h = mkPeersUi({ api: { peerControl: (id, name, on) => (on ? pending.promise : Promise.resolve({ ok: true })) } });
+  h.peerStatuses.set('p1', { online: true, caps: ['args', 'create'], sessions: [] });
+  const entry = {
+    peer: { id: 'p1', name: 'a', controlled: false },
+    fitAddon: { fit() {} },
+    terminal: { cols: 80, rows: 24, focus() {} },
+  };
+  h.sessions.set('a@p1', entry);
+  const restore = h.install();
+  try {
+    h.ui.typeToTakeControl('a@p1', 'x');
+    const acquires = h.calls.filter((c) => c.fn === 'peerControl');
+    assert.deepStrictEqual(acquires.map((c) => c.args), [['p1', 'a', true]], 'ENTER: one acquire in flight');
+    h.sessions.delete('a@p1');
+    pending.resolve({ ok: true });
+    await settle();
+  } finally { restore(); }
+  assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerResize' || c.fn === 'peerInput'), [],
+    'nothing is resized or typed into a detached tab');
+  assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerControl').map((c) => c.args),
+    [['p1', 'a', true], ['p1', 'a', false]], 'the late grant is released, so main forgets the claim');
+  assert.strictEqual(entry.peer.controlled, false);
+});
+
+test('a create that resolves after the dialog was reopened for a move leaves the new dialog open', async () => {
+  const pending = deferred();
+  const h = mkPeersUi({ api: { peerCreateSession: () => pending.promise } });
+  h.ui.openPeerSessionDialog('p1', 'box1');
+  h.byId('peer-input-name').value = 'fresh';
+  h.byId('peer-input-type').value = 'claude';
+  h.byId('peer-input-cwd').value = '/work';
+  const restore = h.install();
+  try {
+    h.byId('peer-session-create').listeners.click.forEach((fn) => fn({}));
+    assert.strictEqual(h.calls.filter((c) => c.fn === 'peerCreateSession').length, 1, 'ENTER: the create is in flight');
+    h.ui.closePeerSessionDialog();
+    h.ui.openPeerSessionDialog('p2', 'box2', { move: { name: 'seat', cwd: '/x' } });
+    assert.strictEqual(h.shape().title, 'Move seat to box2', 'ENTER: the move dialog is open');
+    pending.resolve({ ok: false, error: 'name taken' });
+    await settle();
+  } finally { restore(); }
+  assert.strictEqual(h.byId('peer-session-error').textContent, '', 'the stale create error is not painted into the move dialog');
+  assert.strictEqual(h.byId('peer-session-overlay').classList.contains('hidden'), false, 'the move dialog stays open');
+  assert.strictEqual(h.shape().title, 'Move seat to box2');
 });

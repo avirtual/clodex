@@ -175,7 +175,7 @@ function initPeersUi({
       // Rows are resolved before the header is built: a collapsed header shows
       // how many it is hiding, so the header needs the count.
       const rows = (st.online
-        ? (st.sessions || []).map((s) => ({ name: s.name, cwd: s.cwd, activity: s.activity, stats: s.stats }))
+        ? (st.sessions || []).map((s) => ({ name: s.name, type: s.type, cwd: s.cwd, activity: s.activity, stats: s.stats }))
         : [...sessions.entries()]
             .filter(([, e]) => e.peer && e.peer.id === id)
             .map(([, e]) => ({ name: e.peer.name, cwd: '', activity: 'idle' })))
@@ -497,6 +497,10 @@ function initPeersUi({
     } finally {
       if (on) entry.peer._acquiring = false;
     }
+    if (on && sessions.get(peerKey(peerId, peerName)) !== entry) {
+      if (res && res.ok) window.api.peerControl(peerId, peerName, false);
+      return;
+    }
     if (on) {
       if (res && res.ok) {
         entry.peer.controlled = true;
@@ -715,14 +719,18 @@ function initPeersUi({
       else showToast(`Move of "${name}" to ${label} was refused: ${why}`, { kind: 'error', duration: 10000 });
       return;
     }
+    const target = peerSessionDialogTarget;
     const res = await window.api.peerCreateSession(id, { name, type, cwd });
+    const stillOpen = peerSessionDialogTarget === target;
     btn.disabled = false;
     if (res && res.ok) {
-      closePeerSessionDialog();
+      if (stillOpen) closePeerSessionDialog();
       await ensurePeerSessionVisible(id, res.name || name);
       showToast(`Created "${res.name}" (${res.type}) on ${label}.`, { kind: 'peer-ui' });
     } else {
-      showErr((res && res.error) || 'create failed — no response');
+      const why = (res && res.error) || 'create failed — no response';
+      if (stillOpen) showErr(why);
+      else showToast(`Create of "${name}" on ${label} failed: ${why}`, { kind: 'error', duration: 10000 });
     }
   }
   document.getElementById('peer-session-cancel').addEventListener('click', closePeerSessionDialog);
