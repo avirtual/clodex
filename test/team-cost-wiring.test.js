@@ -981,6 +981,51 @@ test('a standing seat books its spend at a boundary, and books the DELTA next ti
   fs.rmSync(teamsDir, { recursive: true, force: true });
 });
 
+test('an unreadable seat cursor books nothing rather than the whole lifetime again', () => {
+  const userData = mkTmpRoot('clodex-ud-');
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1,
+    sessions: { 's1': { cost: 4, requests: 10, turns: 2, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = mkTmpRoot('clodex-teams-');
+  const persistence = mkPersistence([{ name: 'team-lead', sessionId: 's1', sessionIds: ['s1'] }]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir });
+
+  const first = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'clear');
+  assert.strictEqual(first.ok, true, `ENTER: the first boundary books: ${first.error}`);
+  assert.strictEqual(readLedger(teamsDir).length, 1, 'ENTER: one row');
+  const cursorFile = path.join(teamsDir, 'team', 'cost-cursor.json');
+  assert.ok(fs.existsSync(cursorFile), 'ENTER: the cursor file the stamp wrote');
+  fs.writeFileSync(cursorFile, 'not json');
+
+  const second = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'exit');
+  assert.strictEqual(second.ok, false, 'an unreadable cursor refuses the stamp');
+  assert.strictEqual(readLedger(teamsDir).length, 1, 'the lifetime is not booked a second time');
+  assert.strictEqual(fs.readFileSync(cursorFile, 'utf8'), 'not json', 'the cursor file is not rewritten over the other seats');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+});
+
+test('a failed cursor write returns ok:false', () => {
+  const userData = mkTmpRoot('clodex-ud-');
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({
+    version: 1,
+    sessions: { 's1': { cost: 4, requests: 10, turns: 2, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+  }));
+  const teamsDir = mkTmpRoot('clodex-teams-');
+  const persistence = mkPersistence([{ name: 'team-lead', sessionId: 's1', sessionIds: ['s1'] }]);
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir });
+  m._writeSeatCursor = () => false;
+
+  const r = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'clear');
+  assert.strictEqual(readLedger(teamsDir).length, 1, 'ENTER: the row was appended');
+  assert.strictEqual(r.ok, false, 'a stamp whose cursor did not land reports failure');
+
+  fs.rmSync(userData, { recursive: true, force: true });
+  fs.rmSync(teamsDir, { recursive: true, force: true });
+});
+
 test('a TICKET seat and a REVIEWER are skipped — their spend is already booked once', () => {
   const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({

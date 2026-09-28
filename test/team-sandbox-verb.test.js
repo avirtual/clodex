@@ -261,6 +261,23 @@ test('down that fails leaves the peer entry registered', async () => {
   assert.ok(exists(b.file), 'a failed down leaves the token file in place');
 });
 
+test('status on a team with no box creates none', async () => {
+  const b = mkBox();
+  assert.strictEqual(b.mgr.get('team-clodex'), null, 'ENTER: the team has no box');
+  await fire(b, b.lead, { action: 'status' });
+  assert.strictEqual(b.calls.create.length, 0, 'a read-only status registers no box');
+  assert.strictEqual(b.calls.status, 0);
+  assert.match(b.last(), /no box/);
+});
+
+test('down on a team with no box creates none', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'down' });
+  assert.strictEqual(b.calls.create.length, 0, 'a down registers no box to tear down');
+  assert.strictEqual(b.calls.down, 0);
+  assert.match(b.last(), /no box/);
+});
+
 test('status writes nothing and reports the state', async () => {
   const b = mkBox({ config: { ref: 'master' } });
   await fire(b, b.lead, { action: 'status' });
