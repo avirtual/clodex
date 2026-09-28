@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Seats: deleting a live worktree seat whose tree cannot be removed keeps an archived record naming the tree instead of orphaning it; a spawn refused or failed after the PTY started now kills that PTY rather than leaving a second `--resume` of the same conversation running; two windows restoring at once share one wire proxy instead of building two; a seat that exits during its own start-up still reports the exit.
 
 - Stores: a case-only template rename (Foo → foo) no longer deletes the template on macOS; duplicate peer ids collapse to the first entry so a token-less Peers save cannot hand one host's token to another; a seat named `__proto__` can no longer set the thinking-strip level on every object in the process; a box config built from the defaults gets its own mounts array; a label-less Azure peer is labelled by its target VM, not its bastion.
 - New Session dialog: Enter in the env textarea starts a new line instead of spawning the seat, and Enter on a focused Cancel no longer creates one; ticking Join replaces the default `session-N` name with the `<team>-<role>` suggestion so the seat actually gets its role, and the Create team name follows the folder you pick instead of sticking to your home directory; a template argument containing spaces (`--append-system-prompt "be terse"`) keeps its quoting when the template is picked or edited instead of splitting into separate arguments.

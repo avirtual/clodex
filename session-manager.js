@@ -990,8 +990,17 @@ function createSessionManager(deps) {
       };
     }
 
-    async _ensureWire() {
-      if (this._wire) return this._wire;
+    _ensureWire() {
+      if (this._wire) return Promise.resolve(this._wire);
+      if (this._wirePending) return this._wirePending;
+      const pending = this._buildWire().finally(() => {
+        if (this._wirePending === pending) this._wirePending = null;
+      });
+      this._wirePending = pending;
+      return pending;
+    }
+
+    async _buildWire() {
       const { WireProxy } = require('./wire/proxy');
       const { isSubagentRole } = require('./wire/role');
       const { ShadowDiff } = require('./wire/shadow');
@@ -1134,7 +1143,13 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'wire-spill-cut-error', ...ev });
         log.warn('intent', `spill-cut-error ${ev.agent} forwarded uncut: ${ev.error}`);
       });
-      await wire.listen();
+      try {
+        await wire.listen();
+      } catch (e) {
+        if (hold) { try { hold.stop(); } catch {} }
+        if (this._holdKeeper === hold) this._holdKeeper = null;
+        throw e;
+      }
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {
         try {
@@ -2256,6 +2271,13 @@ function createSessionManager(deps) {
       let streamSeat = null;
       const streamEarly = [];
       let streamRoute = (ev) => { streamEarly.push(ev); };
+      const ptyEarly = [];
+      let ptyExitRoute = (ev) => { ptyEarly.push(ev); };
+      const unwindSpawn = () => {
+        abandonHint();
+        if (streamSeat) streamSeat.kill();
+        if (ptyProc) { try { ptyProc.kill(); } catch {} }
+      };
       try {
         if (streamIo) {
           streamSeat = spawnStreamSeat({
@@ -2276,6 +2298,7 @@ function createSessionManager(deps) {
             cwd: cwd || process.env.HOME || os.homedir(),
             env,
           });
+          ptyProc.onExit((ev) => ptyExitRoute(ev));
         }
       } catch (e) {
         abandonHint();
@@ -2327,7 +2350,7 @@ function createSessionManager(deps) {
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
-          if (e.code !== 'EEXIST') { abandonHint(); if (streamSeat) streamSeat.kill(); throw e; }
+          if (e.code !== 'EEXIST') { unwindSpawn(); throw e; }
           const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
           const existing = JSON.parse(existingRaw);
           if (existingRaw !== blockerRaw) blockerLive = null;
@@ -2346,7 +2369,7 @@ function createSessionManager(deps) {
             try { fs.unlinkSync(existing.socket); } catch {}
             registry.register(name, socketPath, cwd);
           } else {
-            abandonHint(); if (streamSeat) streamSeat.kill();
+            unwindSpawn();
             throw new Error(
               `Session "${name}" is already running elsewhere (pid ${existing.pid})`,
             );
@@ -2359,7 +2382,7 @@ function createSessionManager(deps) {
         try {
           await transport.start();
         } catch (e) {
-          abandonHint(); if (streamSeat) streamSeat.kill();
+          unwindSpawn();
           registry.unregister(name);
           transport = null;
           throw e;
@@ -2852,7 +2875,8 @@ function createSessionManager(deps) {
         if (typeof refreshAppMenu === 'function') refreshAppMenu();
       };
       if (ptyProc) {
-        ptyProc.onExit(onProcExit);
+        ptyExitRoute = onProcExit;
+        for (const ev of ptyEarly.splice(0)) onProcExit(ev);
       } else {
         const opening = typeof streamCodec.open === 'function' ? streamCodec.open() : null;
         if (Array.isArray(opening) && opening.length) {
@@ -3942,6 +3966,7 @@ function createSessionManager(deps) {
       }
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
+      if (wasLive) getPersistence().upsert({ ...this._stripClaimedTree(entry), archivedAt: Date.now() });
       // NO dropRecord() here, and that is the invariant, not an omission: the
       // tree is still on disk and this record is the only thing naming it. The
       // path rides the result so the caller's failure sentence can tell the
