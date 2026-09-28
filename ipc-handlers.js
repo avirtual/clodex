@@ -665,7 +665,10 @@ function registerIpcHandlers(deps) {
     catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
     const list = templates.list();
     if (list.some((t) => t.id === id)) {
-      return { ok: false, error: `could not delete template "${id}" — its file is still in the library`, templates: list };
+      const error = templates.dirWritable && !templates.dirWritable()
+        ? 'the library is a read-only mount inside a sandbox box'
+        : `its file "${id}.json" is still in the library`;
+      return { ok: false, error, templates: list };
     }
     refreshAppMenu();
     return { ok: true, templates: list };
@@ -721,7 +724,8 @@ function registerIpcHandlers(deps) {
     if (entry.io === 'stream') t.io = 'stream';
     if (typeof entry.effort === 'string' && entry.effort) t.effort = entry.effort;
     if (Array.isArray(entry.plugins)) t.plugins = [...entry.plugins];
-    templates.saveByName(t);
+    try { templates.saveByName(t); }
+    catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
     refreshAppMenu();
     return { ok: true, templates: templates.list() };
   });

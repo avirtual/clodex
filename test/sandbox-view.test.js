@@ -361,10 +361,21 @@ test('sandboxRebuiltLine: names the ref+sha, dev checkout, pinned image, or fall
   const rows = [
     [{ kind: 'build', ref: 'master', sha: '3b920409abcdef0123456789' }, 'Rebuilt box on master @ 3b920409'],
     [{ kind: 'build', ref: 'master', sha: null }, 'Rebuilt box on master'],
-    [{ kind: 'build', ref: '8653e748', sha: '8653e748aaaabbbbccccdddd' }, 'Rebuilt box on 8653e748 @ 8653e748 — pinned; set ref to a branch to track it'],
+    [{ kind: 'build', ref: '8653e748', sha: '8653e748aaaabbbbccccdddd' }, 'Rebuilt box on 8653e748 — pinned; set ref to a branch to track it'],
     [{ kind: 'build', ref: null, sha: null }, 'Rebuilt box on the dev checkout'],
     [{ kind: 'image', image: 'ghcr.io/x/clodex:9.9.9' }, 'Rebuilt box from image ghcr.io/x/clodex:9.9.9'],
     [undefined, 'Rebuilt box on the current code.'],
   ];
   for (const [image, want] of rows) assert.strictEqual(sandboxRebuiltLine('box', image), want);
+});
+
+test('sandboxRebuiltLine callers hand it the rebuild reply\'s image field', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const [file, re] of [
+    ['peers-ui.js', /sandboxRebuiltLine\(label, res\.image\)/],
+    ['renderer.js', /sandboxRebuiltLine\('Sandbox', r\.image\)/],
+  ]) {
+    assert.match(fs.readFileSync(path.join(__dirname, '..', 'renderer', file), 'utf8'), re, file);
+  }
 });

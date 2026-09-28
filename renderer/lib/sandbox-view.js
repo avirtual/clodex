@@ -155,7 +155,7 @@ function sandboxRebuiltLine(label, image) {
   if (!image) return `Rebuilt ${label} on the current code.`;
   if (image.kind === 'image') return `Rebuilt ${label} from image ${image.image}`;
   if (!image.ref) return `Rebuilt ${label} on the dev checkout`;
-  const at = image.sha ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
+  const at = image.sha && !String(image.sha).startsWith(image.ref) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
   const pinned = FIXED_SHA_RE.test(image.ref) ? ' — pinned; set ref to a branch to track it' : '';
   return `Rebuilt ${label} on ${at}${pinned}`;
 }

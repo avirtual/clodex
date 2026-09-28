@@ -6167,12 +6167,10 @@ test('verify: a lone review-step orphan is cleared and saved, but a stamp this p
   const f = mkLoop({ repo });
   const ran = [];
   f.m._runTicketLoop = (team, id) => { ran.push(id); };
-  const seed = () => f.tstore.save(f.team.root, [{
+  f.tstore.save(f.team.root, [{
     ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand',
     verifyPhase: { phase: 'reviewer', since: 1 },
   }]);
-
-  seed();
   f.m._verifyLooped = new Set([`${f.team.root}\0t1`]);
   f.m._resumeOrphanedVerify(f.team);
   assert.ok('verifyPhase' in f.one(), 'a reviewer spawn still in flight in this process keeps its phase');

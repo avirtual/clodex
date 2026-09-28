@@ -420,7 +420,7 @@ test('commit counts a reminder row the store refuses as dropped instead of faili
   put(imp, id, 'transcript.jsonl', '{"t":1}\n');
   put(imp, id, 'reminders.json', JSON.stringify([
     { kind: 'every', spec: '30m', body: 'ping' },
-    { kind: 'every', spec: 'bad', body: 'nope' },
+    { kind: 'every', spec: 'bad', body: 'nope', ticket: 't9' },
   ]));
 
   const res = imp.commit({ id });

@@ -7,7 +7,7 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 
 const LIST = [{ id: 'hand', name: 'hand' }];
 
-function mkHandlers(templates) {
+function mkHandlers(templates, extra = {}) {
   const handlers = {};
   const menus = [];
   const stub = () => () => {};
@@ -17,6 +17,7 @@ function mkHandlers(templates) {
     templates: { list: () => LIST, ...templates },
     refreshAppMenu: () => { menus.push(1); },
     log: { info() {}, warn() {}, error() {} },
+    ...extra,
   }, { get: (t, p) => (p in t ? t[p] : stub()) });
   registerIpcHandlers(deps);
   return { handlers, menus };
@@ -64,7 +65,24 @@ test('a remove the store swallows answers ok:false while the template is still l
   const { handlers, menus } = mkHandlers({ remove() {} });
   assert.deepStrictEqual(handlers['templates:remove']({}, 'hand'), {
     ok: false,
-    error: 'could not delete template "hand" — its file is still in the library',
+    error: 'its file "hand.json" is still in the library',
+    templates: LIST,
+  });
+  assert.strictEqual(menus.length, 0);
+});
+
+test('a swallowed remove in a box with a read-only library names the mount as the cause', () => {
+  const { handlers } = mkHandlers({ remove() {}, dirWritable: () => false });
+  assert.strictEqual(handlers['templates:remove']({}, 'hand').error, 'the library is a read-only mount inside a sandbox box');
+});
+
+test('templates:exportFromSession answers ok:false with the error and the list when the library write throws', () => {
+  const { handlers, menus } = mkHandlers({ saveByName: erofs }, { persistence: { get: () => ({ name: 's', type: 'claude' }) } });
+  let res;
+  assert.doesNotThrow(() => { res = handlers['templates:exportFromSession']({}, 's', 'hand'); });
+  assert.deepStrictEqual(res, {
+    ok: false,
+    error: "EROFS: read-only file system, open '/root/.clodex/library/templates/hand.json'",
     templates: LIST,
   });
   assert.strictEqual(menus.length, 0);
