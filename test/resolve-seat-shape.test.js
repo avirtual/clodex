@@ -1555,6 +1555,24 @@ test('t891: an EXPLICITLY named template still keeps its own prompt over the tea
   );
 });
 
+test('a renamed role\'s own template still counts as seeded: the team\'s own prompt copy wins', () => {
+  const { createTeamManifest } = require('../team-manifest');
+  const home = mkTmpRoot('t891-team-');
+  const libTpl = { name: 'libtpl', type: 'claude', systemPromptFile: 'lib-sys' };
+  fs.mkdirSync(path.join(home, 'library', 'templates'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'library', 'prompts', 'system'), { recursive: true });
+  fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'library', 'templates', 'libtpl.json'), JSON.stringify(libTpl));
+  fs.writeFileSync(path.join(home, 'library', 'prompts', 'system', 'clodex-team-hand.md'), 'hand\n');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root: mkTmpRoot('t891-team-'), lead: 'lead' });
+  tm.addRole('x', 'scribe', { template: 'libtpl', prompt: 'clodex-team-hand' });
+  const team = tm.renameRole('x', 'scribe', 'writer');
+  assert.ok(fs.existsSync(path.join(team.dir, 'prompts', 'system', 'writer.md')), 'ENTER: the team owns a prompt copy for the renamed role');
+  const m = managerWith([libTpl]);
+  assert.strictEqual(m.resolveSeatShape(team, 'writer', 'review', LEAD).systemPromptFile, 'writer');
+});
+
 test('t891: the SHIPPED reviewer template really is what the stock role now names', () => {
   assert.strictEqual(STOCK_ROLE_DEFS.reviewer.template, 'clodex-team-reviewer',
     'a stock def naming a template that does not ship is a role pointing at nothing, and the resolver would fall through to DEFAULT_REVIEWER_TEMPLATE and hide it');

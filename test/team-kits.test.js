@@ -587,6 +587,30 @@ test('a brief that cannot be saved unwinds the kit\'s exec copies too', async ()
   assert.strictEqual(fs.existsSync(dir), false, 'the whole team directory is gone, exec/ included');
 });
 
+test('createTeam refuses a kit with no lead role WITHOUT leaving a team.json behind', () => {
+  const home = mkHome();
+  fs.mkdirSync(path.join(home, 'library', 'kits', 'nolead'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'library', 'kits', 'nolead', 'kit.json'), JSON.stringify({ roles: { hand: {} } }));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  const root = mkTmpRoot('t803-proj-');
+  assert.throws(() => tm.createTeam({ name: 'x', root, lead: 'x-lead', kit: 'nolead' }), /must include a "lead" role/);
+  assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'team.json')), false);
+  assert.strictEqual(tm.createTeam({ name: 'x', root, lead: 'x-lead' }).name, 'x', 'the name is reusable');
+});
+
+test('createTeam unwinds its template and prompt copies when a kit exec copy cannot be written', () => {
+  const home = mkHome();
+  fs.mkdirSync(path.join(home, 'library', 'kits', 'default', 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'library', 'kits', 'default', 'exec', 'kit-cmd.json'),
+    JSON.stringify({ argv: ['echo', 'hi'] }));
+  fs.mkdirSync(path.join(home, 'teams', 'x', 'exec', 'kit-cmd.json'), { recursive: true });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.throws(() => tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' }));
+  assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'team.json')), false, 'ENTER: the throw came before team.json');
+  assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'templates')), false);
+  assert.strictEqual(fs.existsSync(path.join(home, 'teams', 'x', 'prompts')), false);
+});
+
 test('createTeam unwinds its kit exec copies when team.json cannot be written', () => {
   const home = mkHome();
   fs.mkdirSync(path.join(home, 'library', 'kits', 'default', 'exec'), { recursive: true });

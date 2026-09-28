@@ -119,6 +119,11 @@ function createAppMenus(deps) {
 
   let tray = null;
 
+  function sendWhenReady(win, fresh, ch, ...a) {
+    if (fresh) win.webContents.once('did-finish-load', () => win.webContents.send(ch, ...a));
+    else win.webContents.send(ch, ...a);
+  }
+
   function buildTrayMenu() {
     const sessions = getManager().list();
     const wsList = getWorkspaces().list();
@@ -167,10 +172,14 @@ function createAppMenus(deps) {
             label: `  ${indicator} ${s.name} (${s.type})`,
             click: () => {
               let win = getManager().windowForWorkspace(s.workspaceId);
-              if (!win) win = createWindow(s.workspaceId);
+              const fresh = !win;
+              if (fresh) {
+                getWorkspaces().setView(s.workspaceId, { activeSession: s.name });
+                win = createWindow(s.workspaceId);
+              }
               win.show();
               win.focus();
-              win.webContents.send('request-switch-session', s.name);
+              sendWhenReady(win, fresh, 'request-switch-session', s.name);
             },
           });
         }
@@ -185,20 +194,22 @@ function createAppMenus(deps) {
       label: 'New Session…',
       click: () => {
         let win = BrowserWindow.getFocusedWindow() || getManager().allLiveWindows()[0];
-        if (!win) win = createWindow(DEFAULT_WORKSPACE_ID);
+        const fresh = !win;
+        if (fresh) win = createWindow(DEFAULT_WORKSPACE_ID);
         win.show();
         win.focus();
-        win.webContents.send('request-open-new-dialog');
+        sendWhenReady(win, fresh, 'request-open-new-dialog');
       },
     });
     template.push({
       label: 'Discover Sessions…',
       click: () => {
         let win = BrowserWindow.getFocusedWindow() || getManager().allLiveWindows()[0];
-        if (!win) win = createWindow(DEFAULT_WORKSPACE_ID);
+        const fresh = !win;
+        if (fresh) win = createWindow(DEFAULT_WORKSPACE_ID);
         win.show();
         win.focus();
-        win.webContents.send('request-open-discovery');
+        sendWhenReady(win, fresh, 'request-open-discovery');
       },
     });
     template.push({
@@ -239,10 +250,11 @@ function createAppMenus(deps) {
                 label: 'Rename…',
                 click: () => {
                   let win = getManager().windowForWorkspace(ws.id);
-                  if (!win) win = createWindow(ws.id);
+                  const fresh = !win;
+                  if (fresh) win = createWindow(ws.id);
                   win.show();
                   win.focus();
-                  win.webContents.send('request-rename-workspace');
+                  sendWhenReady(win, fresh, 'request-rename-workspace');
                 },
               },
               { type: 'separator' },
@@ -914,10 +926,11 @@ function createAppMenus(deps) {
                 label: 'Rename…',
                 click: () => {
                   let win = getManager().windowForWorkspace(ws.id);
-                  if (!win) win = createWindow(ws.id);
+                  const fresh = !win;
+                  if (fresh) win = createWindow(ws.id);
                   win.show();
                   win.focus();
-                  win.webContents.send('request-rename-workspace');
+                  sendWhenReady(win, fresh, 'request-rename-workspace');
                 },
               },
               { type: 'separator' },

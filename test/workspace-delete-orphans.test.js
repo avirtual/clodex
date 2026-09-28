@@ -85,7 +85,7 @@ function realManager(persistence) {
 // template plus the dialog options the Delete item shows. The stub is live
 // while buildTrayMenu RUNS (not only while app-menus loads) because the click
 // handler calls dialog.showMessageBox at fire time.
-function trayMenuWith({ manager, workspaces, response = 0 }) {
+function trayMenuWith({ manager, workspaces, response = 0, createWindow = () => null }) {
   const dialogCalls = [];
   const stub = {
     app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
@@ -108,7 +108,7 @@ function trayMenuWith({ manager, workspaces, response = 0 }) {
     const nothing = () => ({ list: () => [], get: () => ({}), sortedByRecent: () => [], statuses: () => [] });
     const menus = createAppMenus({
       DEFAULT_WORKSPACE_ID: 'default', LOG_FILE: '/dev/null', THEME_KEYS: [], path,
-      checkForUpdate: () => {}, confirmRestartClodex: () => {}, createWindow: () => null,
+      checkForUpdate: () => {}, confirmRestartClodex: () => {}, createWindow,
       getManager: () => manager, getPeerManager: () => null, getSandboxManager: () => null,
       getUpdateInfo: () => null, getUiSettings: nothing, getWorkspaces: () => workspaces,
       getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
@@ -222,4 +222,62 @@ test('the confirm copy names both populations', () => {
   const both = deleteWorkspaceDetail(1, 3);
   assert.match(both, /kill 1 running session\b/);
   assert.match(both, /3 archived or saved sessions/);
+});
+
+function unloadedWindow() {
+  const sent = [];
+  const listeners = [];
+  const wc = {
+    send: (...a) => { sent.push(a); },
+    once: (ev, fn) => { listeners.push([ev, fn]); },
+    on: (ev, fn) => { listeners.push([ev, fn]); },
+  };
+  return {
+    sent,
+    fire: (ev) => { for (const [e, fn] of listeners.splice(0)) if (e === ev) fn(); },
+    win: { show: () => {}, focus: () => {}, webContents: wc },
+  };
+}
+
+function closedWorkspaceMenu({ sessions = [] } = {}) {
+  const views = [];
+  const w = unloadedWindow();
+  const manager = {
+    list: () => sessions,
+    windowForWorkspace: () => null,
+    allLiveWindows: () => [],
+    savedForWorkspace: () => [],
+  };
+  const workspaces = {
+    list: () => [{ id: 'ws2', name: 'Closed' }],
+    get: (id) => (id === 'ws2' ? { id: 'ws2', name: 'Closed' } : null),
+    sortedByRecent: () => [{ id: 'ws2', name: 'Closed' }],
+    setView: (id, view) => { views.push([id, view]); },
+  };
+  let created = 0;
+  const { template } = trayMenuWith({ manager, workspaces, createWindow: () => { created++; return w.win; } });
+  return { template, views, w, created: () => created };
+}
+
+test('a tray session row for a workspace with no open window opens that window ON the clicked session, not whichever one it last showed', () => {
+  const { template, views, w, created } = closedWorkspaceMenu({ sessions: [{ name: 'B', type: 'claude', workspaceId: 'ws2' }] });
+  const row = template.find((i) => i && i.label === '  ○ B (claude)');
+  assert.ok(row, 'ENTER: the B row is in the tray template');
+  row.click();
+  assert.strictEqual(created(), 1, 'ENTER: the click opened the closed workspace');
+  assert.deepStrictEqual(views, [['ws2', { activeSession: 'B' }]]);
+  assert.deepStrictEqual(w.sent, [], 'nothing is sent into the unloaded page');
+});
+
+test('Rename… on a closed workspace defers the prompt until the page has loaded', () => {
+  const { template, w, created } = closedWorkspaceMenu();
+  const recent = template.find((i) => i && i.label === 'Recent Workspaces');
+  const entry = recent && recent.submenu.find((i) => i && typeof i.label === 'string' && i.label.includes('Closed'));
+  const rename = entry && entry.submenu.find((i) => i && i.label === 'Rename…');
+  assert.ok(rename, 'ENTER: the closed workspace has a Rename… item');
+  rename.click();
+  assert.strictEqual(created(), 1, 'ENTER: the click opened the closed workspace');
+  assert.deepStrictEqual(w.sent, []);
+  w.fire('did-finish-load');
+  assert.deepStrictEqual(w.sent, [['request-rename-workspace']]);
 });

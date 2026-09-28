@@ -164,6 +164,21 @@ test('t789 addRole: a new role gets its own copy; a re-add over an existing copy
     'nothing was written, so the reply must not claim a copy it skipped');
 });
 
+test('t789 renameRole: a later addRole of the old name gets the template it asked for, not the renamed role\'s copy', () => {
+  const home = mkHome({ library: { 'clodex-team-hand': LIB_HAND, 'clodex-team-lead': LIB_LEAD, 'clodex-team-reviewer': LIB_REVIEWER, alt: { name: 'alt', type: 'codex' } } });
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root: mkTmpRoot('t789-proj-'), lead: 'x-lead' });
+  const added = tm.addRole('x', 'scribe', { template: 'clodex-team-hand' });
+  assert.deepStrictEqual(added.templatesCopied, ['scribe'], 'ENTER: scribe got its own copy');
+  const renamed = tm.renameRole('x', 'scribe', 'writer');
+  assert.strictEqual(renamed.roles.writer.template, 'writer', 'the renamed role points at its moved copy');
+  assert.strictEqual(readTpl(home, 'x', 'writer').type, 'claude');
+  const re = tm.addRole('x', 'scribe', { template: 'alt' });
+  assert.strictEqual(readTpl(home, 'x', 'scribe').type, 'codex');
+  assert.deepStrictEqual(re.templatesCopied, ['scribe']);
+  assert.notStrictEqual(tm.loadManifest('x').roles.writer.template, 'scribe');
+});
+
 // The ordering constraint inside addRole: the copy runs on the MINT arm only,
 // after the already-exists check. Copying first would repoint `template` at the
 // role's own file, and addRole is exact-match-or-throw. The comparison therefore

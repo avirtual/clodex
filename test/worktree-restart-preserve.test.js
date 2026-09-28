@@ -16,19 +16,7 @@
 // tree (destroy()'s own header says why — the restart paths kill and recreate
 // the same seat, and destroying its checkout there would delete the tree out
 // from under a session that is coming right back), so the value copied back is
-// the one that was on the record microseconds earlier. And the two failures are
-// ASYMMETRIC, which is what actually decides it:
-//
-//   ABSENT pointer — destroy() takes `if (!worktree)`, DROPS the record and
-//     returns { ok: true }. The record was the only thing naming the checkout,
-//     so the tree is orphaned irrecoverably, its path unrecoverable and its
-//     unmerged commits with it. Reported as success.
-//   STALE pointer — removeWorktree fails, destroy() takes the failure return,
-//     KEEPS the record and rides the path out so the operator can finish by
-//     hand. Nothing is lost.
-//
-// So a stale pointer is strictly the safer failure, and that is why `worktree`
-// went to ALWAYS_PRESERVE rather than being left out to avoid staleness.
+// the one that was on the record microseconds earlier.
 //
 // AGAINST A REAL TREE, not a stubbed gitWorktree. The whole claim is about what
 // is on disk after destroy(), and a stub asserts only that a function was
@@ -314,13 +302,7 @@ test('CONSEQUENCE: without it, destroy() reports success and ORPHANS the checkou
     + 'is nothing to strand');
 });
 
-test('CONSEQUENCE: a STALE pointer is the SAFE failure — the record is KEPT', { skip: !gitAvailable() }, async () => {
-  // The objection this decision had to answer: preserving a pointer risks
-  // carrying a stale one. It does — a tree can be removed by hand between the
-  // restart and the destroy — and this is what that costs. Compare with the
-  // orphan above: a wrong pointer loses nothing and tells the operator where to
-  // look, while a missing one loses the directory silently. Nothing here needs
-  // the pointer to be RIGHT; it needs it to EXIST.
+test('CONSEQUENCE: a STALE pointer to a hand-deleted tree drops the record — nothing is left to strand', { skip: !gitAvailable() }, async () => {
   const eng = mkEngine();
   const repo = mkRepo();
   const wt = await gitWorktree.createWorktree(repo, 't489-stale');
@@ -328,19 +310,13 @@ test('CONSEQUENCE: a STALE pointer is the SAFE failure — the record is KEPT', 
 
   eng.stores.persistence.upsert({ name: 'g', type: 'bash', cwd: wt.path, workspaceId: 'default' });
   eng.stores.persistence.setWorktree('g', { path: wt.path, branch: wt.branch });
-  // Removed the way an operator removes one: `rm -rf` on the directory, leaving
-  // git's admin entry behind. The pointer on the record is now stale.
   fs.rmSync(wt.path, { recursive: true, force: true });
   assert.strictEqual(fs.existsSync(wt.path), false, 'ENTER: the tree really is gone before destroy() runs');
 
   const r = await eng.manager.destroy('g');
-  assert.strictEqual(r.worktreeRemoved, false, 'the removal fails, as it must — there is nothing to remove');
-  assert.strictEqual(real(r.path), real(wt.path),
-    'and the path rides the result out, so the failure sentence can name what to clean up by hand');
-  assert.notStrictEqual(eng.stores.persistence.get('g'), null,
-    'the record is KEPT. That is destroy()\'s stated invariant — it must not return having dropped the '
-    + 'record while the tree it named might still stand — and it is why a stale pointer is recoverable '
-    + 'where an absent one is not');
+  assert.strictEqual(r.worktreeRemoved, true, 'a tree that is already gone counts as removed');
+  assert.strictEqual(eng.stores.persistence.get('g'), null,
+    'the record is dropped: it names a directory that no longer exists, so keeping it strands nothing but itself');
 });
 
 // ------------------------------- the other two fields, same helper, one seam

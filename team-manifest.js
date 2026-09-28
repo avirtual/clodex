@@ -97,6 +97,9 @@ function normalizeRoleDef(roleName, def, file) {
   if (def.account != null && typeof def.account !== 'string') {
     throw new Error(`role "${roleName}" account must be a string (${file})`);
   }
+  if (typeof def.account === 'string' && /[\r\n]/.test(def.account)) {
+    throw new Error(`role "${roleName}" account must be a single line (${file})`);
+  }
   return {
     template: def.template ?? null,
     prompt: def.prompt ?? null,
@@ -288,16 +291,21 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     let ents;
     try { ents = fs.readdirSync(path.join(kitDir, 'exec')); } catch { return []; }
     const copied = [];
-    for (const f of ents) {
-      if (!f.endsWith('.json')) continue;
-      const stem = f.slice(0, -'.json'.length);
-      if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
-      const target = path.join(teamsDir, teamName, 'exec', f);
-      try { fs.readFileSync(target, 'utf-8'); continue; } catch {}
-      let body;
-      try { body = fs.readFileSync(path.join(kitDir, 'exec', f), 'utf-8'); } catch { continue; }
-      atomicWrite(target, body);
-      copied.push(stem);
+    try {
+      for (const f of ents) {
+        if (!f.endsWith('.json')) continue;
+        const stem = f.slice(0, -'.json'.length);
+        if (badStem(stem) || !TEAM_STEM_RE.test(stem)) continue;
+        const target = path.join(teamsDir, teamName, 'exec', f);
+        try { fs.readFileSync(target, 'utf-8'); continue; } catch {}
+        let body;
+        try { body = fs.readFileSync(path.join(kitDir, 'exec', f), 'utf-8'); } catch { continue; }
+        atomicWrite(target, body);
+        copied.push(stem);
+      }
+    } catch (err) {
+      unwindExecCopies(teamName, copied);
+      throw err;
     }
     return copied;
   }
@@ -618,7 +626,17 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (!cwd || !root) return false;
     if (containsPath(root, cwd)) return true;
     const main = mainCheckoutOf(cwd);
-    return main ? containsPath(root, main) : false;
+    if (!main) return false;
+    if (containsPath(root, main)) return true;
+    let realMain;
+    let realRoot;
+    try {
+      realMain = fs.realpathSync(main);
+      realRoot = fs.realpathSync(root);
+    } catch {
+      return false;
+    }
+    return containsPath(realRoot, realMain);
   }
 
   // Deepest root wins: a containing pair is always ancestor/descendant, so the
@@ -706,7 +724,14 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       unwindTemplateCopies(name, templatesCopied);
       throw err;
     }
-    const execCopied = copyKitExec(name, kitDir);
+    let execCopied;
+    try {
+      execCopied = copyKitExec(name, kitDir);
+    } catch (err) {
+      unwindTemplateCopies(name, templatesCopied);
+      unwindPromptCopies(name, promptsCopied);
+      throw err;
+    }
     const manifest = {
       version: MANIFEST_VERSION,
       lead,
@@ -715,15 +740,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       ...(resolvedKit ? { kit: resolvedKit.name } : {}),
       roles: seedRoles,
     };
+    let loaded;
     try {
       atomicWrite(file, JSON.stringify(manifest, null, 2));
+      loaded = loadManifest(name);
     } catch (err) {
+      try { fs.unlinkSync(file); } catch {}
       unwindTemplateCopies(name, templatesCopied);
       unwindPromptCopies(name, promptsCopied);
       unwindExecCopies(name, execCopied);
+      try { fs.rmdirSync(path.join(teamsDir, name)); } catch {}
       throw err;
     }
-    return { ...loadManifest(name), templatesCopied, promptsCopied, execCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
+    return { ...loaded, templatesCopied, promptsCopied, execCopied, kitSeeded: resolvedKit ? resolvedKit.name : null };
   }
 
   function addRole(teamName, roleName, def, opts) {
@@ -944,9 +973,37 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
-    raw.roles[toName] = raw.roles[fromName];
-    delete raw.roles[fromName];
-    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    const def = raw.roles[fromName];
+    const owned = [['template', 'templates', '.json'], ['prompt', path.join('prompts', 'system'), '.md']]
+      .filter(([key]) => def && def[key] === fromName
+        && !Object.entries(raw.roles).some(([k, d]) => k !== fromName && d && d[key] === fromName))
+      .map(([key, sub, ext]) => ({
+        key,
+        from: path.join(teamsDir, teamName, sub, `${fromName}${ext}`),
+        to: path.join(teamsDir, teamName, sub, `${toName}${ext}`),
+      }))
+      .filter((mv) => fs.existsSync(mv.from));
+    for (const mv of owned) {
+      if (fs.existsSync(mv.to)) {
+        throw new Error(`role "${fromName}" cannot be renamed to "${toName}": ${mv.to} already exists (${team.file})`);
+      }
+    }
+    const moved = [];
+    try {
+      for (const mv of owned) {
+        fs.renameSync(mv.from, mv.to);
+        moved.push(mv);
+        def[mv.key] = toName;
+      }
+      raw.roles[toName] = def;
+      delete raw.roles[fromName];
+      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    } catch (err) {
+      for (const mv of moved.reverse()) {
+        try { fs.renameSync(mv.to, mv.from); } catch {}
+      }
+      throw err;
+    }
     return loadManifest(teamName);
   }
 
@@ -968,6 +1025,9 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const team = loadManifest(teamName); // throws if the team is missing
     if (ms != null && (typeof ms !== 'number' || !Number.isFinite(ms))) {
       throw new Error(`watchdogMs must be a finite number or null (${team.file})`);
+    }
+    if (ms != null && ms <= 0) {
+      throw new Error(`watchdogMs must be positive, or null to clear it (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     if (ms == null) delete raw.watchdogMs;
@@ -1112,7 +1172,7 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
     // Suppressed on the reviewer: [agent:team-review] resolves the template
     // itself, so printing one invites the hand-spawn the row exists to prevent.
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template}` : '';
-    const brief = def && def.brief ? ` — ${def.brief}` : '';
+    const brief = def && def.brief ? ` — ${String(def.brief).replace(/[\r\n]+/g, ' ')}` : '';
     // Liveness is STATED in this slot, never inferred from a missing tail: a
     // definition row and a live row are otherwise identical in shape, and a
     // reader scanning for teammates dm's a seat that does not exist.
@@ -1120,7 +1180,7 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
     const liveStr = live && live.length
       ? ` · live: ${live.join(', ')}`
       : ' · no live seat — role definition only, not addressable';
-    const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account}` : '';
+    const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account.replace(/[\r\n]+/g, ' ')}` : '';
     const effortStr = (efforts && typeof efforts[role] === 'string' && efforts[role]) ? ` · effort ${efforts[role]}` : '';
     lines.push(`- ${role} (${cls}${tmpl})${effortStr}${account}${brief}${liveStr}`);
     for (const l of retiredFieldLines(team, role)) lines.push(l);
