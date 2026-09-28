@@ -6,7 +6,8 @@
 |---|---|---|---|---|
 | `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed toward a 400-char cap | none (pure) | execElapsedLabel | unpinned |
 | `isScratchCutText` | true when a text starts with a scratch briefing prefix or the handoff-continue line, i.e. a manager-injected scratch cut | none | scratchRealArrivals | unpinned |
-| `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.resolveModelId | unpinned |
+| `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv; readOnly accepts the long, short and `--flag=value` spellings of the cap | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.hasReadOnlyCap, cli-adapters.resolveModelId | session-manager.test.js |
+| `escapeSafeTail` | last `max` code units of a buffer, advanced past an escape sequence or a low surrogate the cut would split | none (pure) | none | session-manager.test.js |
 | `bootNudgeProbeOf` | the first non-blank line of injected bytes, paste markers and Ctrl-U stripped, as up to 32 ink-visible chars to look for in the echo | none (pure) | inkVisibleText | unpinned |
 | `stripCodexStreamArgs` | `{args, dropped}`: a codex argv minus the flags app-server refuses (with their value, including the `--flag=value` form) | none (pure) | none | unpinned |
 | `spillAckLine` | the `[clodex] ... filed at <path>` notice for a prose spill, null for every other verb | none | none | spill-resolve-intent.test.js |
@@ -25,7 +26,6 @@
 ### Hazards
 
 - `execRunStatusReply` trims only the tails, so a long `cmd` in the heads alone can exceed the 400-char cap, and its per-code-unit trim can cut an emoji tail mid-surrogate.
-- `streamCodecCtx` marks a seat readOnly when every readOnlyCap token appears anywhere in argv, so non-adjacent tokens misclassify a writable codex seat and the `--flag=value` form is missed.
 - `isScratchCutText` reads SCRATCH_CUT_TEXT_PREFIXES, which is defined further down the file, so calling it at module load would throw a TDZ ReferenceError.
 - `preseedClaudeOnboarding` writes through a tmp file and a rename, which replaces a symlinked `~/.claude.json` with a regular file instead of writing through the link.
 
@@ -100,7 +100,7 @@
 | `workspaceForWindow` | reverse lookup of a handle's workspace id by `===` identity, null when not registered | `this.windows` | none | session-manager.test.js |
 | `windowForSession` | the live handle of a session's workspace window, null once the session has left the map or its window is destroyed | `this.sessions`, `this.windows` | windowForWorkspace | external-tap-trigger.test.js session-manager.test.js |
 | `quotaStore` | the account plan-quota store, built on first use so the startup read restores from disk before any wire or session exists | `this._quotaStore`, wire-quota.sqlite | wire/quota.QuotaStore, _shadowLog | wire-quota-seam.test.js |
-| `_sendToSession` | sends one channel event to the session's workspace window, buffering pty-data into pendingOutput (2MB cap) when no window is live | `s.pendingOutput` | windowForSession | session-manager.test.js exited-seat-row.test.js session-move-workspace.test.js web-host.test.js |
+| `_sendToSession` | sends one channel event to the session's workspace window, buffering pty-data into pendingOutput (2MB cap, cut by escapeSafeTail) when no window is live | `s.pendingOutput` | windowForSession, escapeSafeTail | session-manager.test.js exited-seat-row.test.js session-move-workspace.test.js web-host.test.js |
 | `_broadcast` | sends one channel event to every live window handle, the fan-out for keep-warm rows, quota and ipc-message lines | `this.windows` | allLiveWindows | session-manager.test.js wire-quota-seam.test.js proxy-poller-quota.test.js |
 
 ### Invariants
@@ -113,7 +113,6 @@
 ### Hazards
 
 - `_sendToSession` drops pty-data silently once the session has left `this.sessions`, and every other channel whenever no window is live.
-- `_sendToSession` caps pendingOutput by string length, not bytes, and cuts at an arbitrary code unit, so the replayed tail can start inside an escape sequence or surrogate pair.
 - `unregisterWindow` deletes by workspace id without checking the handle, so a late close after a replacement `registerWindow` for the same workspace drops the live handle and diverts output into pendingOutput.
 - `quotaStore` latches null for the process lifetime on a construction failure, with no retry.
 
@@ -151,7 +150,7 @@
 | `deliverLostExecRuns` | on a new host, tells each live seat its in-flight exec run died, records it `lost`, keeps rows for persisted-not-live seats | `this._lostExecRuns`, `s.execRuns`, exec ledger file | `_loadLostExecRuns` `_writeExecLedger` `_injectText` | exec-run-lost-restart.test.js |
 | `seatSend` | stream-seat composer send: arms the hint, holds idle delivery on its promise up to STREAM_ARM_WAIT_MS, enqueues as operator | `this._lastOperatorInputAt`, `s._armWait`, `s.outbox` | `_armSubmit` `_streamReleaseHeld` `_streamEnqueue` | seat-send-images.test.js session-manager.test.js api-contract.test.js |
 | `seatControl` | operator stop/compact/clear on a stream seat, refusing while a reload/compact/clear is in flight; wire context cmd over a slash cmd | `this._lastOperatorInputAt`, `s.outbox` | `seatInterrupt` `_executeCompact` `_streamEnqueue` `_injectText` | session-manager.test.js transcript-pull-outbox.test.js api-contract.test.js |
-| `_streamEnqueue` | single entry into a stream outbox: delivers at once when idle and unheld, else queues operator-first with parkKey replace | `s.outbox`, `s.streamBusy`, `s._outboxRev` | `_streamHintHeld` `_streamDeliver` `_streamJoin` `_streamHoldPoll` | unpinned |
+| `_streamEnqueue` | single entry into a stream outbox: delivers at once when idle, unheld and the outbox is empty, else queues operator-first with parkKey replace and drains through `_streamTurnEnd` when idle, unheld and not init-stalled | `s.outbox`, `s.streamBusy`, `s._outboxRev` | `_streamHintHeld` `_streamDeliver` `_streamJoin` `_streamHoldPoll` `_streamTurnEnd` | session-manager.test.js |
 | `_streamTurnEnd` | end-of-turn drain: marks idle, re-polls while hint-held, else delivers a lone wire item or the joined batch before it | `s.streamBusy`, `s.outbox` | `_streamHintHeld` `_streamJoin` `_streamDeliver` `_streamSent` | unpinned |
 | `_onStreamPermission` | records a CLI permission request, raises a permission attention plus ipc line, notifies the OS when the window is unfocused | `s.streamPermissions`, `s._streamPermRev`, `s.needsAttention` | `_setAttention` `_broadcast` `windowForSession` | unpinned |
 | `seatPermission` | answers one pending permission request with the operator's choice through the codec's encodePermission | `s.streamPermissions`, `s._streamPermRev`, `s.needsAttention` | `_streamSend` `_setAttention` `_sendToSession` | session-manager.test.js renderer-source-pins.test.js api-contract.test.js |
@@ -169,7 +168,6 @@
 
 ### Hazards
 
-- `_streamEnqueue` sends immediately on an idle unheld seat without checking whether `s.outbox` is non-empty, so a new item can overtake items left queued (after `_armStreamInitWatchdog` clears busy without draining, or a refused write).
 - `_streamTurnEnd` and `_streamEnqueue` call `_streamSent` whether or not `_streamDeliver` succeeded, so an item whose encodeUser yields nothing is consumed and its onSend still fires.
 - `seatPermission` clears attention of ANY kind when the last request is answered, while its stale branch and `_dropStreamPermissions` clear only kind permission, so an unrelated attention can be wiped.
 - `seatSend` chains `.finally` on the hint arm's promise with no catch, so a rejecting arm becomes an unhandled rejection.
@@ -179,7 +177,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `write` | operator keystrokes into a PTY seat: for human input stamps clocks, tracks paste/submit edges, clears attention, folds the draft | `this._lastOperatorInputAt`, `s.lastUserInputTs`, `s.lastUserSubmitTs`, `s._inPaste`, `s.needsAttention` | `_foldDraft` `_setAttention` `isHumanPtyInput` | hint-arm.test.js injected-turn-bit.test.js dictated-draft-protection.test.js |
+| `write` | operator keystrokes into a PTY seat: for human input on a live PTY seat stamps clocks, tracks paste/submit edges, clears attention, folds the draft | `this._lastOperatorInputAt`, `s.lastUserInputTs`, `s.lastUserSubmitTs`, `s._inPaste`, `s.needsAttention` | `_foldDraft` `_setAttention` `isHumanPtyInput` | hint-arm.test.js injected-turn-bit.test.js dictated-draft-protection.test.js |
 | `_foldDraft` | carries the PTY draft as line-editor state and drives the hint arm: disarm on clear, submit on Enter, onDraft otherwise | `s._draftState`, `s._draft` | `foldDraft` `_armSubmit` `_armCtx` | unpinned |
 | `_armSubmit` | submit edge shared by PTY and stream seats: final onDraft plus onSubmit, retires the selection queue, returns the arm's landed value | none (hint-arm and selection-arm module state) | `_armCtx` `_sendToSession` | unpinned |
 | `_armCtx` | the one hint-routing context {agent, base, route} every hint path is built from | none | `resolveProxyBase` | hint-arm.test.js selection-arm.test.js session-manager.test.js |
@@ -199,7 +197,6 @@
 
 ### Hazards
 
-- `write` stamps `lastOperatorInputAt` before the liveness check and outside the human-input gate, so writes to a missing, dead or stream seat still count as operator input.
 - `noteFocusedSession` moving the microphone on a per-window report without both box-wide focus facts would retarget dictation to a seat the operator cannot see.
 - `_voiceRoute` falls back to the focused seat only on an absent target; `voiceSelect` must keep its own empty-name check or an unset shell variable arms a seat nobody named.
 - `_armSubmit` returns the arm's landed promise, which `_foldDraft` discards and `seatSend` chains without a catch.
@@ -417,7 +414,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleIntent` | central router for a parsed intent: bounces unknowns, drops typed spill pointers, resolves spills, gates per seat, then dispatches dm, resend, who, name, context, scratch, memory, spawn, file, term, exec, remind, shout, team-review, review-done, task, team, team-create, reboot or a plugin verb | `intent.body`, `intent.spill`, parked files under PENDING_DIR (resend claims and re-parks) | `_gatedDeliver`, `_armDmConfirm`, `_spillTyped`, `_dispatchPluginIntent` | session-manager.test.js dm-delivery-latch.test.js spill-resolve-intent.test.js plugin-surface-contract.test.js |
+| `_handleIntent` | central router for a parsed intent: bounces unknowns, drops typed spill pointers, resolves spills, gates per seat, then dispatches dm, resend, who, name, context, scratch, memory, spawn, file, term, exec, remind, shout, team-review, review-done, task, team, team-create, reboot or a plugin verb; records a spawn or team-create on the open scratch marks before its first await, every other watched verb after dispatch | `intent.body`, `intent.spill`, parked files under PENDING_DIR (resend claims and re-parks) | `_gatedDeliver`, `_armDmConfirm`, `_spillTyped`, `_dispatchPluginIntent` | session-manager.test.js dm-delivery-latch.test.js spill-resolve-intent.test.js plugin-surface-contract.test.js |
 | `_dispatchPluginIntent` | default router arm: runs a plugin-registered handler synchronously against the seat's plugin handle, turning a throw into a parkable error inject | none | pluginRowFor, getPluginHooks().handleFor, `_injectText` | unpinned |
 | `_handleShoutIntent` | shout verb: validates a non-empty note up to SHOUT_MAX_BYTES, files it in the operator inbox, raises a note, and archives a fix session on DEPLOY OK | notifications store | `_raiseNote`, `archive`, `_sendToSession` | session-manager.test.js deploy-visible.test.js body-preview.test.js |
 | `_spillTyped` | drops an intent whose body the agent typed as a spill pointer or runtime note, bouncing the correction at most once per reqId | `session.spillMimicReq`, shadow log | `_shadowLog`, `_broadcast`, `_injectText` | unpinned |
@@ -490,7 +487,7 @@
 | `scratchMark` | operator API that sets a labeled mark at the transcript end, returning ok with nonce and offset or an error broadcast to the IPC log | `session._scratchMarks` via `_scratchMark` | `_scratchBeginTail`, `_scratchBeginSettled`, `_scratchMark` | ipc-scratch-mark.test.js api-contract.test.js session-manager.test.js |
 | `_scratchBegin` | entry for begin and mark: queues behind a pending begin, defers an unsettled tail, else marks or refuses now | reads `session._scratchPendingBegin` | `_scratchBeginTail`, `_scratchDeferBegin`, `_scratchMark`, `_scratchBeginRefuse` | unpinned |
 | `_scratchDeferBegin` | parks a begin or mark until the transcript reaches the turn end, waking on fs.watch and forcing a decision after SCRATCH_CLOSE_TIMEOUT | `session._scratchPendingBegin` with its watcher and timer | `_scratchWakePendingBegin`, `_scratchDropPendingBegin`, `_scratchSettleRequests` | unpinned |
-| `_scratchMark` | creates an episode or labeled mark at a proven turn boundary, capturing offset, tail bytes, leaf uuid and usage, and acks it | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | scratchBeginCutAt, scratchNonce, `_scratchUsageAt`, `_scratchMarksOf` | unpinned |
+| `_scratchMark` | creates an episode or labeled mark at a proven turn boundary, capturing offset, tail bytes, leaf uuid and usage, and acks it; refuses when the slot's prior mark has an end or rewind pending | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | scratchBeginCutAt, scratchNonce, `_scratchUsageAt`, `_scratchMarksOf` | session-manager.test.js |
 | `_scratchCancel` | drops a pending begin, a labeled mark or the episode without cutting, and records a cancelled episode row | `session._scratchPendingBegin`, `session._scratchMarks`, `session._scratch`, `session._scratchVoid` | `_scratchDropPendingBegin`, `_scratchRewindTarget`, `_recordScratchEpisode` | unpinned |
 | `_scratchEnd` | validates the end or rewind target and summary, then fires the close now or arms a SCRATCH_CLOSE_TIMEOUT re-emit fallback | mark.closing, mark._closeTimer, `session._scratchVoid` | `_scratchRewindTarget`, `_scratchClosingMark`, `_fireScratchClose` | unpinned |
 | `_fireScratchClose` | consumes the closing mark's pending close and runs the cut; the trigger when the reply's turn end lands | mark.closing, mark._closeTimer | `_scratchClosingMark`, `_runScratchCut` | session-manager.test.js file-view-api.test.js spill-resolve-intent.test.js |
@@ -516,7 +513,6 @@
 
 ### Hazards
 
-- `_scratchMark` clears a replaced mark's close timer but not its pending closing, so a begin or mark settled while an end is pending silently loses that end and its episode row.
 - `_scratchCancel` resolves a bare cancel through `_scratchRewindTarget`, so it drops the newest labeled mark instead of the episode that the begin ack says it cancels.
 - `_scratchRespawn` and `_coldRespawn` hand-copy create()'s positional arguments and already diverge on workspaceId defaulting, so each must be edited when create() changes.
 - `_scratchCutAfterGuard` leaves the .bak in place for `_scratchPruneBaks` to expire by age, while docs/sessions.md says it is removed once the respawned CLI writes its first assistant record.
@@ -558,7 +554,7 @@
 | `_relayViaForOrigin` | Finds a hub whose unexpired relay roster advertises an origin, pruning stale rosters | `this._relayRosters` | none | relay-roster-intake.test.js |
 | `_routeFederatedDm` | Routes a name@peer dm directly to an online peer, else via outbox for a known origin, else via a relay hub, else bounces | `this._knownDmOrigins`, outbox dir | _relayViaForOrigin, enqueueOutbox, buildRelayEnvelope, _injectText | relay-roster-intake.test.js session-manager.test.js |
 | `_deliverClaimedDms` | Delivers dms claimed from a peer outbox to local seats with a from@origin tag, handing relay envelopes to the hub path | none | _relayClaimedDm, _gatedDeliver, _broadcast | peer-inbox-claim.test.js relay-roster-local.test.js session-manager.test.js |
-| `_relayClaimedDm` | Hub side of a relay: checks version, hop budget and relayAllowed on both peers, then forwards a terminal dm | peer settings | hopRule, _bounceRelaySender, buildTerminalDm | session-manager.test.js |
+| `_relayClaimedDm` | Hub side of a relay: checks version, hop budget and relayAllowed on both peers, then forwards a terminal dm whose sender is qualified with the name-shaped origin `_deliverClaimedDms` passes | peer settings | hopRule, _bounceRelaySender, buildTerminalDm | session-manager.test.js |
 | `_isDmReachable` | Predicate for whether a reply to a sender could land now; drives the (no reply path) marker | `this._knownDmOrigins`, `this.sessions` | findPeerByOrigin, outboxKnowsOrigin, _relayViaForOrigin | operator-sender.test.js merged-notice-owes-accept.test.js session-manager.test.js |
 | `_buildDeliveryText` | Builds the [agent:from] delivery line, spilling bodies over MSG_SPILL_THRESHOLD to an @pointer and marking unanswerable dms | messages dir, `s.filedRing` | _isDmReachable, spillToFile, _noteFiled | messaging-spill-receipt.test.js file-view-api.test.js ticket-replay.test.js session-manager.test.js |
 | `_deliverMessage` | Universal delivery: stream enqueue, busy/draft park, or parkable inject, reporting injected or parked to onWrite | pending/<name>/, `target._injectPtyQueue` | _refuseStreamInject, _maybeParkDelivery, _injectText, _writeImageFiles | messaging-spill-receipt.test.js dm-delivery-latch.test.js injected-turn-bit.test.js session-manager.test.js |
@@ -580,7 +576,6 @@
 - `_gatedDeliver` parks the raw body on the parkBehindQueue branch without consulting rebody, unlike its hold branch.
 - `_deliverMessage` honours rebody on the inject path only when onWrite is also passed, and never on a stream seat.
 - `_isDmReachable` splits at the last @ while `_routeFederatedDm` splits at the first, so a two-@ relay sender reads reachable but its reply bounces.
-- `_relayClaimedDm` re-qualifies the sender with the raw peer label rather than a name-shaped origin, so the destination may be unable to reply.
 - `_deliverReminder` checks agentType but not _dead, so a dead seat still in the map drops the reminder while reporting delivered.
 
 ## Parking and the inject queue — _nextParkSeq … _armParkedDrainFallback

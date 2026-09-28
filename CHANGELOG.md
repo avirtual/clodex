@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sessions: a Codex stream seat whose read-only cap was written `-s read-only -a never` or `--sandbox=read-only` now gets the read-only codec it asked for (it ran workspace-write); a dm relayed through a hub whose peer label is a URL or hostname now reaches its destination; a scratch `mark` re-issued while its end is still pending is refused instead of silently dropping the close; a stream seat no longer sends new text ahead of what its outbox already holds; a scratch end in the same reply as a `team create` or `spawn` now sees that dispatch; a detached seat's replay no longer paints half an escape sequence as text; terminal auto-replies no longer count as operator input for the idle-restart timer.
 - Team popover ▸ Roles: the reviewer role's template is now a picker over the installed reviewer templates (the team's own first, then the library), so a box whose library is read-only can point its reviewer at another template instead of editing the stock one; agents still cannot repoint a reviewer through [agent:team role-set].
 - Codex stream seats: a refused sandbox/approval flag written as --flag=value is now stripped whatever its arity (only the arity-1 form was), so it can no longer reach the app-server argv.
 - Templates: "Export as Template…" reports a failed save instead of closing silently (the library is read-only inside a sandbox box); a failed template removal now says why, and a box pinned to a commit says so once in its rebuild toast.
