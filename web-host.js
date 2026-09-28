@@ -45,6 +45,11 @@ function sanitizeBasename(name) {
   return path.basename(String(name || '')).replace(/[/\\]/g, '').trim() || 'export';
 }
 
+function contentDisposition(base) {
+  const fallback = base.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'export';
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(base).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
+}
+
 function createWebHost({ engine, log, port, host, token, userDataPath, registerHandlers } = {}) {
   const manager = engine.manager;
   const exportsDir = path.join(userDataPath || os.homedir(), 'exports');
@@ -56,6 +61,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   const workspaceConns = new Map();           // workspaceId → Set<conn>
   const workspaceHandles = new Map();         // workspaceId → the 5-method handle
   const scrollback = new Map();               // sessionName → attached-period pty-data ring
+  const ringWorkspace = new Map();
   let menuSeq = 0, dialogSeq = 0;
 
 // Absent token = localhost-trust. The compare is constant-time; do not revert to `===`.
@@ -68,6 +74,10 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       const [name, data] = args;
       const cur = (scrollback.get(name) || '') + (data || '');
       scrollback.set(name, cur.length > MAX_SCROLLBACK ? cur.slice(-MAX_SCROLLBACK) : cur);
+      ringWorkspace.set(name, workspaceId);
+    } else if (channel === 'session-exit') {
+      scrollback.delete(args[0]);
+      ringWorkspace.delete(args[0]);
     }
     const set = workspaceConns.get(workspaceId);
     if (!set) return;
@@ -112,6 +122,11 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       try {
         for (const s of manager.listForWorkspace(conn.workspaceId)) scrollback.delete(s.name);
       } catch { /* fake managers in tests may omit listForWorkspace */ }
+      for (const [name, ws] of ringWorkspace) {
+        if (ws !== conn.workspaceId) continue;
+        scrollback.delete(name);
+        ringWorkspace.delete(name);
+      }
     }
   }
 
@@ -308,10 +323,12 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   }
 
   function serveExports(req, res, rel) {
-    const file = path.join(exportsDir, sanitizeBasename(decodeURIComponent(rel)));
+    let decoded;
+    try { decoded = decodeURIComponent(rel); } catch { res.writeHead(400).end('bad path'); return; }
+    const file = path.join(exportsDir, sanitizeBasename(decoded));
     fs.readFile(file, (err, buf) => {
       if (err) { res.writeHead(404).end('not found'); return; }
-      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${path.basename(file)}"` });
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': contentDisposition(path.basename(file)) });
       res.end(buf);
     });
   }

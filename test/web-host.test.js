@@ -12,10 +12,13 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
 const http = require('node:http');
 const WebSocket = require('ws');
 
 const { createWebHost, viewerOnHost } = require('../web-host');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silentLog = { info() {}, warn() {}, error() {} };
 
@@ -32,11 +35,11 @@ function fakeEngine(sessions = {}, stores = {}) {
   return { engine: { manager, stores }, registered, unregistered };
 }
 
-async function startHost({ registerHandlers, token, sessions, stores } = {}) {
+async function startHost({ registerHandlers, token, sessions, stores, userDataPath } = {}) {
   const { engine, registered, unregistered } = fakeEngine(sessions, stores);
   const host = createWebHost({
     engine, log: silentLog, port: 0, token: token || null,
-    userDataPath: os.tmpdir(), registerHandlers: registerHandlers || (() => {}),
+    userDataPath: userDataPath || os.tmpdir(), registerHandlers: registerHandlers || (() => {}),
   });
   if (!host._server.listening) await new Promise((res) => host._server.once('listening', res));
   return { host, port: host._server.address().port, registered, unregistered };
@@ -569,5 +572,105 @@ test('sender token reports isDestroyed once its socket is gone', async () => {
     c.close();
     await c.closed();
     assert.ok(await poll(() => captured.isDestroyed() === true), 'a closed socket must report destroyed');
+  } finally { host.close(); }
+});
+
+function trapUncaught() {
+  let onErr;
+  const tripped = new Promise((_, reject) => { onErr = (e) => reject(new Error(`uncaught: ${e && e.message}`)); });
+  process.on('uncaughtException', onErr);
+  return { tripped, release: () => process.removeListener('uncaughtException', onErr) };
+}
+
+function getWith(agent, port, pathname) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: pathname, agent }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body, cd: res.headers['content-disposition'] }));
+    }).on('error', reject);
+  });
+}
+
+test('a malformed percent-escape under /exports/ answers 400 and raises no uncaught exception', async () => {
+  const { host, port } = await startHost();
+  const agent = new http.Agent();
+  const trap = trapUncaught();
+  try {
+    const r = await Promise.race([getWith(agent, port, '/exports/%zz'), trap.tripped]);
+    assert.equal(r.status, 400);
+    const after = await Promise.race([getWith(agent, port, '/healthz'), trap.tripped]);
+    assert.equal(after.status, 200);
+  } finally { trap.release(); agent.destroy(); host.close(); }
+});
+
+test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 5987 filename and raises no uncaught exception', async () => {
+  const dir = mkTmpRoot('wh-exports-');
+  fs.mkdirSync(path.join(dir, 'exports'));
+  const names = ['отчёт.md', 'a\nb', "it's (1).md"];
+  for (const n of names) fs.writeFileSync(path.join(dir, 'exports', n), `body:${n}`);
+  const { host, port } = await startHost({ userDataPath: dir });
+  const agent = new http.Agent();
+  const trap = trapUncaught();
+  try {
+    for (const n of names) {
+      const r = await Promise.race([
+        getWith(agent, port, '/exports/' + encodeURIComponent(n)),
+        trap.tripped,
+      ]);
+      assert.equal(r.status, 200, n);
+      assert.equal(r.body, `body:${n}`);
+      assert.match(r.cd, /filename\*=UTF-8''[A-Za-z0-9%!._~-]+$/);
+      assert.equal(decodeURIComponent(r.cd.split("''")[1]), n);
+      assert.match(r.cd, /filename="[\x20-\x7e]+"/);
+    }
+  } finally { trap.release(); agent.destroy(); host.close(); }
+});
+
+test('a session that leaves the workspace listing while attached does not leak its ring into a same-named successor\'s replay', async () => {
+  const sessions = { ws1: [{ name: 'x' }] };
+  const { host, port, registered, unregistered } = await startHost({ sessions });
+  try {
+    const a = connect(port);
+    await helloWelcome(a, { workspaceId: 'ws1' });
+    registered[0].handle.webContents.send('pty-data', 'x', 'OLD');
+    const live = await a.until((m) => m.t === 'event' && m.channel === 'pty-data');
+    assert.deepStrictEqual(live.args, ['x', 'OLD']);
+    sessions.ws1 = [];
+    a.close();
+    assert.ok(await poll(() => unregistered.includes('ws1')), 'unregistered after last tab');
+    sessions.ws1 = [{ name: 'x' }];
+
+    const b = connect(port);
+    await helloWelcome(b, { workspaceId: 'ws1' });
+    registered[registered.length - 1].handle.webContents.send('pty-data', 'x', 'NEW');
+    const first = await b.until((m) => m.t === 'event' && m.channel === 'pty-data');
+    assert.deepStrictEqual(first.args, ['x', 'NEW']);
+
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'ws1' });
+    const replay = await c.until((m) => m.t === 'event' && m.channel === 'pty-data');
+    assert.deepStrictEqual(replay.args, ['x', 'NEW']);
+    b.close(); c.close();
+  } finally { host.close(); }
+});
+
+test('a session-exit clears that name\'s ring so a late joiner does not replay the finished run', async () => {
+  const { host, port, registered } = await startHost({ sessions: { ws1: [{ name: 'x' }] } });
+  try {
+    const a = connect(port);
+    await helloWelcome(a, { workspaceId: 'ws1' });
+    const handle = registered[0].handle;
+    handle.webContents.send('pty-data', 'x', 'OLD');
+    handle.webContents.send('session-exit', 'x', 0, {});
+    await a.until((m) => m.t === 'event' && m.channel === 'session-exit');
+    handle.webContents.send('pty-data', 'x', 'NEW');
+    await a.until((m) => m.t === 'event' && m.channel === 'pty-data' && m.args[1] === 'NEW');
+    const b = connect(port);
+    await helloWelcome(b, { workspaceId: 'ws1' });
+    const replay = await b.until((m) => m.t === 'event' && m.channel === 'pty-data');
+    assert.deepStrictEqual(replay.args, ['x', 'NEW']);
+    a.close(); b.close();
   } finally { host.close(); }
 });

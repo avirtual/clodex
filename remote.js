@@ -13,6 +13,16 @@ const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
 
+function parseJsonObject(body) {
+  let msg;
+  try { msg = JSON.parse(body); } catch { return null; }
+  return msg && typeof msg === 'object' ? msg : null;
+}
+
+function decodeSeg(s) {
+  try { return decodeURIComponent(s); } catch { return null; }
+}
+
 // A bind host counts as loopback when nothing off-box can reach it — the case
 // where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
 // (the container's CLODEX_REMOTE_HOST) and any specific LAN address are NOT
@@ -334,6 +344,7 @@ class RemoteServer {
     this._heartbeat = null;
     for (const res of this._clients) { try { res.end(); } catch {} }
     this._clients.clear();
+    for (const name of [...this._control.keys()]) this._setControl(name, null);
     for (const set of this._attach.values()) {
       for (const res of set) { try { res.end(); } catch {} }
     }
@@ -671,7 +682,7 @@ class RemoteServer {
   }
 
   _handleTranscript(name, url, res) {
-    const limit = Math.min(parseInt(url.searchParams.get('limit'), 10) || 100, 500);
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit'), 10) || 100, 1), 500);
     const sinceRaw = url.searchParams.get('since');
     const since = sinceRaw == null ? null : Math.max(parseInt(sinceRaw, 10) || 0, 0);
     const afterRaw = url.searchParams.get('after');
@@ -723,15 +734,15 @@ class RemoteServer {
     this._clients.delete(res);   // attach feeds are per-session, not the global events feed
     req.on('close', () => {
       set.delete(res);
-      if (set.size === 0) { this._attach.delete(name); this._setControl(name, null); }
+      if (set.size === 0 && this._attach.get(name) === set) this._dropAttach(name);
     });
   }
 
   _handleControl(name, req, res) {
     if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'control not available' });
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       const info = this._getAttachInfo ? this._getAttachInfo(name) : null;
       if (!info || !info.ok) return this._json(res, 404, { ok: false, error: 'no such session' });
       if (msg.action === 'acquire') {
@@ -754,8 +765,8 @@ class RemoteServer {
   _handleInput(name, req, res) {
     if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'input not available' });
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       if (String(msg.token || '') !== this._controlToken(name)) {
         return this._json(res, 403, { ok: false, error: 'not the control holder' });
       }
@@ -767,8 +778,8 @@ class RemoteServer {
   _handleResize(name, req, res) {
     if (!this._resizePty) return this._json(res, 501, { ok: false, error: 'resize not available' });
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       if (String(msg.token || '') !== this._controlToken(name)) {
         return this._json(res, 403, { ok: false, error: 'not the control holder' });
       }
@@ -1049,7 +1060,8 @@ class RemoteServer {
     // which is what makes a valid wire seat a valid local one.
     if (req.method === 'GET' && p.startsWith('/api/wterm/')) {
       if (!this._wtermOpen) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
-      const seat = decodeURIComponent(p.slice('/api/wterm/'.length));
+      const seat = decodeSeg(p.slice('/api/wterm/'.length));
+      if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
       let info;
       // `attached` is read BEFORE this stream joins the set, and it is the half
@@ -1092,7 +1104,8 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p.startsWith('/api/wterm-input/')) {
       if (!this._wtermInput) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
-      const seat = decodeURIComponent(p.slice('/api/wterm-input/'.length));
+      const seat = decodeSeg(p.slice('/api/wterm-input/'.length));
+      if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
       return this._readBody(req, res, (body) => {
         // Re-read the handler HERE, not above. `_readBody` calls back from
@@ -1115,8 +1128,8 @@ class RemoteServer {
         // the moment of use for the same reason as the callback above — the
         // last stream can go away while the body is still arriving.
         if (!this._wtermAttached(seat)) return this._json(res, 409, { ok: false, error: 'no open terminal stream for that seat' });
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         // Keystrokes pass through as OPAQUE BYTES and are deliberately not vetted
         // here: this is a terminal, and a person typing `^C` means it. What IS
         // vetted, on both ends, is geometry and the seat.
@@ -1126,7 +1139,8 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p.startsWith('/api/wterm-resize/')) {
       if (!this._wtermResize) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
-      const seat = decodeURIComponent(p.slice('/api/wterm-resize/'.length));
+      const seat = decodeSeg(p.slice('/api/wterm-resize/'.length));
+      if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
       return this._readBody(req, res, (body) => {
         // Same deferral, same re-read, same attachment precondition — see
@@ -1135,8 +1149,8 @@ class RemoteServer {
         // remote input by every measure that matters here.
         if (!this._wtermResize) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
         if (!this._wtermAttached(seat)) return this._json(res, 409, { ok: false, error: 'no open terminal stream for that seat' });
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         const cols = parseInt(msg.cols, 10), rows = parseInt(msg.rows, 10);
         if (!(cols >= 20 && cols <= 500 && rows >= 5 && rows <= 300)) {
           return this._json(res, 400, { ok: false, error: 'bad dimensions' });
@@ -1147,7 +1161,8 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p.startsWith('/api/wterm-close/')) {
       if (!this._wtermClose) return this._json(res, 501, { ok: false, error: 'terminal sharing is not enabled on this box' });
-      const seat = decodeURIComponent(p.slice('/api/wterm-close/'.length));
+      const seat = decodeSeg(p.slice('/api/wterm-close/'.length));
+      if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
       // Detach, never kill: the shell belongs to the operator of THIS box and
       // their own tab is showing it. A remote party closing its view must not
@@ -1224,8 +1239,8 @@ class RemoteServer {
     if (req.method === 'POST' && p === '/api/dm') {
       if (!this._deliverDm) return this._json(res, 501, { ok: false, error: 'dm not available' });
       return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         const to = String(msg.to || '');
         const from = String(msg.from || '');
         const origin = String(msg.origin || '');
@@ -1247,8 +1262,8 @@ class RemoteServer {
     if (req.method === 'POST' && p === '/api/dm/claim') {
       if (!this._claimDms) return this._json(res, 501, { ok: false, error: 'dm not available' });
       return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         const origin = String(msg.origin || '');
         if (!NAME_RE.test(origin)) return this._json(res, 400, { ok: false, error: 'bad origin' });
         Promise.resolve()
@@ -1262,8 +1277,8 @@ class RemoteServer {
     if (req.method === 'POST' && p === '/api/peer/roster') {
       if (!this._receiveRoster) return this._json(res, 501, { ok: false, error: 'relay not available' });
       return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         if (!relayVersionOk(msg.rv)) return this._json(res, 400, { ok: false, error: 'unsupported relay version' });
         const via = String(msg.via || '');
         if (!NAME_RE.test(via)) return this._json(res, 400, { ok: false, error: 'bad via' });
@@ -1294,7 +1309,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/peers/')) {
       if (!this._listPeers) return this._json(res, 501, { ok: false, error: 'peers not available' });
-      const id = decodeURIComponent(p.slice('/api/peers/'.length));
+      const id = decodeSeg(p.slice('/api/peers/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad peer id' });
       const peer = this._getPeer ? this._getPeer(id) : null;
       if (!peer) return this._json(res, 404, { ok: false, error: 'Peer not found' });
@@ -1306,7 +1322,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/teams/')) {
       if (!this._listTeams) return this._json(res, 501, { ok: false, error: 'teams not available' });
-      const name = decodeURIComponent(p.slice('/api/teams/'.length));
+      const name = decodeSeg(p.slice('/api/teams/'.length));
+      if (name == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad team name' });
       const team = this._getTeam ? this._getTeam(name) : null;
       if (!team) return this._json(res, 404, { ok: false, error: 'Team not found' });
@@ -1327,7 +1344,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/tickets/')) {
       if (!this._listTickets) return this._json(res, 501, { ok: false, error: 'tickets not available' });
-      const id = decodeURIComponent(p.slice('/api/tickets/'.length));
+      const id = decodeSeg(p.slice('/api/tickets/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!TICKET_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad ticket id' });
       const team = url.searchParams.get('team');
       if (team != null && !NAME_RE.test(team)) return this._json(res, 400, { ok: false, error: 'bad team name' });
@@ -1347,7 +1365,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/sandboxes/')) {
       if (!this._listSandboxes) return this._json(res, 501, { ok: false, error: 'sandboxes not available' });
-      const id = decodeURIComponent(p.slice('/api/sandboxes/'.length));
+      const id = decodeSeg(p.slice('/api/sandboxes/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!BOX_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad sandbox id' });
       return Promise.resolve()
         .then(() => (this._getSandbox ? this._getSandbox(id) : null))
@@ -1362,7 +1381,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/agents/')) {
       if (!this._listAgents) return this._json(res, 501, { ok: false, error: 'agents not available' });
-      const name = decodeURIComponent(p.slice('/api/agents/'.length));
+      const name = decodeSeg(p.slice('/api/agents/'.length));
+      if (name == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad agent name' });
       const content = this._getAgent ? this._getAgent(name) : null;
       if (content == null) return this._json(res, 404, { ok: false, error: 'Agent not found' });
@@ -1397,7 +1417,8 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p.startsWith('/api/docs/')) {
       if (!this._listDocs) return this._json(res, 501, { ok: false, error: 'docs not available' });
-      const name = String(decodeURIComponent(p.slice('/api/docs/'.length)));
+      const name = decodeSeg(p.slice('/api/docs/'.length));
+      if (name == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad doc name' });
       const rawSection = url.searchParams.get('section');
       if (rawSection != null && String(rawSection).trim()) {
@@ -1462,7 +1483,8 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p.startsWith('/api/inbox/read/')) {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
-      const id = decodeURIComponent(p.slice('/api/inbox/read/'.length));
+      const id = decodeSeg(p.slice('/api/inbox/read/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!this._notifications.markRead(id)) return this._json(res, 404, { ok: false, error: 'unknown note' });
       const rec = this._notifications.list().find((n) => n.id === id);
       return this._json(res, 200, { ok: true, id, readAt: rec ? rec.readAt : null });
@@ -1473,7 +1495,8 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p.startsWith('/api/inbox/remove/')) {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
-      const id = decodeURIComponent(p.slice('/api/inbox/remove/'.length));
+      const id = decodeSeg(p.slice('/api/inbox/remove/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!this._notifications.remove(id)) return this._json(res, 404, { ok: false, error: 'unknown note' });
       return this._json(res, 200, { ok: true, id });
     }
@@ -1515,18 +1538,21 @@ class RemoteServer {
   }
 
   _readBody(req, res, cb, max = MAX_BODY) {
-    let body = '';
+    const chunks = [];
+    let total = 0;
     let over = false;
     req.on('data', (chunk) => {
       if (over) return;
-      body += chunk;
-      if (body.length > max) {
+      total += chunk.length;
+      if (total > max) {
         over = true;
         this._json(res, 413, { ok: false, error: 'message too large' });
         req.destroy();
+        return;
       }
+      chunks.push(chunk);
     });
-    req.on('end', () => { if (!over) cb(body); });
+    req.on('end', () => { if (!over) cb(Buffer.concat(chunks).toString('utf8')); });
   }
 
   _json(res, code, obj) {
