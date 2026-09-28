@@ -65,8 +65,15 @@ test('docker/web/Dockerfile installs docker/web/entrypoint.sh as the ENTRYPOINT 
   assert.ok(all.includes('COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint'));
   assert.ok(all.includes('ENTRYPOINT ["/usr/local/bin/clodex-entrypoint"]'));
   assert.ok(all.includes('USER clodex'));
+  const apt = all.find((i) => /^RUN apt-get update && apt-get install\b/.test(i) && /\bsudo\b/.test(i));
+  assert.match(apt, /\sutil-linux\s/, 'setpriv comes from util-linux, installed explicitly');
   const ignore = fs.readFileSync(path.join(__dirname, '..', '.dockerignore'), 'utf8').split('\n');
   assert.ok(ignore.indexOf('!docker/web/entrypoint.sh') > ignore.indexOf('docker'));
+});
+
+test('docker/web/Dockerfile evicts the base image node account and pins clodex to uid 1001', () => {
+  const user = instructions(DOCKERFILE).find((i) => i.includes('useradd'));
+  assert.match(user, /^RUN userdel -r node \\\n && useradd --uid 1001 --create-home --shell \/bin\/bash clodex \\/);
 });
 
 test('entrypoint: not root or no host ids → execs the command unchanged, before touching anything', () => {
@@ -87,6 +94,8 @@ test('entrypoint: remaps clodex to the host gid and uid, idempotently', () => {
 
 test('entrypoint: chowns only image-owned top-level paths, non-recursively, after an owner check', () => {
   assert.match(ENTRYPOINT, /IMAGE_UID=\$\(stat -c %u \/app\)/);
+  assert.match(ENTRYPOINT, /IMAGE_DEV=\$\(stat -c %d \/app\)/);
+  assert.match(ENTRYPOINT, /\[ -e "\$p" \] \|\| continue\n {2}if \[ "\$\(stat -c %d "\$p"\)" != "\$IMAGE_DEV" \]; then\n {4}\[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \] \|\| continue\n {2}fi\n {2}owner=/);
   assert.match(ENTRYPOINT, /for p in \/data \/home\/clodex \/home\/clodex\/work \/home\/clodex\/\.\[!\.\]\* \/home\/clodex\/\*; do/);
   assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {2}fi/);
   assert.strictEqual((ENTRYPOINT.match(/chown/g) || []).length, 1);

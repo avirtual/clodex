@@ -1212,39 +1212,74 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
   assert.ok(!yaml.includes('library/templates'));
 });
 
-async function composeFor(platform) {
+async function composeFor(platform, { entrypoint = true, packaged = false, override = null, workDir = null } = {}) {
   const ud = freshUserData();
   const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const ctx = mkTmpDirIn(TMP_USERDATA, 'ctx-');
+  if (entrypoint) {
+    fs.mkdirSync(path.join(ctx, 'docker', 'web'), { recursive: true });
+    fs.writeFileSync(path.join(ctx, 'docker', 'web', 'entrypoint.sh'), '#!/bin/sh\n');
+  }
+  const infos = [];
   const sb = createSandbox({
-    getUiSettings: () => fakeSettings(),
+    getUiSettings: () => fakeSettings({ sandbox: { image: override, workDir } }),
     getUserDataPath: () => ud,
     registryDir: reg,
     isPortInUse: () => Promise.resolve(false),
-    repoRoot: '/repo',
+    repoRoot: ctx,
+    isPackaged: () => packaged,
+    appVersion: '9.9.9',
+    log: { info: (...a) => infos.push(a.join(' ')), error() {} },
     platform,
     userInfo: () => ({ uid: 1002, gid: 1003, username: 'op' }),
   });
   await sb.writeComposeFile();
   const plain = generateCompose({
-    image: DEV_IMAGE, ports: { web: 7810, wirescope: 7811, wire: 7820 }, workDir: null, authEnvFile: null,
+    image: resolveImage({ isPackaged: packaged, appVersion: '9.9.9', override, repoRoot: ctx }),
+    ports: { web: 7810, wirescope: 7811, wire: 7820 }, workDir, authEnvFile: null,
     libDir: reg, hostname: SANDBOX_PEER_ID, stateDir: sb.stateDir(),
   });
-  return { yaml: fs.readFileSync(sb.composePath(), 'utf8'), plain };
+  return { yaml: fs.readFileSync(sb.composePath(), 'utf8'), plain, infos };
 }
+
+const HOST_USER_LINE = /^    user: "0:0"$|^      CLODEX_HOST_(UID|GID): |^      CLODEX_WORK_VOLUME: /;
 
 test('writeComposeFile: on a linux host the box starts as root with the host uid/gid to remap to', async () => {
   const { yaml, plain } = await composeFor('linux');
-  const stripped = yaml.split('\n').filter((l) => !/^    user: "0:0"$|^      CLODEX_HOST_(UID|GID): /.test(l)).join('\n');
+  const stripped = yaml.split('\n').filter((l) => !HOST_USER_LINE.test(l)).join('\n');
   assert.strictEqual(stripped, plain);
   assert.ok(yaml.includes('\n    user: "0:0"\n    ports:\n'));
-  assert.ok(yaml.includes('\n      XDG_DATA_HOME: /home/clodex/.local/share\n      CLODEX_HOST_UID: "1002"\n      CLODEX_HOST_GID: "1003"\n'));
+  assert.ok(yaml.includes('\n      XDG_DATA_HOME: /home/clodex/.local/share\n      CLODEX_HOST_UID: "1002"\n      CLODEX_HOST_GID: "1003"\n      CLODEX_WORK_VOLUME: "1"\n'));
+});
+
+test('writeComposeFile: a linux box with a host workDir does not flag the work volume for chown', async () => {
+  const { yaml } = await composeFor('linux', { workDir: '/srv/project' });
+  assert.ok(yaml.includes('\n      CLODEX_HOST_GID: "1003"\n    volumes:\n'));
+  assert.ok(!yaml.includes('CLODEX_WORK_VOLUME'));
+});
+
+test('writeComposeFile: the packaged image of this version gets the linux root start', async () => {
+  const { yaml } = await composeFor('linux', { packaged: true, entrypoint: false });
+  assert.ok(yaml.includes('\n    image: ghcr.io/'));
+  assert.ok(yaml.includes('\n    user: "0:0"\n'));
+  assert.ok(yaml.includes('\n      CLODEX_HOST_UID: "1002"\n'));
+});
+
+test('writeComposeFile: on linux, an image that may lack the entrypoint is never started as root', async () => {
+  const noScript = await composeFor('linux', { entrypoint: false });
+  assert.strictEqual(noScript.yaml, noScript.plain);
+  assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(noScript.yaml));
+  const override = await composeFor('linux', { override: 'ghcr.io/example/clodex:0.1.0' });
+  assert.strictEqual(override.yaml, override.plain);
+  assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(override.yaml));
+  assert.ok(override.infos.some((l) => l.includes('ghcr.io/example/clodex:0.1.0') && l.includes('image user')));
 });
 
 test('writeComposeFile: on darwin and win32 the compose carries no user or host ids', async () => {
   for (const platform of ['darwin', 'win32']) {
     const { yaml, plain } = await composeFor(platform);
     assert.strictEqual(yaml, plain, platform);
-    assert.ok(!/user:|CLODEX_HOST_/.test(yaml), platform);
+    assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(yaml), platform);
   }
 });
 

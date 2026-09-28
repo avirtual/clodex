@@ -17,8 +17,12 @@ if [ "$(id -u clodex)" != "$CLODEX_HOST_UID" ] || [ "$(id -g clodex)" != "$CLODE
   sed -i "s/^clodex:\([^:]*\):[0-9]*:[0-9]*:/clodex:\1:$CLODEX_HOST_UID:$CLODEX_HOST_GID:/" /etc/passwd
 fi
 
+IMAGE_DEV=$(stat -c %d /app)
 for p in /data /home/clodex /home/clodex/work /home/clodex/.[!.]* /home/clodex/*; do
   [ -e "$p" ] || continue
+  if [ "$(stat -c %d "$p")" != "$IMAGE_DEV" ]; then
+    [ "$p" = /home/clodex/work ] && [ "$CLODEX_WORK_VOLUME" = 1 ] || continue
+  fi
   owner=$(stat -c %u "$p")
   if [ "$owner" = "$IMAGE_UID" ] && [ "$owner" != "$CLODEX_HOST_UID" ]; then
     chown -h "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"

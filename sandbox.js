@@ -265,6 +265,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   if (hostUser) {
     L.push(`      CLODEX_HOST_UID: "${hostUser.uid}"`);
     L.push(`      CLODEX_HOST_GID: "${hostUser.gid}"`);
+    if (!workDir) L.push('      CLODEX_WORK_VOLUME: "1"');
   }
   if (authEnvFile) {
     L.push('    env_file:');
@@ -623,8 +624,13 @@ function createSandbox(deps = {}) {
     return set;
   }
 
-  function hostUser() {
+  function hostUser(config, image) {
     if (platform !== 'linux') return null;
+    if (config.image) {
+      log.info('sandbox', `box ${id}: image override ${config.image} runs as the image user; the host uid remap needs the bundled entrypoint`);
+      return null;
+    }
+    if (image.kind === 'build' && !fs.existsSync(path.join(image.context, 'docker', 'web', 'entrypoint.sh'))) return null;
     const { uid, gid } = userInfo();
     return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
   }
@@ -647,7 +653,7 @@ function createSandbox(deps = {}) {
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
-      hostUser: hostUser(),
+      hostUser: hostUser(config, image),
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });

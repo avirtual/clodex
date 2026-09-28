@@ -43,7 +43,7 @@ FROM node:22-slim AS runtime
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git bash procps ca-certificates python3 python3-venv make g++ sudo \
-      curl jq vim less tree unzip zip ripgrep openssh-client \
+      curl jq vim less tree unzip zip ripgrep openssh-client util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
@@ -60,7 +60,8 @@ RUN mkdir -p /opt/muse \
 # etc.). Root-inside-the-container is fine — the container is the isolation
 # boundary, and the interesting state (volumes, host mounts) is reachable as
 # the clodex user already; the host library mounts stay ro either way.
-RUN useradd --create-home --shell /bin/bash clodex \
+RUN userdel -r node \
+ && useradd --uid 1001 --create-home --shell /bin/bash clodex \
  && printf 'clodex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/clodex \
  && chmod 0440 /etc/sudoers.d/clodex \
  && chown -R clodex:clodex /opt/muse
