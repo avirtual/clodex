@@ -203,7 +203,7 @@ test('t1104: team:addRole with no account logs the role line with the literal "a
 
 function mkDeleteDoor({
   manifest = 'ok', sessions = [], tickets = [], persisted = [],
-  sandboxed = false, removeResult = { ok: true }, sandboxManager,
+  sandboxed = false, removeResult = { ok: true }, sandboxManager, refreshThrows = false,
 } = {}) {
   const home = mkTmpRoot('ipc-del-home-');
   const root = mkTmpRoot('ipc-del-root-');
@@ -252,11 +252,13 @@ function mkDeleteDoor({
     loadManifest: tm.loadManifest,
     teamDeleteCheck: deleteCheck,
     teamDeleteGated: deleteGated,
-    refreshAppMenu: () => refreshed.push('app'),
+    refreshAppMenu: () => { refreshed.push('app'); if (refreshThrows) throw new Error('menu boom'); },
     refreshTrayMenu: () => refreshed.push('tray'),
+    agentLibrary: { save: (name) => [name] },
+    skillLibrary: { save: (name) => [name] },
   });
   return {
-    root, dir, manager, refreshed, calls, sandboxManager: mgr,
+    root, dir, manager, refreshed, calls, sandboxManager: mgr, handlers,
     check: () => handlers.get('team:deleteCheck')(null, 't'),
     del: () => handlers.get('team:delete')(null, 't'),
     exists: () => fs.existsSync(dir),
@@ -656,3 +658,27 @@ test('team:activity returns the loadManifest message when the team does not load
     assert.match(res.error, /team\.json is not valid JSON/);
   } finally { d.cleanup(); }
 });
+
+test('team:delete reports ok for a delete that landed even when the menu rebuild throws', async () => {
+  const d = mkDeleteDoor({ sessions: [], refreshThrows: true });
+  try {
+    const res = await d.del();
+    assert.ok(d.refreshed.includes('app'), 'ENTER: the throwing rebuild ran');
+    assert.strictEqual(res.ok, true, JSON.stringify(res));
+    assert.strictEqual(d.exists(), false);
+  } finally { d.cleanup(); }
+});
+
+for (const [channel, expected] of [
+  ['agents:save', { ok: true, agents: ['x'] }],
+  ['skilllib:save', { ok: true, skills: ['x'] }],
+]) {
+  test(`${channel} reports ok for a save that landed even when the menu rebuild throws`, () => {
+    const d = mkDeleteDoor({ refreshThrows: true });
+    try {
+      const res = d.handlers.get(channel)(null, 'x', 'body');
+      assert.deepStrictEqual(d.refreshed, ['app'], 'ENTER: the throwing rebuild ran');
+      assert.deepStrictEqual(res, expected);
+    } finally { d.cleanup(); }
+  });
+}

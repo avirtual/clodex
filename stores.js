@@ -107,6 +107,7 @@ const DEFAULT_UI_SETTINGS = {
   defaultSessionMode: 'optimized',
   discoverOnStartup: false,
   recentCwds: [],
+  recentCwdsByWorkspace: {},
   disableClaudeDesignMcp: false,
   theme: 'midnight',
   terminalWebgl: false,
@@ -149,6 +150,13 @@ function sanitizeSidePaneWidth(px) {
 
 function sanitizeDockSplit(f) {
   return typeof f === 'number' && f >= DOCK_SPLIT_MIN && f <= DOCK_SPLIT_MAX ? f : null;
+}
+
+function sanitizeRecentCwdsByWorkspace(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  return Object.fromEntries(Object.entries(raw)
+    .filter(([, list]) => Array.isArray(list))
+    .map(([wsId, list]) => [wsId, list.filter((c) => typeof c === 'string').slice(0, 12)]));
 }
 
 function defaultUiSettings() { return JSON.parse(JSON.stringify(DEFAULT_UI_SETTINGS)); }
@@ -1522,6 +1530,7 @@ function initStores(userDataPath, {
           defaultSessionMode: SESSION_MODES.includes(raw?.defaultSessionMode) ? raw.defaultSessionMode : DEFAULT_UI_SETTINGS.defaultSessionMode,
           discoverOnStartup: typeof raw?.discoverOnStartup === 'boolean' ? raw.discoverOnStartup : DEFAULT_UI_SETTINGS.discoverOnStartup,
           recentCwds: Array.isArray(raw?.recentCwds) ? raw.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : defaultUiSettings().recentCwds,
+          recentCwdsByWorkspace: sanitizeRecentCwdsByWorkspace(raw?.recentCwdsByWorkspace) || {},
           disableClaudeDesignMcp: typeof raw?.disableClaudeDesignMcp === 'boolean' ? raw.disableClaudeDesignMcp : DEFAULT_UI_SETTINGS.disableClaudeDesignMcp,
           theme: THEME_KEYS.includes(raw?.theme) ? raw.theme : DEFAULT_UI_SETTINGS.theme,
           terminalWebgl: raw?.terminalWebgl === true,
@@ -1618,6 +1627,7 @@ function initStores(userDataPath, {
         defaultSessionMode: SESSION_MODES.includes(partial?.defaultSessionMode) ? partial.defaultSessionMode : cur.defaultSessionMode,
         discoverOnStartup: partial?.discoverOnStartup ?? cur.discoverOnStartup,
         recentCwds: Array.isArray(partial?.recentCwds) ? partial.recentCwds.filter((c) => typeof c === 'string').slice(0, 12) : cur.recentCwds,
+        recentCwdsByWorkspace: sanitizeRecentCwdsByWorkspace(partial?.recentCwdsByWorkspace) || cur.recentCwdsByWorkspace,
         disableClaudeDesignMcp: partial?.disableClaudeDesignMcp ?? cur.disableClaudeDesignMcp,
         theme: THEME_KEYS.includes(partial?.theme) ? partial.theme : cur.theme,
         terminalWebgl: typeof partial?.terminalWebgl === 'boolean' ? partial.terminalWebgl : cur.terminalWebgl,
