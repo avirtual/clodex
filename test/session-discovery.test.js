@@ -72,10 +72,25 @@ test('scanClaudeDisk: sorts by the displayed key (lastActive) when it diverges f
   const readMeta = (file) => ({
     title: null,
     turns: null,
-    last: file.includes('newfile') ? now - 6000 : now - 500,
+    last: new Date(file.includes('newfile') ? now - 6000 : now - 500).toISOString(),
   });
   const rows = withHome(home, () => d.scanClaudeDisk({ readMeta }));
   assert.deepStrictEqual(rows.map((r) => r.sessionId), ['newmeta', 'newfile']);
+});
+
+test('scanClaudeDisk orders by lastActive when readMeta returns ISO timestamps, as readSessionMeta does', () => {
+  const now = Date.now();
+  const home = fakeProjects([
+    { slug: '-a', sessionId: 'older', cwd: '/a', mtimeMs: now - 1000 },
+    { slug: '-b', sessionId: 'newer', cwd: '/b', mtimeMs: now - 1000 },
+  ]);
+  const readMeta = (file) => ({
+    title: null,
+    turns: null,
+    last: file.includes('newer') ? '2026-09-20T00:00:00Z' : '2026-09-01T00:00:00Z',
+  });
+  const rows = withHome(home, () => d.scanClaudeDisk({ readMeta }));
+  assert.deepStrictEqual(rows.map((r) => r.sessionId), ['newer', 'older']);
 });
 
 test('scanClaudeDisk: honors the age cutoff', () => {
