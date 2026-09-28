@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Research-burst fixes: stores that never save over an unreadable file, a ticket loop that stamps and kills what it abandons, seats that reap and restore
+## Unreleased
+
+## 5.89.0 — 2026-09-28 — Research-burst fixes: stores that never save over an unreadable file, a ticket loop that stamps and kills what it abandons, seats that reap and restore
 
 - Team verbs: `[agent:team sandbox down]` on a team whose box is already gone now removes the stale sandbox.json the app menu was still offering; a seat-cost stamp that cannot read or write its cursor file is logged instead of silently dropped; `effort:` on a role refuses to overwrite a template another role shares, like `model:` already did.
 - Messaging: a dm from the `monitor`, `exec` or `wirescope` system senders no longer carries a "(no reply path)" marker; the system-sender list the delivery trailer and the transcript glyphs use is now one shared module instead of two hand-kept copies.
