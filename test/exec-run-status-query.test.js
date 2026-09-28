@@ -25,7 +25,7 @@ const settle = async () => {
   await new Promise((r) => setImmediate(r));
 };
 
-function harness({ grants = ['digest'], defs = { digest: LONG } } = {}) {
+function harness({ grants = ['digest'], defs = { digest: LONG }, onSpawn = null } = {}) {
   const REGISTRY_DIR = mkTmpRoot('clx-statusq-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
@@ -53,6 +53,7 @@ function harness({ grants = ['digest'], defs = { digest: LONG } } = {}) {
         ee.stderr = new EventEmitter();
         ee.kill = () => {};
         children.push(ee);
+        if (onSpawn) onSpawn(ee);
         return ee;
       },
     },
@@ -204,4 +205,53 @@ test('the reply stays inside 400 chars, cutting tails and never heads', async (t
       assert.ok(line.includes(`run #${seq} digest ok at 0m 0`), `head for run #${seq} kept: ${line}`);
     }
   } finally { cleanup(); }
+});
+
+test('a tracked run whose spawn fails asynchronously is not announced as started', async (t) => {
+  const { m, session, replies, cleanup } = harness({
+    onSpawn: (ee) => {
+      delete ee.pid;
+      process.nextTick(() => ee.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })));
+    },
+  });
+  try {
+    const notices = [];
+    m._injectTextPassive = (_s, text) => notices.push(text);
+    m._handleExecIntent(session, 'digest', '{}');
+    await settle();
+    assert.ok(replies.some((r) => r.includes('run failed (spawn ENOENT)')), `got: ${JSON.stringify(replies)}`);
+    assert.deepStrictEqual(notices.filter((text) => /started/.test(text)), []);
+  } finally { cleanup(); }
+});
+
+test('the status reply stays inside 400 chars with three running long-named runs, and never ends a tail on half a surrogate pair', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const N = 'a'.repeat(64);
+  const a = harness({ grants: [N], defs: { [N]: LONG } });
+  try {
+    for (let i = 0; i < 3; i++) {
+      a.m._handleExecIntent(a.session, N, '{}');
+      await settle();
+    }
+    a.m._handleExecIntent(a.session, 'status', '{}');
+    await settle();
+    const line = statusOf(a.replies);
+    assert.ok(line, 'a status reply arrived');
+    assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}: ${line}`);
+    assert.ok(line.endsWith(CLOSING), 'the instruction survives the cut');
+  } finally { a.cleanup(); }
+
+  const b = harness({ defs: { digest: { ...LONG, replyMaxBytes: 2000 } } });
+  try {
+    b.m._handleExecIntent(b.session, 'digest', '{}');
+    await settle();
+    b.children[0].stderr.emit('data', `x${'\u{1F600}'.repeat(300)}\n`);
+    b.children[0].emit('exit', 0, null);
+    b.m._handleExecIntent(b.session, 'status', '{}');
+    await settle();
+    const line = statusOf(b.replies);
+    assert.ok(line, 'a status reply arrived');
+    assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}`);
+    assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(line), 'no lone high surrogate at the cut');
+  } finally { b.cleanup(); }
 });

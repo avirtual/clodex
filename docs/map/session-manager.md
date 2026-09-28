@@ -4,7 +4,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed toward a 400-char cap | none (pure) | execElapsedLabel | unpinned |
+| `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed by code point, then each head's cmd clipped, to stay inside a 400-char cap | none (pure) | execElapsedLabel | unpinned |
 | `isScratchCutText` | true when a text starts with a scratch briefing prefix or the handoff-continue line, i.e. a manager-injected scratch cut | none | scratchRealArrivals | unpinned |
 | `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv; readOnly accepts the long, short and `--flag=value` spellings of the cap | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.hasReadOnlyCap, cli-adapters.resolveModelId | session-manager.test.js |
 | `escapeSafeTail` | last `max` code units of a buffer, advanced past an escape sequence or a low surrogate the cut would split | none (pure) | none | session-manager.test.js |
@@ -25,7 +25,6 @@
 
 ### Hazards
 
-- `execRunStatusReply` trims only the tails, so a long `cmd` in the heads alone can exceed the 400-char cap, and its per-code-unit trim can cut an emoji tail mid-surrogate.
 - `isScratchCutText` reads SCRATCH_CUT_TEXT_PREFIXES, which is defined further down the file, so calling it at module load would throw a TDZ ReferenceError.
 - `preseedClaudeOnboarding` writes through a tmp file and a rename, which replaces a symlinked `~/.claude.json` with a regular file instead of writing through the link.
 
@@ -210,7 +209,7 @@
 | `destroy` | end a seat for good: kill it, remove the worktree its record names, then drop record and seat dir only when nothing is stranded | sessions.json record, REGISTRY_DIR seat dir, worktree on disk | `kill` `_waitForExit` `clearHintForRecord` `gitWorktree.removeWorktree` | worktree-restart-preserve.test.js session-manager.test.js |
 | `archive` | stop a live seat but KEEP its record stamped archivedAt, so the row resumes with --resume | `s._archived`, sessions.json archivedAt | `_notifyComposition` `sigkillPid` `reapPtyDescendants` | reap-seat-descendants.test.js sigkill-pid-guard.test.js |
 | `_stopForRespawn` | the record-keeping stop shared by rename, move and moveToPeer: stream kill, or captured-pid SIGKILL timer plus descendant reap | none (the process only) | `sigkillPid` `reapPtyDescendants` | unpinned |
-| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, team lead pointer | `_stopForRespawn` `_waitForExit` `_renameDirs` `create` | session-rename.test.js |
+| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer | `_stopForRespawn` `_waitForExit` `_renameDirs` `create` | session-rename.test.js |
 
 ### Invariants
 
@@ -225,7 +224,6 @@
 
 - The full record-dropper set is CLAUDE.md's Session lifecycle list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
 - `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live; its comment calling that a second `clearHintForRecord` call is inaccurate.
-- `rename` writes a notice saying memory moved with the seat, but only renameSeat and `_renameDirs` (pending/) move state; anything else keyed by name, such as the memory load log `_moveShipment` ships, stays under the old name.
 - `rename` spells out the 26-argument `create` call a third time (with `move` and `moveToPeer`), so a new `create` parameter must be added to all three or a respawn silently drops it.
 
 ## move, moveToWorkspace, moveToPeer — move … moveToPeer
@@ -233,11 +231,11 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `move` | re-home a seat to a new local cwd: stop it, rewrite cwd, unarchive, respawn with --resume, announce a team change | `this._movingNames`, `s._moving`, sessions.json cwd and archivedAt | `_stopForRespawn` `_waitForExit` `create` `_notifyComposition` | session-move.test.js session-rename.test.js |
-| `moveToWorkspace` | reassign a seat (live or archived) to another workspace window with no kill or respawn | sessions.json workspaceId, `s.workspaceId` | `windowForWorkspace` `session-restore.liveSnapshotFor` `archivedSnapshotFor` | session-move-workspace.test.js session-move.test.js |
+| `moveToWorkspace` | reassign a seat (live or archived) to another workspace window with no kill or respawn; the old window always gets moved-out | sessions.json workspaceId, `s.workspaceId` | `windowForWorkspace` `session-restore.liveSnapshotFor` `archivedSnapshotFor` | session-move-workspace.test.js session-move.test.js |
 | `_moveBadSegment` | pre-flight: first seat-kind or pending/ relative path with a segment a peer would refuse, else null | none | `seatRelFiles` | unpinned |
 | `_moveRecord` | the record shipped to a peer: cwd set to the far cwd, MOVE_TO_PEER_OMIT keys removed, account carried by label | none | `getAccounts.labelFor` | unpinned |
 | `_moveShipment` | the file manifest for a peer move: transcript, every non-run seat kind, pending/<name>, memory load log, reminder rows | none | `seatRelFiles` `getReminders.listForAgent` | session-move-peer.test.js |
-| `moveToPeer` | ship a Claude seat's conversation and state to a peer, then keep a local archived backup stamped movedTo; respawn here if refused | `this._movingNames`, `s._moving`, sessions.json movedTo and archivedAt | `_moveRecord` `_moveShipment` `_stopForRespawn` `create` | session-move-peer.test.js session-move.test.js preserve-census.test.js |
+| `moveToPeer` | ship a Claude seat's conversation and state to a peer, then keep a local archived backup stamped movedTo; respawn here if refused and it was live here | `this._movingNames`, `s._moving`, sessions.json movedTo and archivedAt | `_moveRecord` `_moveShipment` `_stopForRespawn` `create` | session-move-peer.test.js session-move.test.js preserve-census.test.js |
 
 ### Invariants
 
@@ -251,10 +249,8 @@
 ### Hazards
 
 - `_moveBadSegment` and `_moveShipment` walk the same kind list (SEAT_KINDS minus run, plus pending/); widening one without the other lets a peer refuse a file mid-ship.
-- `moveToPeer` respawns locally after a far refusal whether or not the seat was live, so moving an archived seat that the peer refuses brings it up live here.
 - `moveToPeer` composes the transcript path from claudeHome() with no account dir, while `_moveRecord` knows the seat may run under another CLAUDE_CONFIG_DIR, so a non-live seat on another account can fail with transcript not found.
 - `moveToPeer` never calls importAbort when importShip returns ok false, unlike its exit-timeout and throw arms, so the peer may keep a stranded staged import.
-- `moveToWorkspace` sends session:moved-out only for a live seat but session:moved-in for archived and exited rows too, and the invoking renderer's moveSessionToWorkspace only toasts, so an archived or exited row appears in the new window while staying in the old one.
 
 ## Prompt, team block, roster and restart plumbing — clearHintForRecord … _accountForWireAgent
 
@@ -450,7 +446,7 @@
 |---|---|---|---|---|
 | `_handleRemindIntent` | runs `[agent:remind]` list, cancel or schedule, refusing a `for <ticket>` binding to a missing or terminal ticket | remind scheduler records via sched.add and sched.cancel | parseRemindSpec, ticketTerminalReason, `_injectText`, `_broadcast` | ticket-reminder-binding.test.js session-manager.test.js body-preview.test.js spill-resolve-intent.test.js |
 | `_resolveExecDefs` | maps a seat's execCommands grants to name, description and schema prompt shapes, degrading to the bare id string | none (reads team exec defs and REGISTRY_DIR/library/exec) | readTeamJson, isFilenameToken | team-templates-exec.test.js session-rename.test.js intent-checklist-seam.test.js |
-| `_handleExecIntent` | runs a granted registry command with the validated payload on stdin, tracking long runs with status notices, timeout and status query | `session.execRuns`, exec run ledger via `_writeExecLedger`, child process, timeout and status timers | execRunStatusReply, parseAndValidate, childProcess.spawn, `_writeExecLedger` | exec-run-status.test.js exec-run-status-query.test.js exec-run-lost-restart.test.js exec-team-root.test.js |
+| `_handleExecIntent` | runs a granted registry command with the validated payload on stdin, tracking long runs (only once the child has a pid) with status notices, timeout and status query | `session.execRuns`, exec run ledger via `_writeExecLedger`, child process, timeout and status timers | execRunStatusReply, parseAndValidate, childProcess.spawn, `_writeExecLedger` | exec-run-status.test.js exec-run-status-query.test.js exec-run-lost-restart.test.js exec-team-root.test.js |
 | `_handleTermIntent` | runs `[agent:term exec]` on the sender's own terminal tab; the result arrives later on the selection queue | none (side effect inside termExec) | termAvailableFor, termExec, `_injectText`, `_broadcast` | term-busy-names-program.test.js host-log-mask.test.js session-manager.test.js |
 | `_handleFileIntent` | vets and opens a file externally or shows it in the seat's window, rate-limited to 5 per 30s | `session._fileIntentTs` | vetFileIntent, openPath, `windowForSession` | unpinned |
 | `_maybeDeliverDigest` | delivers the memory boot digest as a memory DM to a live idle Claude seat whose current conversation is not yet digested | persistence markDigested, memLoad digest observation | memoryStore.list, composeDigest, `_deliverMessage` | session-manager.test.js worktree-restart-preserve.test.js file-view-api.test.js spill-resolve-intent.test.js |
@@ -476,7 +472,6 @@
 - `_coldRespawn` and `_scratchRespawn` each hand-copy the positional create() arguments, so a new create() parameter must be threaded into both or respawned seats silently lose it.
 - `_handleMemoryIntent` keeps setPinned and the digest refresh in one try for pin and unpin, so a digest-write throw reports "could not pin" for a pin that was already stored.
 - `_maybeDeliverDigest` marks the conversation digested before `_deliverMessage` inside a swallow-all catch, so a throwing delivery leaves a digest marked that never arrived.
-- `_handleExecIntent` records child.pid before an asynchronous spawn error can fire, so a tracked run with a missing binary logs and announces pid undefined before its failure reply.
 - `_handleMemoryIntent` parses directive keys with one regex alternation that stops at the first unknown key, so a new key left out of it strands every directive behind it.
 
 ## Scratch cut — _handleScratchIntent … _recordScratchDispatch

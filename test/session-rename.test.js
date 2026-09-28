@@ -363,6 +363,20 @@ test('rename works on a NOT-LIVE seat — no process to kill', async () => {
   assert.strictEqual(created.length, 1, 'it is respawned under the new name');
 });
 
+test('rename moves the seat\'s memory load log with it', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const logDir = pathReal.join(root, 'library', 'memory-loadlog');
+  fsReal.mkdirSync(logDir, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(logDir, 'seat.jsonl'), '{"n":1}\n');
+  const { m } = mkRename({ root, entries: [BASE] });
+  seedLive(m, 'seat');
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.ok(fsReal.existsSync(pathReal.join(logDir, 'newseat.jsonl')), 'the log is under the new name');
+  assert.ok(!fsReal.existsSync(pathReal.join(logDir, 'seat.jsonl')), 'nothing is left for the next seat named seat');
+});
+
 test('rename sets _moving before killing the pty — the exit must not read as a crash', async () => {
   const root = mkTmpRoot('clodex-rename-');
   seedDirs(root, 'seat');
