@@ -21,7 +21,7 @@ const EXPECTED_MAPS = [
 
   // 'renderer.md',
 
-  // 'session-manager.md',
+  'session-manager.md',
 
   // 'stores.md',
 
