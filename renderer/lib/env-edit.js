@@ -12,6 +12,7 @@
 // Same grammar as env-scopes.ENV_KEY_RE, and the same single deny key.
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const DENY = new Set(['CLODEX_REMOTE_TOKEN']);
+const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
 
 // Parse KEY=value lines into { env, skipped }. Blank lines and lines whose first
 // non-space char is `#` are ignored silently (comments). A line with no `=`, an
@@ -25,9 +26,8 @@ const DENY = new Set(['CLODEX_REMOTE_TOKEN']);
 function parseEnvLines(text) {
   const env = {};
   const skipped = [];
-  const lines = String(text == null ? '' : text).split('\n');
-  for (let raw of lines) {
-    raw = raw.replace(/\r$/, '');
+  const lines = String(text == null ? '' : text).split(/\r\n?|\n/u);
+  for (const raw of lines) {
     const trimmedLead = raw.replace(/^\s+/, '');
     if (!trimmedLead) continue; // blank
     if (trimmedLead[0] === '#') continue; // comment
@@ -37,6 +37,7 @@ function parseEnvLines(text) {
     const value = raw.slice(eq + 1);
     if (!KEY_RE.test(key)) { skipped.push({ line: raw, reason: `invalid env key "${key}"` }); continue; }
     if (DENY.has(key)) { skipped.push({ line: raw, reason: `${key} is reserved` }); continue; }
+    if (UNSAFE.has(key)) { skipped.push({ line: raw, reason: `${key} is a reserved name` }); continue; }
     env[key] = value;
   }
   return { env, skipped };

@@ -25563,27 +25563,42 @@ ${i3.join("\n")}
       function diffLineNumbers(lines) {
         let oldN = null;
         let newN = null;
+        let oldLeft = 0;
+        let newLeft = 0;
         return lines.map((ln) => {
           if (ln.startsWith("@@")) {
-            const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(ln);
+            const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(ln);
             oldN = m ? Number(m[1]) : null;
-            newN = m ? Number(m[2]) : null;
-            return null;
+            newN = m ? Number(m[3]) : null;
+            oldLeft = m ? Number(m[2] ?? 1) : 0;
+            newLeft = m ? Number(m[4] ?? 1) : 0;
+            return { n: null, inHunk: false };
           }
-          if (oldN == null || ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index ") || ln.startsWith("\\") || ln === "") return null;
-          if (ln.startsWith("+")) return newN++;
-          if (ln.startsWith("-")) return oldN++;
+          const inHunk = oldLeft > 0 || newLeft > 0;
+          if (oldN == null || ln.startsWith("\\") || ln === "") return { n: null, inHunk };
+          if (!inHunk && (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index "))) return { n: null, inHunk };
+          if (ln.startsWith("+")) {
+            newLeft = Math.max(0, newLeft - 1);
+            return { n: newN++, inHunk };
+          }
+          if (ln.startsWith("-")) {
+            oldLeft = Math.max(0, oldLeft - 1);
+            return { n: oldN++, inHunk };
+          }
+          oldLeft = Math.max(0, oldLeft - 1);
+          newLeft = Math.max(0, newLeft - 1);
           oldN++;
-          return newN++;
+          return { n: newN++, inHunk };
         });
       }
       function renderDiffHtml(diff, opts = {}) {
         const lines = diff.split("\n");
-        const nums = opts.lineNumbers ? diffLineNumbers(lines) : null;
-        const w = nums ? String(Math.max(1, ...nums.map((n) => n == null ? 0 : n))).length : 0;
+        const state = diffLineNumbers(lines);
+        const nums = opts.lineNumbers ? state.map((st) => st.n) : null;
+        const w = nums ? String(nums.reduce((m, n) => n != null && n > m ? n : m, 1)).length : 0;
         return lines.map((ln, i) => {
           let cls = "diff-ctx";
-          if (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index ")) cls = "diff-file";
+          if (!state[i].inHunk && (ln.startsWith("+++") || ln.startsWith("---") || ln.startsWith("diff ") || ln.startsWith("index "))) cls = "diff-file";
           else if (ln.startsWith("@@")) cls = "diff-hunk";
           else if (ln.startsWith("+")) cls = "diff-add";
           else if (ln.startsWith("-")) cls = "diff-del";
@@ -25649,7 +25664,7 @@ ${i3.join("\n")}
         const healBadge = inherentCompact ? '<span class="bust-badge bust-badge-heal">/compact rewrote messages[0] \xB7 inherent</span>' : deployTax ? '<span class="bust-badge bust-badge-heal">one-time deploy tax \xB7 self-heals</span>' : "";
         const hint = t.fix_hint && !calm ? `<div class="bust-hint">${esc(t.fix_hint)}</div>` : "";
         const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` \xB7 ${Math.round(t.write_frac * 100)}%` : ""}</span>`;
-        const turnLink = base && sid && t.i != null ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (\u2318-click for browser)">turn ${t.i} \u2192</span>` : `<span class="bust-turn-static">turn ${t.i != null ? t.i : "?"}</span>`;
+        const turnLink = base && sid && t.i != null ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (\u2318-click for browser)">turn ${esc(String(t.i))} \u2192</span>` : `<span class="bust-turn-static">turn ${t.i != null ? esc(String(t.i)) : "?"}</span>`;
         const stampStr = t.ts ? fmtBustStamp(t.ts) : "";
         const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : "";
         const oldSnip = typeof loc.old === "string" ? loc.old : "";
@@ -27549,12 +27564,12 @@ ${i3.join("\n")}
     "renderer/lib/env-edit.js"(exports, module) {
       var KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
       var DENY = /* @__PURE__ */ new Set(["CLODEX_REMOTE_TOKEN"]);
+      var UNSAFE = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
       function parseEnvLines(text) {
         const env = {};
         const skipped = [];
-        const lines = String(text == null ? "" : text).split("\n");
-        for (let raw of lines) {
-          raw = raw.replace(/\r$/, "");
+        const lines = String(text == null ? "" : text).split(/\r\n?|\n/u);
+        for (const raw of lines) {
           const trimmedLead = raw.replace(/^\s+/, "");
           if (!trimmedLead) continue;
           if (trimmedLead[0] === "#") continue;
@@ -27571,6 +27586,10 @@ ${i3.join("\n")}
           }
           if (DENY.has(key)) {
             skipped.push({ line: raw, reason: `${key} is reserved` });
+            continue;
+          }
+          if (UNSAFE.has(key)) {
+            skipped.push({ line: raw, reason: `${key} is a reserved name` });
             continue;
           }
           env[key] = value;
@@ -27901,6 +27920,9 @@ ${i3.join("\n")}
       function shellQuotePath(p) {
         const s = String(p);
         if (BARE_SAFE.test(s)) return s;
+        if (/[\x00-\x1f\x7f]/u.test(s)) {
+          return `$'${s.replace(/[\\'\x00-\x1f\x7f]/gu, (c) => c === "\\" || c === "'" ? `\\${c}` : `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`)}'`;
+        }
         return `'${s.replace(/'/g, `'\\''`)}'`;
       }
       var AT_SAFE = /^[A-Za-z0-9_\/.+,~= -]+$/;
@@ -31232,6 +31254,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var VOICE_STOP_TRIES = 2;
       var PASTE_OPEN = "\x1B[200~";
       var PASTE_CLOSE = "\x1B[201~";
+      function bracketPaste(text) {
+        return `${PASTE_OPEN}${String(text).replace(/\x1b\[20[01]~/gu, "")}${PASTE_CLOSE}`;
+      }
       function applyDraft(value, span, text) {
         const v = typeof value === "string" ? value : "";
         let start = -1;
@@ -31559,7 +31584,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             markOrigin();
           } catch {
           }
-          write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
+          write(bracketPaste(text));
           write("\r");
         };
         const submit = () => {
@@ -31635,7 +31660,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         VOICE_QUIET_MS,
         VOICE_RELEASE_MS,
         PASTE_OPEN,
-        PASTE_CLOSE
+        PASTE_CLOSE,
+        bracketPaste
       };
     }
   });
@@ -31644,10 +31670,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_pty_composer = __commonJS({
     "renderer/lib/pty-composer.js"(exports, module) {
       "use strict";
-      var { PASTE_OPEN, PASTE_CLOSE } = require_composer_voice();
+      var { bracketPaste } = require_composer_voice();
       var IMAGE_CHIP_RE = /\[Image #(\d+)\] ?/gu;
       function ptyComposerWrites(text) {
-        return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, "\r"];
+        return [bracketPaste(text), "\r"];
       }
       function pasteKind(items) {
         const list = Array.from(items || []);
@@ -31660,7 +31686,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function expandImageChips(text, paths) {
         const map = paths || {};
-        return String(text).replace(IMAGE_CHIP_RE, (chip, n) => map[n] ? `Image #${n}: ${map[n]} ` : "");
+        return String(text).replace(IMAGE_CHIP_RE, (chip, n) => {
+          if (!Object.hasOwn(map, n)) return chip;
+          return map[n] ? `Image #${n}: ${map[n]} ` : "";
+        });
       }
       function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, writePty }) {
         return async (e) => {
@@ -31718,13 +31747,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_menu_mirror = __commonJS({
     "renderer/lib/menu-mirror.js"(exports, module) {
       "use strict";
-      var { PASTE_OPEN, PASTE_CLOSE } = require_composer_voice();
+      var { bracketPaste } = require_composer_voice();
       var BACKSPACE = "\x7F";
       var ESCAPE = "\x1B";
       var MIRROR_DRAFT = /^\/\S*$/u;
       var ARROWS = { ArrowDown: "\x1B[B", ArrowUp: "\x1B[A" };
       var isMirrorDraft = (text) => typeof text === "string" && MIRROR_DRAFT.test(text);
-      var paste = (text) => `${PASTE_OPEN}${text}${PASTE_CLOSE}`;
+      var paste = bracketPaste;
       var lengthOf = (text) => Array.from(text).length;
       var completionOf = (name) => String(name || "").split(/\s/u)[0];
       function createMenuMirror() {
@@ -34865,6 +34894,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         function openPromptEditor(prompt2 = null, bundle = null, teamOwner = null) {
           editingPromptBundle = bundle;
           editingPromptTeam = teamOwner && teamOwner.team || null;
+          promptName.style.borderColor = "";
           if (prompt2) {
             editingPrompt = { kind: prompt2.kind, name: prompt2.name };
             if (editingPromptTeam) promptEditorTitle.textContent = `Edit Prompt \u2014 team ${editingPromptTeam}`;
@@ -34939,13 +34969,20 @@ Opening it here and saving would overwrite the file with what this editor could 
             const res = await window.api.removeTeamPrompt(editingPromptTeam, editingPrompt.kind, editingPrompt.name);
             if (res && res.ok === false) alert(`Could not delete it: ${res.error || "unknown error"}`);
           } else {
-            await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+            const res = await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+            if (res && res.ok === false) {
+              alert(`Could not delete it: ${res.error || "unknown error"}`);
+              return;
+            }
           }
           closePromptEditor();
           refreshPromptsList();
         });
         promptName.addEventListener("keydown", (e) => e.stopPropagation());
         promptBody.addEventListener("keydown", (e) => e.stopPropagation());
+        promptName.addEventListener("input", () => {
+          promptName.style.borderColor = "";
+        });
         const agentsDrawer = document.getElementById("agents-drawer");
         const agentsListEl = document.getElementById("agents-list");
         const agentsEmpty = document.getElementById("agents-empty");
@@ -35057,7 +35094,7 @@ Opening it here and saving would overwrite the file with what this editor could 
             alert(`Save agent failed: ${res && res.error ? res.error : "unknown error"}`);
             return;
           }
-          if (editingAgentName && editingAgentName !== name) {
+          if (editingAgentName && editingAgentName.toLowerCase() !== name.toLowerCase()) {
             await window.api.removeAgent(editingAgentName);
           }
           closeAgentEditor();
@@ -35067,7 +35104,11 @@ Opening it here and saving would overwrite the file with what this editor could 
         agentDelete.addEventListener("click", async () => {
           if (!editingAgentName) return;
           if (!confirm(`Delete agent "${editingAgentName}"?`)) return;
-          await window.api.removeAgent(editingAgentName);
+          const res = await window.api.removeAgent(editingAgentName);
+          if (res && res.ok === false) {
+            alert(`Could not delete it: ${res.error || "unknown error"}`);
+            return;
+          }
           closeAgentEditor();
           refreshAgentsList();
         });
@@ -35185,7 +35226,7 @@ Opening it here and saving would overwrite the file with what this editor could 
             alert(`Save skill failed: ${res && res.error ? res.error : "unknown error"}`);
             return;
           }
-          if (editingSkillName && editingSkillName !== name) {
+          if (editingSkillName && editingSkillName.toLowerCase() !== name.toLowerCase()) {
             await window.api.removeSkillLib(editingSkillName);
           }
           closeSkillEditor();
@@ -35195,7 +35236,11 @@ Opening it here and saving would overwrite the file with what this editor could 
         skillDelete.addEventListener("click", async () => {
           if (!editingSkillName) return;
           if (!confirm(`Delete skill "${editingSkillName}"?`)) return;
-          await window.api.removeSkillLib(editingSkillName);
+          const res = await window.api.removeSkillLib(editingSkillName);
+          if (res && res.ok === false) {
+            alert(`Could not delete it: ${res.error || "unknown error"}`);
+            return;
+          }
           closeSkillEditor();
           refreshSkillsLibList();
         });
@@ -35296,7 +35341,7 @@ Opening it here and saving would overwrite the file with what this editor could 
             alert(`Save exec command failed: ${res && res.error ? res.error : "unknown error"}`);
             return;
           }
-          if (editingExecName && editingExecName !== name) {
+          if (editingExecName && editingExecName.toLowerCase() !== name.toLowerCase()) {
             await window.api.removeExecCommand(editingExecName);
           }
           closeExecEditor();
@@ -35306,7 +35351,11 @@ Opening it here and saving would overwrite the file with what this editor could 
         execDelete.addEventListener("click", async () => {
           if (!editingExecName) return;
           if (!confirm(`Delete exec command "${editingExecName}"?`)) return;
-          await window.api.removeExecCommand(editingExecName);
+          const res = await window.api.removeExecCommand(editingExecName);
+          if (res && res.ok === false) {
+            alert(`Could not delete it: ${res.error || "unknown error"}`);
+            return;
+          }
           closeExecEditor();
           refreshExecList();
         });
@@ -38968,12 +39017,14 @@ void main() {
   // renderer/popovers/report-panel.js
   var require_report_panel = __commonJS({
     "renderer/popovers/report-panel.js"(exports, module) {
-      var { esc, fmtTokens, fmtUsd, fmtDur, shortTs } = require_format();
+      var { esc, fmtTokens, fmtUsd, fmtDur, shortTs, fmtAgo } = require_format();
       var { REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       function initReportPanel({ popoverApi, ctxCatLabel }) {
         const reportOverlay = document.getElementById("report-overlay");
         const reportNameEl = document.getElementById("report-name");
         const reportBody = document.getElementById("report-body");
+        const num = (v) => typeof v === "number" && isFinite(v) ? v : 0;
+        let reportSeq = 0;
         function closeReportPanel() {
           reportOverlay.classList.add("hidden");
           reportOverlay.dataset.name = "";
@@ -38983,14 +39034,16 @@ void main() {
           reportOverlay.dataset.name = name;
           reportBody.innerHTML = '<div class="rep-note">Analyzing session capture\u2026</div>';
           reportOverlay.classList.remove("hidden");
+          const my = ++reportSeq;
           const res = await popoverApi(name).report();
-          if (reportOverlay.dataset.name !== name || reportOverlay.classList.contains("hidden")) return;
+          if (my !== reportSeq || reportOverlay.dataset.name !== name || reportOverlay.classList.contains("hidden")) return;
           if (!res || !res.ok) {
             reportBody.innerHTML = `<div class="rep-note">${esc(res && res.error ? res.error : "Report unavailable")}</div>`;
             return;
           }
+          const stale = res.stale ? `<div class="rep-note">showing the last successful report (${esc(fmtAgo(res.at || Date.now()))})${res.error ? " \u2014 " + esc(String(res.error)) : ""}</div>` : "";
           try {
-            reportBody.innerHTML = renderReport(res.data);
+            reportBody.innerHTML = stale + renderReport(res.data);
           } catch (e) {
             reportBody.innerHTML = `<div class="rep-note">Could not render report: ${esc(String(e && e.message || e))}</div>`;
           }
@@ -39020,7 +39073,7 @@ void main() {
           const rows = w.by_type.map((t) => {
             const conf = t.confidence || "medium";
             const meta = [`<span class="rep-conf rep-conf-${esc(conf)}">${esc(conf)}</span>`];
-            if (t.items) meta.push(`<span>${t.items} item${t.items === 1 ? "" : "s"}</span>`);
+            if (num(t.items)) meta.push(`<span>${num(t.items)} item${t.items === 1 ? "" : "s"}</span>`);
             if (t.tokens) meta.push(`<span>${fmtTokens(t.tokens)} tok</span>`);
             return `<div class="rep-find"><div class="rep-find-top"><span class="rep-find-title">${esc(WASTE_LABELS[t.type] || t.type)}</span><span class="rep-find-usd">${fmtUsd(t.usd)}</span></div><div class="rep-find-meta">${meta.join("")}</div></div>`;
           }).join("");
@@ -39033,14 +39086,14 @@ void main() {
           const sc = d.scope || {};
           const subs = (sc.agents || []).filter((a) => a.line === "subagent");
           const span = sc.first_ts && sc.last_ts ? ` \xB7 ${esc(shortTs(sc.first_ts))} \u2192 ${esc(shortTs(sc.last_ts))}` : "";
-          const scope = `${sc.requests || 0} requests \xB7 ${sc.turns || 0} turns` + (subs.length ? ` \xB7 ${subs.length} subagent line${subs.length === 1 ? "" : "s"}` : "") + (sc.models && sc.models.length ? ` \xB7 ${esc(sc.models.join(", "))}` : "") + span;
+          const scope = `${num(sc.requests)} requests \xB7 ${num(sc.turns)} turns` + (subs.length ? ` \xB7 ${subs.length} subagent line${subs.length === 1 ? "" : "s"}` : "") + (sc.models && sc.models.length ? ` \xB7 ${esc(sc.models.join(", "))}` : "") + span;
           return `<div class="rep-verdict"><div class="rep-score rep-rating-${esc(rating)}"><span class="n">${score}</span><span class="l">${esc(rating)}</span></div><div class="rep-verdict-text"><div class="rep-headline">${esc(v.headline || "")}</div><div class="rep-reclaim">Reclaimable: <b>${fmtUsd(v.reclaimable_usd_total)}</b>` + (typeof v.reclaimable_pct === "number" ? ` (${v.reclaimable_pct}% of spend)` : "") + (v.confidence ? ` \xB7 ${esc(v.confidence)} confidence` : "") + `</div></div></div><div class="rep-scope">${scope}</div>`;
         }
         function renderCostDecomp(c) {
           if (!c || !Array.isArray(c.by_bucket)) return "";
           const total = c.total_usd || 0;
           const bars = c.by_bucket.map((b) => `<i style="width:${Math.max(0.5, b.pct || 0)}%;background:${REP_BUCKET_COLOR[b.bucket] || "#888"}" title="${esc(REP_BUCKET_LABEL[b.bucket] || b.bucket)} ${fmtUsd(b.usd)}"></i>`).join("");
-          const legend = c.by_bucket.map((b) => `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_BUCKET_COLOR[b.bucket] || "#888"}"></span><span class="rep-leg-name">${esc(REP_BUCKET_LABEL[b.bucket] || b.bucket)}</span><span class="rep-leg-nums">${fmtUsd(b.usd)} \xB7 ${b.pct}%</span></div>`).join("");
+          const legend = c.by_bucket.map((b) => `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_BUCKET_COLOR[b.bucket] || "#888"}"></span><span class="rep-leg-name">${esc(REP_BUCKET_LABEL[b.bucket] || b.bucket)}</span><span class="rep-leg-nums">${fmtUsd(b.usd)} \xB7 ${num(b.pct)}%</span></div>`).join("");
           let miss = "";
           const m = c.cache_misses;
           if (m && m.count > 0) {
@@ -39066,7 +39119,7 @@ void main() {
           const cats = (p.by_category || []).map((c) => ({ category: c.category, v: vget(c, "tokens_per_request", "tokens_per_turn") || 0 })).filter((c) => c.v > 0);
           const bars = cats.map((c) => `<i style="width:${Math.max(0.5, per ? c.v / per * 100 : 0)}%;background:${REP_CAT_COLOR[c.category] || "#888"}" title="${esc(ctxCatLabel(c.category))} ${fmtTokens(c.v)}${unit}"></i>`).join("");
           const legend = cats.map((c) => `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_CAT_COLOR[c.category] || "#888"}"></span><span class="rep-leg-name">${esc(ctxCatLabel(c.category))}</span><span class="rep-leg-nums">${fmtTokens(c.v)}${unit}</span></div>`).join("");
-          const sub = `<div class="rep-sub">${fmtTokens(per)}${unit} re-sent ${resent}\xD7 = ${fmtTokens(p.total_resent_tokens || 0)} total` + (unused ? ` \xB7 <b>${fmtTokens(unused)}${unit} never used</b>` : "") + (p.stable === false ? " \xB7 estimate" : "") + `</div>`;
+          const sub = `<div class="rep-sub">${fmtTokens(per)}${unit} re-sent ${num(resent)}\xD7 = ${fmtTokens(p.total_resent_tokens || 0)} total` + (unused ? ` \xB7 <b>${fmtTokens(unused)}${unit} never used</b>` : "") + (p.stable === false ? " \xB7 estimate" : "") + `</div>`;
           return `<div class="rep-sec"><div class="rep-sec-head">Your request preamble (reloaded every ${perReq ? "request" : "turn"})</div><div class="rep-stack">${bars}</div><div class="rep-legend">${legend}</div>${sub}</div>`;
         }
         const isMainCarriage = (f) => /^main_[a-z]+_carriage$/.test(f.category || "");
@@ -44128,7 +44181,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return;
           }
           setStatus(okMsg || "");
-          await refresh(teamName());
+          const bound = teamName();
+          if (bound) await refresh(bound);
         }
         let promptNames = [];
         let allPromptNames = [];
@@ -44217,6 +44271,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const ok = await refresh(name);
           if (!ok) {
             popover.dataset.name = "";
+            popover.classList.add("hidden");
             return;
           }
           popover.classList.remove("hidden");
@@ -44237,10 +44292,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const name = teamName();
           if (!name || !role) return;
           const act = btn.dataset.act;
+          if (act !== "save" && act !== "create-lead" && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           if (act === "disclose") {
             expandedRole = expandedRole === role ? null : role;
             const res = await window.api.teamGet(name);
-            if (res && res.ok) renderRows(res.team);
+            if (res && res.ok && teamName() === name) renderRows(res.team);
             return;
           }
           if (act === "set-lead") {
@@ -44367,6 +44423,7 @@ You can add it back from this popover.` : "";
             confirm2.type = "button";
             confirm2.textContent = `Copy ${todo.length} piece${todo.length === 1 ? "" : "s"} into the team directory`;
             confirm2.addEventListener("click", async () => {
+              if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
               confirm2.disabled = true;
               let applied;
               try {
@@ -44415,6 +44472,7 @@ You can add it back from this popover.` : "";
         addBtn.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
+          if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           const addReveal = fieldReveal(addDispatch.value, { cwd: "", template: "" });
           const v = validateAddRole({
             name: addName.value,
@@ -44443,6 +44501,7 @@ You can add it back from this popover.` : "";
         watchdogSet.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
+          if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           if (!watchdogInput.value.trim()) {
             const res2 = await window.api.teamSetWatchdog(name, null);
             await afterMutation(res2, "watchdog cleared (back to default)");
@@ -44462,6 +44521,7 @@ You can add it back from this popover.` : "";
         watchdogClear.addEventListener("click", async () => {
           const name = teamName();
           if (!name) return;
+          if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           const res = await window.api.teamSetWatchdog(name, null);
           await afterMutation(res, "watchdog cleared (back to default)");
         });
@@ -50291,7 +50351,7 @@ ${detail}` });
             append: (added) => {
               for (const { n, chip, path } of added) {
                 composerEl.value += chip;
-                if (path) pastedImagePaths[n] = path;
+                pastedImagePaths[n] = path || null;
               }
               if (menuMirror.on()) syncMenuMirror();
               const end = composerEl.value.length;

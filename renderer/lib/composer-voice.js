@@ -8,6 +8,10 @@ const VOICE_STOP_TRIES = 2;
 const PASTE_OPEN = '\x1b[200~';
 const PASTE_CLOSE = '\x1b[201~';
 
+function bracketPaste(text) {
+  return `${PASTE_OPEN}${String(text).replace(/\x1b\[20[01]~/gu, '')}${PASTE_CLOSE}`;
+}
+
 function applyDraft(value, span, text) {
   const v = typeof value === 'string' ? value : '';
   let start = -1;
@@ -206,7 +210,7 @@ function createPtyVoiceDraft({
     value = '';
     if (!text) return;
     try { markOrigin(); } catch {}
-    write(`${PASTE_OPEN}${text}${PASTE_CLOSE}`);
+    write(bracketPaste(text));
     write('\r');
   };
   const submit = () => {
@@ -249,5 +253,5 @@ function createPtyVoiceDraft({
 
 module.exports = {
   applyDraft, createComposerTrigger, attachTriggerSubmit, createPtyVoiceDraft,
-  VOICE_QUIET_MS, VOICE_RELEASE_MS, PASTE_OPEN, PASTE_CLOSE,
+  VOICE_QUIET_MS, VOICE_RELEASE_MS, PASTE_OPEN, PASTE_CLOSE, bracketPaste,
 };

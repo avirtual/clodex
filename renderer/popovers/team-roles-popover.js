@@ -1061,7 +1061,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       return;
     }
     setStatus(okMsg || '');
-    await refresh(teamName());
+    const bound = teamName();
+    if (bound) await refresh(bound);
   }
 
   // Populate the add-role prompt picker, rail-filtered and scoped to THIS team
@@ -1162,7 +1163,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     settingsBtn.setAttribute('aria-expanded', 'false');
     popover.dataset.name = name;
     const ok = await refresh(name);
-    if (!ok) { popover.dataset.name = ''; return; } // not a team / unreadable → show nothing
+    if (!ok) { popover.dataset.name = ''; popover.classList.add('hidden'); return; } // not a team / unreadable → show nothing
     popover.classList.remove('hidden');
     // Anchor just below the header, clamped to the viewport. anchorRect absorbs
     // the anchor-less open the Teams menu (t288) performs.
@@ -1185,6 +1186,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     const name = teamName();
     if (!name || !role) return;
     const act = btn.dataset.act;
+    if (act !== 'save' && act !== 'create-lead' && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     if (act === 'disclose') {
       // ONE row open at a time: this assignment IS the collapse of the previous
       // one, since renderRows reads a single key. Re-render rather than toggling
@@ -1192,7 +1194,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       // by construction instead of by two code paths kept in step.
       expandedRole = expandedRole === role ? null : role;
       const res = await window.api.teamGet(name);
-      if (res && res.ok) renderRows(res.team);
+      if (res && res.ok && teamName() === name) renderRows(res.team);
       return;
     }
     if (act === 'set-lead') {
@@ -1352,6 +1354,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       confirm.type = 'button';
       confirm.textContent = `Copy ${todo.length} piece${todo.length === 1 ? '' : 's'} into the team directory`;
       confirm.addEventListener('click', async () => {
+        if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
         confirm.disabled = true;
         let applied;
         try { applied = await window.api.teamGather(name, {}); } catch { applied = null; }
@@ -1391,6 +1394,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   addBtn.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
+    if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     // The template is validated only when the chosen dispatch actually consumes
     // it: a `foo/bar` typed under spawn and then switched to standing is off
     // screen, and erroring about a field the operator cannot see is a dead end.
@@ -1445,6 +1449,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   watchdogSet.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
+    if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     // MF-1 (Slice-4 review): every hint promises "blank = default", so blank+Set
     // must BE Clear — not a parse error contradicting the hint the user just read.
     if (!watchdogInput.value.trim()) {
@@ -1469,6 +1474,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   watchdogClear.addEventListener('click', async () => {
     const name = teamName();
     if (!name) return;
+    if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     const res = await window.api.teamSetWatchdog(name, null);
     await afterMutation(res, 'watchdog cleared (back to default)');
   });

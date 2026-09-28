@@ -62,3 +62,14 @@ test('dropText claude style: @-mentions, per-path shell fallback for unmentionab
 test('dropText default style: shell quoting unchanged', () => {
   assert.strictEqual(dropText(['/a/b', '/c d']), `/a/b '/c d' `);
 });
+
+test('dropText never emits a raw control byte, whatever the filename contains', () => {
+  const paths = ['/tmp/a\rb.txt', "/tmp/x'\recho pwned\r'.txt", '/tmp/e\x1b[A.txt', '/tmp/n\nl.txt', '/tmp/d\x7f\\.txt'];
+  for (const p of paths) assert.match(p, /[\x00-\x1f\x7f]/u, `ENTER: ${JSON.stringify(p)} carries a control byte`);
+  for (const style of [undefined, 'claude']) {
+    const out = dropText(paths, style);
+    assert.doesNotMatch(out, /[\x00-\x1f\x7f]/u, `style ${style}`);
+  }
+  assert.strictEqual(shellQuotePath('/tmp/a\rb.txt'), "$'/tmp/a\\x0db.txt'");
+  assert.strictEqual(shellQuotePath("/tmp/x'\r\\y"), "$'/tmp/x\\'\\x0d\\\\y'");
+});

@@ -317,3 +317,90 @@ test('t1377 r1: a reviewer save sends `template` only when the operator changed 
   assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'reviewer' }, { account: '', template: 'reviewer' }),
     { account: 'work' }, 'an unchanged non-reviewer stored template never rides an account save into the purpose refusal');
 });
+
+function compileListClick({ dirty, answer, teamName, teamGet }) {
+  const body = sliceBetween(POPOVER, "  listEl.addEventListener('click', async (e) => {", '\n  });\n');
+  const asked = [];
+  const rendered = [];
+  let handler = null;
+  const listEl = {
+    addEventListener: (type, fn) => { if (type === 'click') handler = fn; },
+    querySelector: (sel) => (sel === '.team-role-row.dirty' && dirty ? {} : null),
+  };
+  const window = { confirm: (m) => { asked.push(m); return answer; }, api: { teamGet } };
+  new Function('listEl', 'window', 'teamName', 'renderRows', 'confirmDiscardRoleEdits', `let expandedRole = 'hand';\n${body}`)(
+    listEl, window, teamName, (t) => rendered.push(t), confirmDiscardRoleEdits);
+  const fire = (act) => handler({
+    target: { closest: () => ({ dataset: { act }, closest: () => ({ dataset: { role: 'hand' } }) }) },
+  });
+  return { fire, asked, rendered };
+}
+
+test('roles popover: collapsing or switching a dirty row asks before re-rendering the list', async () => {
+  const kept = compileListClick({ dirty: true, answer: false, teamName: () => 'clodex', teamGet: async () => ({ ok: true, team: {} }) });
+  await kept.fire('disclose');
+  assert.deepStrictEqual(kept.asked, [DISCARD_ROLE_EDITS_PROMPT]);
+  assert.strictEqual(kept.rendered.length, 0, 'keeping the edits leaves the list alone');
+
+  const clean = compileListClick({ dirty: false, answer: false, teamName: () => 'clodex', teamGet: async () => ({ ok: true, team: {} }) });
+  await clean.fire('disclose');
+  assert.deepStrictEqual(clean.asked, []);
+  assert.strictEqual(clean.rendered.length, 1, 'ENTER: a clean list re-renders without asking');
+
+  for (const act of ['set-lead', 'set-trunk', 'rename', 'remove', 'readd']) {
+    const rig = compileListClick({ dirty: true, answer: false, teamName: () => 'clodex', teamGet: async () => ({ ok: true, team: {} }) });
+    await rig.fire(act);
+    assert.deepStrictEqual(rig.asked, [DISCARD_ROLE_EDITS_PROMPT], `${act} asks first`);
+  }
+  const guard = 'if (!confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;';
+  for (const head of [
+    "  addBtn.addEventListener('click', async () => {",
+    "  watchdogSet.addEventListener('click', async () => {",
+    "  watchdogClear.addEventListener('click', async () => {",
+    "      confirm.addEventListener('click', async () => {",
+  ]) {
+    const at = POPOVER.indexOf(head);
+    assert.ok(at >= 0, `ENTER: found ${head.trim()}`);
+    assert.ok(POPOVER.slice(at, at + 200).includes(guard), `${head.trim()} asks before its re-render`);
+  }
+});
+
+test('roles popover: a disclose whose teamGet resolves after the popover re-bound to another team does not render', async () => {
+  let bound = 'team-a';
+  let resolve;
+  const rig = compileListClick({ dirty: false, answer: true, teamName: () => bound, teamGet: () => new Promise((r) => { resolve = r; }) });
+  const done = rig.fire('disclose');
+  bound = 'team-b';
+  resolve({ ok: true, team: { name: 'team-a' } });
+  await done;
+  assert.strictEqual(rig.rendered.length, 0);
+});
+
+test('roles popover: a mutation that lands after the popover closed does not refresh a null team', async () => {
+  const refreshed = [];
+  const afterMutation = compileAfterMutation({
+    setStatus: () => {}, formatBlockedBy: lib.formatBlockedBy, teamName: () => null,
+    refresh: async (n) => { refreshed.push(n); return true; },
+  });
+  await afterMutation({ ok: true }, 'ok');
+  assert.deepStrictEqual(refreshed, []);
+});
+
+test('roles popover: a re-open whose refresh fails hides the popover instead of leaving the previous team on screen', async () => {
+  const body = sliceBetween(POPOVER, '  async function openTeamRolesPopover(name, anchorEl) {', '\n  }\n');
+  const popover = { classList: fakeClassList([]), dataset: { name: 'team-a' }, style: {} };
+  const noop = () => {};
+  const env = {
+    popover, listEl: { querySelector: () => null }, window: { confirm: () => true }, confirmDiscardRoleEdits,
+    setStatus: noop, helpPanel: { classList: fakeClassList([]) }, resetDrag: noop,
+    populatePromptOptions: async () => {}, populateTemplateOptions: async () => {}, populateAccountOptions: async () => {},
+    paintAccountSelect: noop, addAccount: {}, setAddPanel: noop, closeGatherPanel: noop,
+    watchdogSection: { classList: fakeClassList([]) }, settingsBtn: { setAttribute: noop },
+    refresh: async () => false, anchorRect: () => ({ left: 0, bottom: 0 }),
+  };
+  const names = Object.keys(env);
+  const open = new Function(...names, `let expandedRole = null;\n${body}\nreturn openTeamRolesPopover;`)(...names.map((n) => env[n]));
+  await open('no-such-team', null);
+  assert.strictEqual(popover.dataset.name, '');
+  assert.strictEqual(popover.classList.contains('hidden'), true);
+});

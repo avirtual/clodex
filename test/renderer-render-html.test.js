@@ -373,3 +373,59 @@ test('renderDiffHtml: a diff with no @@ header numbers nothing rather than guess
     'ENTER: both header rows reached the assertion');
   assert.ok(r.every(x => x[1] === ''), 'without a hunk header there is no known position — emit blanks, not 1..n');
 });
+
+test('renderDiffHtml: a deleted `-- comment` / added `++x` line inside a hunk is a del/add row that advances its counter, not a file header', () => {
+  const diff = ['--- a/q.sql', '+++ b/q.sql', '@@ -10,3 +10,3 @@', '--- old comment', '+++ new', '  select 1;', ' tail'].join('\n');
+  for (const opts of [{ lineNumbers: true }, {}]) {
+    const r = rows(renderDiffHtml(diff, opts));
+    assert.deepStrictEqual(r.map(x => x[2]).slice(3, 5), ['--- old comment', '+++ new'], 'ENTER: the in-hunk rows were parsed');
+    assert.deepStrictEqual(r.slice(0, 2).map(x => x[0]), ['diff-file', 'diff-file'], 'the real header rows stay file headers');
+    assert.deepStrictEqual(r.slice(3).map(x => x[0]), ['diff-del', 'diff-add', 'diff-ctx', 'diff-ctx']);
+  }
+  const r = rows(renderDiffHtml(diff, { lineNumbers: true }));
+  assert.deepStrictEqual(r.slice(0, 2).map(x => x[1]), ['', '']);
+  assert.deepStrictEqual(r.slice(3).map(x => x[1]), ['10', '10', '11', '12']);
+});
+
+test('renderDiffHtml: a header after a hunk whose counts are spent is still a file header', () => {
+  const diff = ['@@ -1 +1 @@', '-a', '+b', 'diff --git a/y b/y', '--- a/y', '+++ b/y', '@@ -5,1 +5,1 @@', '-c', '+d'].join('\n');
+  const r = rows(renderDiffHtml(diff, { lineNumbers: true }));
+  assert.equal(r.length, 9, 'ENTER: every row parsed');
+  assert.deepStrictEqual(r.map(x => [x[0], x[1]]), [
+    ['diff-hunk', ''], ['diff-del', '1'], ['diff-add', '1'],
+    ['diff-file', ''], ['diff-file', ''], ['diff-file', ''],
+    ['diff-hunk', ''], ['diff-del', '5'], ['diff-add', '5'],
+  ]);
+});
+
+test('renderDiffHtml: a 300k-line diff renders with a gutter instead of throwing', () => {
+  const n = 300000;
+  const diff = `@@ -1,${n} +1,${n} @@\n` + new Array(n).fill('+x').join('\n');
+  let html;
+  assert.doesNotThrow(() => { html = renderDiffHtml(diff, { lineNumbers: true }); });
+  const r = rows(html);
+  assert.equal(r.length, n + 1, 'ENTER: every row rendered');
+  assert.equal(r[r.length - 1][1], String(n));
+});
+
+test('bustRow: a non-numeric turn index is escaped in the link text and in the static fallback', () => {
+  const t = tx({ i: '<img src=x onerror=1>' });
+  const linked = bustRow(t, 'http://127.0.0.1:9', 'sid');
+  const bare = bustRow(t, null, null);
+  assert.ok(linked.includes('px-link-ext') && bare.includes('bust-turn-static'), 'ENTER: both arms rendered');
+  for (const html of [linked, bare]) {
+    assert.ok(!html.includes('<img'), 'the turn index must not reach the markup raw');
+    assert.ok(html.includes('&lt;img'), 'it must appear escaped');
+  }
+});
+
+test('BUST_COMPACT_MSG_RATIO matches the vendored wirescope default', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const warmth = fs.readFileSync(path.join(__dirname, '..', 'vendor', 'wirescope', 'proxylab', 'warmth.py'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'lib', 'render-html.js'), 'utf8');
+  const proxy = /"BUST_COMPACT_MSG_RATIO",\s*"([0-9.]+)"/.exec(warmth);
+  const client = /const BUST_COMPACT_MSG_RATIO = ([0-9.]+);/.exec(src);
+  assert.ok(proxy && client, 'ENTER: both defaults were found');
+  assert.strictEqual(Number(client[1]), Number(proxy[1]));
+});

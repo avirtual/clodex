@@ -289,6 +289,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   function openPromptEditor(prompt = null, bundle = null, teamOwner = null) {
     editingPromptBundle = bundle;
     editingPromptTeam = (teamOwner && teamOwner.team) || null;
+    promptName.style.borderColor = '';
     if (prompt) {
       editingPrompt = { kind: prompt.kind, name: prompt.name };
       if (editingPromptTeam) promptEditorTitle.textContent = `Edit Prompt — team ${editingPromptTeam}`;
@@ -364,7 +365,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       const res = await window.api.removeTeamPrompt(editingPromptTeam, editingPrompt.kind, editingPrompt.name);
       if (res && res.ok === false) alert(`Could not delete it: ${res.error || 'unknown error'}`);
     } else {
-      await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+      const res = await window.api.removePrompt(editingPrompt.kind, editingPrompt.name);
+      if (res && res.ok === false) { alert(`Could not delete it: ${res.error || 'unknown error'}`); return; }
     }
     closePromptEditor();
     refreshPromptsList();
@@ -373,6 +375,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   // Prevent keyboard shortcuts from firing inside the editor
   promptName.addEventListener('keydown', (e) => e.stopPropagation());
   promptBody.addEventListener('keydown', (e) => e.stopPropagation());
+  promptName.addEventListener('input', () => { promptName.style.borderColor = ''; });
 
   // ---------------------------------------------------------------------------
   // Agents library — custom subagents stored as ~/.clodex/agents/*.md
@@ -498,7 +501,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.
-    if (editingAgentName && editingAgentName !== name) {
+    if (editingAgentName && editingAgentName.toLowerCase() !== name.toLowerCase()) {
       await window.api.removeAgent(editingAgentName);
     }
     closeAgentEditor();
@@ -509,7 +512,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   agentDelete.addEventListener('click', async () => {
     if (!editingAgentName) return;
     if (!confirm(`Delete agent "${editingAgentName}"?`)) return;
-    await window.api.removeAgent(editingAgentName);
+    const res = await window.api.removeAgent(editingAgentName);
+    if (res && res.ok === false) { alert(`Could not delete it: ${res.error || 'unknown error'}`); return; }
     closeAgentEditor();
     refreshAgentsList();
   });
@@ -642,7 +646,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.
-    if (editingSkillName && editingSkillName !== name) {
+    if (editingSkillName && editingSkillName.toLowerCase() !== name.toLowerCase()) {
       await window.api.removeSkillLib(editingSkillName);
     }
     closeSkillEditor();
@@ -653,7 +657,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   skillDelete.addEventListener('click', async () => {
     if (!editingSkillName) return;
     if (!confirm(`Delete skill "${editingSkillName}"?`)) return;
-    await window.api.removeSkillLib(editingSkillName);
+    const res = await window.api.removeSkillLib(editingSkillName);
+    if (res && res.ok === false) { alert(`Could not delete it: ${res.error || 'unknown error'}`); return; }
     closeSkillEditor();
     refreshSkillsLibList();
   });
@@ -767,7 +772,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
       return;
     }
     // Rename: a changed Name field writes a new file — drop the old one.
-    if (editingExecName && editingExecName !== name) {
+    if (editingExecName && editingExecName.toLowerCase() !== name.toLowerCase()) {
       await window.api.removeExecCommand(editingExecName);
     }
     closeExecEditor();
@@ -778,7 +783,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   execDelete.addEventListener('click', async () => {
     if (!editingExecName) return;
     if (!confirm(`Delete exec command "${editingExecName}"?`)) return;
-    await window.api.removeExecCommand(editingExecName);
+    const res = await window.api.removeExecCommand(editingExecName);
+    if (res && res.ok === false) { alert(`Could not delete it: ${res.error || 'unknown error'}`); return; }
     closeExecEditor();
     refreshExecList();
   });

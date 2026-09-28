@@ -171,3 +171,67 @@ test('a failed Clear still tells the operator why, after the refresh repaints th
     assert.strictEqual(wsLogsClearBtn.disabled, false);
   }
 });
+
+function reportRig(report) {
+  const mkEl = () => {
+    const cls = new Set();
+    return {
+      classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c), contains: (c) => cls.has(c) },
+      dataset: {}, innerHTML: '', textContent: '', addEventListener: () => {},
+    };
+  };
+  const els = new Map();
+  global.document = {
+    getElementById: (id) => { if (!els.has(id)) els.set(id, mkEl()); return els.get(id); },
+    addEventListener: () => {},
+    createElement: () => {
+      let text = '';
+      return {
+        set textContent(v) { text = String(v); },
+        get innerHTML() { return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); },
+      };
+    },
+  };
+  const modPath = require.resolve('../renderer/popovers/report-panel.js');
+  delete require.cache[modPath];
+  const { initReportPanel } = require(modPath);
+  const { openReportPanel } = initReportPanel({ popoverApi: () => ({ report }), ctxCatLabel: (c) => c });
+  return { open: openReportPanel, body: els.get('report-body') };
+}
+
+test('the session report panel escapes every report field it interpolates, so a hostile peer\'s report cannot inject markup', async () => {
+  const X = '<img src=x onerror=1>';
+  const PAYLOAD = {
+    report_version: 4,
+    scope: { requests: X, turns: X },
+    waste: { by_type: [{ type: 'cold_cache', items: X }] },
+    cost_decomposition: { by_bucket: [{ bucket: 'input', usd: 1, pct: X }] },
+    token_decomposition: { preamble: { tokens_per_request: 10, requests_resent: X } },
+  };
+  const { open, body } = reportRig(async () => ({ ok: true, data: PAYLOAD }));
+  await open('s');
+  assert.ok(body.innerHTML.includes('rep-verdict'), 'ENTER: the report rendered rather than the catch arm');
+  assert.ok(!body.innerHTML.includes('<img'), 'no report field reaches the markup raw');
+});
+
+test('the session report panel labels a stale cached report and shows the error that caused the fallback', async () => {
+  const { open, body } = reportRig(async () => ({ ok: true, stale: true, at: Date.now() - 600000, error: 'proxy returned 503 <b>', data: { report_version: 4 } }));
+  await open('s');
+  assert.ok(body.innerHTML.includes('rep-verdict'), 'ENTER: the report rendered');
+  assert.match(body.innerHTML, /proxy returned 503 &lt;b&gt;/);
+  assert.match(body.innerHTML, /last successful report \(10m ago\)/);
+});
+
+test('a report fetch superseded by a newer open of the same session does not overwrite the newer render', async () => {
+  const pending = [];
+  const { open, body } = reportRig(() => new Promise((resolve) => pending.push(resolve)));
+  const first = open('s');
+  const second = open('s');
+  assert.strictEqual(pending.length, 2, 'ENTER: two fetches in flight');
+  pending[1]({ ok: true, data: { report_version: 4, verdict: { headline: 'NEW' } } });
+  await second;
+  assert.ok(body.innerHTML.includes('NEW'), 'ENTER: the newer fetch rendered');
+  pending[0]({ ok: true, data: { report_version: 4, verdict: { headline: 'OLD' } } });
+  await first;
+  assert.ok(body.innerHTML.includes('NEW') && !body.innerHTML.includes('OLD'));
+});

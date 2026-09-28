@@ -23,6 +23,14 @@ test('newlines in a draft are carried literally inside the paste', () => {
   assert.strictEqual(ptyComposerWrites('a\nb')[0], `${PASTE_OPEN}a\nb${PASTE_CLOSE}`);
 });
 
+test('a draft carrying a paste-close marker cannot end the bracketed paste early', () => {
+  const [body] = ptyComposerWrites('a\x1b[201~b\nc\x1b[200~d');
+  assert.ok(body.startsWith(PASTE_OPEN));
+  assert.strictEqual(body.indexOf(PASTE_CLOSE), body.length - PASTE_CLOSE.length);
+  assert.strictEqual(body.lastIndexOf(PASTE_OPEN), 0);
+  assert.strictEqual(body, `${PASTE_OPEN}ab\ncd${PASTE_CLOSE}`);
+});
+
 test('an empty draft still yields the two writes', () => {
   assert.deepStrictEqual(ptyComposerWrites(''), [`${PASTE_OPEN}${PASTE_CLOSE}`, '\r']);
 });
@@ -53,15 +61,17 @@ test('pasteKind reads an array-like item list', () => {
 for (const [label, text, paths, want] of [
   ['ENTER: text with no chip is untouched', 'describe this', {}, 'describe this'],
   ['a mapped chip becomes the path line', '[Image #1] hi', { 1: '/a/img.png' }, 'Image #1: /a/img.png hi'],
-  ['an unmapped chip is stripped', '[Image #1] hi', {}, 'hi'],
-  ['two chips, one mapped', '[Image #1] [Image #2] hi', { 2: '/a/two.png' }, 'Image #2: /a/two.png hi'],
+  ['an inserted pathless chip is stripped', '[Image #1] hi', { 1: null }, 'hi'],
+  ['two chips, one mapped', '[Image #1] [Image #2] hi', { 1: null, 2: '/a/two.png' }, 'Image #2: /a/two.png hi'],
   ['a chip-free text is unchanged with paths given', 'plain words', { 1: '/a/img.png' }, 'plain words'],
-  ['a leading chip is dropped with its space', `${imageChip(1)}describe this`, {}, 'describe this'],
-  ['chips after text are dropped', `look ${imageChip(1)}${imageChip(2)}`, {}, 'look '],
-  ['a draft of only chips becomes empty', `${imageChip(1)}${imageChip(2)}`, {}, ''],
-  ['newlines around a chip survive', `a\n${imageChip(3)}b`, {}, 'a\nb'],
+  ['a leading chip is dropped with its space', `${imageChip(1)}describe this`, { 1: null }, 'describe this'],
+  ['chips after text are dropped', `look ${imageChip(1)}${imageChip(2)}`, { 1: null, 2: null }, 'look '],
+  ['a draft of only chips becomes empty', `${imageChip(1)}${imageChip(2)}`, { 1: null, 2: null }, ''],
+  ['newlines around a chip survive', `a\n${imageChip(3)}b`, { 3: null }, 'a\nb'],
   ['a chip-shaped token without a number stays', '[Image #x] ok', {}, '[Image #x] ok'],
-  ['no path map strips every chip', `${imageChip(1)}x`, undefined, 'x'],
+  ['no path map keeps every chip-shaped token', `${imageChip(1)}x`, undefined, '[Image #1] x'],
+  ['a typed chip no paste inserted is kept', 'see [Image #1] above', {}, 'see [Image #1] above'],
+  ['a typed chip beside an inserted one is kept', '[Image #1] see [Image #2] above', { 1: null }, 'see [Image #2] above'],
 ]) {
   test(`expandImageChips: ${label}`, () => {
     assert.strictEqual(expandImageChips(text, paths), want);
@@ -98,7 +108,7 @@ function pasteRig({ web, reply, upload = null }) {
     upload: upload || (async (images) => { log.uploads.push(images); return reply; }),
     toast: (m) => log.toasts.push(m),
     nextImage: () => { n += 1; return n; },
-    append: (added) => { log.order.push('append'); for (const a of added) { log.draft += a.chip; if (a.path) log.paths[a.n] = a.path; } },
+    append: (added) => { log.order.push('append'); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
@@ -143,7 +153,7 @@ test('on the desktop a pasted image writes Ctrl-V, appends the chip and never up
   assert.deepStrictEqual(log.writes, ['\x16']);
   assert.deepStrictEqual(log.order, ['append', 'write'], 'the chip and slash mirror land before the CLI takes the image');
   assert.strictEqual(log.draft, '[Image #1] ');
-  assert.deepStrictEqual(log.paths, {});
+  assert.deepStrictEqual(log.paths, { 1: null });
 });
 
 test('the pty composer wires its paste listener through ptyImagePasteHandler and expands chips on send', () => {
@@ -154,6 +164,6 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(m[1], /upload: \(images\) => window\.api\.seatImageUpload\(name, images\)/u);
   assert.match(m[1], /readImages: \(items\) => clipboardImages\(items, FileReader\)/u);
   assert.match(m[1], /if \(menuMirror\.on\(\)\) syncMenuMirror\(\);/u);
-  assert.match(m[1], /if \(path\) pastedImagePaths\[n\] = path;/u);
+  assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
 });
