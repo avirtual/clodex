@@ -245,7 +245,7 @@ test('the status reply stays inside 400 chars with three running long-named runs
   try {
     b.m._handleExecIntent(b.session, 'digest', '{}');
     await settle();
-    b.children[0].stderr.emit('data', `${'\u{1F600}'.repeat(300)}\n`);
+    b.children[0].stderr.emit('data', `x${'\u{1F600}'.repeat(300)}\n`);
     b.children[0].emit('exit', 0, null);
     b.m._handleExecIntent(b.session, 'status', '{}');
     await settle();
