@@ -64,7 +64,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 // the reviewer-prompt lookup reads, which the prompt-absent subjects need bare.
 // Shared is safe BECAUSE nothing reads it; pointing it at `home` would not be.
 const SEED_DIR = mkTmpRoot('clodex-t470-seed-');
-initStores(mkTmpRoot('clodex-t470-seed-ud-'), { log: console, registryDir: SEED_DIR });
+initStores(mkTmpRoot('clodex-t470-ud-'), { log: console, registryDir: SEED_DIR });
 
 // A REAL git repo, for the reason ticket-reminder-binding.test.js gives: the
 // accept arms fork on a git fact (merged / not merged / check could not run),

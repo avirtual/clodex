@@ -55,7 +55,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 };
 
 const SEED_DIR = mkTmpRoot('clodex-t618-seed-');
-initStores(mkTmpRoot('clodex-t618-seed-ud-'), { log: console, registryDir: SEED_DIR });
+initStores(mkTmpRoot('clodex-t618-ud-'), { log: console, registryDir: SEED_DIR });
 
 function buildRepo() {
   const dir = mkTmpRoot('clodex-t618-repo-');

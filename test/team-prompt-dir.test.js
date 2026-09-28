@@ -43,8 +43,8 @@ const LIB_BODY = 'LIB\n';
 // A real clodex home: `library/prompts/<kind>/` is what the prompt store reads
 // and `teams/<name>/team.json` is what resolveTeam loads, both hung off the same
 // REGISTRY_DIR the app hangs them off.
-const SEEDED_HOME = path.join(mkTmpRoot('clx-t699-seed-'), 'clodex-home');
-initStores(mkTmpRoot('clx-t699-seed-ud-'), { log: console, registryDir: SEEDED_HOME });
+const SEEDED_HOME = path.join(mkTmpRoot('clx-t699-'), 'clodex-home');
+initStores(mkTmpRoot('clx-t699-'), { log: console, registryDir: SEEDED_HOME });
 
 function mkHome() {
   const tmp = mkTmpRoot('clx-t699-');

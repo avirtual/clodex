@@ -330,8 +330,8 @@ function mkSpawner(registryRoot, knownSkillNames) {
 // A root with nothing on it: no agent-defaults.json (the floor's tri-state
 // ABSENT case) and no skills-seen.json (the seed is then all `*` can expand
 // against). This IS the new-install case the operator hits.
-const SEEDED_REGISTRY = path.join(mkTmpRoot('clx-t918-seed-'), 'clodex-home');
-initStores(mkTmpRoot('clx-t918-seed-ud-'), { log: silent, registryDir: SEEDED_REGISTRY });
+const SEEDED_REGISTRY = path.join(mkTmpRoot('clx-t918-'), 'clodex-home');
+initStores(mkTmpRoot('clx-t918-'), { log: silent, registryDir: SEEDED_REGISTRY });
 
 function freshBox() {
   const tmp = mkTmpRoot('clx-t918-');

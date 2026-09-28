@@ -55,7 +55,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // per subject, and the first one to fire would delete the dir the remaining
 // fixtures still share.
 const SEED_DIR = mkTmpRoot('clodex-t482-seed-');
-initStores(mkTmpRoot('clodex-t482-seed-ud-'), { log: console, registryDir: SEED_DIR });
+initStores(mkTmpRoot('clodex-t482-ud-'), { log: console, registryDir: SEED_DIR });
 const seedDir = () => SEED_DIR;
 after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, force: true }); } catch {} } });
 

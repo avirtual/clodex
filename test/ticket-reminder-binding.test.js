@@ -99,8 +99,8 @@ function buildRepo() {
 }
 
 const REPO_TEMPLATE = buildRepo();
-const SEEDED_REGISTRY = mkTmpRoot('clodex-t395-seed-');
-initStores(mkTmpRoot('clodex-t395-seed-ud-'), { log: console, registryDir: SEEDED_REGISTRY });
+const SEEDED_REGISTRY = mkTmpRoot('clodex-t395-');
+initStores(mkTmpRoot('clodex-t395-ud-'), { log: console, registryDir: SEEDED_REGISTRY });
 
 function mkRepo() {
   const dir = mkTmpRoot('clodex-t395-repo-');
