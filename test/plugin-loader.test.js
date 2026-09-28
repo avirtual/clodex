@@ -508,6 +508,20 @@ test('the RENDERER rule: only the FIRST activation report per run counts', () =>
     'three windows, one launch, one strike');
 });
 
+test('a renderer half that throws on two consecutive launches is quarantined even though its engine half loads', () => {
+  const root = mkTree({
+    rend: { manifest: { ...OK_MANIFEST, id: 'rend', entry: { renderer: 'renderer.js' }, style: undefined }, files: { 'renderer.js': '' } },
+  });
+  const a = mkLoader(root);
+  a.loader.loadAll(fakeHost());
+  a.loader.noteRendererActivation('rend', false, 'x');
+  const b = mkLoader(root, a.ui.read());
+  const results = b.loader.loadAll(fakeHost());
+  assert.deepStrictEqual(results.find((r) => r.id === 'rend'), { id: 'rend', ok: true });
+  b.loader.noteRendererActivation('rend', false, 'x');
+  assert.strictEqual(b.loader.isQuarantined('rend'), true);
+});
+
 test('a renderer half that succeeds clears an engine-half strike', () => {
   const { loader } = mkLoader(BOOM_TREE());
   loader.loadAll(fakeHost());
@@ -1201,6 +1215,51 @@ test('re-scan marks a CHANGED plugin restart-required and does NOT reload it', (
   assert.strictEqual(row.restartRequired.now, '2.0.0');
 });
 
+test('re-scan reports a plugin whose engine was already required at another version as changed, not added', () => {
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  const register = host.register;
+  let failFirst = true;
+  host.register = (...args) => {
+    if (failFirst) { failFirst = false; throw new Error('transient'); }
+    return register(...args);
+  };
+  assert.strictEqual(loader.loadAll(host).find((r) => r.id === 'gamma').ok, false);
+
+  fs.writeFileSync(path.join(user, 'gamma', 'manifest.json'),
+    JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '2.0.0' }));
+  const r = loader.rescan(host);
+
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'gamma').restartRequired.was, '1.0.0');
+  assert.deepStrictEqual(r.changed, ['gamma']);
+  assert.deepStrictEqual(r.added, []);
+});
+
+test('re-scan keeps restart-required across a removal while the old engine stays required', () => {
+  const user = freshTree('gamma', '1.0.0');
+  const { loader } = mkMultiLoader([{ id: 'user', dir: user, label: 'User' }]);
+  const host = rescanHost();
+  loader.loadAll(host);
+  const manifestPath = path.join(user, 'gamma', 'manifest.json');
+  const original = fs.readFileSync(manifestPath, 'utf8');
+  const engineBody = fs.readFileSync(path.join(user, 'gamma', 'engine.js'), 'utf8');
+  fs.writeFileSync(manifestPath, JSON.stringify({ ...OK_MANIFEST, id: 'gamma', version: '2.0.0' }));
+  assert.deepStrictEqual(loader.rescan(host).changed, ['gamma']);
+
+  fs.rmSync(path.join(user, 'gamma'), { recursive: true, force: true });
+  assert.deepStrictEqual(loader.rescan(host).removed, ['gamma']);
+
+  fs.mkdirSync(path.join(user, 'gamma'));
+  fs.writeFileSync(manifestPath, original);
+  fs.writeFileSync(path.join(user, 'gamma', 'engine.js'), `${engineBody}\nmodule.exports.v = 2;`);
+  fs.writeFileSync(path.join(user, 'gamma', 'renderer.js'), '');
+  fs.writeFileSync(path.join(user, 'gamma', 'style.css'), '');
+  const r = loader.rescan(host);
+  assert.deepStrictEqual(r.changed, ['gamma']);
+  assert.ok(loader.status().plugins.find((p) => p.id === 'gamma').restartRequired);
+});
+
 test('re-scan takes NO strike when a plugin fails to activate', () => {
   // A re-scan is not a launch (t20's reasoning). The counter exists for plugins
   // that crash on a real activation; a user pressing Re-scan three times must
@@ -1355,6 +1414,21 @@ test('listUserRoot lists the user root one level deep, marking directories', () 
     { name: 'notes.txt', isDir: false, source: null },
     { name: 'zeta', isDir: true, source: null },
   ], 'sorted by name, directories marked, source null for a plain directory');
+});
+
+test('listUserRoot marks a registered symlinked plugin as a directory, with source null', () => {
+  const base = mkTmpRoot('clodex-plugins-');
+  const userDir = path.join(base, 'plugins');
+  const target = path.join(base, 'target');
+  fs.mkdirSync(userDir, { recursive: true });
+  fs.mkdirSync(target, { recursive: true });
+  fs.symlinkSync(target, path.join(userDir, 'linked'), 'dir');
+  const { loader } = mkMultiLoader([
+    { id: 'core', dir: path.join(base, 'core'), label: 'Built in' },
+    { id: 'user', dir: userDir, label: 'User' },
+  ]);
+  const entries = loader.listUserRoot().entries;
+  assert.deepStrictEqual(entries.find((e) => e.name === 'linked'), { name: 'linked', isDir: true, source: null });
 });
 
 test('listUserRoot reports a fetched entry\'s sidecar as its source (t683)', () => {

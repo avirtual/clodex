@@ -250,6 +250,15 @@ function insideDir(path, dir, rel) {
   return resolved === dir || resolved.startsWith(dir + path.sep);
 }
 
+function checkEntryPaths(path, dir, manifest) {
+  const entry = (manifest && manifest.entry) || {};
+  for (const half of ['engine', 'renderer']) {
+    if (entry[half] && !insideDir(path, dir, entry[half])) return `entry.${half} escapes the plugin directory`;
+  }
+  if (manifest && manifest.style && !insideDir(path, dir, manifest.style)) return 'style escapes the plugin directory';
+  return null;
+}
+
 function createPluginLoader(deps) {
   const {
     fs, path,
@@ -295,24 +304,37 @@ function createPluginLoader(deps) {
     } catch (e) { logIt(`could not persist plugin failure record: ${e && e.message}`); }
   }
 
-  function recordFailure(id, why) {
+  function strikesOf(f, half) {
+    if (!f || typeof f !== 'object') return 0;
+    if (typeof f.engine !== 'number' && typeof f.renderer !== 'number') {
+      return half === 'engine' ? (Number(f.count) || 0) : 0;
+    }
+    return Number(f[half]) || 0;
+  }
+
+  function recordFailure(id, why, half = 'engine') {
     const key = String(id);
     const rec = failureRecord();
-    const prev = Number(rec[key] && rec[key].count) || 0;
-    const count = prev + 1;
-    writeFailureRecord({ ...rec, [key]: { count, error: String(why || 'activation failed'), at: Date.now() } });
+    const halves = { engine: strikesOf(rec[key], 'engine'), renderer: strikesOf(rec[key], 'renderer') };
+    halves[half] += 1;
+    const count = Math.max(halves.engine, halves.renderer);
+    writeFailureRecord({ ...rec, [key]: { count, ...halves, error: String(why || 'activation failed'), at: Date.now() } });
     logIt(count >= QUARANTINE_AFTER
       ? `${key}: strike ${count} — QUARANTINED (Preferences ▸ Plugins offers Retry; your enabled setting is untouched)`
       : `${key}: strike ${count} of ${QUARANTINE_AFTER} — ${why}`);
     return count;
   }
 
-  function clearFailures(id) {
+  function clearFailures(id, half) {
     const key = String(id);
     const rec = failureRecord();
     if (!(key in rec)) return false;
+    if (half && !strikesOf(rec[key], half)) return false;
+    const other = half === 'engine' ? 'renderer' : 'engine';
+    const left = half ? strikesOf(rec[key], other) : 0;
     const next = { ...rec };
-    delete next[key];
+    if (left) next[key] = { ...rec[key], count: left, [half]: 0, [other]: left };
+    else delete next[key];
     writeFailureRecord(next);
     return true;
   }
@@ -344,7 +366,7 @@ function createPluginLoader(deps) {
     if (rendererReportedThisRun.has(key)) return { counted: false };
     rendererReportedThisRun.add(key);
     if (ok) { clearFailures(key); return { counted: true, ok: true }; }
-    return { counted: true, ok: false, count: recordFailure(key, `renderer activate() threw: ${error || 'unknown error'}`) };
+    return { counted: true, ok: false, count: recordFailure(key, `renderer activate() threw: ${error || 'unknown error'}`, 'renderer') };
   }
 
   let discoveryProblems = [];
@@ -425,21 +447,9 @@ function createPluginLoader(deps) {
       // what the user named the directory is what they meant the id to be.
       const why = validateManifest(manifest, ent.name, !bundleIsEmpty(bundle));
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
+      const escapes = checkEntryPaths(path, dir, manifest);
+      if (escapes) { logIt(`skipping ${ent.name}: ${escapes}`); note(ent.name, escapes); continue; }
       const entry = manifest.entry || {};
-      for (const half of ['engine', 'renderer']) {
-        if (entry[half] && !insideDir(path, dir, entry[half])) {
-          logIt(`skipping ${ent.name}: entry.${half} escapes the plugin directory`);
-          note(ent.name, `entry.${half} escapes the plugin directory`);
-          manifest = null;
-          break;
-        }
-      }
-      if (!manifest) continue;
-      if (manifest.style && !insideDir(path, dir, manifest.style)) {
-        logIt(`skipping ${ent.name}: style escapes the plugin directory`);
-        note(ent.name, 'style escapes the plugin directory');
-        continue;
-      }
       const rec = {
         id: manifest.id,
         dir,
@@ -537,8 +547,8 @@ function createPluginLoader(deps) {
       });
       logIt(`loaded ${rec.id} v${rec.manifest.version || '?'}`);
       verbConflicts.delete(rec.id);
-      loadedFrom.set(rec.id, { dir: rec.dir, version: rec.manifest.version || null });
-      if (count) clearFailures(rec.id); // a success clears the slate, always
+      loadedFrom.set(rec.id, { dir: rec.dir, version: rec.manifest.version || null, enginePath: rec.enginePath || null });
+      if (count) clearFailures(rec.id, 'engine');
       return { ok: true };
     } catch (e) {
       const error = String((e && e.message) || e);
@@ -622,7 +632,8 @@ function createPluginLoader(deps) {
       if (!isEnabled(rec)) continue;
       if (isQuarantined(rec.id)) continue;
       const r = loadOne(rec, pluginHost, { count: false });
-      if (r.ok) added.push(rec.id);
+      if (r.ok && restartRequired.has(rec.id)) changed.push(rec.id);
+      else if (r.ok) added.push(rec.id);
       else failed.push({ id: rec.id, error: r.error, ...(r.verbConflict ? { verbConflict: r.verbConflict } : {}) });
     }
 
@@ -630,8 +641,9 @@ function createPluginLoader(deps) {
     for (const id of before) {
       if (seen.has(id)) continue;
       try { pluginHost.deactivate(id); } catch {}
+      const gone = loadedFrom.get(id);
       loadedFrom.delete(id);
-      restartRequired.delete(id);
+      if (!(gone && gone.enginePath && requiredPaths.has(gone.enginePath))) restartRequired.delete(id);
       rendererReportedThisRun.delete(id);
       removed.push(id);
       logIt(`${id}: removed from disk — deactivated`);
@@ -664,7 +676,7 @@ function createPluginLoader(deps) {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true })
         .map((d) => ({
-          name: d.name, isDir: d.isDirectory(),
+          name: d.name, isDir: isCandidateDir(dir, d),
           source: d.isDirectory() ? source.readSidecar(path.join(dir, d.name)) : null,
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -709,6 +721,8 @@ function createPluginLoader(deps) {
       }
       return { ok: false, error: why };
     }
+    const escapes = checkEntryPaths(path, abs, manifest);
+    if (escapes) return { ok: false, error: escapes };
     const entry = manifest.entry || {};
     return {
       ok: true,
@@ -718,6 +732,7 @@ function createPluginLoader(deps) {
       entry: { engine: entry.engine || null, renderer: entry.renderer || null },
       scope: scopeOf(manifest),
       hasRenderer: !!entry.renderer,
+      announce: manifest.announce ?? null,
     };
   }
 
@@ -904,6 +919,10 @@ function createPluginLoader(deps) {
     if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
     const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
     if (!r.ok) return r;
+    if (r.manifest.id !== id) {
+      rmQuiet(r.work);
+      return { ok: false, error: `upstream now declares id "${r.manifest.id}", not "${id}"` };
+    }
     const changed = !commitsMatch(sidecar.commit, r.commit) && !source.sameTree(r.dir, dir);
     rmQuiet(r.work);
     return {
@@ -932,6 +951,10 @@ function createPluginLoader(deps) {
     if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
     const r = await fetchAndValidate({ repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath });
     if (!r.ok) return r;
+    if (r.manifest.id !== id) {
+      rmQuiet(r.work);
+      return { ok: false, error: `upstream now declares id "${r.manifest.id}", not "${id}"` };
+    }
     if (!commitsMatch(r.commit, commit)) {
       rmQuiet(r.work);
       return { ok: false, error: `the source now resolves to ${r.commit}, not the ${commit} you accepted — resolve the update again` };
@@ -952,8 +975,12 @@ function createPluginLoader(deps) {
       });
       rmQuiet(aside);
       const live = loadedFrom.get(id);
-      if (live && (r.manifest.entry.engine || r.manifest.entry.renderer)) {
-        restartRequired.set(id, { was: live.version, now: r.manifest.version || null, dirChanged: false });
+      const enginePath = r.manifest.entry.engine ? path.join(target, r.manifest.entry.engine) : null;
+      const required = !!enginePath && requiredPaths.has(enginePath);
+      if ((live || required) && (r.manifest.entry.engine || r.manifest.entry.renderer)) {
+        restartRequired.set(id, {
+          was: live ? live.version : requiredPaths.get(enginePath), now: r.manifest.version || null, dirChanged: false,
+        });
       }
       logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}`);
       return { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
