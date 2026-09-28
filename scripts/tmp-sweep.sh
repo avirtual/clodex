@@ -419,7 +419,6 @@ clx-eng-home-
 clx-eng-prune-
 clx-eng-sbx-
 clx-eng-web-
-wh-exports-
 clx-engine-seams-
 clx-env-
 clx-exec-home-
@@ -720,6 +719,7 @@ tl-outer-
 tmp-roots-pin-
 voice-engine-
 warmth-
+wh-exports-
 wire-hold-cred-
 ws-gate-
 ws-spawnenv-

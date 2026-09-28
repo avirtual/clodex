@@ -608,7 +608,7 @@ test('a malformed percent-escape under /exports/ answers 400 and raises no uncau
 test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 5987 filename and raises no uncaught exception', async () => {
   const dir = mkTmpRoot('wh-exports-');
   fs.mkdirSync(path.join(dir, 'exports'));
-  const names = ['отчёт.md', 'a\nb'];
+  const names = ['отчёт.md', 'a\nb', "it's (1).md"];
   for (const n of names) fs.writeFileSync(path.join(dir, 'exports', n), `body:${n}`);
   const { host, port } = await startHost({ userDataPath: dir });
   const agent = new http.Agent();
@@ -621,7 +621,8 @@ test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 59
       ]);
       assert.equal(r.status, 200, n);
       assert.equal(r.body, `body:${n}`);
-      assert.ok(r.cd.includes(`filename*=UTF-8''${encodeURIComponent(n)}`), r.cd);
+      assert.match(r.cd, /filename\*=UTF-8''[A-Za-z0-9%!._~-]+$/);
+      assert.equal(decodeURIComponent(r.cd.split("''")[1]), n);
       assert.match(r.cd, /filename="[\x20-\x7e]+"/);
     }
   } finally { trap.release(); agent.destroy(); host.close(); }

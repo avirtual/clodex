@@ -13,10 +13,6 @@ const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
 
-// A bind host counts as loopback when nothing off-box can reach it — the case
-// where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
-// (the container's CLODEX_REMOTE_HOST) and any specific LAN address are NOT
-// loopback, so they trip the fail-closed rule when no token is configured.
 function parseJsonObject(body) {
   let msg;
   try { msg = JSON.parse(body); } catch { return null; }
@@ -27,6 +23,10 @@ function decodeSeg(s) {
   try { return decodeURIComponent(s); } catch { return null; }
 }
 
+// A bind host counts as loopback when nothing off-box can reach it — the case
+// where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
+// (the container's CLODEX_REMOTE_HOST) and any specific LAN address are NOT
+// loopback, so they trip the fail-closed rule when no token is configured.
 function isLoopbackHost(h) {
   const host = String(h || '').toLowerCase();
   return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');

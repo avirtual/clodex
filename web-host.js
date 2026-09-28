@@ -47,7 +47,7 @@ function sanitizeBasename(name) {
 
 function contentDisposition(base) {
   const fallback = base.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_') || 'export';
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(base)}`;
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(base).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
 }
 
 function createWebHost({ engine, log, port, host, token, userDataPath, registerHandlers } = {}) {
