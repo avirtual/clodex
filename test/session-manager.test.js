@@ -22450,3 +22450,69 @@ test('t1199: seatInterrupt sends the codec frame on a live stream seat and refus
   assert.deepStrictEqual(c.h.m.seatInterrupt('ghost'), { ok: false, error: 'not a live stream seat' });
   c.h.m.sessions.delete('pty1');
 });
+
+test('a jsonl-activity seat that takes a turn after the park is presumed delivered', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  m._emitActivity('a', 'thinking');
+  m._emitActivity('a', 'idle');
+  assert.strictEqual(m.sessions.get('a').activityState, 'idle', 'ENTER: the real activity edges ran');
+  assert.ok(!m.sessions.get('a').lastMainStop, 'ENTER: no wire stop — this seat has no tee');
+  fireRebootRetry(m, 'a');
+  assert.ok(state.pendingRebootNotice === null && parks.length === 1,
+    'a turn seen on the activity edge is a turn: the notice clears and is not re-parked');
+  disarm();
+});
+
+test('the compact guard gets a full INJECT_HOLD_TIMEOUT from when it goes up', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const m = mk({ INJECT_HOLD_TIMEOUT: 10_000 });
+  const s = { name: 'g', agentType: 'claude', activityState: 'thinking' };
+  m.sessions.set('g', s);
+  m._maybeFlushInjectQueue = () => {};
+  m._injectText(s, 'x');
+  assert.ok(s._injectQueue && s._injectQueue.length === 1 && s._injectHoldTimer, 'ENTER: held behind the busy turn');
+  t.mock.timers.tick(9_000);
+  s.activityState = 'idle';
+  m._armCompactGuard(s);
+  t.mock.timers.tick(1_000);
+  assert.strictEqual(s._compactGuard, true,
+    'the guard went up 1s ago — the busy hold\'s leftover deadline must not release it');
+});
+
+test('a stream seat\'s turn-end drain holds a queued operator item while its hint is pending', async (t) => {
+  const stub = {
+    encodeUser: (text) => ({ stub: text }),
+    decode: () => ({ kind: 'result' }),
+  };
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'claude' ? { ...realStreamFor('claude'), codec: 'stub-codec' } : null),
+    loadStreamCodec: () => stub,
+  });
+  t.after(() => h.stopAll());
+  await h.create('sth');
+  const s = h.m.sessions.get('sth');
+  t.after(() => clearTimeout(s._streamHoldTimer));
+  h.m.seatSend('sth', 'first');
+  assert.strictEqual(s.streamBusy, true, 'ENTER: the first send opened a turn');
+  h.m.seatSend('sth', 'second');
+  assert.strictEqual(s.outbox.length, 1, 'ENTER: the operator item is queued behind the busy turn');
+  s._armWait = { until: Date.now() + 60_000 };
+  const sent = h.handles[0].sent.length;
+  h.line('sth', { any: 1 });
+  assert.strictEqual(h.handles[0].sent.length, sent, 'the queued item waits for its hint instead of going at turn end');
+  assert.strictEqual(s.streamBusy, false, 'and the turn did end');
+});
+
+test('an offline reboot notice survives its park until the seat resumes', () => {
+  const { m, state, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' },
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked for the offline seat');
+  assert.ok(state.pendingRebootNotice !== null, 'the settings copy is the durable one until a turn confirms it');
+});

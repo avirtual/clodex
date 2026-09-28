@@ -317,3 +317,24 @@ test('ENTER: with NO dictated draft, the idle drain still delivers an ACTIVE par
     'an undrafted seat still gets its parked message delivered');
   cleanup(h);
 });
+
+test('a dm held by a permission dialog still diverts to the park when released into an open draft', async () => {
+  const h = boot();
+  h.m._sendToSession = () => {};
+  h.m._buildDeliveryText = (_t, from, body) => `[agent:from ${from}] ${body}`;
+  h.s.needsAttention = { kind: 'permission' };
+  h.m._deliverMessage('hand', 'lead', 'HELD BODY', 'dm');
+  assert.ok(h.s._injectQueue && h.s._injectQueue.length === 1,
+    'ENTER: the dm must be HELD by the dialog, or the release below is not under test');
+  assert.ok(!hasPending(h.PENDING_DIR, 'hand'), 'ENTER: nothing parked before the release');
+  h.m.noteVoiceDraft('hand');
+  assert.ok(h.m._anyDraftOpen(h.s), 'ENTER: a draft is open when the dialog is answered');
+  h.m._setAttention(h.s, null);
+  await settleQueue(h);
+  clearTimeout(h.s._injectHoldTimer);
+  assert.deepStrictEqual(h.writes, SENTINEL_BYTES,
+    'neither the Ctrl-U nor the held body may reach the pane over the open draft; only the sentinel did');
+  assert.ok(drainPending(h.PENDING_DIR, 'hand', 'probe').some((t) => String(t).includes('HELD BODY')),
+    'the released dm diverts to the park, as it would have had it not been held');
+  cleanup(h);
+});

@@ -1748,3 +1748,20 @@ test('t1246: a stale park cap leaves a passive-only mailbox parked', async () =>
     } finally { mock.timers.reset(); }
   } finally { app.stop(); }
 });
+
+test('resend to a target that is no longer live keeps the parked copy', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    await coldParked(app, 'ARCHIVED BODY');
+    const ids = app.parkedIds('target', /ARCHIVED BODY/);
+    assert.strictEqual(ids.length, 1, 'ENTER: the hold-park must carry the id the resend addresses');
+    app.m.sessions.delete('target');
+    await app.m._handleIntent('sender', { type: 'resend', id: ids[0] });
+    assert.strictEqual(app.parked('target', /ARCHIVED BODY/), 1,
+      'the claim must not destroy the only copy of a dm whose seat still has a record to resume from');
+    assert.deepStrictEqual(app.parkedIds('target', /ARCHIVED BODY/), ids,
+      'and it is re-parked under the same id, so the sender still holds a live handle');
+  } finally { app.stop(); }
+});
