@@ -1026,6 +1026,53 @@ test('a failed cursor write returns ok:false', () => {
   fs.rmSync(teamsDir, { recursive: true, force: true });
 });
 
+const WARN_WIRE = JSON.stringify({
+  version: 1,
+  sessions: { 's1': { cost: 4, requests: 10, turns: 2, inputTokens: 100, outputTokens: 50, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+});
+const mkWarnLedger = () => {
+  const userData = mkTmpRoot('clodex-ud-');
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), WARN_WIRE);
+  const teamsDir = mkTmpRoot('clodex-teams-');
+  const persistence = mkPersistence([{ name: 'team-lead', sessionId: 's1', sessionIds: ['s1'] }]);
+  const warns = [];
+  const log = { info: () => {}, warn: (...a) => warns.push(a), error: () => {}, debug: () => {} };
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir, deps: { log } });
+  const cleanup = () => {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(teamsDir, { recursive: true, force: true });
+  };
+  return { m, warns, teamsDir, cleanup };
+};
+
+test('an unreadable seat cursor is logged as a warn naming the seat', () => {
+  const { m, warns, teamsDir, cleanup } = mkWarnLedger();
+  fs.mkdirSync(path.join(teamsDir, 'team'), { recursive: true });
+  fs.writeFileSync(path.join(teamsDir, 'team', 'cost-cursor.json'), 'not json');
+
+  const r = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'clear');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(warns.length, 1, `one warn\n${JSON.stringify(warns)}`);
+  assert.strictEqual(warns[0][0], 'cost');
+  assert.match(warns[0][1], /team-lead/);
+  assert.match(warns[0][1], /unreadable/);
+  cleanup();
+});
+
+test('a failed seat-cursor write is logged as a warn naming the seat', () => {
+  const { m, warns, teamsDir, cleanup } = mkWarnLedger();
+  m._writeSeatCursor = () => false;
+
+  const r = m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: 's1' }, 'clear');
+  assert.strictEqual(readLedger(teamsDir).length, 1, 'ENTER: the row was appended before the write failed');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(warns.length, 1, `one warn\n${JSON.stringify(warns)}`);
+  assert.strictEqual(warns[0][0], 'cost');
+  assert.match(warns[0][1], /team-lead/);
+  assert.match(warns[0][1], /could not be written/);
+  cleanup();
+});
+
 test('a TICKET seat and a REVIEWER are skipped — their spend is already booked once', () => {
   const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({

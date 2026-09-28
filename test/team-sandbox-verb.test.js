@@ -278,6 +278,17 @@ test('down on a team with no box creates none', async () => {
   assert.match(b.last(), /no box/);
 });
 
+test('down on a team with no box removes a stale token file', async () => {
+  const b = mkBox();
+  fs.mkdirSync(path.dirname(b.file), { recursive: true });
+  fs.writeFileSync(b.file, JSON.stringify({ url: 'http://127.0.0.1:1', token: 'stale' }));
+  await fire(b, b.lead, { action: 'down' });
+  assert.strictEqual(b.calls.create.length, 0, 'a down registers no box to tear down');
+  assert.strictEqual(b.calls.down, 0);
+  assert.ok(!exists(b.file), 'the stale token file is gone');
+  assert.match(b.last(), /stale .*sandbox\.json removed/);
+});
+
 test('status writes nothing and reports the state', async () => {
   const b = mkBox({ boxes: ['team-clodex'], config: { ref: 'master' } });
   await fire(b, b.lead, { action: 'status' });
