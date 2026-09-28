@@ -1088,7 +1088,7 @@ test('a repoint flushes pending TEXT too — the mirror image of the same lie', 
 
 test('a multibyte character split across two reads reaches onText intact', () => {
   const { createJsonlWatcher } = require('../jsonl-watcher');
-  const dir = mkTmpRoot('clodex-utf8-');
+  const dir = mkTmpRoot('clodex-repoint2-');
   try {
     const file = path.join(dir, 'transcript.jsonl');
     const text = 'a'.repeat(100) + '—tail';
@@ -1117,7 +1117,7 @@ test('a multibyte character split across two reads reaches onText intact', () =>
 test('a repoint whose open fails leaves the watcher with no fd rather than the closed one', () => {
   const { createJsonlWatcher } = require('../jsonl-watcher');
   const { pathFor, runDirFor } = require('../clodex-paths');
-  const reg = mkTmpRoot('clodex-repoint3-');
+  const reg = mkTmpRoot('clodex-repoint2-');
   const realOpen = fs.openSync;
   try {
     const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: reg });

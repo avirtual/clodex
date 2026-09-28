@@ -216,6 +216,10 @@ const CENSUS = [
     why: 'isAlive over a registry file; a lying probe keeps a stale agent.json blocking a name',
   },
   {
+    file: 'cli-hooks.js', pid: 'pid', sig: '0', count: 1, probe: true,
+    why: "the generated pending drain's pid_alive over a claim dir's tag; rehome_orphans skips a non-positive tag before probing",
+  },
+  {
     file: 'headless-main.js', pid: 'prev', sig: '0', count: 1, probe: true,
     why: 'single-instance pidfile; a lying probe refuses to start rather than starting twice',
   },
