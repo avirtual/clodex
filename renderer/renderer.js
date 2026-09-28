@@ -1529,9 +1529,8 @@ function makeGroupHeader(key, count) {
 
 let metaRefreshInFlight = false;
 let metaRefreshQueued = null;
-async function refreshSidebarMeta(opts = {}) {
-  if (metaRefreshInFlight) { metaRefreshQueued = opts; return; }
-  const { includePr = true } = opts;
+async function refreshSidebarMeta({ includePr = true } = {}) {
+  if (metaRefreshInFlight) { metaRefreshQueued = { includePr }; return; }
   metaRefreshInFlight = true;
   try {
     const res = await window.api.sidebarMeta({ includePr });
@@ -1541,8 +1540,9 @@ async function refreshSidebarMeta(opts = {}) {
       }
     }
   } catch {} finally {
-    metaRefreshInFlight = false;
-    if (metaRefreshQueued) { const next = metaRefreshQueued; metaRefreshQueued = null; refreshSidebarMeta(next); }
+    const next = metaRefreshQueued;
+    metaRefreshInFlight = false; metaRefreshQueued = null;
+    if (next) refreshSidebarMeta(next);
   }
   try {
     const live = await window.api.listSessions();

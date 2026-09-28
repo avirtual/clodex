@@ -49246,12 +49246,11 @@ ${detail}` });
       }
       var metaRefreshInFlight = false;
       var metaRefreshQueued = null;
-      async function refreshSidebarMeta(opts = {}) {
+      async function refreshSidebarMeta({ includePr = true } = {}) {
         if (metaRefreshInFlight) {
-          metaRefreshQueued = opts;
+          metaRefreshQueued = { includePr };
           return;
         }
-        const { includePr = true } = opts;
         metaRefreshInFlight = true;
         try {
           const res = await window.api.sidebarMeta({ includePr });
@@ -49262,12 +49261,10 @@ ${detail}` });
           }
         } catch {
         } finally {
+          const next = metaRefreshQueued;
           metaRefreshInFlight = false;
-          if (metaRefreshQueued) {
-            const next = metaRefreshQueued;
-            metaRefreshQueued = null;
-            refreshSidebarMeta(next);
-          }
+          metaRefreshQueued = null;
+          if (next) refreshSidebarMeta(next);
         }
         try {
           const live = await window.api.listSessions();
