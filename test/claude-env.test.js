@@ -182,8 +182,8 @@ test('scrub: CLAUDE_CONFIG_DIR survives — it is the account config root, not s
 
 test('user layer follows CLAUDE_CONFIG_DIR: an account\'s settings.json Bedrock flag marks the seat tee-blind', () => {
   const d = mkDirs();
-  const acct = mkTmpRoot('ce-acct-');
-  const acct2 = mkTmpRoot('ce-acct-');
+  const acct = mkTmpRoot('ce-home-');
+  const acct2 = mkTmpRoot('ce-home-');
   try {
     fs.writeFileSync(path.join(acct, 'settings.json'), JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: '1' } }));
     assert.strictEqual(teeBlindBackend(readEffectiveClaudeEnv(d.cwd, { baseEnv: { CLAUDE_CONFIG_DIR: acct }, homeDir: d.home })), 'bedrock');
