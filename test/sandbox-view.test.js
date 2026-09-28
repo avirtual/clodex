@@ -71,6 +71,20 @@ test('sandboxActionGate: docker running → nothing disabled, no reason', () => 
   assert.strictEqual(g.reason, null);
 });
 
+test('detectNotice: running but Compose plugin missing → error + apt remedy', () => {
+  const n = detectNotice({ present: true, running: true, compose: false });
+  assert.strictEqual(n.kind, 'error');
+  assert.strictEqual(n.text, 'Docker Compose plugin isn’t installed — on Debian/Ubuntu run `sudo apt-get install docker-compose-v2`; elsewhere install Docker Desktop.');
+  assert.strictEqual(detectNotice({ present: true, running: true, compose: true }).kind, 'ok');
+});
+
+test('sandboxActionGate: Compose plugin missing → same disabled set, compose reason', () => {
+  const g = sandboxActionGate({ present: true, running: true, compose: false });
+  assert.strictEqual(g.running, false);
+  assert.deepStrictEqual(g.disabled, GATED);
+  assert.match(g.reason, /docker-compose-v2/);
+});
+
 test('sandboxActionGate: missing/undefined detect reads as not installed (fully gated)', () => {
   assert.deepStrictEqual(sandboxActionGate(undefined).disabled, GATED);
   assert.deepStrictEqual(sandboxActionGate(null).disabled, GATED);

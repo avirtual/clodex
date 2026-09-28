@@ -399,43 +399,58 @@ function parseComposeState(stdout) {
 }
 
 
-function probeDocker(spawn) {
+function probeChild(spawn, args, onSpawnError, onTimeout, onError, onExit) {
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn('docker', ['info', '--format', '{{.ServerVersion}}'],
-        { stdio: ['ignore', 'ignore', 'ignore'] });
+      child = spawn('docker', args, { stdio: ['ignore', 'ignore', 'ignore'] });
     } catch {
-      resolve({ present: false, running: false });
+      resolve(onSpawnError());
       return;
     }
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* already gone */ }
-      done({ present: true, running: false, timedOut: true });
+      done(onTimeout());
     }, DETECT_TIMEOUT_MS);
     child.on('error', (e) => {
       clearTimeout(timer);
-      done({ present: e && e.code !== 'ENOENT', running: false });
+      done(onError(e));
     });
     child.on('exit', (code) => {
       clearTimeout(timer);
-      done({ present: true, running: code === 0 });
+      done(onExit(code));
     });
   });
 }
 
+async function probeDocker(spawn) {
+  const info = await probeChild(spawn, ['info', '--format', '{{.ServerVersion}}'],
+    () => ({ present: false, running: false }),
+    () => ({ present: true, running: false, timedOut: true }),
+    (e) => ({ present: e && e.code !== 'ENOENT', running: false }),
+    (code) => ({ present: true, running: code === 0 }));
+  if (!info.running) return { ...info, compose: false };
+  const compose = await probeChild(spawn, ['compose', 'version'],
+    () => false, () => false, () => false, (code) => code === 0);
+  return { ...info, compose };
+}
+
 
 // Operator-facing docker-remedy copy. KEEP IN SYNC with
-// renderer/lib/sandbox-view.js detectNotice — the dialog shows the same two
+// renderer/lib/sandbox-view.js detectNotice — the dialog shows the same
 // messages for a down/absent daemon, and a late compose failure (daemon died
 // between probe and click) must surface the SAME copy rather than raw stderr.
 const DOCKER_ABSENT_MSG = 'Docker isn’t installed — sandboxes need Docker Desktop.';
 const DOCKER_DOWN_MSG = 'Docker daemon isn’t running — start Docker Desktop.';
+const DOCKER_NO_COMPOSE_MSG = 'Docker Compose plugin isn’t installed — on Debian/Ubuntu run `sudo apt-get install docker-compose-v2`; elsewhere install Docker Desktop.';
 
 function dockerUnavailableError(stderr) {
   const s = String(stderr || '');
+  if (/unknown shorthand flag: 'p' in -p|docker: unknown command: docker compose|'compose' is not a docker command/i.test(s)) {
+    return DOCKER_NO_COMPOSE_MSG;
+  }
   if (/cannot connect to the docker daemon|is the docker daemon running|docker daemon is not running|error during connect/i.test(s)) {
     return DOCKER_DOWN_MSG;
   }
@@ -695,6 +710,11 @@ function createSandbox(deps = {}) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
     return serialize(async () => {
+      const d = await detect();
+      if (d && d.running && d.compose === false) {
+        invalidateDetect();
+        return { ok: false, error: DOCKER_NO_COMPOSE_MSG };
+      }
       const owner = await foreignOwner();
       if (owner) return foreignError(owner);
       try { ensureBoxTokens(); } catch (e) {
@@ -946,11 +966,12 @@ function defaultIsPortInUse(port) {
 module.exports = {
   createSandbox, createSandboxManager,
   // Pure parts, exported for the unit suite.
-  createDetectCache, dockerUnavailableError,
+  createDetectCache, dockerUnavailableError, probeDocker,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
   runningInSandboxBox,
   DEFAULT_CONFIG, DEFAULT_PORTS, CONTAINER_PORTS, RESERVED_MOUNT_TARGETS, WORK_CONTAINER_DIR,
   SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, SANDBOX_BOX_ENV, BOX_ID_RE, RESERVED_BOX_IDS,
+  DOCKER_ABSENT_MSG, DOCKER_DOWN_MSG, DOCKER_NO_COMPOSE_MSG,
 };

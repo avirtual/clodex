@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox preflight now detects a Docker daemon whose Compose plugin is missing (Ubuntu's docker.io package) and says how to install it, instead of failing Start with docker's raw "unknown shorthand flag: 'p'" usage text; the ssh installer warns about it at deploy time.
 - Docs: docs/map/renderer.md — a symbol-level map of renderer/renderer.js (19 regions, 134 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/session-manager.md — a symbol-level map of session-manager.js (20 regions, 197 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/team-tickets.md — a symbol-level map of team-tickets.js (20 regions, 133 rows), gated by test/module-map-fresh.test.js.

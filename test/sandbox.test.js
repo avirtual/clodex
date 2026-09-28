@@ -20,7 +20,8 @@ process.on('exit', () => { try { fs.rmSync(TMP_REGISTRY, { recursive: true, forc
 
 const {
   createSandbox, createSandboxManager,
-  createDetectCache, dockerUnavailableError,
+  createDetectCache, dockerUnavailableError, probeDocker,
+  DOCKER_ABSENT_MSG, DOCKER_DOWN_MSG, DOCKER_NO_COMPOSE_MSG,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState,
   normalizeMounts, translatePath, composeProjectName,
@@ -653,17 +654,44 @@ function fakeSpawn(behavior) {
 
 test('detect: docker missing (ENOENT) → not present', async () => {
   const sb = createSandbox({ registryDir: TMP_REGISTRY, spawn: fakeSpawn({ error: Object.assign(new Error('nope'), { code: 'ENOENT' }) }) });
-  assert.deepStrictEqual(await sb.detect(), { present: false, running: false });
+  assert.deepStrictEqual(await sb.detect(), { present: false, running: false, compose: false });
 });
 
 test('detect: daemon down (non-zero exit) → present but not running', async () => {
   const sb = createSandbox({ registryDir: TMP_REGISTRY, spawn: fakeSpawn({ code: 1 }) });
-  assert.deepStrictEqual(await sb.detect(), { present: true, running: false });
+  assert.deepStrictEqual(await sb.detect(), { present: true, running: false, compose: false });
 });
 
 test('detect: healthy (exit 0) → present and running', async () => {
   const sb = createSandbox({ registryDir: TMP_REGISTRY, spawn: fakeSpawn({ code: 0 }) });
-  assert.deepStrictEqual(await sb.detect(), { present: true, running: true });
+  assert.deepStrictEqual(await sb.detect(), { present: true, running: true, compose: true });
+});
+
+function scriptedSpawn(codes, calls) {
+  return (cmd, args, opts) => {
+    calls.push([cmd, ...args]);
+    return fakeSpawn({ code: codes[args[0]] })(cmd, args, opts);
+  };
+}
+
+test('probeDocker: info ok, compose version fails → compose:false', async () => {
+  const calls = [];
+  const r = await probeDocker(scriptedSpawn({ info: 0, compose: 1 }, calls));
+  assert.deepStrictEqual(r, { present: true, running: true, compose: false });
+  assert.deepStrictEqual(calls, [['docker', 'info', '--format', '{{.ServerVersion}}'], ['docker', 'compose', 'version']]);
+});
+
+test('probeDocker: info ok, compose version ok → compose:true', async () => {
+  const calls = [];
+  assert.deepStrictEqual(await probeDocker(scriptedSpawn({ info: 0, compose: 0 }, calls)),
+    { present: true, running: true, compose: true });
+});
+
+test('probeDocker: info fails → compose probe is never spawned', async () => {
+  const calls = [];
+  const r = await probeDocker(scriptedSpawn({ info: 1, compose: 0 }, calls));
+  assert.deepStrictEqual(r, { present: true, running: false, compose: false });
+  assert.deepStrictEqual(calls, [['docker', 'info', '--format', '{{.ServerVersion}}']]);
 });
 
 // ── detect cache: TTL + in-flight dedupe (fake clock / injected probe) ──────
@@ -733,6 +761,14 @@ test('dockerUnavailableError: not-installed signatures → the not-installed mes
   assert.match(dockerUnavailableError('docker: command not found'), /isn.t installed/);
 });
 
+test('dockerUnavailableError: a missing Compose plugin → the install-compose message, ahead of the other two', () => {
+  assert.strictEqual(dockerUnavailableError("unknown shorthand flag: 'p' in -p\nUsage:  docker [OPTIONS] COMMAND [ARG...]"), DOCKER_NO_COMPOSE_MSG);
+  assert.strictEqual(dockerUnavailableError('docker: unknown command: docker compose'), DOCKER_NO_COMPOSE_MSG);
+  assert.strictEqual(dockerUnavailableError("docker: 'compose' is not a docker command."), DOCKER_NO_COMPOSE_MSG);
+  assert.strictEqual(dockerUnavailableError('Cannot connect to the Docker daemon at unix:///x'), DOCKER_DOWN_MSG);
+  assert.strictEqual(dockerUnavailableError('spawn docker ENOENT'), DOCKER_ABSENT_MSG);
+});
+
 test('dockerUnavailableError: a genuine compose error is NOT a docker-availability one', () => {
   assert.strictEqual(dockerUnavailableError('service "clodex" failed to build'), null);
   assert.strictEqual(dockerUnavailableError('port is already allocated'), null);
@@ -748,7 +784,7 @@ test('manager: box detect() returns the shared cached payload (stamped, deduped)
   const mgr = createSandboxManager({ registryDir: TMP_REGISTRY,
     getUiSettings: () => settings,
     now: () => 4242,
-    spawn: () => { probes++; return fakeSpawn({ code: 0 })(); },
+    spawn: (_cmd, args) => { if (args[0] === 'info') probes++; return fakeSpawn({ code: 0 })(); },
   });
   const box = mgr.get('sandbox');
   const d = await box.detect();
@@ -858,6 +894,24 @@ test('up: a docker-gone failure maps to the friendly message, invalidates the ca
   assert.match(r.error, /Docker daemon isn.t running/);     // friendly copy, not raw stderr
   assert.doesNotMatch(r.error, /unix:\/\//);                // raw stderr suppressed
   assert.strictEqual(invalidated, 1, 'late failure invalidates the detect cache');
+  assert.strictEqual(settings._state().peers.length, 0);
+});
+
+test('up: detect says running without Compose → refused with the install-compose message, no compose file', async () => {
+  const settings = fakeSettings();
+  const calls = [];
+  const sb = createSandbox({ registryDir: TMP_REGISTRY,
+    spawn: (cmd, args, opts) => { calls.push(args); return fakeSpawn({ code: 0 })(cmd, args, opts); },
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    detect: async () => ({ present: true, running: true, compose: false }),
+  });
+  fs.rmSync(sb.composePath(), { force: true });
+  const r = await sb.up();
+  assert.deepStrictEqual(r, { ok: false, error: DOCKER_NO_COMPOSE_MSG });
+  assert.strictEqual(fs.existsSync(sb.composePath()), false);
+  assert.deepStrictEqual(calls, []);
   assert.strictEqual(settings._state().peers.length, 0);
 });
 

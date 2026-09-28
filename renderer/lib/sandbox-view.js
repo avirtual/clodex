@@ -11,8 +11,8 @@
 // Docker detection → the dialog's top line, and the stated reason the disabled
 // actions carry (sandboxActionGate reuses this copy). The install-vs-start
 // distinction is the whole reason detect() separates present from running: the
-// remedy differs. KEEP the two remedy strings in sync with sandbox.js
-// DOCKER_ABSENT_MSG / DOCKER_DOWN_MSG — a late compose failure surfaces the same
+// remedy differs. KEEP the remedy strings in sync with sandbox.js
+// DOCKER_ABSENT_MSG / DOCKER_DOWN_MSG / DOCKER_NO_COMPOSE_MSG — a late compose failure surfaces the same
 // copy for the same daemon state.
 function detectNotice(detect) {
   const d = detect || {};
@@ -29,6 +29,9 @@ function detectNotice(detect) {
   if (!d.running) {
     return { kind: 'warn', text: 'Docker daemon isn’t running — start Docker Desktop.' };
   }
+  if (d.compose === false) {
+    return { kind: 'error', text: 'Docker Compose plugin isn’t installed — on Debian/Ubuntu run `sudo apt-get install docker-compose-v2`; elsewhere install Docker Desktop.' };
+  }
   return { kind: 'ok', text: 'Docker is running.' };
 }
 
@@ -38,12 +41,12 @@ function detectNotice(detect) {
 // and box-create — because they all fail with raw compose stderr otherwise. Stop
 // is NEVER gated (cleanup/teardown must always be reachable), so it is absent
 // from the disabled set by construction. `reason` is the detectNotice text while
-// gated, null when docker is running.
+// gated.
 const GATED_ACTIONS = ['start', 'rebuild', 'boxStart', 'boxCreate'];
 function sandboxActionGate(detect) {
   const d = detect || {};
   const notice = detectNotice(d);
-  const running = !!d.running;
+  const running = !!d.running && d.compose !== false;
   return {
     running,
     notice,
