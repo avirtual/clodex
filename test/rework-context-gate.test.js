@@ -261,7 +261,8 @@ async function settle() {
 const FRESH = 'team-hand-1-r2';
 
 test('mkFixture injects every dep team-tickets.js reads', () => {
-  const f = mkFixture(mkWorld());
+  const repo = real(mkTmpRoot('clodex-t827-repo-'));
+  const f = mkFixture({ home: mkTmpRoot('clodex-t827-home-'), userData: mkTmpRoot('clodex-t827-ud-'), repo, treePath: `${repo}-wt` });
   assertTicketDepsCovered(assert, f.deps, {
     optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest',
