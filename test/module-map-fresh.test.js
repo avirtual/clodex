@@ -23,7 +23,7 @@ const EXPECTED_MAPS = [
 
   'session-manager.md',
 
-  // 'stores.md',
+  'stores.md',
 
   'team-tickets.md',
 ];
