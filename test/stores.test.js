@@ -17,6 +17,10 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { migrateSeatLayout } = require('../seat-layout');
 const { voiceModeOf } = require('../voice-settings');
 
+const filesHolding = (dir, needle) => fs.readdirSync(dir)
+  .filter((n) => { try { return fs.readFileSync(path.join(dir, n), 'utf-8').includes(needle); } catch { return false; } });
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
 // Fresh temp userData + registry dirs, and a stores bundle over them. BOTH seed
 // sources are pointed at paths that don't exist, so neither the shipped library
 // defaults nor the shipped skills pollute the per-store assertions below; the
@@ -50,6 +54,31 @@ test('persistence: missing file -> [], upsert/list/remove round-trip', () => {
     stores.persistence.remove('a');
     assert.deepStrictEqual(stores.persistence.list().map(e => e.name), ['b']);
   } finally { cleanup(); }
+});
+
+test('persistence: an unreadable sessions.json is not replaced by an upsert', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData, registryDir } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    stores.persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+    const again = initStores(userData, { log: console, registryDir,
+      resourcesDir: path.join(registryDir, '__no_seed__'),
+      skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+      envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
+    fs.copyFileSync(file, file + '.bak');
+    fs.chmodSync(file, 0o000);
+    fs.chmodSync(file + '.bak', 0o000);
+    assert.throws(() => fs.readFileSync(file), /EACCES/, 'ENTER: the file is unreadable');
+    try { again.persistence.upsert({ name: 'c', type: 'claude', workspaceId: 'default' }); } catch {}
+    fs.chmodSync(file, 0o600);
+    fs.chmodSync(file + '.bak', 0o600);
+    assert.ok(JSON.parse(fs.readFileSync(file, 'utf-8')).map((e) => e.name).includes('a'));
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    try { fs.chmodSync(file + '.bak', 0o600); } catch {}
+    cleanup();
+  }
 });
 
 test('persistence: seat.json mirrors the record beside the seat, and only when the home exists', () => {
@@ -194,6 +223,34 @@ test('uiSettings: a corrupt settings file yields a fresh default object each rea
     const b = stores.uiSettings.get();
     assert.deepStrictEqual(b.recentCwds, [], 'catch path does not hand out the shared default');
     assert.notStrictEqual(b.theme, 'poison');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a write after a corrupt read neither persists defaults over the stored peers nor grants terminal reports', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    fs.writeFileSync(path.join(userData, 'ui-settings.json'),
+      JSON.stringify({ terminalReports: 'off', peerShellEnabled: true, peers: [{ id: 'p1', sshHost: 'h', token: 'SECRET' }] }) + ',');
+    assert.strictEqual(uiSettings.get().peers.length, 0, 'ENTER: the corrupt path is taken');
+    uiSettings.set({ sidebarFolded: true });
+    assert.ok(filesHolding(userData, 'SECRET').length > 0, 'the peer token survives on disk');
+    assert.notStrictEqual(uiSettings.get().terminalReports, 'asked');
+  } finally { cleanup(); }
+});
+
+test('uiSettings: a corrupt ui-settings.json is quarantined once, byte-exact, beside the store', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    const original = '{"theme":"dark",,}';
+    fs.writeFileSync(path.join(userData, 'ui-settings.json'), original);
+    stores.uiSettings.get();
+    stores.uiSettings.get();
+    stores.uiSettings.set({ sidebarFolded: true });
+    stores.uiSettings.get();
+    const moved = fs.readdirSync(userData).filter((n) => n.startsWith('ui-settings.json.corrupt-'));
+    assert.strictEqual(moved.length, 1, `exactly one quarantine file: ${moved}`);
+    assert.strictEqual(fs.readFileSync(path.join(userData, moved[0]), 'utf-8'), original);
   } finally { cleanup(); }
 });
 
@@ -2671,6 +2728,21 @@ test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () =
   } finally { cleanup(); }
 });
 
+test('workspaces: an unparseable workspaces.json is not overwritten by list()', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    const { workspaces } = stores;
+    workspaces.upsert({ id: 'default', name: 'Workspace', bounds: null });
+    workspaces.upsert({ id: 'ws-2', name: 'Trading' });
+    const file = path.join(userData, 'workspaces.json');
+    const text = fs.readFileSync(file, 'utf-8');
+    fs.writeFileSync(file, text.slice(0, text.lastIndexOf(']')) + ',]');
+    assert.throws(() => JSON.parse(fs.readFileSync(file, 'utf-8')), 'ENTER: the file is unparseable');
+    workspaces.list();
+    assert.ok(filesHolding(userData, 'Trading').length > 0, 'the Trading record survives on disk');
+  } finally { cleanup(); }
+});
+
 test('workspaces: setOpen round-trips true, clears to an ABSENT key', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3815,6 +3887,19 @@ test('envScopes: prototype-pollution guard — __proto__/constructor/prototype s
   } finally { cleanup(); }
 });
 
+test('envScopes: an inherited member name as scope neither pollutes a built-in nor reports a phantom save', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { envScopes } = stores;
+    try { envScopes.set('toString', 'K', 'v', false); } catch {}
+    assert.strictEqual(Object.prototype.toString.K, undefined);
+    assert.strictEqual(typeof envScopes.getScope('valueOf'), 'object');
+  } finally {
+    delete Object.prototype.toString.K;
+    cleanup();
+  }
+});
+
 test('envScopes: the store file is written 0600 (secret store)', () => {
   const { stores, userData, cleanup } = freshStores();
   try {
@@ -3822,6 +3907,18 @@ test('envScopes: the store file is written 0600 (secret store)', () => {
     const st = fs.statSync(path.join(userData, 'env-scopes.json'));
     assert.strictEqual(st.mode & 0o777, 0o600, 'env-scopes.json is 0600');
   } finally { cleanup(); }
+});
+
+test('envScopes: set() throws when the save fails, so the settings pane cannot report ok', { skip: isRoot && 'root writes a 0500 dir' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    fs.chmodSync(userData, 0o500);
+    assert.throws(() => stores.envScopes.set('global', 'K', 'v', false));
+    assert.deepStrictEqual(stores.envScopes.getScope('global'), {}, 'ENTER: nothing was written');
+  } finally {
+    fs.chmodSync(userData, 0o700);
+    cleanup();
+  }
 });
 
 test('uiSettings: the hint toggles default off and round-trip independently', () => {
@@ -3939,3 +4036,4 @@ test('persistence: _load still recovers entries from .bak when sessions.json wil
   assert.deepStrictEqual(persistence.list().map(e => e.name), ['rescued'],
     'the recovery half of the mechanism is what the snapshot exists to feed');
 });
+

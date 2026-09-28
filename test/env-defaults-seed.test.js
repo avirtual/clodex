@@ -435,3 +435,18 @@ test('planEnvSeed over the shipped file seeds the harness nudge off', () => {
   assert.strictEqual(writes.CLAUDE_CODE_GENTLE_PARASOL, 'off');
   assert.strictEqual(plan.writes.length, 8);
 });
+
+test('an unparseable env-scopes.json survives a launch: the seeder never writes over a file it could not read', () => {
+  withDirs((dirs) => {
+    const src = mkTmpRoot('envdef-src-');
+    try {
+      const original = '{"global":{"MY_SECRET":{"value":"hunter2","secret":true}},}';
+      fs.writeFileSync(dirs.scopesFile, original);
+      assert.throws(() => JSON.parse(original), 'ENTER: the fixture must be unparseable');
+      launch(dirs, writeDefaults(src, FIXTURE));
+      const holders = fs.readdirSync(dirs.userData)
+        .filter((n) => fs.readFileSync(path.join(dirs.userData, n), 'utf-8').includes('hunter2'));
+      assert.ok(holders.length > 0, 'some file under userData still holds the secret value');
+    } finally { fs.rmSync(src, { recursive: true, force: true }); }
+  });
+});
