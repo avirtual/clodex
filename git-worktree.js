@@ -291,7 +291,10 @@ async function repoInfo(cwd) {
 async function isDirty(worktreePath) {
   const wt = worktreePath && path.resolve(String(worktreePath));
   if (!wt) return { ok: false, error: 'No worktree path given' };
-  const r = await git(wt, ['status', '--porcelain']);
+  let linkedModules = false;
+  try { linkedModules = fs.lstatSync(path.join(wt, 'node_modules')).isSymbolicLink(); } catch { linkedModules = false; }
+  const args = linkedModules ? ['status', '--porcelain', '--', '.', ':(exclude)node_modules'] : ['status', '--porcelain'];
+  const r = await git(wt, args);
   if (!r.ok) return { ok: false, error: (r.stderr || 'git status failed').trim() };
   return { ok: true, dirty: r.stdout.trim().length > 0 };
 }
