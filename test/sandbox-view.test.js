@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText } = require('../renderer/lib/sandbox-view');
+const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -199,6 +199,41 @@ test('portsLineText: a role missing from a partial parse is skipped', () => {
 test('portsLineText: a non-numeric port value is skipped', () => {
   assert.strictEqual(portsLineText({ web: NaN, wirescope: 7813 }), 'Wirescope 7813');
   assert.strictEqual(portsLineText({}), '');
+});
+
+test('portsLineText: asked ports identical to the effective ones → the unchanged line', () => {
+  assert.strictEqual(
+    portsLineText({ web: 7810, wirescope: 7811, wire: 7820 }, { web: 7810, wirescope: 7811, wire: 7820 }),
+    'Web 7810 · Wirescope 7811 · Peer wire 7820',
+  );
+});
+
+test('portsLineText: a bumped port names the one asked for', () => {
+  assert.strictEqual(
+    portsLineText({ web: 7812, wirescope: 7811, wire: 7820 }, { web: 7810, wirescope: 7811, wire: 7820 }),
+    'Web 7812 (asked 7810) · Wirescope 7811 · Peer wire 7820',
+  );
+  assert.strictEqual(
+    portsLineText({ web: 7810, wirescope: 7813, wire: 7821 }, { web: 7810, wirescope: 7811, wire: 7820 }),
+    'Web 7810 · Wirescope 7813 (asked 7811) · Peer wire 7821 (asked 7820)',
+  );
+});
+
+test('validatePorts: distinct integers in 1024–65535 → null', () => {
+  assert.strictEqual(validatePorts({ web: 7810, wirescope: 7811, wire: 7820 }), null);
+  assert.strictEqual(validatePorts({ web: 1024, wirescope: 65535, wire: 8000 }), null);
+});
+
+test('validatePorts: non-integer, out of range, duplicate or missing → the toast message', () => {
+  const msg = 'Ports must be distinct integers between 1024 and 65535.';
+  assert.strictEqual(validatePorts({ web: 7810.5, wirescope: 7811, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: NaN, wirescope: 7811, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: '7810', wirescope: 7811, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: 1023, wirescope: 7811, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: 7810, wirescope: 65536, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: 7810, wirescope: 7810, wire: 7820 }), msg);
+  assert.strictEqual(validatePorts({ web: 7810, wirescope: 7811, wire: 7811 }), msg);
+  assert.strictEqual(validatePorts({ web: 7810, wirescope: 7811 }), msg);
 });
 
 test('foreignNotice: status.foreign → a warn notice naming the owner, read-only; absent otherwise', () => {

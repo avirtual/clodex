@@ -29,7 +29,7 @@ const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -7723,6 +7723,10 @@ const sbStatusRow = document.getElementById('sandbox-status');
 const sbWorkdir = document.getElementById('sandbox-workdir');
 const sbRef = document.getElementById('sandbox-ref');
 const sbAutoStart = document.getElementById('sandbox-autostart');
+const sbPortsField = document.getElementById('sandbox-ports-field');
+const sbWebPort = document.getElementById('sandbox-web-port');
+const sbWirescopePort = document.getElementById('sandbox-wirescope-port');
+const sbWirePort = document.getElementById('sandbox-wire-port');
 const sbToggleBtn = document.getElementById('btn-sandbox-toggle');
 const sbRebuildBtn = document.getElementById('btn-sandbox-rebuild');
 const sbOpenRow = document.getElementById('sandbox-open-row');
@@ -7751,6 +7755,7 @@ const SB_GATE_UNKNOWN = { running: false, notice: { kind: 'idle', text: 'Checkin
 let sbGate = SB_GATE_UNKNOWN;
 let sbForeign = null;
 let sbEffectivePorts = null;
+let sbAskedPorts = null;
 let sbCurrentBox = 'sandbox';
 let sbBoxes = [];
 let sbMounts = [];
@@ -7772,7 +7777,10 @@ function applySandboxRunning(running, ports = null) {
   sbRunning = running;
   sbEffectivePorts = running ? (ports || null) : null;
   sbToggleBtn.textContent = running ? 'Stop' : 'Start';
-  const portsLine = sandboxPortsLineText(sbEffectivePorts);
+  const portsLine = sandboxPortsLineText(sbEffectivePorts, sbAskedPorts);
+  const portsHint = running ? 'Ports apply on the next Start — stop the sandbox to change them.' : '';
+  for (const el of [sbWebPort, sbWirescopePort, sbWirePort]) { el.disabled = running; el.title = portsHint; }
+  sbPortsField.title = portsHint;
   if (running && portsLine) {
     sbPortsLine.textContent = portsLine;
     sbPortsLine.classList.remove('hidden');
@@ -7951,6 +7959,7 @@ async function loadBoxDetail() {
   sbDetailLabel.textContent = (box && box.label) || sbCurrentBox;
   sbWorkdir.value = cfg.workDir || '';
   sbRef.value = cfg.ref || '';
+  applyAskedPorts(cfg);
   sbAutoStart.checked = !!cfg.autoStart;
   sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
   sbMountsDirty = false;
@@ -8004,22 +8013,42 @@ function closeSandboxDialog() {
   sandboxOverlay.classList.add('hidden');
 }
 
-// Ports are engine-managed and deliberately NOT collected: setConfig merges over the stored
-// config, so the persisted port values survive only while this keeps omitting them.
+function applyAskedPorts(cfg) {
+  sbAskedPorts = { web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort };
+  sbWebPort.value = cfg.webPort != null ? String(cfg.webPort) : '';
+  sbWirescopePort.value = cfg.wirescopePort != null ? String(cfg.wirescopePort) : '';
+  sbWirePort.value = cfg.wirePort != null ? String(cfg.wirePort) : '';
+}
+
+function portInputValue(el) {
+  const s = el.value.trim();
+  return s === '' ? NaN : Number(s);
+}
+
 function collectSandboxConfig() {
   return {
     workDir: sbWorkdir.value.trim() || null,
     ref: sbRef.value.trim() || null,
     autoStart: sbAutoStart.checked,
+    webPort: portInputValue(sbWebPort),
+    wirescopePort: portInputValue(sbWirescopePort),
+    wirePort: portInputValue(sbWirePort),
   };
 }
 
 async function saveSandboxConfig() {
-  const r = await window.api.sandboxSetConfig(collectSandboxConfig(), sbCurrentBox);
+  const cfg = collectSandboxConfig();
+  const bad = sandboxValidatePorts({ web: cfg.webPort, wirescope: cfg.wirescopePort, wire: cfg.wirePort });
+  if (bad) {
+    showToast(bad, { kind: 'error', duration: 10000 });
+    return false;
+  }
+  const r = await window.api.sandboxSetConfig(cfg, sbCurrentBox);
   if (r && r.ok === false) {
     showToast(r.error || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
     return false;
   }
+  if (r && r.webPort != null) applyAskedPorts(r);
   return true;
 }
 

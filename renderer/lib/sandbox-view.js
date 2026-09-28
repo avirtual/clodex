@@ -126,15 +126,26 @@ function openUrl(webPort) {
 // "configured vs bumped" to reconcile — just state what the box IS listening on.
 // `effective` is status.ports ({web,wirescope,wire} or a subset) or null when
 // stopped/absent → '' (the caller hides the line, nothing true to say).
-function portsLineText(effective) {
+function portsLineText(effective, asked) {
   if (!effective) return '';
   const roles = [['web', 'Web'], ['wirescope', 'Wirescope'], ['wire', 'Peer wire']];
   const parts = [];
   for (const [role, label] of roles) {
     const p = Number(effective[role]);
-    if (Number.isFinite(p)) parts.push(`${label} ${p}`);
+    if (!Number.isFinite(p)) continue;
+    const a = asked ? Number(asked[role]) : NaN;
+    parts.push(Number.isFinite(a) && a !== p ? `${label} ${p} (asked ${a})` : `${label} ${p}`);
   }
   return parts.join(' · ');
 }
 
-module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText };
+const PORTS_INVALID = 'Ports must be distinct integers between 1024 and 65535.';
+
+function validatePorts(ports) {
+  const vals = ['web', 'wirescope', 'wire'].map((k) => (ports ? ports[k] : undefined));
+  if (!vals.every((v) => Number.isInteger(v) && v >= 1024 && v <= 65535)) return PORTS_INVALID;
+  if (new Set(vals).size !== vals.length) return PORTS_INVALID;
+  return null;
+}
+
+module.exports = { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
