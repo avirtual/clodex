@@ -219,7 +219,7 @@
 
 - `kill` calls getPersistence().remove() UNCONDITIONALLY, agent or bash, before the pty dies, so a killed agent's record is gone and the bash drop gate `exitDisposition` feeds in the exit handler only suppresses a redundant second remove.
 - `kill` returns at its `if (!s) return;` before its remove, so on an already-dead seat only `destroy` drops the record; without that own drop the worktree goes and the record naming it stays.
-- `destroy` drops the record per return, never up front: the no-worktree and worktree-removed returns drop it, the removeWorktree failure return keeps it (and re-upserts it archived for a live seat whose record `kill` already removed).
+- `destroy` drops the record per return, never up front: the no-worktree and worktree-removed returns drop it, the `_waitForExit` timeout return (process still running, tree kept, `ok: false`) and the removeWorktree failure return keep it (each re-upserting it archived for a live seat whose record `kill` already removed).
 - `destroy` is the only route that ends a seat for good; restart paths call `kill` on purpose because they recreate the same seat, so worktree removal must never be folded into `kill`.
 - `archive` keeps the record stamped archivedAt and sets `s._archived` without touching `s._userKilled`, so `exitDisposition` treats the exit as expected and the record survives.
 - `rename`, `move` and `moveToPeer` stop through `_stopForRespawn`, never `kill`, because the record is exactly what they must keep.

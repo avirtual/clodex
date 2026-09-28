@@ -2563,7 +2563,7 @@ function createSessionManager(deps) {
         // (everything gated) is a real value that persists.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
         // Same conditional-omit rule as `intents` above: freezing `plugins: null`
-        // onto the record writes a value where the absent list means all.
+        // onto the record writes a value where the absent list means core-shipped only.
         ...(Array.isArray(plugins) ? { plugins: plugins.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
         // Session-scope env. Persisted on the entry so --resume respawns with the
@@ -7095,8 +7095,8 @@ function createSessionManager(deps) {
       try {
         r = sched.add(who, spec, body);
       } catch (e) {
-        log.error('intent', `remind by ${who}: store refused the save — ${e.message}`);
-        reply(`reminder NOT armed — ${e.message}`);
+        log.error('intent', `remind by ${who}: store refused the save — ${(e && e.message) || e}`);
+        reply(`reminder NOT armed — ${(e && e.message) || e}`);
         return;
       }
       if (!r.ok) {
@@ -7764,7 +7764,7 @@ function createSessionManager(deps) {
           if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
           const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
           if (resumeId) this._freshBakeOnce.add(name);
-          // Same field set as engine.js's restartSession/applySessionArgs — a
+          // Same field set as engine.js's restartSession on a fresh restart — a
           // reload is a kill()+create() like theirs, and `ephemeral` is what
           // tells `task accept` whether the loop minted this seat. Dropped
           // here, a reloaded ticket seat reads as the operator's standing seat
@@ -8261,6 +8261,11 @@ function createSessionManager(deps) {
         return;
       }
       const mark = session._scratch;
+      if (!mark && droppedPending) {
+        reply('[agent:scratch] pending begin cancelled before it opened');
+        log.info('intent', `scratch ${session.name}: pending begin cancelled before it opened`);
+        return;
+      }
       if (!mark) {
         reply('[agent:scratch] cancel: no episode is open — nothing was cut.');
         return;
@@ -9828,12 +9833,6 @@ function createSessionManager(deps) {
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
-    // An EXPIRING stamp, so it releases on its own: he submits (the composer
-    // empties, the renderer stops reporting, and the submit drains the park),
-    // he clears it, the seat loses focus, the window closes, the screen becomes
-    // unreadable — every one of those stops the level and the stamp goes stale.
-    // Past that the park cap bounds it again from a timer that reads no voice
-    // signal at all, so the protection cannot outlive its release.
     // What every drain and the divert must agree "an open draft" means. The two
     // predicates are separate because typed and dictated drafts reach Clodex by
     // different routes (see _voiceDraftOpen); a reader consulting only the typed
@@ -9842,6 +9841,12 @@ function createSessionManager(deps) {
       try { return isDraftOpen(session) || this._voiceDraftOpen(session); } catch { return false; }
     }
 
+    // An EXPIRING stamp, so it releases on its own: he submits (the composer
+    // empties, the renderer stops reporting, and the submit drains the park),
+    // he clears it, the seat loses focus, the window closes, the screen becomes
+    // unreadable — every one of those stops the level and the stamp goes stale.
+    // Past that the park cap bounds it again from a timer that reads no voice
+    // signal at all, so the protection cannot outlive its release.
     _voiceDraftOpen(session) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
