@@ -12,7 +12,7 @@
 | `handle:session:create` | {ok, session} for a new seat in the sender's workspace, or {ok:false,error} | sessions via manager | spawnFromParams | api-shim.test.js drawer-services-seam.test.js plugin-template-spawn.test.js |
 
 ### Invariants
-- `spawnFromParams` is the one mint door every create transport funnels through, and refuses a name held by a live OR a persisted record.
+- `spawnFromParams` is the one mint door every OPERATOR create transport (session:create, team:create, team:join) funnels through, and refuses a name held by a live OR a persisted record.
 - `handle:session:create` registers with `handle`, so the renderer awaits an {ok, session} or {ok:false, error} reply rather than a thrown rejection.
 - `registerIpcHandlers` must not require electron: every native touch (dialogs, popupMenu, openExternal) arrives as an injected dep, which is what lets web-host register the same channels.
 - `spawnFromParams` stamps the workspace from `workspaceOfSender`, never from a renderer-supplied id.
@@ -374,6 +374,7 @@
 - Dropping `syncRemoteServer` from `handle:peer:setShellAllowed` leaves a revocation on paper until the next restart.
 - A per-line log inside `handle:peer:deploy` would bury the run; the drop is logged once on purpose.
 - `handle:peer:setVisible` validates names against the seat grammar; loosening it lets a dot-only or path-shaped name into ui-settings.
+- `handle:peer:deployFix` reaches create()'s fixFor by position (24 positionals); deploy-visible.test.js pins fixFor's index in create()'s declared signature to the index its create stub reads, so a parameter inserted before fixFor must move both.
 
 ## Peer terminals, drawer-gated — peerSeat … on:peer:wtermInput
 
@@ -513,7 +514,7 @@
 - `on:session:focused` resolves the sender strictly, so a dying window's last report maps to no window instead of the default workspace's.
 
 ### Hazards
-- `on:pty-input`, like `handle:prompts:inject`, takes any seat name with no workspace check.
+- `on:pty-input`, `on:voice:markOrigin`, `on:voice:unmarkOrigin`, `on:voice:recording`, `on:voice:draft`, `handle:console:read` and `handle:console:live`, like `handle:prompts:inject`, take any seat name with no workspace check; the seat:* handlers and `handle:voice:record` check it.
 - Resolving `on:session:focused` with the loose helper lets a closing window move the microphone of whatever window holds the default workspace.
 
 ## Restore, retry, forget and workspaces — handle:app:restore-sessions … handle:workspace:setName
@@ -537,6 +538,8 @@
 ### Hazards
 - Routing `handle:session:retrySpawn` through `spawnFromParams` refuses the retry as a clash with its own persisted record.
 - `handle:workspace:setView` and `handle:workspace:setName` act on the sender's workspace, so taking an id argument instead would let a web connection edit another workspace.
+- `handle:session:retrySpawn` finds the record by name alone and spawns it into the sender's workspace, so a retry naming another workspace's record rehomes it (create's upsert rewrites `workspaceId`).
+- `handle:session:forget` reaps the drawer shell only in the sender's workspace, so a forget naming another workspace's seat drops the record and orphans that seat's shell.
 
 ## Gated services: ctl, drawer, console, local terminal, new workspace — handle:ctl:run … handle:workspace:new
 

@@ -1,6 +1,6 @@
 // Transport-agnostic: this module must not require electron. Registration and
 // every native-GUI touch ride injected seams (handle/on, popupMenu, dialogs,
-// shell/app calls) supplied by the host.
+// shell/app calls) supplied by the host — except Open in Terminal, which execFiles here.
 
 const { pathFor, fixDirFor, seatDirFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
@@ -112,7 +112,7 @@ function registerIpcHandlers(deps) {
 
   async function spawnFromParams(e, p) {
     const workspaceId = workspaceOfSender(e);
-    // Mint front door: every mint transport funnels here, while the resume paths
+    // Mint front door: every operator create transport funnels here, while the resume paths
     // (restore, unarchive→retry, restart) call manager.create directly and may
     // legitimately re-create a persisted name. Reject a mint over any existing
     // record, live OR archived/persisted; resumeId is not the discriminator.
@@ -412,11 +412,6 @@ function registerIpcHandlers(deps) {
           // one notch out. Fixing that means probing existence rather than
           // bytes, which costs a second disk touch and a reach past the store's
           // public surface; deliberately not taken here.
-          // Not redundant with raw()'s own catch: that one covers the READ,
-          // while _file() resolves outside it and throws on a name confineOrThrow
-          // refuses. Uncaught, one bad name in one template collapses the whole
-          // team's preflight to {ok:false} — reporting nothing because a single
-          // name was bad is the swallow this module exists to kill.
           let bytes = null;
           try { bytes = execLibrary.raw(id); } catch { bytes = null; }
           return bytes == null ? null : { name: id, unreadable: true };
@@ -484,7 +479,7 @@ function registerIpcHandlers(deps) {
   // for a role the team ALREADY has would turn a no-op re-add (empty def matching
   // an empty-normalized role on disk) into "already exists with a different
   // definition": the stock def refusing a live team's role. Gating on absence
-  // keeps this a mint and nothing else. Pinned by team-hand-template-portable.test.js.
+  // keeps this a mint and nothing else. Pinned by ipc-handlers-team.test.js.
   const isEmptyDef = (d) => !d || typeof d !== 'object' || Array.isArray(d) || Object.keys(d).length === 0;
   handle('team:addRole', (_e, team, role, def) => {
     try {
@@ -532,10 +527,6 @@ function registerIpcHandlers(deps) {
     catch (e) { return { ok: false, error: e.message, isRepo: false, branches: [] }; }
   });
   handle('worktree:remove', async (_e, worktreePath, opts) => gitWorktree.removeWorktree(worktreePath, opts || null));
-  // Scoped, not global: `popular` is built from directory paths, so an unscoped
-  // list would hand a web-host connection bound to one workspace the cwds of
-  // every other one. See the rule at `session:list` below — this handler was the
-  // violation of it, registered thirty lines above where it is stated.
   handle('session:cwdSuggestions', (e) => {
     const recent = recentCwdsFor(uiSettings.get(), workspaceOfSender(e));
     const counts = new Map();
@@ -571,9 +562,9 @@ function registerIpcHandlers(deps) {
 
   // No unscoped cross-workspace lister on this surface: web-host dispatches any
   // registered channel by name without consulting the contract, so a
-  // `manager.list()` handler hands an authenticated connection every workspace's
-  // sessions when it is bound to one. In-process callers (app-menus.js) use
-  // `getManager().list()` directly and need no channel.
+  // `manager.list()` handler mixes every workspace into one view (hygiene, not
+  // isolation: the hello's workspaceId is client-chosen). In-process callers
+  // (app-menus.js) use `getManager().list()` directly and need no channel.
   //
   // That rule is now OWNED BY A TEST rather than by this paragraph:
   // test/ipc-unscoped-listing.test.js runs the one-line grep this comment
@@ -664,9 +655,6 @@ function registerIpcHandlers(deps) {
     return { ok: true, template: t, templates: templates.list() };
   });
   handle('templates:remove', (_e, id) => {
-    // A refused name now throws (stores.js confines at _file). Caught here so
-    // it reads like every other refusal on this surface instead of rejecting
-    // the invoke, and so the caller can tell it apart from a real delete.
     try { templates.remove(id); } catch { /* refused name — nothing was deleted */ }
     refreshAppMenu();
     return templates.list();
@@ -1141,7 +1129,7 @@ function registerIpcHandlers(deps) {
           meta[s.name].pluginGrants = [...s.pluginGrants];
         }
         // Array.isArray ALONE, unlike the grants line above: `[]` is a seat with
-        // no plugins, absent is a seat with all — dropping `[]` inverts it.
+        // no plugins, absent is a seat with the core-shipped ones — dropping `[]` grants those.
         if (Array.isArray(s.plugins)) meta[s.name].plugins = [...s.plugins];
       }
       return { ok: true, meta };
@@ -1487,9 +1475,9 @@ function registerIpcHandlers(deps) {
   // the plugin host — the registry is a module-level table both halves mutate, so
   // it stays authoritative with no host (kill switch, construction failed), where
   // routing through the host would blank the checklist in exactly those cases.
-  // With neither a name nor an override the answer is the globally enabled set,
-  // which is what an absent list resolves to: only a globally enabled plugin
-  // ever registers a row here. `override` is the checklist's LIVE ticked set.
+  // With neither a name nor an override the answer is what an absent list resolves
+  // to: core-shipped plugins' rows only (seatHasPlugin), not every enabled one's.
+  // `override` is the checklist's LIVE ticked set.
   handle('intents:catalog', (_e, name, override) => {
     if (Array.isArray(override)) return catalogRows(override.map(String));
     const entry = name ? persistence.get(String(name)) : null;
@@ -2487,14 +2475,14 @@ function registerIpcHandlers(deps) {
     return manager.voiceRecord(s.name, action, { workspaceId: s.workspaceId, observed: seen });
   });
 
-  // The renderer knows a submit is voice-originated (it watched the composition
-  // or the recorder); the proxy base and route live here. Carries no text — the
-  // marker's wording is decided in voice-origin-arm.js, so a doctored payload
-  // cannot choose what the agent is told.
   on('log:voice', (_e, name, line) => {
     log.info('voice', `${String(name || '-').slice(0, 64)} ${String(line || '')}`.slice(0, 300));
   });
 
+  // The renderer knows a submit is voice-originated (it watched the composition
+  // or the recorder); the proxy base and route live here. Carries no text — the
+  // marker's wording is decided in voice-origin-arm.js, so a doctored payload
+  // cannot choose what the agent is told.
   on('voice:markOrigin', (_e, name) => {
     manager.markVoiceOrigin(String(name || ''));
   });
@@ -2729,7 +2717,7 @@ function registerIpcHandlers(deps) {
   // Both keep `enableDrawerServices`. A host that wants a local terminal is
   // saying something narrower than a host that wants the drawer's services.
   if (enableLocalTerminal) {
-    // STRICT resolution, unlike every other handler here: the shared helper
+    // STRICT resolution, unlike almost every other handler here: the shared helper
     // falls back to the default workspace when the sender's window is gone, so
     // an in-flight keystroke from a closing window would land in a DIFFERENT
     // workspace's shell. Unresolved is a refusal, not a default.
