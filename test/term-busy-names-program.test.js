@@ -19,7 +19,7 @@ function boot() {
   try {
     engine = require('../engine').createEngine({
       userDataPath: tmp,
-      seams: { registryDir: path.join(tmp, 'clodex-home') },
+      seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
       log: { info() {}, warn() {}, error() {} },
     });
   } finally { dp.createDrawerPtys = orig; }

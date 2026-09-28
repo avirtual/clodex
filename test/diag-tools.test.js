@@ -98,7 +98,7 @@ test('a directory named claude on PATH is not an installed CLI', () => {
   const tmp = mkTmpRoot('clx-diag-dir-');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info() {}, warn() {}, error() {} },
   });
   const binDir = path.join(tmp, 'bin');
@@ -121,7 +121,7 @@ test('whichBin: an explicit path to a directory is not a binary', () => {
   const tmp = mkTmpRoot('clx-diag-dir-');
   const { whichBin } = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info() {}, warn() {}, error() {} },
   });
   const binDir = path.join(tmp, 'bin');

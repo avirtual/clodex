@@ -232,7 +232,7 @@ function bootEngine() {
   // consulted, and any path not routed through this seam keeps the old root.
   const eng = createEngine({
     userDataPath: userData,
-    seams: { registryDir: path.join(home, '.clodex') },
+    seams: { noSeed: true, registryDir: path.join(home, '.clodex') },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
   // `shutdown()` is not optional here. createEngine arms the wirescope watchdog,

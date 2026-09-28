@@ -59,7 +59,7 @@ function mkHome() {
   const home = path.join(tmp, 'clodex-home');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: home },
+    seams: { noSeed: true, registryDir: home },
     log: { info() {}, warn() {}, error() {} },
   });
   const { createTeam } = createTeamManifest({ fs, clodexHome: home });

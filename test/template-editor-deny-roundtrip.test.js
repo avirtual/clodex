@@ -89,7 +89,7 @@ function mkBox() {
   const registryDir = path.join(tmp, 'clodex-home');
   fs.mkdirSync(path.join(registryDir, 'run'), { recursive: true });
   const log = { info() {}, warn() {}, error() {} };
-  const engine = createEngine({ userDataPath: tmp, seams: { registryDir }, log });
+  const engine = createEngine({ userDataPath: tmp, seams: { noSeed: true, registryDir }, log });
   const handlers = new Map();
   registerIpcHandlers({ ...engine, handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn), log });
   return {

@@ -136,7 +136,7 @@ function mkEngine(seams) {
   const tmp = mkTmpRoot('t959-eng-');
   return createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home'), ...seams },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
     log: { info() {}, warn() {}, error() {} },
   });
 }

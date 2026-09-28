@@ -63,7 +63,7 @@ test('an injected REGISTRY_DIR outranks CLODEX_HOME for the in-app team layer', 
       // without seeding ~/.clodex from whatever branch the suite runs in.
       const eng = createEngine({
         userDataPath: tmp,
-        seams: { registryDir: path.join(tmp, 'clodex-home') },
+        seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
         log: { info() {}, warn() {}, error() {} },
       });
       // listTeams is the front door's own reader, so this drives the real wiring

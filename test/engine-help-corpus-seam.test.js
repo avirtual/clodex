@@ -12,7 +12,7 @@ function theEngine() {
     const tmp = mkTmpRoot('clx-eng-help-');
     engine = createEngine({
       userDataPath: tmp,
-      seams: { registryDir: path.join(tmp, 'clodex-home') },
+      seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
       log: { info() {}, warn() {}, error() {} },
     });
   }

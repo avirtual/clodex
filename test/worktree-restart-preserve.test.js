@@ -68,7 +68,7 @@ function mkEngine() {
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
   // Returned rather than read back off the engine, which does not expose it: the

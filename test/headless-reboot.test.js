@@ -72,6 +72,7 @@ function mkHeadlessHost({ env = {}, startMs = 1_000_000 } = {}) {
     log: quietLog,
     // registryDir or the engine seeds the operator's live ~/.clodex (t359).
     seams: {
+      noSeed: true,
       registryDir: path.join(tmp, 'clodex-home'),
       restartHost: () => exits.push(64),
       restartHostWhenIdle: headlessRestart.restartHostWhenIdle,
