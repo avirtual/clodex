@@ -80,6 +80,16 @@ test('withModelArg: strips all model tokens across mixed forms', () => {
   );
 });
 
+test('withModelArg: an empty-valued model token does not stop the strip, so a later token cannot survive', () => {
+  assert.deepStrictEqual(withModelArg(['--model=', '--model', 'b', '--foo'], 'x'), ['--model', 'x', '--foo']);
+  assert.deepStrictEqual(withModelArg(['--model', '', '-m', 'b'], 'x'), ['--model', 'x']);
+});
+
+test('withModelArg: a model flag whose next token is another model flag leaves no orphaned value', () => {
+  assert.deepStrictEqual(withModelArg(['--model', '-m', 'b'], 'x'), ['--model', 'x']);
+  assert.deepStrictEqual(withModelArg(['-m', '--model=b', '--foo'], 'x'), ['--model', 'x', '--foo']);
+});
+
 test('withModelArg: F3 pass-through — empty field leaves a box --model UNTOUCHED', () => {
   assert.deepStrictEqual(
     withModelArg(['--model', 'opus', '--foo'], ''),
