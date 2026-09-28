@@ -54,3 +54,10 @@ Blast radius on peers: `skillDenyForPeer` sends `[]` for any directive-bearing
 list, so an operator whose explicit list is upgraded here stops sending that
 denial verbatim to a remote peer and sends nothing. The tradeoff is t918's (an
 old peer reads `!x` as a skill name); t950 is what moves this operator into it.
+
+## safeScope
+
+The `__proto__` / `constructor` / `prototype` denylist stays beside the
+`Object.hasOwn` guards in `envScopes`. `data.workspaces['__proto__'] = {}`
+sets that object's prototype instead of creating an own key, so `set` would
+persist nothing and still report ok; hasOwn cannot turn that into a real write.

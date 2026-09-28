@@ -449,6 +449,7 @@ function initStores(userDataPath, {
   let launchBakTaken = false;
 
   const unreadableLogged = new Set();
+  const quarantinedFiles = new Set();
   function readStoreJson(file) {
     let text;
     try {
@@ -469,9 +470,13 @@ function initStores(userDataPath, {
       try {
         fs.renameSync(file, dest);
       } catch (e) {
-        console.error(`${path.basename(file)} could not be parsed nor moved aside (${(e && e.code) || e}); saves to it are refused`);
+        if (!unreadableLogged.has(file)) {
+          unreadableLogged.add(file);
+          console.error(`${path.basename(file)} could not be parsed nor moved aside (${(e && e.code) || e}); saves to it are refused`);
+        }
         return { state: 'unreadable' };
       }
+      quarantinedFiles.add(file);
       console.warn(`${path.basename(file)} could not be parsed; moved aside to ${dest}`);
       return { state: 'quarantined' };
     }
@@ -925,6 +930,7 @@ function initStores(userDataPath, {
     _load() {
       const r = readStoreJson(WORKSPACES_FILE);
       this._unreadable = r.state === 'unreadable';
+      if (this._unreadable) return [{ id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null }];
       return r.state === 'ok' && Array.isArray(r.value) ? r.value : [];
     },
     _save(entries) {
@@ -937,7 +943,7 @@ function initStores(userDataPath, {
       const all = this._load();
       if (all.length === 0) {
         const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
-        if (!this._unreadable) this._save([def]);
+        this._save([def]);
         return [def];
       }
       return all;
@@ -1497,9 +1503,14 @@ function initStores(userDataPath, {
     } catch {}
   }
 
+  let uiSettingsQuarantineOnDisk = null;
   function uiSettingsQuarantined() {
-    const prefix = `${path.basename(UI_SETTINGS_FILE)}.corrupt-`;
-    try { return fs.readdirSync(userDataPath).some((n) => n.startsWith(prefix)); } catch { return false; }
+    if (quarantinedFiles.has(UI_SETTINGS_FILE)) return true;
+    if (uiSettingsQuarantineOnDisk === null) {
+      const prefix = `${path.basename(UI_SETTINGS_FILE)}.corrupt-`;
+      try { uiSettingsQuarantineOnDisk = fs.readdirSync(userDataPath).some((n) => n.startsWith(prefix)); } catch { uiSettingsQuarantineOnDisk = false; }
+    }
+    return uiSettingsQuarantineOnDisk;
   }
 
   const uiSettings = {

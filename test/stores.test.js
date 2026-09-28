@@ -2743,6 +2743,26 @@ test('workspaces: an unparseable workspaces.json is not overwritten by list()', 
   } finally { cleanup(); }
 });
 
+test('workspaces: an unreadable workspaces.json still resolves the default through get() as list() does', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'workspaces.json');
+  try {
+    const { workspaces } = stores;
+    workspaces.upsert({ id: 'ws-2', name: 'Trading' });
+    fs.chmodSync(file, 0o000);
+    assert.throws(() => fs.readFileSync(file), /EACCES/, 'ENTER: the file is unreadable');
+    const listed = workspaces.list();
+    assert.deepStrictEqual(workspaces.get('default'), listed[0]);
+    assert.deepStrictEqual(workspaces.sortedByRecent().map((w) => w.id), ['default']);
+    assert.throws(() => workspaces.touch('default'), /refusing to save/);
+    fs.chmodSync(file, 0o600);
+    assert.ok(filesHolding(userData, 'Trading').length > 0, 'the Trading record survives on disk');
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    cleanup();
+  }
+});
+
 test('workspaces: setOpen round-trips true, clears to an ABSENT key', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3894,6 +3914,7 @@ test('envScopes: an inherited member name as scope neither pollutes a built-in n
     try { envScopes.set('toString', 'K', 'v', false); } catch {}
     assert.strictEqual(Object.prototype.toString.K, undefined);
     assert.strictEqual(typeof envScopes.getScope('valueOf'), 'object');
+    assert.deepStrictEqual(envScopes.getScope('toString'), { K: { value: 'v', secret: false } });
   } finally {
     delete Object.prototype.toString.K;
     cleanup();
@@ -3913,7 +3934,7 @@ test('envScopes: set() throws when the save fails, so the settings pane cannot r
   const { stores, cleanup, userData } = freshStores();
   try {
     fs.chmodSync(userData, 0o500);
-    assert.throws(() => stores.envScopes.set('global', 'K', 'v', false));
+    assert.throws(() => stores.envScopes.set('global', 'K', 'v', false), /EACCES|EPERM/);
     assert.deepStrictEqual(stores.envScopes.getScope('global'), {}, 'ENTER: nothing was written');
   } finally {
     fs.chmodSync(userData, 0o700);

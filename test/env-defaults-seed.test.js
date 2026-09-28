@@ -445,7 +445,7 @@ test('an unparseable env-scopes.json survives a launch: the seeder never writes 
       assert.throws(() => JSON.parse(original), 'ENTER: the fixture must be unparseable');
       launch(dirs, writeDefaults(src, FIXTURE));
       const holders = fs.readdirSync(dirs.userData)
-        .filter((n) => fs.readFileSync(path.join(dirs.userData, n), 'utf-8').includes('hunter2'));
+        .filter((n) => { try { return fs.readFileSync(path.join(dirs.userData, n), 'utf-8').includes('hunter2'); } catch { return false; } });
       assert.ok(holders.length > 0, 'some file under userData still holds the secret value');
     } finally { fs.rmSync(src, { recursive: true, force: true }); }
   });
