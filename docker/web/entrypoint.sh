@@ -27,7 +27,7 @@ for p in /data /home/clodex /home/clodex/work /home/clodex/.[!.]* /home/clodex/*
   if [ "$p" = /home/clodex/work ] && [ "$CLODEX_WORK_VOLUME" = 1 ]; then
     if [ "$CLODEX_HOST_UID" != "$IMAGE_UID" ]; then
       if [ "$owner" = "$IMAGE_UID" ] || [ -n "$(find "$p" -maxdepth 1 -uid "$IMAGE_UID" -print -quit)" ]; then
-        chown -R "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"
+        chown -R "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p" || echo "clodex: work volume re-own incomplete on $p (continuing)" >&2
       fi
     fi
   elif [ "$owner" = "$IMAGE_UID" ] && [ "$owner" != "$CLODEX_HOST_UID" ]; then

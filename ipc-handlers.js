@@ -412,8 +412,7 @@ function registerIpcHandlers(deps) {
           // one notch out. Fixing that means probing existence rather than
           // bytes, which costs a second disk touch and a reach past the store's
           // public surface; deliberately not taken here.
-          let bytes = null;
-          try { bytes = execLibrary.raw(id); } catch { bytes = null; }
+          const bytes = execLibrary.raw(id);
           return bytes == null ? null : { name: id, unreadable: true };
         },
         resolvePrompt: (kind, stem) => (teamPromptFile({ fs, path }, team, kind, stem)

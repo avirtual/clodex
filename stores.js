@@ -780,8 +780,8 @@ function initStores(userDataPath, {
         this._save(all, name);
       }
     },
-    // Unlike setPluginGrants above, an EMPTY array is a real value and persists:
-    // absent means ALL, so storing "no plugins" as absence inverts the seat.
+    // Unlike setPluginGrants above, an EMPTY array is a real value and persists: absent
+    // means core-shipped plugins, so storing "no plugins" as absence widens the seat.
     setPlugins(name, plugins) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -1821,7 +1821,7 @@ function initStores(userDataPath, {
 
   // Version-stamped reconciliation against .seed-state.json ({ relPath: sha256
   // of the shipped bytes we last wrote }), so an upgrade replaces an UNEDITED
-  // shipped copy but never an operator-edited one:
+  // shipped copy and leaves an edited one stranded:
   //   dest absent           -> copy, stamp shippedHash.
   //   present + stamped     -> overwrite only if sha256(dest) === stamp AND
   //                            shippedHash !== stamp; else leave it.

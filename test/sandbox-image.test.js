@@ -96,6 +96,7 @@ test('docker/web/Dockerfile ships no duplicate layer and no build cache', () => 
   const ci = npmRuns.find((i) => /\bnpm ci\b/.test(i));
   assert.ok(ci.includes('rm -rf /root/.cache/node-gyp'));
   assert.ok(ci.includes('rm -rf node_modules/node-pty/prebuilds'));
+  assert.ok(ci.includes('chown -R clodex:clodex node_modules'), 'npm ci runs as root; node_modules is re-owned in the same RUN');
 
   assert.ok(all.every((i) => !/chown -R clodex:clodex [^\n]*\/app\b/.test(i)), 'no recursive /app chown');
   const appChowns = all.filter((i) => /(^|\s)chown clodex:clodex \/app(\s|$)/m.test(i));
@@ -129,7 +130,7 @@ test('entrypoint: chowns image-owned top-level paths non-recursively, and only t
   assert.match(ENTRYPOINT, /IMAGE_DEV=\$\(stat -c %d \/app\)/);
   assert.match(ENTRYPOINT, /\[ -e "\$p" \] \|\| continue\n {2}if \[ "\$\(stat -c %d "\$p"\)" != "\$IMAGE_DEV" \]; then\n {4}\[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \] \|\| continue\n {2}fi\n {2}owner=/);
   assert.match(ENTRYPOINT, /for p in \/data \/home\/clodex \/home\/clodex\/work \/home\/clodex\/\.\[!\.\]\* \/home\/clodex\/\*; do/);
-  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \]; then\n {4}if \[ "\$CLODEX_HOST_UID" != "\$IMAGE_UID" \]; then\n {6}if \[ "\$owner" = "\$IMAGE_UID" \] \|\| \[ -n "\$\(find "\$p" -maxdepth 1 -uid "\$IMAGE_UID" -print -quit\)" \]; then\n {8}chown -R "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {6}fi\n {4}fi\n {2}elif \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {2}fi/);
+  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \]; then\n {4}if \[ "\$CLODEX_HOST_UID" != "\$IMAGE_UID" \]; then\n {6}if \[ "\$owner" = "\$IMAGE_UID" \] \|\| \[ -n "\$\(find "\$p" -maxdepth 1 -uid "\$IMAGE_UID" -print -quit\)" \]; then\n {8}chown -R "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p" \|\| echo "clodex: work volume re-own incomplete on \$p \(continuing\)" >&2\n {6}fi\n {4}fi\n {2}elif \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {2}fi/);
   assert.strictEqual((ENTRYPOINT.match(/chown/g) || []).length, 2);
   assert.strictEqual((ENTRYPOINT.match(/chown -R/g) || []).length, 1);
   assert.strictEqual((ENTRYPOINT.match(/chown -h/g) || []).length, 1);
