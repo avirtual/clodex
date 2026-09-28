@@ -162,6 +162,13 @@ const BLOCKS = [
   ['underscore bold', 'a __b__ c', 'p{a strong{b} c}'],
   ['italic', 'a *b* c', 'p{a em{b} c}'],
   ['underscore italic', 'a _b_ c', 'p{a em{b} c}'],
+  ['a fence whose info string has several words is still a fence', '```js title=x\nlet a;\n```\nafter', 'pre{code[data-lang=js]{let a;}}p{after}'],
+  ['a fence opener with only trailing space is still a fence', '``` \nx\n```', 'pre{code{x}}'],
+  ['underscores inside a word are literal', 'a foo_bar_baz b', 'p{a foo_bar_baz b}'],
+  ['underscores inside two identifiers are literal', 'call my_func and your_func now', 'p{call my_func and your_func now}'],
+  ['double underscores inside a word are literal', 'a foo__bar__baz b', 'p{a foo__bar__baz b}'],
+  ['a longer fence is not closed by a shorter one', '````\n```\nx\n````\nafter', 'pre{code{```\nx}}p{after}'],
+  ['a table right after a list item is a table, not continuation text', '- a\nx | y\n|---|---|\n1 | 2', 'ul{li{a}}table{thead{tr{th{x}th{y}}}tbody{tr{td{1}td{2}}}}'],
   ['escaped pipe is one cell, backslash dropped', '| a \\| b |\n| --- |', 'table{thead{tr{th{a | b}}}tbody{}}'],
   ['empty input renders nothing', '', ''],
   ['whitespace-only input renders nothing', '\n\n  \n', ''],
@@ -198,6 +205,14 @@ test('a safe link becomes an anchor carrying the href', () => {
   assert.strictEqual(
     shapeOf(frag),
     'p{see a[href=https://example.com/x][rel=noreferrer noopener][target=_blank]{docs}}',
+  );
+});
+
+test('a link destination with balanced parentheses keeps them', () => {
+  const { frag } = render('a [w](https://en.wikipedia.org/wiki/Foo_(bar)) b');
+  assert.strictEqual(
+    shapeOf(frag),
+    'p{a a[href=https://en.wikipedia.org/wiki/Foo_(bar)][rel=noreferrer noopener][target=_blank]{w} b}',
   );
 });
 
@@ -370,6 +385,7 @@ test('no href on any anchor escapes the allowlist', () => {
     '[d](mailto:x@example.com)',
     '[e](file:///etc/passwd)',
     '[f](  javascript:alert(1)  )',
+    '[h](javascript:void(0))',
     '[g](http://ok2.example)',
   ].join('\n\n'));
 
