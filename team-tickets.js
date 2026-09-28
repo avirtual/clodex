@@ -6622,13 +6622,14 @@ function createTicketMethods(deps, shared) {
       const resume = [];
       let cleared = false;
       for (const t of tickets) {
-        if (t.state === 'done' && t.loopStep === 'review' && t.verifyPhase && !this._liveReviewerSeat(team, t)) {
+        const key = `${team.root}\0${t.id}`;
+        if (t.state === 'done' && t.loopStep === 'review' && t.verifyPhase
+          && !this._verifyLooped.has(key) && !this._liveReviewerSeat(team, t)) {
           delete t.verifyPhase;
           cleared = true;
           continue;
         }
         if (t.state !== 'done' || t.loopStep !== 'verify' || t.verifyHold) continue;
-        const key = `${team.root}\0${t.id}`;
         if (this._verifyLooped.has(key)) continue;
         this._verifyLooped.add(key);
         if (this._liveReviewerSeat(team, t)) continue;

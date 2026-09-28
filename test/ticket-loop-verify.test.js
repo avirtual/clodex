@@ -6161,3 +6161,24 @@ test('verify: a host restart clears the reviewer phase of a review-step ticket w
   assert.ok(!('verifyPhase' in f.one()), 'the orphaned "spawning reviewer" stamp is cleared');
   assert.strictEqual(f.one().loopStep, 'review', 'and the ticket stays on its review step for the stall sweep');
 });
+
+test('verify: a lone review-step orphan is cleared and saved, but a stamp this process\'s own loop wrote is kept', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const ran = [];
+  f.m._runTicketLoop = (team, id) => { ran.push(id); };
+  const seed = () => f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand',
+    verifyPhase: { phase: 'reviewer', since: 1 },
+  }]);
+
+  seed();
+  f.m._verifyLooped = new Set([`${f.team.root}\0t1`]);
+  f.m._resumeOrphanedVerify(f.team);
+  assert.ok('verifyPhase' in f.one(), 'a reviewer spawn still in flight in this process keeps its phase');
+
+  f.m._verifyLooped = new Set();
+  f.m._resumeOrphanedVerify(f.team);
+  assert.deepStrictEqual(ran, [], 'nothing is re-run for a review orphan');
+  assert.ok(!('verifyPhase' in f.one()), 'ENTER: with no loop of this process behind it, the orphan is cleared and saved');
+});
