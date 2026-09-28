@@ -4768,6 +4768,45 @@ test('spawner-hint (t151): the disabledSkills "*" gate throw clears the route ro
     'the gate throw clears the route the hint POST set');
 });
 
+test('spawner-hint: an unreadable muse overlay settings.json on a stream seat clears the route row', async (t) => {
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const hints = [];
+  const inst = { open: () => [], decode: () => ({ kind: 'other' }), encodeUser: () => null, encodeContext: () => null, encodeInterrupt: () => null };
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'muse' ? realStreamFor('muse') : null),
+    loadStreamCodec: () => ({ create: () => inst }),
+    extraDeps: (root) => {
+      const source = pathReal.join(root, 'src-config');
+      fsReal.mkdirSync(pathReal.join(source, 'muse'), { recursive: true });
+      fsReal.writeFileSync(pathReal.join(source, 'muse', 'auth.json'), '{}\n');
+      fsReal.writeFileSync(pathReal.join(source, 'muse', 'trust.json'), '{}\n');
+      fsReal.writeFileSync(pathReal.join(source, 'muse', 'settings.json'), '{"schema_version":1}\n');
+      const fs = {
+        ...fsReal,
+        readFileSync: (p, ...rest) => {
+          if (String(p).endsWith(pathReal.join('muse', 'settings.json')) && !String(p).startsWith(source)) {
+            throw Object.assign(new Error(`EACCES: ${p}`), { code: 'EACCES' });
+          }
+          return fsReal.readFileSync(p, ...rest);
+        },
+      };
+      return {
+        fs,
+        mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
+        getEnvScopes: () => ({ all: () => ({ global: { XDG_CONFIG_HOME: source, CLODEX_SPAWNER_HINT: 'off' }, workspaces: {} }) }),
+        ProxyClient: {
+          spawnerHint: (base, agent, opts) => { hints.push(opts); return Promise.resolve({ status: 200 }); },
+          probe: () => Promise.resolve({ capabilities: { muse: true } }),
+        },
+      };
+    },
+  });
+  t.after(() => h.stopAll());
+  await assert.rejects(() => h.m.create('mu8', 'muse', osReal.tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream'), /EACCES/);
+  assert.deepStrictEqual(hints, [{ on: false }, { clear: true }], 'the settings throw clears the route the hint POST set');
+});
+
 test('every create() throw after pty.spawn kills the pty it spawned', async () => {
   const cases = [
     ['"already running elsewhere" refusal', {
@@ -13455,7 +13494,7 @@ test('_handleRemindIntent: a scheduler whose store refuses the save bounces loud
   m._handleRemindIntent(session, 'every 30m', 'check the build');
   assert.deepStrictEqual(calls.add, [{ agent: 't1', spec: 'every 30m', body: 'check the build' }]);
   assert.deepStrictEqual(replies, [`[agent:remind] reminder NOT armed — ${err}`]);
-  assert.deepStrictEqual(ipc.filter((x) => x.type === 'remind'), []);
+  assert.deepStrictEqual(ipc, []);
 });
 
 test('_handleRemindIntent: list with no schedules replies "none"', () => {
@@ -19942,6 +19981,20 @@ test('scratch cancel: a label whose begin is still pending is acknowledged, not 
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'a', replay: false, body: '' });
   assert.strictEqual(f.s._scratchPendingBegin, null, 'the pending request is gone');
   assert.deepStrictEqual(f.injected, ['[agent:scratch] mark a cancelled before it was set']);
+});
+
+test('scratch cancel: a bare cancel while an unlabelled begin is pending acknowledges dropping it', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
+  assert.ok(f.s._scratchPendingBegin && f.s._scratchPendingBegin.requests.length === 1 && f.s._scratch == null,
+    'ENTER: the anonymous begin is pending and no episode is open');
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', replay: false, body: '' });
+  assert.strictEqual(f.s._scratchPendingBegin, null, 'the pending begin is gone');
+  assert.deepStrictEqual(f.injected, ['[agent:scratch] pending begin cancelled before it opened']);
 });
 
 test('scratch cancel: with no mark open it says so rather than pretending it dropped one', () => {
