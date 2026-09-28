@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- CLI: an SSM re-deploy no longer leaves the saved node on a dead token; a corrupt contexts file is refused instead of silently replaced; deploy no longer leaves a `clodex-token-*` shell on the box; helm deploys save the ports and web state actually installed (`--set wirePort`, `--values` with web disabled); the Fargate secret hint carries `--profile`; a `--docker --host` destination is validated before it reaches ssh; `import` skips labels that are not valid node names, duplicate names, unnamed peers and malformed box ids instead of storing or misreporting them, and `__proto__` can no longer be created as a node; `agent exec` no longer exits 0 before its message was sent, `logs -f` no longer crashes on a failed refetch, bash `exec --timeout` is honoured before the stream opens; an SSE overflow reports one error, and a connection dropped mid-body exits 3 like any other connection error.
+
 ## 5.91.0 — 2026-09-29
 
 - Teams: a role brief can no longer forge an intent line in the roster digest; a team whose seed fails validation no longer leaves an unloadable team.json that blocks its name forever; renaming a role carries its team-owned template and prompt along instead of stranding them; a worktree seat stays on a team whose root is reached through a symlink; a failed kit exec copy no longer leaks the template and prompt copies; a watchdog of 0 or less is refused instead of stored as "nullms"; Delete Session… on a seat whose worktree was removed by hand now drops its record; a branch name starting with `-` is refused before it reaches git; a tray or Window-menu action on a closed workspace now reaches the window it opens.

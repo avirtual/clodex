@@ -331,7 +331,7 @@ async function cli(argv, io = {}) {
     stdout: (s) => (stdout += s), stderr: (s) => (stderr += s),
     env: {},
     sleepFn: noSleep,   // no-op the 2s pre-poll + retry backoff in tests
-    contextsFile: io.contextsFile || path.join(os.tmpdir(), 'nonexistent-clodexctl', 'contexts.json'),
+    contextsFile: io.contextsFile || tmpCtxFile(),
     ...io,
   });
   return { code, stdout, stderr };
@@ -472,6 +472,33 @@ test('deliverClaudeToken: wire dance — bash session, control acquire, drop-in 
   // The OAuth token rides a shell-var assignment in the typed script (not argv).
   assert.match(input.body.data, /CLODEX_CLAUDE_TOKEN='sk-oauth-9'/);
   assert.ok(seen.some((s) => s.url === '/api/peer/hello'), 'engine polled back after restart');
+});
+
+test('deliverClaudeToken deletes its throwaway session once the engine answers again', async () => {
+  const http = require('node:http');
+  const seen = [];
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
+      if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
+      if (req.url === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const entry = { url: `http://127.0.0.1:${server.address().port}` };
+    await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {} });
+    const create = seen.find((s) => s.method === 'POST' && s.url === '/api/sessions');
+    const helloAt = seen.findIndex((s) => s.url === '/api/peer/hello');
+    const delAt = seen.findIndex((s) => s.method === 'DELETE' && s.url === '/api/sessions/' + create.body.name);
+    assert.ok(delAt > helloAt && helloAt >= 0, 'the throwaway session is deleted after the engine answered');
+    const input = seen.find((s) => /\/input$/.test(s.url));
+    assert.match(input.body.data, /^unset HISTFILE\n/);
+  } finally { server.close(); }
 });
 
 test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any session is created', async () => {
@@ -664,13 +691,15 @@ test('deploy ssm --json: NDJSON preflight/command/marker/verify/context, no toke
   assert.doesNotMatch(stdout, /[0-9a-f]{48}/);
 });
 
-test('deploy ssm: ctx collision kept unless --force', async () => {
+test('deploy ssm: a ctx collision refuses before any remote action unless --force', async () => {
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: null, contexts: { n: { url: 'http://old' } } }));
-  const skip = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
-  assert.strictEqual(skip.code, 0);
-  assert.match(skip.stdout, /already exists — kept it/);
+  const rec = {};
+  const skip = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], { execFn: fakeAws(rec), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
+  assert.strictEqual(skip.code, EXIT.USAGE);
+  assert.match(skip.stderr, /already exists/);
+  assert.strictEqual((rec.calls || []).length, 0, 'no aws call before the refusal');
   assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.url, 'http://old');
   const force = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--force'], { execFn: fakeAws({}), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
   assert.strictEqual(force.code, 0);
@@ -697,4 +726,32 @@ test('a node literally NAMED ssm still routes on the flag, not the name', async 
     spawnFn: () => { const e = new Error('spawn ssh ENOENT'); e.code = 'ENOENT'; throw e; },
   });
   assert.strictEqual(code, EXIT.CONNECT);   // ssh flavor's "could not start ssh"
+});
+
+test('deploy ssm re-run without --force never leaves the saved ctx holding a token the box no longer accepts', async () => {
+  const contextsFile = tmpCtxFile();
+  fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
+  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'n', contexts: { n: { ssm: { target: 'i-1' }, token: 'a'.repeat(48), deploy: { flavor: 'ssm', target: 'i-1' } } } }));
+  const rec = {};
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], { execFn: fakeAws(rec), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n;
+  const sent = /CLODEX_REMOTE_TOKEN=(\w+)/.exec(rec.sentScript || '');
+  if (sent) assert.strictEqual(saved.token, sent[1], 'the box was re-tokened, so the ctx must carry the new token');
+  else {
+    assert.notStrictEqual(r.code, 0);
+    assert.ok(!(rec.calls || []).some((a) => a.includes('send-command')), 'no send-command on a refusal');
+  }
+});
+
+test('deploy never overwrites a contexts file it could not parse', async () => {
+  const contextsFile = tmpCtxFile();
+  fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
+  const bytes = '{"current":"a","contexts":{"a":{"url":"http://x","token":"t"}';
+  fs.writeFileSync(contextsFile, bytes);
+  const rec = {};
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], { execFn: fakeAws(rec), probeSsm: async () => ({ app: 'clodex' }), contextsFile });
+  assert.strictEqual(fs.readFileSync(contextsFile, 'utf8'), bytes);
+  assert.strictEqual(r.code, EXIT.USAGE);
+  assert.match(r.stderr, /contexts file/);
+  assert.strictEqual((rec.calls || []).length, 0, 'refused before any remote action');
 });
