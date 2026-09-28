@@ -129,7 +129,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
     `Replayed from scratch episode <mark> (arrived HH:MM; you saw it inside the
     episode and your summary says what you did about it — do not re-answer unless
     it says otherwise):` followed by the content verbatim from the transcript.
-    `[agent:scratch cancel]` keeps everything. The replay follows the summary and
+    `[agent:scratch cancel]` drops the most recent mark and cuts nothing. The replay follows the summary and
     only if the summary landed; an arrival with no episode behind it is the
     double-action hazard the explicit modifier exists to prevent.
   - a second `end` while one is parked for the turn boundary: *end already

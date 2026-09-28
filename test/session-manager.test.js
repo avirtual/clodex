@@ -4542,7 +4542,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null, knownSkillNames = () => [] } = {}) {
   const root = mkTmpRoot('clodex-hint-');
   const registered = [];
   const hints = [];
@@ -4552,7 +4552,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   // WITHOUT a session (forget, reviewer sweep) read the hint flag back out of.
   const upserts = [];
   const SessionManager = createSessionManager({
-    knownSkillNames: () => [],
+    knownSkillNames,
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
@@ -4753,6 +4753,19 @@ test('spawner-hint (t151): the abandon-clear covers EVERY throw site past the PO
     assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
       `${label} → the orphaned route is cleared on the way out`);
   }
+});
+
+test('spawner-hint (t151): the disabledSkills "*" gate throw clears the route row too', async () => {
+  const { m, hints } = mkHintProbe({ knownSkillNames: null });
+  let thrown = null;
+  try {
+    await m.create('seat', 'claude', osReal.tmpdir(), [], null, 'ws', null, false, null,
+      [], [], [], ['*'], [], null, [], [], null, { CLODEX_SPAWNER_HINT: 'off' });
+  } catch (e) { thrown = e; }
+  assert.strictEqual(thrown && thrown.message, 'disabledSkills "*" needs the knownSkillNames dep',
+    'ENTER: create() threw at the disabledSkills gate');
+  assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
+    'the gate throw clears the route the hint POST set');
 });
 
 test('every create() throw after pty.spawn kills the pty it spawned', async () => {
@@ -14072,6 +14085,20 @@ test('t360 _flushParkedNow: ANY forced flush ends the notice deferral chain, not
   }, 70));
 });
 
+test('_flushParkedNow on a recycling seat still disarms the reboot-notice timer', () => {
+  const m = mkFlush({ _texts: ['parked one'] });
+  const s = { name: 'a', agentType: 'claude', _recycling: true };
+  m.sessions.set('a', s);
+  const timer = setTimeout(() => {}, 60000);
+  timer.unref();
+  s._rebootNoticeFlushTimer = timer;
+  try {
+    assert.deepStrictEqual(m._flushParkedNow(s, `cap.${process.pid}`, 'park-cap'), { ok: true, count: 0 });
+    assert.strictEqual(s._rebootNoticeFlushTimer, null);
+    assert.strictEqual(m._drained.length, 0, 'ENTER: the recycling return was taken, nothing drained');
+  } finally { clearTimeout(timer); }
+});
+
 test('flushPending: unknown / non-claude / dead target → refused, nothing drained', () => {
   const m = mkFlush();
   assert.deepStrictEqual(m.flushPending('ghost'), { ok: false, reason: 'no-such-agent' });
@@ -19482,6 +19509,31 @@ test('destroy reports live on the worktree arms too, so a ticket seat row is not
   assert.deepStrictEqual(removals, ['/wt/t900', '/wt/t900'], 'both arms really reached the removal');
 });
 
+test('destroy keeps the worktree and the record when the old process outlives _waitForExit', async () => {
+  const records = new Map([['stuck-wt', { name: 'stuck-wt', cwd: '/wt/t902', worktree: { path: '/wt/t902', branch: 't902' } }]]);
+  const removals = [];
+  const warns = [];
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+      upsert: (e) => { records.set(e.name, e); },
+    }),
+    gitWorktree: { removeWorktree: async (p) => { removals.push(p); return { ok: true }; } },
+    log: { info: () => {}, warn: (_s, msg) => warns.push(msg), error: () => {}, debug: () => {} },
+  });
+  m.sessions.set('stuck-wt', { name: 'stuck-wt', pty: { pid: 0, kill: () => {} } });
+  let waits = 0;
+  m._waitForExit = async () => { waits += 1; return false; };
+  const r = await m.destroy('stuck-wt');
+  assert.strictEqual(waits, 1, 'ENTER: destroy awaited _waitForExit once');
+  assert.deepStrictEqual(r, { ok: false, error: 'process still running after 8s; worktree kept', live: true, worktreeRemoved: false, path: '/wt/t902' });
+  assert.deepStrictEqual(removals, [], 'the tree a live process may still run in is not removed');
+  assert.strictEqual(records.get('stuck-wt')?.worktree?.path, '/wt/t902', 'a record still names the kept tree');
+  assert.ok(warns.some((w) => w.includes('stuck-wt') && w.includes('/wt/t902')), 'and the keep is logged at warn');
+});
+
 test('destroy of a live worktree seat whose tree removal fails keeps a record naming the tree', async () => {
   const records = new Map([['alive-wt', { name: 'alive-wt', cwd: '/wt/t901', worktree: { path: '/wt/t901', branch: 't901' } }]]);
   const m = mk({
@@ -19855,6 +19907,20 @@ test('scratch cancel: drops the mark, cuts nothing, and says so', () => {
     `[agent:scratch] episode cancelled · mark ${n} is dropped. Nothing was cut; everything `
     + 'you read since begin stays in your transcript as ordinary history.');
   assert.strictEqual(f.read(), before, 'the transcript is untouched');
+});
+
+test('scratch cancel: a label whose begin is still pending is acknowledged, not refused', () => {
+  const f = mkScratch();
+  const tape = scratchPrefix(f);
+  tape.prompt('now open an episode');
+  f.write(tape);
+  f.s._flushTurnEnd = true;
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
+  assert.ok(f.s._scratchPendingBegin && f.s._scratchPendingBegin.requests.some((q) => q.opts.label === 'a'),
+    'ENTER: the mark a request is pending');
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'a', replay: false, body: '' });
+  assert.strictEqual(f.s._scratchPendingBegin, null, 'the pending request is gone');
+  assert.deepStrictEqual(f.injected, ['[agent:scratch] mark a cancelled before it was set']);
 });
 
 test('scratch cancel: with no mark open it says so rather than pretending it dropped one', () => {

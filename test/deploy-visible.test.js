@@ -187,15 +187,17 @@ test('fixDirFor can never produce a traversal, and caps the leaf at 64 chars', (
 
 const FIX_FOR_ARG = 23;
 
-test('create()\'s declared signature carries fixFor at the index the deployFix stub reads', () => {
+test('create()\'s and _createReserved()\'s declared signatures carry fixFor at the index the deployFix stub reads', () => {
   const src = fs.readFileSync(path.join(REPO, 'session-manager.js'), 'utf8');
-  const sig = /async create\(([^)]*)\)/.exec(src);
-  assert.ok(sig, 'ENTER: create()\'s signature must be findable in session-manager.js');
-  const params = sig[1].split(',').map((p) => p.trim().split(/\s*=/)[0]).filter(Boolean);
-  assert.ok(params.length > 0, 'ENTER: create()\'s parameter list must be non-empty');
-  assert.strictEqual(params.indexOf('fixFor'), FIX_FOR_ARG,
-    `fixFor must sit at create()'s positional ${FIX_FOR_ARG}, the index the stub below reads; `
-    + `a parameter inserted before it must move the stub and handle:peer:deployFix's call with it. params: ${params.join(', ')}`);
+  for (const [label, re] of [['create()', /async create\(([^)]*)\)/], ['_createReserved()', /async _createReserved\(([^)]*)\)\s*\{/]]) {
+    const sig = re.exec(src);
+    assert.ok(sig, `ENTER: ${label}'s signature must be findable in session-manager.js`);
+    const params = sig[1].split(',').map((p) => p.trim().split(/\s*=/)[0]).filter(Boolean);
+    assert.ok(params.length > 0, `ENTER: ${label}'s parameter list must be non-empty`);
+    assert.strictEqual(params.indexOf('fixFor'), FIX_FOR_ARG,
+      `fixFor must sit at ${label}'s positional ${FIX_FOR_ARG}, the index the stub below reads; `
+      + `a parameter inserted before it must move the stub and handle:peer:deployFix's call with it. params: ${params.join(', ')}`);
+  }
 });
 
 test('peer:deployFix homes the seat in a 0700 dir under <root>/fix/ and passes fixFor to create()', async () => {

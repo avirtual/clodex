@@ -139,7 +139,6 @@
 - `_createReserved` must compute `expected` and the record drop through the one `exitDisposition` call, since a flag added to one and not the other makes an expected exit also drop the record.
 - `create` forwards its raw `arguments`, so its own defaults never reach `_createReserved` and a parameter added or reordered in one signature must be mirrored in the other.
 - `create` reserves the name only for xdg-overlay adapters, so for every other type two concurrent creates both pass the duplicate check and only the proven-live socket veto in `_createReserved` stops the second from rebinding.
-- `_createReserved` throws on disabledSkills star without the knownSkillNames dep before any unwind runs, so a seat with a spawner hint set leaves its route row behind on that path.
 - `_createReserved` resolves prompt args and the baked prompt from one `_realIpcFor` call, and splitting it into two calls can bake a prompt out of sync with the argv.
 
 ## Exec ledger and stream-seat IO — lastOperatorInputAt … _refuseStreamInject
@@ -228,7 +227,6 @@
 ### Hazards
 
 - The full record-dropper set is CLAUDE.md's Session lifecycle list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
-- `destroy` ignores the result of `_waitForExit`, so after the 8s timeout removeWorktree runs against a cwd that may still be live.
 - `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live; its comment calling that a second `clearHintForRecord` call is inaccurate.
 - `rename` writes a notice saying memory moved with the seat, but only renameSeat and `_renameDirs` (pending/) move state; anything else keyed by name, such as the memory load log `_moveShipment` ships, stays under the old name.
 - `rename` spells out the 26-argument `create` call a third time (with `move` and `moveToPeer`), so a new `create` parameter must be added to all three or a respawn silently drops it.
@@ -520,7 +518,6 @@
 
 - `_scratchMark` clears a replaced mark's close timer but not its pending closing, so a begin or mark settled while an end is pending silently loses that end and its episode row.
 - `_scratchCancel` resolves a bare cancel through `_scratchRewindTarget`, so it drops the newest labeled mark instead of the episode that the begin ack says it cancels.
-- `_scratchCancel` drops a still-deferred labeled request and then replies "cancel refused", although the cancel took effect.
 - `_scratchRespawn` and `_coldRespawn` hand-copy create()'s positional arguments and already diverge on workspaceId defaulting, so each must be edited when create() changes.
 - `_scratchCutAfterGuard` leaves the .bak in place for `_scratchPruneBaks` to expire by age, while docs/sessions.md says it is removed once the respawned CLI writes its first assistant record.
 
@@ -616,7 +613,6 @@
 
 ### Hazards
 
-- `_flushParkedNow` returns early for a recycling seat before clearing the reboot-notice timer, so `flushPending` reports ok with that chain still armed.
 - `_deliverPassive` and `_deliverParkedActive` exclude dead and non-claude seats but not stream seats, so a claude stream seat gets a pending-store park instead of a stream enqueue.
 - `_armParkedDrainFallback` falls through to a forced drain once its deadline passes even while the boot-ready latch is still missing.
 - `_maybeParkDelivery` and `_parkDivertFor` arm `_armParkCap`, which forces the park through `_flushParkedNow` after INJECT_QUIET_MAXWAIT with no submit, so a draft left open that long is spliced subject only to the queue's own gates.

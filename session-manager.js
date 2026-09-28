@@ -1980,6 +1980,7 @@ function createSessionManager(deps) {
           if (!args.includes('--settings')) {
             if (Array.isArray(disabledSkills) && disabledSkills.includes('*')
                 && typeof knownSkillNames !== 'function') {
+              abandonHint();
               throw new Error('disabledSkills "*" needs the knownSkillNames dep');
             }
             const skillsOff = expandSkillsOff(disabledSkills, {
@@ -2230,9 +2231,14 @@ function createSessionManager(deps) {
             };
             if (Object.keys(museSeatPatch).length) {
               const museSettingsPath = path.join(seatConfigDir, 'muse', 'settings.json');
-              const museSettings = JSON.parse(fs.readFileSync(museSettingsPath, 'utf-8'));
-              fs.writeFileSync(museSettingsPath,
-                `${JSON.stringify(deepMerge(museSettings, museSeatPatch), null, 2)}\n`, { mode: 0o600 });
+              try {
+                const museSettings = JSON.parse(fs.readFileSync(museSettingsPath, 'utf-8'));
+                fs.writeFileSync(museSettingsPath,
+                  `${JSON.stringify(deepMerge(museSettings, museSeatPatch), null, 2)}\n`, { mode: 0o600 });
+              } catch (e) {
+                abandonHint();
+                throw e;
+              }
             }
             if (extraArgs.length) log.info('session', `stream ${name}: muse serve takes no TUI flags, dropped ${extraArgs.join(' ')}; posture and model ride the codec`);
             args = streamSpec.argv({ resumeId, sessionId: museSid, fork, ...streamCtx });
@@ -3934,7 +3940,7 @@ function createSessionManager(deps) {
     // recreate the same seat, and destroying its checkout there would delete the
     // tree out from under a session that is coming right back.
     //
-    // Captured BEFORE the kill; removal waits for the pty exit, but only up to _waitForExit's 8s.
+    // Captured BEFORE the kill; removal runs only after the pty exit — _waitForExit's 8s running out keeps the tree.
     //
     // A seat that has ALREADY exited still gets its record dropped here, and
     // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
@@ -3947,8 +3953,7 @@ function createSessionManager(deps) {
     // return having dropped the record while the tree it named still stands.
     // Dropping first is the same irrecoverable orphan the header forbids — a
     // failed `removeWorktree` would leave a checkout on disk with nothing naming
-    // it. So the two safe returns call it and the failure return deliberately
-    // does not.
+    // it. So the two safe returns call it.
     async destroy(name) {
       const entry = getPersistence().get(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
@@ -3974,7 +3979,19 @@ function createSessionManager(deps) {
       // No tree to lose, so nothing can strand: this is the r1 case the drop
       // exists for, and it must keep dropping.
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
-      await this._waitForExit(name);
+      const keepRecord = () => {
+        if (!wasLive) return;
+        try {
+          getPersistence().upsert({ ...this._stripClaimedTree(entry), archivedAt: Date.now() });
+        } catch (e) {
+          log.warn('session', `destroy ${name}: record for ${worktree.path} not restored (${e.message})`);
+        }
+      };
+      if (!await this._waitForExit(name)) {
+        keepRecord();
+        log.warn('worktree', `destroy ${name}: process still running after 8s; ${worktree.path} kept`);
+        return { ok: false, error: 'process still running after 8s; worktree kept', live: true, worktreeRemoved: false, path: worktree.path };
+      }
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok) {
         dropRecord();
@@ -3984,13 +4001,7 @@ function createSessionManager(deps) {
       }
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
-      if (wasLive) {
-        try {
-          getPersistence().upsert({ ...this._stripClaimedTree(entry), archivedAt: Date.now() });
-        } catch (e) {
-          log.warn('session', `destroy ${name}: record for ${worktree.path} not restored (${e.message})`);
-        }
-      }
+      keepRecord();
       // NO dropRecord() here, and that is the invariant, not an omission: the
       // tree is still on disk and this record is the only thing naming it. The
       // path rides the result so the caller's failure sentence can tell the
@@ -8131,14 +8142,18 @@ function createSessionManager(deps) {
 
     _scratchDropPendingBegin(session, label) {
       const pending = session._scratchPendingBegin;
-      if (!pending) return;
+      if (!pending) return false;
+      let dropped = true;
       if (label !== undefined) {
+        const before = pending.requests.length;
         pending.requests = pending.requests.filter((r) => (r.opts.label || null) !== label);
-        if (pending.requests.length) return;
+        dropped = pending.requests.length < before;
+        if (pending.requests.length) return dropped;
       }
       session._scratchPendingBegin = null;
       if (pending.timer) clearTimeout(pending.timer);
       if (pending.watcher) { try { pending.watcher.close(); } catch {} }
+      return dropped;
     }
 
     _scratchWakePendingBegin(session, pending) {
@@ -8221,7 +8236,7 @@ function createSessionManager(deps) {
 
     _scratchCancel(session, reply, intent = {}) {
       let label = typeof intent.label === 'string' && intent.label ? intent.label : null;
-      this._scratchDropPendingBegin(session, label);
+      const droppedPending = this._scratchDropPendingBegin(session, label);
       session._scratchVoid = null;
       if (!label) {
         const best = this._scratchRewindTarget(session, null);
@@ -8230,6 +8245,11 @@ function createSessionManager(deps) {
       if (label) {
         const marks = session._scratchMarks;
         const named = (marks instanceof Map && marks.get(label)) || null;
+        if (!named && droppedPending && intent.label === label) {
+          reply(`[agent:scratch] mark ${label} cancelled before it was set`);
+          log.info('intent', `scratch ${session.name}: pending mark ${label} cancelled before it was set`);
+          return;
+        }
         if (!named) { reply(this._scratchNoMarkLine(session, 'cancel', label)); return; }
         if (named._closeTimer) clearTimeout(named._closeTimer);
         marks.delete(label);
@@ -9693,8 +9713,7 @@ function createSessionManager(deps) {
     }
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
-      if (target._dead || target._recycling) return { ok: true, count: 0 };
-      // A forced flush past the dead/recycling return ends the notice's deferral chain, not just the operator's
+      // A forced flush ends the notice's deferral chain, not just the operator's
       // (flushPending). The chain otherwise dies only on a real turn or its own
       // flush, so a pane kept warm past the 300s park cap left it alive after the
       // cap had already delivered the notice — and the next unrelated park would
@@ -9705,6 +9724,7 @@ function createSessionManager(deps) {
       // either. Moving this after that early return would leave it armed in exactly
       // the case where it is most certainly stale.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
+      if (target._dead || target._recycling) return { ok: true, count: 0 };
       // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
       // files, and enqueue returns before the queue has written anything, so
       // claiming here meant a wiped or never-reached write destroyed the only
