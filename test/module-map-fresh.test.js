@@ -263,7 +263,7 @@ function mapFilesIn(dir) {
 }
 
 test('real maps listing ignores README.md and anything that is not a .md file', () => {
-  const dir = mkTmpRoot('module-map-list-');
+  const dir = mkTmpRoot('module-map-fresh-');
   for (const f of ['README.md', 'a.md', '.DS_Store', '.a.md.swp', 'b.md~']) fs.writeFileSync(path.join(dir, f), '');
   assert.deepStrictEqual(mapFilesIn(dir), ['a.md']);
 });
