@@ -47,12 +47,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
-RUN npm i -g @anthropic-ai/claude-code @openai/codex
-RUN mkdir -p /opt/muse \
- && curl -fsSL https://api.meta.ai/muse-launcher.sh -o /opt/muse/muse \
- && chmod +x /opt/muse/muse \
- && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 /opt/muse/muse \
- && ln -s /opt/muse/muse /usr/local/bin/muse
+RUN npm i -g @anthropic-ai/claude-code @openai/codex \
+ && npm cache clean --force
 
 # Non-root user with a real home: agent-transport creates ~/.clodex 0700 and
 # fixPathFromLoginShell runs `$SHELL -ilc`, so HOME + SHELL must be real.
@@ -63,7 +59,13 @@ RUN mkdir -p /opt/muse \
 RUN userdel -r node \
  && useradd --uid 1001 --create-home --shell /bin/bash clodex \
  && printf 'clodex ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/clodex \
- && chmod 0440 /etc/sudoers.d/clodex \
+ && chmod 0440 /etc/sudoers.d/clodex
+
+RUN mkdir -p /opt/muse \
+ && curl -fsSL https://api.meta.ai/muse-launcher.sh -o /opt/muse/muse \
+ && chmod +x /opt/muse/muse \
+ && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 /opt/muse/muse \
+ && ln -s /opt/muse/muse /usr/local/bin/muse \
  && chown -R clodex:clodex /opt/muse
 
 WORKDIR /app
@@ -71,13 +73,17 @@ WORKDIR /app
 # Prod deps only, then rebuild node-pty against the Node ABI (the headless smoke
 # recipe — the dev checkout's node-pty is built for Electron's ABI, useless here).
 # Manifests first so a source-only change doesn't bust this layer.
-COPY package.json package-lock.json ./
+COPY --chown=clodex:clodex package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts \
- && npm rebuild node-pty
+ && npm rebuild node-pty \
+ && npm cache clean --force \
+ && rm -rf /root/.cache/node-gyp \
+ && rm -rf node_modules/node-pty/prebuilds \
+ && chown -R clodex:clodex node_modules
 
 # App source (filtered by .dockerignore) + the built browser bundle from stage 1.
-COPY . .
-COPY --from=builder /build/web-dist ./web-dist
+COPY --chown=clodex:clodex . .
+COPY --chown=clodex:clodex --from=builder /build/web-dist ./web-dist
 RUN ln -s /app/cli/bin/clodexctl.js /usr/local/bin/clodexctl
 COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint
 RUN chmod 0755 /usr/local/bin/clodex-entrypoint
@@ -99,7 +105,8 @@ RUN chmod 0755 /usr/local/bin/clodex-entrypoint
 RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/.local/share /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
  && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
- && chown -R clodex:clodex /app /data /home/clodex
+ && chown clodex:clodex /app \
+ && chown -R clodex:clodex /data /home/clodex
 
 ENV HOME=/home/clodex \
     SHELL=/bin/bash \
