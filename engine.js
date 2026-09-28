@@ -1585,13 +1585,14 @@ async function waitForSessionExit(name, timeoutMs = 8000) {
 
 
 async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
-  const entry = persistence.get(name);
+  let entry = persistence.get(name);
   if (!entry) return { ok: false, error: 'Session not found in persistence' };
 // A skill change needs `fresh`: the roster is evaluated when a CONVERSATION is
 // created, so --resume replays the roster frozen before the change.
 // opts.resumeId switches to a past conversation and becomes the active id.
   if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
     persistence.setSessionId(name, opts.resumeId);
+    entry = persistence.get(name);
   }
   const resumeId = opts && opts.fresh ? null : ((opts && opts.resumeId) || entry.sessionId || null);
   try {
@@ -1687,6 +1688,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend,
     intents: nextIntents, execCommands: nextExec, env: nextEnv, plugins: nextPlugins,
   } = resolveSessionArgsPatch(patch, beforeKill);
+  if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   persistence.setExtraArgs(name, extraArgs);
   persistence.setProxy(name, proxy ?? null);
   persistence.setSystemPrompt(name, nextInline);
@@ -1713,7 +1715,6 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
   if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
   if (!restart) return { ok: true, restarted: false };
-  if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
   const prunedGrants = (prunedArgs.pluginGrants && prunedArgs.pluginGrants.length)
     ? prunedArgs.pluginGrants : undefined;
@@ -1726,7 +1727,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
     manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
-    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, Array.isArray(beforeKill.execCommands) ? beforeKill.execCommands : [], restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort);
+    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, nextExec, restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
@@ -1735,7 +1736,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
     // actually reaches the store, so stripping the source would be undone by it.
     // Same reason as restartSession's arm above (t491).
-    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }

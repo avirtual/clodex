@@ -1528,8 +1528,9 @@ function makeGroupHeader(key, count) {
 }
 
 let metaRefreshInFlight = false;
+let metaRefreshQueued = null;
 async function refreshSidebarMeta({ includePr = true } = {}) {
-  if (metaRefreshInFlight) return;
+  if (metaRefreshInFlight) { metaRefreshQueued = { includePr }; return; }
   metaRefreshInFlight = true;
   try {
     const res = await window.api.sidebarMeta({ includePr });
@@ -1538,7 +1539,11 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
         sidebarMeta.set(name, mergeMeta(sidebarMeta.get(name), m));
       }
     }
-  } catch {} finally { metaRefreshInFlight = false; }
+  } catch {} finally {
+    const next = metaRefreshQueued;
+    metaRefreshInFlight = false; metaRefreshQueued = null;
+    if (next) refreshSidebarMeta(next);
+  }
   try {
     const live = await window.api.listSessions();
     if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); }
@@ -1994,12 +1999,19 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     if (!item || !range) return;
     const value = composer.value;
     if (item.kind === 'control' && run) {
-      composer.value = '';
+      const cut = value.slice(range.start, range.end);
+      composer.value = value.slice(0, range.start) + value.slice(range.end);
       composer.dispatchEvent(new Event('input', { bubbles: true }));
+      const restore = () => {
+        if (composer.value !== value.slice(0, range.start) + value.slice(range.end)) return;
+        composer.value = value.slice(0, range.start) + cut + value.slice(range.end);
+        composer.dispatchEvent(new Event('input', { bubbles: true }));
+      };
       Promise.resolve(window.api.seatControl(name, String(item.name).replace(/^\//, ''))).then((res) => {
-        if (res && res.ok === false) showToast(`${item.name} failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
+        if (res && res.ok === false) { restore(); showToast(`${item.name} failed: ${res.error || 'unknown error'}`, { kind: 'error', name }); }
         else pull(true);
       }).catch((err) => {
+        restore();
         showToast(`${item.name} failed: ${err && err.message ? err.message : err}`, { kind: 'error', name });
       });
       return;
@@ -4341,6 +4353,11 @@ function sessionTypeOf(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   return item ? (item.dataset.type || null) : null;
 }
+function seatTypeOf(name) {
+  const peer = name ? sessions.get(name)?.peer : null;
+  const far = peer ? (peerStatuses.get(peer.id)?.sessions || []).find((s) => s.name === peer.name)?.type : null;
+  return far || sessionTypeOf(name);
+}
 function activeIsAgent() {
   const t = activeSession ? sessionTypeOf(activeSession) : null;
   return isAgentType(t);
@@ -4596,7 +4613,7 @@ function renderProxyBar() {
   if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
   const rSeg = reqSeg(p);
   if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-  if (p.warmth && adapterFor(sessionTypeOf(activeSession))?.caps.warmth) {
+  if (p.warmth && adapterFor(seatTypeOf(activeSession))?.caps.warmth) {
     let txt;
     if (dead) {
       txt = '🔥 ?';
@@ -5019,7 +5036,7 @@ function checkWarmthCooldown(name) {
 }
 
 setInterval(() => {
-  for (const name of proxyState.keys()) { applyWarmBadge(name); checkWarmthCooldown(name); }
+  for (const name of proxyState.keys()) { applyWarmBadge(name); checkWarmthCooldown(name); applySubagents(name); }
   for (const el of sessionList.querySelectorAll('.session-item[data-thinking-since], .session-item[data-compacting-since]')) applyThinkBadge(el);
   tickProxyBar();
   // Staleness is time-based, so it has to be re-evaluated on the clock rather

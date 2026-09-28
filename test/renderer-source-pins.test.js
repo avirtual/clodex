@@ -125,3 +125,76 @@ test('a seat view choice is kept per name across a rebuild, and a delete or a re
   assert.ok(del && del[0].includes('seatViewMemory.delete(name);'));
   assert.ok(/streamSeatNames\.delete\(sessionName\);\n\s*seatViewMemory\.delete\(sessionName\);\n\s*rebuildLiveRow\(res\.name, /.test(SRC), 'a rename drops the old name');
 });
+
+test('running a control command from a line below other text keeps the other text', () => {
+  const start = SRC.indexOf('  const pickSlash = (run) => {');
+  assert.ok(start > 0, 'ENTER: pickSlash is still found by this anchor');
+  const end = SRC.indexOf('\n  };\n', start);
+  assert.ok(end > start, 'ENTER: the end of pickSlash was found');
+  const body = SRC.slice(start, end + 5);
+  const composer = { value: 'keep this\n/comp', dispatchEvent() {}, setSelectionRange() {} };
+  const env = {
+    slashItems: [{ kind: 'control', name: '/compact' }],
+    slashIndex: 0,
+    slashRange: { start: 10, end: 15 },
+    composer,
+    closeSlash() {},
+    window: { api: { seatControl: () => Promise.resolve({ ok: true }) } },
+    pull() {},
+    showToast() {},
+    sendComposer() {},
+    name: 's',
+  };
+  const names = Object.keys(env);
+  const pickSlash = new Function(...names, `${body}\nreturn pickSlash;`)(...names.map((n) => env[n]));
+  pickSlash(true);
+  assert.strictEqual(composer.value, 'keep this\n');
+});
+
+test('the 1 s tick re-classifies subagent rows', () => {
+  const { fakeDocument } = require('./lib/fake-dom');
+  const { classifySubagent } = require('../renderer/lib/subagent-policy');
+  const fnStart = SRC.indexOf('function applySubagents(name) {');
+  assert.ok(fnStart > 0, 'ENTER: applySubagents is still found by this anchor');
+  const fnEnd = SRC.indexOf('\n}\n', fnStart);
+  const rowsAt = SRC.indexOf('function subagentRows(name) {');
+  assert.ok(rowsAt > 0, 'ENTER: subagentRows is still found by this anchor');
+  const fnBody = SRC.slice(rowsAt, SRC.indexOf('\n}\n', rowsAt) + 2) + SRC.slice(fnStart, fnEnd + 2);
+  const document = fakeDocument();
+  const root = document.createElement('div');
+  const item = document.createElement('div');
+  item.className = 'session-item';
+  item.dataset.name = 's';
+  const child = document.createElement('div');
+  child.className = 'session-child';
+  child.dataset.parent = 's';
+  child.dataset.key = 'k';
+  child.dataset.state = 'active';
+  root.appendChild(item);
+  root.appendChild(child);
+  const sessionList = {
+    querySelector: (sel) => root.childNodes.find((n) => sel === `[data-name="${n.dataset.name}"]`) || null,
+    querySelectorAll: (sel) => root.childNodes.filter((n) => n.className === 'session-child'
+      && sel === `.session-child[data-parent="${n.dataset.parent}"]`),
+  };
+  const proxyState = new Map([['s', {
+    payload: { linked: true, subagents: [{ key: 'k', label: 'k', lastActiveS: 0 }] },
+    at: Date.now() - 400000,
+  }]]);
+  const env = {
+    sessionList, proxyState, classifySubagent, document,
+    CSS: { escape: (s) => s }, PROXY_POLL_MS: 5000,
+    openActivityFeed() {}, fmtUsd: (n) => String(n),
+  };
+  const names = Object.keys(env);
+  const applySubagents = new Function(...names, `${fnBody}\nreturn applySubagents;`)(...names.map((n) => env[n]));
+  applySubagents('s');
+  assert.deepStrictEqual(root.childNodes.map((n) => n.className), ['session-item'],
+    'ENTER: applySubagents drops a child whose payload is 400 s old');
+
+  const ticks = SRC.split('\nsetInterval(() => {').slice(1).map((s) => s.slice(0, s.indexOf('\n}, 1000);')));
+  const tick = ticks.find((s) => s.includes('tickProxyBar()'));
+  assert.ok(tick, 'ENTER: the 1 s interval that runs tickProxyBar is found');
+  assert.ok(tick.includes('refreshQuotaChip()'), 'ENTER: it is the block that refreshes the quota chip');
+  assert.match(tick, /applySubagents\(/);
+});

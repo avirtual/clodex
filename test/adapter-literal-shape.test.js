@@ -10,7 +10,27 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 test('m0: renderer.js gates the warmth segment on caps.warmth, not on a codex literal', () => {
   const src = read('renderer/renderer.js');
   assert.ok(!src.includes("!== 'codex'"), "renderer.js carries no `!== 'codex'`");
-  assert.match(src, /if \(p\.warmth && adapterFor\(sessionTypeOf\(activeSession\)\)\?\.caps\.warmth\)/);
+  assert.match(src, /if \(p\.warmth && adapterFor\(seatTypeOf\(activeSession\)\)\?\.caps\.warmth\)/);
+});
+
+test('the warmth gate is open for a peer seat whose far seat is a claude', () => {
+  const src = read('renderer/renderer.js');
+  const m = src.match(/\n  if \((p\.warmth && [^\n]*)\) \{\n/);
+  assert.ok(m, 'ENTER: the warmth gate condition is found');
+  const { adapterFor } = require('../cli-adapters');
+  const env = {
+    sessionTypeOf: () => 'remote',
+    activeSession: 'p',
+    sessions: new Map([['p', { peer: { id: 'b', name: 'x' } }]]),
+    peerStatuses: new Map([['b', { sessions: [{ name: 'x', type: 'claude' }] }]]),
+    adapterFor,
+    p: { warmth: {} },
+  };
+  const helperAt = src.indexOf('\nfunction seatTypeOf(');
+  const helper = helperAt < 0 ? '' : src.slice(helperAt, src.indexOf('\n}\n', helperAt) + 2);
+  const names = Object.keys(env);
+  const gate = new Function(...names, `${helper}\nreturn (${m[1]});`)(...names.map((n) => env[n]));
+  assert.ok(gate);
 });
 
 test('m0: session-manager.js resolves a restored seat type through isAgentType', () => {

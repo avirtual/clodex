@@ -4609,6 +4609,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       },
     },
     notifyOS: () => {},
+    cleanupClaudeHook: () => {}, cleanupAgentPlugin: () => {}, cleanupSkills: () => {},
     // Only reached on the pty.spawn failure path, which the abandon-clear tests
     // drive; without them the real ENOENT is masked by a TypeError.
     collectSystemDiagnostics: () => ({}),
@@ -4742,6 +4743,45 @@ test('spawner-hint (t151): the abandon-clear covers EVERY throw site past the PO
     assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
       `${label} → the orphaned route is cleared on the way out`);
   }
+});
+
+test('every create() throw after pty.spawn kills the pty it spawned', async () => {
+  const cases = [
+    ['"already running elsewhere" refusal', {
+      socketLive: true,
+      registry: { register: () => { throw Object.assign(new Error('exists'), { code: 'EEXIST' }); }, unregister: () => {} },
+      seedRegistry: { pid: 999999, socket: '/tmp/clodex-blocker.sock' },
+    }, /already running elsewhere/],
+    ['transport.start() failure', {
+      transportStart: () => { throw new Error('EADDRINUSE'); },
+    }, /EADDRINUSE/],
+    ['registry.register non-EEXIST rethrow', {
+      registry: { register: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }, unregister: () => {} },
+    }, /EACCES/],
+  ];
+  for (const [label, opts, re] of cases) {
+    let killed = 0;
+    const { spawn, root } = mkHintProbe({ ...opts, ptySpawn: () => ({ pid: 999, onData() {}, onExit() {}, kill() { killed++; } }) });
+    if (opts.seedRegistry) {
+      fsReal.mkdirSync(runDirForReal(root, 'seat'), { recursive: true });
+      fsReal.writeFileSync(pathForReal(root, 'seat', 'registry'), JSON.stringify(opts.seedRegistry));
+    }
+    await assert.rejects(() => spawn('seat', { CLODEX_SPAWNER_HINT: 'off' }), re, label);
+    assert.strictEqual(killed, 1, `${label} → the spawned pty is killed, not left running as a second --resume`);
+  }
+});
+
+test('a pty that exits during the registry and transport awaits still sends session-exit', async () => {
+  let exitCb = null;
+  const { m, spawn } = mkHintProbe({
+    transportStart: () => new Promise((r) => setTimeout(r, 50)),
+    ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }),
+  });
+  const sent = [];
+  m._sendToSession = (...a) => { sent.push(a); };
+  setTimeout(() => { if (exitCb) exitCb({ exitCode: 1 }); }, 10);
+  await spawn('seat', {});
+  assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
 });
 
 test('spawner-hint (t151): the abandon-clear is silent when this seat set nothing', async () => {
@@ -16002,6 +16042,19 @@ test('t188: a replayed turn fires a repeated exec ONCE, and the DEDUPER is what 
   }
 });
 
+test('two overlapping _ensureWire calls share one wire', async () => {
+  const { m } = mkRecovery();
+  m._broadcast = () => {};
+  const [a, b] = await Promise.all([m._ensureWire(), m._ensureWire()]);
+  try {
+    assert.strictEqual(a, b, 'the second caller received the first caller\'s wire, not a second proxy');
+  } finally {
+    await a.close();
+    if (b !== a) await b.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+});
+
 // ── t313: two bodyless siblings in ONE turn are two emissions, not a repeat ──
 //
 // The dedupe key short-circuited on `sub`, so `[agent:task start t210]` and
@@ -19163,6 +19216,27 @@ test('destroy reports live on the worktree arms too, so a ticket seat row is not
     { ok: true, worktreeRemoved: false, error: 'busy', path: '/wt/t900', live: false },
     'and so does the failure return: the row must go whether or not the tree did');
   assert.deepStrictEqual(removals, ['/wt/t900', '/wt/t900'], 'both arms really reached the removal');
+});
+
+test('destroy of a live worktree seat whose tree removal fails keeps a record naming the tree', async () => {
+  const records = new Map([['alive-wt', { name: 'alive-wt', cwd: '/wt/t901', worktree: { path: '/wt/t901', branch: 't901' } }]]);
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+      upsert: (e) => { records.set(e.name, e); },
+    }),
+    gitWorktree: { removeWorktree: async () => ({ ok: false, error: 'busy' }) },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  m.sessions.set('alive-wt', { name: 'alive-wt', pty: { pid: 0, kill: () => { m.sessions.delete('alive-wt'); } } });
+  const r = await m.destroy('alive-wt');
+  assert.deepStrictEqual(r, { ok: true, worktreeRemoved: false, error: 'busy', path: '/wt/t901', live: true },
+    'ENTER: the live seat reached the removal-failed return');
+  assert.strictEqual(records.get('alive-wt')?.worktree?.path, '/wt/t901',
+    'the standing tree is still named by a record after kill() dropped the live one');
+  assert.ok(records.get('alive-wt').archivedAt > 0, 'and that record is archived, as an already-dead seat\'s would be');
 });
 
 test('renderer deleteSessionRow removes the row itself when destroy reports live:false', () => {
