@@ -6608,8 +6608,8 @@ function createSessionManager(deps) {
       try {
         rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
       } catch (e) {
-        log.error('intent', `shout by ${who}: store refused the save — ${e.message}`);
-        reply(`note NOT delivered — ${e.message}`);
+        log.error('intent', `shout by ${who}: store refused the save — ${(e && e.message) || e}`);
+        reply(`note NOT delivered — ${(e && e.message) || e}`);
         return;
       }
       this._raiseNote(who, text);
@@ -7222,7 +7222,7 @@ function createSessionManager(deps) {
             stdio: ['pipe', 'ignore', 'pipe'],
           });
         } catch (e) {
-          fail(`spawn failed (${e.message})`);
+          fail(`spawn failed (${(e && e.message) || e})`);
           return;
         }
         // The collector keeps the HEAD of stderr and drops the overflow, so its
@@ -9394,7 +9394,13 @@ function createSessionManager(deps) {
       for (const note of ordered) {
         if (!note || typeof note.body !== 'string') continue;
         const from = `${note.from || 'peer'}@${origin}`;
-        const rec = store.add({ from, workspaceId: null, body: note.body });
+        let rec;
+        try {
+          rec = store.add({ from, workspaceId: null, body: note.body });
+        } catch (e) {
+          log.error('peer', `claimed note from ${from} NOT stored: ${(e && e.message) || e}`);
+          continue;
+        }
         this._raiseNote(from, note.body);
         log.info('peer', `claimed note from ${from}: ${rec.id}`);
       }

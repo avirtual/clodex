@@ -67,6 +67,7 @@ test('docker/web/Dockerfile installs docker/web/entrypoint.sh as the ENTRYPOINT 
   assert.ok(all.includes('USER clodex'));
   const apt = all.find((i) => /^RUN apt-get update && apt-get install\b/.test(i) && /\bsudo\b/.test(i));
   assert.match(apt, /\sutil-linux\s/, 'setpriv comes from util-linux, installed explicitly');
+  assert.match(apt, /\sfindutils\s/, 'the entrypoint work-volume check runs find');
   const ignore = fs.readFileSync(path.join(__dirname, '..', '.dockerignore'), 'utf8').split('\n');
   assert.ok(ignore.indexOf('!docker/web/entrypoint.sh') > ignore.indexOf('docker'));
 });
@@ -97,10 +98,10 @@ test('entrypoint: chowns image-owned top-level paths non-recursively, and only t
   assert.match(ENTRYPOINT, /IMAGE_DEV=\$\(stat -c %d \/app\)/);
   assert.match(ENTRYPOINT, /\[ -e "\$p" \] \|\| continue\n {2}if \[ "\$\(stat -c %d "\$p"\)" != "\$IMAGE_DEV" \]; then\n {4}\[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \] \|\| continue\n {2}fi\n {2}owner=/);
   assert.match(ENTRYPOINT, /for p in \/data \/home\/clodex \/home\/clodex\/work \/home\/clodex\/\.\[!\.\]\* \/home\/clodex\/\*; do/);
-  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}if \[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \]; then\n {6}chown -R "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {4}else\n {6}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {4}fi\n {2}fi/);
+  assert.match(ENTRYPOINT, /owner=\$\(stat -c %u "\$p"\)\n {2}if \[ "\$p" = \/home\/clodex\/work \] && \[ "\$CLODEX_WORK_VOLUME" = 1 \]; then\n {4}if \[ "\$CLODEX_HOST_UID" != "\$IMAGE_UID" \]; then\n {6}if \[ "\$owner" = "\$IMAGE_UID" \] \|\| \[ -n "\$\(find "\$p" -maxdepth 1 -uid "\$IMAGE_UID" -print -quit\)" \]; then\n {8}chown -R "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {6}fi\n {4}fi\n {2}elif \[ "\$owner" = "\$IMAGE_UID" \] && \[ "\$owner" != "\$CLODEX_HOST_UID" \]; then\n {4}chown -h "\$CLODEX_HOST_UID:\$CLODEX_HOST_GID" "\$p"\n {2}fi/);
   assert.strictEqual((ENTRYPOINT.match(/chown/g) || []).length, 2);
   assert.strictEqual((ENTRYPOINT.match(/chown -R/g) || []).length, 1);
-  assert.doesNotMatch(ENTRYPOINT, /chown -R[^\n]*(\/data|\/home\/clodex\b(?!\/work))/);
+  assert.strictEqual((ENTRYPOINT.match(/chown -h/g) || []).length, 1);
   assert.doesNotMatch(ENTRYPOINT, /\/app\b[^)]*chown/);
 });
 

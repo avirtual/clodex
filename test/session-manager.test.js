@@ -13611,6 +13611,24 @@ test('_deliverClaimedInbox: a bodyless note is skipped, not stored as undefined'
   assert.strictEqual(toasts.length, 1);
 });
 
+test('_deliverClaimedInbox: a note the store refuses is logged and not toasted, and the next note still lands', () => {
+  const calls = [], toasts = [], errors = [];
+  const m = mk({
+    getNotifications: () => ({ add: (rec) => { calls.push(rec); if (calls.length === 1) throw new Error('notifications.json unreadable'); return { id: 'nt10', ...rec }; } }),
+    getPeerManager: () => ({ statuses: () => BOX_STATUS }),
+    notifyOS: (opts) => toasts.push(opts),
+    log: { info: () => {}, warn: () => {}, error: (...a) => errors.push(a) },
+  });
+  m._broadcast = () => {};
+  m._deliverClaimedInbox('team-clodex', [
+    { id: 'n1', from: 'lead', body: 'first', createdAt: 100 },
+    { id: 'n2', from: 'lead', body: 'second', createdAt: 200 },
+  ]);
+  assert.strictEqual(calls.length, 2);
+  assert.deepStrictEqual(toasts.map((t) => t.body), ['second']);
+  assert.ok(errors.some(([tag, msg]) => tag === 'peer' && /claimed note from lead@team-clodex NOT stored: notifications\.json unreadable/.test(msg)));
+});
+
 // --- _deliverReminder — durable fire routing (live / park-offline / drop) ----
 // The reminder deliver seam: a fired self-reminder must never be silently lost
 // the way a plain dm to an absent target is. Live → the DM path; offline but

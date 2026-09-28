@@ -43,7 +43,7 @@ FROM node:22-slim AS runtime
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git bash procps ca-certificates python3 python3-venv make g++ sudo \
-      curl jq vim less tree unzip zip ripgrep openssh-client util-linux \
+      curl jq vim less tree unzip zip ripgrep openssh-client util-linux findutils \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.

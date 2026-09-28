@@ -24,12 +24,14 @@ for p in /data /home/clodex /home/clodex/work /home/clodex/.[!.]* /home/clodex/*
     [ "$p" = /home/clodex/work ] && [ "$CLODEX_WORK_VOLUME" = 1 ] || continue
   fi
   owner=$(stat -c %u "$p")
-  if [ "$owner" = "$IMAGE_UID" ] && [ "$owner" != "$CLODEX_HOST_UID" ]; then
-    if [ "$p" = /home/clodex/work ] && [ "$CLODEX_WORK_VOLUME" = 1 ]; then
-      chown -R "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"
-    else
-      chown -h "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"
+  if [ "$p" = /home/clodex/work ] && [ "$CLODEX_WORK_VOLUME" = 1 ]; then
+    if [ "$CLODEX_HOST_UID" != "$IMAGE_UID" ]; then
+      if [ "$owner" = "$IMAGE_UID" ] || [ -n "$(find "$p" -maxdepth 1 -uid "$IMAGE_UID" -print -quit)" ]; then
+        chown -R "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"
+      fi
     fi
+  elif [ "$owner" = "$IMAGE_UID" ] && [ "$owner" != "$CLODEX_HOST_UID" ]; then
+    chown -h "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$p"
   fi
 done
 
