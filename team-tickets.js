@@ -4827,7 +4827,7 @@ function createTicketMethods(deps, shared) {
     // ticket a seat currently holds. `deliveredTo` is the only such stamp and it is
     // never written by assign/advance on a standing seat, so it is absent on exactly
     // the tickets this would need to test.
-    _advanceSeat(team, seatName, closed) {
+    _advanceSeat(team, seatName, closed, delivery = null) {
       if (team && team.solo) return null;
       if (!ticketStarted(closed)) return null;
       const queue = this._openTicketsFor(team, seatName, closed && closed.id);
@@ -4853,7 +4853,8 @@ function createTicketMethods(deps, shared) {
       // so every ticket reachable here has already had its spec sent once. Unmarked,
       // the seat cannot tell this from a fresh dispatch, and a hand following its
       // brief compacts and starts clean over work already in flight.
-      this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true /* urgent */, true /* replay */);
+      const d = this._deliverTicketSpec(team, next, next.spec, 'clodex-team', true /* urgent */, true /* replay */);
+      if (delivery) delivery.d = d || {};
       log.info('intent', `seat ${seatName} advanced to ${next.id} after closing ${closed && closed.id}`);
       return next;
     },
@@ -6452,7 +6453,8 @@ function createTicketMethods(deps, shared) {
       if (!isAssignee && !isLead) { reply(`error: only ticket ${intent.id}'s assignee (${ticket.role || ticket.assignee || 'unassigned'}) or the team lead (${team.lead}) can close it${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const lead = team.lead;
       if (!isLead) {
-        const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false, `[ticket ${ticket.id} done]`);
+        const tag = `[ticket ${ticket.id} ${reentry ? 're-verifying' : 'done'}]`;
+        const r = this._gatedDeliver(lead, session.name, `${tag} ${report}`, false, tag);
         const kept = reentry ? `ticket stays held at "${heldAt}" (${holdRecoveryText(ticket.verifyHold && ticket.verifyHold.recovery, ticket.id).trim()})` : 'ticket kept open';
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
@@ -6579,8 +6581,9 @@ function createTicketMethods(deps, shared) {
       // second copy of work already in flight, which is the exact confusion the
       // replay marker exists to prevent one layer down.
       const doneSeat = reentry ? null : this._ticketAssigneeSeat(team, ticket);
-      const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket) : null;
-      const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}` : '';
+      const adv = {};
+      const next = doneSeat ? this._advanceSeat(team, doneSeat, ticket, adv) : null;
+      const nextSuffix = next ? ` — next: ${next.id} delivered to ${doneSeat}${this._ticketDeliverySuffix(adv.d || {}, doneSeat, team, next)}` : '';
       // `re-verifying` on a re-entry. A re-entry does
       // not close anything — the ticket was already `done` — so a second "done"
       // on this channel is one close event rendered twice to every consumer, the
@@ -7362,6 +7365,7 @@ function createTicketMethods(deps, shared) {
       if (Number(tests) === 0) {
         out.error = `the runner executed ZERO tests (exit ${res.code}) — a run that verified nothing `
           + 'cannot stand in for a green suite';
+        out.output = text;
         return out;
       }
       out.ran = true;
@@ -7497,7 +7501,10 @@ function createTicketMethods(deps, shared) {
         const seat = this._ticketAssigneeSeat(team, ticket);
         // Resolved BEFORE the write: with no seat to receive it the ticket must
         // stay done for the lead to escalate on, not sit reopened and unread.
-        if (!seat || seat === team.lead) {
+        if (seat && seat === team.lead) {
+          return { ok: false, error: `${seat} is holding ${ticket.id} itself — the must-fixes are yours to act on` };
+        }
+        if (!seat) {
           return { ok: false, error: `no live seat holds ${ticket.role || ticket.assignee || 'the ticket'} to send the rework to` };
         }
         ticket.state = 'open';
@@ -8878,12 +8885,13 @@ function createTicketMethods(deps, shared) {
       const seat = ticketStarted(ticket) && !ticket.parked ? this._ticketAssigneeSeat(team, ticket) : null;
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
       this._reconcileTickets(team);
-      const next = seat ? this._advanceSeat(team, seat, ticket) : null;
+      const adv = {};
+      const next = seat ? this._advanceSeat(team, seat, ticket, adv) : null;
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} cancelled` });
       this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       const dropped = this._cancelTicketReminders(session.name, ticket.id);
-      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}` : ''}${dropped ? ` ${dropped}` : ''}`);
+      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}${this._ticketDeliverySuffix(adv.d || {}, seat, team, next)}` : ''}${dropped ? ` ${dropped}` : ''}`);
     },
 
     // Drop the reminders BOUND to a ticket (`[agent:remind for t42 …]`) when it
