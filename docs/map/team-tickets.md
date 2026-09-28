@@ -30,7 +30,7 @@
 | `reviewerModelArgs` | the only argv a reviewer template may contribute: a rebuilt model flag and name from the first model token, plus a refused spec | none | cli-adapters.adapterFor | team-hand-template-portable.test.js |
 | `standingSeat` | true for a persistence record that is neither minted for a ticket nor a reviewer (an absent record counts as standing) | none | mintedForTicket | team-cost-wiring.test.js |
 | `seatCwdInTree` | maps a seat cwd under the project root onto the same spot in a ticket worktree, or the tree root when it escapes | none | none | resolve-seat-shape.test.js |
-| `ignoreCwdDir` | writes a star .gitignore into a per-seat cwd dir in the hand's worktree so it stays out of git status; returns a warning or null | seat cwd dir .gitignore on disk | none | worktree-codex-exclude.test.js |
+| `ignoreCwdDir` | writes a star .gitignore into a per-seat cwd dir in the hand's worktree so it stays out of git status, only where none exists; an existing different one is left and a note returned; returns a warning, a note or null | seat cwd dir .gitignore on disk | none | worktree-codex-exclude.test.js |
 
 ### Invariants
 - `reviewerModelArgs` rebuilds the model argv from the parsed name and never passes template tokens through, so no neighbouring flag can ride along.
@@ -39,7 +39,6 @@
 
 ### Hazards
 - Dropping the refused result from `reviewerModelArgs` silently spawns a reviewer on the default model the operator did not configure.
-- `ignoreCwdDir` overwrites any .gitignore whose content is not exactly a star line, which dirties a tree that tracks one there.
 - `seatCwdInTree` tests the relative path with a two-dot prefix check, so a real subdirectory named with a leading two dots maps to the tree root.
 
 ## Spawn intent and team activity — createTicketMethods … _forgetTeam
@@ -209,7 +208,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `_deliverTicketSpec` | Renders and sends a ticket dispatch (fresh, REPLAY or RESPEC head plus context) to the resolved seat and arms the spec latch | seat latch via hook, spill file under messages dir | _ticketAssigneeSeat, _gatedDeliver, _armSpecConfirm, _ticketTaskDirRender | tickets-viewer-path-parity.test.js ticket-replay.test.js task-start.test.js |
-| `_armSpecConfirm` | At write time arms, keeps or drops the per-seat spec latch, carrying the retry budget and owing redelivery for a displaced ticket | session spec latch and confirm timer, owed-spent set | _oweDisplacedSpec, _pruneOwedSpent, _seatTranscriptSize, _armSpecConfirmTimer | ticket-replay.test.js |
+| `_armSpecConfirm` | At write time arms, keeps or drops the per-seat spec latch, carrying the retry budget and owing redelivery for a displaced ticket | session spec latch (byte anchor and the resolved transcript file) and confirm timer, owed-spent set | _oweDisplacedSpec, _pruneOwedSpent, _seatTranscriptSize, _armSpecConfirmTimer | ticket-replay.test.js |
 | `_redirectDeliveryText` | One builder for a seat-bound rejection or must-fix redirect, optionally with a REDELIVERY head | none | ticketCloseLine | unpinned |
 | `_armSpecConfirmTimer` | Arms the unref'd confirm-window timer that runs the spec check inside a logging try | session confirm timer | _checkSpecConfirm | dm-delivery-latch.test.js ticket-replay.test.js |
 | `_oweDisplacedSpec` | For a latch displaced by another ticket's write: escalates if its budget is spent, else queues one owed redelivery and arms the drain | session owed queue | _escalateTicket, _armSpecOwedTimer, _soloOpenerTeam | ticket-replay.test.js |
@@ -234,7 +233,7 @@
 |---|---|---|---|---|
 | `_armReviewStartCheck` | Arms a one-shot unref'd check that a freshly spawned reviewer took its first turn, anchoring arm time and transcript size on the first arm | session review-start armed-at, size and timer | _seatTranscriptSize, _checkReviewStarted | review-scope-in-prompt.test.js session-manager.test.js |
 | `_checkReviewStarted` | At the reviewer start deadline re-arms on a dialog, re-sends the start nudge once, then escalates to the lead with the measured age | session nudge-retried flag | _seatTurnSince, _armReviewStartCheck, _deliverParkedActive | review-scope-in-prompt.test.js |
-| `_seatTranscriptHas` | Three-valued probe for whether a ticket dispatch marker appears in the seat transcript after a byte offset | reads seat transcript | _seatTranscriptTail | ticket-replay.test.js |
+| `_seatTranscriptHas` | Three-valued probe for whether a ticket dispatch marker appears in the seat transcript after a byte offset, reading the anchored file from the offset and a repointed current file from 0 | reads seat transcript | _seatTranscriptTail | ticket-replay.test.js |
 | `_checkSpecConfirm` | At the spec-confirm deadline re-arms, confirms from transcript, drops, escalates, or redelivers once then escalates after two silent writes | session spec latch; tickets.json via escalation | _seatTranscriptHas, _ticketAssigneeSeat, _deliverTicketSpec, _escalateTicket | ticket-replay.test.js solo-tickets.test.js |
 | `_deliverRedirectReplay` | Re-sends a redirect from the latch snapshot as a REDELIVERY with the same return shape and arm-on-write hook as spec delivery | seat latch via hook | _redirectDeliveryText, _gatedDeliver, _armSpecConfirm | ticket-replay.test.js |
 | `_openTicketsFor` | The single resolver of a seat's open, assigned, unparked, started tickets, FIFO by openedAt then numeric id | reads tickets.json | _ticketAssigneeSeat, ticketStarted | session-rename.test.js task-start.test.js session-manager.test.js |
@@ -339,7 +338,7 @@
 | `_taskRejectFollowUp` | a lead reject on a ticket already open for rework, sent as a follow-up into the running round | tickets.json lastActivityAt, rework reasons, reject event | _reworkSeatFor, _gatedDeliver, _seatReplacedClause | ticket-rework-reasons.test.js reviewer-round-end.test.js |
 | `_notifyHandOfHold` | best-effort urgent notice to the hand that its ticket is held at verify, with the hand recovery text | none | _ticketAssigneeSeat, holdRecoveryText, _gatedDeliver | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
 | `_stampVerifyHold` | re-load, set or clear the verify hold and its event, null being a no-op when absent | tickets.json verifyHold | recordEvent | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
-| `_slowTestsOwned` | the slow test names that appear in test files the branch changed since its merge base or recorded base | none | _slowTestsOwnedFrom, gitWorktree.mergeBase | ticket-loop-verify.test.js |
+| `_slowTestsOwned` | the slow test names that appear in files under the runner's TEST_ROOTS the branch changed since its merge base or recorded base | none | _slowTestsOwnedFrom, gitWorktree.mergeBase | ticket-loop-verify.test.js |
 | `_reapRunner` | kills an abandoned suite runner pid that is still alive, never this process | none | _killRunner | sigkill-pid-census.test.js |
 | `_stampVerifyPhase` | re-load, set or clear the verify phase the board renders (suite run 1 or 2, reviewer spawn), null being a no-op when absent | tickets.json verifyPhase | none | ticket-loop-verify.test.js |
 | `_setLoopStep` | re-load, set or clear the loop step and end the stall episode | tickets.json loopStep, lastActivityAt, nudgedAt | none | ticket-loop-verify.test.js |

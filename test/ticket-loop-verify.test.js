@@ -1775,6 +1775,16 @@ test('slow gate: a test the branch itself added after the merge IS still owned',
   assert.deepStrictEqual(await f.m._slowTestsOwned(f.team, f.one(), [SLOW_ONE, SLOW_TWO]), [SLOW_TWO]);
 });
 
+test('slow gate: a slow test the branch adds under cli/test/ IS owned', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'cli/test/own.test.js', `test('${SLOW_TWO}', () => {});\n`);
+  const f = mkLoop({ repo });
+  const gw = require('../git-worktree');
+  const d = await gw.diffNames(repo.dir, repo.baseSha, 'tl-1');
+  assert.ok(d.ok && d.names.includes('cli/test/own.test.js'), 'ENTER: the branch diff carries the cli/test file');
+  assert.deepStrictEqual(await f.m._slowTestsOwned(f.team, f.one(), [SLOW_TWO]), [SLOW_TWO]);
+});
+
 test('slow gate: no merge-base falls back to the recorded baseSha', async () => {
   const repo = mkMasterBroughtTest();
   const f = mkLoop({ repo, wrapGit: (gw) => ({ ...gw, mergeBase: async () => ({ ok: false, sha: null, error: 'stub' }) }) });

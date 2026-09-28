@@ -5576,7 +5576,7 @@ function createSessionManager(deps) {
         // to it. null (no transcript, unreadable link, nothing new) trusts the turn,
         // as before: the probe must never manufacture a redelivery out of its own
         // blind spot.
-        const has = this._seatTranscriptHas(s.name, u.ticketId, u.since);
+        const has = this._seatTranscriptHas(s.name, u.ticketId, u.since, undefined, u.sinceFile);
         if (has === false) {
           log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
         } else {

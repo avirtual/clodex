@@ -16,6 +16,7 @@ const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extra
 const teamCost = require('./team-cost');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
+const { TEST_ROOTS } = require('./scripts/clodex-run-tests');
 // Deliberately NOT named `path`: inside createTicketMethods that name is the
 // injected one, and shadowing it would swap a fixture's probe for the real
 // module.
@@ -468,6 +469,7 @@ function ignoreCwdDir(fs, seatCwd, cwdDir) {
     let cur = null;
     try { cur = fs.readFileSync(file, 'utf8'); } catch { cur = null; }
     if (cur === '*\n') return null;
+    if (cur !== null) return `${file} already exists and is not the \`*\` marker, so it was left as is; the hand's tree may show ${cwdDir}/ contents as untracked`;
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(file, '*\n');
     return null;
@@ -2950,9 +2952,8 @@ function createTicketMethods(deps, shared) {
       const rootClause = cls.kind === 'takeover' ? '(existing repo, untouched)' : "(new, git init'd)";
       const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
-        lead: { ...kitRoles.lead },
+        ...Object.fromEntries(Object.entries(kitRoles).map(([k, v]) => [k, { ...v }])),
         hand: { ...kitRoles.hand, dispatch: 'worktree' },
-        reviewer: { ...kitRoles.reviewer },
       } : undefined;
       let team;
       try {
@@ -4080,10 +4081,12 @@ function createTicketMethods(deps, shared) {
       // unanchored search is the correct one.
       const size = this._seatTranscriptSize(seatName);
       const since = size < 0 ? 0 : size;
+      let sinceFile = null;
+      try { sinceFile = fs.realpathSync(pathFor(REGISTRY_DIR, seatName, 'transcript')); } catch {}
       const carry = this._redirectCarry(seatName, ticketId, prior, redirect);
       s._specUnconfirmed = redirect
-        ? { ticketId, kind, at: Date.now(), retried, since, ...redirect, ...carry }
-        : { ticketId, kind, at: Date.now(), retried, since };
+        ? { ticketId, kind, at: Date.now(), retried, since, sinceFile, ...redirect, ...carry }
+        : { ticketId, kind, at: Date.now(), retried, since, sinceFile };
       if (rearmed) s._specUnconfirmed.windowRearmed = true;
       this._armSpecConfirmTimer(s);
       return s._specUnconfirmed;
@@ -4093,7 +4096,7 @@ function createTicketMethods(deps, shared) {
       if (!(redirect && prior && prior.ticketId === ticketId && prior.kind === 'redirect'
           && typeof prior.reason === 'string' && prior.reason)) return null;
       if (prior.reason === redirect.reason) return prior.carried ? { reason: prior.reason, carried: true } : null;
-      if (this._seatTranscriptHas(seatName, ticketId, prior.since) === true) return null;
+      if (this._seatTranscriptHas(seatName, ticketId, prior.since, undefined, prior.sinceFile) === true) return null;
       const first = prior.carried ? prior.reason
         : `[ticket ${ticketId} ${prior.label || 'rejected'}] ${prior.reason}`;
       return { reason: `${first}\n[ticket ${ticketId} ${redirect.label}] ${redirect.reason}`, carried: true };
@@ -4297,7 +4300,7 @@ function createTicketMethods(deps, shared) {
       // arbitrarily long time, accumulating transcript that may mention the ticket
       // from a non-delivery source. A false true here re-creates the original
       // silent loss, so it must not also be an invisible one.
-      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since, undefined, u.sinceFile) === true) {
         log.info('intent', `displaced ${isRedirect ? 'redirect' : 'spec'} for ${u.ticketId} dropped at ${session.name}: its transcript shows the seat received it`);
         rearm();
         return;
@@ -4502,8 +4505,8 @@ function createTicketMethods(deps, shared) {
     // the latch armed. `null` is reserved for a probe that cannot answer at all (no
     // transcript, unreadable link), where the caller must fall back to trusting the
     // turn rather than manufacture a redelivery out of a blind spot.
-    _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20) {
-      const tail = this._seatTranscriptTail(name, from, tailBytes);
+    _seatTranscriptHas(name, ticketId, from = 0, tailBytes = 1 << 20, fromFile = null) {
+      const tail = this._seatTranscriptTail(name, from, tailBytes, fromFile);
       if (tail === null) return null;
       return tail.includes(`[ticket ${ticketId}]`) || tail.includes(`[ticket ${ticketId} `);
     },
@@ -4513,11 +4516,19 @@ function createTicketMethods(deps, shared) {
     // transcript bytes, and answering "cannot say" here would surrender the
     // two shapes this mechanism is for — a fresh seat (anchored at 0, empty
     // transcript) and a wire-routed edge that beat the CLI's append.
-    _seatTranscriptTail(name, from = 0, tailBytes = 1 << 20) {
+    _seatTranscriptTail(name, from = 0, tailBytes = 1 << 20, fromFile = null) {
+      let target = null;
+      try { target = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch {}
+      if (!fromFile || target === fromFile) return target ? this._transcriptFileTail(target, from, tailBytes) : null;
+      const anchored = this._transcriptFileTail(fromFile, from, tailBytes);
+      if (anchored === null) return null;
+      const fresh = target ? this._transcriptFileTail(target, 0, tailBytes) : null;
+      return fresh === null ? anchored : `${anchored}\n${fresh}`;
+    },
+
+    _transcriptFileTail(target, from = 0, tailBytes = 1 << 20) {
       let fd;
       try {
-        const link = pathFor(REGISTRY_DIR, name, 'transcript');
-        const target = fs.realpathSync(link);
         const size = fs.statSync(target).size;
         if (size <= from) return '';
         const start = Math.max(from, size - tailBytes);
@@ -4584,7 +4595,7 @@ function createTicketMethods(deps, shared) {
       // can still be sitting here armed; by the deadline the write is long since on
       // disk, which makes this the reliable read and the edge the eager one.
       // Anchored identically, so a respawn's stale copy cannot answer for it.
-      if (this._seatTranscriptHas(session.name, u.ticketId, u.since) === true) {
+      if (this._seatTranscriptHas(session.name, u.ticketId, u.since, undefined, u.sinceFile) === true) {
         // Receipt, so the episode ENDS here too — same prune as the activity edge's
         // (_emitActivity), for the same reason. This is the RARER of the two
         // confirm exits: a seat that consumes its spec normally clears the latch at
@@ -7838,7 +7849,7 @@ function createTicketMethods(deps, shared) {
 
     async _slowTestsOwnedFrom(team, branch, wanted, base) {
       if (!base) return [];
-      const d = await gitWorktree.diffNames(team.root, base, branch, ['test/'])
+      const d = await gitWorktree.diffNames(team.root, base, branch, TEST_ROOTS.map((r) => `${r}/`))
         .catch(() => ({ ok: false, names: null }));
       if (!d || !d.ok || !Array.isArray(d.names) || !d.names.length) return [];
       const owned = new Set();

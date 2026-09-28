@@ -1577,6 +1577,32 @@ test('t409: a turn over the spec ITSELF still clears the latch, and no redeliver
   } finally { app.stop(); }
 });
 
+test('a spec consumed before a /clear still confirms after the transcript link moves to a fresh file', async () => {
+  const world = mkWorld();
+  const link = pathFor(world.home, 'team-hand', 'transcript');
+  const fileA = path.join(world.home, 'transcript-a.jsonl');
+  const fileB = path.join(world.home, 'transcript-b.jsonl');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.writeFileSync(fileA, '{"role":"user","content":"an earlier turn from before the dispatch"}\n');
+  fs.symlinkSync(fileA, link);
+  const { app, s } = await dispatched(world);
+  try {
+    assert.strictEqual(s._specUnconfirmed.ticketId, 't1', 'ENTER: t1 must hold the latch');
+    assert.strictEqual(s._specUnconfirmed.sinceFile, fs.realpathSync(fileA),
+      'ENTER: the latch must have armed against file A through the link');
+    app.transcript('team-hand', '{"role":"user","content":"[ticket t1] close with [agent:task done t1]"}\n');
+    fs.writeFileSync(fileB, '{"a":"b"}\n');
+    const tmp = `${link}.tmp`;
+    fs.symlinkSync(fileB, tmp);
+    fs.renameSync(tmp, link);
+    assert.ok(app.m._seatTranscriptSize('team-hand') < s._specUnconfirmed.since,
+      'ENTER: the fresh file must be smaller than the anchor, the shape a /clear leaves');
+    app.m._emitActivity('team-hand', 'thinking');
+    assert.strictEqual(s._specUnconfirmed, null,
+      'the spec reached the seat before the repoint, so the turn confirms it');
+  } finally { app.stop(); }
+});
+
 // r1 must-fix 1. Ids are monotonic, so every low id is a PREFIX of ~10 live higher
 // ones — `includes('t1')` is true of a transcript that merely mentions t156 in a
 // cross-reference, a lead dm, or a review scope. Discriminating a turn caused by
