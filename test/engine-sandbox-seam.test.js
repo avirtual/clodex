@@ -194,7 +194,7 @@ test('the engine hands SELF_LABEL to the hosts, so sandbox:self can name the box
 });
 
 test('sandbox:self reports a read-only library templates dir inside a box, and writable outside one', { skip: !!(process.getuid && process.getuid() === 0) && 'root ignores 0555' }, () => {
-  const tmp = mkTmpRoot('clx-eng-sbx-ro-');
+  const tmp = mkTmpRoot('clx-eng-sbx-');
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
     userDataPath: tmp,
