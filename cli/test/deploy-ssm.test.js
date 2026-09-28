@@ -66,8 +66,8 @@ test('buildSsmScript: root wrapper — prereqs+node gate, clodex user, pinned in
   assert.match(s, /if \[ "\$code" = "200" \]; then echo "::ok verify"; else echo "::fail verify http=\$code"; fi/);
   assert.ok(s.indexOf('::step token') < s.indexOf('::step verify'), 'verify runs after the token is live');
   assert.match(s, /::done/);
-  // no docker anywhere — this is the OS flavor.
-  assert.doesNotMatch(s, /docker/);
+  assert.match(s, /if command -v docker >\/dev\/null 2>&1 && ! docker compose version >\/dev\/null 2>&1; then\n[^\n]*\nfi\n/);
+  assert.doesNotMatch(s.replace(/if command -v docker >\/dev\/null 2>&1 && ! docker compose version >\/dev\/null 2>&1; then\n[^\n]*\nfi\n/, ''), /docker/);
   // valid /bin/sh.
   const f = path.join(os.tmpdir(), `t39-${process.pid}.sh`);
   fs.writeFileSync(f, s);

@@ -26712,13 +26712,16 @@ ${i3.join("\n")}
         if (!d.running) {
           return { kind: "warn", text: "Docker daemon isn\u2019t running \u2014 start Docker Desktop." };
         }
+        if (d.compose === false) {
+          return { kind: "error", text: "Docker Compose plugin isn\u2019t installed \u2014 on Debian/Ubuntu run `sudo apt-get install docker-compose-v2`; elsewhere install Docker Desktop." };
+        }
         return { kind: "ok", text: "Docker is running." };
       }
       var GATED_ACTIONS = ["start", "rebuild", "boxStart", "boxCreate"];
       function sandboxActionGate(detect) {
         const d = detect || {};
         const notice = detectNotice(d);
-        const running = !!d.running;
+        const running = !!d.running && d.compose !== false;
         return {
           running,
           notice,

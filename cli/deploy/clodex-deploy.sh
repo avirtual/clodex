@@ -230,6 +230,9 @@ else
   log "no apt/dnf/yum found — assuming the node-pty build toolchain is present"
   ok sys-deps
 fi
+if command -v docker >/dev/null 2>&1 && ! docker compose version >/dev/null 2>&1; then
+  log "docker is installed but the Compose plugin is missing — sandboxes will not start; on Debian/Ubuntu: sudo apt-get install docker-compose-v2"
+fi
 
 # --- source: clone or fast-forward to origin/<BRANCH> ----------------------
 step source

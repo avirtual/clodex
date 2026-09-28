@@ -223,6 +223,13 @@ test('clodex-deploy.sh passes a bash -n syntax check', () => {
   execFileSync('bash', ['-n', script]);
 });
 
+test('clodex-deploy.sh warns (never fails) when docker lacks the Compose plugin', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '..', 'peering', 'clodex-deploy.sh'), 'utf8');
+  const m = src.match(/if command -v docker >\/dev\/null 2>&1 && ! docker compose version >\/dev\/null 2>&1; then\n([^\n]*)\nfi\n/);
+  assert.ok(m, 'compose-plugin probe present');
+  assert.match(m[1], /^\s*log "docker is installed but the Compose plugin is missing — sandboxes will not start; on Debian\/Ubuntu: sudo apt-get install docker-compose-v2"$/);
+});
+
 // --- classifyDeployFolder: the CLODEX_SRC preamble token ---------------------
 test('classifyDeployFolder: blank ⇒ no override (script default stands)', () => {
   assert.deepStrictEqual(classifyDeployFolder(''), { ok: true, srcExport: '' });
