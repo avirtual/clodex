@@ -22,7 +22,7 @@ const { projectDirFor } = require('./clodex-paths');
 const nodePath = require('path');
 const {
   readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
-  parseCpuTime, sumTreeCpuMs, parsePsRows, classifyReviewSeat, formatReviewSeatClause, didGrow,
+  sumTreeCpuMs, parsePsRows, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
 const { resolveAccountLabel, accountMissingError } = require('./accounts');
@@ -299,7 +299,7 @@ const ticketCloseLine = (id) => `CLOSE WITH: ${ticketCloseVerb(id)} <your report
 // asserting an absolute path "is relative to the PROJECT'S ARTIFACT DIR".
 const taskDirRelative = (raw) => !!raw && !raw.startsWith('~') && !nodePath.isAbsolute(raw);
 
-// The rule a RELATIVE pointer needs and an already-placed one does not. Split
+// The rule a RELATIVE pointer needs. Split
 // from the line below because the two renderers of a task dir — the hand's
 // dispatch and the reviewer's scope — frame the path differently but must state
 // the rule identically; a second wording is the divergence in new clothes.
@@ -1247,7 +1247,7 @@ function createTicketMethods(deps, shared) {
       // record to mint the proxy agent id, so a label written after the deferred
       // create() would label nothing. The round comes from the ticket when there
       // is one, so round 2's spend stays off round 1's label; the seat index is
-      // only a fallback for an ad-hoc review, which has no ticket to count on.
+      // only a fallback for an ad-hoc review or an unreadable ticket (logged above).
       const reviewRound = ticketRound > 0 ? ticketRound : n - 1;
       // The id comes from `reviewTicket` when there is one — the caller's explicit
       // claim — and only falls back to the scope prose for an ad-hoc review, which
@@ -1528,7 +1528,7 @@ function createTicketMethods(deps, shared) {
       const ledger = teamCost.sumSessions(totals, sessionIds, { currentId, live });
       ledger.ids = sessionIds;
       // `resolved` is about whether a LEDGER was found, not whether a seat was:
-      // the seat is `session.name` and is never in doubt on this path. A seat
+      // the seat is `seatName` and is never in doubt on this path. A seat
       // that spent nothing observable (a Codex reviewer, or one killed before
       // its first main-line turn) reports null rather than 0, so a real review
       // whose cost the wire never saw cannot read as a free one.
@@ -2584,8 +2584,8 @@ function createTicketMethods(deps, shared) {
         // comment said "exactly one shape", then "THREE shapes", and a fourth
         // turned up in the next round. Do not re-close the set. Known: a nested
         // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a rename
-        // into or out of the root file, and a multi-segment prefix
-        // (`diff.srcPrefix 'i/w/'`), both read as OWED.
+        // into the root file and a multi-segment prefix (`diff.srcPrefix 'i/w/'`)
+        // read as OWED; a rename OUT of it reads as "no CHANGELOG.md — none owed".
         //
         // The pattern is NOT widened to chase these: testing each side
         // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
@@ -2684,7 +2684,7 @@ function createTicketMethods(deps, shared) {
           ...(stamp ? [`Verify suite was re-measured. First run: ${oneLine(stamp.first) || 'unrecorded'} (${wideLine(stamp.firstFailing) || 'no names recorded'}).`] : []),
           changelogLine,
           // False once the loop has closed out; on a REOPEN it is true but its
-          // verb is not, and line 2 has already said it.
+          // verb is not, and the step line has already said it.
           ...(closedOutOk || (closeOut && closeOut.reopened) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
         this._stampMerged(team, ticketId, sha);
@@ -2805,10 +2805,9 @@ function createTicketMethods(deps, shared) {
         });
         bookReview();
         this.kill(session.name);
-        // ACCEPT alone, and fired UNAWAITED — this handler is synchronous and
+        // ACCEPT alone, and not awaited — this handler is synchronous and
         // the merge shells out to git and then runs a whole suite, so awaiting
-        // it would hold the intent handler open for minutes. Same shape and same
-        // reason as _taskDone firing _runTicketLoop.
+        // it would hold the intent handler open for minutes.
         //
         // AFTER the verdict is durable and the reviewer retired: the merge reads
         // the record, and a merge that throws must never cost the verdict or
@@ -3869,7 +3868,7 @@ function createTicketMethods(deps, shared) {
       // dispatch cannot leave unsaid: it has no tree of its own, so the isolation
       // every other one-shot seat is handed silently does not exist here, and a
       // hand that assumes it would commit onto whatever branch the operator has
-      // checked out. ONE line — the head is already ~420 chars and every dispatch
+      // checked out. ONE line — the close line alone is ~410 chars and every dispatch
       // spills, so each added line costs the seat a Read turn.
       //
       // Gated on the ROLE's dispatch, not on the absence of a worktree: a standing
@@ -3898,7 +3897,7 @@ function createTicketMethods(deps, shared) {
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
-      // EVERY dispatch spills now: the head alone is ~420 chars and a worktree one
+      // EVERY dispatch spills now: the close line alone is ~410 chars and a worktree one
       // ~730, against a 500-byte threshold. So the pointer line is all a seat sees
       // before deciding whether to spend a Read turn, and it must carry the id AND
       // the verb — a spilled body announces itself only as "Message (N bytes)
@@ -3960,7 +3959,7 @@ function createTicketMethods(deps, shared) {
     // Armed from the WRITE (_deliverMessage's onWrite), never from the enqueue, and
     // only for the 'injected' disposition. Two reasons, both load-bearing:
     //
-    // A PARKED delivery is not confirmable. Arming there would redeliver
+    // A PARKED delivery is not confirmable, except a turn-start-window park. Arming there would redeliver
     // a full spec into a seat actively working on it.
     //
     // And arming at ENQUEUE would start the clock before the bytes exist: the quiet
@@ -4198,7 +4197,7 @@ function createTicketMethods(deps, shared) {
     // release sites are the three ways a write stops being destroyable:
     //   receipt, attributed turn      (_emitActivity)
     //   receipt, deadline re-probe    (_checkSpecConfirm)
-    //   park                          (_armSpecConfirm's non-injected branch)
+    //   park                          (_armSpecConfirm's non-injected branch; not a window park)
     // A park qualifies as strongly as a receipt: the bytes are a file on disk, no
     // later Ctrl-U can destroy them. Reading the rule as "receipt and nothing
     // else" left every ticket whose first repair parked escalating on a budget
@@ -4711,7 +4710,7 @@ function createTicketMethods(deps, shared) {
     // retry arm reads that shape to decide between escalating, standing down, and
     // re-arming, and a second shape there would need a second copy of that logic.
     //
-    // Re-resolves the seat rather than trusting the latch: the caller has already
+    // Does NOT re-resolve the seat: the caller has already
     // established the ticket still resolves to this session, and resolving again
     // here would be a second answer to a settled question that could disagree.
     // `onWrite(disposition)` mirrors _deliverTicketSpec's, for the same reason and
@@ -4999,7 +4998,7 @@ function createTicketMethods(deps, shared) {
     // One replay per process, whichever edge gets there first: the claude arm has two
     // (the boot-ready drain and a fallback for a seat that never announces), and both
     // must be safe to fire.
-    // The one-shot is spent only on an outcome that REACHED the seat. A `held` verdict
+    // A `held` verdict
     // delivers nothing and stamps nothing, so consuming the flag there would burn the
     // process's only replay on a pass that did no work — while the other claude edge
     // is still to come.
@@ -5204,16 +5203,8 @@ function createTicketMethods(deps, shared) {
       return { path: wt.path, branch: wt.branch, ...(wt.baseSha ? { baseSha: wt.baseSha } : {}) };
     },
 
-    // Mint the worktree, spawn the seat, then hand it the spec. Async and
-    // fire-and-forget like the other spawn paths: the ticket record is already
-    // saved, so a crash here loses the seat, never the ticket.
     // Resolve a library template NAME into the seat shape create() takes.
-    // Extracted because the ticket path used to pass `[]` for every one of these
-    // and a role's `template:` was inert for exactly the seats it was written
-    // for — the hands — while the spawn-intent path 40 lines up honored it. Two
-    // call sites, one resolution; a third inherits it instead of re-deriving it.
-    //
-    // AGENT-INITIATED, both callers: a template is agent-writable, so privileged
+    // A template is agent-writable, so privileged
     // intents are stripped and env is confined to REVIEWER_ENV_ALLOWLIST. Only an
     // operator's local GUI create/edit may grant those.
     _templateShape(tplName, team) {
@@ -5590,7 +5581,7 @@ function createTicketMethods(deps, shared) {
         plugins: shape ? shape.plugins : null,
         io: (shape && shape.io) || 'pty',
         // An object always, never null — and the fallback applies whenever the
-        // TEMPLATE supplied no usable env, not merely when the template is
+        // TEMPLATE supplied no env object, not merely when the template is
         // missing: a reviewer that booted without CLODEX_DISABLE_IPC_PROMPT gets
         // the full protocol prompt it was configured not to have.
         // REVIEWER_FALLBACK.env needs no allowlist pass: it IS the shipped set the
@@ -5643,8 +5634,8 @@ function createTicketMethods(deps, shared) {
     _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree', fromBacklog = false, prelude = '') {
       const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
-      // Reserved SYNCHRONOUSLY, before any await: two tickets opened in one lead
-      // turn both run their taken-name check above before either create() lands,
+      // Reserved SYNCHRONOUSLY, before any await: two tickets dispatched in one lead
+      // turn both run the caller's `_mintTicketSeat` check before either create() lands,
       // and the persistence stub is what makes the second one see the first.
       // Same ordering contract as the reviewer's stub: the label must be on the
       // record BEFORE the deferred create() reads it back to mint the proxy id.
@@ -5878,13 +5869,13 @@ function createTicketMethods(deps, shared) {
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
             false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null,
           );
-          this._applyTemplatePersistence(seat.name, shape.tpl);
           // FIRST, before anything else that can throw. Between create() and this
           // line the seat is live in a tree no record names, and _ticketTreeHolder
           // reads occupancy off the RECORD — so it is blind to it, and session:kill
           // (which reads entry.worktree to remove the tree) orphans the checkout
           // forever. A throw anywhere in that window used to leave exactly that state.
           claimTree(wt);
+          this._applyTemplatePersistence(seat.name, shape.tpl);
           this._sendToSession(seat.name, 'session:context-action', {
             // The cwd create() actually got: this feeds the sidebar row's
             // dataset.cwd, which "Reveal Working Directory in Finder" opens. After a
@@ -6245,7 +6236,7 @@ function createTicketMethods(deps, shared) {
       // Captured before the re-pin below rewrites it — the reply reports where the
       // ticket came FROM, which is the role it was filed under.
       const prevRole = ticket.role || null;
-      // Assign is the OTHER dispatch path, so it mints like _taskAdd: releasing a
+      // Assign is the OTHER dispatch path, so it mints like _taskStart: releasing a
       // parked ticket for an opted-in role must still get its own branch, or the
       // documented park-then-release flow silently opts the role out and the hand
       // works in the shared checkout holding a spec written for an isolated tree.
@@ -6815,10 +6806,6 @@ function createTicketMethods(deps, shared) {
         // the refused path and drops the only description of what was refused.
         const dest = this._ticketDiffDest(team, ticket);
         if (!dest.ok) {
-          // `task edit` and "re-run task done" are NOT the recovery and must not
-          // be suggested: there is no `edit` verb in the task grammar
-          // (intent-registry parseTask), and the ticket is already `done` here,
-          // which `_taskDone` refuses. `task reject` is what reopens it.
           // The FIX belongs to the `spec` recovery arm rendered below this
           // evidence, and must not be restated with a different route: two
           // contradictory instructions in one message can count a rework round
@@ -6880,7 +6867,7 @@ function createTicketMethods(deps, shared) {
         const runOpts = { onSpawn: (pid) => { ownPid = pid; this._stampRunnerPid(team, ticketId, pid); } };
         this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 1 });
         let suite = await this._runTicketSuite(team, ticket, null, runOpts);
-        // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
+        // Checks 1-4 were quick; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
         // landing inside that window deletes loopStep, retires the seat, removes
         // the worktree and deletes the branch — and every arm below would then
@@ -7088,10 +7075,10 @@ function createTicketMethods(deps, shared) {
     },
 
     // Run the suite in the ticket's WORKTREE while holding the ROOT checkout's
-    // lock. Returns { ran, green, code, summary, failing, output, cwd, error, head }.
+    // lock.
     //
-    // `output` is the run's captured text, carried out ONLY when the suite is
-    // red, for _writeTicketSuiteFailure to preserve. The reduction to `failing`
+    // `output` is the run's captured text, carried out on the red, error and
+    // no-TOTALS arms, for _writeTicketSuiteFailure. The reduction to `failing`
     // keeps test NAMES and drops the assertion text, diff and stack — and the
     // loop's rejection reaches only the hand, so the hand is the one party who
     // can diagnose a red gate and the only evidence it had was those names.
@@ -7328,7 +7315,7 @@ function createTicketMethods(deps, shared) {
       out.headEnd = await gitWorktree.currentBranch(cwd).catch(() => null);
 
       const text = `${res.stdout || ''}\n${res.stderr || ''}`;
-      // The capture rides the UNRAN arms too, not the red one alone. A post-merge
+      // Error and no-TOTALS arms carry the capture too, not red alone. A post-merge
       // run that crashed or timed out REVERTS master exactly as a red one does,
       // so its output is unreproducible for the same reason — and without this
       // the whole account of it is a 300-char last line. Kept raw for
@@ -7727,10 +7714,6 @@ function createTicketMethods(deps, shared) {
       } catch { return null; }
     },
 
-    // Re-load, mutate, save — never a mutation of a caller's snapshot. The loop
-    // awaits git between reads, which is a wide enough window for another writer
-    // (a verdict, a cancel) to land in, and saving a stale array would silently
-    // revert it.
     // The HAND's copy of a hand-fixable hold: the seat, urgent, tagged with the
     // close verb — `_rejectTicketFromLoop`'s delivery MINUS the spec-confirm latch.
     //
@@ -7745,7 +7728,7 @@ function createTicketMethods(deps, shared) {
     //
     // Best-effort by construction, and that is the whole reason it is a separate
     // function rather than a branch inside `fail()`. So every failure here — no seat,
-    // a dead seat, a delivery that bounces — is logged and swallowed: a hand that
+    // a dead seat, a delivery that bounces — is swallowed: a hand that
     // cannot be reached must NOT turn a correctly-held ticket into an escalation
     // failure, because the lead has already been told and the board already
     // carries the hold.
@@ -7969,6 +7952,10 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    // Re-load, mutate, save — never a mutation of a caller's snapshot. The loop
+    // awaits git between reads, which is a wide enough window for another writer
+    // (a verdict, a cancel) to land in, and saving a stale array would silently
+    // revert it.
     _setLoopStep(team, ticketId, step) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -8110,12 +8097,9 @@ function createTicketMethods(deps, shared) {
       // run that could not have seen it, and a hand reading "my fix is
       // committed and the suite still reds at my sha" edits correct work.
       //
-      // The re-read is the fallback for a caller that did not come through
-      // _runTicketSuite — a synthetic suite object, which today means the direct
-      // callers in test/ticket-loop-verify.test.js. NOT a production path: the
-      // capture precedes every `out.output` assignment, so a suite carrying a
-      // body has necessarily passed it, and the arms that return before the
-      // capture carry no body and are refused by the empty-body guard above.
+      // The re-read is the fallback for a suite with no `head`: a synthetic suite
+      // (the direct callers in test/ticket-loop-verify.test.js), or a real run
+      // whose pre-run capture rejected — `.catch(() => null)` at `out.head`.
       // Kept because a late sha still beats none for such a caller: without it
       // the degraded arm below takes over and every synthetic-suite dump reads
       // `(commit unresolved)` — correct, but blank where a sha was available.
@@ -8848,7 +8832,7 @@ function createTicketMethods(deps, shared) {
         : { undelivered: true };
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} respec'd` });
-      log.info('intent', `task respec ${ticket.id} by ${session.name} → spec replaced, re-dispatched`);
+      log.info('intent', `task respec ${ticket.id} by ${session.name} → spec replaced${dispatched ? ', re-dispatched' : ', not dispatched'}`);
       const target = ticket.role || ticket.assignee || 'unassigned';
       // The undispatched arms say WHICH verb sends the corrected spec. Silence here
       // reads as "delivered" and is how a lead ends up believing a hand has the new
@@ -8911,8 +8895,8 @@ function createTicketMethods(deps, shared) {
     // the rework round. `state = 'open'` is written by both rejection
     // transitions, so a done ticket is not closed out until accept.
     //
-    // `agent` is the LEAD (both callers are lead-gated), which is also the owner
-    // the scheduler enforces against — a bound reminder is still its owner's.
+    // `agent` is the LEAD (cancel is lead-gated; accept passes `team.lead`, as the
+    // loop closes out too), the owner the scheduler enforces against.
     // Never throws into a close path: a reminder that outlives its ticket is the
     // bug this fixes, but failing to CLOSE the ticket over it would be worse.
     _cancelTicketReminders(agent, ticketId) {
@@ -8961,7 +8945,7 @@ function createTicketMethods(deps, shared) {
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
       // `!t.revival` holds on BOTH branches: the first stamp names the session
       // that did the work, and a later retire must not overwrite its seat,
-      // session id or branch. The two targeted field writes in `_taskAccept`
+      // session id or branch. The two targeted field writes in `_closeOutMergedTicket`
       // exist precisely because this call no-ops on an already-stamped ticket.
       // `!= null`, not truthiness: absence of an id is a legitimate caller state
       // (the retire path, which omits it) while a FALSY id is a caller bug, and
@@ -9640,8 +9624,8 @@ function createTicketMethods(deps, shared) {
           ? `${seatName} was ARCHIVED, not retired, and its worktree was KEPT`
           : `${seatName} was NOT retired and its worktree was KEPT`;
         if (downgrade && downgrade.kind === 'dirty') {
-          // A second accept is NOT refused — the only gate is `ticket.state`,
-          // which stays `done` — so the recovery is the same verb again, not
+          // A second accept is NOT refused — `ticket.state` stays `done` and a downgrade
+          // never stamps `loopClosedOut` — so the recovery is the same verb again, not
           // manual cleanup. Mirrors _handleTeamRetire's "then retire again".
           parts.push(`${kept} — ${downgrade.path} has uncommitted work `
             + 'that a removal would have deleted. Commit or clear that tree, then '
@@ -9719,7 +9703,7 @@ function createTicketMethods(deps, shared) {
       // merged and the work is accepted — not about the cleanup, which is why
       // the dirty path can invite a second accept without contradicting it: the
       // ticket is closed out either way, and `closedOut` is not a gate on accept
-      // (only `ticket.state` is), so re-accepting after committing the tree
+      // (only `state` and `loopClosedOut` are), so re-accepting after committing the tree
       // finishes the teardown. That path is the ONE place the "don't cancel a
       // bound reminder in a message that invites you back" rule on the
       // not-merged arms is knowingly broken — terminality here is the merge
@@ -9727,7 +9711,7 @@ function createTicketMethods(deps, shared) {
       // reporting merged work as unfinished. Deliberate; do not "fix" it.
       //
       // `complete` asks the other question — is anything left for anyone to do?
-      // ROW 1 and nothing else: every other row leaves something on disk a lead
+      // Only a clean, fully torn-down loop seat: anything else leaves something a lead
       // may act on, so none may silence a later accept. `worktreeRemoved !==
       // false`, not `=== true`: destroy() omits it when the record carried no
       // tree path, where the teardown did finish.
@@ -9976,9 +9960,6 @@ function createTicketMethods(deps, shared) {
     // Every probe is best-effort and a failure DROPS its field rather than
     // guessing. The alarm's whole job is to be trustworthy enough to act on
     // without a hand probe; a wrong field spends that trust to save a git call.
-    //
-    // `dirty` is never returned without `tool` being attempted: dirty alone is
-    // identical for a seat writing and a seat killed mid-write.
     async _stallEvidence(team, ticket) {
       const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
@@ -10018,7 +9999,7 @@ function createTicketMethods(deps, shared) {
     // the alarm would probe some other seat's liveness and report it as this
     // review's.
     //
-    // SCOPED TO THE TEAM'S PROJECT, like every sibling resolver in this file
+    // SCOPED TO THE TEAM'S PROJECT, like every sibling resolver
     // (`_teamLiveSeats`, `_ticketAssigneeSeat`). `nextTicketId` maxes over ONE
     // board's list, so `t1` exists on every project at once — an unscoped walk
     // lets project B's live reviewer answer for project A's `t1` and SUPPRESS
@@ -10176,33 +10157,13 @@ function createTicketMethods(deps, shared) {
       return retired;
     },
 
-    // Accumulated CPU for a pid, in ms, or null when it cannot be read.
-    //
-    // `ps` rather than anything in-process: the reviewer is a SEPARATE process
-    // (a CLI under a pty), so `process.cpuUsage()` measures this app and would
-    // answer confidently about the wrong thing.
-    //
-    // Null on every failure, and the classifier treats null as "no CPU signal"
-    // rather than as zero — zero is the wedge verdict, so a failed sample would
-    // otherwise alarm about a healthy seat.
-    _sampleCpuMs(pid) {
-      return new Promise((resolve) => {
-        if (!Number.isInteger(pid) || pid <= 0) { resolve(null); return; }
-        try {
-          childProcess.execFile('ps', ['-o', 'time=', '-p', String(pid)], { timeout: 5000 }, (err, stdout) => {
-            resolve(err ? null : parseCpuTime(stdout));
-          });
-        } catch { resolve(null); }
-      });
-    },
-
     // Accumulated CPU over a pty's whole process tree, in ms, or null.
     //
     // One `ps` call for the entire process table rather than one per descendant:
     // the tree is discovered FROM the snapshot, so a per-pid walk would need a
     // call per level and would read a different instant at each one.
     //
-    // Same null-on-failure contract and same 5s timeout as `_sampleCpuMs`.
+    // Null on every failure: the classifier reads null as no CPU signal, while zero is the wedge verdict.
     _samplePtyTreeCpuMs(pid) {
       return new Promise((resolve) => {
         if (!Number.isInteger(pid) || pid <= 0) { resolve(null); return; }
@@ -10665,7 +10626,7 @@ function createTicketMethods(deps, shared) {
             // there is the blind alarm, fired at the first sweep past the window
             // at a seat nobody asked about. Deferring costs ONE sweep (60s)
             // against a 30m window, and it is bounded: the sample is stored
-            // below, so the next sweep has a baseline and either classifies or
+            // by `_sampleSeatLiveness`, so the next sweep has a baseline and either classifies or
             // alarms. A seat that is not live returns null and never reaches
             // this, so nothing can defer forever on a seat that no longer exists.
             if (seatInfo && (seatInfo.verdict === 'moving' || seatInfo.verdict === 'unknown')) continue;
@@ -10828,7 +10789,7 @@ function createTicketMethods(deps, shared) {
               // seat that speaks inside this window ends the stall. Stamping anyway
               // spends the next episode's one nudge before it starts, and only
               // activity clears it — which never comes during a stall.
-              // The SAME predicate as the eligibility test above, and it must
+              // `ticketInFlight`, the eligibility test's in-flight term, and it must
               // stay the same one: this guard decides whether the one nudge is
               // spent, so a shape the loop nudges but this refuses to stamp
               // re-nudges every single sweep — the one-nudge-per-episode rule,
@@ -10856,9 +10817,9 @@ function createTicketMethods(deps, shared) {
             } catch (e) { log.error('ticket', `nudge stamp for ${tid} failed: ${e.message}`); }
           });
       }
-      // No save here: the only field this sweep writes is `nudgedAt`, and each stamp
-      // now saves its own re-loaded copy from onWrite. A save of `tickets` at this
-      // point would write back a snapshot taken BEFORE those stamps and undo them.
+      // No save here: every stamp this sweep makes saves its own re-loaded copy.
+      // A save of `tickets` would write back a snapshot taken BEFORE those stamps
+      // and undo them.
     },
 
     async _handleTeamRetire(targetName, requesterName) {
