@@ -164,7 +164,7 @@ function resolve(store, { ctxName = null, env = process.env, flags = {}, platfor
   // flags, to allow "this context but a different token").
   const wanted = ctxName || store.current;
   if (wanted) {
-    entry = store.contexts[wanted];
+    entry = Object.hasOwn(store.contexts, wanted) ? store.contexts[wanted] : undefined;
     if (ctxName && !entry) throw new CliError(EXIT.USAGE, `no such node: ${ctxName}`);
     if (entry) { entry = { ...entry }; label = wanted; }
   }

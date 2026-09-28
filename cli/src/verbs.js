@@ -1019,7 +1019,7 @@ function helloLines({ hello, error }) {
 
 async function nodeDescribe({ store, printer, args, dialHello }) {
   const name = nodeName(store, args, 'describe');
-  const e = store.contexts[name];
+  const e = Object.hasOwn(store.contexts, name) ? store.contexts[name] : null;
   if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   const r = nodeRow(name, e, store.current);
   printer.line([
@@ -1050,7 +1050,7 @@ function nodeCreate(bundle) {
 async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt = defaultPrompt }) {
   const { rest: args } = takeResourceWord(raw, 'delete', DELETABLE);
   const name = requireName(args[0], 'delete node', 'node');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!Object.hasOwn(store.contexts, name)) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   if (!flags.force && flags.json) {
     throw new CliError(EXIT.USAGE, 'delete node needs --force in -o json|yaml/non-interactive mode (there is no prompt to answer)');
   }
@@ -1068,7 +1068,7 @@ async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt 
 function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
   const { rest: args } = takeResourceWord(raw, 'use', USABLE);
   const name = requireName(args[0], 'use node', 'node');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!Object.hasOwn(store.contexts, name)) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   store.current = name;
   saveStore(store);
   if (flags.json) { printer.json({ current: name }); return; }
@@ -1127,9 +1127,11 @@ function transcriptPath(name) {
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const RESERVED_NODE_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 function requireName(v, verb, noun = 'session') {
   if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a ${noun} name`);
   if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad ${noun} name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
+  if (noun === 'node' && RESERVED_NODE_NAMES.has(v)) throw new CliError(EXIT.USAGE, `bad node name "${v}" — reserved`);
   return v;
 }
 
