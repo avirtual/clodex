@@ -13,6 +13,11 @@ const { WebSocketServer } = require('ws');
 const { makeTokenGate } = require('./auth-token');
 
 const APP_VERSION = require('./package.json').version;
+
+function viewerOnHost(remoteAddress) {
+  const a = String(remoteAddress || '').toLowerCase().replace(/^::ffff:/, '');
+  return a === '::1' || /^127\.\d+\.\d+\.\d+$/.test(a);
+}
 const UPDATE_REPO = 'avirtual/clodex'; // mirrors main.js — the deploy-briefing URL fallback
 const MAX_SCROLLBACK = 2 * 1024 * 1024; // per-session ring; matches the engine's 2MB pendingOutput cap
 const DEFAULT_WORKSPACE_ID = 'default';
@@ -262,7 +267,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       conn.authed = true;
       conn.workspaceId = frame.workspaceId || DEFAULT_WORKSPACE_ID;
       attachConn(conn);
-      conn.send({ t: 'welcome', workspaceId: conn.workspaceId, appVersion: APP_VERSION, home: os.homedir(), ...wirescopeReach() });
+      conn.send({ t: 'welcome', workspaceId: conn.workspaceId, appVersion: APP_VERSION, home: os.homedir(), ...wirescopeReach(), viewerOnHost: conn.viewerOnHost === true });
       replayScrollback(conn);
       return;
     }
@@ -346,9 +351,9 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     const conn = {
-      ws, authed: false, visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
+      ws, authed: false, viewerOnHost: viewerOnHost(req && req.socket && req.socket.remoteAddress), visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
       pendingMenus: new Map(), pendingDialogs: new Map(),
       send: (frame) => { try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame)); } catch (err) { log.error('web', `send: ${err.message}`); } },
       pushEvent: (channel, args) => conn.send({ t: 'event', channel, args: args.map(encodeBuffers) }),
@@ -404,4 +409,4 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   };
 }
 
-module.exports = { createWebHost };
+module.exports = { createWebHost, viewerOnHost };

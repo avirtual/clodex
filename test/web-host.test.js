@@ -15,7 +15,7 @@ const os = require('node:os');
 const http = require('node:http');
 const WebSocket = require('ws');
 
-const { createWebHost } = require('../web-host');
+const { createWebHost, viewerOnHost } = require('../web-host');
 
 const silentLog = { info() {}, warn() {}, error() {} };
 
@@ -137,6 +137,35 @@ test('welcome carries wirescope reachability: proxyBase from settings + publishe
     host.close();
     if (prevEnv === undefined) delete process.env.CLODEX_WIRESCOPE_PUBLIC_URL; else process.env.CLODEX_WIRESCOPE_PUBLIC_URL = prevEnv;
   }
+});
+
+test('welcome carries viewerOnHost: true for a socket that arrived over 127.0.0.1', async () => {
+  const { host, port } = await startHost();
+  try {
+    const c = connect(port);
+    const welcome = await helloWelcome(c, { workspaceId: 'default' });
+    assert.equal(welcome.viewerOnHost, true);
+    c.close();
+  } finally { host.close(); }
+});
+
+test('viewerOnHost: loopback peer addresses in every spelling the socket reports', () => {
+  assert.equal(viewerOnHost('127.0.0.1'), true);
+  assert.equal(viewerOnHost('::1'), true);
+  assert.equal(viewerOnHost('::ffff:127.0.0.1'), true);
+  assert.equal(viewerOnHost('127.9.9.9'), true);
+  assert.equal(viewerOnHost('192.168.0.79'), false);
+  assert.equal(viewerOnHost('::ffff:192.168.0.79'), false);
+  assert.equal(viewerOnHost('10.0.0.1'), false);
+  assert.equal(viewerOnHost(undefined), false);
+  assert.equal(viewerOnHost(''), false);
+});
+
+test('welcome viewerOnHost is the helper applied to the upgrade request socket address', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'web-host.js'), 'utf8');
+  assert.match(src, /wss\.on\('connection', \(ws, req\) =>/);
+  assert.match(src, /viewerOnHost: viewerOnHost\(req && req\.socket && req\.socket\.remoteAddress\)/);
+  assert.match(src, /t: 'welcome',[^\n]*viewerOnHost: conn\.viewerOnHost === true/);
 });
 
 test('welcome reachability fields are empty when proxy is disabled and no published base is set', async () => {

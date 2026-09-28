@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Web GUI: opening a sandbox console (or any of the engine's own loopback links) from a browser on the SAME machine now works whatever the address bar says — 0.0.0.0, the Mac's .local name, a hosts alias — because the engine reports whether the browser's connection arrived over loopback; a tab the engine tunnelled in is still treated as remote.
 - Docs: docs/map/renderer.md — a symbol-level map of renderer/renderer.js (19 regions, 134 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/session-manager.md — a symbol-level map of session-manager.js (20 regions, 197 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/team-tickets.md — a symbol-level map of team-tickets.js (20 regions, 133 rows), gated by test/module-map-fresh.test.js.
