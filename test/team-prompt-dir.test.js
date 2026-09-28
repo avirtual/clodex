@@ -34,6 +34,7 @@ const { teamPromptFile } = require('../team-prompt-dir');
 const { createTeamManifest } = require('../team-manifest');
 const { teamPreflight } = require('../team-preflight');
 const { createEngine } = require('../engine');
+const { initStores } = require('../stores');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const TEAM_BODY = 'TEAM\n';
@@ -42,9 +43,13 @@ const LIB_BODY = 'LIB\n';
 // A real clodex home: `library/prompts/<kind>/` is what the prompt store reads
 // and `teams/<name>/team.json` is what resolveTeam loads, both hung off the same
 // REGISTRY_DIR the app hangs them off.
+const SEEDED_HOME = path.join(mkTmpRoot('clx-t699-seed-'), 'clodex-home');
+initStores(mkTmpRoot('clx-t699-seed-ud-'), { log: console, registryDir: SEEDED_HOME });
+
 function mkHome() {
   const tmp = mkTmpRoot('clx-t699-');
   const home = path.join(tmp, 'clodex-home');
+  fs.cpSync(SEEDED_HOME, home, { recursive: true });
   const eng = createEngine({
     userDataPath: tmp,
     seams: { registryDir: home },

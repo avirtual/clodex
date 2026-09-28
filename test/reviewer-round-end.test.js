@@ -64,13 +64,14 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 // the reviewer-prompt lookup reads, which the prompt-absent subjects need bare.
 // Shared is safe BECAUSE nothing reads it; pointing it at `home` would not be.
 const SEED_DIR = mkTmpRoot('clodex-t470-seed-');
+initStores(mkTmpRoot('clodex-t470-seed-ud-'), { log: console, registryDir: SEED_DIR });
 
 // A REAL git repo, for the reason ticket-reminder-binding.test.js gives: the
 // accept arms fork on a git fact (merged / not merged / check could not run),
 // and a stubbed gitWorktree would let a subject claim to exercise the merged arm
 // while taking whichever arm the stub was written to return. `landed` is an
 // ancestor of master; `pending` carries a commit master does not have.
-function mkRepo() {
+function buildRepo() {
   const dir = mkTmpRoot('clodex-t470-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
@@ -85,6 +86,14 @@ function mkRepo() {
   git(['add', 'work.txt']);
   git(['commit', '-q', '-m', 'work']);
   git(['checkout', '-q', 'master']);
+  return dir;
+}
+
+const REPO_TEMPLATE = buildRepo();
+
+function mkRepo() {
+  const dir = mkTmpRoot('clodex-t470-repo-');
+  fsReal.cpSync(REPO_TEMPLATE, dir, { recursive: true });
   return dir;
 }
 

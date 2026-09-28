@@ -43,7 +43,7 @@ const { legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { assertTicketDepsCovered } = require('./lib/loop-fixture-deps');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-// ONE seed dir for the whole file, minted on first use: initStores SEEDS the
+// ONE seed dir for the whole file: initStores SEEDS the
 // shipped library into whatever registryDir it is handed, and re-seeding it per
 // mkFixture() cost 34 copies of nine files for a directory nothing reads.
 //
@@ -54,8 +54,9 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // Reaped by a TOP-LEVEL after rather than the per-fixture `tmpDirs`: those run
 // per subject, and the first one to fire would delete the dir the remaining
 // fixtures still share.
-let SEED_DIR = null;
-const seedDir = () => (SEED_DIR ||= mkTmpRoot('clodex-t482-seed-'));
+const SEED_DIR = mkTmpRoot('clodex-t482-seed-');
+initStores(mkTmpRoot('clodex-t482-seed-ud-'), { log: console, registryDir: SEED_DIR });
+const seedDir = () => SEED_DIR;
 after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, force: true }); } catch {} } });
 
 // A REAL repo with REAL worktrees, for the reason reviewer-round-end.test.js
@@ -64,7 +65,7 @@ after(() => { if (SEED_DIR) { try { fsReal.rmSync(SEED_DIR, { recursive: true, f
 // let a subject claim the merged arm while asserting against whatever the stub
 // was written to return. `landed` is an ancestor of master; `pending` carries a
 // commit master does not have.
-function mkRepo() {
+function buildRepo() {
   const dir = mkTmpRoot('clodex-t482-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
@@ -79,6 +80,14 @@ function mkRepo() {
   git(['add', 'work.txt']);
   git(['commit', '-q', '-m', 'work']);
   git(['checkout', '-q', 'master']);
+  return dir;
+}
+
+const REPO_TEMPLATE = buildRepo();
+
+function mkRepo() {
+  const dir = mkTmpRoot('clodex-t482-repo-');
+  fsReal.cpSync(REPO_TEMPLATE, dir, { recursive: true });
   return dir;
 }
 

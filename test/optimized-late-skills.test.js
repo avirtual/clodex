@@ -23,6 +23,7 @@ const { capsFor } = require('../cli-adapters');
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
 const { createEngine } = require('../engine');
+const { initStores } = require('../stores');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionManager } = require('../session-manager');
 const { createCliHooks } = require('../cli-hooks');
@@ -329,9 +330,13 @@ function mkSpawner(registryRoot, knownSkillNames) {
 // A root with nothing on it: no agent-defaults.json (the floor's tri-state
 // ABSENT case) and no skills-seen.json (the seed is then all `*` can expand
 // against). This IS the new-install case the operator hits.
+const SEEDED_REGISTRY = path.join(mkTmpRoot('clx-t918-seed-'), 'clodex-home');
+initStores(mkTmpRoot('clx-t918-seed-ud-'), { log: silent, registryDir: SEEDED_REGISTRY });
+
 function freshBox() {
   const tmp = mkTmpRoot('clx-t918-');
   const registryDir = path.join(tmp, 'clodex-home');
+  fs.cpSync(SEEDED_REGISTRY, registryDir, { recursive: true });
   fs.mkdirSync(path.join(registryDir, 'run'), { recursive: true });
   const engine = createEngine({ userDataPath: tmp, seams: { registryDir }, log: silent });
   assert.ok(!fs.existsSync(path.join(tmp, 'agent-defaults.json')),

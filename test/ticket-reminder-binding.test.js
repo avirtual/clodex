@@ -78,7 +78,7 @@ function fakeClock(startMs) {
 // not-merged vs check-could-not-run — is exactly a git fact, and a stubbed
 // gitWorktree would let a subject claim to exercise the not-merged arm while
 // actually taking whichever arm the stub was written to return.
-function mkRepo() {
+function buildRepo() {
   const dir = mkTmpRoot('clodex-t395-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
@@ -95,6 +95,17 @@ function mkRepo() {
   git(['add', 'work.txt']);
   git(['commit', '-q', '-m', 'work']);
   git(['checkout', '-q', 'master']);
+  return dir;
+}
+
+const REPO_TEMPLATE = buildRepo();
+const SEEDED_REGISTRY = mkTmpRoot('clodex-t395-seed-');
+initStores(mkTmpRoot('clodex-t395-seed-ud-'), { log: console, registryDir: SEEDED_REGISTRY });
+
+function mkRepo() {
+  const dir = mkTmpRoot('clodex-t395-repo-');
+  fsReal.cpSync(REPO_TEMPLATE, dir, { recursive: true });
+  const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   return { dir, git };
 }
 
@@ -107,6 +118,7 @@ function mkRepo() {
 // into a fixture whose whole subject is which reminders survive.
 function mkFixture() {
   const home = mkTmpRoot('clodex-t395-');
+  fsReal.cpSync(SEEDED_REGISTRY, home, { recursive: true });
   const userData = mkTmpRoot('clodex-t395-ud-');
   const repo = mkRepo();
   const repoDir = repo.dir;
