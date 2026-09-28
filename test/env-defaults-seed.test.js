@@ -263,7 +263,7 @@ function realUserData(home) {
   return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'clodex');
 }
 
-test('a temp userDataPath is seeded under node --test even when registryDir is the home ~/.clodex', () => {
+test('refuseEnvWriteUnderTest: a temp userDataPath is seeded under node --test even when registryDir is the home ~/.clodex', () => {
   const prevHome = process.env.HOME;
   const fakeHome = mkTmpRoot('envdef-home3-');
   const userData = mkTmpRoot('envdef-tmpud3-');
@@ -290,7 +290,7 @@ test('a temp userDataPath is seeded under node --test even when registryDir is t
   }
 });
 
-test('initStores refuses to seed env defaults into the real home under node --test', () => {
+test('refuseEnvWriteUnderTest: initStores refuses to seed env defaults into the platformAppDataDir clodex userData under node --test', () => {
   // Under a FAKE home, so a regression that drops the guard writes the fake tree
   // and fails here rather than writing the operator's own env-scopes.json.
   const prevHome = process.env.HOME;

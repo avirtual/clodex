@@ -321,7 +321,7 @@
 |---|---|---|---|---|
 | `sha256` | hex SHA-256 of a buffer, the seed manifest's content identity | none | none | stores.test.js |
 | `seedRoot` | reconciles one shipped seed tree into its destination by hash manifest: unedited copies upgrade, edited ones are kept, withheld updates are reported once | destRoot files, destRoot/.seed-state.json, destRoot/.seed-report.json, notifications.json | sha256, fs-util.atomicWriteFileSync, notifications add | unpinned |
-| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir is the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js env-defaults-seed.test.js engine-registry-dir-seam.test.js |
+| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir is the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js engine-registry-dir-seam.test.js |
 
 ### Invariants
 - `seedRoot` overwrites a present file only when it still matches its stamp and the shipped bytes moved; a file matching neither is stranded and reported, never repaired.
