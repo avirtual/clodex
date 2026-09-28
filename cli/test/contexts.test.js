@@ -100,7 +100,7 @@ test('resolve: flags beat env and file; --url forces direct', () => {
 });
 
 function emptyDataDir(files = {}) {
-  const d = mkTmpRoot('ctx-data-');
+  const d = mkTmpRoot('ctx-');
   for (const [name, body] of Object.entries(files)) fs.writeFileSync(path.join(d, name), body);
   return d;
 }
@@ -137,7 +137,7 @@ test('resolve: CLODEX_URL beats the local engine', () => {
 });
 
 test('resolve: with no data dir and no token anywhere the usage error names the box', () => {
-  const home = mkTmpRoot('ctx-home-');
+  const home = mkTmpRoot('ctx-');
   assert.throws(() => C.resolve(EMPTY(), { env: {}, home, platform: 'linux' }), /inside a Clodex box/);
 });
 
