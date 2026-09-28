@@ -12,8 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Injection: a message delivered into a seat that is still loading its transcript (a big --resume) is now submitted once the CLI has actually read it, instead of sitting in the composer until someone presses Enter — the boot Enter nudge waits for the seat's echo and gives up after 2 minutes, not 20 seconds.
 
+- Injection: a message delivered into a seat that is still loading its transcript (a big --resume) is now submitted once the CLI has actually read it, instead of sitting in the composer until someone presses Enter — the boot Enter nudge waits for the seat's echo and gives up after 2 minutes, not 20 seconds.
 - Team popover: a role row's Save button now lights up only when a field on that row has changed and goes quiet again once saved (it used to look inactive at all times, so an account change seemed not to register); closing the popover with unsaved role edits asks first.
 
 ## 5.89.0 — 2026-09-28 — Research-burst fixes: stores that never save over an unreadable file, a ticket loop that stamps and kills what it abandons, seats that reap and restore

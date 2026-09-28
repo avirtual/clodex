@@ -150,7 +150,7 @@ const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
-const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -198,6 +198,22 @@ function streamCodecCtx(type, extraArgs) {
     readOnly: roArgs.length > 0 && roArgs.every((tok) => argv.includes(tok)),
     model: model ? resolveModelId(type, model) : null,
   };
+}
+
+const TERM_ESCAPE_RE = /\x1b\[[0-9;?<>=]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>78MDEc]/g;
+const BOOT_NUDGE_PROBE_CHARS = 32;
+const BOOT_NUDGE_ECHO_CAP = 65536;
+const BOOT_NUDGE_PASTE_PLACEHOLDER = '[Pastedtext#';
+
+function inkVisibleText(s) {
+  return String(s).replace(TERM_ESCAPE_RE, '').replace(/\s+/g, '');
+}
+
+function bootNudgeProbeOf(bytes) {
+  if (typeof bytes !== 'string') return '';
+  const body = bytes.split(PASTE_START).join('').split(PASTE_END).join('').replace(/\x15/g, '');
+  const line = body.split(/[\r\n]/).find((l) => /\S/.test(l)) || '';
+  return inkVisibleText(line).slice(0, BOOT_NUDGE_PROBE_CHARS);
 }
 
 const CODEX_STREAM_REFUSED = new Map([
@@ -2808,6 +2824,7 @@ function createSessionManager(deps) {
 
       if (ptyProc) ptyProc.onData((data) => {
         session._lastPtyDataAt = Date.now();
+        if (typeof session._bootNudgeEcho === 'string' && session._bootNudgeEcho.length < BOOT_NUDGE_ECHO_CAP) session._bootNudgeEcho += data;
         session.scrollback = ((session.scrollback || '') + data);
         if (session.scrollback.length > SCROLLBACK_MAX) {
           session.scrollback = session.scrollback.slice(-SCROLLBACK_MAX);
@@ -5374,6 +5391,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._bootNudgeTimer);
+      s._bootNudgeEcho = null;
       clearTimeout(s._bootReplayTimer);
       clearTimeout(s._replayFallbackTimer);
       clearTimeout(s._parkedDrainFallbackTimer);
@@ -5586,6 +5604,7 @@ function createSessionManager(deps) {
       if (s && state !== 'idle' && s._bootNudgeTimer) {
         clearTimeout(s._bootNudgeTimer);
         s._bootNudgeTimer = null;
+        s._bootNudgeEcho = null;
       }
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
@@ -5989,13 +6008,31 @@ function createSessionManager(deps) {
       this._replayTicketsOnce(session);
     }
 
-    _armBootNudge(session) {
+    _recordBootNudgeProbe(session, bytes) {
+      if (session._bootNudgeProbe) return;
+      const probe = bootNudgeProbeOf(bytes);
+      if (!probe) return;
+      session._bootNudgeProbe = probe;
+      session._bootNudgeEcho = '';
+    }
+
+    _bootNudgeEchoed(session) {
+      if (!session._bootNudgeProbe || typeof session._bootNudgeEcho !== 'string') return false;
+      const seen = inkVisibleText(session._bootNudgeEcho);
+      return seen.includes(session._bootNudgeProbe) || seen.includes(BOOT_NUDGE_PASTE_PLACEHOLDER);
+    }
+
+    _armBootNudge(session, bytes) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
-      if (session._bootNudgeArmed) return;
+      if (session._bootNudgeArmed) {
+        if (session._bootNudgeTimer) this._recordBootNudgeProbe(session, bytes);
+        return;
+      }
       const readyAt = session._bootReadyAt;
       if (!readyAt || Date.now() - readyAt > INJECT_BOOT_MAXWAIT) return;
       session._bootNudgeArmed = true;
       const wroteAt = Date.now();
+      this._recordBootNudgeProbe(session, bytes);
       const arm = (ms) => {
         session._bootNudgeTimer = setTimeout(fire, ms);
         if (session._bootNudgeTimer.unref) session._bootNudgeTimer.unref();
@@ -6003,17 +6040,18 @@ function createSessionManager(deps) {
       const fire = () => {
         session._bootNudgeTimer = null;
         if (session._dead) return;
-        const echoed = (session._lastPtyDataAt || 0) > wroteAt;
+        const echoed = this._bootNudgeEchoed(session);
         const painting = Date.now() - (session._lastPtyDataAt || 0) < BOOT_NUDGE_QUIET_MS;
         if (!echoed || painting || this._anyDraftOpen(session)) {
-          if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) return;
+          if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) { session._bootNudgeEcho = null; return; }
           arm(BOOT_NUDGE_QUIET_MS);
           return;
         }
+        session._bootNudgeEcho = null;
         if (!session.pty) return;
         if (!session.firstInputAt) session.firstInputAt = Date.now();
         try { session.pty.write('\r'); } catch {}
-        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, last output at +${session._lastPtyDataAt - wroteAt}ms, sent Enter`);
+        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, its echo seen, sent Enter`);
       };
       arm(BOOT_NUDGE_MS);
     }
@@ -9823,7 +9861,7 @@ function createSessionManager(deps) {
         // boot-settle machinery and must not be coupled to this.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
-          write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session); },
+          write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,

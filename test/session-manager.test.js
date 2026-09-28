@@ -14867,11 +14867,7 @@ async function drainAndArm(p, name) {
   return { s, writes };
 }
 
-function echoAfterWrite(p) {
-  const t0 = Date.now();
-  while (Date.now() <= t0) {}
-  p.fireData('x');
-}
+const DRAIN_ECHO = '\x1b[?25l\x1b[2C\x1b[5A[agent:from\x1b[15Gclodex]\x1b[23Gthe\x1b[27Gbox\x1b[31Grebooted\r\r\n\x1b[?25h';
 
 async function tickFor(t, ms) {
   for (let i = 0; i < ms; i++) {
@@ -14919,7 +14915,7 @@ test('t771: with no turn edge the armed nudge fires exactly ONE Enter, and no se
   // fired by the time a poll could look. The only thing waited for is the FIRE.
   const p = mkNudgeProbe({ bootNudgeMs: 40, bootNudgeQuietMs: 10 });
   const { s, writes } = await drainOnly(p, 'nudge-b');
-  echoAfterWrite(p);
+  p.fireData(DRAIN_ECHO);
   await waitFor(() => writes.length >= 4);       // the fire, observed
   assert.deepStrictEqual(writes, [...DRAINED, '\r'],
     'ONE \\r appended — the drain\'s three bytes untouched, row 3 is the nudge');
@@ -14957,7 +14953,7 @@ test('t1103: a DIRECT inject into a fresh seat — no boot drain ever ran — ar
   const SPEC = ['\x15', '[ticket t1] the spec', '\r'];
   await p.m._injectQueueFor(s).enqueue('[ticket t1] the spec');
   assert.deepStrictEqual(writes, SPEC, 'the direct inject wrote its three bytes');
-  echoAfterWrite(p);
+  p.fireData('\x1b[2C[ticket\x1b[10Gt1]\x1b[14Gthe\x1b[18Gspec');
   await waitFor(() => writes.length >= 4);
   assert.deepStrictEqual(writes, [...SPEC, '\r'], 'ONE \\r appended after BOOT_NUDGE_MS — row 3 is the nudge');
   assert.strictEqual(s._bootNudgeTimer, null, 'the timer is spent, not re-armed');
@@ -15003,6 +14999,7 @@ test('t771: pty output at fire time RE-ARMS the nudge, which lands once the seat
   const p = mkNudgeProbe({ bootNudgeMs: 30 });
   let paint = null;
   const { s, writes } = await drainOnlyMocked(t, p, 'nudge-d', () => {
+    p.fireData(DRAIN_ECHO);
     paint = setInterval(() => p.fireData('.'), 5);
   });
   await tickFor(t, 120);                         // several fire windows, all re-armed
@@ -15025,8 +15022,7 @@ test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the 
   const { s, writes } = await drainOnlyMocked(t, p, 'nudge-e', (sess) => {
     sess.lastUserInputTs = Date.now(); sess.lastUserSubmitTs = 0;   // isDraftOpen → true
   });
-  await tickFor(t, 1);
-  p.fireData('x');
+  p.fireData(DRAIN_ECHO);
   await tickFor(t, 120);                                    // several fire windows
   assert.deepStrictEqual(writes, DRAINED, 'his half-typed line was not submitted for him');
   assert.ok(s._bootNudgeTimer, 'and the nudge is still armed, not abandoned');
@@ -15044,6 +15040,7 @@ test('t771: a seat that NEVER goes quiet gives up silently at bootNudgeMaxWaitMs
   const p = mkNudgeProbe({ bootNudgeMs: 30, bootNudgeMaxWaitMs: 200 });
   let paint = null;
   const { s, writes } = await drainOnlyMocked(t, p, 'nudge-f', () => {
+    p.fireData(DRAIN_ECHO);
     paint = setInterval(() => p.fireData('.'), 5);         // shut the quiet gate at once
   });
   await tickUntil(t, () => s._bootNudgeTimer === null, 4000);   // the give-up ran
@@ -15059,10 +15056,14 @@ test('t771: no Enter while the seat has been silent since the write — the nudg
   await tickFor(t, 200);
   assert.deepStrictEqual(writes, DRAINED, 'a silent seat has not read the unit — no Enter into its buffer');
   assert.ok(s._bootNudgeTimer, 'the nudge is re-armed, waiting for the echo');
-  p.fireData('x');
+  p.fireData('\x1b[?2004l\x1b[?2004h.');
+  await tickFor(t, 200);
+  assert.deepStrictEqual(writes, DRAINED, 'a render tail after the write is not the echo — still no Enter');
+  assert.ok(s._bootNudgeTimer, 'and the nudge is still re-armed');
+  p.fireData(DRAIN_ECHO);
   await tickUntil(t, () => writes.length >= 4);
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the echo arrived and went quiet — ONE Enter');
-  assert.ok(p.logged.some((l) => /boot-drain nudge for nudge-silent .*last output at \+\d+ms/.test(l)));
+  assert.ok(p.logged.some((l) => /boot-drain nudge for nudge-silent .*its echo seen/.test(l)));
   await tickFor(t, 150);
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'and it stays exactly one');
   assert.strictEqual(s._bootNudgeTimer, null);
@@ -15075,6 +15076,15 @@ test('t771: a seat that stays SILENT gives up at bootNudgeMaxWaitMs with no Ente
   await tickUntil(t, () => s._bootNudgeTimer === null, 4000);
   assert.deepStrictEqual(writes, DRAINED, 'gave up without writing');
   assert.strictEqual(p.logged.some((l) => l.includes('boot-drain nudge for nudge-giveup')), false);
+  t.mock.timers.reset();
+});
+
+test('t771: a long paste the CLI collapses to its [Pasted text] placeholder counts as the echo', async (t) => {
+  const p = mkNudgeProbe({ bootNudgeMs: 40, bootNudgeQuietMs: 10 });
+  const { writes } = await drainOnlyMocked(t, p, 'nudge-pasted');
+  p.fireData('\x1b[2C\x1b[5A[Pasted\x1b[11Gtext\x1b[16G#1\x1b[19G+29\x1b[23Glines]\r');
+  await tickUntil(t, () => writes.length >= 4);
+  assert.deepStrictEqual(writes, [...DRAINED, '\r']);
   t.mock.timers.reset();
 });
 
