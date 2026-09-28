@@ -26821,7 +26821,7 @@ ${i3.join("\n")}
       "use strict";
       function detectNotice(detect) {
         const d = detect || {};
-        if (d.ok === false) {
+        if (detect == null || d.ok === false) {
           return { kind: "error", text: `Couldn\u2019t check Docker${d.error ? ` \u2014 ${d.error}` : "."}` };
         }
         if (!d.present) {
@@ -26838,7 +26838,7 @@ ${i3.join("\n")}
       var GATED_ACTIONS = ["start", "rebuild", "boxStart", "boxCreate"];
       function sandboxActionGate(detect) {
         const d = detect || {};
-        const notice = detectNotice(d);
+        const notice = detectNotice(detect);
         const running = !!d.running && d.compose !== false;
         return {
           running,
@@ -26916,12 +26916,12 @@ ${i3.join("\n")}
         if (new Set(vals).size !== vals.length) return PORTS_INVALID;
         return null;
       }
-      var FIXED_SHA_RE = /^[0-9a-f]{7,40}$/;
+      var FIXED_SHA_RE = /^[0-9a-f]{7,40}$/i;
       function sandboxRebuiltLine(label, image) {
         if (!image) return `Rebuilt ${label} on the current code.`;
         if (image.kind === "image") return `Rebuilt ${label} from image ${image.image}`;
         if (!image.ref) return `Rebuilt ${label} on the dev checkout`;
-        const at = image.sha && !String(image.sha).startsWith(image.ref) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
+        const at = image.sha && !String(image.sha).toLowerCase().startsWith(String(image.ref).toLowerCase()) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
         const pinned = FIXED_SHA_RE.test(image.ref) ? " \u2014 pinned; set ref to a branch to track it" : "";
         return `Rebuilt ${label} on ${at}${pinned}`;
       }
@@ -27101,6 +27101,7 @@ ${i3.join("\n")}
         return { name: install.sessionName, type: "bash", cwd: homeDir, command: install.command };
       }
       module.exports = {
+        AGENT_TOOLS,
         newSessionToolGate,
         installSessionParams,
         newSessionOverlayPlan,
@@ -27261,7 +27262,8 @@ ${i3.join("\n")}
       function warningText(resolved, opts) {
         if (!resolved || !resolved.ok) return "";
         const where = opts && opts.remote ? "This code will run on the Clodex host this browser is connected to, with the app's full authority, the same as Clodex itself. " : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
-        return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
+        const sha = shortCommit(resolved.commit);
+        return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)}${sha ? ` (commit ${sha})` : ""}. Clodex cannot check what it does \u2014 install it only if you trust its author.`;
       }
       function sourceLine(source) {
         if (!source || !source.repo) return "";
@@ -27299,7 +27301,7 @@ ${i3.join("\n")}
           return { label: "Install", enabled: false, reason: LIBRARY_REASONS.registered, action: null };
         }
         if (r.installed === "fetched") {
-          if (repo && r.installedRepo && r.installedRepo !== repo) {
+          if (repo && r.installedRepo && String(r.installedRepo).toLowerCase() !== String(repo).toLowerCase()) {
             return { label: "Install", enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
           }
           if (r.upToDate) return { label: "Install", enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };
@@ -27389,7 +27391,7 @@ ${i3.join("\n")}
           return { kind: "core", glyph: ORIGIN_GLYPHS.core, label: "Built in" };
         }
         const repo = row.source && row.source.repo || "";
-        if (repo === LIBRARY_REPO) {
+        if (repo.toLowerCase() === LIBRARY_REPO) {
           return { kind: "library", glyph: ORIGIN_GLYPHS.library, label: "From the clodex-plugins library" };
         }
         if (repo) {
@@ -28119,11 +28121,11 @@ ${i3.join("\n")}
         const total = p && p.cost && typeof p.cost.requests === "number" ? p.cost.requests : null;
         const sc = p && p.sinceCompact;
         const now = sc && typeof sc.requests === "number" ? sc.requests : null;
-        if (now != null && sc.compacted) {
-          return total != null ? `req ${now} (${total} total)` : `req ${now}`;
-        }
-        if (total == null) return now != null ? `req ${now}` : null;
-        return `req ${total}`;
+        if (now == null) return total != null ? `req ${total}` : null;
+        if (total == null) return `req ${now}`;
+        if (p.costRun) return `req ${now} (${total} all-time)`;
+        if (sc.compacted) return `req ${now} (${total} total)`;
+        return `req ${now}`;
       }
       function fmtCost(v) {
         return v >= 1 ? v.toFixed(2) : v.toFixed(4);
@@ -28152,11 +28154,11 @@ ${i3.join("\n")}
         const { total, run } = costScopes(p);
         const sc = p && p.sinceCompact;
         const now = sc && typeof sc.estUsd === "number" ? sc.estUsd : null;
-        if (now != null && sc.compacted) {
+        if (now != null) {
           if (run != null) return `~$${fmtCost(now)} ($${fmtCost(run)} run \xB7 $${fmtCost(total)} all-time)`;
-          return total != null ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
+          return total != null && sc.compacted ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
         }
-        if (total == null) return now != null ? `~$${fmtCost(now)}` : null;
+        if (total == null) return null;
         if (run != null) return `~$${fmtCost(run)} ($${fmtCost(total)} all-time)`;
         return `~$${fmtCost(total)}`;
       }
@@ -32341,13 +32343,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof tag !== "string") return false;
         return tag === "REPLAY" || tag === "wake" || tag.endsWith(" REDELIVERY") || MERGED_NAG_RE.test(tag);
       }
+      function isTalkIntent(seg) {
+        return Boolean(seg) && seg.kind === "intent" && (TALK_VERBS.has(seg.verb) || seg.verb === "task" && seg.sub !== "list");
+      }
       function segmentSurface(seg) {
         if (!seg || typeof seg !== "object") return INTERNALS;
         if (seg.kind === "prose") return typeof seg.text === "string" && seg.text.trim() ? CONVERSATION : INTERNALS;
-        if (seg.kind !== "intent") return INTERNALS;
-        if (TALK_VERBS.has(seg.verb)) return CONVERSATION;
-        if (seg.verb === "task" && seg.sub !== "list") return CONVERSATION;
-        return INTERNALS;
+        return isTalkIntent(seg) ? CONVERSATION : INTERNALS;
       }
       function inboundSurface(rec) {
         if (rec.from === "user") return CONVERSATION;
@@ -32380,12 +32382,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return Boolean(rec) && (rec.kind === "prompt" || rec.kind === "inbound" && rec.from === "user");
       }
       function talksBack(rec) {
-        return rec && rec.kind === "assistant" && Array.isArray(rec.segments) && rec.segments.some((s) => s && s.kind === "intent" && TALK_VERBS.has(s.verb));
+        return rec && rec.kind === "assistant" && Array.isArray(rec.segments) && rec.segments.some(isTalkIntent);
+      }
+      function apiErrored(rec) {
+        return Boolean(rec) && rec.kind === "assistant" && Boolean(rec.apiError);
       }
       function turnFolds(records, mode) {
         if (mode !== CONVERSATION) return false;
         if (!turnDriver(records)) return false;
-        return !records.some((r) => fromOperator(r) || talksBack(r));
+        return !records.some((r) => fromOperator(r) || talksBack(r) || apiErrored(r));
       }
       module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };
     }
@@ -33927,7 +33932,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         if (s < 0) return null;
         const block = [];
-        for (let k = s; k < rows.length && k <= at + CODEX_REACH && !isBlank(rows[k]); k++) block.push(rows[k]);
+        for (let k = s; k < rows.length && k <= s + 2 && !isBlank(rows[k]); k++) block.push(rows[k]);
         const plan = block.flatMap((r) => r.trim().split(/\s{2,}/u)).some((c) => CODEX_PLAN.test(c));
         const warn = block.map((r) => CODEX_WARNINGS.exec(r)).find(Boolean);
         const mode = plan ? { key: "plan", label: "Plan", cycles: true } : { key: "default", label: "Default", cycles: true };
@@ -41087,7 +41092,7 @@ void main() {
       function agentChanged(set, a) {
         const tab = set.tabs.find((t) => t.id === a.id);
         if (!tab) return { set, effect: null };
-        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true }), effect: "banner" };
+        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true, kept: false, seenMtime: null }), effect: "banner" };
         if (a.visible) return { set, effect: "reload" };
         return { set: patchTab(set, a.id, { stale: true }), effect: null };
       }
@@ -41099,11 +41104,14 @@ void main() {
         }
         const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
         if (tab.dirty) {
-          if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: "banner" };
-          return { set: patchTab(set, a.id, { deleted: false }), effect: null };
+          if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) {
+            if (tab.kept && tab.seenMtime == null) return { set: patchTab(set, a.id, { deleted: false, seenMtime: mtime, kept: false }), effect: null };
+            return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: "banner" };
+          }
+          return { set: patchTab(set, a.id, { deleted: false, kept: false }), effect: null };
         }
         if (!a.force && tab.mtime != null && mtime === tab.mtime && !tab.deleted && !tab.stale) return { set, effect: null };
-        return { set: patchTab(set, a.id, { mtime, deleted: false, stale: false, banner: false }), effect: "render" };
+        return { set: patchTab(set, a.id, { mtime, seenMtime: null, kept: false, deleted: false, stale: false, banner: false }), effect: "render" };
       }
       function reduceTabs(set, a) {
         switch (a.type) {
@@ -41133,11 +41141,11 @@ void main() {
           case "loaded":
             return loaded(set, a);
           case "saved":
-            return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
+            return { set: patchTab(set, a.id, { mtime: a.mtime, seenMtime: null, kept: false, dirty: false, banner: false, deleted: false }), effect: null };
           case "discard":
             return { set: patchTab(set, a.id, { dirty: false, banner: false }), effect: "reload" };
           case "keep":
-            return { set: patchTab(set, a.id, { banner: false }), effect: null };
+            return { set: patchTab(set, a.id, { banner: false, kept: true }), effect: null };
           default:
             return { set, effect: null };
         }
@@ -42202,6 +42210,8 @@ void main() {
         if (!data.enabled) {
           return { rows: [], note: 'Sending selected text is off. Preferences \u2192 "Send text I select in the panel".' };
         }
+        const proxyError = data.proxy && data.proxy.error;
+        const proxyNote = proxyError ? `Could not reach the proxy: ${proxyError}` : data.proxy && !data.proxy.routed ? "This session does not route through wirescope, so selecting will not send \u2014 Copy still will." : "";
         const rows = [];
         const proxyHints = data.proxy && Array.isArray(data.proxy.hints) ? data.proxy.hints : [];
         const byId = new Map(proxyHints.map((h) => [h.id, h]));
@@ -42227,6 +42237,17 @@ void main() {
           });
         }
         const queued = Array.isArray(data.queued) ? data.queued : [];
+        const queueError = data.queued && !Array.isArray(data.queued) && data.queued.error;
+        if (queueError) {
+          rows.push({
+            kind: "note",
+            title: "",
+            text: "",
+            meta: "",
+            note: `Could not read the queue file: ${queueError}`,
+            warn: true
+          });
+        }
         for (const text of queued) {
           rows.push({
             kind: "attach",
@@ -42238,7 +42259,7 @@ void main() {
           });
         }
         const pending = data.local && data.local.pending || [];
-        if (pending.length !== queued.length) {
+        if (!queueError && pending.length !== queued.length) {
           rows.push({
             kind: "note",
             title: "",
@@ -42270,13 +42291,13 @@ void main() {
             warn: false
           });
         }
-        if (rows.length) return { rows, note: "" };
-        if (data.proxy && data.proxy.error) {
-          return { rows, note: `Nothing queued. Could not reach the proxy: ${data.proxy.error}` };
+        if (rows.length) {
+          const stated = proxyError && rows.some((r) => r.kind === "peek-gone");
+          if (proxyNote && !stated) rows.push({ kind: "note", title: "", text: "", meta: "", note: proxyNote, warn: Boolean(proxyError) });
+          return { rows, note: "" };
         }
-        if (data.proxy && !data.proxy.routed) {
-          return { rows, note: "Nothing is riding. This session does not route through wirescope, so selecting will not send \u2014 Copy still will." };
-        }
+        if (proxyError) return { rows, note: `Nothing queued. ${proxyNote}` };
+        if (proxyNote) return { rows, note: `Nothing is riding. ${proxyNote}` };
         return { rows, note: "Nothing is on its way to this agent." };
       }
       function liveCount(data) {
@@ -50620,7 +50641,7 @@ ${detail}` });
         if (window.api.getProxySnapshot) {
           window.api.getProxySnapshot(name).then((p) => {
             if (!p) return;
-            proxyState.set(name, { payload: p, at: Date.now() });
+            proxyState.set(name, { payload: p, at: typeof p.ts === "number" ? p.ts : Date.now() });
             applyWarmBadge(name);
             if (activeSession === name) renderProxyBar();
           }).catch(() => {
@@ -52788,7 +52809,7 @@ ${detail}` });
         return next.length > 0 || latest != null;
       }
       window.api.onSessionProxy((name, payload) => {
-        proxyState.set(name, { payload, at: Date.now() });
+        proxyState.set(name, { payload, at: payload && typeof payload.ts === "number" ? payload.ts : Date.now() });
         applyWarmBadge(name);
         applySubagents(name);
         refreshQuotaChip();
@@ -56849,7 +56870,7 @@ ${res.stderr}` : "");
           ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === "number" ? entry.ctxCost : null, model: entry.ctxModel || null });
         }
         if (entry.proxy) {
-          proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() });
+          proxyState.set(entry.name, { payload: entry.proxy, at: typeof entry.proxy.ts === "number" ? entry.proxy.ts : Date.now() });
           applyWarmBadge(entry.name);
         }
         if (typeof entry.pendingCount === "number") applyPendingBadge(entry.name, entry.pendingCount);

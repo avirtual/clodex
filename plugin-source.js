@@ -59,7 +59,7 @@ function parseSourceSpec(text) {
     if (!subpath) subpath = null;
   }
 
-  return { ok: true, repo: `${owner}/${repo}`, ref: ref || null, subpath: subpath || null };
+  return { ok: true, repo: `${owner}/${repo}`.toLowerCase(), ref: ref || null, subpath: subpath || null };
 }
 
 function encodeRefPath(ref) {

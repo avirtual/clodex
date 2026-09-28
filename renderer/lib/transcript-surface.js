@@ -15,13 +15,15 @@ function isNagTag(tag) {
   return tag === 'REPLAY' || tag === 'wake' || tag.endsWith(' REDELIVERY') || MERGED_NAG_RE.test(tag);
 }
 
+function isTalkIntent(seg) {
+  return Boolean(seg) && seg.kind === 'intent'
+    && (TALK_VERBS.has(seg.verb) || (seg.verb === 'task' && seg.sub !== 'list'));
+}
+
 function segmentSurface(seg) {
   if (!seg || typeof seg !== 'object') return INTERNALS;
   if (seg.kind === 'prose') return typeof seg.text === 'string' && seg.text.trim() ? CONVERSATION : INTERNALS;
-  if (seg.kind !== 'intent') return INTERNALS;
-  if (TALK_VERBS.has(seg.verb)) return CONVERSATION;
-  if (seg.verb === 'task' && seg.sub !== 'list') return CONVERSATION;
-  return INTERNALS;
+  return isTalkIntent(seg) ? CONVERSATION : INTERNALS;
 }
 
 function inboundSurface(rec) {
@@ -57,13 +59,17 @@ function fromOperator(rec) {
 
 function talksBack(rec) {
   return rec && rec.kind === 'assistant' && Array.isArray(rec.segments)
-    && rec.segments.some((s) => s && s.kind === 'intent' && TALK_VERBS.has(s.verb));
+    && rec.segments.some(isTalkIntent);
+}
+
+function apiErrored(rec) {
+  return Boolean(rec) && rec.kind === 'assistant' && Boolean(rec.apiError);
 }
 
 function turnFolds(records, mode) {
   if (mode !== CONVERSATION) return false;
   if (!turnDriver(records)) return false;
-  return !records.some((r) => fromOperator(r) || talksBack(r));
+  return !records.some((r) => fromOperator(r) || talksBack(r) || apiErrored(r));
 }
 
 module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };

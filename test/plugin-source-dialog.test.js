@@ -339,6 +339,16 @@ test('warningText, for a bare owner/repo (ref null)', () => {
     + 'Clodex cannot check what it does — install it only if you trust its author.');
 });
 
+test('warningText drops the commit parenthetical when the resolve carries no commit', () => {
+  const noCommit = { ...RESOLVED, commit: null };
+  assert.ok(previewLines(noCommit)[1].endsWith('at commit unknown'), 'ENTER: the fixture reaches the null-commit branch');
+  assert.strictEqual(
+    warningText(noCommit),
+    "This code will run inside Clodex with the app's full authority, the same as Clodex itself. "
+    + 'It comes from github.com/avirtual/clodex-plugins at v2. '
+    + 'Clodex cannot check what it does — install it only if you trust its author.');
+});
+
 test('there is no warning to show before a successful resolve', () => {
   assert.strictEqual(warningText(null), '');
   assert.strictEqual(warningText({ ok: false, error: 'nope' }), '');
@@ -742,6 +752,11 @@ const LIBRARY_CASES = [
       reason: 'Already installed at the commit the library holds.',
       action: null,
     },
+  },
+  {
+    label: 'fetched from the library, recorded in another case before specs were lowercased',
+    row: { id: 'notes', installed: 'fetched', installedRepo: 'Avirtual/Clodex-Plugins', upToDate: false },
+    expected: { label: 'Update', enabled: true, reason: '', action: 'update' },
   },
   {
     label: 'fetched from a DIFFERENT repo',

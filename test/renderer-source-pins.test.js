@@ -206,6 +206,37 @@ test('put-back is skipped when the operator typed meanwhile', async () => {
   assert.strictEqual(toasts.length, 1, 'ENTER: the refusal path ran');
 });
 
+test('a proxy payload is stamped with its own mint time, on seat switch, on emit and on a restored mount', () => {
+  const { classifySubagent } = require('../renderer/lib/subagent-policy');
+  const snapAt = SRC.indexOf('window.api.getProxySnapshot(name).then(');
+  assert.ok(snapAt > 0, 'ENTER: the seat-switch snapshot handler is found by this anchor');
+  const snapSrc = SRC.slice(SRC.indexOf('(p) => {', snapAt), SRC.indexOf('\n    }).catch(', snapAt) + 6);
+  const emitAt = SRC.indexOf('window.api.onSessionProxy(');
+  assert.ok(emitAt > 0, 'ENTER: the onSessionProxy handler is found by this anchor');
+  const emitSrc = SRC.slice(emitAt + 'window.api.onSessionProxy('.length, SRC.indexOf('\n});\n', emitAt) + 2);
+  const mountAt = SRC.indexOf('  if (entry.proxy) { proxyState.set(');
+  assert.ok(mountAt > 0, 'ENTER: the restored-mount proxy line is found by this anchor');
+  const mountSrc = `(entry) => {\n${SRC.slice(mountAt, SRC.indexOf('\n', mountAt))}\n}`;
+  const noop = () => {};
+  const env = {
+    applyWarmBadge: noop, applySubagents: noop, refreshQuotaChip: noop, refreshActivityChips: noop,
+    renderProxyBar: noop, activeSession: 'other', name: 's',
+  };
+  for (const [label, fnSrc] of [['seat switch', snapSrc], ['emit', emitSrc], ['restored mount', mountSrc]]) {
+    const proxyState = new Map();
+    const names = ['proxyState', ...Object.keys(env)];
+    const handler = new Function(...names, `return ${fnSrc};`)(proxyState, ...Object.values(env));
+    const p = { linked: true, ts: Date.now() - 15000, subagents: [{ key: 'k', lastActiveS: 25 }] };
+    if (label === 'emit') handler('s', p);
+    else if (label === 'restored mount') handler({ name: 's', proxy: p });
+    else handler(p);
+    const st = proxyState.get('s');
+    assert.ok(st, `ENTER: the ${label} handler stored the payload`);
+    const ageS = (Date.now() - st.at) / 1000;
+    assert.strictEqual(classifySubagent(p.subagents[0], ageS), 'done', `${label}: age ${ageS}s`);
+  }
+});
+
 test('the 1 s tick re-classifies subagent rows', () => {
   const { fakeDocument } = require('./lib/fake-dom');
   const { classifySubagent } = require('../renderer/lib/subagent-policy');

@@ -2533,7 +2533,7 @@ function switchSession(name) {
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
       if (!p) return;
-      proxyState.set(name, { payload: p, at: Date.now() });
+      proxyState.set(name, { payload: p, at: typeof p.ts === 'number' ? p.ts : Date.now() });
       applyWarmBadge(name);
       if (activeSession === name) renderProxyBar();
     }).catch(() => {});
@@ -4863,7 +4863,7 @@ function acceptWireQuota(payload, at = Date.now()) {
 }
 
 window.api.onSessionProxy((name, payload) => {
-  proxyState.set(name, { payload, at: Date.now() });
+  proxyState.set(name, { payload, at: payload && typeof payload.ts === 'number' ? payload.ts : Date.now() });
   applyWarmBadge(name);
   applySubagents(name);
   refreshQuotaChip();
@@ -8972,7 +8972,7 @@ function mountRestoredSession(entry) {
   if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
     ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
   }
-  if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: Date.now() }); applyWarmBadge(entry.name); }
+  if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: typeof entry.proxy.ts === 'number' ? entry.proxy.ts : Date.now() }); applyWarmBadge(entry.name); }
   if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
 }
 

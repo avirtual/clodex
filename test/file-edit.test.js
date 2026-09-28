@@ -112,6 +112,12 @@ test('accepts when the mtime still matches', () => {
   assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000 })), { ok: true, path: '/repo/src/a.js' });
 });
 
+test('accepts the integral expectMtime the peek reports when the real mtime carries a fraction', () => {
+  const frac = fsFixture({ files: { '/repo/src/a.js': { mtimeMs: 1000.4624 } } });
+  assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000, ...frac })), { ok: true, path: '/repo/src/a.js' });
+  assert.match(vetFileWrite(base({ expectMtime: 999, ...frac })).error, /changed on disk/);
+});
+
 test('refuses a session with no cwd — there is nothing to confine the write to', () => {
   const r = vetFileWrite(base({ cwd: null }));
   assert.strictEqual(r.ok, false);

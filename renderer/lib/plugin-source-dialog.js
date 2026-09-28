@@ -41,8 +41,9 @@ function warningText(resolved, opts) {
   const where = opts && opts.remote
     ? 'This code will run on the Clodex host this browser is connected to, with the app\'s full authority, the same as Clodex itself. '
     : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
+  const sha = shortCommit(resolved.commit);
   return where
-    + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). `
+    + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)}${sha ? ` (commit ${sha})` : ''}. `
     + 'Clodex cannot check what it does — install it only if you trust its author.';
 }
 
@@ -85,7 +86,7 @@ function libraryRowAction(row, opts) {
     return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.registered, action: null };
   }
   if (r.installed === 'fetched') {
-    if (repo && r.installedRepo && r.installedRepo !== repo) {
+    if (repo && r.installedRepo && String(r.installedRepo).toLowerCase() !== String(repo).toLowerCase()) {
       return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.otherRepo, action: null };
     }
     if (r.upToDate) return { label: 'Install', enabled: false, reason: LIBRARY_REASONS.upToDate, action: null };

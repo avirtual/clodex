@@ -15,7 +15,7 @@ function pluginOrigin(p) {
     return { kind: 'core', glyph: ORIGIN_GLYPHS.core, label: 'Built in' };
   }
   const repo = (row.source && row.source.repo) || '';
-  if (repo === LIBRARY_REPO) {
+  if (repo.toLowerCase() === LIBRARY_REPO) {
     return { kind: 'library', glyph: ORIGIN_GLYPHS.library, label: 'From the clodex-plugins library' };
   }
   if (repo) {

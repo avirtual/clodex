@@ -16,11 +16,7 @@
 // copy for the same daemon state.
 function detectNotice(detect) {
   const d = detect || {};
-  // An {ok:false,error} payload is a detection FAILURE (IPC/routing/manager
-  // error), NOT a verdict that docker is absent — don't lie that it "isn't
-  // installed" (which also wrongly gates create-box). A genuine probe returns
-  // {present,running}; only a real present:false is the not-installed case.
-  if (d.ok === false) {
+  if (detect == null || d.ok === false) {
     return { kind: 'error', text: `Couldn’t check Docker${d.error ? ` — ${d.error}` : '.'}` };
   }
   if (!d.present) {
@@ -45,7 +41,7 @@ function detectNotice(detect) {
 const GATED_ACTIONS = ['start', 'rebuild', 'boxStart', 'boxCreate'];
 function sandboxActionGate(detect) {
   const d = detect || {};
-  const notice = detectNotice(d);
+  const notice = detectNotice(detect);
   const running = !!d.running && d.compose !== false;
   return {
     running,
@@ -149,13 +145,13 @@ function validatePorts(ports) {
   return null;
 }
 
-const FIXED_SHA_RE = /^[0-9a-f]{7,40}$/;
+const FIXED_SHA_RE = /^[0-9a-f]{7,40}$/i;
 
 function sandboxRebuiltLine(label, image) {
   if (!image) return `Rebuilt ${label} on the current code.`;
   if (image.kind === 'image') return `Rebuilt ${label} from image ${image.image}`;
   if (!image.ref) return `Rebuilt ${label} on the dev checkout`;
-  const at = image.sha && !String(image.sha).startsWith(image.ref) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
+  const at = image.sha && !String(image.sha).toLowerCase().startsWith(String(image.ref).toLowerCase()) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
   const pinned = FIXED_SHA_RE.test(image.ref) ? ' — pinned; set ref to a branch to track it' : '';
   return `Rebuilt ${label} on ${at}${pinned}`;
 }

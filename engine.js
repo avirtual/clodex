@@ -61,12 +61,8 @@ function diagWarning(d = {}) {
     return 'PATH merge from your login shell failed — CLIs installed there (claude/codex) '
       + 'may be invisible to Clodex. Relaunch Clodex, or start it from a terminal.';
   }
-  // Neither agent CLI on PATH → no agent session can start at all. A SINGLE missing
-  // CLI is handled precisely by the New Session dialog gate (and the enriched exit
-  // toast), so it's deliberately NOT raised as a global banner — nagging a user who
-  // uses only one CLI would be noise.
-  if (!d.claude && !d.codex) {
-    return 'Neither the claude nor codex CLI was found on PATH — no agent sessions can start. '
+  if (!d.claude && !d.codex && !d.muse) {
+    return 'No agent CLI (claude, codex or muse) was found on PATH — no agent sessions can start. '
       + 'Install one, e.g. curl -fsSL https://claude.ai/install.sh | bash';
   }
   return null;
@@ -84,6 +80,7 @@ function diagLines(d = {}) {
   lines.push(
     `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
     `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
+    `muse:         ${d.muse || 'NOT FOUND on PATH'}`,
   );
   const warning = diagWarning(d);
   if (warning) lines.push(`⚠ ${warning}`);
@@ -315,7 +312,7 @@ function collectSystemDiagnostics() {
   return {
     platform: process.platform, procArch: process.arch, rosetta: detectRosetta(),
     electron: process.versions.electron, node: process.versions.node,
-    claude: whichBin('claude'), codex: whichBin('codex'),
+    claude: whichBin('claude'), codex: whichBin('codex'), muse: whichBin('muse'),
     pathMergeFailed,
     helperPath: helper, helperExists: fs.existsSync(helper),
     helperExecutable, helperArch: machoArch(helper),
@@ -1527,7 +1524,7 @@ function writeFilePeek(name, filePath, content, expectMtime) {
     fs.writeFileSync(v.path, content);
     // The fresh mtime is the caller's next `expectMtime`; without it every save
     // after the first would trip the stale check against its own write.
-    return { ok: true, mtime: fs.statSync(v.path).mtimeMs, size: Buffer.byteLength(content) };
+    return { ok: true, mtime: Math.trunc(fs.statSync(v.path).mtimeMs), size: Buffer.byteLength(content) };
   } catch (e) { return { ok: false, error: e.message }; }
 }
 

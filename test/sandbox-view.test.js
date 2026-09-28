@@ -25,9 +25,19 @@ test('detectNotice: running → ok', () => {
   assert.strictEqual(n.kind, 'ok');
 });
 
-test('detectNotice: missing/undefined input reads as not installed', () => {
-  assert.strictEqual(detectNotice(undefined).kind, 'error');
+test('detectNotice: an empty probe object reads as not installed', () => {
   assert.strictEqual(detectNotice({}).kind, 'error');
+  assert.match(detectNotice({}).text, /isn’t installed/);
+});
+
+test('detectNotice + sandboxActionGate: a detect that yielded nothing reads as a failed check, not as Docker not installed', () => {
+  for (const detect of [null, undefined]) {
+    const n = detectNotice(detect);
+    assert.strictEqual(n.kind, 'error', `${detect}`);
+    assert.doesNotMatch(n.text, /install/i, `${detect}`);
+    assert.match(n.text, /check Docker/i, `${detect}`);
+    assert.match(sandboxActionGate(detect).reason, /check Docker/i, `${detect}`);
+  }
 });
 
 test('detectNotice: {ok:false} detection failure is NOT reported as "not installed"', () => {
@@ -85,7 +95,7 @@ test('sandboxActionGate: Compose plugin missing → same disabled set, compose r
   assert.match(g.reason, /docker-compose-v2/);
 });
 
-test('sandboxActionGate: missing/undefined detect reads as not installed (fully gated)', () => {
+test('sandboxActionGate: missing/undefined detect is fully gated', () => {
   assert.deepStrictEqual(sandboxActionGate(undefined).disabled, GATED);
   assert.deepStrictEqual(sandboxActionGate(null).disabled, GATED);
   assert.strictEqual(sandboxActionGate({}).running, false);
@@ -367,6 +377,11 @@ test('sandboxRebuiltLine: names the ref+sha, dev checkout, pinned image, or fall
     [undefined, 'Rebuilt box on the current code.'],
   ];
   for (const [image, want] of rows) assert.strictEqual(sandboxRebuiltLine('box', image), want);
+});
+
+test('sandboxRebuiltLine: an uppercase SHA ref is recognised as pinned and not repeated', () => {
+  assert.strictEqual(sandboxRebuiltLine('box', { kind: 'build', ref: 'ABCDEF1', sha: 'abcdef1234567890' }),
+    'Rebuilt box on ABCDEF1 — pinned; set ref to a branch to track it');
 });
 
 test('sandboxRebuiltLine callers hand it the rebuild reply\'s image field', () => {

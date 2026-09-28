@@ -117,6 +117,19 @@ for (const row of TABLE_2) {
   });
 }
 
+test('codex: a draft tall enough to put the status row at at+6 still reads the warnings row below it', () => {
+  const base = load(SPLIT_DIR, 'codex-idle@100');
+  const draft = ['  continuation', '  continuation', '  continuation', '  continuation'];
+  const rows = [...base.slice(0, 27), ...draft, ...base.slice(27)].slice(draft.length);
+  const at = 22;
+  assert.strictEqual(rows.length, 30);
+  enterAnchor(rows, at, 'codex');
+  assert.strictEqual(measureSplit(rows, null, 100, 'codex').at, at, 'ENTER: the split still anchors on the composer');
+  assert.ok(rows[at + 6].startsWith('  Context 0% used'), 'ENTER: the Context row sits at at+6');
+  assert.ok(rows[at + 7].trimEnd().endsWith('⚠ 1 warning · f2 to view'), 'ENTER: the warnings row sits at at+7');
+  assert.deepStrictEqual(readStatusRows(rows, at, 'codex'), { mode: { key: 'default', label: 'Default', cycles: true }, tasks: null, warnings: 1 });
+});
+
 test('slash-menu@100 (split-states): the menu replaces the status rows, so nothing reads', () => {
   const rows = load(SPLIT_DIR, 'slash-menu@100');
   assert.strictEqual(rows.length, 40);

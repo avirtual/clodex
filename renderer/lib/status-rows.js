@@ -49,7 +49,7 @@ function readCodex(rows, at) {
   }
   if (s < 0) return null;
   const block = [];
-  for (let k = s; k < rows.length && k <= at + CODEX_REACH && !isBlank(rows[k]); k++) block.push(rows[k]);
+  for (let k = s; k < rows.length && k <= s + 2 && !isBlank(rows[k]); k++) block.push(rows[k]);
   const plan = block.flatMap((r) => r.trim().split(/\s{2,}/u)).some((c) => CODEX_PLAN.test(c));
   const warn = block.map((r) => CODEX_WARNINGS.exec(r)).find(Boolean);
   const mode = plan ? { key: 'plan', label: 'Plan', cycles: true } : { key: 'default', label: 'Default', cycles: true };
