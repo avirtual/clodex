@@ -6620,11 +6620,11 @@ function createTicketMethods(deps, shared) {
       // THE verifyHold INVARIANT, the shape `_autoMergeTicket` states for
       // `mergeWaiting`: set on the fail arms, cleared on EVERY other exit, and
       // held in a `finally` rather than by clearing at each one. The exits are not
-      // only the ones easy to remember — the green path spawns a review, four
-      // guards return silently on a ticket that moved under the checks, the
+      // only the ones easy to remember — the green path spawns a review, the
       // suite-red arm rejects, and the catch-all throws. A stamp left behind on
       // any of them is a ticket that alarms forever about a check that passed.
       let held = false;
+      let superseded = false;
       // A verify escalation is a HOLD, not an exit. Deleting `loopStep` on a
       // DELIVERED one leaves `state=done` with nothing in flight: the stall sweep
       // skips it forever (ticketInFlight is false), `task done` bounces as "is done,
@@ -6709,6 +6709,12 @@ function createTicketMethods(deps, shared) {
         // owns it now, and re-driving a step against a stale snapshot is how two
         // reviewers end up on one ticket.
         if (!ticket || ticket.loopStep !== 'verify') return;
+        const round = ticket.reworkRound || 0;
+        const current = (t) => {
+          const ok = !!t && t.loopStep === 'verify' && (t.reworkRound || 0) === round;
+          if (!ok) superseded = true;
+          return ok;
+        };
         const wt = ticket.worktree || {};
         const branch = wt.branch;
         const baseSha = wt.baseSha;
@@ -6842,7 +6848,7 @@ function createTicketMethods(deps, shared) {
         // reviewer spawned for a ticket that is already open again. Re-load and
         // bail, the same don't-trust-the-snapshot rule _setLoopStep states.
         let still = this._loadTicket(team, ticketId);
-        if (!still || still.loopStep !== 'verify') return;
+        if (!current(still)) return;
         let firstRed = null;
         let remeasureError = null;
         let slowOwned = [];
@@ -6850,14 +6856,11 @@ function createTicketMethods(deps, shared) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           const again = await this._runTicketSuite(team, ticket);
           still = this._loadTicket(team, ticketId);
-          if (!still || still.loopStep !== 'verify') return;
-          if (again.ran && again.green) {
+          if (!current(still)) return;
+          if (again.ran) {
             firstRed = suite;
             suite = again;
-            this._stampSuiteRemeasured(team, ticketId, firstRed);
-          } else if (again.ran) {
-            firstRed = suite;
-            suite = again;
+            if (again.green || again.slowOnly) this._stampSuiteRemeasured(team, ticketId, firstRed);
           } else {
             remeasureError = again.error;
           }
@@ -6865,7 +6868,7 @@ function createTicketMethods(deps, shared) {
         if (suite.ran && suite.slowOnly) {
           slowOwned = await this._slowTestsOwned(team, still, suite.slow);
           still = this._loadTicket(team, ticketId);
-          if (!still || still.loopStep !== 'verify') return;
+          if (!current(still)) return;
           if (!slowOwned.length) this._stampSuiteSlow(team, ticketId, suite.slow);
         }
         if (!suite.ran) {
@@ -6910,7 +6913,7 @@ function createTicketMethods(deps, shared) {
           // accepted ticket and bump its rework round. The WRITE is harmless
           // either way (a file beside the ticket's artifacts); the REJECT is not.
           const fresh = this._loadTicket(team, ticketId);
-          if (!fresh || fresh.loopStep !== 'verify') return;
+          if (!current(fresh)) return;
           // Named ABSOLUTELY in the message, so the hand needs no convention to
           // find it. A write failure rides the same line rather than being
           // swallowed: a rejection with no evidence is still a correct
@@ -6978,13 +6981,12 @@ function createTicketMethods(deps, shared) {
           atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned', 'infra');
       } finally {
         // Every exit that is NOT a fail arm: the green path that spawned a
-        // review, the four guards that return silently on a ticket which moved
-        // under the checks, and the suite-red arm that rejected. A hold surviving
+        // review and the suite-red arm that rejected. A hold surviving
         // any of them makes the sweep alarm about a check that has since passed —
         // and `fail` itself re-stamps, so a second round is not cleared by its own
         // predecessor's stamp. Costs one load per run and no save unless the field
         // is actually there.
-        if (!held) this._stampVerifyHold(team, ticketId, null);
+        if (!held && !superseded) this._stampVerifyHold(team, ticketId, null);
       }
     },
 
@@ -7102,18 +7104,17 @@ function createTicketMethods(deps, shared) {
       // correct work), while a REMOVED or RE-RANGED one still resolves out of
       // the root's node_modules and the suite goes GREEN over a dependency set
       // the branch does not declare. The second is the dangerous one.
-      //
-      // So ESCALATE on any difference rather than reject: the resolution is an
-      // `npm install` in the SHARED root checkout, which is the lead's call and
-      // outside what a hand can do from inside its worktree.
       // NOT named `deps`: that is createSessionManager's own injected dependency
       // object, and shadowing it here would silently cut this method off from
       // every seam the factory provides the moment someone reaches for one.
-      const readDeps = (pkgPath) => {
+      const parseDeps = (text) => {
         try {
-          const j = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          const j = JSON.parse(text);
           return { ...(j.dependencies || {}), ...(j.devDependencies || {}), ...(j.optionalDependencies || {}) };
         } catch { return null; }
+      };
+      const readDeps = (pkgPath) => {
+        try { return parseDeps(fs.readFileSync(pkgPath, 'utf8')); } catch { return null; }
       };
       const wantDeps = readDeps(path.join(cwd, 'package.json'));
       const haveDeps = readDeps(path.join(team.root, 'package.json'));
@@ -7121,13 +7122,19 @@ function createTicketMethods(deps, shared) {
       // and escalating every ticket in a repo that has none would be worse than
       // the hole this closes.
       if (wantDeps && haveDeps) {
+        const atBase = wt.baseSha
+          ? await gitWorktree.fileAt(team.root, wt.baseSha, 'package.json').catch(() => null)
+          : null;
+        const baseDeps = atBase && atBase.ok ? parseDeps(atBase.text) : null;
+        const branchChanged = (name) => !baseDeps || baseDeps[name] !== wantDeps[name];
         const diffs = [];
         for (const [name, range] of Object.entries(wantDeps)) {
+          if (!branchChanged(name)) continue;
           if (!(name in haveDeps)) diffs.push(`+${name}@${range} (added by the branch)`);
           else if (haveDeps[name] !== range) diffs.push(`~${name}: root has ${haveDeps[name]}, branch wants ${range}`);
         }
         for (const name of Object.keys(haveDeps)) {
-          if (!(name in wantDeps)) diffs.push(`-${name} (dropped by the branch)`);
+          if (!(name in wantDeps) && branchChanged(name)) diffs.push(`-${name} (dropped by the branch)`);
         }
         if (diffs.length) {
           out.error = 'the branch changes package.json dependencies, but the suite runs against the ROOT checkout\'s '
@@ -8267,7 +8274,27 @@ function createTicketMethods(deps, shared) {
           ...(recovery ? ['', `RECOVERY: ${recovery}`] : []),
         ].join('\n');
         let disposition = null;
-        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, (d) => { disposition = d || 'injected'; }, { parkBehindQueue: true });
+        let returned = false;
+        let released = null;
+        const onDisposition = (d) => {
+          disposition = d || 'injected';
+          if (!returned || disposition !== 'parked') return;
+          log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead} after the queue returned`);
+          if (keepHold || !released) return;
+          try {
+            const tickets = ticketsStore.load(team.root);
+            const rec = tickets.find((t) => t.id === ticketId);
+            if (!rec || rec.state !== 'done' || rec.loopStep || rec.acceptedAt || rec.closedOut) return;
+            rec.loopStep = released;
+            ticketsStore.save(team.root, tickets);
+            released = null;
+            this._watchParkedEscalation(team, ticketId);
+          } catch (e) {
+            log.error('ticket', `ticket ${ticketId} late-parked escalation could not re-hold: ${e.message}`);
+          }
+        };
+        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, true, `[ticket ${ticketId} ESCALATED]`, onDisposition, { parkBehindQueue: true });
+        returned = true;
         const parked = !!(r && (r.parked || (r.queued && disposition === 'parked')));
         const reached = !!(r && r.queued) && !parked;
         // Two independent reasons to keep the hold, deliberately not collapsed
@@ -8276,7 +8303,10 @@ function createTicketMethods(deps, shared) {
         // reviewer may still land a verdict. Only the first is a failure, so
         // only the first logs one.
         if (reached) {
-          if (!keepHold) this._setLoopStep(team, ticketId, null);
+          if (!keepHold) {
+            released = (this._loadTicket(team, ticketId) || {}).loopStep || null;
+            this._setLoopStep(team, ticketId, null);
+          }
         } else if (parked) {
           if (!keepHold) this._watchParkedEscalation(team, ticketId);
           log.info('ticket', `ticket ${ticketId} escalation at ${step} parked for ${team.lead}`);
