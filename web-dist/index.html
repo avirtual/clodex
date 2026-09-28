@@ -52733,7 +52733,12 @@ Click for live activity`;
               okBtn.textContent = "Create";
             }
             if (!res || !res.ok) {
-              errEl.textContent = res && res.error || "could not create the team";
+              const msg = res && res.error || "could not create the team";
+              if (!overlay.isConnected) {
+                showToast(`Create team ${name} failed: ${msg}`, { kind: "error", duration: 12e3 });
+                return;
+              }
+              errEl.textContent = msg;
               errEl.classList.remove("hidden");
               return;
             }
@@ -53382,7 +53387,6 @@ Click for live activity`;
           setPrefsEnvState(res && res.error || "Environment scopes unavailable on this host.", "error");
           return;
         }
-        setPrefsEnvState("");
         const vars = res.vars || [];
         if (!vars.length) {
           const empty = document.createElement("span");
@@ -53484,7 +53488,6 @@ Click for live activity`;
           if (prefsAccountModel) prefsAccountModel.textContent = "";
           return;
         }
-        setPrefsAccountsState("");
         const accounts = res.accounts || [];
         let live = [];
         try {
@@ -53827,8 +53830,8 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           wsLogsSize.textContent = `Error: ${e && e.message || e}`;
         } finally {
           wsLogsClearBusy = false;
+          await refreshWsLogs();
         }
-        await refreshWsLogs();
       });
       function renderRemoteStatus(st) {
         if (!st) return;
@@ -55406,7 +55409,7 @@ ${res.stderr}` : "");
           if (rowStartGated) tog.title = sn.foreign && sn.foreign.text || sbGate.reason || "";
           tog.addEventListener("click", (e) => {
             e.stopPropagation();
-            toggleBox(b.id, sn.running);
+            toggleBox(b.id);
           });
           row.append(dot, label, tog);
           row.addEventListener("click", () => selectBox(b.id));
@@ -55436,10 +55439,13 @@ ${res.stderr}` : "");
         await renderBoxList();
         await refreshSandboxStatus();
       }
-      async function toggleBox(id, running) {
+      async function toggleBox(id) {
         if (sbBusy) return;
         sbBusy = true;
+        let running = false;
         try {
+          const s = await window.api.sandboxStatus(id);
+          running = sandboxStatusNotice(s && s.state).running;
           const r = running ? await window.api.sandboxDown(id) : await window.api.sandboxUp(id);
           if (!r || r.ok === false) {
             showToast(`Sandbox ${running ? "stop" : "start"} failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });

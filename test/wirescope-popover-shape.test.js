@@ -119,3 +119,26 @@ test('a failed preview disables only Clear, and the age change re-runs it', () =
   assert.ok(/wsLogsAge\.addEventListener\('change', previewWsLogs\)/.test(RENDERER),
     're-enabling the button has to be reachable: changing the age re-runs the preview');
 });
+
+test('Clear is usable again after the operator cancels the confirm', async () => {
+  const vm = require('node:vm');
+  const head = "wsLogsClearBtn.addEventListener('click', async () => {";
+  const start = RENDERER.indexOf(head);
+  assert.ok(start > 0, 'ENTER: the Clear click handler was located');
+  const block = RENDERER.slice(start, RENDERER.indexOf('\n});\n', start) + 4);
+  let listener = null;
+  let refreshes = 0;
+  const wsLogsClearBtn = { disabled: false, addEventListener: (t, cb) => { listener = cb; } };
+  const ctx = {
+    wsLogsClearBtn, wsLogsClearBusy: false, wsLogsSize: { textContent: '' },
+    wsSelectedAge: () => '7d', wsAgeLabel: () => '7 days', fmtBytes: (n) => `${n} B`, wsLogsSizeText: () => 'Capture logs',
+    previewWsLogs: async () => {}, confirm: () => false,
+    refreshWsLogs: async () => { refreshes++; wsLogsClearBtn.disabled = false; },
+    window: { api: { wirescopePrune: async () => ({ ok: true, data: { bytes_reclaimed: 5, files_deleted: 1, sessions_pruned: 1 } }) } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(block, ctx);
+  assert.ok(listener, 'ENTER: the handler was registered');
+  await listener();
+  assert.strictEqual(wsLogsClearBtn.disabled, false);
+});
