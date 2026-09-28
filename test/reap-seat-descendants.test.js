@@ -44,7 +44,7 @@ const assert = require('node:assert');
 const childProcess = require('node:child_process');
 const { createSessionManager } = require('../session-manager');
 
-function mkManager(log) {
+function mkManager(log, deps = {}) {
   const store = [];
   const persistence = {
     list: () => store,
@@ -52,6 +52,8 @@ function mkManager(log) {
     upsert: (e) => { store.push({ ...e }); },
     remove: (n) => { const i = store.findIndex((x) => x.name === n); if (i >= 0) store.splice(i, 1); },
     setArchived: () => {},
+    setCwd: (n, cwd) => { const e = store.find((x) => x.name === n); if (e) e.cwd = cwd; },
+    rename: (n, to) => { const e = store.find((x) => x.name === n); if (!e) return false; e.name = to; return true; },
   };
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
@@ -62,8 +64,10 @@ function mkManager(log) {
     fs: require('node:fs'),
     childProcess,
     log: log || { info: () => {}, warn: () => {}, error: () => {} },
+    ...deps,
   });
   const m = new SessionManager();
+  m.store = store;
   m._notifyComposition = () => {};
   return m;
 }
@@ -199,6 +203,41 @@ test('archive(): a real descendant of the seat pty is dead afterwards', async ()
       + 'must not drift from kill()\'s — an archived seat leaves orphans exactly the same way.');
   } finally { reapFixture(sh.pid, sleepPid); }
 });
+
+const RESPAWNS = [
+  { verb: 'rename', run: (m) => m.rename('a', 'b') },
+  { verb: 'move', run: (m) => m.move('a', require('node:os').tmpdir()) },
+];
+
+for (const { verb, run } of RESPAWNS) {
+  test(`${verb}(): a real descendant of the old pty is dead afterwards`, async () => {
+    const sh = spawnTree();
+    let sleepPid = null;
+    try {
+      await new Promise((r) => setTimeout(r, 300));
+      sleepPid = childPidOf(sh.pid);
+
+      const { mkTmpRoot } = require('./lib/tmp-roots');
+      const m = mkManager(null, {
+        REGISTRY_DIR: mkTmpRoot('clodex-move-'),
+        path: require('node:path'),
+        resolveTeam: () => null,
+        findProjectRoot: () => null,
+        enqueueNotice: () => {},
+        DEFAULT_WORKSPACE_ID: 'default',
+      });
+      m.store.push({ name: 'a', type: 'claude', cwd: '/proj', workspaceId: 'default' });
+      const s = seat(m, 'a', sh.pid);
+      s.pty.kill = () => { m.sessions.delete('a'); };
+      m.create = async () => {};
+      await run(m);
+
+      assert.ok(await goneWithin(sleepPid, 2000),
+        `${verb}() left the old pty's descendant (pid ${sleepPid}) alive: the respawn quiesce killed the pty and `
+        + 'nothing beneath it, unlike kill() and archive().');
+    } finally { reapFixture(sh.pid, sleepPid); }
+  });
+}
 
 // ── The ownership guard ──
 

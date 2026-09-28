@@ -63,7 +63,7 @@ for (const row of [
 // re-derivation is resolved the way the shipped code resolves it — a stub
 // keyed on a path prefix would agree with itself about which cwd joins a team,
 // which is the whole assertion.
-function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
+function mkMove({ entries = [], teamHome = null, createThrows = null, getWorkspaces = undefined } = {}) {
   const store = entries.map((e) => ({ ...e }));
   const persistence = {
     list: () => store,
@@ -94,6 +94,7 @@ function mkMove({ entries = [], teamHome = null, createThrows = null } = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     getPersistence: () => persistence,
+    getWorkspaces,
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
     fs: fsReal,
@@ -512,6 +513,39 @@ test('the exit-TIMEOUT result also carries a retry row, at the OLD cwd — that 
 // A source-shape pin, like the peer/sandbox one below: this branch runs only
 // against a live Electron sidebar, and the failure it guards is the ABSENCE of a
 // call — a toast-only arm passes every runtime assertion about the toast.
+test('moveToWorkspace mid-move is refused or survives the respawn', async () => {
+  const WORKSPACES = [{ id: 'ws1', name: 'Home' }, { id: 'ws2', name: 'Research' }];
+  const { m, store, persistence } = mkMove({
+    entries: [BASE],
+    getWorkspaces: () => ({ list: () => WORKSPACES, get: (id) => WORKSPACES.find((w) => w.id === id) || null }),
+  });
+  const stubCreate = m.create;
+  m.create = async (...args) => {
+    persistence.upsert({ name: args[0], workspaceId: args[5] });
+    return stubCreate(...args);
+  };
+  seedLive(m, 'seat', {
+    workspaceId: 'ws1',
+    pty: { pid: 4242, kill() { setImmediate(() => m.sessions.delete('seat')); } },
+  });
+  const p = m.move('seat', mkTmpRoot('clodex-move-'));
+  const ws = m.moveToWorkspace('seat', 'ws2');
+  const r = await p;
+  assert.strictEqual(r.ok, true, 'ENTER: the move itself went through');
+  assert.ok(ws.ok === false || store[0].workspaceId === 'ws2',
+    `the workspace move reported ok but the respawn reverted it to ${store[0].workspaceId}`);
+});
+
+test('an exit timeout in move() clears _moving on the still-live seat', async () => {
+  const { m } = mkMove({ entries: [BASE] });
+  m._waitForExit = async () => false;
+  seedLive(m, 'seat', { pty: { pid: 4242, kill() {} } });
+  const r = await m.move('seat', mkTmpRoot('clodex-move-'));
+  assert.strictEqual(r.ok, false, 'ENTER: the exit-timeout arm is the one under test');
+  assert.strictEqual(m.sessions.get('seat')._moving, false,
+    'the seat stayed live, so a later crash must not be classed as an expected exit');
+});
+
 test('the renderer rebuilds a failed row from res.kept, not just a toast', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
   const fn = src.slice(src.indexOf('function moveSessionWithPicker'));

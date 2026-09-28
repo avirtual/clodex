@@ -18,7 +18,7 @@
 // deny-key case below is entirely inside that merge). The cost is a heavier
 // harness; the ENTER assertions below are what keep it honest.
 
-const { test, after } = require('node:test');
+const { test, after, mock } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -192,6 +192,34 @@ test('[agent:context reload] does not need its own deny filter — the merge sti
       'a reload must not inject the deny-listed remote-auth token into the PTY (base value, whatever it is, '
       + 'untouched) — the reload path threads a persisted map it did not sanitize itself');
   } finally { stop('r3'); }
+});
+
+test('a cold respawn whose old process never exits does not leave the seat refusing every later clear', async () => {
+  const { m, stop } = mkManager();
+  const realImmediate = setImmediate;
+  const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => realImmediate(r)); };
+  await m.create('r4', 'bash', os.tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, ENV);
+  const s = m.sessions.get('r4');
+  assert.ok(s, 'ENTER: a live session to reload');
+  const said = [];
+  m._broadcast = (_ch, msg) => { if (msg && msg.body) said.push(msg.body); };
+  m._injectText = () => {};
+  m.kill = async () => {};
+  const realError = console.error;
+  console.error = () => {};
+  mock.timers.enable({ apis: ['setTimeout', 'setImmediate', 'Date'] });
+  try {
+    m._handleContextIntent(s, 'reload', 'pick up at step 3');
+    for (let i = 0; i < 200; i++) { mock.timers.tick(50); await flush(); }
+    m._handleContextIntent(s, 'clear', '');
+    assert.ok(!said.some((b) => /dropped \(already in flight\)/.test(b)),
+      `the failed reload left _reloadInFlight set, so clear was refused: ${JSON.stringify(said)}`);
+  } finally {
+    mock.timers.reset();
+    console.error = realError;
+    stop('r4');
+  }
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
