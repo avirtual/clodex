@@ -66,16 +66,24 @@ function execRunStatusReply(execRuns, rawBody, now) {
     shown = runs.slice(-EXEC_STATUS_REPLY_RUNS).reverse();
   }
 
-  const heads = shown.map((r) => {
-    const head = `run #${r.seq} ${r.cmd} ${r.state} `;
+  const cmds = shown.map((r) => String(r.cmd));
+  const clipped = shown.map(() => false);
+  const headOf = (r, i) => {
+    const head = `run #${r.seq} ${cmds[i]}${clipped[i] ? '…' : ''} ${r.state} `;
     if (r.state === 'running') {
       return `${head}${execElapsedLabel(now - r.startedAt)} so far, ceiling ${r.ceilingMin}m`;
     }
     return `${head}at ${execElapsedLabel((r.endedAt == null ? now : r.endedAt) - r.startedAt)}`;
-  });
+  };
   const tails = shown.map((r) => (r.state === 'running' ? '' : String(r.tail || '')));
-  const render = () => `status: ${heads.map((h, i) => (tails[i] ? `${h}: ${tails[i]}` : h)).join('; ')}`
-    + EXEC_STATUS_REPLY_CLOSING;
+  const render = () => `status: ${shown.map((r, i) => {
+    const h = headOf(r, i);
+    return tails[i] ? `${h}: ${tails[i]}` : h;
+  }).join('; ')}` + EXEC_STATUS_REPLY_CLOSING;
+  const dropLast = (str) => {
+    const cut = str.slice(0, -1);
+    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+  };
 
   let over = render().length - EXEC_STATUS_REPLY_MAX;
   while (over > 0) {
@@ -83,9 +91,23 @@ function execRunStatusReply(execRuns, rawBody, now) {
     for (let i = 0; i < tails.length; i++) {
       if (longest < 0 || tails[i].length > tails[longest].length) longest = i;
     }
-    if (longest < 0 || !tails[longest].length) break;
-    tails[longest] = tails[longest].slice(0, -1);
-    over -= 1;
+    if (longest >= 0 && tails[longest].length) {
+      const cut = dropLast(tails[longest]);
+      over -= tails[longest].length - cut.length;
+      tails[longest] = cut;
+      continue;
+    }
+    let widest = -1;
+    for (let i = 0; i < cmds.length; i++) {
+      if (cmds[i].length && (widest < 0 || cmds[i].length > cmds[widest].length)) widest = i;
+    }
+    if (widest < 0) break;
+    cmds[widest] = dropLast(cmds[widest]);
+    clipped[widest] = true;
+    over = render().length - EXEC_STATUS_REPLY_MAX;
+  }
+  for (let i = 0; i < tails.length; i++) {
+    if (/[\uD800-\uDBFF]$/.test(tails[i])) tails[i] = tails[i].slice(0, -1);
   }
   return render();
 }
@@ -4034,6 +4056,7 @@ function createSessionManager(deps) {
     _renameDirs(oldName, newName) {
       return [
         [path.join(REGISTRY_DIR, 'pending', oldName), path.join(REGISTRY_DIR, 'pending', newName)],
+        [path.join(REGISTRY_DIR, 'library', 'memory-loadlog', `${oldName}.jsonl`), path.join(REGISTRY_DIR, 'library', 'memory-loadlog', `${newName}.jsonl`)],
       ];
     }
 
@@ -4265,10 +4288,8 @@ function createSessionManager(deps) {
       if (s) s.workspaceId = workspaceId;
 
       const destWin = this.windowForWorkspace(workspaceId);
-      if (s) {
-        const srcWin = this.windowForWorkspace(oldId);
-        if (srcWin) srcWin.webContents.send('session:moved-out', { name });
-      }
+      const srcWin = this.windowForWorkspace(oldId);
+      if (srcWin) srcWin.webContents.send('session:moved-out', { name });
       if (destWin) {
         const record = getPersistence().get(name) || entry;
         const row = s
@@ -4447,6 +4468,14 @@ function createSessionManager(deps) {
         }
 
         const farError = (out && out.error) || 'peer refused the import';
+        if (!s) {
+          return {
+            ok: false, kept: true, error: farError,
+            installed: (out && out.installed) || null,
+            peer: peerLabel,
+            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          };
+        }
         const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
         try {
           await this.create(
@@ -7246,7 +7275,7 @@ function createSessionManager(deps) {
         let stderrTruncated = false;
         let stderrRecent = '';
 
-        const tracked = timeoutMs >= EXEC_ACK_MIN_TIMEOUT_MS;
+        const tracked = timeoutMs >= EXEC_ACK_MIN_TIMEOUT_MS && child.pid !== undefined;
         const startedAt = Date.now();
         let statusTimer = null;
         let record = null;
