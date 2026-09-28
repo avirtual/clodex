@@ -906,3 +906,133 @@ test('t1077: a BASH form is not an agent — no prompts, no intents, and the plu
   assert.deepStrictEqual(cfg.agents, []);
   assert.strictEqual(cfg.stripLevel, 0);
 });
+
+test('ticking Join on a fresh dialog replaces the default session name with the team-role suggestion', () => {
+  const recordDefault = extract(/\n  (if \(!prefill && inputName\.value === defaultName\) \{\n[\s\S]*?\n  \})\n/, "openDialog's default-name block");
+  const suggest = slice('function updateTeamJoinNameSuggestion(', '\nasync function refreshCwdSuggestions(', 'updateTeamJoinNameSuggestion');
+  const roleKey = slice('function roleKeyForJoin(', '\nlet teamForCwdToken', 'roleKeyForJoin');
+  const inputName = { value: 'session-3' };
+  const run = new Function('inputName', 'teamRoleSelect', 'teamRolePromptSelect', 'sessionNameTaken', 'refreshNameValidity',
+    'bumpDefaultName', 'dialogReservedNames',
+    `let lastTeamAutoName = null; let dialogTeamMode = 'join'; let dialogTeamName = 't';
+     const prefill = null; const defaultName = 'session-3';
+     ${roleKey}\n${suggest}\n${recordDefault}\nupdateTeamJoinNameSuggestion();`);
+  run(inputName, { value: 'hand' }, null, () => false, () => {}, (n) => n, new Set());
+  assert.strictEqual(inputName.value, 't-hand');
+});
+
+test('picking a template before ticking Join still replaces the default session name', () => {
+  const recordDefault = extract(/\n  (if \(!prefill && inputName\.value === defaultName\) \{\n[\s\S]*?\n  \})\n/, "openDialog's default-name block");
+  const typeReset = extract(/\n  (if \(teamRow\) \{\n    teamRow\.style\.display = 'none';[\s\S]*?\n  \})\n\}\n/, "applyTypeDefaults' team-row block");
+  const suggest = slice('function updateTeamJoinNameSuggestion(', '\nasync function refreshCwdSuggestions(', 'updateTeamJoinNameSuggestion');
+  const roleKey = slice('function roleKeyForJoin(', '\nlet teamForCwdToken', 'roleKeyForJoin');
+  const inputName = { value: 'session-3' };
+  let refreshed = 0;
+  new Function('inputName', 'teamRoleSelect', 'teamRolePromptSelect', 'sessionNameTaken', 'refreshNameValidity',
+    'bumpDefaultName', 'dialogReservedNames', 'refreshTeamForCwd',
+    `let lastTeamAutoName = null; let dialogTeamMode = 'join'; let dialogTeamName = 't';
+     const prefill = null; const defaultName = 'session-3'; const authoring = false;
+     const teamRow = { style: {} }, teamToggle = { checked: true }, teamFields = { style: {} };
+     ${roleKey}\n${suggest}\n${recordDefault}\n${typeReset}\nupdateTeamJoinNameSuggestion();`)(
+    inputName, { value: 'hand' }, null, () => false, () => {}, (n) => n, new Set(), () => { refreshed++; });
+  assert.strictEqual(refreshed, 1, 'ENTER: the team-row block ran');
+  assert.strictEqual(inputName.value, 't-hand');
+});
+
+test('a stale cwd refresh landing after a newer one does not overwrite the team name', async () => {
+  const fn = slice('async function refreshTeamForCwd(', '\nfunction dedupeTeamName(', 'refreshTeamForCwd');
+  const dedupe = slice('function dedupeTeamName(', '\nasync function populateTeamRolePrompts(', 'dedupeTeamName');
+  const slug = slice('function slugifyTeamName(', '\nfunction roleKeyForJoin(', 'slugifyTeamName + pathBasename');
+  const inputCwd = { value: '/Users/u' };
+  const teamNameInput = { value: '' };
+  const pending = [];
+  const window = { api: { teamForCwd: async () => ({ team: null }), teamNames: () => new Promise((r) => pending.push(r)) } };
+  const refresh = new Function('window', 'inputCwd', 'teamNameInput', 'teamRow', 'inputType', 'isAgentType', 'currentPlacement',
+    'expandPath', 'homeDir',
+    `let dialogMode = 'create'; let dialogTeamMode = null; let dialogTeamName = null; let dialogTeamNames = [];
+     let teamForCwdToken = 0; let lastTeamNameAuto = null;
+     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null;
+     ${slug}\n${dedupe}\n${fn}\nreturn refreshTeamForCwd;`)(
+    window, inputCwd, teamNameInput, { style: {} }, { value: 'claude' }, () => true, () => 'host', (p) => p, '/Users/u');
+  const a = refresh();
+  await new Promise((r) => setImmediate(r));
+  inputCwd.value = '/p/foo';
+  const b = refresh();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(pending.length, 2, 'ENTER: both refreshes reached teamNames');
+  pending[1]({ names: [] });
+  await b;
+  pending[0]({ names: [] });
+  await a;
+  assert.strictEqual(teamNameInput.value, 'foo');
+});
+
+test('the Create team name follows the folder picked after the home-dir prefill', async () => {
+  const fn = slice('async function refreshTeamForCwd(', '\nfunction dedupeTeamName(', 'refreshTeamForCwd');
+  const dedupe = slice('function dedupeTeamName(', '\nasync function populateTeamRolePrompts(', 'dedupeTeamName');
+  const slug = slice('function slugifyTeamName(', '\nfunction roleKeyForJoin(', 'slugifyTeamName + pathBasename');
+  const inputCwd = { value: '/Users/u' };
+  const teamNameInput = { value: '' };
+  const window = { api: { teamForCwd: async () => ({ team: null }), teamNames: async () => ({ names: [] }) } };
+  const refresh = new Function('window', 'inputCwd', 'teamNameInput', 'teamRow', 'inputType', 'isAgentType', 'currentPlacement',
+    'expandPath', 'homeDir',
+    `let dialogMode = 'create'; let dialogTeamMode = null; let dialogTeamName = null; let dialogTeamNames = [];
+     let teamForCwdToken = 0; let lastTeamNameAuto = null;
+     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null;
+     ${slug}\n${dedupe}\n${fn}\nreturn refreshTeamForCwd;`)(
+    window, inputCwd, teamNameInput, { style: {} }, { value: 'claude' }, () => true, () => 'host', (p) => p, '/Users/u');
+  await refresh();
+  assert.strictEqual(teamNameInput.value, 'u', 'ENTER: the home-dir prefill landed');
+  inputCwd.value = '/p/foo';
+  await refresh();
+  assert.strictEqual(teamNameInput.value, 'foo');
+  teamNameInput.value = 'mine';
+  inputCwd.value = '/p/bar';
+  await refresh();
+  assert.strictEqual(teamNameInput.value, 'mine', 'a name the operator typed is never overwritten');
+});
+
+const PARSE_ARGS_FN = slice('function parseArgs(', '\nfunction expandPath(', 'parseArgs');
+const parseArgs = new Function(`${PARSE_ARGS_FN}\nreturn parseArgs;`)();
+
+const PARSE_ROWS = [
+  ['--x="a b"', ['--x=a b']],
+  ["--x='a b' --y", ['--x=a b', '--y']],
+  ['--append-system-prompt "be terse now"', ['--append-system-prompt', 'be terse now']],
+  ['"a b" c', ['a b', 'c']],
+  ['--flag plain', ['--flag', 'plain']],
+];
+for (const [field, expected] of PARSE_ROWS) {
+  test(`parseArgs(${field}) → ${JSON.stringify(expected)}`, () => {
+    assert.deepStrictEqual(parseArgs(field), expected);
+  });
+}
+
+test("a template's whitespace argument survives the dialog's field round trip", () => {
+  const sites = [
+    ['template picker', slice("inputTemplate.addEventListener('change'", '\n});\n', 'the template change handler'), /inputArgs\.value = (.*);/],
+    ['template editor', slice('async function openTemplateEditor(', '\n}\n', 'openTemplateEditor'), /inputArgs\.value = (.*);/],
+    ['args dialog', rendererSrc, /\n    argsInput\.value = (.*);\n/],
+  ];
+  for (const [label, src, re] of sites) {
+    const m = re.exec(src);
+    assert.ok(m, `ENTER: the ${label} fills the args field`);
+    const field = new Function('rest', `${PARSE_ARGS_FN}\nreturn ${m[1]};`)(['--append-system-prompt', 'be terse now']);
+    assert.deepStrictEqual(parseArgs(field), ['--append-system-prompt', 'be terse now'], label);
+  }
+});
+
+test('a second saveTemplateFromForm while one is in flight saves nothing', async () => {
+  const fn = slice('async function saveTemplateFromForm(', '\nwindow.api.onTranscriptChanged(', 'saveTemplateFromForm');
+  let saves = 0;
+  const window = { api: { saveTemplateByName: async () => { saves++; } } };
+  const save = new Function('window', 'inputName', 'collectFormConfig', 'closeDialog', 'refreshTemplatesDropdown', 'alert',
+    `let templateSaveInFlight = false; let editingTemplateTeam = null, editingTemplateBundle = null, editingTemplateId = null;
+     let templatesDrawerRefresh = null;
+     ${fn}\nreturn saveTemplateFromForm;`)(
+    window, { value: 'tpl', style: {} }, () => ({}), () => {}, async () => {}, () => {});
+  await Promise.all([save(), save()]);
+  assert.strictEqual(saves, 1);
+  await save();
+  assert.strictEqual(saves, 2, 'the guard is released after the save');
+});
