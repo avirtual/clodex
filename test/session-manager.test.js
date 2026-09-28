@@ -19616,7 +19616,7 @@ test('destroy of a live worktree seat whose tree removal fails keeps a record na
 });
 
 test('destroy of an archived worktree seat whose directory was deleted by hand drops the record', async () => {
-  const repoDir = mkTmpRoot('clodex-ghostwt-');
+  const repoDir = mkTmpRoot('clodex-retire-');
   const runGit = (...a) => require('child_process').execFileSync('git', ['-C', repoDir, ...a], { stdio: 'ignore' });
   runGit('init', '-q');
   runGit('config', 'user.email', 't@example.com');

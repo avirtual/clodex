@@ -1557,7 +1557,7 @@ test('t891: an EXPLICITLY named template still keeps its own prompt over the tea
 
 test('a renamed role\'s own template still counts as seeded: the team\'s own prompt copy wins', () => {
   const { createTeamManifest } = require('../team-manifest');
-  const home = mkTmpRoot('rename-home-');
+  const home = mkTmpRoot('t891-team-');
   const libTpl = { name: 'libtpl', type: 'claude', systemPromptFile: 'lib-sys' };
   fs.mkdirSync(path.join(home, 'library', 'templates'), { recursive: true });
   fs.mkdirSync(path.join(home, 'library', 'prompts', 'system'), { recursive: true });
@@ -1565,7 +1565,7 @@ test('a renamed role\'s own template still counts as seeded: the team\'s own pro
   fs.writeFileSync(path.join(home, 'library', 'templates', 'libtpl.json'), JSON.stringify(libTpl));
   fs.writeFileSync(path.join(home, 'library', 'prompts', 'system', 'clodex-team-hand.md'), 'hand\n');
   const tm = createTeamManifest({ fs, clodexHome: home });
-  tm.createTeam({ name: 'x', root: mkTmpRoot('rename-root-'), lead: 'lead' });
+  tm.createTeam({ name: 'x', root: mkTmpRoot('t891-team-'), lead: 'lead' });
   tm.addRole('x', 'scribe', { template: 'libtpl', prompt: 'clodex-team-hand' });
   const team = tm.renameRole('x', 'scribe', 'writer');
   assert.ok(fs.existsSync(path.join(team.dir, 'prompts', 'system', 'writer.md')), 'ENTER: the team owns a prompt copy for the renamed role');
