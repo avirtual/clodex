@@ -22,7 +22,7 @@ const ADAPTERS = {
       idRe: MODEL_ID_RE,
     },
     effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'settings' },
-    posture: { bypassArgs: ['--dangerously-skip-permissions'] },
+    posture: { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']] },
     account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null },
     cwdDir: null,
     readOnlyCap: { enforce: 'tool-denylist' },
@@ -60,7 +60,7 @@ const ADAPTERS = {
     cmd: 'codex',
     model: { flags: ['--model', '-m'], aliases: {}, idRe: MODEL_ID_RE },
     effort: { values: [...META_EFFORTS], apply: 'config' },
-    posture: { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'] },
+    posture: { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'], bypass: [['--dangerously-bypass-approvals-and-sandbox']] },
     account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
     cwdDir: '.codex',
     readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'], shortFlags: { '-s': '--sandbox', '-a': '--ask-for-approval' } },
@@ -94,7 +94,7 @@ const ADAPTERS = {
     cmd: 'muse',
     model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
     effort: { values: [...META_EFFORTS], apply: 'flag' },
-    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'] },
+    posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'], bypass: [['--approval-mode', 'never'], ['--disable-sandbox']] },
     account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
     cwdDir: null,
     readOnlyCap: {
@@ -164,20 +164,7 @@ function isAgentType(type) {
   return adapterFor(type) !== null;
 }
 
-function hasBypass(adapter, argv) {
-  if (!adapter || !Array.isArray(argv)) return false;
-  const want = adapter.posture.bypassArgs;
-  if (!want.length || argv.length < want.length) return false;
-  for (let i = 0; i + want.length <= argv.length; i += 1) {
-    if (want.every((tok, j) => argv[i + j] === tok)) return true;
-  }
-  return false;
-}
-
-function hasReadOnlyCap(adapter, argv) {
-  const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
-  if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
-  const short = adapter.readOnlyCap.shortFlags || {};
+function normalizeArgv(argv, short) {
   const norm = [];
   for (const tok of argv) {
     if (typeof tok !== 'string') { norm.push(tok); continue; }
@@ -185,12 +172,30 @@ function hasReadOnlyCap(adapter, argv) {
     if (eq > 2) norm.push(tok.slice(0, eq), tok.slice(eq + 1));
     else norm.push(Object.prototype.hasOwnProperty.call(short, tok) ? short[tok] : tok);
   }
+  return norm;
+}
+
+function lastValueOf(norm, flag) {
+  let value;
+  for (let i = 0; i + 1 < norm.length; i += 1) {
+    if (norm[i] === flag) { value = norm[i + 1]; i += 1; }
+  }
+  return value;
+}
+
+function hasBypass(adapter, argv) {
+  const want = adapter && adapter.posture && adapter.posture.bypass;
+  if (!Array.isArray(want) || want.length === 0 || !Array.isArray(argv)) return false;
+  const norm = normalizeArgv(argv, {});
+  return want.every((opt) => (opt.length === 1 ? norm.includes(opt[0]) : lastValueOf(norm, opt[0]) === opt[1]));
+}
+
+function hasReadOnlyCap(adapter, argv) {
+  const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
+  if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
+  const norm = normalizeArgv(argv, adapter.readOnlyCap.shortFlags || {});
   for (let c = 0; c < cap.length; c += 2) {
-    let value;
-    for (let i = 0; i + 1 < norm.length; i += 1) {
-      if (norm[i] === cap[c]) { value = norm[i + 1]; i += 1; }
-    }
-    if (value !== cap[c + 1]) return false;
+    if (lastValueOf(norm, cap[c]) !== cap[c + 1]) return false;
   }
   return true;
 }
@@ -243,6 +248,7 @@ function stripModelArgs(type, extraArgs) {
     const tok = src[i];
     if (flags.includes(tok)) { i += 1; continue; }
     if (typeof tok === 'string' && flags.some((f) => f.startsWith('--') && tok.startsWith(f + '='))) continue;
+    if (typeof tok === 'string' && flags.some((f) => /^-[^-]$/.test(f) && tok.startsWith(f) && tok.length > f.length)) continue;
     rest.push(tok);
   }
   return rest;

@@ -173,3 +173,25 @@ test('scrub: agent-scoped ANTHROPIC_BASE_URL goes, a global override survives', 
   scrubInheritedClaudeMarkers(global);
   assert.strictEqual(global.ANTHROPIC_BASE_URL, 'https://gateway.example.com/v1');
 });
+
+test('scrub: CLAUDE_CONFIG_DIR survives — it is the account config root, not session state', () => {
+  const env = { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'abc', CLAUDE_CONFIG_DIR: '/srv/claude-acct', PATH: '/usr/bin' };
+  scrubInheritedClaudeMarkers(env);
+  assert.deepStrictEqual(env, { CLAUDE_CONFIG_DIR: '/srv/claude-acct', PATH: '/usr/bin' });
+});
+
+test('user layer follows CLAUDE_CONFIG_DIR: an account\'s settings.json Bedrock flag marks the seat tee-blind', () => {
+  const d = mkDirs();
+  const acct = mkTmpRoot('ce-acct-');
+  const acct2 = mkTmpRoot('ce-acct-');
+  try {
+    fs.writeFileSync(path.join(acct, 'settings.json'), JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: '1' } }));
+    assert.strictEqual(teeBlindBackend(readEffectiveClaudeEnv(d.cwd, { baseEnv: { CLAUDE_CONFIG_DIR: acct }, homeDir: d.home })), 'bedrock');
+    writeSettings(d.home, 'settings.json', { CLAUDE_CODE_USE_BEDROCK: '1' });
+    assert.strictEqual(teeBlindBackend(readEffectiveClaudeEnv(d.cwd, { baseEnv: { CLAUDE_CONFIG_DIR: acct2 }, homeDir: d.home })), null);
+  } finally {
+    rmDirs(d);
+    fs.rmSync(acct, { recursive: true, force: true });
+    fs.rmSync(acct2, { recursive: true, force: true });
+  }
+});

@@ -367,3 +367,28 @@ test('sweep: a move to `default` merges no trust — it is the source, not a cop
   await other.run({ mergeTrust: (l) => log.push(l) });
   assert.deepStrictEqual(log, ['sub-2']);
 });
+
+test('sweep: a move to `default` DELETES CLAUDE_CONFIG_DIR rather than writing ~/.claude', async () => {
+  const fx = sweepFixture();
+  fx.entries['fable-idle'].env = { MY_KEY: 'keep-me', CLAUDE_CONFIG_DIR: '/minted/sub-2' };
+  const res = await fx.run({ label: 'default', configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) });
+  assert.deepStrictEqual(res.moved, ['fable-idle']);
+  assert.deepStrictEqual(fx.restarts[0].patch.env, { MY_KEY: 'keep-me' });
+});
+
+test('sweep: a seat pinned to an EXPLICIT ~/.claude is healed onto `default` with no CLAUDE_CONFIG_DIR', async () => {
+  const fx = sweepFixture();
+  fx.entries['fable-idle'].env = { MY_KEY: 'keep-me', CLAUDE_CONFIG_DIR: '/home/u/.claude/' };
+  const res = await fx.run({ label: 'default', configDirFor: (l) => (l === 'default' ? '/home/u/.claude' : null) });
+  assert.deepStrictEqual(res.moved, ['fable-idle']);
+  assert.deepStrictEqual(fx.restarts[0].patch.env, { MY_KEY: 'keep-me' });
+});
+
+test('sweep: a seat whose CLAUDE_CONFIG_DIR differs only by a trailing slash is already on that account', async () => {
+  const fx = sweepFixture();
+  fx.entries['fable-idle'].env = { CLAUDE_CONFIG_DIR: '/minted/sub-2/' };
+  const res = await fx.run();
+  assert.deepStrictEqual(res.moved, []);
+  assert.deepStrictEqual(res.skipped[0], { name: 'fable-idle', reason: 'already on account sub-2' });
+  assert.strictEqual(fx.restarts.length, 0);
+});

@@ -94,14 +94,9 @@ function createAccounts(deps = {}) {
   const claudeHome = deps.claudeHome || path.join(os.homedir(), '.claude');
   const claudeConfigFile = deps.claudeConfigFile || path.join(path.dirname(claudeHome), '.claude.json');
 
+  const norm = (p) => normDir(path, p);
   const registryFile = path.join(clodexHome, 'accounts.json');
   const accountsDir = path.join(clodexHome, 'accounts');
-
-  const norm = (p) => {
-    if (typeof p !== 'string' || !p) return '';
-    const r = path.resolve(p);
-    return r.length > 1 && r.endsWith(path.sep) ? r.slice(0, -1) : r;
-  };
 
   function defaultRow() {
     return { label: DEFAULT_LABEL, email: null, configDir: claudeHome, plan: 'unknown', addedAt: null };
@@ -231,7 +226,7 @@ function createAccounts(deps = {}) {
   function copySettings(dir, { overwrite }) {
     const src = path.join(claudeHome, 'settings.json');
     const dest = path.join(dir, 'settings.json');
-    if (!exists(src)) return false;
+    if (!fs.existsSync(src)) return false;
     if (exists(dest) && !overwrite) return false;
     fs.writeFileSync(dest, fs.readFileSync(src), { mode: 0o600 });
     return true;
@@ -253,7 +248,7 @@ function createAccounts(deps = {}) {
     for (const name of SHARED_LINKS) {
       const target = path.join(claudeHome, name);
       const link = path.join(dir, name);
-      if (!exists(target) || exists(link)) continue;
+      if (!fs.existsSync(target) || exists(link)) continue;
       try { fs.symlinkSync(target, link); } catch {}
     }
     copySettings(dir, { overwrite: false });
@@ -315,7 +310,14 @@ function createAccounts(deps = {}) {
   };
 }
 
-async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs, settingsModelFor, mergeTrust }) {
+function normDir(path, p) {
+  if (typeof p !== 'string' || !p) return '';
+  const r = path.resolve(p);
+  return r.length > 1 && r.endsWith(path.sep) ? r.slice(0, -1) : r;
+}
+
+async function sweepAccountMove({ model, label, liveSessions, getEntry, configDirFor, applyArgs, settingsModelFor, mergeTrust, path = require('path') }) {
+  const norm = (p) => normDir(path, p);
   const dir = configDirFor(label);
   if (!dir) return { ok: false, error: `unknown account "${label}"`, moved: [], skipped: [] };
   const toDefault = String(label) === DEFAULT_LABEL;
@@ -336,16 +338,19 @@ async function sweepAccountMove({ model, label, liveSessions, getEntry, configDi
       continue;
     }
     const prevEnv = (entry && entry.env && typeof entry.env === 'object') ? entry.env : {};
-    const already = prevEnv.CLAUDE_CONFIG_DIR ? prevEnv.CLAUDE_CONFIG_DIR === dir : toDefault;
+    const already = prevEnv.CLAUDE_CONFIG_DIR ? !toDefault && norm(prevEnv.CLAUDE_CONFIG_DIR) === norm(dir) : toDefault;
     if (already) { skipped.push({ name, reason: `already on account ${label}` }); continue; }
     if (live.activityState && live.activityState !== 'idle') {
       skipped.push({ name, reason: 'session is mid-turn' });
       continue;
     }
+    const env = { ...prevEnv };
+    if (toDefault) delete env.CLAUDE_CONFIG_DIR;
+    else env.CLAUDE_CONFIG_DIR = dir;
     const res = await applyArgs(name, {
       extraArgs: (entry && entry.extraArgs) || [],
       proxy: (entry && entry.proxy) ?? null,
-      env: { ...prevEnv, CLAUDE_CONFIG_DIR: dir },
+      env,
       restart: true,
     }, entry && entry.workspaceId);
     if (res && res.ok) moved.push(name);

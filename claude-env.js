@@ -37,8 +37,9 @@ function isEnvTruthy(v) {
 // EVERY claude session tee-blind, not just ones with a settings-file entry.
 function readEffectiveClaudeEnv(cwd, { baseEnv = process.env, homeDir = os.homedir() } = {}) {
   const merged = { ...baseEnv };
+  const userDir = baseEnv.CLAUDE_CONFIG_DIR || path.join(homeDir, '.claude');
   const layers = [
-    path.join(homeDir, '.claude', 'settings.json'),
+    path.join(userDir, 'settings.json'),
     cwd ? path.join(cwd, '.claude', 'settings.json') : null,
     cwd ? path.join(cwd, '.claude', 'settings.local.json') : null,
   ];
@@ -87,7 +88,7 @@ function teeBlindBackend(env) {
 //   (ours or a dead predecessor's tee); a user's own global endpoint override
 //   survives.
 const SCRUB_SURVIVORS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CONFIG_DIR',
 ]);
 function scrubInheritedClaudeMarkers(env) {
   for (const k of Object.keys(env)) {
