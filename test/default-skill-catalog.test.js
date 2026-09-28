@@ -238,6 +238,26 @@ test('on Linux the policy layer is read from /etc/claude-code, so a policy deny 
   }
 });
 
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+test('t1356: an unreadable skills-seen.json still lets both catalogs open with the swept skills', { skip: isRoot && 'root reads a 000 file' }, async () => {
+  const box = mkBox({ seats: [ROSTER_SEAT] });
+  const file = path.join(box.tmp, 'skills-seen.json');
+  fs.writeFileSync(file, '[]');
+  fs.chmodSync(file, 0o000);
+  try {
+    assert.throws(() => fs.readFileSync(file), /EACCES|EPERM/);
+    const res = await box.defaults();
+    assert.strictEqual(res.ok, true);
+    assert.ok(res.names.includes(DISCOVERED[0]), res.names.join(','));
+    const seat = await box.seat(ROSTER_SEAT.name);
+    assert.strictEqual(seat.ok, true);
+    assert.ok(seat.names.includes(DISCOVERED[0]), seat.names.join(','));
+  } finally {
+    fs.chmodSync(file, 0o644);
+  }
+});
+
 // The engine leaves background timers running (proxy poll, pending poll); the
 // same force-exit every other createEngine file uses.
 test('done', () => { setImmediate(() => process.exit(0)); });

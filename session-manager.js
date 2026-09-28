@@ -6604,7 +6604,14 @@ function createSessionManager(deps) {
         return;
       }
 
-      const rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
+      let rec;
+      try {
+        rec = store.add({ from: who, workspaceId: session.workspaceId || null, body: text });
+      } catch (e) {
+        log.error('intent', `shout by ${who}: store refused the save — ${e.message}`);
+        reply(`note NOT delivered — ${e.message}`);
+        return;
+      }
       this._raiseNote(who, text);
       log.info('intent', `shout by ${who}: ${rec.id}`);
 
@@ -7080,7 +7087,14 @@ function createSessionManager(deps) {
         }
       }
 
-      const r = sched.add(who, spec, body);
+      let r;
+      try {
+        r = sched.add(who, spec, body);
+      } catch (e) {
+        log.error('intent', `remind by ${who}: store refused the save — ${e.message}`);
+        reply(`reminder NOT armed — ${e.message}`);
+        return;
+      }
       if (!r.ok) {
         reply(r.error);
         this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${r.error}` });
