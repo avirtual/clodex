@@ -1494,6 +1494,7 @@ function fetchFilePeek(filePath, opts = {}) {
 function resolveFilePath(name, raw, baseDir) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
+  if (s.peer) return { ok: false, error: 'remote' };
   return resolveDisplayedPath({
     raw, cwd: s.cwd, baseDir: baseDir || null,
     touched: (s.fileTouches || []).map((t) => t && t.path).filter(Boolean),
@@ -1508,6 +1509,7 @@ function resolveFilePath(name, raw, baseDir) {
 function writeFilePeek(name, filePath, content, expectMtime) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
+  if (s.peer) return { ok: false, error: 'remote' };
   const v = vetFileWrite({
     filePath, cwd: s.cwd, content, expectMtime,
     resolve: path.resolve, realpath: fs.realpathSync, stat: fs.statSync,

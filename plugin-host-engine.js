@@ -339,6 +339,7 @@ function createPluginHostEngine(deps) {
         fsScope: (name) => {
           const s = manager.sessions.get(name);
           if (!s) return { error: 'Session not found' };
+          if (s.peer) return { error: 'remote' }; // peer sessions have no local fs
           if (!s.cwd) return { error: 'Session has no working directory' };
           return { cwd: s.cwd };
         },
