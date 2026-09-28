@@ -25,7 +25,7 @@ const EXPECTED_MAPS = [
 
   // 'stores.md',
 
-  // 'team-tickets.md',
+  'team-tickets.md',
 ];
 
 const WHY_EMPTY_IS_NOT_VACUOUS = 'no maps ship with the gate; each giant lands in its own ticket, which appends its file to EXPECTED_MAPS. '
