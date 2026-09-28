@@ -4262,3 +4262,73 @@ test('persistence: _load still recovers entries from .bak when sessions.json wil
     'the recovery half of the mechanism is what the snapshot exists to feed');
 });
 
+
+const LOADED_STORES = [
+  { name: 'agentDefaults', file: 'agent-defaults.json', seed: { a: { strip: 1 } },
+    read: (s) => s.agentDefaults._load(), empty: {}, write: (s) => s.agentDefaults.setStrip('b', 2) },
+  { name: 'reminders', file: 'reminders.json', seed: [{ id: 'r1', agent: 'a', kind: 'in', spec: '1m', body: 'x' }],
+    read: (s) => s.reminders._load(), empty: [], write: (s) => s.reminders.add({ agent: 'b', kind: 'in', spec: '1m' }) },
+  { name: 'notifications', file: 'notifications.json', seed: [{ id: 'n1', from: 'a', body: 'x', createdAt: 1 }],
+    read: (s) => s.notifications._load(), empty: [], write: (s) => s.notifications.add({ from: 'b', body: 'y' }) },
+  { name: 'skillsSeen', file: 'skills-seen.json', seed: ['alpha'],
+    read: (s) => s.skillsSeen.list(), empty: [], write: (s) => s.skillsSeen.record(['beta']) },
+];
+
+for (const st of LOADED_STORES) {
+  test(`${st.name}: a corrupt ${st.file} is quarantined once, byte-exact, and reads as empty`, () => {
+    const { stores, cleanup, userData } = freshStores();
+    try {
+      const original = JSON.stringify(st.seed) + ',,';
+      fs.writeFileSync(path.join(userData, st.file), original);
+      assert.deepStrictEqual(st.read(stores), st.empty);
+      st.write(stores);
+      st.read(stores);
+      const moved = fs.readdirSync(userData).filter((n) => n.startsWith(`${st.file}.corrupt-`));
+      assert.strictEqual(moved.length, 1, `exactly one quarantine file: ${moved}`);
+      assert.strictEqual(fs.readFileSync(path.join(userData, moved[0]), 'utf-8'), original);
+    } finally { cleanup(); }
+  });
+
+  test(`${st.name}: an unreadable ${st.file} refuses saves until it is readable again`, { skip: isRoot && 'root reads a 000 file' }, () => {
+    const { stores, cleanup, userData } = freshStores();
+    const file = path.join(userData, st.file);
+    try {
+      fs.writeFileSync(file, JSON.stringify(st.seed));
+      const before = fs.readFileSync(file);
+      fs.chmodSync(file, 0o000);
+      assert.throws(() => fs.readFileSync(file), /EACCES|EPERM/, 'ENTER: the file is unreadable');
+      captureConsoleError(() => {
+        assert.deepStrictEqual(st.read(stores), st.empty);
+        assert.throws(() => st.write(stores), /could not be read; refusing to save over it/);
+      });
+      fs.chmodSync(file, 0o600);
+      assert.deepStrictEqual(fs.readFileSync(file), before, 'the unreadable file was left byte-for-byte');
+      st.read(stores);
+      st.write(stores);
+      assert.notDeepStrictEqual(fs.readFileSync(file), before, 'a readable file re-arms saves');
+    } finally {
+      try { fs.chmodSync(file, 0o600); } catch {}
+      cleanup();
+    }
+  });
+}
+
+test('agentDefaults: getDefaultSkillDeny on an unreadable agent-defaults.json returns the floor without writing', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'agent-defaults.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify({ '*': { denySkills: ['alpha'] } }));
+    const before = fs.readFileSync(file);
+    const mtime = fs.statSync(file).mtimeMs;
+    fs.chmodSync(file, 0o000);
+    let got;
+    captureConsoleError(() => { got = stores.agentDefaults.getDefaultSkillDeny(); });
+    assert.deepStrictEqual(got, DEFAULT_SKILL_DENY_FLOOR.slice());
+    fs.chmodSync(file, 0o600);
+    assert.deepStrictEqual(fs.readFileSync(file), before);
+    assert.strictEqual(fs.statSync(file).mtimeMs, mtime);
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    cleanup();
+  }
+});

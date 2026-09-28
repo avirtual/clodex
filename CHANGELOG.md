@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Reminders, notifications, per-agent defaults and the skills-seen record are now loaded the way sessions/workspaces/settings are: a corrupt file is moved aside instead of being overwritten on the next save, and an unreadable one refuses saves until it is readable again; the env-defaults seeding guard under tests now checks the directory the env store actually lives in.
 - Docs: docs/map/stores.md — a symbol-level map of stores.js (16 regions, 117 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/engine.md — a symbol-level map of engine.js (15 regions, 101 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/ipc-handlers.md — a symbol-level map of ipc-handlers.js (20 regions, 270 rows), gated by test/module-map-fresh.test.js.

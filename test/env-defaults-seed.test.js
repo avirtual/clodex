@@ -257,13 +257,45 @@ test('workspace scopes are untouched by seeding', () => {
 
 // --- the NODE_TEST_CONTEXT safety net ----------------------------------------
 
+function realUserData(home) {
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'clodex');
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'clodex');
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'clodex');
+}
+
+test('a temp userDataPath is seeded under node --test even when registryDir is the home ~/.clodex', () => {
+  const prevHome = process.env.HOME;
+  const fakeHome = mkTmpRoot('envdef-home3-');
+  const userData = mkTmpRoot('envdef-tmpud3-');
+  const src = mkTmpRoot('envdef-src3-');
+  process.env.HOME = fakeHome;
+  const warnings = [];
+  try {
+    assert.ok(process.env.NODE_TEST_CONTEXT);
+    assert.strictEqual(os.homedir(), fakeHome);
+    initStores(userData, {
+      log: { info() {}, warn: (...a) => warnings.push(a.join(' ')), error() {} },
+      registryDir: path.join(fakeHome, '.clodex'),
+      resourcesDir: path.join(src, '__no_seed__'),
+      skillsResourcesDir: path.join(src, '__no_seed_skills__'),
+      envDefaultsFile: writeDefaults(src, FIXTURE),
+    });
+    assert.ok(!warnings.some((w) => /refusing to seed env defaults/.test(w)), JSON.stringify(warnings));
+    assert.deepStrictEqual(readScopes(path.join(userData, 'env-scopes.json')).seeded, ['ALPHA', 'BETA']);
+  } finally {
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    fs.rmSync(fakeHome, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(src, { recursive: true, force: true });
+  }
+});
+
 test('initStores refuses to seed env defaults into the real home under node --test', () => {
-  // Mirrors seedLibraryDefaults' net (test/engine-registry-dir-seam.test.js).
   // Under a FAKE home, so a regression that drops the guard writes the fake tree
   // and fails here rather than writing the operator's own env-scopes.json.
   const prevHome = process.env.HOME;
   const fakeHome = mkTmpRoot('envdef-home-');
-  const userData = mkTmpRoot('envdef-realud-');
+  const userData = realUserData(fakeHome);
   const src = mkTmpRoot('envdef-src-');
   process.env.HOME = fakeHome;
   const warnings = [];
@@ -275,7 +307,7 @@ test('initStores refuses to seed env defaults into the real home under node --te
 
     initStores(userData, {
       log: { info() {}, warn: (...a) => warnings.push(a.join(' ')), error() {} },
-      registryDir: path.join(fakeHome, '.clodex'), // the mistake the net catches
+      registryDir: path.join(fakeHome, '.clodex'),
       resourcesDir: path.join(src, '__no_seed__'),
       skillsResourcesDir: path.join(src, '__no_seed_skills__'),
       envDefaultsFile: writeDefaults(src, FIXTURE),
@@ -302,7 +334,7 @@ test('envDefaults.restore() carries the same NODE_TEST_CONTEXT guard as construc
   // seedEnvDefaults() is refused too, so the file below is untouched by it.
   const prevHome = process.env.HOME;
   const fakeHome = mkTmpRoot('envdef-home2-');
-  const userData = mkTmpRoot('envdef-realud2-');
+  const userData = realUserData(fakeHome);
   const src = mkTmpRoot('envdef-src2-');
   process.env.HOME = fakeHome;
   try {
