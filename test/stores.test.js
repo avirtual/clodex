@@ -245,7 +245,7 @@ test('uiSettings: a corrupt ui-settings.json is quarantined once, byte-exact, be
     const original = '{"theme":"dark",,}';
     fs.writeFileSync(path.join(userData, 'ui-settings.json'), original);
     stores.uiSettings.get();
-    stores.uiSettings.get();
+    assert.strictEqual(stores.uiSettings.get().terminalReports, 'off', 'a quarantined install is not a new one');
     stores.uiSettings.set({ sidebarFolded: true });
     stores.uiSettings.get();
     const moved = fs.readdirSync(userData).filter((n) => n.startsWith('ui-settings.json.corrupt-'));

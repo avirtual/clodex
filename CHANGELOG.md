@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Stores: a settings file Clodex cannot parse is moved aside as `<name>.json.corrupt-<timestamp>` and never overwritten — env-scopes.json, ui-settings.json, workspaces.json and sessions.json used to be silently replaced with defaults on the next save, destroying secret env values, peer tokens, workspace records or session records; a file that cannot be read for another reason makes that store refuse to save instead. `envScopes.set` now reports a failed write instead of ok, and a scope named after an Object.prototype member no longer resolves through the prototype chain.
 
 - Export as Template… now carries the seat's io, effort and plugin grants into the template (an exported template no longer re-grants plugins it had turned off) and refreshes the app menu so the new template appears at once.
 - Seats no longer receive the CLI's per-call "list what you need next" nudge or its secondary reminder: Clodex's shipped env defaults turn both off, since the seat prompts already say when to write and what to request.

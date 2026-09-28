@@ -448,28 +448,60 @@ function initStores(userDataPath, {
 
   let launchBakTaken = false;
 
+  const unreadableLogged = new Set();
+  function readStoreJson(file) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf-8');
+    } catch (e) {
+      if (e && e.code === 'ENOENT') return { state: 'absent' };
+      if (!unreadableLogged.has(file)) {
+        unreadableLogged.add(file);
+        console.error(`${path.basename(file)} could not be read (${(e && e.code) || e}); saves to it are refused`);
+      }
+      return { state: 'unreadable' };
+    }
+    unreadableLogged.delete(file);
+    try {
+      return { state: 'ok', value: JSON.parse(text) };
+    } catch {
+      const dest = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+      try {
+        fs.renameSync(file, dest);
+      } catch (e) {
+        console.error(`${path.basename(file)} could not be parsed nor moved aside (${(e && e.code) || e}); saves to it are refused`);
+        return { state: 'unreadable' };
+      }
+      console.warn(`${path.basename(file)} could not be parsed; moved aside to ${dest}`);
+      return { state: 'quarantined' };
+    }
+  }
+  function refuseUnreadable(file) {
+    throw new Error(`${path.basename(file)} could not be read; refusing to save over it`);
+  }
+
   const persistence = {
     _load() {
-      let all;
-      try {
-        all = JSON.parse(fs.readFileSync(PERSIST_FILE, 'utf-8'));
-      } catch {
-        try {
-          all = JSON.parse(fs.readFileSync(PERSIST_FILE + '.bak', 'utf-8'));
-          console.error('sessions.json unreadable; recovered from .bak');
-        } catch {
-          return [];
-        }
+      const primary = readStoreJson(PERSIST_FILE);
+      this._unreadable = primary.state === 'unreadable';
+      let all = primary.value;
+      if (primary.state !== 'ok') {
+        const bak = readStoreJson(PERSIST_FILE + '.bak');
+        if (bak.state === 'unreadable') this._unreadable = true;
+        if (bak.state !== 'ok') return [];
+        all = bak.value;
+        console.error('sessions.json unreadable; recovered from .bak');
       }
       if (!Array.isArray(all)) return [];
       let changed = false;
       for (const e of all) {
         if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
       }
-      if (changed) this._save(all);
+      if (changed && !this._unreadable) this._save(all);
       return all;
     },
     _save(entries, touched = null) {
+      if (this._unreadable) refuseUnreadable(PERSIST_FILE);
       try {
         if (!launchBakTaken) {
           launchBakTaken = true;
@@ -891,12 +923,12 @@ function initStores(userDataPath, {
 
   const workspaces = {
     _load() {
-      try {
-        const all = JSON.parse(fs.readFileSync(WORKSPACES_FILE, 'utf-8'));
-        return Array.isArray(all) ? all : [];
-      } catch { return []; }
+      const r = readStoreJson(WORKSPACES_FILE);
+      this._unreadable = r.state === 'unreadable';
+      return r.state === 'ok' && Array.isArray(r.value) ? r.value : [];
     },
     _save(entries) {
+      if (this._unreadable) refuseUnreadable(WORKSPACES_FILE);
       try {
         atomicWriteFileSync(WORKSPACES_FILE, JSON.stringify(entries, null, 2));
       } catch (e) { console.error('workspaces save failed:', e); }
@@ -905,7 +937,7 @@ function initStores(userDataPath, {
       const all = this._load();
       if (all.length === 0) {
         const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
-        this._save([def]);
+        if (!this._unreadable) this._save([def]);
         return [def];
       }
       return all;
@@ -1465,10 +1497,22 @@ function initStores(userDataPath, {
     } catch {}
   }
 
+  function uiSettingsQuarantined() {
+    const prefix = `${path.basename(UI_SETTINGS_FILE)}.corrupt-`;
+    try { return fs.readdirSync(userDataPath).some((n) => n.startsWith(prefix)); } catch { return false; }
+  }
+
   const uiSettings = {
     _load() {
+      const r = readStoreJson(UI_SETTINGS_FILE);
+      this._unreadable = r.state === 'unreadable';
+      if (r.state !== 'ok') {
+        return (r.state === 'absent' && !uiSettingsQuarantined())
+          ? defaultUiSettings()
+          : { ...defaultUiSettings(), terminalReports: sanitizeTerminalReports({}) };
+      }
       try {
-        const raw = JSON.parse(fs.readFileSync(UI_SETTINGS_FILE, 'utf-8'));
+        const raw = r.value;
         warnUiSettingsMode();
         // Bound BEFORE the object literal so the migration below cannot reach
         // it by accident: `peerShellEnabled` must read `raw.peers`, and having
@@ -1559,6 +1603,7 @@ function initStores(userDataPath, {
     },
     set(partial) {
       const cur = this._load();
+      if (this._unreadable) refuseUnreadable(UI_SETTINGS_FILE);
       const next = {
         statusline: {
           claude: partial?.statusline?.claude ?? cur.statusline.claude,
@@ -1936,38 +1981,38 @@ function initStores(userDataPath, {
 
   // Holds secret VALUES at rest: every write chmods 0600. Reads NEVER mask (the
   // pure merge needs the values) — masking is an IPC-layer concern.
-  // Prototype-pollution guard: the workspace path does
-  // `data.workspaces[scope] = data.workspaces[scope] || {}`, so a scope of
-  // '__proto__' / 'constructor' / 'prototype' would reach Object.prototype.
-  // Workspace ids are UUIDs; reject these at every door.
   const UNSAFE_SCOPE = new Set(['__proto__', 'constructor', 'prototype']);
   const safeScope = (scope) => scope === 'global' || !UNSAFE_SCOPE.has(String(scope));
 
   const envScopes = {
     _load() {
-      try {
-        const obj = JSON.parse(fs.readFileSync(ENV_SCOPES_FILE, 'utf-8'));
-        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return { global: {}, workspaces: {}, seeded: [] };
-        return {
-          global: (obj.global && typeof obj.global === 'object' && !Array.isArray(obj.global)) ? obj.global : {},
-          workspaces: (obj.workspaces && typeof obj.workspaces === 'object' && !Array.isArray(obj.workspaces)) ? obj.workspaces : {},
-          seeded: Array.isArray(obj.seeded) ? obj.seeded.filter((k) => typeof k === 'string') : [],
-        };
-      } catch { return { global: {}, workspaces: {}, seeded: [] }; }
+      const r = readStoreJson(ENV_SCOPES_FILE);
+      this._unreadable = r.state === 'unreadable';
+      const obj = r.value;
+      if (r.state !== 'ok' || !obj || typeof obj !== 'object' || Array.isArray(obj)) return { global: {}, workspaces: {}, seeded: [] };
+      return {
+        global: (obj.global && typeof obj.global === 'object' && !Array.isArray(obj.global)) ? obj.global : {},
+        workspaces: (obj.workspaces && typeof obj.workspaces === 'object' && !Array.isArray(obj.workspaces)) ? obj.workspaces : {},
+        seeded: Array.isArray(obj.seeded) ? obj.seeded.filter((k) => typeof k === 'string') : [],
+      };
     },
     _save(data) {
+      if (this._unreadable) refuseUnreadable(ENV_SCOPES_FILE);
       try {
         atomicWriteFileSync(ENV_SCOPES_FILE, JSON.stringify(data, null, 2));
         // Reassert 0600 on the final file — a secret store must never be group/
         // world-readable, and the atomic rename can land on an older lax-mode file.
         try { fs.chmodSync(ENV_SCOPES_FILE, 0o600); } catch { /* best-effort */ }
-      } catch (e) { console.error('env-scopes save failed:', e); }
+      } catch (e) {
+        console.error('env-scopes save failed:', e);
+        throw e;
+      }
     },
     getScope(scope) {
       if (!safeScope(scope)) return {};
       const data = this._load();
       if (scope === 'global') return data.global || {};
-      return (data.workspaces && data.workspaces[scope]) || {};
+      return Object.hasOwn(data.workspaces, scope) ? data.workspaces[scope] : {};
     },
     all() { return this._load(); },
     set(scope, key, value, secret) {
@@ -1976,8 +2021,8 @@ function initStores(userDataPath, {
       if (err) throw new Error(err);
       const data = this._load();
       const target = scope === 'global'
-        ? (data.global = data.global || {})
-        : ((data.workspaces = data.workspaces || {}), (data.workspaces[scope] = data.workspaces[scope] || {}));
+        ? data.global
+        : (Object.hasOwn(data.workspaces, scope) ? data.workspaces[scope] : (data.workspaces[scope] = {}));
       target[key] = { value: String(value == null ? '' : value), secret: secret === true };
       this._save(data);
     },
@@ -1985,8 +2030,8 @@ function initStores(userDataPath, {
       if (!safeScope(scope)) return;
       const data = this._load();
       if (scope === 'global') {
-        if (data.global) delete data.global[key];
-      } else if (data.workspaces && data.workspaces[scope]) {
+        delete data.global[key];
+      } else if (Object.hasOwn(data.workspaces, scope)) {
         delete data.workspaces[scope][key];
         if (!Object.keys(data.workspaces[scope]).length) delete data.workspaces[scope];
       }
@@ -1995,7 +2040,7 @@ function initStores(userDataPath, {
     removeWorkspace(workspaceId) {
       if (!safeScope(workspaceId)) return;
       const data = this._load();
-      if (data.workspaces && data.workspaces[workspaceId]) {
+      if (Object.hasOwn(data.workspaces, workspaceId)) {
         delete data.workspaces[workspaceId];
         this._save(data);
       }
@@ -2040,7 +2085,11 @@ function initStores(userDataPath, {
   migratePromptsJson(); // one-shot: prompts.json -> library/prompts/append/*.md
   migrateTemplatesJson(); // one-shot: templates.json -> library/templates/*.json
   seedLibraryDefaults();
-  seedEnvDefaults();
+  try {
+    seedEnvDefaults();
+  } catch (e) {
+    if (log) log.warn?.('stores', `env defaults not seeded: ${(e && e.message) || e}`);
+  }
 
   return {
     persistence, templates, workspaces, promptLibrary,
