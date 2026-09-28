@@ -294,12 +294,17 @@ test('refuseEnvWriteUnderTest: initStores refuses to seed env defaults into the 
   // Under a FAKE home, so a regression that drops the guard writes the fake tree
   // and fails here rather than writing the operator's own env-scopes.json.
   const prevHome = process.env.HOME;
+  const prevXdg = process.env.XDG_CONFIG_HOME;
+  const prevAppData = process.env.APPDATA;
   const fakeHome = mkTmpRoot('envdef-home-');
-  const userData = realUserData(fakeHome);
   const src = mkTmpRoot('envdef-src-');
   process.env.HOME = fakeHome;
+  process.env.XDG_CONFIG_HOME = path.join(fakeHome, '.config');
+  process.env.APPDATA = path.join(fakeHome, 'AppData', 'Roaming');
+  const userData = realUserData(fakeHome);
   const warnings = [];
   try {
+    assert.ok(userData.startsWith(fakeHome + path.sep), 'ENTER: the real-shaped userData must sit under the fake home');
     assert.ok(process.env.NODE_TEST_CONTEXT,
       'this test is meaningless unless node --test marks the process');
     assert.strictEqual(os.homedir(), fakeHome,
@@ -319,8 +324,9 @@ test('refuseEnvWriteUnderTest: initStores refuses to seed env defaults into the 
       'the guard must leave env-scopes.json uncreated');
   } finally {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevXdg;
+    if (prevAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevAppData;
     fs.rmSync(fakeHome, { recursive: true, force: true });
-    fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(src, { recursive: true, force: true });
   }
 });
@@ -333,11 +339,16 @@ test('envDefaults.restore() carries the same NODE_TEST_CONTEXT guard as construc
   // construction write it) isolates restore()'s own guard: construction's
   // seedEnvDefaults() is refused too, so the file below is untouched by it.
   const prevHome = process.env.HOME;
+  const prevXdg = process.env.XDG_CONFIG_HOME;
+  const prevAppData = process.env.APPDATA;
   const fakeHome = mkTmpRoot('envdef-home2-');
-  const userData = realUserData(fakeHome);
   const src = mkTmpRoot('envdef-src2-');
   process.env.HOME = fakeHome;
+  process.env.XDG_CONFIG_HOME = path.join(fakeHome, '.config');
+  process.env.APPDATA = path.join(fakeHome, 'AppData', 'Roaming');
+  const userData = realUserData(fakeHome);
   try {
+    assert.ok(userData.startsWith(fakeHome + path.sep), 'ENTER: the real-shaped userData must sit under the fake home');
     assert.ok(process.env.NODE_TEST_CONTEXT,
       'this test is meaningless unless node --test marks the process');
     const scopesFile = path.join(userData, 'env-scopes.json');
@@ -358,8 +369,9 @@ test('envDefaults.restore() carries the same NODE_TEST_CONTEXT guard as construc
       '`seeded` and the rest of the file are untouched by a refused restore');
   } finally {
     if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = prevXdg;
+    if (prevAppData === undefined) delete process.env.APPDATA; else process.env.APPDATA = prevAppData;
     fs.rmSync(fakeHome, { recursive: true, force: true });
-    fs.rmSync(userData, { recursive: true, force: true });
     fs.rmSync(src, { recursive: true, force: true });
   }
 });

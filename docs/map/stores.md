@@ -301,7 +301,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
+| `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | list, refuseUnreadable, fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
 | `read` | setupMarker: first-run setup is done only when setup.json parses with a string completedAt | setup.json under registryDir | none | first-run-setup.test.js |
 | `write` | setupMarker: stamps completion time, version and a SETUP_CHOICES choice (default skipped); a write error reaches the caller | setup.json under registryDir | fs-util.atomicWriteFileSync | first-run-setup.test.js |
 | `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
