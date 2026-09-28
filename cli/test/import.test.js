@@ -90,7 +90,7 @@ test('platformDataDirs: covers both names per platform', () => {
 // ── leaf: candidate collection ───────────────────────────────────────────────
 test('collect: local engine → url+token; wire-off adds a warning reason', () => {
   const dir = fixture({ ui: { remoteEnabled: false, remotePort: 7911 }, remoteToken: 'sek' });
-  const cands = imp.collectCandidates(dir);
+  const cands = imp.collectCandidates(dir, { env: {} });
   const local = cands.find((c) => c.name === 'local');
   assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7911', token: 'sek' });
   assert.strictEqual(local.tokenState, 'set');
@@ -99,9 +99,30 @@ test('collect: local engine → url+token; wire-off adds a warning reason', () =
 
 test('collect: local defaults port 7900 when absent, no token → tokenState none', () => {
   const dir = fixture({ ui: {} });
-  const local = imp.collectCandidates(dir).find((c) => c.name === 'local');
+  const local = imp.collectCandidates(dir, { env: {} }).find((c) => c.name === 'local');
   assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7900' });
   assert.strictEqual(local.tokenState, 'none');
+});
+
+test('collect: inside a box, env CLODEX_REMOTE_TOKEN with no remote.env seeds local with that token', () => {
+  const dir = fixture({ ui: {} });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: 'box-tok' } }).find((c) => c.name === 'local');
+  assert.deepStrictEqual(local.entry, { url: 'http://127.0.0.1:7900', token: 'box-tok' });
+  assert.strictEqual(local.tokenState, 'set');
+});
+
+test('collect: env CLODEX_REMOTE_TOKEN wins over the remote.env token', () => {
+  const dir = fixture({ ui: {}, remoteToken: 'file-tok' });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: 'env-tok' } }).find((c) => c.name === 'local');
+  assert.strictEqual(local.entry.token, 'env-tok');
+  assert.strictEqual(local.tokenState, 'set');
+});
+
+test('collect: a whitespace-only env CLODEX_REMOTE_TOKEN falls back to the remote.env token', () => {
+  const dir = fixture({ ui: {}, remoteToken: 'file-tok' });
+  const local = imp.collectCandidates(dir, { env: { CLODEX_REMOTE_TOKEN: '  \t ' } }).find((c) => c.name === 'local');
+  assert.strictEqual(local.entry.token, 'file-tok');
+  assert.strictEqual(local.tokenState, 'set');
 });
 
 test('collect: peers → ssh/url mapping; disabled skipped; tokenless imports', () => {

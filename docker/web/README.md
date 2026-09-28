@@ -195,7 +195,7 @@ engine*. Both can be used at once.)
 ## Operating notes
 
 - **Logs**: `docker compose -f docker/web/compose.yaml logs -f`.
-- **clodexctl**: the image ships `clodexctl` on PATH; inside the box it talks to the box's own engine with no setup (`clodexctl get sessions`).
+- **clodexctl**: the image ships `clodexctl` on PATH; inside the box the box's own engine is the default with no setup (`clodexctl get sessions`), and `clodexctl create node --import` run there seeds the `local` node with the box's own wire token.
 - **Health**: the container reports healthy once `/healthz` answers 200
   (unauthenticated liveness only).
 - **Restart contract**: the service restarts automatically on a clean exit and

@@ -102,9 +102,10 @@ function safeTransport(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json')) || {}) {
+function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json')) || {}, env = process.env) {
   const remotePort = Number.isInteger(ui.remotePort) ? ui.remotePort : DEFAULT_REMOTE_PORT;
-  const token = parseEnvFile(path.join(dataDir, 'remote.env'))[SANDBOX_TOKEN_KEY] || null;
+  const envToken = env[SANDBOX_TOKEN_KEY] && String(env[SANDBOX_TOKEN_KEY]).trim();
+  const token = envToken || parseEnvFile(path.join(dataDir, 'remote.env'))[SANDBOX_TOKEN_KEY] || null;
   return { url: `http://127.0.0.1:${remotePort}`, token };
 }
 
@@ -113,13 +114,13 @@ function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json
 // `entry` is present only for importable ones (url|ssh + optional token). This
 // does NOT consult the existing contexts store — collision handling is applied
 // later in applyImport so --dry-run and --json share one shape.
-function collectCandidates(dataDir) {
+function collectCandidates(dataDir, { env = process.env } = {}) {
   const out = [];
   const ui = readJson(path.join(dataDir, 'ui-settings.json')) || {};
 
   // 1) The local engine itself → `local`.
   {
-    const { url, token } = localEngine(dataDir, ui);
+    const { url, token } = localEngine(dataDir, ui, env);
     const reasons = [];
     if (ui.remoteEnabled === false) reasons.push('wire is OFF — flip remote access in Preferences');
     out.push({
