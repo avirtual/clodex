@@ -2389,7 +2389,10 @@ test('a run that executed ZERO tests escalates — it is not a green suite', asy
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'zerotests' });
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.tstore.save(f.team.root, [{
+    ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    verifyPhase: { phase: 'reviewer', since: 1 },
+  }]);
 
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
@@ -2400,12 +2403,14 @@ test('a run that executed ZERO tests escalates — it is not a green suite', asy
   assert.match(esc[0].body, /ZERO tests/, 'and it says the run executed nothing, not that tests failed');
   assert.deepStrictEqual(f.gated.filter((g) => /rejected/.test(g.body)), [],
     'the hand is not sent rework for a run that discovered no tests');
+  assert.ok(!('verifyPhase' in f.one()), 'fail() clears a phase stamp the escalated ticket carried');
 
   const zero = await f.m._runTicketSuite(f.team, f.one());
   assert.match(zero.error || '', /ZERO tests/, 'ENTER: the direct run is the zero-tests arm');
+  const before = keptFiles(f, f.home).length;
   const kept = await f.m._writeTicketSuiteFailure(f.team, f.one(), zero);
   assert.strictEqual(kept.ok, true, `the zero-tests run carries its output to the writer (${kept.error})`);
-  assert.strictEqual(keptFiles(f, f.home).length, 1, 'and the failure file is on disk');
+  assert.strictEqual(keptFiles(f, f.home).length, before + 1, 'and the direct write put one more failure file on disk');
 });
 
 test('the LAST TOTALS line decides, not the first a test file happened to print', async () => {
@@ -3129,6 +3134,12 @@ test('rb-tt-bugs R33: a loop reject of a lead-held ticket names the lead, not "n
   assert.match(r.error, /^lead is holding t1 itself — the must-fixes are yours to act on$/);
   assert.doesNotMatch(r.error, /no live seat/);
   assert.strictEqual(f.one().state, 'done', 'the ticket stays done for the lead to act on');
+
+  const owed = f.m._verdictBriefLines('t1', { verdict: 'REWORK', mustFix: '' }, r)
+    .find((l) => /The rework was NOT dispatched/.test(l));
+  assert.ok(owed, 'ENTER: the summary renders the not-dispatched line for the lead-held error');
+  assert.ok(!owed.includes('[agent:task reject'), `a lead-held summary suggests no reject that would bounce: ${owed}`);
+  assert.match(owed, /the must-fixes are yours to act on\.$/);
 });
 
 test('t362: a follow-up that does NOT reach the seat leaves the stall stamps alone', () => {
@@ -6130,4 +6141,23 @@ test('verify: a resumed verify drops the runner pid a previous host lifetime lef
 
   assert.strictEqual(f.one().runnerPid, undefined, 'the resumed loop starts without a pid it cannot vouch for');
   assert.strictEqual(f.one().runnerOwner, undefined, 'or its owner');
+});
+
+test('verify: a host restart clears the reviewer phase of a review-step ticket with no live reviewer, without re-running it', () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo });
+  const ran = [];
+  f.m._runTicketLoop = (team, id) => { ran.push(id); };
+  f.tstore.save(f.team.root, [
+    { ...f.one(), state: 'done', loopStep: 'review', report: 'r', reportedBy: 'team-hand',
+      verifyPhase: { phase: 'reviewer', since: 1 } },
+    { ...f.one(), id: 't2', state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' },
+  ]);
+  assert.strictEqual(f.m._liveReviewerSeat(f.team, f.one()), null, 'ENTER: no reviewer seat survived the restart');
+
+  f.m._resumeOrphanedVerify(f.team);
+
+  assert.deepStrictEqual(ran, ['t2'], 'ENTER: the walk resumed the verify sibling, and did not re-run the review ticket');
+  assert.ok(!('verifyPhase' in f.one()), 'the orphaned "spawning reviewer" stamp is cleared');
+  assert.strictEqual(f.one().loopStep, 'review', 'and the ticket stays on its review step for the stall sweep');
 });
