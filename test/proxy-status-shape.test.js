@@ -32,7 +32,7 @@ test('status(): sessions AND the top-level quota block come back', async () => {
     json(res, 200, { proxy: { version: 'v0.6.53' }, quota, sessions });
   });
   try {
-    const out = await ProxyClient.status(base);
+    const out = await ProxyClient.status(base, { env: {} });
     assert.deepStrictEqual(out, { sessions, quota, authRefresh: null });
   } finally { srv.close(); }
 });
@@ -43,7 +43,7 @@ test('status(): a proxy with no quota block yields sessions plus a null quota', 
   const sessions = [{ agent: 'clodex-a-1' }];
   const { srv, base } = await serve((_req, res) => json(res, 200, { sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions, quota: null, authRefresh: null });
   } finally { srv.close(); }
 });
 
@@ -53,12 +53,12 @@ test('status(): a non-200, or a body with no sessions array, degrades to empty',
     json(res, 200, {});
   });
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions: [], quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions: [], quota: null, authRefresh: null });
   } finally { srv.close(); }
 
   const { srv: s2, base: b2 } = await serve((_req, res) => json(res, 200, { proxy: {} }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(b2), { sessions: [], quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(b2, { env: {} }), { sessions: [], quota: null, authRefresh: null });
   } finally { s2.close(); }
 });
 
@@ -75,7 +75,7 @@ test('status(): a stalled auth_refresh block comes back beside the sessions', as
   };
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.59', auth_refresh: authRefresh }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), {
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), {
       sessions,
       quota: null,
       authRefresh: { stalled: true, lapsed: true, lastOutcome: 'refresh_failed', readError: null, stalledStores: [] },
@@ -91,7 +91,7 @@ test('status(): a healthy auth_refresh block reads as not stalled', async () => 
   };
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { auth_refresh: authRefresh }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), {
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), {
       sessions,
       quota: null,
       authRefresh: { stalled: false, lapsed: false, lastOutcome: 'refreshed', readError: null, stalledStores: [] },
@@ -107,7 +107,7 @@ test('status(): a proxy with no auth_refresh block yields a null readout', async
   const sessions = [{ agent: 'clodex-a-1' }];
   const { srv, base } = await serve((_req, res) => json(res, 200, { proxy: { version: 'v0.6.53' }, sessions }));
   try {
-    assert.deepStrictEqual(await ProxyClient.status(base), { sessions, quota: null, authRefresh: null });
+    assert.deepStrictEqual(await ProxyClient.status(base, { env: {} }), { sessions, quota: null, authRefresh: null });
   } finally { srv.close(); }
 });
 

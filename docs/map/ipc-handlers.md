@@ -425,7 +425,7 @@
 |---|---|---|---|---|
 | `withBox` | runs a callback against one sandbox box, or a no-such-sandbox refusal | none | getSandbox | unpinned |
 | `handle:sandbox:detect` | whether docker is usable, host-wide and not box-scoped | none | sandbox manager detect | engine-sandbox-seam.test.js |
-| `handle:sandbox:self` | whether this engine runs inside a box, and its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner | none | runningInSandboxBox | unpinned |
+| `handle:sandbox:self` | whether this engine runs inside a box, and its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner | none | runningInSandboxBox | engine-sandbox-seam.test.js |
 | `handle:sandbox:status` | one box's status | box container (read) | withBox | unpinned |
 | `handle:sandbox:openWeb` | opens a box's web UI with its token in the external browser | none | withBox, openExternal | sandbox-open-web.test.js |
 | `handle:sandbox:getConfig` | one box's config | box config (read) | withBox | unpinned |

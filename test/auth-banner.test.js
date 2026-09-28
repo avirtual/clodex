@@ -141,6 +141,8 @@ test('renderer.js drives the banner from the same sweep that feeds the quota chi
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.match(src, /const \{ refreshDiagBanner, refreshAuthBanner \} = initBanners\(/,
     'the setter must be destructured off initBanners');
+  assert.match(src, /getBoxLabel: \(\) => sandboxSelfLabel/, 'the banner reads the box label the renderer holds');
+  assert.match(src, /window\.api\.sandboxSelf\(\)/, 'and the renderer fetches it from main');
   const fn = src.slice(src.indexOf('function refreshQuotaChip()'));
   const body = fn.slice(0, fn.indexOf('\n}\n'));
   assert.ok(body.length > 0 && body.includes('drawerHost.setQuota('),

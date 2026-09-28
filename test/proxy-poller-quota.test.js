@@ -84,6 +84,7 @@ async function tickOnce({ quota, capabilities = { stats: true, quota: true }, li
     getPersistence: () => ({ get: () => null }),
     getRemoteServer: () => null,
     getContextCommands: () => ({}),
+    env: {},
   });
   const poller = new ProxyPoller(manager);
   try {

@@ -152,5 +152,46 @@ test('sandbox:detect with a manager runs `docker info`; with none it short-circu
     + 'above reads as "detect always answers present" rather than as a consequence of the manager');
 });
 
+function captureSandboxSelf(base) {
+  const handlers = new Map();
+  const capture = { ...base, handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn) };
+  const stub = () => () => {};
+  const deps = new Proxy(capture, {
+    get(target, prop) { return prop in target ? target[prop] : stub(); },
+    has(target, prop) { return prop in target; },
+  });
+  require('../ipc-handlers').registerIpcHandlers(deps);
+  const self = handlers.get('sandbox:self');
+  assert.strictEqual(typeof self, 'function', 'ENTER: sandbox:self registered');
+  return self;
+}
+
+function withBoxEnv(value, fn) {
+  const had = Object.prototype.hasOwnProperty.call(process.env, SANDBOX_BOX_ENV);
+  const prev = process.env[SANDBOX_BOX_ENV];
+  const hadLabel = Object.prototype.hasOwnProperty.call(process.env, 'CLODEX_BOX_LABEL');
+  const prevLabel = process.env.CLODEX_BOX_LABEL;
+  delete process.env.CLODEX_BOX_LABEL;
+  if (value === undefined) delete process.env[SANDBOX_BOX_ENV]; else process.env[SANDBOX_BOX_ENV] = value;
+  try { return fn(); } finally {
+    if (had) process.env[SANDBOX_BOX_ENV] = prev; else delete process.env[SANDBOX_BOX_ENV];
+    if (hadLabel) process.env.CLODEX_BOX_LABEL = prevLabel;
+  }
+}
+
+test('sandbox:self answers the box label inside a box and nothing outside one', () => {
+  const self = captureSandboxSelf({ SELF_LABEL: 'team-clodex-ios' });
+  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: 'team-clodex-ios' });
+  assert.deepStrictEqual(withBoxEnv(undefined, () => self()), { inBox: false, label: null });
+});
+
+test('the engine hands SELF_LABEL to the hosts, so sandbox:self can name the box', () => {
+  const eng = mkEngine({ enableSandbox: false });
+  assert.strictEqual(typeof eng.SELF_LABEL, 'string');
+  assert.ok(eng.SELF_LABEL.length > 0, 'a non-empty label');
+  const self = captureSandboxSelf({ ...eng });
+  assert.deepStrictEqual(withBoxEnv('1', () => self()), { inBox: true, label: eng.SELF_LABEL });
+});
+
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
