@@ -29,7 +29,7 @@ const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -8125,7 +8125,7 @@ sbRebuildBtn.addEventListener('click', async () => {
       showToast(`Sandbox rebuild failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
     } else {
       sbMountsDirty = false;   // rebuild recreated the container with current mounts
-      showToast('Sandbox rebuilt on the current code.', { kind: 'peer-ui' });
+      showToast(sandboxRebuiltLine('Sandbox', r.image), { kind: 'peer-ui' });
     }
   } catch (e) {
     showToast(`Sandbox rebuild failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });

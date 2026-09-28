@@ -95,6 +95,12 @@ function resolveImage({ isPackaged, appVersion, override, repoRoot, ref, srcDir,
   return { kind: 'build', context: repoRoot, dockerfile: 'docker/web/Dockerfile' };
 }
 
+function describeImage(image) {
+  if (image && image.kind === 'image') return { kind: 'image', image: image.image };
+  if (image && image.ref) return { kind: 'build', ref: image.ref, sha: image.sha || null };
+  return { kind: 'build', ref: null, sha: null };
+}
+
 function nextFreePort(desired, isBusy, taken) {
   const claimed = taken || new Set();
   let p = desired;
@@ -773,7 +779,7 @@ function createSandbox(deps = {}) {
       }
       registerPeer(gen.ports.wire);
       log.info('sandbox', `${id} ${label} — wire peer http://127.0.0.1:${gen.ports.wire}`);
-      return { ok: true, ports: gen.ports };
+      return { ok: true, ports: gen.ports, image: describeImage(gen.image) };
     });
   }
 
@@ -1008,7 +1014,7 @@ module.exports = {
   createSandbox, createSandboxManager,
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError, probeDocker,
-  resolveImage, resolvePorts, nextFreePort, generateCompose,
+  resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
   runningInSandboxBox,

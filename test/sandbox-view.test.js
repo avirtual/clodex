@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts } = require('../renderer/lib/sandbox-view');
+const { sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -355,4 +355,16 @@ test('loadBoxDetail: switching boxes drops both the effective and the asked port
   assert.ok(start > 0, 'ENTER: loadBoxDetail was located');
   const body = src.slice(start, src.indexOf('\n}\n', start));
   assert.match(body, /\n {2}sbEffectivePorts = null;\n {2}sbAskedPorts = null;\n {2}const cfg = await window\.api\.sandboxGetConfig\(/);
+});
+
+test('sandboxRebuiltLine: names the ref+sha, dev checkout, pinned image, or falls back for an older engine', () => {
+  const rows = [
+    [{ kind: 'build', ref: 'master', sha: '3b920409abcdef0123456789' }, 'Rebuilt box on master @ 3b920409'],
+    [{ kind: 'build', ref: 'master', sha: null }, 'Rebuilt box on master'],
+    [{ kind: 'build', ref: '8653e748', sha: '8653e748aaaabbbbccccdddd' }, 'Rebuilt box on 8653e748 @ 8653e748 — pinned; set ref to a branch to track it'],
+    [{ kind: 'build', ref: null, sha: null }, 'Rebuilt box on the dev checkout'],
+    [{ kind: 'image', image: 'ghcr.io/x/clodex:9.9.9' }, 'Rebuilt box from image ghcr.io/x/clodex:9.9.9'],
+    [undefined, 'Rebuilt box on the current code.'],
+  ];
+  for (const [image, want] of rows) assert.strictEqual(sandboxRebuiltLine('box', image), want);
 });
