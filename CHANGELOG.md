@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Docs: a symbol-level module map format (docs/map/, README there) with a suite gate — a mapped symbol that is renamed, a function of 40+ lines nobody mapped, a pin that names a test which does not mention the symbol, or regions listed out of file order all fail test/module-map-fresh.test.js. scripts/symbol-index.js (acorn) is the shared extractor and the map author's tool. No maps ship yet; the six giants follow one ticket each.
+
 - Team popover: a role row's Save button now lights up only when a field on that row has changed and goes quiet again once saved (it used to look inactive at all times, so an account change seemed not to register); closing the popover with unsaved role edits asks first.
 
 ## 5.89.0 — 2026-09-28 — Research-burst fixes: stores that never save over an unreadable file, a ticket loop that stamps and kills what it abandons, seats that reap and restore

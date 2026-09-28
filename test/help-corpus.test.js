@@ -101,7 +101,7 @@ function collectLinks() {
 
 function markdownUnder(dir) {
   const listed = execFileSync('git', ['ls-files', '-z', '--', `${dir}/*.md`, `${dir}/**/*.md`], { cwd: ROOT, encoding: 'utf8' });
-  return listed.split('\0').filter((rel) => rel && !rel.startsWith('docs/notes/') && !rel.startsWith('docs/explorations/'));
+  return listed.split('\0').filter((rel) => rel && !rel.startsWith('docs/notes/') && !rel.startsWith('docs/explorations/') && !rel.startsWith('docs/map/'));
 }
 
 function writeFixture(pages, sections) {
@@ -154,7 +154,7 @@ test('at-a-glance is the first Using Clodex page and resolves and indexes', () =
   assert.ok(hits.some((h) => h.name === 'at-a-glance'), 'the search index must reach at-a-glance');
 });
 
-test('every docs markdown file is listed or excluded, and docs/notes and docs/explorations are never listed', () => {
+test('every docs markdown file is listed or excluded, and docs/notes, docs/explorations and docs/map are never listed', () => {
   const found = markdownUnder('docs').sort();
   assert.ok(found.length >= 10, `docs scan returned ${found.length} markdown files`);
   assert.ok(found.includes('docs/how-to.md'), 'ENTER: docs/how-to.md did not survive the docs scan');
@@ -175,6 +175,9 @@ test('every docs markdown file is listed or excluded, and docs/notes and docs/ex
   for (const page of PAGES) {
     assert.ok(!page.path.startsWith('docs/notes/'), `${page.path} is an engineering note, not a reader page`);
   }
+  assert.ok(fs.existsSync(path.join(ROOT, 'docs/map/README.md')), 'ENTER: docs/map/README.md is not on disk');
+  assert.ok(!found.includes('docs/map/README.md'), 'docs/map/ is agent reference and must be skipped by the docs scan');
+  assert.ok(!BY_PATH.has('docs/map/README.md'), 'docs/map/README.md is agent reference, not a help page');
   assert.ok(!BY_PATH.has('README.md'), 'README.md is the product page, not a help page');
   assert.ok(!BY_PATH.has('plugins/README.md'), 'plugins/README.md is not a help page');
 });
