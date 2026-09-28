@@ -526,7 +526,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   function containsPath(root, cwd) {
     const rel = path.relative(path.resolve(root), path.resolve(cwd));
-    return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+    return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
   }
 
   // A security boundary: `cwd` flows to create() as a PTY working directory and

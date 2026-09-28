@@ -39,7 +39,6 @@
 
 ### Hazards
 - Dropping the refused result from `reviewerModelArgs` silently spawns a reviewer on the default model the operator did not configure.
-- `seatCwdInTree` tests the relative path with a two-dot prefix check, so a real subdirectory named with a leading two dots maps to the tree root.
 
 ## Spawn intent and team activity — createTicketMethods … _forgetTeam
 
@@ -124,12 +123,13 @@
 | `_stampMergeError` | re-load, mutate and save of the board's mergeError: a step sets it with a merge-failed event, null clears it | tickets.json (mergeError, escalationUndelivered) | recordEvent | ticket-auto-merge.test.js task-respec.test.js |
 | `_stampMergeWaiting` | re-load, mutate and save of a deferred merge's mergeWaiting reason, kept apart from mergeError | tickets.json (mergeWaiting) | none | task-respec.test.js |
 | `_autoMergeTicket` | gates an ACCEPTed branch, merges it with --no-ff, runs the suite on the merged trunk, then reverts and stamps MERGE FAILED or closes out | tickets.json, merge message file, git commits in the team root, retry timer | _runTicketSuite, _closeOutMergedTicket, _mergeTouchedChangelog, _notifyMergeLanded | ticket-auto-merge.test.js clodex-team.test.js |
-| `_mergeTouchedChangelog` | measures whether the merged range touched the root CHANGELOG.md and whether it exists, known false for anything unproven | none (reads diff text, stats CHANGELOG.md) | gitWorktree.diffText | ticket-auto-merge.test.js |
+| `_mergeTouchedChangelog` | measures whether the merged range touched the root CHANGELOG.md (a header naming it on either side, so a move out of the root reads as touched) and whether it exists, known false for anything unproven | none (reads diff text, stats CHANGELOG.md) | gitWorktree.diffText | ticket-auto-merge.test.js |
 | `_notifyMergeLanded` | one lead DM for a landed merge: sha, tip drift, close-out or step owed, suite, union and CHANGELOG state; stamps merged | tickets.json (merged stamp), lead inbox | _stampMerged, _gatedDeliver, closeOutDetail | merged-notice-owes-accept.test.js ticket-auto-merge.test.js |
 
 ### Invariants
 - `_queueAutoMerge` runs one merge at a time process-wide, with the catch inside each link so one rejected merge cannot break the chain.
 - `_autoMergeTicket` leaves mergeWaiting set only on the defer arm, clearing it for every other exit in its finally.
+- `_autoMergeTicket`'s `fail` re-reads the ticket before any merge ran and logs ABANDONED instead of stamping when it is gone, reopened, rejected or closed out.
 - `_autoMergeTicket` retries only the suite-in-flight arm, scheduling the retry through `_scheduleMergeRetry` and re-entering via `_queueAutoMerge`.
 - `_suiteLockHolder` keeps the liveness probe outside the read's catch, so a probe fault reaches the catch-all rather than reading as no suite running.
 
@@ -199,7 +199,7 @@
 - `_repinTicketToSeat` resolves through `_ticketAssigneeSeat`, the same resolver delivery uses, so the pin can never name a seat other than the one the spec reached.
 
 ### Hazards
-- Dropping the catch on the accept arm of `_handleTask` leaves `_taskAccept` rejections floating and the lead waiting on a confirmation that never comes; its reply also always says nothing was removed.
+- Dropping the catch on the accept arm of `_handleTask` leaves `_taskAccept` rejections floating and the lead waiting on a confirmation that never comes; its reply names the error only, since a throw after the teardown has already removed things.
 - Letting `_repinTicketToSeat` pin to the lead reads downstream as an exact seat pin and bills one ticket for the lead's whole ledger via `_costSeatFor`.
 - A second copy of the role-or-name match outside `_ticketAssigneeSeat` lets pin, delivery and queue disagree invisibly.
 
@@ -386,7 +386,7 @@
 |---|---|---|---|---|
 | `_taskReject` | lead verb that reopens a done ticket for rework, or routes a rework-open ticket to the follow-up path | tickets.json state, reworkRound, rework reasons, strips close, accept, loop, verify and merge stamps | _taskRejectFollowUp, _reworkSeatFor, _retireReviewSeatsFor, _gatedDeliver | ticket-rework-reasons.test.js reviewer-round-end.test.js ticket-auto-merge.test.js |
 | `_taskRespec` | lead verb that replaces an open ticket's spec, keeps the superseded body, re-derives title and taskDir, and re-delivers only if dispatched | tickets.json spec, title, taskDir, respecs, nudgedAt | _deliverTicketSpec, _resolvableAssignTarget, _ticketDeliverySuffix, _reconcileTickets | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
-| `_taskCancel` | lead verb that closes an open ticket as cancelled, tells a started seat, advances it, writes cost and drops bound reminders | tickets.json state, closedAt, closedBy, events | _advanceSeat, _writeTicketCost, _cancelTicketReminders, _gatedDeliver | ticket-reminder-binding.test.js team-cost-wiring.test.js |
+| `_taskCancel` | lead verb that closes an open ticket as cancelled, tells a started seat (with a default line when no reason is given), advances it, writes cost and drops bound reminders | tickets.json state, closedAt, closedBy, events | _advanceSeat, _writeTicketCost, _cancelTicketReminders, _gatedDeliver | ticket-reminder-binding.test.js team-cost-wiring.test.js |
 | `_cancelTicketReminders` | drop remind-scheduler entries bound to a ticket on a terminal close and return a report fragment or empty string | remind scheduler | getRemindScheduler | ticket-rework-reasons.test.js ticket-loop-verify.test.js |
 | `_stampTicketRevival` | write the write-once revival link (seat, session id, branch, worktree, baseSha) onto a ticket before teardown | tickets.json revival, lastActivityAt | getPersistence, ticketsStore.save | accept-standing-seat.test.js review-cost-durable.test.js |
 | `_acceptSeatFacts` | the one source of seat name, record, branch and ephemeralSeat that both accept paths read | none (reads persistence record) | getPersistence | unpinned |
@@ -422,6 +422,7 @@
 
 ### Hazards
 - `_closeOutMergedTicket` counts commits before destroy and the branch delete, and moving the count below them turns every reply into the unknown case.
+- Letting the board save after `_closeOutMergedTicket`'s teardown throw uncaught makes the accept reply claim nothing was removed after the tree and branch are gone.
 - `_closeOutMergedTicket` re-reads the board for the mergeError veto after its awaits, and reading the entry snapshot lets a stamp landed mid-accept be torn down.
 - The dirty-tree arm of `_closeOutMergedTicket` skips the branch delete on purpose, since the second accept it invites reads the branch back through isMerged.
 

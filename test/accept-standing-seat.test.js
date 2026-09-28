@@ -1532,3 +1532,28 @@ test('team-retire still stamps by seat name, with no ticket id available to narr
   assert.strictEqual(f.one('t7').revival.branch, 'landed',
     'along with the branch a hotfix would start from');
 });
+
+test('an accept whose board save fails after the teardown does not claim nothing was removed', async (t) => {
+  const f = mkFixture(t);
+  const lead = f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const realDestroy = f.m.destroy.bind(f.m);
+  f.m.destroy = async (...args) => {
+    const r = await realDestroy(...args);
+    fsReal.writeFileSync(f.tstore.ticketsPath(f.team.root), 'not json');
+    return r;
+  };
+  const replies = [];
+  let landed = null;
+  const replied = new Promise((r) => { landed = r; });
+  f.m._injectText = (_s, text) => { replies.push(text); landed(); };
+
+  f.m._handleTask(lead, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' });
+  await replied;
+
+  assert.ok(replies.length, 'ENTER: a reply landed');
+  assert.strictEqual(exists(wt), false, 'ENTER: the teardown removed the worktree');
+  assert.doesNotMatch(replies.join('\n'), /nothing was removed/);
+  assert.match(replies.join('\n'), /board could NOT be updated/);
+});

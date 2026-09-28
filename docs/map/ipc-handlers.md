@@ -32,10 +32,10 @@
 | `handle:team:join` | spawns a seat into an existing role, minting only an absent role, refusing roles that dispatch per ticket | team.json roles, sessions via manager | loadManifest, addRole, spawnFromParams | team-frontdoor-seam.test.js team-hand-template-portable.test.js team-role-template-copy.test.js |
 | `accountPatchError` | the account-label refusal for a role def or patch that names an unknown account, or null | none (reads accounts) | accounts.resolveAccountLabel | unpinned |
 | `handle:team:setRole` | patches one role's def as the operator and returns the saved team, refusing an unknown account label and a reviewer template whose system prompt is not clodex-team-reviewer* | team.json roles | accountPatchError, reviewerTemplateError, setRole, fmtPatch | team-frontdoor-seam.test.js ipc-handlers-team.test.js team-gather.test.js |
-| `handle:team:removeRole` | removes a role (operator opt-in allows reviewer) unless a live seat or open ticket uses it, returning blockedBy | team.json roles | manager._roleInUse, removeRole | team-frontdoor-seam.test.js |
+| `handle:team:removeRole` | removes a role (operator opt-in allows reviewer) unless a live seat or an open or in-loop ticket (by role or assignee) uses it, returning blockedBy | team.json roles | manager._roleInUse, removeRole | team-frontdoor-seam.test.js |
 | `handle:team:deleteCheck` | what deleting the team would discard, for the confirm dialog | none | teamDeleteCheck | ipc-handlers-team.test.js |
 | `handle:team:delete` | deletes the team through the gated deleter and rebuilds app and tray menus on success | team dir on disk | teamDeleteGated, refreshMenusAfterWrite | ipc-handlers-team.test.js |
-| `handle:team:renameRole` | renames a role unless a seat or open ticket uses it | team.json roles | manager._roleInUse, renameRole | team-frontdoor-seam.test.js |
+| `handle:team:renameRole` | renames a role unless a seat or an open or in-loop ticket uses it | team.json roles | manager._roleInUse, renameRole | team-frontdoor-seam.test.js |
 | `handle:team:gather` | collects the team's library files into its dir, with byte payloads stripped from the reply lists | team dir on disk | gatherTeam, stripBytes | team-gather.test.js team-uses.test.js |
 | `handle:team:setWatchdog` | sets the team's watchdog interval and returns the saved team | team.json | setTeamWatchdog | team-frontdoor-seam.test.js |
 | `handle:team:trunk` | the team's configured trunk, the repo-derived merge target and the effective one | team.json (read) | loadManifest, git-worktree.mergeTargetFor | unpinned |
@@ -54,7 +54,7 @@
 - `handle:team:create` writes the manifest before spawning, and refreshes the menu gated on the write, not on the spawn's result.
 - `handle:team:join` adopts an existing role exactly as the team defines it and refuses a role whose dispatch is spawn or worktree, since the ticket loop mints those seats.
 - `handle:team:addRole` substitutes the stock def only when the role is absent and the caller's def is empty, so the written def is never a blend.
-- `handle:team:removeRole` and `handle:team:renameRole` refuse while `manager._roleInUse` reports a live seat or open ticket.
+- `handle:team:removeRole` and `handle:team:renameRole` refuse while `manager._roleInUse` reports a live seat or an open or in-loop ticket.
 - `handle:team:createBare` forwards the root verbatim so createTeam's absolute-path refusal is the single gate.
 
 ### Hazards

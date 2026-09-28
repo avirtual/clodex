@@ -1325,10 +1325,10 @@ test('formatBlockedBy: names blocking seats + open tickets, empty when nothing b
   assert.strictEqual(formatBlockedBy(null), '');
   assert.strictEqual(formatBlockedBy({ seats: [], tickets: [] }), '');
   assert.strictEqual(formatBlockedBy({ seats: ['shop-runner-1'], tickets: [] }), 'seat(s): shop-runner-1');
-  assert.strictEqual(formatBlockedBy({ seats: [], tickets: ['t3'] }), 'open ticket(s): t3');
+  assert.strictEqual(formatBlockedBy({ seats: [], tickets: ['t3'] }), 'in-flight ticket(s): t3');
   assert.strictEqual(
     formatBlockedBy({ seats: ['shop-runner-1', 'shop-runner-2'], tickets: ['t3'] }),
-    'seat(s): shop-runner-1, shop-runner-2; open ticket(s): t3',
+    'seat(s): shop-runner-1, shop-runner-2; in-flight ticket(s): t3',
   );
 });
 
@@ -1736,4 +1736,10 @@ test('t888 wiring: reserved Open is team-first, dead on an unresolvable stem, an
   // path on exactly the row whose whole point is that it has none.
   assert.ok(!/dataset\.act|data-act/.test(block),
     'the reserved Open must NOT carry data-act: it would join the delegation that reaches role-def writes');
+});
+
+test('roleSummaries: a live seat on a HELD verify reads "held", not "working"', () => {
+  const act = ACT_ROLES({ dispatch: 'worktree', live: [{ seat: 'shop-hand-783', ticket: 't783', step: 'held' }], open: [], last: null });
+  const out = roleSummaries(WT, [], { activity: act, now: NOW });
+  assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (held)');
 });

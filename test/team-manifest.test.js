@@ -2429,3 +2429,10 @@ test('setTeamTrunk writes a valid branch, clears on null, and refuses a traversa
   assert.strictEqual(tm.setTeamTrunk('shop', null).trunk, null);
   assert.ok(!('trunk' in JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8'))));
 });
+
+test('role cwd: a child directory named ..cache is inside the root and is stored', () => {
+  const { tm, root, file } = teamForCwd();
+  fs.mkdirSync(path.join(root, '..cache'));
+  tm.addRole('shop', 'api-hand', { brief: 'b', cwd: '..cache' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, '..cache');
+});

@@ -23331,3 +23331,48 @@ test('escapeSafeTail: a detached seat\'s buffer trimmed at the cap does not begi
   assert.ok(!/^[\uDC00-\uDFFF]/.test(s.pendingOutput));
   assert.strictEqual(s.pendingOutput, 'x'.repeat(MAX - 1));
 });
+
+test('a reasonless cancel of a STARTED ticket still tells its seat to stop', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  assert.ok(f.one('t1').startedAt != null, 'ENTER: t1 is started');
+  assert.ok(f.gated.some((g) => g.target === 'team-hand' && /build it/.test(g.body)), 'ENTER: the spec reached team-hand');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: '' });
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+  assert.strictEqual(f.gated.filter((g) => g.target === 'team-hand' && /^\[ticket t1 cancelled\]/.test(g.body)).length, 1);
+});
+
+test('_roleInUse: a started ticket pinned to a gone seat, and one still in the verify loop, both block the role', () => {
+  const f = mkTeamMut({ getPersistence: () => ({ list: () => [], get: () => null }) });
+  f.tstore.save(f.team.root, [
+    { id: 't1', role: 'runner', assignee: 'team-runner-t1', state: 'open', startedAt: 1 },
+    { id: 't2', role: 'runner', assignee: 'team-runner-t2', state: 'done', loopStep: 'verify' },
+  ]);
+  assert.deepStrictEqual(f.m._roleInUse(f.team, 'runner').tickets, ['t1', 't2']);
+  f.seat('lead');
+  f.m._handleTeam(f.seat('lead'), { type: 'team', sub: 'role-rm', name: 'runner' });
+  assert.deepStrictEqual(f.calls, [], 'blocked — removeRole not called, so the role still exists');
+  assert.ok(f.injected.some((t) => /role "runner" is in use.*t1, t2/.test(t)), 'names both blocking tickets');
+});
+
+test('a role cwd named ..cache is a child of the root, not an escape', async () => {
+  const { root, repo } = mkGitRepo();
+  fsReal.mkdirSync(path.join(repo, '..cache'));
+  try {
+    const f = mkTicketWt(repo, { cwd: '..cache' });
+    assert.deepStrictEqual(f.m._resolveRoleCwd(f.team, { cwd: '..cache' }),
+      { cwd: path.resolve(f.team.root, '..cache'), fallback: null });
+    let createdCwd = 'UNSET';
+    f.m.create = async (...args) => { createdCwd = args[2]; f.seat(args[0], args[2]); return { name: args[0] }; };
+    f.seat('lead');
+    f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+    f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    await until(() => createdCwd !== 'UNSET' || f.gated.length);
+    const wtPath = f.worktreeSet.length ? f.worktreeSet[0].wt.path : null;
+    assert.ok(wtPath, 'ENTER: a worktree must have been minted');
+    assert.strictEqual(createdCwd, path.join(wtPath, '..cache'));
+  } finally { fsReal.rmSync(root, { recursive: true, force: true }); }
+});
