@@ -184,7 +184,15 @@ function isReviewerTemplateRow(row) {
 
 function reviewerTemplateOptionGroups(rows, team, stored) {
   const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
-  return templateOptionGroups(reviewers, team, stored).slice(1);
+  const groups = templateOptionGroups(reviewers, team, stored).slice(1);
+  const installed = templateRowFor(rows, team, stored);
+  if (!installed || isReviewerTemplateRow(installed)) return groups;
+  return groups.map((g) => ({
+    ...g,
+    options: g.options.map((o) => (o.value === stored && o.label === `${stored} (missing)`
+      ? { value: stored, label: `${stored} (not a reviewer template)`, title: `"${stored}" is installed, but its system prompt is not clodex-team-reviewer*` }
+      : o)),
+  }));
 }
 
 function templateRowFor(rows, team, value) {

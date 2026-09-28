@@ -797,7 +797,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
             ? buildTemplateControl(name, reviewerTemplateOptionGroups(templateRows, teamName(), name))
             : null;
           if (picker) holder.append(picker.select, picker.platform, picker.open);
-          if (!picker) {
+          else {
             const val = document.createElement('span');
             val.className = 'ro-val';
             val.textContent = name || '—';
@@ -1236,9 +1236,11 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     if (act === 'save') {
       const v = rowFormValues(rowEl);
       // buildSavePatch OMITS a blank template (setRole throws NAME_RE on '').
+      const shownTemplate = JSON.parse(rowEl._saved || '{}').template;
       const reviewerTemplate = role === 'reviewer' ? String(v.template || '').trim() : '';
+      const repicked = reviewerTemplate && reviewerTemplate !== shownTemplate;
       const patch = rowEl.classList.contains('read-only')
-        ? { account: String(v.account || '').trim(), ...(reviewerTemplate ? { template: reviewerTemplate } : {}) }
+        ? { account: String(v.account || '').trim(), ...(repicked ? { template: reviewerTemplate } : {}) }
         : buildSavePatch(v);
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);

@@ -607,6 +607,25 @@ test('t1377: isReviewerTemplateRow keys on a clodex-team-reviewer* system prompt
   assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: 'clodex-team-hand' }), false);
   assert.strictEqual(isReviewerTemplateRow({ name: 'clodex-team-reviewer' }), false, 'no systemPromptFile, no purpose');
   assert.strictEqual(isReviewerTemplateRow(null), false);
+  const { REVIEWER_PROMPT_PREFIX } = require('../team-tickets');
+  assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: REVIEWER_PROMPT_PREFIX }), true,
+    'the renderer predicate agrees with the main-process prefix');
+  assert.strictEqual(isReviewerTemplateRow({ systemPromptFile: REVIEWER_PROMPT_PREFIX.slice(0, -1) }), false,
+    'and on where the prefix ends');
+});
+
+test('t1377 r1: an installed stored template that is not a reviewer one is labelled so, not "(missing)"', () => {
+  const { reviewerTemplateOptionGroups } = require('../renderer/lib/team-roles');
+  const rows = [
+    { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+    { name: 'reviewer', systemPromptFile: 'box-review', team: 'box' },
+  ];
+  const opts = (stored) => reviewerTemplateOptionGroups(rows, 'box', stored).flatMap((g) => g.options);
+  const kept = opts('reviewer').find((o) => o.value === 'reviewer');
+  assert.strictEqual(kept.label, 'reviewer (not a reviewer template)');
+  assert.match(kept.title, /is installed, but its system prompt is not clodex-team-reviewer/);
+  const gone = opts('ghost').find((o) => o.value === 'ghost');
+  assert.strictEqual(gone.label, 'ghost (missing)', 'a truly absent stem keeps the missing label');
 });
 
 // `reservedRoleTemplate: a reserved role with no stored template…` above hardcodes

@@ -288,3 +288,32 @@ test('t1377: the reviewer row renders a template picker over reviewer templates 
   handlers.change({ target: select });
   assert.strictEqual(save.disabled, false, 'picking another reviewer template lights Save');
 });
+
+function compileSaveArm() {
+  const arm = sliceBetween(POPOVER, "    if (act === 'save') {", "    } else if (act === 'rename') {")
+    .replace(/    \} else if \(act === 'rename'\) \{$/, '    }');
+  return new Function('rowEl', 'role', 'name', 'act', 'window', 'afterMutation', 'rowFormValues', 'buildSavePatch',
+    `return (async () => {\n${arm}\n})();`);
+}
+
+async function saveReviewer({ account, template }, shown) {
+  const { row, field } = fakeRow({ fields: { account: shown.account, template: shown.template }, readOnly: true });
+  snapshotRowForm(row);
+  field.account.value = account;
+  field.template.value = template;
+  const sent = [];
+  const window = { api: { teamSetRole: async (...a) => { sent.push(a); return { ok: true }; } } };
+  await compileSaveArm()(row, 'reviewer', 'box', 'save', window, async () => {}, rowFormValues, buildSavePatch);
+  assert.strictEqual(sent.length, 1, 'ENTER: the save arm called teamSetRole once');
+  return sent[0][2];
+}
+
+test('t1377 r1: a reviewer save sends `template` only when the operator changed the pick', async () => {
+  const shown = { account: '', template: 'clodex-team-reviewer' };
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'clodex-team-reviewer' }, shown), { account: 'work' },
+    'an account-only save is {account} alone — the displayed default must not be written as an explicit template');
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'box-reviewer' }, shown),
+    { account: 'work', template: 'box-reviewer' }, 'a changed pick is sent');
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'reviewer' }, { account: '', template: 'reviewer' }),
+    { account: 'work' }, 'an unchanged non-reviewer stored template never rides an account save into the purpose refusal');
+});

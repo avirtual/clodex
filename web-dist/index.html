@@ -42957,7 +42957,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       }
       function reviewerTemplateOptionGroups(rows, team, stored) {
         const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
-        return templateOptionGroups(reviewers, team, stored).slice(1);
+        const groups = templateOptionGroups(reviewers, team, stored).slice(1);
+        const installed = templateRowFor(rows, team, stored);
+        if (!installed || isReviewerTemplateRow(installed)) return groups;
+        return groups.map((g) => ({
+          ...g,
+          options: g.options.map((o) => o.value === stored && o.label === `${stored} (missing)` ? { value: stored, label: `${stored} (not a reviewer template)`, title: `"${stored}" is installed, but its system prompt is not clodex-team-reviewer*` } : o)
+        }));
       }
       function templateRowFor(rows, team, value) {
         if (!value) return null;
@@ -43922,7 +43928,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 const name = reservedRoleTemplate(row.key, row.template);
                 const picker = row.key === "reviewer" ? buildTemplateControl(name, reviewerTemplateOptionGroups(templateRows, teamName(), name)) : null;
                 if (picker) holder.append(picker.select, picker.platform, picker.open);
-                if (!picker) {
+                else {
                   const val = document.createElement("span");
                   val.className = "ro-val";
                   val.textContent = name || "\u2014";
@@ -44247,8 +44253,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           if (act === "save") {
             const v = rowFormValues(rowEl);
+            const shownTemplate = JSON.parse(rowEl._saved || "{}").template;
             const reviewerTemplate = role === "reviewer" ? String(v.template || "").trim() : "";
-            const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim(), ...reviewerTemplate ? { template: reviewerTemplate } : {} } : buildSavePatch(v);
+            const repicked = reviewerTemplate && reviewerTemplate !== shownTemplate;
+            const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim(), ...repicked ? { template: reviewerTemplate } : {} } : buildSavePatch(v);
             const res = await window.api.teamSetRole(name, role, patch);
             await afterMutation(res, `role "${role}" saved`);
           } else if (act === "rename") {
