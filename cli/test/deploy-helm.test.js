@@ -133,6 +133,7 @@ function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null
     if (cmd === 'helm' && args[0] === 'version') return { stdout: 'v3.14.0+g0000000' };
     if (cmd === 'helm' && args[0] === 'get' && args[1] === 'values') {
       if (getValuesFail) { const e = new Error('helm get values failed'); e.stderr = getValuesFail; throw e; }
+      if (rec.helmArgs && !helmFail) return { stdout: JSON.stringify(mergedValues(rec)) };
       // helm prints the JSON literal `null` when a release has no overrides.
       return { stdout: priorValues == null ? 'null' : JSON.stringify(priorValues) };
     }
@@ -181,6 +182,31 @@ function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null
     }
     throw new Error('unexpected call: ' + j);
   };
+}
+
+function mergedValues(rec) {
+  const out = {};
+  const deepSet = (obj, keyPath, v) => {
+    const keys = keyPath.split('.');
+    let o = obj;
+    for (const k of keys.slice(0, -1)) o = (o[k] && typeof o[k] === 'object') ? o[k] : (o[k] = {});
+    o[keys[keys.length - 1]] = v;
+  };
+  const merge = (dst, src) => {
+    for (const [k, v] of Object.entries(src || {})) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && dst[k] && typeof dst[k] === 'object') merge(dst[k], v);
+      else dst[k] = v;
+    }
+  };
+  for (const p of rec.valuesPaths) { try { merge(out, JSON.parse(rec.valuesBodies[p])); } catch {} }
+  rec.helmArgs.forEach((a, i) => {
+    if (rec.helmArgs[i - 1] !== '--set') return;
+    const eq = a.indexOf('=');
+    const raw = a.slice(eq + 1);
+    const v = /^(true|false)$/.test(raw) ? raw === 'true' : (/^\d+$/.test(raw) ? Number(raw) : raw);
+    deepSet(out, a.slice(0, eq), v);
+  });
+  return out;
 }
 
 async function cli(argv, io = {}) {
@@ -515,7 +541,8 @@ test('deploy helm FRESH install: no read-back at all (there is no release to rea
     probeHelm: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(code, 0);
-  assert.ok(!rec.calls.some((c) => c.join(' ').includes('get values')), 'no get values on a fresh install');
+  const upgradeAt = rec.calls.findIndex((c) => c[0] === 'helm' && c[1] === 'upgrade');
+  assert.ok(!rec.calls.slice(0, upgradeAt).some((c) => c.join(' ').includes('get values')), 'no pre-upgrade get values on a fresh install');
   assert.doesNotMatch(stdout, /carrying forward/);
   assert.doesNotMatch(rec.helmArgs.join(' '), /carried-values/);
 });
@@ -874,4 +901,42 @@ test('a node literally NAMED helm still routes on the flag, not the name', async
     spawnFn: () => { const e = new Error('spawn ssh ENOENT'); e.code = 'ENOENT'; throw e; },
   });
   assert.strictEqual(code, EXIT.CONNECT);   // ssh flavor's "could not start ssh"
+});
+
+test('deploy helm: a this-run --set wirePort=N reaches the saved ctx as remotePort', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  let seen = null;
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm', '--set', 'wirePort=7950'], {
+    execFn: fakeK8s(rec), probeHelm: async (e) => { seen = e; return { app: 'clodex' }; }, contextsFile,
+  });
+  assert.strictEqual(code, 0, stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.n.remotePort, 7950);
+  assert.strictEqual(seen.remotePort, 7950);
+});
+
+test('deploy helm: web.enabled=false from a this-run --values file leaves no webPort on the ctx', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const valuesFile = path.join(mkTmpRoot('clodexctl-helm-t-'), 'values.json');
+  fs.writeFileSync(valuesFile, JSON.stringify({ web: { enabled: false } }));
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm', '--values', valuesFile], {
+    execFn: fakeK8s(rec), probeHelm: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0, stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.n.webPort, undefined);
+});
+
+test('deploy helm: --port still wins over the read-back wirePort, and web stays on by default', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stderr } = await cli(['deploy', 'node', 'n', '--helm', '--port', '8200'], {
+    execFn: fakeK8s(rec), probeHelm: async () => ({ app: 'clodex' }), contextsFile,
+  });
+  assert.strictEqual(code, 0, stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.strictEqual(saved.contexts.n.remotePort, 8200);
+  assert.strictEqual(saved.contexts.n.webPort, 8080);
 });

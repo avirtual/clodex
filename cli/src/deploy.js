@@ -1377,6 +1377,16 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
+  let installed = null;
+  try {
+    installed = parseCarriedValues(await runVendor(execFn, helmGetValuesArgs({ name, namespace, kubeContext }), 'get values', EXIT.SERVER)).values;
+  } catch (e) {
+    log(`could not read back the installed values (${e.message}) — saving the ports and web state this run's flags imply`);
+  }
+  if (installed) {
+    if (!portFlagged && Number.isInteger(installed.wirePort)) port = installed.wirePort;
+    if (installed.web && typeof installed.web === 'object' && typeof installed.web.enabled === 'boolean') webEnabled = installed.web.enabled;
+  }
 
   const entry = {
     kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
