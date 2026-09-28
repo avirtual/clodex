@@ -382,6 +382,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, unf
         lastSeq = Math.max(lastSeq, seq);
         emit(page);
       }
+    } catch {
     } finally {
       refetching = false;
       if (pending) { pending = false; refetch(); }
@@ -608,7 +609,8 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   let stream = null;
   let settled = false;
   let hardTimer = null;
-  let sinceSeq = 0;
+  let sinceSeq = null;
+  let dmSent = false;
   const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
     const finish = (fn, v) => { if (settled) return; settled = true; if (hardTimer) clearTimeout(hardTimer); fn(v); };
@@ -623,19 +625,17 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
           const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
           sinceSeq = lastSeqOf(before.messages) + 1;
           await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
+          dmSent = true;
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
       onEvent: (event, data) => {
-        if (event !== 'activity' || !data || data.name !== name || !data.turnEnd) return;
+        if (!dmSent || event !== 'activity' || !data || data.name !== name || !data.turnEnd) return;
         finish(resolve, { timedOut: false });
       },
       onError: (e) => finish(reject, e),
     });
   }).catch((e) => { try { if (stream) stream.close(); } catch {} waitAc.abort(); throw e; });
   try { if (stream) stream.close(); } catch {}
-  // The wait can settle via onError/turnEnd while a snapshot/send fetch is
-  // still wedged in flight; abort it unconditionally or its socket keeps node
-  // alive (bin sets exitCode, never exit()). Idempotent, harmless when spent.
   waitAc.abort();
 
       // Print from the first assistant entry on (drops our echoed user message). The whole
@@ -656,7 +656,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   const refetchDeadline = setTimeout(() => { graceExpired = true; try { refetchAc.abort(); } catch {} }, graceMs);
   let fresh = [];
   try {
-    while (!graceExpired) {
+    while (!graceExpired && sinceSeq != null) {
       let after;
       try {
         after = await client.get(`${transcriptPath(name)}?since=${sinceSeq}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
@@ -722,7 +722,8 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
   let token = null;
   let settled = false;
 
-  const clearTimers = () => { if (quietTimer) clearTimeout(quietTimer); if (hardTimer) clearTimeout(hardTimer); quietTimer = null; hardTimer = null; };
+  const clearTimers = () => { if (quietTimer) clearTimeout(quietTimer); quietTimer = null; };
+  const ac = new AbortController();
 
   const outcome = await new Promise((resolve) => {
     const finish = (o) => { if (settled) return; settled = true; clearTimers(); resolve(o); };
@@ -732,13 +733,13 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
       quietTimer = setTimeout(() => finish({ ok: true }), quietMs);
     };
 
+    hardTimer = setTimeout(() => { try { ac.abort(); } catch {} finish({ ok: false, timedOut: true }); }, timeoutMs);
     stream = client.openEventStream(`/api/sessions/${encodeURIComponent(name)}/attach`, 'exec (attach)', {
       onOpen: async () => {
-        hardTimer = setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs);
         try {
-          const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' });
+          const acq = await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (acquire control)', { action: 'acquire', client: 'clodexctl' }, { signal: ac.signal });
           token = acq.token;
-          await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'exec (input)', { token, data: cmd + '\r' });
+          await client.post(`/api/sessions/${encodeURIComponent(name)}/input`, 'exec (input)', { token, data: cmd + '\r' }, { signal: ac.signal });
           inputSent = true;
           armQuiet(); // in case output already arrived before the input resolved
         } catch (e) { finish({ ok: false, error: e }); }
@@ -753,7 +754,8 @@ async function execPty({ client, ctx, printer, flags, args, mode = null }) {
     });
   });
 
-  try { if (token) await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (release control)', { action: 'release', token }); } catch {}
+  try { if (token) await client.post(`/api/sessions/${encodeURIComponent(name)}/control`, 'exec (release control)', { action: 'release', token }, { signal: ac.signal }); } catch {}
+  clearTimeout(hardTimer);
   try { if (stream) stream.close(); } catch {}
 
   const raw = Buffer.concat(chunks).toString('utf8');
@@ -1019,7 +1021,7 @@ function helloLines({ hello, error }) {
 
 async function nodeDescribe({ store, printer, args, dialHello }) {
   const name = nodeName(store, args, 'describe');
-  const e = store.contexts[name];
+  const e = Object.hasOwn(store.contexts, name) ? store.contexts[name] : null;
   if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   const r = nodeRow(name, e, store.current);
   printer.line([
@@ -1050,7 +1052,7 @@ function nodeCreate(bundle) {
 async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt = defaultPrompt }) {
   const { rest: args } = takeResourceWord(raw, 'delete', DELETABLE);
   const name = requireName(args[0], 'delete node', 'node');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!Object.hasOwn(store.contexts, name)) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   if (!flags.force && flags.json) {
     throw new CliError(EXIT.USAGE, 'delete node needs --force in -o json|yaml/non-interactive mode (there is no prompt to answer)');
   }
@@ -1068,7 +1070,7 @@ async function nodeDelete({ store, saveStore, printer, flags, args: raw, prompt 
 function nodeUse({ store, saveStore, printer, flags = {}, args: raw }) {
   const { rest: args } = takeResourceWord(raw, 'use', USABLE);
   const name = requireName(args[0], 'use node', 'node');
-  if (!store.contexts[name]) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
+  if (!Object.hasOwn(store.contexts, name)) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   store.current = name;
   saveStore(store);
   if (flags.json) { printer.json({ current: name }); return; }
@@ -1127,9 +1129,11 @@ function transcriptPath(name) {
 }
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const RESERVED_NODE_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
 function requireName(v, verb, noun = 'session') {
   if (v == null || v === '') throw new CliError(EXIT.USAGE, `${verb} needs a ${noun} name`);
   if (!NAME_RE.test(v)) throw new CliError(EXIT.USAGE, `bad ${noun} name "${v}" — allowed [a-zA-Z0-9._-], 1-64 chars`);
+  if (noun === 'node' && RESERVED_NODE_NAMES.has(v)) throw new CliError(EXIT.USAGE, `bad node name "${v}" — reserved`);
   return v;
 }
 

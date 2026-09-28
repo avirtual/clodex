@@ -48,6 +48,8 @@ function followStub(opts = {}) {
         const msgs = opts.transcript ? opts.transcript(i, seen) : [];
         const page = opts.page ? opts.page(msgs, req.url) : serverTranscriptPage(msgs, req.url);
         if (opts.onServed) res.on('finish', () => opts.onServed(i, state));
+        const status = opts.status ? opts.status(i) : 200;
+        if (status !== 200) { res.writeHead(status); return res.end(JSON.stringify({ ok: false, error: 'boom' })); }
         res.writeHead(200); return res.end(JSON.stringify(page));
       }
       res.writeHead(404); res.end('{}');
@@ -339,4 +341,24 @@ test('logs without -f: unchanged one-shot (no events feed opened)', async (t) =>
   assert.match(stdout, /\[assistant\] hi/);
   assert.ok(!seen.some((s) => s.url === '/api/events'), 'no follow stream for a plain logs');
   assert.strictEqual(seen.filter((s) => s.url === '/api/resources').length, 1, 'ONE capability check per invocation');
+});
+
+test('logs -f: a refetch that fails (500) is not an unhandled rejection — the follow stays up and a later activity frame still prints', FOLLOW, async (t) => {
+  const rejections = [];
+  const onRej = (r) => rejections.push(r);
+  process.on('unhandledRejection', onRej);
+  t.after(() => process.off('unhandledRejection', onRej));
+  const sig = fakeSignalTty();
+  const OLD = [{ role: 'user', text: 'q1' }];
+  const stub = followStub({
+    onServed: (i, state) => { if (i === 1 || i === 2) activity(state.events, 'bob'); },
+    status: (i) => (i === 2 ? 500 : 200),
+    transcript: (i) => (i <= 2 ? OLD : [...OLD, { role: 'assistant', text: 'after the failure' }]),
+  });
+  const port = await serve(t, stub);
+  const { code, stdout } = await follow(['logs', 'bob', '-f'], port, sig, (out) => /after the failure/.test(out));
+  assert.strictEqual(code, 0);
+  assert.match(stdout, /\[assistant\] after the failure/);
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(rejections.map((r) => String(r && r.message)), []);
 });

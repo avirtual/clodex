@@ -462,3 +462,41 @@ test('dm: unchanged fire-and-forget', async () => {
   assert.deepStrictEqual(seen.map((s) => s.url), ['/api/resources', '/api/sessions/bob/dm']); // no events feed opened
   server.close();
 });
+
+test('exec (agent mode): a turnEnd that lands before the DM is sent is not our reply — the DM still goes out and old entries are not printed', async () => {
+  const OLD = [{ role: 'user', text: 'old question' }, { role: 'assistant', text: 'OLD ANSWER' }];
+  const turnEnd = `event: activity\ndata: ${JSON.stringify({ name: 'bob', state: 'idle', turnEnd: true })}\n\n`;
+  let dmHit = false;
+  let snapshotHeld = false;
+  const { server, seen } = sseStub({
+    onEventsOpen: (state) => { state.events.write(turnEnd); },
+    handle: (req, res, rec, state) => {
+      const p = req.url.split('?')[0];
+      if (/\/transcript$/.test(p) && !snapshotHeld) {
+        snapshotHeld = true;
+        setTimeout(() => { if (!res.destroyed) { res.writeHead(200); res.end(JSON.stringify(serverTranscriptPage(OLD, req.url))); } }, 100);
+        return true;
+      }
+      if (/\/transcript$/.test(p)) {
+        const msgs = dmHit ? [...OLD, { role: 'user', text: 'hi' }, { role: 'assistant', text: 'NEW ANSWER' }] : OLD;
+        res.writeHead(200); res.end(JSON.stringify(serverTranscriptPage(msgs, req.url)));
+        return true;
+      }
+      if (/\/dm$/.test(p)) {
+        dmHit = true;
+        res.writeHead(200); res.end(JSON.stringify({ ok: true }));
+        setTimeout(() => state.events.write(turnEnd), 20);
+        return true;
+      }
+      return false;
+    },
+  });
+  const port = await listen(server);
+  try {
+    const { code, stdout } = await cli(['exec', 'bob', 'hi', '--timeout', '2'], port, { refetchGraceMs: 300 });
+    assert.ok(seen.some((s) => /\/dm$/.test(s.url)), 'the DM was sent');
+    assert.doesNotMatch(stdout, /OLD ANSWER/);
+    assert.match(stdout, /NEW ANSWER/);
+    assert.strictEqual(code, 0);
+  } finally { server.closeAllConnections(); server.close(); }
+});

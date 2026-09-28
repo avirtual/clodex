@@ -985,3 +985,14 @@ test('runAws with NO execFn injected execs the argv via the real child-process s
   const out = await D.runAws(undefined, ['node', '-e', 'console.log("live-seam-ok")'], 'seam probe');
   assert.strictEqual(out, 'live-seam-ok');
 });
+
+test('deploy fargate: the manual oauth hint carries --profile when the deploy used one', async () => {
+  for (const outputs of [[], null]) {
+    const rec = {};
+    const { code, stdout } = await cli(['deploy', 'node', 's', '--fargate', '--no-ctx', '--profile', 'p'], {
+      execFn: fakeAws(rec, { outputs }), probeFargate: async () => ({ app: 'clodex' }),
+    });
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /put-secret-value[^\n]*--profile p/);
+  }
+});

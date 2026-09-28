@@ -92,6 +92,7 @@ function readClaudeToken(file) {
 
 function buildTokenDropinScript(token) {
   return [
+    'unset HISTFILE',
     'set -e',
     `CLODEX_CLAUDE_TOKEN=${shSingleQuote(token)}`,
     'export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"',
@@ -175,7 +176,7 @@ async function probeHello(dest, port, { spawnFn } = {}) {
   }
 }
 
-const DEST_RE = /^[a-zA-Z0-9._@-]{1,128}$/;
+const DEST_RE = /^(?!-)[a-zA-Z0-9._@-]{1,128}$/;
 
 function parsePortOr(v) {
   const n = parseInt(v, 10);
@@ -219,6 +220,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
+  loadContextsFor(flags, io);
   const sudoCmds = [];
   let sawDone = false;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
@@ -282,7 +284,7 @@ async function deployVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
-  const store = safeLoadContexts(io);
+  const store = loadContextsFor(flags, io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
@@ -306,9 +308,9 @@ async function deployVerb({ printer, flags, args, io = {} }) {
   }
 }
 
-function safeLoadContexts(io) {
-  try { return contexts.load(io.contextsFile, { warn: () => {} }); }
-  catch { return { current: null, contexts: {} }; }
+function loadContextsFor(flags, io) {
+  if (flags['no-ctx']) return null;
+  return contexts.load(io.contextsFile, { warn: () => {} });
 }
 
 
@@ -397,6 +399,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const volumes = Array.isArray(flags.volume) ? flags.volume : (flags.volume ? [String(flags.volume)] : []);
   const dockerHost = flags.host ? normalizeDockerHost(flags.host) : '';
   const sshDest = dockerHost ? dockerHostToSshDest(dockerHost) : '';
+  if (sshDest && !DEST_RE.test(sshDest)) throw new CliError(EXIT.USAGE, `bad --host ssh destination "${sshDest}" — use ssh://user@host / host / IP (set a port in ~/.ssh/config)`);
   const noWirescope = !!flags['no-wirescope'];
   const json = !!flags.json;
   const emit = (obj) => printer.json(obj);
@@ -415,6 +418,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
+  loadContextsFor(flags, io);
   const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
   let res;
@@ -460,7 +464,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
-  const store = safeLoadContexts(io);
+  const store = loadContextsFor(flags, io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
   if (exists && !flags.force) {
     if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
@@ -809,6 +813,7 @@ const TOKEN_SESSION_PREFIX = 'clodex-token-';
 async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execFn, timeoutMs = 60000, pollMs = 1000, sleepFn = defaultSleep, ctxName = '<ctx>' } = {}) {
   const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
   const t = await openTransport(entry, { spawnFn, execFn });
+  let engineDropped = false;
   try {
     const client = new WireClient(t.baseUrl, wireToken);
     await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
@@ -823,6 +828,7 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       await client.post(`/api/sessions/${encodeURIComponent(sessName)}/input`, 'deploy ssm (token write)', { token: ctrlToken, data: dropin });
     } catch (e) {
       if (!(e instanceof CliError && e.exitCode === EXIT.CONNECT)) throw e;
+      engineDropped = true;
     }
   } finally {
     try { t.close(); } catch {}
@@ -835,8 +841,11 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       t2 = await openTransport(entry, { spawnFn, execFn });
       const client = new WireClient(t2.baseUrl, wireToken);
       const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
+      if (engineDropped) {
+        try { await client.del(`/api/sessions/${encodeURIComponent(sessName)}`, 'deploy ssm (token session cleanup)'); } catch {}
+      }
       return { ok: true, hello };
-    } catch (e) { lastErr = e; }
+    } catch (e) { lastErr = e; engineDropped = true; }
     finally { if (t2) { try { t2.close(); } catch {} } }
     if (Date.now() >= deadline) {
       throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
@@ -906,6 +915,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
+  const early = loadContextsFor(flags, io);
+  if (early && Object.prototype.hasOwnProperty.call(early.contexts, name) && !flags.force) {
+    throw new CliError(EXIT.USAGE, `context "${name}" already exists — an SSM deploy mints a new wire token, so keeping it would leave the node on a dead token; re-run with --force to overwrite it, or --no-ctx to leave it alone`);
+  }
   const token = crypto.randomBytes(24).toString('hex');
   const script = buildSsmScript({ port, token, repo, branch, noWirescope });
 
@@ -967,13 +980,8 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
     return;
   }
-  const store = safeLoadContexts(io);
+  const store = loadContextsFor(flags, io);
   const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
-  if (exists && !flags.force) {
-    if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
-    else printer.line(`context "${name}" already exists — kept it (--force to overwrite). Use: clodexctl --ctx ${name} get sessions`);
-    return;
-  }
   const webPort = port + 1;
   store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
   if (!store.current) store.current = name;
@@ -1244,6 +1252,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
+  loadContextsFor(flags, io);
   step('preflight');
   await runVendor(execFn, ['helm', 'version', '--short'], 'version');
   await runVendor(execFn, ['kubectl', 'version', '--client', '--output=yaml'], 'version --client');
@@ -1377,6 +1386,16 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
+  let installed = null;
+  try {
+    installed = parseCarriedValues(await runVendor(execFn, helmGetValuesArgs({ name, namespace, kubeContext }), 'get values', EXIT.SERVER)).values;
+  } catch (e) {
+    log(`could not read back the installed values (${e.message}) — saving the ports and web state this run's flags imply`);
+  }
+  if (installed) {
+    if (!portFlagged && Number.isInteger(installed.wirePort)) port = installed.wirePort;
+    if (installed.web && typeof installed.web === 'object' && typeof installed.web.enabled === 'boolean') webEnabled = installed.web.enabled;
+  }
 
   const entry = {
     kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
@@ -1394,7 +1413,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
   } else {
-    const store = safeLoadContexts(io);
+    const store = loadContextsFor(flags, io);
     const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
     if (exists && !flags.force) {
       if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
@@ -1724,6 +1743,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
     return;
   }
 
+  loadContextsFor(flags, io);
   step('preflight');
   const idOut = await runAws(execFn, callerIdentityArgs({ region, profile }), 'sts get-caller-identity');
   let account = null; let arn = null;
@@ -1747,7 +1767,8 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
       okm('oauth-token');
     } else {
       log('WARNING: no claude token (--token-file / CLODEX_CLAUDE_TOKEN_FILE unset) — the oauth-token secret keeps its REPLACE-ME placeholder; claude sessions will NOT authenticate until you populate it:');
-      log(`  ${outputs.PutTokenCommand || `aws secretsmanager put-secret-value --secret-id ${stackName}/oauth-token --secret-string "$(cat TOKEN-FILE)"${effectiveRegion ? ` --region ${effectiveRegion}` : ''}`}`);
+      const profileArg = profile ? ` --profile ${profile}` : '';
+      log(`  ${outputs.PutTokenCommand ? outputs.PutTokenCommand + profileArg : `aws secretsmanager put-secret-value --secret-id ${stackName}/oauth-token --secret-string "$(cat TOKEN-FILE)"${effectiveRegion ? ` --region ${effectiveRegion}` : ''}${profileArg}`}`);
     }
   }
 
@@ -1769,7 +1790,7 @@ async function deployFargateVerb({ printer, flags, args, io = {} }) {
   if (flags['no-ctx']) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
   } else {
-    const store = safeLoadContexts(io);
+    const store = loadContextsFor(flags, io);
     const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
     if (exists && !flags.force) {
       if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });

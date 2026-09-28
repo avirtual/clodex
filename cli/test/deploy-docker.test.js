@@ -468,3 +468,30 @@ test('t54: an ssh-flavor and a docker-flavor deploy of the SAME host are disting
   assert.doesNotThrow(() => require('../src/contexts').validateEntry(loaded.contexts.viassh));
   assert.doesNotThrow(() => require('../src/contexts').validateEntry(loaded.contexts.viadocker));
 });
+
+test('deploy docker --host rejects an ssh destination that is not a plain user@host', async () => {
+  const { EXIT } = require('../src/errors');
+  const rec = {};
+  const contextsFile = tmpCtxFile();
+  const { code, stderr } = await cli(['deploy', 'node', 'edge', '--docker', '--host=-oProxyCommand=id'], {
+    spawnFn: fakeDocker(rec),
+    pollHello: async () => ({ ok: true, hello: { app: 'clodex' } }),
+    contextsFile,
+  });
+  assert.strictEqual(code, EXIT.USAGE, stderr);
+  assert.match(stderr, /bad --host ssh destination/);
+  assert.strictEqual(rec.cmd, undefined, 'docker never ran');
+  assert.ok(!fs.existsSync(contextsFile), 'no ctx saved');
+});
+
+test('deploy docker --host rejects a destination that starts with a dash even without an =', async () => {
+  const { EXIT } = require('../src/errors');
+  for (const bad of ['-Jjump', '-Fconf']) {
+    const rec = {};
+    const { code } = await cli(['deploy', 'node', 'edge', '--docker', `--host=${bad}`], {
+      spawnFn: fakeDocker(rec), pollHello: async () => ({ ok: true, hello: {} }), contextsFile: tmpCtxFile(),
+    });
+    assert.strictEqual(code, EXIT.USAGE, bad);
+    assert.strictEqual(rec.cmd, undefined, bad);
+  }
+});
