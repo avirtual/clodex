@@ -307,7 +307,7 @@ test('refuseEnvWriteUnderTest: initStores refuses to seed env defaults into the 
 
     initStores(userData, {
       log: { info() {}, warn: (...a) => warnings.push(a.join(' ')), error() {} },
-      registryDir: path.join(fakeHome, '.clodex'),
+      registryDir: path.join(src, 'registry'),
       resourcesDir: path.join(src, '__no_seed__'),
       skillsResourcesDir: path.join(src, '__no_seed_skills__'),
       envDefaultsFile: writeDefaults(src, FIXTURE),
@@ -347,7 +347,7 @@ test('envDefaults.restore() carries the same NODE_TEST_CONTEXT guard as construc
 
     const stores = initStores(userData, {
       log: { info() {}, warn() {}, error() {} },
-      registryDir: path.join(fakeHome, '.clodex'),
+      registryDir: path.join(src, 'registry'),
       resourcesDir: path.join(src, '__no_seed__'),
       skillsResourcesDir: path.join(src, '__no_seed_skills__'),
       envDefaultsFile: writeDefaults(src, FIXTURE),
