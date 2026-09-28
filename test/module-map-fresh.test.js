@@ -19,7 +19,7 @@ const EXPECTED_MAPS = [
 
   // 'ipc-handlers.md',
 
-  // 'renderer.md',
+  'renderer.md',
 
   // 'session-manager.md',
 
