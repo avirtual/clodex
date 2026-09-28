@@ -23271,6 +23271,7 @@ test('a codex stream seat whose read-only cap is written in the short or fused f
     { argv: ['--sandbox', 'read-only', '--ask-for-approval', 'never'], readOnly: true },
     { argv: ['-s', 'read-only', '-a', 'never'], readOnly: true },
     { argv: ['-sread-only', '-anever'], readOnly: true },
+    { argv: ['-s=read-only', '-a=never'], readOnly: true },
     { argv: ['--sandbox=read-only', '--ask-for-approval=never'], readOnly: true },
     { argv: ['-s', 'read-only', '--ask-for-approval=never'], readOnly: true },
     { argv: ['--sandbox', 'workspace-write', '--ask-for-approval', 'never', '--add-dir', 'read-only'], readOnly: false },
