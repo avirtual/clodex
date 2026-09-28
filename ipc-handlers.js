@@ -663,8 +663,12 @@ function registerIpcHandlers(deps) {
   handle('templates:remove', (_e, id) => {
     try { templates.remove(id); }
     catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
+    const list = templates.list();
+    if (list.some((t) => t.id === id)) {
+      return { ok: false, error: `could not delete template "${id}" — its file is still in the library`, templates: list };
+    }
     refreshAppMenu();
-    return { ok: true, templates: templates.list() };
+    return { ok: true, templates: list };
   });
 
   const teamFileDeps = { fs, path, teamsDir, listTeams };

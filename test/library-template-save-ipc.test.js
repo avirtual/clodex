@@ -47,10 +47,25 @@ test('a library write that throws answers ok:false with the error and the list, 
 });
 
 test('a library write that lands answers ok:true with the list', () => {
-  const { handlers, menus } = mkHandlers({ save() {}, saveByName: (t) => ({ ...t, id: t.name }), remove() {} });
+  let listed = LIST;
+  const { handlers, menus } = mkHandlers({
+    save() {}, saveByName: (t) => ({ ...t, id: t.name }),
+    remove(id) { listed = listed.filter((t) => t.id !== id); },
+    list: () => listed,
+  });
   assert.deepStrictEqual(handlers['templates:save']({}, { id: 'hand', name: 'hand' }), { ok: true, templates: LIST });
   assert.deepStrictEqual(handlers['templates:saveByName']({}, { name: 'hand' }),
     { ok: true, template: { name: 'hand', id: 'hand' }, templates: LIST });
-  assert.deepStrictEqual(handlers['templates:remove']({}, 'hand'), { ok: true, templates: LIST });
+  assert.deepStrictEqual(handlers['templates:remove']({}, 'hand'), { ok: true, templates: [] });
   assert.strictEqual(menus.length, 3);
+});
+
+test('a remove the store swallows answers ok:false while the template is still listed', () => {
+  const { handlers, menus } = mkHandlers({ remove() {} });
+  assert.deepStrictEqual(handlers['templates:remove']({}, 'hand'), {
+    ok: false,
+    error: 'could not delete template "hand" — its file is still in the library',
+    templates: LIST,
+  });
+  assert.strictEqual(menus.length, 0);
 });
