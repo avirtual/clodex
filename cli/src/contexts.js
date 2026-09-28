@@ -4,9 +4,9 @@
 // group/world-readable — the operator may have reasons, but they should know).
 //
 // Resolution precedence (kubectl-style): file(current or --ctx) < env
-// (CLODEX_URL/CLODEX_TOKEN) < flags(--url/--token). A url from env or a flag
-// switches the transport to DIRECT (drops any ssh/tunnel from the file entry);
-// token overlays independently of transport.
+// (CLODEX_URL/CLODEX_TOKEN) < flags(--url/--token); an EMPTY selection falls
+// back to the local engine (CLODEX_REMOTE_TOKEN / <userData>/remote.env). A url
+// from env or a flag switches the transport to DIRECT; token overlays alone.
 'use strict';
 
 const fs = require('fs');
@@ -152,9 +152,9 @@ function validateAz(az) {
   if (missing.length) throw new CliError(EXIT.USAGE, `az transport needs ${missing.map((k) => need[k]).join(', ')}`);
 }
 
-// Resolve the effective context: pick the named/current file entry, then layer
-// env, then flags. Returns { url? , ssh?, tunnel?, remotePort?, token, name }.
-// `name` is the source label for messages ('(flags)' / '(env)' / ctx name).
+// Resolve the effective context: file entry, then env, then flags; nothing at
+// all → the local engine. Returns { url?, ssh?, tunnel?, remotePort?, token,
+// name }, `name` labelling the source ('(flags)' / '(env)' / '(local engine)' / ctx).
 function resolve(store, { ctxName = null, env = process.env, flags = {}, platform = process.platform, home = os.homedir() } = {}) {
   let entry = null;
   let label = null;

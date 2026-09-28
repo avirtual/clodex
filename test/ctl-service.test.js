@@ -38,6 +38,10 @@ function tmpCtxFile() {
   return path.join(dir, 'contexts.json');
 }
 
+// CLODEX_DATA_DIR is pinned to the tmp dir so resolve's local-engine fallback
+// cannot read a developer box's real remote.env: with `env: {}` the
+// "no context selected" subject stays green on a machine without one and goes
+// red only where the file exists.
 function mkService(file = tmpCtxFile()) {
   return { svc: createCtlService({ contextsFile: file, env: { CLODEX_DATA_DIR: path.dirname(file) } }), file };
 }
