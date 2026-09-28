@@ -1707,8 +1707,11 @@ function createTicketMethods(deps, shared) {
           + ' — it reaches that same seat and keeps its tree, and it REPLACES the spec wholesale, so send the whole corrected'
           + ' one rather than a delta. Doing nothing is the normal case.');
       } else {
+        const leadHeld = !!(dispatch && dispatch.error && /is holding .* itself/.test(dispatch.error));
         out.push(`The rework was NOT dispatched (${(dispatch && dispatch.error) || 'no live seat was resolved'}) and is OWED:`
-          + ` no seat has been told. Read the full verdict below and send it back yourself with [agent:task reject ${ticketId}] <the must-fixes>.`);
+          + (leadHeld
+            ? ' no seat has been told. Read the full verdict below; the must-fixes are yours to act on.'
+            : ` no seat has been told. Read the full verdict below and send it back yourself with [agent:task reject ${ticketId}] <the must-fixes>.`));
       }
       return out;
     },
@@ -3897,8 +3900,8 @@ function createTicketMethods(deps, shared) {
       // Rides EVERY dispatch, replays included: a respawned seat has no memory of
       // the verb, exactly as it has none of its worktree. See ticketCloseLine.
       const closeLine = ticketCloseLine(ticket.id);
-      // EVERY dispatch spills now: the close line alone is ~410 chars and a worktree one
-      // ~730, against a 500-byte threshold. So the pointer line is all a seat sees
+      // EVERY dispatch spills now: the close line alone is ~410 chars and a worktree
+      // dispatch ~730, against a 500-byte threshold. So the pointer line is all a seat sees
       // before deciding whether to spend a Read turn, and it must carry the id AND
       // the verb — a spilled body announces itself only as "Message (N bytes)
       // attached", which would put the close verb behind the very turn this line
@@ -5523,11 +5526,9 @@ function createTicketMethods(deps, shared) {
           : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
             ? tpl.systemPromptFile
             : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
-      // Defense-in-depth: the template is agent-writable and its systemPromptFile
-      // flows into resolveSystemPromptFile → promptLibrary._file, a bare path.join
-      // with no confinement — a stem like "../../../../etc/x" escapes
-      // library/prompts/system. Rejected HERE, not in the shared resolver, to avoid
-      // widening the blast radius; the stem rides back on `promptEscaped`.
+      // The template is agent-writable: promptLibrary._file throws on a traversing
+      // stem and resolvePromptFile's unwired fallback is a bare path.join, so reject it
+      // here and fall back to the default; the stem rides back on `promptEscaped`.
       let promptEscaped = null;
       if (systemPromptFile.includes('/') || systemPromptFile.includes('\\') || systemPromptFile.includes('..')) {
         promptEscaped = systemPromptFile;
@@ -6619,9 +6620,16 @@ function createTicketMethods(deps, shared) {
       if (!this._verifyLooped) this._verifyLooped = new Set();
       let tickets; try { tickets = ticketsStore.load(team.root); } catch { return; }
       const resume = [];
+      let cleared = false;
       for (const t of tickets) {
-        if (t.state !== 'done' || t.loopStep !== 'verify' || t.verifyHold) continue;
         const key = `${team.root}\0${t.id}`;
+        if (t.state === 'done' && t.loopStep === 'review' && t.verifyPhase
+          && !this._verifyLooped.has(key) && !this._liveReviewerSeat(team, t)) {
+          delete t.verifyPhase;
+          cleared = true;
+          continue;
+        }
+        if (t.state !== 'done' || t.loopStep !== 'verify' || t.verifyHold) continue;
         if (this._verifyLooped.has(key)) continue;
         this._verifyLooped.add(key);
         if (this._liveReviewerSeat(team, t)) continue;
@@ -6631,7 +6639,7 @@ function createTicketMethods(deps, shared) {
         delete t.runnerOwner;
         resume.push(t.id);
       }
-      if (!resume.length) return;
+      if (!resume.length && !cleared) return;
       try { ticketsStore.save(team.root, tickets); } catch (e) { log.error('ticket', `verify resume: save failed: ${e.message}`); return; }
       for (const id of resume) {
         log.info('intent', `verify resumed for ${id} after a host restart`);
