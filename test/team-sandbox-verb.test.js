@@ -279,7 +279,7 @@ test('down on a team with no box creates none', async () => {
 });
 
 test('status writes nothing and reports the state', async () => {
-  const b = mkBox({ config: { ref: 'master' } });
+  const b = mkBox({ boxes: ['team-clodex'], config: { ref: 'master' } });
   await fire(b, b.lead, { action: 'status' });
   assert.ok(!exists(b.file), 'status is read-only — no token file appears');
   assert.match(b.last(), /^\[agent:team\] sandbox team-clodex running \(ref master\)/);
@@ -288,7 +288,7 @@ test('status writes nothing and reports the state', async () => {
 // An unconfigured box has no ref to report, and status must not invent one by
 // seeding a default — seeding belongs to up/rebuild alone.
 test('status on a box with no ref reports no ref clause, and still configures nothing', async () => {
-  const b = mkBox();
+  const b = mkBox({ boxes: ['team-clodex'] });
   await fire(b, b.lead, { action: 'status' });
   assert.strictEqual(b.calls.setConfig.length, 0);
   assert.match(b.last(), /^\[agent:team\] sandbox team-clodex running/);
@@ -296,7 +296,7 @@ test('status on a box with no ref reports no ref clause, and still configures no
 });
 
 test('status names the clodex version the box reports on its wire', async () => {
-  const b = mkBox({
+  const b = mkBox({ boxes: ['team-clodex'],
     getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: true, version: '5.64.4' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
@@ -304,7 +304,7 @@ test('status names the clodex version the box reports on its wire', async () => 
 });
 
 test('status marks the version as last seen when the box wire is offline', async () => {
-  const b = mkBox({
+  const b = mkBox({ boxes: ['team-clodex'],
     getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: false, version: '5.64.4' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
@@ -312,7 +312,7 @@ test('status marks the version as last seen when the box wire is offline', async
 });
 
 test('status treats a peer row with no online key as offline for the version', async () => {
-  const b = mkBox({
+  const b = mkBox({ boxes: ['team-clodex'],
     getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', version: '5.64.4' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
@@ -320,13 +320,13 @@ test('status treats a peer row with no online key as offline for the version', a
 });
 
 test('status with no peer manager says the version is unknown', async () => {
-  const b = mkBox();
+  const b = mkBox({ boxes: ['team-clodex'] });
   await fire(b, b.lead, { action: 'status' });
   assert.match(b.last(), /clodex version unknown \(box not reporting on its wire\)/);
 });
 
 test('status ignores a peer row whose id is not the box id', async () => {
-  const b = mkBox({
+  const b = mkBox({ boxes: ['team-clodex'],
     getPeerManager: () => ({ statuses: () => [{ id: 'sandbox', version: '9.9.9' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
