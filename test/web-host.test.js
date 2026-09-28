@@ -581,15 +581,27 @@ function trapUncaught() {
   return { tripped, release: () => process.removeListener('uncaughtException', onErr) };
 }
 
+function getWith(agent, port, pathname) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: pathname, agent }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body, cd: res.headers['content-disposition'] }));
+    }).on('error', reject);
+  });
+}
+
 test('a malformed percent-escape under /exports/ answers 400 and raises no uncaught exception', async () => {
   const { host, port } = await startHost();
+  const agent = new http.Agent();
   const trap = trapUncaught();
   try {
-    const r = await Promise.race([httpGet(port, '/exports/%zz'), trap.tripped]);
+    const r = await Promise.race([getWith(agent, port, '/exports/%zz'), trap.tripped]);
     assert.equal(r.status, 400);
-    const after = await Promise.race([httpGet(port, '/healthz'), trap.tripped]);
+    const after = await Promise.race([getWith(agent, port, '/healthz'), trap.tripped]);
     assert.equal(after.status, 200);
-  } finally { trap.release(); host.close(); }
+  } finally { trap.release(); agent.destroy(); host.close(); }
 });
 
 test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 5987 filename and raises no uncaught exception', async () => {
@@ -598,18 +610,12 @@ test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 59
   const names = ['отчёт.md', 'a\nb'];
   for (const n of names) fs.writeFileSync(path.join(dir, 'exports', n), `body:${n}`);
   const { host, port } = await startHost({ userDataPath: dir });
+  const agent = new http.Agent();
   const trap = trapUncaught();
   try {
     for (const n of names) {
       const r = await Promise.race([
-        new Promise((resolve, reject) => {
-          http.get({ host: '127.0.0.1', port, path: '/exports/' + encodeURIComponent(n) }, (res) => {
-            let body = '';
-            res.setEncoding('utf8');
-            res.on('data', (c) => { body += c; });
-            res.on('end', () => resolve({ status: res.statusCode, body, cd: res.headers['content-disposition'] }));
-          }).on('error', reject);
-        }),
+        getWith(agent, port, '/exports/' + encodeURIComponent(n)),
         trap.tripped,
       ]);
       assert.equal(r.status, 200, n);
@@ -617,7 +623,7 @@ test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 59
       assert.ok(r.cd.includes(`filename*=UTF-8''${encodeURIComponent(n)}`), r.cd);
       assert.match(r.cd, /filename="[\x20-\x7e]+"/);
     }
-  } finally { trap.release(); host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { trap.release(); agent.destroy(); host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('a session that leaves the workspace listing while attached does not leak its ring into a same-named successor\'s replay', async () => {
@@ -628,7 +634,7 @@ test('a session that leaves the workspace listing while attached does not leak i
     await helloWelcome(a, { workspaceId: 'ws1' });
     registered[0].handle.webContents.send('pty-data', 'x', 'OLD');
     const live = await a.until((m) => m.t === 'event' && m.channel === 'pty-data');
-    assert.deepEqual(live.args, ['x', 'OLD']);
+    assert.deepStrictEqual(live.args, ['x', 'OLD']);
     sessions.ws1 = [];
     a.close();
     assert.ok(await poll(() => unregistered.includes('ws1')), 'unregistered after last tab');
@@ -638,12 +644,12 @@ test('a session that leaves the workspace listing while attached does not leak i
     await helloWelcome(b, { workspaceId: 'ws1' });
     registered[registered.length - 1].handle.webContents.send('pty-data', 'x', 'NEW');
     const first = await b.until((m) => m.t === 'event' && m.channel === 'pty-data');
-    assert.deepEqual(first.args, ['x', 'NEW']);
+    assert.deepStrictEqual(first.args, ['x', 'NEW']);
 
     const c = connect(port);
     await helloWelcome(c, { workspaceId: 'ws1' });
     const replay = await c.until((m) => m.t === 'event' && m.channel === 'pty-data');
-    assert.deepEqual(replay.args, ['x', 'NEW']);
+    assert.deepStrictEqual(replay.args, ['x', 'NEW']);
     b.close(); c.close();
   } finally { host.close(); }
 });
@@ -662,7 +668,7 @@ test('a session-exit clears that name\'s ring so a late joiner does not replay t
     const b = connect(port);
     await helloWelcome(b, { workspaceId: 'ws1' });
     const replay = await b.until((m) => m.t === 'event' && m.channel === 'pty-data');
-    assert.deepEqual(replay.args, ['x', 'NEW']);
+    assert.deepStrictEqual(replay.args, ['x', 'NEW']);
     a.close(); b.close();
   } finally { host.close(); }
 });

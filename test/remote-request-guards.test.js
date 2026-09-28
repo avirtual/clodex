@@ -16,8 +16,14 @@ async function withServer(opts, fn) {
     ...opts,
   });
   await server.start();
-  try { return await fn(server); } finally { server.stop(); }
+  try { return await fn(server); } finally {
+    for (const r of inflight) r.destroy();
+    inflight.clear();
+    server.stop();
+  }
 }
+
+const inflight = new Set();
 
 function request(server, method, p, raw) {
   return new Promise((resolve, reject) => {
@@ -29,6 +35,8 @@ function request(server, method, p, raw) {
       res.on('data', (d) => { buf += d; });
       res.on('end', () => resolve({ status: res.statusCode, body: buf }));
     });
+    inflight.add(r);
+    r.on('close', () => inflight.delete(r));
     r.on('error', reject);
     r.end(raw == null ? undefined : raw);
   });
@@ -131,7 +139,7 @@ test('stopping the server releases every control holder through onControlChange'
   await server.start();
   server._setControl('alpha', { token: 't', client: 'peer' });
   server.stop();
-  assert.deepEqual(changes[changes.length - 1], ['alpha', null]);
+  assert.deepStrictEqual(changes[changes.length - 1], ['alpha', null]);
 });
 
 test('a stale attach feed closing after re-attach leaves the new feed registered', () => {
