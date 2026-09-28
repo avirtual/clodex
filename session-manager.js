@@ -854,6 +854,7 @@ function createSessionManager(deps) {
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const BOOT_NUDGE_MS = Number.isFinite(deps.bootNudgeMs) ? deps.bootNudgeMs : 4000;
   const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
+  const BOOT_NUDGE_MAXWAIT_MS = Number.isFinite(deps.bootNudgeMaxWaitMs) ? deps.bootNudgeMaxWaitMs : 120000;
   const BOOT_REPLAY_POLL_MS = Number.isFinite(deps.bootReplayPollMs) ? deps.bootReplayPollMs : 250;
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
   const STREAM_INIT_MS = Number.isFinite(deps.streamInitTimeoutMs) ? deps.streamInitTimeoutMs : STREAM_INIT_TIMEOUT_MS;
@@ -6002,16 +6003,17 @@ function createSessionManager(deps) {
       const fire = () => {
         session._bootNudgeTimer = null;
         if (session._dead) return;
+        const echoed = (session._lastPtyDataAt || 0) > wroteAt;
         const painting = Date.now() - (session._lastPtyDataAt || 0) < BOOT_NUDGE_QUIET_MS;
-        if (painting || this._anyDraftOpen(session)) {
-          if (Date.now() - wroteAt >= INJECT_BOOT_MAXWAIT) return;
+        if (!echoed || painting || this._anyDraftOpen(session)) {
+          if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) return;
           arm(BOOT_NUDGE_QUIET_MS);
           return;
         }
         if (!session.pty) return;
         if (!session.firstInputAt) session.firstInputAt = Date.now();
         try { session.pty.write('\r'); } catch {}
-        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, sent Enter`);
+        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, last output at +${session._lastPtyDataAt - wroteAt}ms, sent Enter`);
       };
       arm(BOOT_NUDGE_MS);
     }
