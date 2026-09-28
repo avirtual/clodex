@@ -8249,6 +8249,10 @@ body.web-frontend #sidebar-header {
   background: var(--accent);
   color: var(--accent-fg);
 }
+.team-role-row.dirty .team-role-actions button[data-act=save] {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
 #btn-create:hover,
 #btn-plugins-source-install:hover,
 .popover-actions button:not(.secondary):hover,
@@ -42819,6 +42823,37 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         patch.account = trim(formValues && formValues.account);
         return patch;
       }
+      function rowFormValues(rowEl) {
+        const val = (f) => {
+          const inp = rowEl.querySelector(`[data-f="${f}"]`);
+          return inp ? inp.value : "";
+        };
+        const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
+        return {
+          brief: val("brief"),
+          prompt: val("prompt"),
+          template: val("template"),
+          dispatch: on ? on.value : "",
+          cwd: val("cwd"),
+          account: val("account")
+        };
+      }
+      function syncRowDirty(rowEl) {
+        const dirty = typeof rowEl._saved === "string" && JSON.stringify(rowFormValues(rowEl)) !== rowEl._saved;
+        rowEl.classList.toggle("dirty", dirty);
+        const save = rowEl.querySelector('button[data-act="save"]');
+        if (save) save.disabled = !dirty;
+        return dirty;
+      }
+      function snapshotRowForm(rowEl) {
+        rowEl._saved = JSON.stringify(rowFormValues(rowEl));
+        return syncRowDirty(rowEl);
+      }
+      var DISCARD_ROLE_EDITS_PROMPT = "Discard unsaved role changes?";
+      function confirmDiscardRoleEdits(root, confirmFn) {
+        if (!root || !root.querySelector(".team-role-row.dirty")) return true;
+        return !!(typeof confirmFn === "function" && confirmFn(DISCARD_ROLE_EDITS_PROMPT));
+      }
       function promptOptionGroups(names, teamOwned, team) {
         const owned = new Set(team ? teamOwned || [] : []);
         const ownedNames = (names || []).filter((n) => owned.has(n));
@@ -43171,6 +43206,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templatePlatform,
         accountOptions,
         reservedRemovalWarning,
+        rowFormValues,
+        syncRowDirty,
+        snapshotRowForm,
+        confirmDiscardRoleEdits,
+        DISCARD_ROLE_EDITS_PROMPT,
         parseDuration,
         formatDuration,
         formatBlockedBy,
@@ -43229,7 +43269,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templateOptionGroups,
         templateRowFor,
         templatePlatform,
-        accountOptions
+        accountOptions,
+        rowFormValues,
+        syncRowDirty,
+        snapshotRowForm,
+        confirmDiscardRoleEdits
       } = require_team_roles();
       var { anchorRect, makeDraggable, resetDrag } = require_popover_drag();
       function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = {}) {
@@ -43265,8 +43309,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           statusEl.classList.toggle("warn", !!(warn && msg));
         };
         function closeTeamRolesPopover() {
+          if (!popover.classList.contains("hidden") && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return false;
           popover.classList.add("hidden");
           popover.dataset.name = "";
+          return true;
         }
         let preflight = /* @__PURE__ */ new Map();
         async function loadPreflight(name) {
@@ -43543,7 +43589,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           open.addEventListener("click", () => {
             const row = rowFor();
             if (!row) return;
-            closeTeamRolesPopover();
+            if (!closeTeamRolesPopover()) return;
             if (typeof openTemplate === "function") openTemplate(row);
           });
           return { select, open, platform };
@@ -43596,6 +43642,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                   why.title = `${f} is removed when you Save. The box stays inert because the role still dispatches standing \u2014 switch dispatch to spawn/worktree to set a new one.`;
                   clear.remove();
                   if (typeof onClear === "function") onClear(f);
+                  const rowEl = field.closest(".team-role-row");
+                  if (rowEl) syncRowDirty(rowEl);
                 });
                 field.appendChild(clear);
               }
@@ -43813,7 +43861,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 open.disabled = !tplRow;
                 open.addEventListener("click", () => {
                   if (!tplRow) return;
-                  closeTeamRolesPopover();
+                  if (!closeTeamRolesPopover()) return;
                   if (typeof openTemplate === "function") openTemplate(tplRow);
                 });
                 holder.appendChild(open);
@@ -43928,6 +43976,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               }
               body.appendChild(box);
             }
+            snapshotRowForm(el);
             listEl.appendChild(el);
           }
           if (stage === "normal") {
@@ -44111,28 +44160,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               return;
             }
             const teamRoot = currentRoot;
-            closeTeamRolesPopover();
+            if (!closeTeamRolesPopover()) return;
             Promise.resolve(openSessionDialog({ name: seat || `${name}-lead`, type: "claude", cwd: teamRoot || void 0 })).catch(() => {
             });
             return;
           }
           if (act === "save") {
-            const val = (f) => {
-              const inp = rowEl.querySelector(`[data-f="${f}"]`);
-              return inp ? inp.value : "";
-            };
-            const dispatchVal = () => {
-              const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
-              return on ? on.value : "";
-            };
-            const patch = rowEl.classList.contains("read-only") ? { account: String(val("account") || "").trim() } : buildSavePatch({
-              brief: val("brief"),
-              prompt: val("prompt"),
-              template: val("template"),
-              dispatch: dispatchVal(),
-              cwd: val("cwd"),
-              account: val("account")
-            });
+            const v = rowFormValues(rowEl);
+            const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim() } : buildSavePatch(v);
             const res = await window.api.teamSetRole(name, role, patch);
             await afterMutation(res, `role "${role}" saved`);
           } else if (act === "rename") {
@@ -44322,6 +44357,15 @@ You can add it back from this popover.` : "";
         submitOnEnter(addBrief, addBtn);
         submitOnEnter(addTemplate, addBtn);
         submitOnEnter(watchdogInput, watchdogSet);
+        const ROW_SAVE_EXEMPT_FIELDS = /* @__PURE__ */ new Set(["lead-seat", "lead-pick", "trunk"]);
+        const onRowFieldEdit = (e) => {
+          const inp = e.target && typeof e.target.closest === "function" ? e.target.closest("[data-f]") : null;
+          if (!inp || ROW_SAVE_EXEMPT_FIELDS.has(inp.dataset.f)) return;
+          const rowEl = inp.closest(".team-role-row");
+          if (rowEl) syncRowDirty(rowEl);
+        };
+        listEl.addEventListener("input", onRowFieldEdit);
+        listEl.addEventListener("change", onRowFieldEdit);
         listEl.addEventListener("keydown", (e) => {
           if (e.key !== "Enter" || e.isComposing) return;
           const inp = e.target.closest("input[data-f]");

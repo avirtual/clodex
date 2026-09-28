@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team popover: a role row's Save button now lights up only when a field on that row has changed and goes quiet again once saved (it used to look inactive at all times, so an account change seemed not to register); closing the popover with unsaved role edits asks first.
+
 ## 5.89.0 — 2026-09-28 — Research-burst fixes: stores that never save over an unreadable file, a ticket loop that stamps and kills what it abandons, seats that reap and restore
 
 - Team verbs: `[agent:team sandbox down]` on a team whose box is already gone now removes the stale sandbox.json the app menu was still offering; a seat-cost stamp that cannot read or write its cursor file is logged instead of silently dropped; `effort:` on a role refuses to overwrite a template another role shares, like `model:` already did.

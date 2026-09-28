@@ -1580,7 +1580,7 @@ test('t792 wiring: the row template field is a select the save path reads, and a
   assert.match(src, /const rowFor = \(\) => templateRowFor\(templateRows, teamName\(\), select\.value\)/,
     'the Open target is resolved by the team-first helper, over THIS team — a name-only find '
     + 'over the raw listing opens another team\'s file, or the library copy of a stem this team shadows');
-  assert.match(src, /closeTeamRolesPopover\(\);\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(row\)/,
+  assert.match(src, /if \(!closeTeamRolesPopover\(\)\) return;\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(row\)/,
     'the click closes the popover and hands the ROW to the injected opener — no globals');
 });
 
@@ -1687,7 +1687,7 @@ test('t888 wiring: reserved Open is team-first, dead on an unresolvable stem, an
   assert.match(block, /open\.textContent = 'Open';/, 'the Open button is beside the name');
   assert.match(block, /open\.disabled = !tplRow;/,
     'Open is dead unless the resolved stem names a row the editor can be seeded from');
-  assert.match(block, /if \(!tplRow\) return;\n\s*closeTeamRolesPopover\(\);\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(tplRow\);/,
+  assert.match(block, /if \(!tplRow\) return;\n\s*if \(!closeTeamRolesPopover\(\)\) return;\n\s*if \(typeof openTemplate === 'function'\) openTemplate\(tplRow\);/,
     'the click re-checks the target, closes the popover and hands the ROW to the injected opener — no globals');
 
   // THE LOCK: this is the one assertion here that guards more than wiring. The
