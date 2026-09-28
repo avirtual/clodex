@@ -432,6 +432,25 @@ test('mtime is integral on both filePeek shapes and on a seeded filed[].ts, what
   assert.ok(ring.list().every((e) => Number.isInteger(e.ts)), `filed[].ts: ${ring.list().map((e) => e.ts)}`);
 });
 
+test('writeFilePeek returns the integral mtime the next save is vetted against', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const start = src.indexOf('function writeFilePeek(');
+  assert.ok(start > 0, 'ENTER: writeFilePeek is found by this anchor');
+  const body = src.slice(start, src.indexOf('\n}\n', start) + 2);
+  const { vetFileWrite } = require('../file-edit');
+  const cwd = mkTmpRoot('clx-fileview-');
+  const file = writeAt(cwd, 'a.txt', 'one');
+  const manager = { sessions: new Map([['seat', { cwd }]]) };
+  const writeFilePeek = new Function('manager', 'vetFileWrite', 'fs', 'path', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, fs, path);
+  const first = writeFilePeek('seat', file, 'two', null);
+  assert.strictEqual(first.ok, true, `ENTER: the first save wrote (${first.error})`);
+  assert.strictEqual(Number.isInteger(fs.statSync(file).mtimeMs), false, 'ENTER: the filesystem keeps a fraction on the write');
+  assert.strictEqual(Number.isInteger(first.mtime), true, `mtime ${first.mtime}`);
+  const second = writeFilePeek('seat', file, 'three', first.mtime);
+  assert.deepStrictEqual([second.ok, second.error], [true, undefined]);
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'three');
+});
+
 test('confinement follow-up: a non-traversable ancestor is outside, a loop is unreadable; a root itself and a dangling link inside cwd are not-a-file', () => {
   const registry = mkTmpRoot('clx-fileview-');
   const cwd = mkTmpRoot('clx-fileview-');

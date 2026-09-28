@@ -496,6 +496,32 @@ test('side-pane tabs: a save after an agent change is still sent with the pre-ch
   assert.deepStrictEqual(saveArgs('hand-1', s.tabs[0], 'mine'), ['hand-1', '/w/a.js', 'mine', 111]);
 });
 
+test('side-pane tabs: Keep editing stays dismissed when the tab is refocused on the same external change', () => {
+  let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100 })], 'a');
+  const first = reduceTabs(s, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 200, content: 'theirs' } });
+  assert.strictEqual(first.effect, 'banner', 'ENTER: the external change raised the banner');
+  s = reduceTabs(first.set, { type: 'keep', id: 'a' }).set;
+  s = reduceTabs(s, { type: 'focus', id: 'a' }).set;
+  const again = reduceTabs(s, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 200, content: 'theirs' } });
+  assert.strictEqual(again.effect, null);
+  assert.strictEqual(again.set.tabs[0].banner, false);
+  assert.deepStrictEqual(saveArgs('hand-1', again.set.tabs[0], 'mine'), ['hand-1', '/w/a.js', 'mine', 100]);
+  assert.strictEqual(reduceTabs(again.set, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'newer' } }).effect, 'banner');
+});
+
+test('side-pane tabs: a mtime seen under a banner does not outlive a save or a render that adopts a new one', () => {
+  const peek300 = { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'x' } };
+  let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100, seenMtime: 200 })], 'a');
+  s = reduceTabs(s, { type: 'saved', id: 'a', mtime: 300 }).set;
+  s = reduceTabs(s, { type: 'dirty', id: 'a', dirty: true }).set;
+  assert.strictEqual(reduceTabs(s, peek300).effect, null, 'after a save');
+  let r = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: false, mtime: 100, seenMtime: 200 })], 'a');
+  const rendered = reduceTabs(r, peek300);
+  assert.strictEqual(rendered.effect, 'render', 'ENTER: the clean tab adopted the new mtime');
+  r = reduceTabs(rendered.set, { type: 'dirty', id: 'a', dirty: true }).set;
+  assert.strictEqual(reduceTabs(r, peek300).effect, null, 'after a render');
+});
+
 test('side-pane width: 40vw by default, clamped to 320px and 60vw', () => {
   assert.strictEqual(clampSidePaneWidth(null, 1000), 400);
   assert.strictEqual(clampSidePaneWidth(100, 1000), 320);

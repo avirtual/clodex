@@ -6,6 +6,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { diagWarning } = require('../engine');
 const { missingToolOnExit } = require('../session-manager');
 
@@ -25,14 +27,28 @@ test('diagWarning: only one CLI missing → NOT a global warning (dialog gate ow
   assert.strictEqual(diagWarning({ ...healthyHelper, claude: '/x/claude', codex: null }), null);
 });
 
-test('diagWarning: BOTH agent CLIs missing → warns "no agent sessions can start"', () => {
-  const w = diagWarning({ ...healthyHelper, claude: null, codex: null });
-  assert.match(w, /Neither the claude nor codex CLI/);
+test('diagWarning: every agent CLI missing → warns "no agent sessions can start"', () => {
+  const w = diagWarning({ ...healthyHelper, claude: null, codex: null, muse: null });
+  assert.match(w, /No agent CLI \(claude, codex or muse\)/);
   assert.match(w, /no agent sessions can start/);
   // Same remedy discipline as tool-doctor's claude spec: the native installer,
   // not npm — this audience (fresh account/machine) usually lacks npm too.
   assert.match(w, /claude\.ai\/install\.sh/);
   assert.doesNotMatch(w, /npm i -g @anthropic-ai/);
+});
+
+test('diagWarning: any one AGENT_TOOLS CLI present is enough, and the collector probes every one of them', () => {
+  const { AGENT_TOOLS } = require('../renderer/lib/tool-gate');
+  const none = Object.fromEntries(AGENT_TOOLS.map((t) => [t, null]));
+  assert.match(diagWarning({ ...healthyHelper, ...none }), /no agent sessions can start/, 'ENTER: none present warns');
+  for (const t of AGENT_TOOLS) {
+    assert.strictEqual(diagWarning({ ...healthyHelper, ...none, [t]: `/x/${t}` }), null, t);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const start = src.indexOf('function collectSystemDiagnostics() {');
+  assert.ok(start > 0, 'ENTER: collectSystemDiagnostics is found by this anchor');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  for (const t of AGENT_TOOLS) assert.ok(body.includes(`${t}: whichBin('${t}')`), `collectSystemDiagnostics probes ${t}`);
 });
 
 test('diagWarning: a failed PATH merge is a first-class warning (root cause, over the symptom)', () => {

@@ -120,11 +120,11 @@ function loaded(set, a) {
   }
   const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
   if (tab.dirty) {
-    if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: 'banner' };
+    if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: 'banner' };
     return { set: patchTab(set, a.id, { deleted: false }), effect: null };
   }
   if (!a.force && tab.mtime != null && mtime === tab.mtime && !tab.deleted && !tab.stale) return { set, effect: null };
-  return { set: patchTab(set, a.id, { mtime, deleted: false, stale: false, banner: false }), effect: 'render' };
+  return { set: patchTab(set, a.id, { mtime, seenMtime: null, deleted: false, stale: false, banner: false }), effect: 'render' };
 }
 
 function reduceTabs(set, a) {
@@ -146,7 +146,7 @@ function reduceTabs(set, a) {
     case 'openPane': return set.tabs.length ? { set: { ...set, open: true }, effect: 'revalidate' } : { set, effect: null };
     case 'changed': return agentChanged(set, a);
     case 'loaded': return loaded(set, a);
-    case 'saved': return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
+    case 'saved': return { set: patchTab(set, a.id, { mtime: a.mtime, seenMtime: null, dirty: false, banner: false, deleted: false }), effect: null };
     case 'discard': return { set: patchTab(set, a.id, { dirty: false, banner: false }), effect: 'reload' };
     case 'keep': return { set: patchTab(set, a.id, { banner: false }), effect: null };
     default: return { set, effect: null };

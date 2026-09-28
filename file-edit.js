@@ -48,7 +48,7 @@ function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, 
   if (st.size > PEEK_MAX_BYTES) {
     return { ok: false, error: `File is larger than the ${PEEK_MAX_BYTES / 1024}KB peek limit — edit it in a real editor` };
   }
-  if (expectMtime != null && st.mtimeMs !== expectMtime) {
+  if (expectMtime != null && Math.trunc(st.mtimeMs) !== expectMtime) {
     return { ok: false, error: 'File changed on disk since it was opened — reopen it to see the current bytes' };
   }
   let head;

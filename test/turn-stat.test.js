@@ -74,6 +74,12 @@ test('reqSeg: no counts at all → null', () => {
   assert.strictEqual(reqSeg(null), null);
 });
 
+test('reqLine leads with reqSeg\'s headline when the session never compacted but p.cost is the all-time scope', () => {
+  const p = { cost: { requests: 500 }, costRun: { usd: 1, requests: 20 }, sinceCompact: { requests: 20, compacted: false } };
+  assert.strictEqual(reqSeg(p).text, 'req 20', 'ENTER: the fixture reaches the never-compacted branch');
+  assert.strictEqual(reqLine(p), 'req 20 (500 all-time)');
+});
+
 test('reqLine: both inline post-compact, plain otherwise', () => {
   assert.strictEqual(reqLine(scPayload), 'req 61 (1008 total)');
   assert.strictEqual(reqLine({ cost: { requests: 61 }, sinceCompact: { requests: 61, compacted: false } }), 'req 61');
@@ -143,6 +149,24 @@ test('costSeg: no cost at all → null (renderer falls through to CLI side-chann
   assert.strictEqual(costSeg({}), null);
   assert.strictEqual(costSeg(null), null);
   assert.strictEqual(costSeg({ cost: { usd: null } }), null);
+});
+
+test('costLine leads with the since-start figure like costSeg when never compacted and costRun is absent', () => {
+  const p = { cost: { usd: 247.30 }, sinceCompact: { estUsd: 3.5, compacted: false } };
+  assert.strictEqual(costSeg(p).text, '~$3.50', 'ENTER: the statusbar headline is the since-start figure');
+  assert.strictEqual(costLine(p), '~$3.50');
+});
+
+test('the hovercard req and cost lines lead with the statusbar headline for every scope shape', () => {
+  const heads = (line, seg) => line === seg.text || line.startsWith(`${seg.text} (`);
+  for (const compacted of [true, false]) {
+    for (const costRun of [null, { usd: 96.12, requests: 20 }]) {
+      const p = { cost: { usd: 247.30, requests: 500 }, costRun, sinceCompact: { requests: 12, estUsd: 3.5, compacted } };
+      const shape = JSON.stringify({ compacted, costRun: Boolean(costRun) });
+      assert.ok(heads(reqLine(p), reqSeg(p)), `req ${shape}: ${reqLine(p)} vs ${reqSeg(p).text}`);
+      assert.ok(heads(costLine(p), costSeg(p)), `cost ${shape}: ${costLine(p)} vs ${costSeg(p).text}`);
+    }
+  }
 });
 
 test('costLine: both inline post-compact, plain otherwise', () => {

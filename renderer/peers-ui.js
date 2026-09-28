@@ -880,7 +880,7 @@ function initPeersUi({
     const key = peerKey(id, name);
     if (!sessions.has(key)) return;
     if (tele.proxy) {
-      proxyState.set(key, { payload: tele.proxy, at: Date.now() });
+      proxyState.set(key, { payload: tele.proxy, at: typeof tele.proxy.ts === 'number' ? tele.proxy.ts : Date.now() });
       applyWarmBadge(key);
     }
     if (tele.ctx && typeof tele.ctx.pct === 'number') {

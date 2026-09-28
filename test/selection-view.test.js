@@ -124,6 +124,31 @@ test('a proxy that cannot be reached says so rather than claiming nothing rides'
   assert.match(note, /Could not reach the proxy: timeout/);
 });
 
+test('a proxy error or an unrouted session is still stated when the Copy tier built rows', () => {
+  const said = ({ rows, note }) => [note, ...rows.map((r) => r.note)].join('\n');
+  const cases = [
+    [{ local: { peek: null, pending: ['a'] }, queued: [] }, 'note'],
+    [{ local: { peek: null, pending: ['a'] }, queued: ['a'] }, 'attach'],
+  ];
+  for (const [over, kind] of cases) {
+    const errored = buildRows(data({ ...over, proxy: { routed: true, hints: null, error: 'timeout' } }));
+    assert.ok(errored.rows.some((r) => r.kind === kind), `ENTER: a ${kind} row was built`);
+    assert.match(said(errored), /Could not reach the proxy: timeout/, kind);
+    const unrouted = buildRows(data({ ...over, proxy: { routed: false, hints: null, error: null } }));
+    assert.ok(unrouted.rows.some((r) => r.kind === kind), `ENTER: a ${kind} row was built unrouted`);
+    assert.match(said(unrouted), /does not route through wirescope/, kind);
+  }
+});
+
+test('a queue read error is said as an error, not as an empty file', () => {
+  const { rows } = buildRows(data({ local: { peek: null, pending: ['a'] }, queued: { error: 'EACCES' } }));
+  assert.ok(rows.length, 'ENTER: something was said');
+  const all = rows.map((r) => r.note).join('\n');
+  assert.match(all, /Could not read the queue file: EACCES/);
+  assert.doesNotMatch(all, /file holds 0/);
+  assert.ok(rows.find((r) => /EACCES/.test(r.note)).warn, 'the unread file is flagged, not stated as a count');
+});
+
 test('remaining time comes from the proxy age, never a local clock', () => {
   assert.strictEqual(remainingS({ ttlS: 120, ageS: 30 }), 90);
   // A hint older than its TTL must floor at 0 — a negative reads as a bug.

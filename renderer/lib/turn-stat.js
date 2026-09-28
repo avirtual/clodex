@@ -64,16 +64,15 @@ function reqSeg(p) {
   return { text: `req ${total}`, tip: 'API roundtrips since session start, spans compacts (tool-loop calls, not just your prompts)' };
 }
 
-// Hovercard req line, mirroring turnLine: both numbers inline.
 function reqLine(p) {
   const total = p && p.cost && typeof p.cost.requests === 'number' ? p.cost.requests : null;
   const sc = p && p.sinceCompact;
   const now = sc && typeof sc.requests === 'number' ? sc.requests : null;
-  if (now != null && sc.compacted) {
-    return total != null ? `req ${now} (${total} total)` : `req ${now}`;
-  }
-  if (total == null) return now != null ? `req ${now}` : null;
-  return `req ${total}`;
+  if (now == null) return total != null ? `req ${total}` : null;
+  if (total == null) return `req ${now}`;
+  if (sc.compacted) return `req ${now} (${total} total)`;
+  if (p.costRun) return `req ${now} (${total} all-time)`;
+  return `req ${now}`;
 }
 
 // Cost, same live-first policy (operator ruling 07-15, reversing the earlier
@@ -113,16 +112,15 @@ function costSeg(p) {
   return { text: `~$${fmtCost(total)}`, tip: 'Estimated total spend (spans compacts)' };
 }
 
-// Hovercard cost line, mirroring turnLine/reqLine: the numbers inline.
 function costLine(p) {
   const { total, run } = costScopes(p);
   const sc = p && p.sinceCompact;
   const now = sc && typeof sc.estUsd === 'number' ? sc.estUsd : null;
-  if (now != null && sc.compacted) {
+  if (now != null) {
     if (run != null) return `~$${fmtCost(now)} ($${fmtCost(run)} run · $${fmtCost(total)} all-time)`;
-    return total != null ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
+    return total != null && sc.compacted ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
   }
-  if (total == null) return now != null ? `~$${fmtCost(now)}` : null;
+  if (total == null) return null;
   if (run != null) return `~$${fmtCost(run)} ($${fmtCost(total)} all-time)`;
   return `~$${fmtCost(total)}`;
 }

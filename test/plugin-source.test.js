@@ -50,6 +50,8 @@ const SPEC_ROWS = [
   ['owner/.', { ok: false }],
   ['owner/..', { ok: false }],
   ['owner/repo@release/1.0', { ok: true, repo: 'owner/repo', ref: 'release/1.0', subpath: null }],
+  ['Owner/Repo@Release-1:Plugins/Foo', { ok: true, repo: 'owner/repo', ref: 'Release-1', subpath: 'Plugins/Foo' }],
+  ['https://github.com/Owner/Repo.git', { ok: true, repo: 'owner/repo', ref: null, subpath: null }],
 ];
 
 test('parseSourceSpec: a literal table of accepted forms and refusals', () => {

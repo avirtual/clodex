@@ -115,6 +115,6 @@ function installSessionParams(install, homeDir) {
 }
 
 module.exports = {
-  newSessionToolGate, installSessionParams,
+  AGENT_TOOLS, newSessionToolGate, installSessionParams,
   newSessionOverlayPlan, shouldRaiseOverlay, agentInstallButtons,
 };

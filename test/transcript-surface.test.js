@@ -148,6 +148,22 @@ test('turnFolds: a shout or a dm in a machine-driven turn keeps it open; a non-t
   assert.strictEqual(turnFolds([report, said2(intent('exec'), intent('remind'))], C), true);
 });
 
+test('turnFolds: a task intent other than list in a machine-driven turn keeps it open, as segmentSurface surfaces it', () => {
+  const report = { kind: 'inbound', from: 'clodex-hand-12', text: 'report' };
+  assert.strictEqual(segmentSurface(intent('task', 'add')), C, 'ENTER: a task add is talk to segmentSurface');
+  assert.strictEqual(turnFolds([report, said2(intent('task', 'add'))], C), false);
+  assert.strictEqual(turnFolds([report, said2(intent('task', 'accept'))], C), false);
+  assert.strictEqual(turnFolds([report, said2(intent('task', 'list'))], C), true);
+});
+
+test('turnFolds: a machine-driven turn whose assistant record is an API error never folds', () => {
+  const reminder = { kind: 'inbound', from: 'reminder', text: 'continue' };
+  const err = { kind: 'assistant', text: 'API Error', apiError: true, segments: [intent('exec')] };
+  assert.strictEqual(surfaceOf(err), C, 'ENTER: surfaceOf fails open to conversation for it');
+  assert.strictEqual(turnFolds([reminder, err], C), false);
+  assert.strictEqual(turnFolds([reminder, said2(intent('exec'))], C), true, 'the same turn without the error still folds');
+});
+
 test('turnFolds: a machine-driven turn holding the operator\'s mid-turn prompt or panel message never folds', () => {
   const notice = { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 MERGED] x', ticket: { id: 't1', tag: 'MERGED' } };
   assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'queued' }], C), false);

@@ -54,6 +54,12 @@ function buildRows(data) {
   if (!data.enabled) {
     return { rows: [], note: 'Sending selected text is off. Preferences → "Send text I select in the panel".' };
   }
+  const proxyError = data.proxy && data.proxy.error;
+  const proxyNote = proxyError
+    ? `Could not reach the proxy: ${proxyError}`
+    : (data.proxy && !data.proxy.routed
+      ? 'This session does not route through wirescope, so selecting will not send — Copy still will.'
+      : '');
   const rows = [];
   const proxyHints = (data.proxy && Array.isArray(data.proxy.hints)) ? data.proxy.hints : [];
   const byId = new Map(proxyHints.map((h) => [h.id, h]));
@@ -89,6 +95,17 @@ function buildRows(data) {
 
   // ── attachments waiting in the queue file ──────────────────────────────
   const queued = Array.isArray(data.queued) ? data.queued : [];
+  const queueError = data.queued && !Array.isArray(data.queued) && data.queued.error;
+  if (queueError) {
+    rows.push({
+      kind: 'note',
+      title: '',
+      text: '',
+      meta: '',
+      note: `Could not read the queue file: ${queueError}`,
+      warn: true,
+    });
+  }
   for (const text of queued) {
     rows.push({
       kind: 'attach',
@@ -104,7 +121,7 @@ function buildRows(data) {
   // a row of its own — but a pending list with an EMPTY file after no submit is
   // how a lost attachment would look, so the count is stated when they differ.
   const pending = (data.local && data.local.pending) || [];
-  if (pending.length !== queued.length) {
+  if (!queueError && pending.length !== queued.length) {
     rows.push({
       kind: 'note',
       title: '',
@@ -146,15 +163,12 @@ function buildRows(data) {
     });
   }
 
-  if (rows.length) return { rows, note: '' };
-  if (data.proxy && data.proxy.error) {
-    return { rows, note: `Nothing queued. Could not reach the proxy: ${data.proxy.error}` };
+  if (rows.length) {
+    if (proxyNote) rows.push({ kind: 'note', title: '', text: '', meta: '', note: proxyNote, warn: Boolean(proxyError) });
+    return { rows, note: '' };
   }
-  if (data.proxy && !data.proxy.routed) {
-    // Copy still works here — its channel is a file the CLI's own hook reads —
-    // so this must not read as "the feature is off".
-    return { rows, note: 'Nothing is riding. This session does not route through wirescope, so selecting will not send — Copy still will.' };
-  }
+  if (proxyError) return { rows, note: `Nothing queued. ${proxyNote}` };
+  if (proxyNote) return { rows, note: `Nothing is riding. ${proxyNote}` };
   return { rows, note: 'Nothing is on its way to this agent.' };
 }
 

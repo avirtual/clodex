@@ -2531,7 +2531,7 @@ function switchSession(name) {
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
       if (!p) return;
-      proxyState.set(name, { payload: p, at: Date.now() });
+      proxyState.set(name, { payload: p, at: typeof p.ts === 'number' ? p.ts : Date.now() });
       applyWarmBadge(name);
       if (activeSession === name) renderProxyBar();
     }).catch(() => {});
@@ -4854,7 +4854,7 @@ function acceptWireQuota(payload, at = Date.now()) {
 }
 
 window.api.onSessionProxy((name, payload) => {
-  proxyState.set(name, { payload, at: Date.now() });
+  proxyState.set(name, { payload, at: payload && typeof payload.ts === 'number' ? payload.ts : Date.now() });
   applyWarmBadge(name);
   applySubagents(name);
   refreshQuotaChip();

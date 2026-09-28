@@ -26806,7 +26806,7 @@ ${i3.join("\n")}
       "use strict";
       function detectNotice(detect) {
         const d = detect || {};
-        if (d.ok === false) {
+        if (detect == null || d.ok === false) {
           return { kind: "error", text: `Couldn\u2019t check Docker${d.error ? ` \u2014 ${d.error}` : "."}` };
         }
         if (!d.present) {
@@ -26901,12 +26901,12 @@ ${i3.join("\n")}
         if (new Set(vals).size !== vals.length) return PORTS_INVALID;
         return null;
       }
-      var FIXED_SHA_RE = /^[0-9a-f]{7,40}$/;
+      var FIXED_SHA_RE = /^[0-9a-f]{7,40}$/i;
       function sandboxRebuiltLine(label, image) {
         if (!image) return `Rebuilt ${label} on the current code.`;
         if (image.kind === "image") return `Rebuilt ${label} from image ${image.image}`;
         if (!image.ref) return `Rebuilt ${label} on the dev checkout`;
-        const at = image.sha && !String(image.sha).startsWith(image.ref) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
+        const at = image.sha && !String(image.sha).toLowerCase().startsWith(String(image.ref).toLowerCase()) ? `${image.ref} @ ${String(image.sha).slice(0, 8)}` : image.ref;
         const pinned = FIXED_SHA_RE.test(image.ref) ? " \u2014 pinned; set ref to a branch to track it" : "";
         return `Rebuilt ${label} on ${at}${pinned}`;
       }
@@ -27086,6 +27086,7 @@ ${i3.join("\n")}
         return { name: install.sessionName, type: "bash", cwd: homeDir, command: install.command };
       }
       module.exports = {
+        AGENT_TOOLS,
         newSessionToolGate,
         installSessionParams,
         newSessionOverlayPlan,
@@ -27239,7 +27240,8 @@ ${i3.join("\n")}
       function warningText(resolved, opts) {
         if (!resolved || !resolved.ok) return "";
         const where = opts && opts.remote ? "This code will run on the Clodex host this browser is connected to, with the app's full authority, the same as Clodex itself. " : `This code will run inside Clodex with the app's full authority, the same as Clodex itself. `;
-        return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)} (commit ${shortCommit(resolved.commit)}). Clodex cannot check what it does \u2014 install it only if you trust its author.`;
+        const sha = shortCommit(resolved.commit);
+        return where + `It comes from github.com/${resolved.repo} at ${refLabel(resolved)}${sha ? ` (commit ${sha})` : ""}. Clodex cannot check what it does \u2014 install it only if you trust its author.`;
       }
       function sourceLine(source) {
         if (!source || !source.repo) return "";
@@ -28092,11 +28094,11 @@ ${i3.join("\n")}
         const total = p && p.cost && typeof p.cost.requests === "number" ? p.cost.requests : null;
         const sc = p && p.sinceCompact;
         const now = sc && typeof sc.requests === "number" ? sc.requests : null;
-        if (now != null && sc.compacted) {
-          return total != null ? `req ${now} (${total} total)` : `req ${now}`;
-        }
-        if (total == null) return now != null ? `req ${now}` : null;
-        return `req ${total}`;
+        if (now == null) return total != null ? `req ${total}` : null;
+        if (total == null) return `req ${now}`;
+        if (sc.compacted) return `req ${now} (${total} total)`;
+        if (p.costRun) return `req ${now} (${total} all-time)`;
+        return `req ${now}`;
       }
       function fmtCost(v) {
         return v >= 1 ? v.toFixed(2) : v.toFixed(4);
@@ -28125,11 +28127,11 @@ ${i3.join("\n")}
         const { total, run } = costScopes(p);
         const sc = p && p.sinceCompact;
         const now = sc && typeof sc.estUsd === "number" ? sc.estUsd : null;
-        if (now != null && sc.compacted) {
+        if (now != null) {
           if (run != null) return `~$${fmtCost(now)} ($${fmtCost(run)} run \xB7 $${fmtCost(total)} all-time)`;
-          return total != null ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
+          return total != null && sc.compacted ? `~$${fmtCost(now)} ($${fmtCost(total)} total)` : `~$${fmtCost(now)}`;
         }
-        if (total == null) return now != null ? `~$${fmtCost(now)}` : null;
+        if (total == null) return null;
         if (run != null) return `~$${fmtCost(run)} ($${fmtCost(total)} all-time)`;
         return `~$${fmtCost(total)}`;
       }
@@ -32302,13 +32304,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof tag !== "string") return false;
         return tag === "REPLAY" || tag === "wake" || tag.endsWith(" REDELIVERY") || MERGED_NAG_RE.test(tag);
       }
+      function isTalkIntent(seg) {
+        return Boolean(seg) && seg.kind === "intent" && (TALK_VERBS.has(seg.verb) || seg.verb === "task" && seg.sub !== "list");
+      }
       function segmentSurface(seg) {
         if (!seg || typeof seg !== "object") return INTERNALS;
         if (seg.kind === "prose") return typeof seg.text === "string" && seg.text.trim() ? CONVERSATION : INTERNALS;
-        if (seg.kind !== "intent") return INTERNALS;
-        if (TALK_VERBS.has(seg.verb)) return CONVERSATION;
-        if (seg.verb === "task" && seg.sub !== "list") return CONVERSATION;
-        return INTERNALS;
+        return isTalkIntent(seg) ? CONVERSATION : INTERNALS;
       }
       function inboundSurface(rec) {
         if (rec.from === "user") return CONVERSATION;
@@ -32341,12 +32343,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return Boolean(rec) && (rec.kind === "prompt" || rec.kind === "inbound" && rec.from === "user");
       }
       function talksBack(rec) {
-        return rec && rec.kind === "assistant" && Array.isArray(rec.segments) && rec.segments.some((s) => s && s.kind === "intent" && TALK_VERBS.has(s.verb));
+        return rec && rec.kind === "assistant" && Array.isArray(rec.segments) && rec.segments.some(isTalkIntent);
+      }
+      function apiErrored(rec) {
+        return Boolean(rec) && rec.kind === "assistant" && Boolean(rec.apiError);
       }
       function turnFolds(records, mode) {
         if (mode !== CONVERSATION) return false;
         if (!turnDriver(records)) return false;
-        return !records.some((r) => fromOperator(r) || talksBack(r));
+        return !records.some((r) => fromOperator(r) || talksBack(r) || apiErrored(r));
       }
       module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };
     }
@@ -33888,7 +33893,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         if (s < 0) return null;
         const block = [];
-        for (let k = s; k < rows.length && k <= at + CODEX_REACH && !isBlank(rows[k]); k++) block.push(rows[k]);
+        for (let k = s; k < rows.length && k <= s + 2 && !isBlank(rows[k]); k++) block.push(rows[k]);
         const plan = block.flatMap((r) => r.trim().split(/\s{2,}/u)).some((c) => CODEX_PLAN.test(c));
         const warn = block.map((r) => CODEX_WARNINGS.exec(r)).find(Boolean);
         const mode = plan ? { key: "plan", label: "Plan", cycles: true } : { key: "default", label: "Default", cycles: true };
@@ -41038,11 +41043,11 @@ void main() {
         }
         const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
         if (tab.dirty) {
-          if (mtime != null && mtime !== tab.mtime) return { set: patchTab(set, a.id, { banner: true, deleted: false }), effect: "banner" };
+          if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: "banner" };
           return { set: patchTab(set, a.id, { deleted: false }), effect: null };
         }
         if (!a.force && tab.mtime != null && mtime === tab.mtime && !tab.deleted && !tab.stale) return { set, effect: null };
-        return { set: patchTab(set, a.id, { mtime, deleted: false, stale: false, banner: false }), effect: "render" };
+        return { set: patchTab(set, a.id, { mtime, seenMtime: null, deleted: false, stale: false, banner: false }), effect: "render" };
       }
       function reduceTabs(set, a) {
         switch (a.type) {
@@ -41072,7 +41077,7 @@ void main() {
           case "loaded":
             return loaded(set, a);
           case "saved":
-            return { set: patchTab(set, a.id, { mtime: a.mtime, dirty: false, banner: false, deleted: false }), effect: null };
+            return { set: patchTab(set, a.id, { mtime: a.mtime, seenMtime: null, dirty: false, banner: false, deleted: false }), effect: null };
           case "discard":
             return { set: patchTab(set, a.id, { dirty: false, banner: false }), effect: "reload" };
           case "keep":
@@ -42140,6 +42145,8 @@ void main() {
         if (!data.enabled) {
           return { rows: [], note: 'Sending selected text is off. Preferences \u2192 "Send text I select in the panel".' };
         }
+        const proxyError = data.proxy && data.proxy.error;
+        const proxyNote = proxyError ? `Could not reach the proxy: ${proxyError}` : data.proxy && !data.proxy.routed ? "This session does not route through wirescope, so selecting will not send \u2014 Copy still will." : "";
         const rows = [];
         const proxyHints = data.proxy && Array.isArray(data.proxy.hints) ? data.proxy.hints : [];
         const byId = new Map(proxyHints.map((h) => [h.id, h]));
@@ -42165,6 +42172,17 @@ void main() {
           });
         }
         const queued = Array.isArray(data.queued) ? data.queued : [];
+        const queueError = data.queued && !Array.isArray(data.queued) && data.queued.error;
+        if (queueError) {
+          rows.push({
+            kind: "note",
+            title: "",
+            text: "",
+            meta: "",
+            note: `Could not read the queue file: ${queueError}`,
+            warn: true
+          });
+        }
         for (const text of queued) {
           rows.push({
             kind: "attach",
@@ -42176,7 +42194,7 @@ void main() {
           });
         }
         const pending = data.local && data.local.pending || [];
-        if (pending.length !== queued.length) {
+        if (!queueError && pending.length !== queued.length) {
           rows.push({
             kind: "note",
             title: "",
@@ -42208,13 +42226,12 @@ void main() {
             warn: false
           });
         }
-        if (rows.length) return { rows, note: "" };
-        if (data.proxy && data.proxy.error) {
-          return { rows, note: `Nothing queued. Could not reach the proxy: ${data.proxy.error}` };
+        if (rows.length) {
+          if (proxyNote) rows.push({ kind: "note", title: "", text: "", meta: "", note: proxyNote, warn: Boolean(proxyError) });
+          return { rows, note: "" };
         }
-        if (data.proxy && !data.proxy.routed) {
-          return { rows, note: "Nothing is riding. This session does not route through wirescope, so selecting will not send \u2014 Copy still will." };
-        }
+        if (proxyError) return { rows, note: `Nothing queued. ${proxyNote}` };
+        if (proxyNote) return { rows, note: `Nothing is riding. ${proxyNote}` };
         return { rows, note: "Nothing is on its way to this agent." };
       }
       function liveCount(data) {
@@ -46715,7 +46732,7 @@ ${detail}` });
           const key = peerKey(id, name);
           if (!sessions.has(key)) return;
           if (tele.proxy) {
-            proxyState.set(key, { payload: tele.proxy, at: Date.now() });
+            proxyState.set(key, { payload: tele.proxy, at: typeof tele.proxy.ts === "number" ? tele.proxy.ts : Date.now() });
             applyWarmBadge(key);
           }
           if (tele.ctx && typeof tele.ctx.pct === "number") {
@@ -50536,7 +50553,7 @@ ${detail}` });
         if (window.api.getProxySnapshot) {
           window.api.getProxySnapshot(name).then((p) => {
             if (!p) return;
-            proxyState.set(name, { payload: p, at: Date.now() });
+            proxyState.set(name, { payload: p, at: typeof p.ts === "number" ? p.ts : Date.now() });
             applyWarmBadge(name);
             if (activeSession === name) renderProxyBar();
           }).catch(() => {
@@ -52697,7 +52714,7 @@ ${detail}` });
         return next.length > 0 || latest != null;
       }
       window.api.onSessionProxy((name, payload) => {
-        proxyState.set(name, { payload, at: Date.now() });
+        proxyState.set(name, { payload, at: payload && typeof payload.ts === "number" ? payload.ts : Date.now() });
         applyWarmBadge(name);
         applySubagents(name);
         refreshQuotaChip();
