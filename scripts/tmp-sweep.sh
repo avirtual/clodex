@@ -580,6 +580,8 @@ ipc-act-home-
 ipc-act-root-
 ipc-del-home-
 ipc-del-root-
+ipc-hist-codex-
+ipc-hist-reg-
 ipc-team-home-
 ipc-team-root-
 ipc-tpull-

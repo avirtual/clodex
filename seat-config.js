@@ -162,6 +162,30 @@ function findCodexRollout(deps, codexHome, opts) {
   return best ? best.path : null;
 }
 
+function codexRolloutsForCwd(deps, codexHome, opts) {
+  const { fs, path } = deps;
+  const { cwd, sinceMs } = opts;
+  const cwds = new Set([cwd]);
+  try { cwds.add(fs.realpathSync(cwd)); } catch {}
+  const root = path.join(codexHome, 'sessions');
+  const out = [];
+  for (const y of listDir(fs, root)) {
+    for (const m of listDir(fs, path.join(root, y))) {
+      for (const d of listDir(fs, path.join(root, y, m))) {
+        for (const f of listDir(fs, path.join(root, y, m, d))) {
+          if (!f.startsWith('rollout-') || !f.endsWith('.jsonl')) continue;
+          const p = path.join(root, y, m, d, f);
+          let st;
+          try { st = fs.statSync(p); } catch { continue; }
+          if (!st.isFile() || st.mtimeMs < sinceMs) continue;
+          if (cwds.has(codexRolloutMetaCwd(fs, p))) out.push(p);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function museRegistryFor(deps, dataHome, pid) {
   const { fs, path } = deps;
   const dir = path.join(dataHome, 'muse', 'runtime', 'muse', 'sessions');
@@ -187,6 +211,6 @@ function linkTranscript(deps, linkPath, target) {
 }
 
 module.exports = {
-  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript,
+  uuidv7, deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, codexRolloutsForCwd, museRegistryFor, linkTranscript,
   REQUIRED_MUSE_FILES, DEFAULT_MUSE_SETTINGS,
 };
