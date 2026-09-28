@@ -662,3 +662,35 @@ test('a pty seat: a keystroke after the stop but before the release still freeze
   assert.match(line, /voiceRecordingSeat === name \|\| \(voiceArmedSeat === name && voiceEngineView && voiceEngineView\.mirror\.isArmed\(\)\)/);
   assert.match(line, /isHumanPtyInput\(data\)/);
 });
+
+test('a dispose() during an in-flight onVoiceStop never sends, whichever way the stop settles', async () => {
+  for (const ok of [true, false]) {
+    const ta = fakeTextarea();
+    const clock = fakeClock();
+    const sent = [];
+    let holds = true;
+    let stops = 0;
+    let settleStop = null;
+    const sub = attachTriggerSubmit(ta, {
+      getConfig: () => ({ enabled: true, phrase: 'enter' }),
+      markOrigin() {},
+      send: () => sent.push(ta.value),
+      holdsFire: () => holds,
+      onVoiceStop: () => { stops++; return new Promise((resolve) => { settleStop = resolve; }); },
+      quietMs: 1200,
+      releaseMs: 2500,
+      timers: clock.timers,
+    });
+    sub.draft('hello enter');
+    clock.advance(1200);
+    assert.strictEqual(stops, 1, `ENTER (${ok}): the quiet window reached the in-flight stop`);
+    sub.dispose();
+    holds = false;
+    settleStop(ok);
+    await Promise.resolve();
+    await Promise.resolve();
+    clock.advance(2500);
+    assert.deepStrictEqual(sent, [], `a stop that resolved ${ok} after dispose sent from a torn-down composer`);
+    assert.strictEqual(clock.pending(), 0, `a stop that resolved ${ok} after dispose left a timer armed`);
+  }
+});

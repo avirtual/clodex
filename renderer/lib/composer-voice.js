@@ -77,6 +77,7 @@ function attachTriggerSubmit(composer, {
   let release = null;
   let stopping = false;
   let stopFails = 0;
+  let disposed = false;
   const note = (line) => { try { trace(line); } catch {} };
   const fire = (fromVoice) => {
     const traced = fromVoice || stopping || span !== null;
@@ -100,12 +101,14 @@ function attachTriggerSubmit(composer, {
   };
   const cancelQuiet = () => { if (quiet !== null) { timerClear(quiet); quiet = null; } };
   const armQuiet = () => {
+    if (disposed) return;
     cancelQuiet();
     quiet = timerSet(() => { quiet = null; voiceFire(); }, quietMs);
   };
   const cancelRelease = () => { if (release !== null) { timerClear(release); release = null; } };
   const settle = () => { stopping = false; cancelRelease(); };
   const armRelease = () => {
+    if (disposed) return;
     cancelRelease();
     if (!(releaseMs > 0)) return;
     note(`release deadline armed ${releaseMs}ms`);
@@ -119,7 +122,7 @@ function attachTriggerSubmit(composer, {
     }, releaseMs);
   };
   const stopFailed = () => {
-    if (!stopping) return;
+    if (disposed || !stopping) return;
     stopping = false;
     stopFails++;
     if (stopFails < VOICE_STOP_TRIES) { note(`stop failed ${stopFails}/${VOICE_STOP_TRIES}, retrying`); armQuiet(); return; }
@@ -142,6 +145,7 @@ function attachTriggerSubmit(composer, {
     try { stopped = onVoiceStop(); } catch { stopFailed(); return; }
     if (stopped && typeof stopped.then === 'function') {
       stopped.then((ok) => {
+        if (disposed) return;
         note(`onVoiceStop resolved ${ok}`);
         if (ok === false) stopFailed();
         else if (ok === true && stopping) { stopFails = 0; armRelease(); }
@@ -174,6 +178,8 @@ function attachTriggerSubmit(composer, {
     },
     resetSpan() { span = null; stopping = false; stopFails = 0; trigger.reset(); },
     dispose() {
+      disposed = true;
+      stopping = false;
       cancelQuiet();
       cancelRelease();
       composer.removeEventListener('input', onInput);
