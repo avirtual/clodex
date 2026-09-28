@@ -134,6 +134,28 @@ test('persistence: after the file becomes readable again, the warn re-arms', { s
   }
 });
 
+test('persistence: an absent primary with an unreadable .bak warns once per launch', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  const bak = file + '.bak';
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    fs.copyFileSync(file, bak);
+    fs.unlinkSync(file);
+    fs.chmodSync(bak, 0o000);
+    assert.throws(() => fs.readFileSync(bak), /EACCES|EPERM/, 'ENTER: the .bak is unreadable');
+    const lines = captureConsoleError(() => {
+      for (let i = 0; i < 3; i++) {
+        stores.persistence.upsert({ name: 'b' + i, type: 'claude', workspaceId: 'default' });
+      }
+    });
+    assert.strictEqual(lines.filter((l) => l.includes('not persisted')).length, 1);
+  } finally {
+    try { fs.chmodSync(bak, 0o600); } catch {}
+    cleanup();
+  }
+});
+
 test('persistence: _save reports false when the write itself fails, true once it lands', { skip: isRoot && 'root writes a read-only dir' }, () => {
   const { stores, cleanup, userData } = freshStores();
   try {

@@ -79,14 +79,19 @@ test('missingToolOnExit: expected exit / a signal / a non-1 code are never flagg
   assert.strictEqual(missingToolOnExit({ ...base, expected: false, exitCode: 127 }), null);
 });
 
-test('missingToolOnExit: an absolute-path cmd is never flagged (assumed explicit, like the spawn-error path)', () => {
-  // An absolute cmd short-circuits on '/' WITHOUT consulting whichBin, mirroring
-  // the spawn-error diagnostic (session-manager:958). So a code-1 bash exit never
-  // masquerades as a missing CLI, regardless of whichBin.
-  const neverCalled = () => { throw new Error('whichBin must not be consulted for an absolute cmd'); };
+test('missingToolOnExit: an absolute-path cmd the probe accepts is never flagged', () => {
+  const whichExplicit = (bin) => (bin === '/bin/zsh' ? '/bin/zsh' : null);
   assert.strictEqual(
-    missingToolOnExit({ expected: false, exitCode: 1, signal: null, elapsedMs: 100, cmd: '/bin/zsh', whichBin: neverCalled }),
+    missingToolOnExit({ expected: false, exitCode: 1, signal: null, elapsedMs: 100, cmd: '/bin/zsh', whichBin: whichExplicit }),
     null,
+  );
+});
+
+test('missingToolOnExit: an explicit path the probe rejects → names the cmd', () => {
+  const rejectDir = (bin) => (bin === '/opt/dir/claude' ? null : '/usr/bin/' + bin);
+  assert.strictEqual(
+    missingToolOnExit({ expected: false, exitCode: 1, signal: null, elapsedMs: 100, cmd: '/opt/dir/claude', whichBin: rejectDir }),
+    '/opt/dir/claude',
   );
 });
 

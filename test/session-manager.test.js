@@ -12880,6 +12880,7 @@ function mkExitProbe() {
     os: osReal,
     log: { info: () => {}, warn: () => {}, error: () => {} },
     setAppQuitting: () => {},
+    whichBin: (c) => c || null,
   });
   m._sendToSession = (...a) => sent.push(a);
   const broadcasts = [];

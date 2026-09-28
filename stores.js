@@ -497,11 +497,11 @@ function initStores(userDataPath, {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
       this._unreadable = primary.state === 'unreadable';
-      if (primary.state !== 'unreadable') persistRefusedLogged = false;
       let all = primary.value;
-      if (primary.state !== 'ok') {
-        const bak = readStoreJson(PERSIST_FILE + '.bak');
-        if (bak.state === 'unreadable') this._unreadable = true;
+      const bak = primary.state !== 'ok' ? readStoreJson(PERSIST_FILE + '.bak') : null;
+      if (bak && bak.state === 'unreadable') this._unreadable = true;
+      if (!this._unreadable) persistRefusedLogged = false;
+      if (bak) {
         if (bak.state !== 'ok') return [];
         all = bak.value;
         console.error('sessions.json unreadable; recovered from .bak');
