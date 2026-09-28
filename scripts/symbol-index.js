@@ -375,7 +375,7 @@ function parseMap(text) {
       if (inExempt) { err(i, 'no region may follow ## EXEMPT'); continue; }
       const m = REGION_RE.exec(line);
       if (!m) { err(i, `region heading must be "## <name> — <firstSymbol> … <lastSymbol>": ${line}`); continue; }
-      region = { name: m[1].trim(), first: m[2], last: m[3], rows: [], invariants: [], hazards: [] };
+      region = { name: m[1].trim(), first: m[2], last: m[3], rows: [], invariants: [], hazards: [], tables: 0 };
       out.regions.push(region);
       continue;
     }
@@ -397,6 +397,7 @@ function parseMap(text) {
       if (!region) { err(i, 'table outside a region'); continue; }
       const cells = splitCells(line);
       if (!table) {
+        if (region.tables++) err(i, `region "${region.name}" carries a second table; each region carries one`);
         if (cells.length !== TABLE_HEADER.length || cells.some((c, k) => c !== TABLE_HEADER[k])) {
           err(i, `table header must be "| ${TABLE_HEADER.join(' | ')} |": ${line}`);
           table = { bad: true };
@@ -479,8 +480,13 @@ function checkMap({ map, extracted, testDir, minLines = 40, root = null }) {
       for (const pin of row.pins) {
         const rel = pin.replace(/^test\//, '');
         const file = path.join(testDir, rel);
-        if (!fs.existsSync(file)) {
+        const stat = fs.statSync(file, { throwIfNoEntry: false });
+        if (!stat) {
           failures.push({ kind: 'pin', symbol: row.symbol, detail: `pin ${pin} for ${row.symbol} does not exist under test/` });
+          continue;
+        }
+        if (!stat.isFile()) {
+          failures.push({ kind: 'pin', symbol: row.symbol, detail: `pin ${pin} for ${row.symbol} is not a file` });
           continue;
         }
         const text = fs.readFileSync(file, 'utf8');
