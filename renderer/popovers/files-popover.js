@@ -10,6 +10,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
   const filesPopover = document.getElementById('files-popover');
   const filesPopoverName = document.getElementById('files-popover-name');
   const filesPopoverBody = document.getElementById('files-popover-body');
+  const cwdByName = new Map();
 
   window.api.onSessionFiles((name, files) => {
     filesState.set(name, files || []);
@@ -42,22 +43,23 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
       filesPopoverBody.innerHTML = '<div class="cost-note">No file edits observed yet — rows appear as the agent\'s file tools run.</div>';
       return;
     }
-    const cwd = filesPopover.dataset.cwd || '';
+    const cwd = cwdByName.get(name) || '';
+    const outside = (f) => !!cwd && !f.path.startsWith(cwd + '/');
     const rows = files.map((f) => {
-      const inCwd = cwd && f.path.startsWith(cwd + '/');
+      const inCwd = !!cwd && f.path.startsWith(cwd + '/');
       const rel = inCwd ? f.path.slice(cwd.length + 1) : f.path;
       const base = rel.split('/').pop();
       const dir = rel.slice(0, rel.length - base.length);
       const badges = []; // aim-count + subagent provenance, not change size
       if (f.count > 1) badges.push(`<span class="file-badge" title="Touched ${f.count} times">×${f.count}</span>`);
       if (f.sub) badges.push('<span class="file-badge file-badge-sub" title="Touched via a subagent">sub</span>');
-      return `<div class="file-row${inCwd ? '' : ' file-row-out'}" data-path="${esc(f.path)}" title="${esc(f.path)} — click to view / diff">`
+      return `<div class="file-row${outside(f) ? ' file-row-out' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)} — click to view / diff">`
         + `<span class="file-row-main"><span class="file-row-dir">${esc(dir)}</span><span class="file-row-name">${esc(base)}</span>${badges.join('')}</span>`
         + `<span class="file-row-meta">${esc(f.tool)} · ${fmtAgo(f.ts)}</span>`
         + `</div>`;
     }).join('');
     filesPopoverBody.innerHTML = `<div class="file-rows">${rows}</div>`
-      + (files.some((f) => !(cwd && f.path.startsWith(cwd + '/')))
+      + (files.some(outside)
         ? '<div class="cost-note">Dimmed rows are outside the session\'s working directory.</div>' : '');
   }
 
@@ -74,7 +76,6 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
     const r = anchor.getBoundingClientRect();
     filesPopoverName.textContent = name;
     filesPopover.dataset.name = name;
-    filesPopover.dataset.cwd = '';
     // Opening IS seeing — drop the unseen latch and unlight the button.
     if (filesUnseen.delete(name)) renderProxyBar();
     filesPopoverBody.innerHTML = '<div class="cost-note">Loading…</div>';
@@ -88,7 +89,7 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
       filesPopoverBody.innerHTML = `<div class="cost-note">${esc((res && res.error) || 'Session not running')}</div>`;
       return;
     }
-    filesPopover.dataset.cwd = res.cwd || '';
+    if (res.cwd) cwdByName.set(name, res.cwd);
     filesState.set(name, res.files || []);
     // Reconcile the peer count-shadow to the authoritative list length so the
     // badge and the rows can't drift after an open (no-op for local sessions).

@@ -194,9 +194,12 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   let speak = null;
   function speakHtml() {
     if (!speak) return '';
+    const voiceList = speak.voice && speak.voices.length && !speak.voices.some((v) => v.name === speak.voice)
+      ? [{ name: speak.voice, locale: 'set elsewhere' }, ...speak.voices]
+      : speak.voices;
     const voices = speak.voices.length
       ? `<select class="speak-voice" ${speak.on ? '' : 'disabled'}>`
-        + speak.voices.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? ' selected' : ''}>`
+        + voiceList.map((v) => `<option value="${esc(v.name)}"${v.name === speak.voice ? ' selected' : ''}>`
           + `${esc(v.name)} (${esc(v.locale)})</option>`).join('')
         + '</select>'
       // No enumerable voices means `say` did not answer. The name is still shown
@@ -293,7 +296,7 @@ function initVoicePopover({ core, renderProxyBar, getRecorderReading, getRecorde
   // arrived at from the other side.
   let failedOnce = false;
   core.subscribe((snap) => {
-    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.capable === false ? 'no' : ''}`;
+    const key = `${snap.pending || ''}|${snap.mode || ''}|${snap.capable === false ? `no|${snap.cause || ''}` : ''}`;
     if (key === lastKey) return;
     try {
       // Equally a no-op rebuild of a live picker: the rows are detached under the

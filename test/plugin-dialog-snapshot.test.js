@@ -259,9 +259,11 @@ function popEl(tag = 'div') {
     addEventListener: (t, fn) => { if (!handlers.has(t)) handlers.set(t, []); handlers.get(t).push(fn); },
     fire: async (t, ev = {}) => { for (const fn of handlers.get(t) || []) await fn(ev); },
     querySelector: () => null,
-    querySelectorAll: (sel) => (sel === 'input[type="checkbox"]:checked'
-      ? e.children.flatMap((row) => row.children || []).filter((c) => c.type === 'checkbox' && c.checked)
-      : []),
+    querySelectorAll: (sel) => {
+      const boxes = e.children.flatMap((row) => row.children || []).filter((c) => c.type === 'checkbox');
+      if (sel === 'input[type="checkbox"]:checked') return boxes.filter((c) => c.checked);
+      return sel === 'input[type="checkbox"]' ? boxes : [];
+    },
   };
   return e;
 }
@@ -609,5 +611,32 @@ for (const site of FILL_SITES) {
     assert.ok(iFill < start || iFill > end,
       `${site.fill} is assigned inside the collect/apply body — a snapshot filled `
       + 'there reads the refilled cache under a new name, which is the original bug');
+  });
+}
+
+for (const [label, grantedTokens, want] of [
+  ['an untick', ['workbench:thinking'], []],
+  ['a tick', [], ['workbench:thinking']],
+]) {
+  test(`a plugin tick in the Intents popover keeps ${label} made on a grant before it`, async () => {
+    const h = popoverHarness({
+      catalog: DRAWN,
+      persisted: ['workbench'],
+      grantPlugins: [{ id: 'workbench', name: 'Workbench' }],
+      grantCaps: ['thinking'],
+      grantedTokens,
+    });
+    try {
+      await h.api.openIntentsPopover('seat-f1', null);
+      const box = h.ticks('intents-popover-grants-list').find((c) => c.value === 'workbench:thinking');
+      assert.ok(box, 'ENTER: the grant row was drawn');
+      assert.strictEqual(box.checked, grantedTokens.length > 0, 'ENTER: drawn at its persisted state');
+      box.checked = !box.checked;
+      await h.els.get('intents-popover-plugins-list').fire('change');
+      await h.apply('intents-popover-apply');
+      const wrote = h.calls.find((c) => c[0] === 'setSessionPluginGrants');
+      assert.ok(wrote, 'ENTER: the apply reached the grants write');
+      assert.deepStrictEqual(wrote[2], want);
+    } finally { h.restore(); }
   });
 }

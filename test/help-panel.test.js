@@ -115,6 +115,7 @@ const PAGES = {
   ].join('\n'),
   messaging: '# Messaging\n\n## Anchors\n\nMessaging prose.\n',
   architecture: '# Architecture\n\nThe [web box](../docker/web/) lives outside the corpus.\n',
+  'anchored-outside': '# Anchored\n\nSee the [readme](../README.md#install).\n',
   'recipe-aws-ec2': [
     '# EC2 recipe',
     '',
@@ -132,7 +133,7 @@ function pageReply(name) {
 function makeApi() {
   const calls = { index: 0, page: [], external: [] };
   const gates = [];
-  const fail = { index: 0, page: 0 };
+  const fail = { index: 0, page: 0, indexThrow: 0, pageThrow: 0 };
   const settle = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
   return {
     calls,
@@ -145,12 +146,14 @@ function makeApi() {
         calls.index += 1;
         if (calls.holding) await new Promise((r) => gates.push(r));
         if (fail.index > 0) { fail.index -= 1; return { ok: false }; }
+        if (fail.indexThrow > 0) { fail.indexThrow -= 1; throw new Error('help corpus manifest unreadable'); }
         return { ok: true, ...corpus.index() };
       },
       helpPage: async (name) => {
         calls.page.push(name);
         if (calls.holding) await new Promise((r) => gates.push(r));
         if (fail.page > 0) { fail.page -= 1; return { ok: false }; }
+        if (fail.pageThrow > 0) { fail.pageThrow -= 1; throw new Error('help corpus page not found'); }
         return pageReply(name);
       },
       openExternal: (url) => { calls.external.push(url); },
@@ -442,6 +445,41 @@ test('a failed fetch is retried, not cached as an empty corpus for the renderer\
   await withDocument(ctx2, () => ctx2.panel.openHelpPanel('messaging', null));
   assert.strictEqual(ctx2.byId.get('help-body').querySelector('h1').textContent, 'Messaging',
     'a transient page failure was memoized as a permanent miss');
+});
+
+test('a REJECTED index or page fetch is retried, not memoized as a rejected promise', async () => {
+  const ctx = mount();
+  ctx.harness.fail.indexThrow = 1;
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null).catch(() => {}));
+  assert.strictEqual(ctx.calls.index, 1, 'ENTER: the index was fetched once and rejected');
+  assert.deepStrictEqual(ctx.byId.get('help-nav').querySelectorAll('.help-nav-page'), [],
+    'ENTER: with the index call rejected the nav must be empty');
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  assert.strictEqual(ctx.calls.index, 2, 'the rejected index promise was memoized');
+  assert.ok(ctx.byId.get('help-nav').querySelectorAll('.help-nav-page').length >= 17);
+
+  const ctx2 = mount();
+  ctx2.harness.fail.pageThrow = 1;
+  await withDocument(ctx2, () => ctx2.panel.openHelpPanel('messaging', null).catch(() => {}));
+  assert.deepStrictEqual(ctx2.calls.page, ['messaging'], 'ENTER: the page was fetched once and rejected');
+  await withDocument(ctx2, () => ctx2.panel.openHelpPanel('messaging', null));
+  assert.strictEqual(ctx2.byId.get('help-body').querySelector('h1').textContent, 'Messaging',
+    'a rejected page fetch was memoized');
+});
+
+test('a rejected page fetch renders the miss instead of rejecting the open', async () => {
+  const ctx = mount();
+  ctx.harness.fail.pageThrow = 1;
+  await assert.doesNotReject(() => withDocument(ctx, () => ctx.panel.openHelpPanel('messaging', null)));
+  assert.strictEqual(ctx.byId.get('help-body').textContent, 'No such help page: messaging');
+});
+
+test('a non-corpus repo link keeps its anchor on the GitHub URL', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('anchored-outside', null));
+  const a = links(ctx.byId.get('help-body'));
+  assert.strictEqual(a.length, 1, 'ENTER: the fixture renders its one link');
+  assert.strictEqual(a[0].attrs.href, 'https://github.com/avirtual/clodex/blob/master/README.md#install');
 });
 
 test('reopening the page already on screen does not push a dead history entry', async () => {

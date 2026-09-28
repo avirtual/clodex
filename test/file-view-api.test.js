@@ -320,7 +320,7 @@ test('peekFile: binary detection and every error code', () => {
   assert.ok(typeof nf.error === 'string' && typeof dir.error === 'string');
 });
 
-function wiringFixture({ registry, cwd, session, fs: fsDep = fs }) {
+function wiringFixture({ registry, cwd, session, fs: fsDep = fs, deps: extra = {} }) {
   const manager = { sessions: new Map([[session.name, session]]) };
   const peeks = [];
   const diffs = [];
@@ -350,6 +350,7 @@ function wiringFixture({ registry, cwd, session, fs: fsDep = fs }) {
     getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; }, setRemoteError: () => {},
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
+    ...extra,
   };
   const remoteMod = require('../remote');
   const orig = remoteMod.RemoteServer;
@@ -584,4 +585,38 @@ test('_handleQuery maps code to status; no such session is codeless; notifyFiled
   } finally {
     server.stop();
   }
+});
+
+test('a peer ctx query that asks for the plain read gets the plain read, not the owner\'s utilization scan', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const session = { name: 'seat', agentType: 'claude', cwd, filedRing: createFiledRing() };
+  let caps = { context_utilization: true };
+  const recorded = [];
+  const f = wiringFixture({
+    registry: mkTmpRoot('clx-fileview-'), cwd, session,
+    deps: {
+      proxyPoller: { snapshot: () => (caps ? { capabilities: caps } : null) },
+      fetchProxyContext: (name, opts) => { recorded.push(opts); return { ok: true, data: { agents: [] } }; },
+    },
+  });
+  f.query('seat', 'ctx', { utilization: false });
+  assert.strictEqual(recorded.length, 1, 'ENTER: the owner fetched once');
+  assert.deepStrictEqual(recorded[0], { utilization: false });
+  f.query('seat', 'ctx', { utilization: true });
+  assert.deepStrictEqual(recorded[1], { utilization: true }, 'a scan asked for and advertised is run');
+  caps = null;
+  f.query('seat', 'ctx', { utilization: true });
+  assert.deepStrictEqual(recorded[2], { utilization: false }, 'the owner still decides whether a scan is possible');
+});
+
+test('the peer popoverApi forwards ctx opts, and a scan-capable owner advertises ctxScan to its viewers', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.match(src, /ctx: \(opts\) => q\('ctx', opts\),/);
+  const engineSrc = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const fn = engineSrc.match(/\nfunction peerProxyView\(p\) \{[\s\S]*?\n\}\n/);
+  assert.ok(fn, 'ENTER: peerProxyView is still found by this anchor');
+  const peerProxyView = new Function('boxWirescopeView', 'process', `${fn[0]}\nreturn peerProxyView;`)(() => null, { env: {} });
+  assert.ok(peerProxyView({ capabilities: { context_utilization: true } }).queries.includes('ctxScan'));
+  assert.ok(peerProxyView({ capabilities: { context_skills: true } }).queries.includes('ctxScan'));
+  assert.ok(!peerProxyView({ capabilities: { context_composition: true } }).queries.includes('ctxScan'));
 });

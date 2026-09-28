@@ -5324,7 +5324,7 @@ function popoverApi(name) {
     const q = (kind, args) => window.api.peerQuery(entry.peer.id, entry.peer.name, kind, args);
     return {
       remote: true,
-      ctx: () => q('ctx'),               // utilization opt-in is the owner's call
+      ctx: (opts) => q('ctx', opts),
       report: (opts) => q('report', opts),
       bust: () => q('bust'),
       files: () => q('files'),
