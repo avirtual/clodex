@@ -103,7 +103,7 @@ function mkWorld() {
 
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {}, debug() {} },
   });
   captureSeed(registryDir);

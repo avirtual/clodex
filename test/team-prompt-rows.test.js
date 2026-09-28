@@ -61,7 +61,7 @@ function mkHome(prefix, { library = {}, teams = {} } = {}) {
 function engineOver(registryDir, userDataPath) {
   return createEngine({
     userDataPath,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
 }

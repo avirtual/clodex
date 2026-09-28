@@ -19,7 +19,7 @@ function mkEngine() {
   fs.mkdirSync(cwd, { recursive: true });
   const engine = createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
   for (const name of [SEAT, OTHER]) {

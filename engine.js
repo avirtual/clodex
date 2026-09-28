@@ -245,6 +245,9 @@ function createEngine({ userDataPath, seams = {}, log }) {
 
   const logFile = seams.logFile || null;
 
+  const noSeed = !!seams.noSeed;
+  if (noSeed && !process.env.NODE_TEST_CONTEXT) throw new Error('createEngine: seams.noSeed is a test seam');
+
   // Every path below derives from this, and the suite's twelve createEngine
   // callers pass a temp one: unseamed, they seeded the operator's live library
   // from whatever branch happened to be checked out.
@@ -2293,7 +2296,12 @@ function drawerPtyCwd(workspaceId, seat) {
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
 
-  const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR, knownSkillNames });
+  const stores = initStores(userDataPath, { log, registryDir: REGISTRY_DIR, knownSkillNames,
+    ...(noSeed ? {
+      resourcesDir: path.join(REGISTRY_DIR, '__no_seed__'),
+      skillsResourcesDir: path.join(REGISTRY_DIR, '__no_seed_skills__'),
+      envDefaultsFile: path.join(REGISTRY_DIR, '__no_env_defaults__.json'),
+    } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
 

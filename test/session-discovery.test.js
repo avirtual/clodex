@@ -133,7 +133,7 @@ test('readSessionMeta counts operator prompts, not tool_result lines', () => {
   const tmp = mkTmpRoot('clodex-meta-turns-');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info() {}, warn() {}, error() {} },
   });
   const toolResult = (id) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] } });
@@ -158,7 +158,7 @@ test('readSessionMeta parses only user lines that mention tool_result', () => {
   const tmp = mkTmpRoot('clodex-meta-turns-');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info() {}, warn() {}, error() {} },
   });
   const plain = (t) => JSON.stringify({ type: 'user', message: { role: 'user', content: t } });

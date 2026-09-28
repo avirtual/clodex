@@ -211,7 +211,7 @@ test("a spilled body's header states its size in bytes", () => {
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
   eng.manager.sessions.set('bob', {
@@ -233,7 +233,7 @@ for (const [ch, want] of [['é', 1200], ['a', 600]]) {
     const registryDir = path.join(tmp, 'clodex-home');
     const eng = createEngine({
       userDataPath: tmp,
-      seams: { registryDir },
+      seams: { noSeed: true, registryDir },
       log: { info() {}, warn() {}, error() {} },
     });
     const body = ch.repeat(600);

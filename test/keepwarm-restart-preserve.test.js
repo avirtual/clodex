@@ -63,7 +63,7 @@ function mkEngine(info) {
   // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info(tag, msg) { if (info) info.push(`${tag}: ${msg}`); }, warn() {}, error() {} },
   });
 }

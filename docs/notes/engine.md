@@ -103,3 +103,7 @@ token is an ordinary path miss. Pinned by `test/engine-spill-resolve.test.js`.
 
 Seat image files (`img-<stamp>-<n>.<ext>`) age out after 24 h because a browser draft holds an uploaded image with nothing on disk naming it until send, so no parked pointer protects it.
 Text spill files keep the 30-minute age.
+
+## createEngine
+
+`seams.noSeed` skips seeding the shipped library, skills and env defaults; it throws outside `NODE_TEST_CONTEXT` because production must never build an unseeded engine.

@@ -39,7 +39,7 @@ function engineSeamTargets(seams) {
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
       // registryDir or the engine seeds the operator's live ~/.clodex (t359).
-      seams: { registryDir: path.join(tmp, 'clodex-home'), ...seams },
+      seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
     });
   } finally {
     smMod.createSessionManager = origSm;
@@ -102,6 +102,7 @@ test('engine: the return object exposes restartClodex and restartUnavailable', (
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
       seams: {
+        noSeed: true,
         registryDir: path.join(tmp, 'clodex-home'),
         restartHost: () => calls.push('immediate'),
         restartHostWhenIdle: () => calls.push('deferred'),

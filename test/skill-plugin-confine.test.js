@@ -186,7 +186,7 @@ test('t687: a bundle plugin.json carries the plugin\'s own version and announce'
   const before = capturedDeps.length;
   createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
   assert.strictEqual(capturedDeps.length, before + 1,
@@ -238,7 +238,7 @@ test('t732: writeBundlePlugins writes a skill\'s companion files under its dir',
   const before = capturedDeps.length;
   createEngine({
     userDataPath: tmp,
-    seams: { registryDir },
+    seams: { noSeed: true, registryDir },
     log: { info() {}, warn() {}, error() {} },
   });
   assert.strictEqual(capturedDeps.length, before + 1,

@@ -13,7 +13,7 @@ function mkEngine() {
   const tmp = mkTmpRoot('clx-report-cache-');
   const engine = createEngine({
     userDataPath: tmp,
-    seams: { registryDir: path.join(tmp, 'clodex-home') },
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
     log: { info() {}, warn() {}, error() {} },
   });
   engine.manager.sessions.set(NAME, { name: NAME, proxyBase: 'http://127.0.0.1:7999' });
