@@ -4487,6 +4487,12 @@ function createTicketMethods(deps, shared) {
       return false;
     },
 
+    _soloOpenerTeam(team, ticket) {
+      if (!team || !team.solo || !ticket) return team;
+      const add = (Array.isArray(ticket.events) ? ticket.events : []).find((e) => e && e.kind === 'add');
+      return { ...team, lead: ticket.opener || (add && add.by) || null };
+    },
+
     // Cleared by a non-idle edge that is ATTRIBUTABLE to this write (see
     // _emitActivity): reaching a turn over the delivered text means the seat
     // submitted, and submitting is exactly what a lost write prevents. A turn the
@@ -4501,12 +4507,6 @@ function createTicketMethods(deps, shared) {
     //     cleared it — a terminal idle with the latch still set is unreachable;
     //   - a seat blocked on a permission dialog re-arms below instead of firing,
     //     so a dialog answered ten minutes later is still checked afterwards.
-    _soloOpenerTeam(team, ticket) {
-      if (!team || !team.solo || !ticket) return team;
-      const add = (Array.isArray(ticket.events) ? ticket.events : []).find((e) => e && e.kind === 'add');
-      return { ...team, lead: add && add.by ? add.by : null };
-    },
-
     _checkSpecConfirm(session) {
       const u = session._specUnconfirmed;
       if (!u || session._dead) return;
@@ -6405,10 +6405,10 @@ function createTicketMethods(deps, shared) {
       const lead = team.lead;
       if (!isLead) {
         const r = this._gatedDeliver(lead, session.name, `[ticket ${ticket.id} done] ${report}`, false, `[ticket ${ticket.id} done]`);
+        const kept = reentry ? `ticket stays held at "${heldAt}" (${holdRecoveryText(ticket.verifyHold && ticket.verifyHold.recovery, ticket.id).trim()})` : 'ticket kept open';
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
         // unreachable lead — an interval that can outlive its context or its process.
-        const kept = reentry ? `ticket stays held at "${heldAt}" (${holdRecoveryText(ticket.verifyHold && ticket.verifyHold.recovery, ticket.id).trim()})` : 'ticket kept open';
         if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ${kept}; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       }
       ticket.state = 'done';
