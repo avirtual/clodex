@@ -53,7 +53,7 @@ const TURN_TEXT_CAP = 4 * 1024 * 1024;
 const TURN_THINKING_CAP = 256 * 1024;
 
 
-const CODEX_AUTH_PATH = path.join(os.homedir(), '.codex', 'auth.json');
+const codexAuthPath = () => path.join(os.homedir(), '.codex', 'auth.json');
 
 function isChatgptBackend(upstream) {
   return (upstream || '').includes('chatgpt.com/backend-api');
@@ -64,7 +64,7 @@ function isChatgptBackend(upstream) {
 // forwarded as-is and upstream rejects it cleanly.
 function readCodexAuth() {
   try {
-    const data = JSON.parse(fs.readFileSync(CODEX_AUTH_PATH, 'utf8'));
+    const data = JSON.parse(fs.readFileSync(codexAuthPath(), 'utf8'));
     const tokens = data.tokens || {};
     return { accessToken: tokens.access_token || null, accountId: tokens.account_id || null };
   } catch {
@@ -454,15 +454,13 @@ class WireProxy extends EventEmitter {
     let upstreamUrl;
     try {
       upstreamUrl = new URL(upstreamBase.replace(/\/+$/, '') + upstreamPath + (query || ''));
+      if (upstreamUrl.protocol !== 'http:' && upstreamUrl.protocol !== 'https:') {
+        throw new Error(`unsupported protocol ${upstreamUrl.protocol}`);
+      }
     } catch (e) {
       this.stats.requestsErrored += 1;
       this.emit('proxy-error', { agent, reqId, error: `bad upstream url: ${e.message}` });
       return this._json(res, 502, { error: `bad upstream url: ${e.message}` });
-    }
-    if (upstreamUrl.protocol !== 'http:' && upstreamUrl.protocol !== 'https:') {
-      this.stats.requestsErrored += 1;
-      this.emit('proxy-error', { agent, reqId, error: `bad upstream url: unsupported protocol ${upstreamUrl.protocol}` });
-      return this._json(res, 502, { error: `bad upstream url: unsupported protocol ${upstreamUrl.protocol}` });
     }
 
     // Main line only: a subagent, title side-call or quota probe shares the

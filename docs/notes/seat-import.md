@@ -65,7 +65,7 @@ replaces that entry with the account-by-label outcome.
 
 ## sweep
 
-Removes stagings older than 1h. A crash between `begin`'s mkdir and its manifest
+Removes stagings whose last activity (`begin`, or the last `putFile` chunk) is over 1h old. A crash between `begin`'s mkdir and its manifest
 write leaves a dir nothing else reaps, so an unreadable manifest falls back to
 the directory's `mtimeMs` rather than skipping it. NOT `birthtimeMs`: it is the
 one stat field `utimesSync` cannot move, so a backdated subject would pin this

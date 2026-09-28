@@ -653,9 +653,8 @@ function createPluginHostEngine(deps) {
     const r = loader.rescan(api);
     for (const id of r.added) announceState(id, true);
     for (const id of r.removed) announceState(id, false);
-    // A CHANGED plugin gets no announce: nothing about it moved in this
-    // process, and telling windows to re-activate would re-run the OLD cached
-    // module's renderer half for a version the user thinks they just installed.
+    // A CHANGED plugin gets no announce: telling windows to re-activate would re-run
+    // the OLD cached module's renderer half for a version the user thinks they just installed.
     if (r.added.length || r.removed.length) notifyStateChanged();
     return r;
   }

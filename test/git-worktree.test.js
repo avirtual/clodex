@@ -68,6 +68,24 @@ test('removeWorktree: deleteBranch drops the branch createWorktree minted', { sk
   assert.strictEqual(branchList(repo, 'agent/minted'), '');
 });
 
+test('removeWorktree: a worktree dir already gone still honours deleteBranch and reports it', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'agent/vanished');
+  assert.strictEqual(r.ok, true, r.error);
+  fs.rmSync(r.path, { recursive: true, force: true });
+  assert.ok(branchList(repo, 'agent/vanished').includes('agent/vanished'), 'ENTER: the branch outlived its dir');
+
+  const rm = await wt.removeWorktree(r.path, { repo, deleteBranch: r.branch });
+  assert.strictEqual(rm.ok, true, rm.error);
+  assert.strictEqual(rm.gone, true);
+  assert.strictEqual(rm.branchDeleted, 'agent/vanished');
+  assert.strictEqual(branchList(repo, 'agent/vanished'), '');
+
+  const noRepo = await wt.removeWorktree(r.path, { deleteBranch: 'agent/other' });
+  assert.strictEqual(noRepo.branchDeleted, null);
+  assert.ok(noRepo.branchError, 'a branch that could not be deleted is reported');
+});
+
 test('removeWorktree: no deleteBranch keeps the branch', { skip: !gitAvailable() }, async () => {
   const repo = makeRepo();
   const r = await wt.createWorktree(repo, 'agent/kept');

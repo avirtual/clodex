@@ -170,6 +170,7 @@ function normalizeArgv(argv, short) {
     if (typeof tok !== 'string') { norm.push(tok); continue; }
     const eq = tok.startsWith('--') ? tok.indexOf('=') : -1;
     if (eq > 2) norm.push(tok.slice(0, eq), tok.slice(eq + 1));
+    else if (tok.length > 2 && tok[0] === '-' && tok[1] !== '-' && Object.prototype.hasOwnProperty.call(short, tok.slice(0, 2))) norm.push(short[tok.slice(0, 2)], tok[2] === '=' ? tok.slice(3) : tok.slice(2));
     else norm.push(Object.prototype.hasOwnProperty.call(short, tok) ? short[tok] : tok);
   }
   return norm;

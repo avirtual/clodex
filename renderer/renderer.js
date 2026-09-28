@@ -573,17 +573,19 @@ function startWorkspaceRename() {
     newSpan.id = 'workspace-name';
     newSpan.className = 'workspace-name';
     newSpan.dataset.tip = 'Double-click to rename workspace';
-    newSpan.textContent = current;
+    newSpan.textContent = currentWorkspaceName;
     input.replaceWith(newSpan);
     if (!commit || newName === current) return;
     try {
       await window.api.setWorkspaceName(newName);
     } catch (e) {
-      showToast(`Rename failed: ${(e && e.message) || 'unknown error'}`, { kind: 'error', duration: 10000 });
+      const why = String((e && e.message) || 'unknown error').replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
+      showToast(`Rename failed: ${why}`, { kind: 'error', duration: 10000 });
       return;
     }
     currentWorkspaceName = newName;
-    newSpan.textContent = newName;
+    const live = document.getElementById('workspace-name');
+    if (live) live.textContent = newName;
     document.title = newName;
   };
 
@@ -3840,7 +3842,7 @@ async function doCreate() {
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
       if (worktree) {
-        const rm = await window.api.removeWorktree(worktree.path, worktree.base !== null ? { deleteBranch: worktree.branch } : null);
+        const rm = await window.api.removeWorktree(worktree.path, worktree.base !== null ? { repo: worktree.repo, deleteBranch: worktree.branch } : null);
         if (!rm || !rm.ok) showToast(`Session was not created and its worktree could not be removed: ${worktree.path} (${(rm && rm.error) || 'unknown error'})`, { kind: 'error', duration: 10000 });
         else if (rm.branchError) showToast(`Session was not created; worktree removed but branch ${worktree.branch} was kept: ${rm.branchError}`, { kind: 'error', duration: 10000 });
         worktree = null;

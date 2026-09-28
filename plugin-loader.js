@@ -333,8 +333,10 @@ function createPluginLoader(deps) {
     const other = half === 'engine' ? 'renderer' : 'engine';
     const left = half ? strikesOf(rec[key], other) : 0;
     const next = { ...rec };
-    if (left) next[key] = { ...rec[key], count: left, [half]: 0, [other]: left };
-    else delete next[key];
+    if (left) {
+      next[key] = { ...rec[key], count: left, [half]: 0, [other]: left };
+      delete next[key].error;
+    } else delete next[key];
     writeFailureRecord(next);
     return true;
   }
@@ -358,7 +360,7 @@ function createPluginLoader(deps) {
   // outlive the restart that resolves it.
   const restartRequired = new Map(); // id -> { was, now, dirChanged }
   const requiredPaths = new Map(); // enginePath -> version first required
-  const loadedFrom = new Map(); // id -> { dir, version }
+  const loadedFrom = new Map();
 
   const rendererReportedThisRun = new Set();
   function noteRendererActivation(id, ok, error) {
@@ -533,6 +535,8 @@ function createPluginLoader(deps) {
       const nowVersion = rec.manifest.version || null;
       if (priorVersion !== undefined && priorVersion !== nowVersion) {
         restartRequired.set(rec.id, { was: priorVersion, now: nowVersion, dirChanged: false });
+      } else if (restartRequired.has(rec.id)) {
+        restartRequired.set(rec.id, { ...restartRequired.get(rec.id), now: nowVersion });
       }
       const mod = rec.enginePath ? requireModule(rec.enginePath) : {};
       if (rec.enginePath && priorVersion === undefined) requiredPaths.set(rec.enginePath, nowVersion);
@@ -688,10 +692,11 @@ function createPluginLoader(deps) {
   }
 
   function validateCandidate(dir) {
-    const abs = String(dir || '');
-    if (!abs || !path.isAbsolute(abs)) {
+    const given = String(dir || '');
+    if (!given || !path.isAbsolute(given)) {
       return { ok: false, error: 'a plugin folder must be given as an absolute path' };
     }
+    const abs = path.resolve(given);
     let st;
     try { st = fs.statSync(abs); } catch (e) {
       return { ok: false, error: `cannot read ${abs} — ${(e && e.message) || e}` };

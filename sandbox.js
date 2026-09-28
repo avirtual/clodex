@@ -504,6 +504,7 @@ function createSandbox(deps = {}) {
   const writeBoxConfig = deps.writeBoxConfig
     || ((next) => { getUiSettings().set({ sandbox: next }); });
   const serialize = deps.serialize || ((fn) => fn());
+  const boxExists = deps.boxExists || (() => true);
   const siblingComposePaths = deps.siblingComposePaths || (() => []);
   const platform = deps.platform || process.platform;
   const userInfo = deps.userInfo || os.userInfo;
@@ -762,6 +763,7 @@ function createSandbox(deps = {}) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
     return serialize(async () => {
+      if (!boxExists()) return { ok: false, error: `no such sandbox: ${id}` };
       const owner = await foreignOwner();
       if (owner) return foreignError(owner);
       const d = await detect();
@@ -927,6 +929,7 @@ function createSandboxManager(deps = {}) {
       label: box.label || boxId,
       subdir: subdirFor(boxId),
       serialize,
+      boxExists: () => listBoxes().some((b) => b && b.id === boxId),
       siblingComposePaths: () => listBoxes()
         .filter((b) => b && b.id && b.id !== boxId)
         .map((b) => get(b.id))

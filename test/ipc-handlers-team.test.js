@@ -442,6 +442,28 @@ test('t863: deleting a sandboxed team whose manifest does not load still removes
   } finally { d.cleanup(); }
 });
 
+test('deleteCheck never reads a sandbox pointer outside the teams dir for a name that is not a team name', () => {
+  const d = mkDeleteDoor({ manifest: '{not json' });
+  try {
+    const home = path.dirname(path.dirname(d.dir));
+    fs.mkdirSync(path.join(home, 'evil'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'evil', 'sandbox.json'), JSON.stringify({ boxId: 'victim' }));
+    assert.strictEqual(fs.existsSync(path.join(home, 'teams', '..', 'evil', 'sandbox.json')), true, 'ENTER: the traversal target exists');
+    const check = d.deleteCheck('../evil');
+    assert.strictEqual(check.loaded, false);
+    assert.strictEqual(check.boxId, undefined);
+    assert.strictEqual(check.sandboxed, undefined);
+  } finally { d.cleanup(); }
+});
+
+test('createTeamDelete refuses to build without a teamsDir, so the unloadable-team box probe cannot be dropped silently', () => {
+  const { createTeamDelete: build } = require('../team-delete');
+  const deps = { loadManifest() {}, deleteTeam() {}, getManager: () => ({}), getSandboxManager: () => null };
+  for (const teamsDir of [undefined, null, '']) {
+    assert.throws(() => build({ ...deps, teamsDir }), /teamsDir is required/);
+  }
+});
+
 test('t863: an unloadable team with no sandbox pointer never touches the sandbox manager', async () => {
   const d = mkDeleteDoor({ manifest: '{not json' });
   try {

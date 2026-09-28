@@ -654,6 +654,7 @@ function deletableTeamsOnDisk(spec, { seats = [], tickets = [], saved = 0, remov
   const { deleteCheck, deleteGated } = createTeamDelete({
     loadManifest: tm.loadManifest, deleteTeam: tm.deleteTeam, getManager: () => manager,
     getSandboxManager: () => ({ remove: async (id) => { removed.push(id); return removeResult; } }),
+    teamsDir: tm.teamsDir,
   });
   const getTeams = () => ({
     listTeams: tm.listTeams, loadManifest: tm.loadManifest, teamsDir: tm.teamsDir,

@@ -84,8 +84,8 @@ function execRunStatusReply(execRuns, rawBody, now) {
     const c = str.charCodeAt(str.length - 1);
     return c >= 0xD800 && c <= 0xDBFF;
   };
-  const dropLast = (str) => {
-    const cut = str.slice(0, -1);
+  const dropLast = (str, n = 1) => {
+    const cut = str.slice(0, -n);
     return endsHigh(cut) ? cut.slice(0, -1) : cut;
   };
 
@@ -96,7 +96,7 @@ function execRunStatusReply(execRuns, rawBody, now) {
       if (longest < 0 || tails[i].length > tails[longest].length) longest = i;
     }
     if (longest >= 0 && tails[longest].length) {
-      tails[longest] = dropLast(tails[longest]);
+      tails[longest] = dropLast(tails[longest], over);
       over = render().length - EXEC_STATUS_REPLY_MAX;
       continue;
     }
@@ -105,7 +105,7 @@ function execRunStatusReply(execRuns, rawBody, now) {
       if (cmds[i].length && (widest < 0 || cmds[i].length > cmds[widest].length)) widest = i;
     }
     if (widest < 0) break;
-    cmds[widest] = dropLast(cmds[widest]);
+    cmds[widest] = dropLast(cmds[widest], over + (clipped[widest] ? 0 : 1));
     clipped[widest] = true;
     over = render().length - EXEC_STATUS_REPLY_MAX;
   }
@@ -273,6 +273,7 @@ function stripCodexStreamArgs(argv) {
       i += CODEX_STREAM_REFUSED.get(tok);
       continue;
     }
+    if (typeof tok === 'string' && /^-[^-]./.test(tok) && CODEX_STREAM_REFUSED.has(tok.slice(0, 2))) { dropped.push(tok.slice(0, 2)); continue; }
     const eq = typeof tok === 'string' ? tok.indexOf('=') : -1;
     if (eq > 0 && tok.startsWith('--') && CODEX_STREAM_REFUSED.has(tok.slice(0, eq))) { dropped.push(tok.slice(0, eq)); continue; }
     out.push(tok);

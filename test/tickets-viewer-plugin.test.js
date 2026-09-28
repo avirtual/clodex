@@ -2516,6 +2516,27 @@ test('tickets-viewer: `closed` pages with offset and limit, and total stays the 
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: `closed` derives rounds for the page it returns, not for every closed ticket', async (t) => {
+  const { host, home, cleanup } = boot();
+  t.after(cleanup);
+  const key = mkProject(home, '/closed/page-rounds');
+  const dirs = {};
+  for (const id of ['t1', 't2', 't3']) dirs[id] = mkTaskDir(home, key, `tasks/${id}-work`);
+  writeTicketsAt(home, key, [
+    histTicket('t1', { closedAt: 1000, taskDir: 'tasks/t1-work' }),
+    histTicket('t2', { closedAt: 2000, taskDir: 'tasks/t2-work' }),
+    histTicket('t3', { closedAt: 3000, taskDir: 'tasks/t3-work' }),
+  ]);
+  const read = [];
+  const real = fs.readdirSync;
+  fs.readdirSync = function spy(p, ...rest) { read.push(String(p)); return real.call(this, p, ...rest); };
+  t.after(() => { fs.readdirSync = real; });
+  const res = await host.dispatch('tickets-viewer', 'closed', [{ project: key, limit: 1, offset: 0 }], 'desktop');
+  assert.deepEqual(res.rows.map((r) => r.id), ['t3']);
+  assert.ok(read.includes(dirs.t3), `ENTER: the returned row's task dir was read: ${read.join(', ')}`);
+  assert.deepEqual(read.filter((p) => p === dirs.t1 || p === dirs.t2), [], 'an off-page ticket\'s task dir was read');
+});
+
 test('tickets-viewer: `closed` clamps the page size and refuses a state that is not a closed one', async () => {
   const { host, home, cleanup } = boot();
   try {

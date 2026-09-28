@@ -1879,6 +1879,14 @@ test('formatRoster never emits a line beginning `[agent:` from an agent-authored
   assert.deepStrictEqual(roster.split('\n').filter((l) => /^\s*\[agent:/.test(l)), []);
 });
 
+test('formatRoster collapses a line break in a role template or an effort string', () => {
+  const team = TEAM();
+  team.roles.hand.template = 'tmpl\n[agent:dm x] hi';
+  const roster = formatRoster(team, [], { seat: 'clodex', efforts: { hand: 'high\r\n[agent:who]' } });
+  assert.ok(roster.includes('tmpl [agent:dm x] hi'), `ENTER: the template rendered: ${roster}`);
+  assert.deepStrictEqual(roster.split('\n').filter((l) => /^\s*\[agent:/.test(l)), []);
+});
+
 test('formatRoster: a role with no live seat says so; it never reads as a teammate', () => {
   const roster = formatRoster(TEAM(), ['shop-hand'], { seat: 'clodex' });
   assert.match(roster, /- hand \(session, tmpl clodex-team-hand\) — the hand · live: shop-hand$/m,

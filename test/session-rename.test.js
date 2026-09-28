@@ -567,8 +567,8 @@ for (const key of ['messages', 'pending', 'promptcache', 'notices', 'memory', 's
 
 test('an ordinary rename on a MIGRATED root is not refused by the legacy pre-check', async () => {
   const why = 'the pre-check reads the NEW name\'s spellings, which no ordinary rename has yet — '
-    + 'renameSeat mints them AFTER it. This is the control for the six refusal subjects above: '
-    + 'without it, a pre-check that refused everything would satisfy all six';
+    + 'renameSeat mints them AFTER it. This is the control for the refusal subjects above: '
+    + 'without it, a pre-check that refused everything would satisfy all of them';
   const root = mkTmpRoot('clodex-rename-');
   seedDirs(root, 'seat');
   migrateSeatLayout({ root, names: ['seat'], fs: fsReal });

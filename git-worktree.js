@@ -309,7 +309,10 @@ async function removeWorktree(worktreePath, opts) {
   if (!fs.existsSync(wt)) {
     const repo = opts && opts.repo ? String(opts.repo) : null;
     if (repo) await git(repo, ['worktree', 'prune']);
-    return { ok: true, gone: true };
+    const gone = opts && opts.deleteBranch ? String(opts.deleteBranch) : null;
+    if (!gone) return { ok: true, gone: true };
+    const d = repo ? await deleteBranch(repo, gone) : { ok: false, error: 'no repo given to delete the branch in' };
+    return d.ok ? { ok: true, gone: true, branchDeleted: gone } : { ok: true, gone: true, branchDeleted: null, branchError: d.error };
   }
   // Anchor git at the worktree itself so we can find its repo, then confirm it's
   // a linked worktree (not the primary checkout) before removing anything.

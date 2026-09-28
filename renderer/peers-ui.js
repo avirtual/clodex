@@ -497,8 +497,9 @@ function initPeersUi({
     } finally {
       if (on) entry.peer._acquiring = false;
     }
-    if (on && sessions.get(peerKey(peerId, peerName)) !== entry) {
-      if (res && res.ok && !sessions.has(peerKey(peerId, peerName))) dropPersistedControl(peerId, peerName);
+    const live = sessions.get(peerKey(peerId, peerName));
+    if (on && live !== entry) {
+      if (res && res.ok && !(live && live.peer && (live.peer.controlled || live.peer._acquiring))) dropPersistedControl(peerId, peerName);
       return;
     }
     if (on) {
@@ -739,7 +740,10 @@ function initPeersUi({
     if (e.target.id === 'peer-session-overlay') closePeerSessionDialog();
   });
   document.getElementById('peer-session-dialog').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); submitPeerSessionDialog(); }
+    if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') {
+      e.preventDefault();
+      if (!document.getElementById('peer-session-create').disabled) submitPeerSessionDialog();
+    }
   });
 
   async function peerHideFromList(id, name) {

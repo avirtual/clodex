@@ -66,6 +66,7 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }), api: apiOve
   };
   const noop = () => {};
   const calls = [];
+  const toasts = [];
   const handlers = {};
   const api = new Proxy({}, {
     get: (_, prop) => (...args) => {
@@ -102,7 +103,7 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }), api: apiOve
       sessions, sessionList,
       getActiveSession: () => null,
       createTerminal: noop, switchSession: noop, removeSession: noop,
-      updateSidebarActive: noop, showToast: noop, appendIpcEntry: noop,
+      updateSidebarActive: noop, showToast: (msg, opts) => toasts.push({ msg, opts }), appendIpcEntry: noop,
       remeasureReadonlyPeer: noop,
       peerStatuses, peerTunnels: new Map(), peerWebTunnels: new Map(),
       getOurAppVersion: () => '0.0.0', syncSeatAvailability: noop,
@@ -126,7 +127,7 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }), api: apiOve
     openPeerSessionDialog: (...a) => withDom(() => ui.openPeerSessionDialog(...a)),
     closePeerSessionDialog: (...a) => withDom(() => ui.closePeerSessionDialog(...a)),
     typeToTakeControl: (...a) => withDom(() => ui.typeToTakeControl(...a)),
-  }, byId, shape, doc, withDom, install, calls, handlers, sessions, peerStatuses, sessionList };
+  }, byId, shape, doc, withDom, install, calls, toasts, handlers, sessions, peerStatuses, sessionList };
 }
 
 function deferred() {
@@ -308,5 +309,56 @@ for (const row of [
     assert.strictEqual(h.byId('peer-session-overlay').classList.contains('hidden'), false);
     assert.strictEqual(h.byId('peer-input-name').disabled, true);
     assert.strictEqual(h.shape().title, 'Move seat to box2');
+    if (row.outcome === 'fails') {
+      assert.deepStrictEqual(h.toasts.map((x) => x.msg), ['Create of "fresh" on box1 failed: name taken'],
+        'the failure the closed dialog can no longer show is toasted instead');
+    }
+  });
+}
+
+test('Enter in the create dialog does not submit a second create while the button is disabled', async () => {
+  const pending = deferred();
+  const h = mkPeersUi({ api: { peerCreateSession: () => pending.promise } });
+  h.ui.openPeerSessionDialog('p1', 'box1');
+  h.byId('peer-input-name').value = 'fresh';
+  h.byId('peer-input-type').value = 'claude';
+  h.byId('peer-input-cwd').value = '/work';
+  const restore = h.install();
+  try {
+    h.byId('peer-session-create').listeners.click.forEach((fn) => fn({}));
+    assert.strictEqual(h.byId('peer-session-create').disabled, true, 'ENTER: the button is disabled while the create is in flight');
+    h.byId('peer-session-dialog').listeners.keydown.forEach((fn) => fn({ key: 'Enter', target: { tagName: 'INPUT' }, preventDefault() {} }));
+    assert.strictEqual(h.calls.filter((c) => c.fn === 'peerCreateSession').length, 1, 'Enter sent a second create');
+    pending.resolve({ ok: false, error: 'x' });
+    await settle();
+  } finally { restore(); }
+});
+
+for (const row of [
+  { controlled: false, forget: [['p1', 'a']], outcome: 'forgets the stale claim' },
+  { controlled: true, forget: [], outcome: 'keeps the claim the new tab holds' },
+]) {
+  test(`a control acquire that resolves after the SAME name was re-attached ${row.outcome}`, async () => {
+    const pending = deferred();
+    const h = mkPeersUi({ api: { peerControl: (id, name, on) => (on ? pending.promise : Promise.resolve({ ok: true })) } });
+    h.peerStatuses.set('p1', { online: true, caps: ['args', 'create'], sessions: [] });
+    const mk = () => ({
+      peer: { id: 'p1', name: 'a', controlled: false },
+      fitAddon: { fit() {} },
+      terminal: { cols: 80, rows: 24, focus() {} },
+    });
+    const entry = mk();
+    h.sessions.set('a@p1', entry);
+    const restore = h.install();
+    try {
+      h.ui.typeToTakeControl('a@p1', 'x');
+      const fresh = mk();
+      fresh.peer.controlled = row.controlled;
+      h.sessions.set('a@p1', fresh);
+      pending.resolve({ ok: true });
+      await settle();
+    } finally { restore(); }
+    assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerForgetControlled').map((c) => c.args), row.forget);
+    assert.strictEqual(entry.peer.controlled, false);
   });
 }

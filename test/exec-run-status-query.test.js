@@ -270,6 +270,44 @@ test('a reply that fits once its last tail empties leaves every cmd whole', asyn
   } finally { cleanup(); }
 });
 
+test('the whole overshoot comes off the longest tail in one cut', async () => {
+  const { m, session, replies, cleanup } = harness();
+  try {
+    session.execRuns = [
+      { seq: 1, cmd: 'c', state: 'ok', startedAt: 0, endedAt: 1000, tail: 'a'.repeat(200), ceilingMin: 7 },
+      { seq: 2, cmd: 'c', state: 'ok', startedAt: 0, endedAt: 1000, tail: 'b'.repeat(199), ceilingMin: 7 },
+    ];
+    m._handleExecIntent(session, 'status', '{}');
+    await settle();
+    const line = statusOf(replies);
+    assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}`);
+    assert.ok(line.includes(`: ${'b'.repeat(199)};`), `the shorter tail was cut too: ${line}`);
+  } finally { cleanup(); }
+});
+
+test('clipping a cmd budgets for its ellipsis, so one cut clips one cmd', async () => {
+  const runs = (a, b, c) => [
+    { seq: 1, cmd: a, state: 'ok', startedAt: 0, endedAt: 1000, tail: '', ceilingMin: 7 },
+    { seq: 2, cmd: b, state: 'ok', startedAt: 0, endedAt: 1000, tail: '', ceilingMin: 7 },
+    { seq: 3, cmd: c, state: 'ok', startedAt: 0, endedAt: 1000, tail: '', ceilingMin: 7 },
+  ];
+  const ask = async (list) => {
+    const { m, session, replies, cleanup } = harness();
+    try {
+      session.execRuns = list;
+      m._handleExecIntent(session, 'status', '{}');
+      await settle();
+      return statusOf(replies);
+    } finally { cleanup(); }
+  };
+  const base = (await ask(runs('x', 'x', 'x'))).length - '[agent:exec] '.length - 3;
+  const L = Math.ceil((400 - base + 3 + 10) / 3);
+  const line = await ask(runs('a'.repeat(L), 'b'.repeat(L - 1), 'c'.repeat(L - 2)));
+  assert.ok(line.length <= '[agent:exec] '.length + 400, `got ${line.length}`);
+  assert.ok(line.includes('b'.repeat(L - 1) + ' ok'), `the second-widest cmd was clipped: ${line}`);
+  assert.strictEqual(line.split('…').length - 1, 1, `more than one cmd was clipped: ${line}`);
+});
+
 test('a narrow tail cut on half a surrogate pair drops the lone high half even when nothing is trimmed', async () => {
   const { m, session, replies, children, cleanup } = harness();
   try {

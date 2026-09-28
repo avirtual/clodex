@@ -395,6 +395,19 @@ test('sweep removes a staging older than an hour by manifest startedAt and keeps
   assert.deepStrictEqual(imp.sweep(), []);
 });
 
+test('sweep ages a staging from its last putFile chunk, so a slow transfer is not reaped mid-flight', () => {
+  const { root } = mkRoots();
+  let clock = 1_000_000_000_000;
+  const imp = createSeatImport({ root, claudeProjects: root, reminders: stubReminders(), fs, now: () => clock });
+  const slow = imp.begin({ name: 'ana', record: record() });
+  clock += 50 * 60 * 1000;
+  put(imp, slow.id, 'transcript.jsonl', '{"t":1}\n');
+  clock += 11 * 60 * 1000;
+  assert.deepStrictEqual(imp.sweep(), [], 'a staging started 61 minutes ago but written 11 minutes ago was reaped');
+  clock += 50 * 60 * 1000;
+  assert.deepStrictEqual(imp.sweep(), [slow.id], 'ENTER: an idle staging is still reaped');
+});
+
 test('claudeProjectSlug flattens both separators and engine composes through it', () => {
   assert.strictEqual(claudeProjectSlug('/Users/x/proj.app'), '-Users-x-proj-app');
   assert.strictEqual(claudeProjectSlug('/a/b-c/.hidden'), '-a-b-c--hidden');
@@ -450,10 +463,11 @@ test('a commit that fails after the seat dir is made rolls the install back so a
   const res = imp.commit({ id });
   assert.strictEqual(res.ok, false);
   assert.match(res.error, /^install failed/);
+  assert.match(res.error, /EIO/, 'ENTER: the failure is the loadlog rename, which runs after the seat dir is made');
   assert.strictEqual(res.installed, undefined);
   assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
   assert.strictEqual(fs.existsSync(path.join(claudeProjects, SLUG, `${SID}.jsonl`)), false);
-  assert.strictEqual(fs.existsSync(legacySeatPathFor(root, 'ana', 'memory')), false);
+  assert.throws(() => fs.lstatSync(legacySeatPathFor(root, 'ana', 'memory')), { code: 'ENOENT' });
   assert.strictEqual(fs.existsSync(path.join(root, 'import', id)), false);
   assert.strictEqual(imp.begin({ name: 'ana', record: record() }).ok, true);
 });
