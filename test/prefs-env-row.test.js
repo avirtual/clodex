@@ -165,6 +165,14 @@ test('an empty-string value is a legitimate row, not an absent one', () => {
   assert.strictEqual(valEl.title, 'EMPTY=');
 });
 
+test('envRowView tolerates a missing row the way its key and secret lines already do', () => {
+  assert.doesNotThrow(() => envRowView(null, DEFAULTS));
+  const blank = { key: '', secret: false, valueText: '', nameTitle: '', valueTitle: '=', shipped: false };
+  assert.deepStrictEqual(envRowView(null, {}), blank);
+  assert.deepStrictEqual(envRowView(undefined, {}), blank);
+  assert.deepStrictEqual(envRowView({ key: 'K', value: 'v' }, {}).valueText, 'v', 'ENTER: a real value still reads through');
+});
+
 const flush = async () => { for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
 const sliceNamed = (head) => {
   const start = rendererSrc.indexOf(head);

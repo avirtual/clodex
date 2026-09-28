@@ -3,7 +3,7 @@
 function envRowView(v, defaults) {
   const key = v && v.key ? String(v.key) : '';
   const secret = !!(v && v.secret);
-  const value = secret ? '' : String(v && v.value == null ? '' : v.value);
+  const value = secret ? '' : String(v && v.value != null ? v.value : '');
   const rec = defaults && Object.prototype.hasOwnProperty.call(defaults, key) ? defaults[key] : null;
   const shipped = !!rec && !secret && value === String(rec.value == null ? '' : rec.value);
   const note = rec && rec.note ? String(rec.note) : '';
