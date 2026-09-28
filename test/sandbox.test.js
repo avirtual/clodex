@@ -685,6 +685,7 @@ test('probeDocker: info ok, compose version ok → compose:true', async () => {
   const calls = [];
   assert.deepStrictEqual(await probeDocker(scriptedSpawn({ info: 0, compose: 0 }, calls)),
     { present: true, running: true, compose: true });
+  assert.deepStrictEqual(calls, [['docker', 'info', '--format', '{{.ServerVersion}}'], ['docker', 'compose', 'version']]);
 });
 
 test('probeDocker: info fails → compose probe is never spawned', async () => {
@@ -1268,7 +1269,7 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
   assert.ok(!yaml.includes('library/templates'));
 });
 
-async function composeFor(platform, { entrypoint = true, packaged = false, override = null, workDir = null } = {}) {
+async function composeFor(platform, { entrypoint = true, packaged = false, override = null, workDir = null, userInfo = () => ({ uid: 1002, gid: 1003, username: 'op' }) } = {}) {
   const ud = freshUserData();
   const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
   const ctx = mkTmpDirIn(TMP_USERDATA, 'ctx-');
@@ -1287,7 +1288,7 @@ async function composeFor(platform, { entrypoint = true, packaged = false, overr
     appVersion: '9.9.9',
     log: { info: (...a) => infos.push(a.join(' ')), error() {} },
     platform,
-    userInfo: () => ({ uid: 1002, gid: 1003, username: 'op' }),
+    userInfo,
   });
   await sb.writeComposeFile();
   const plain = generateCompose({
@@ -1329,6 +1330,17 @@ test('writeComposeFile: on linux, an image that may lack the entrypoint is never
   assert.strictEqual(override.yaml, override.plain);
   assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(override.yaml));
   assert.ok(override.infos.some((l) => l.includes('ghcr.io/example/clodex:0.1.0') && l.includes('image user')));
+});
+
+test('writeComposeFile: a linux desktop uid with no passwd entry runs the box as the image user', async () => {
+  let called = 0;
+  const { yaml, plain, infos } = await composeFor('linux', {
+    userInfo: () => { called++; throw new Error('ENOENT: no such file or directory, uv_os_get_passwd'); },
+  });
+  assert.strictEqual(called, 1);
+  assert.strictEqual(yaml, plain);
+  assert.ok(!/user:|CLODEX_HOST_|CLODEX_WORK_VOLUME/.test(yaml));
+  assert.ok(infos.some((l) => l.startsWith('sandbox ') && l.includes('host uid unresolvable (ENOENT: no such file or directory, uv_os_get_passwd)') && l.includes('image user')));
 });
 
 test('writeComposeFile: on darwin and win32 the compose carries no user or host ids', async () => {

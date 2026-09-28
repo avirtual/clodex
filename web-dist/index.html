@@ -55546,6 +55546,7 @@ ${res.stderr}` : "");
       }
       async function loadBoxDetail() {
         sbEffectivePorts = null;
+        sbAskedPorts = null;
         const cfg = await window.api.sandboxGetConfig(sbCurrentBox);
         const box = sbBoxes.find((b) => b.id === sbCurrentBox);
         sbDetailLabel.textContent = box && box.label || sbCurrentBox;
@@ -55644,7 +55645,7 @@ ${res.stderr}` : "");
           showToast(r.error || "Sandbox settings were rejected.", { kind: "error", duration: 1e4 });
           return false;
         }
-        if (r && r.webPort != null) applyAskedPorts(r);
+        if ("webPort" in cfg && r && r.webPort != null) applyAskedPorts(r);
         return true;
       }
       var sbWorkdirPick = document.getElementById("sandbox-workdir-pick");
