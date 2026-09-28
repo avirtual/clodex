@@ -226,5 +226,30 @@ test("a spilled body's header states its size in bytes", () => {
   assert.strictEqual(lines[2], 'Size: 1200 bytes');
 });
 
+for (const [ch, want] of [['é', 1200], ['a', 600]]) {
+  test(`a spilled pointer's byte count matches the header's for 600 × ${JSON.stringify(ch)}`, () => {
+    const { createEngine } = require('../engine');
+    const tmp = mkTmpRoot('clx-spill-ptr-');
+    const registryDir = path.join(tmp, 'clodex-home');
+    const eng = createEngine({
+      userDataPath: tmp,
+      seams: { registryDir },
+      log: { info() {}, warn() {}, error() {} },
+    });
+    const body = ch.repeat(600);
+    assert.strictEqual(body.length, 600, 'ENTER: 600 UTF-16 units either way');
+    const text = eng.manager._buildDeliveryText({ name: 'bob', agentType: 'claude' }, 'alice', body, 'dm');
+    const ptr = /Message \((\d+) bytes\)/.exec(text);
+    assert.ok(ptr, `a pointer, not the body inline: ${text.slice(0, 80)}`);
+
+    const dir = path.join(registryDir, 'messages', 'bob');
+    const files = fs.readdirSync(dir).filter((f) => /^msg-.*\.txt$/.test(f));
+    assert.strictEqual(files.length, 1);
+    const hdr = /^Size: (\d+) bytes$/.exec(fs.readFileSync(path.join(dir, files[0]), 'utf8').split('\n')[2]);
+    assert.strictEqual(Number(ptr[1]), Number(hdr[1]));
+    assert.strictEqual(Number(ptr[1]), want);
+  });
+}
+
 const { after } = require('node:test');
 after(() => { setImmediate(() => process.exit(0)); });

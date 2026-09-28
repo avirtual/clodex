@@ -7593,9 +7593,10 @@ function createSessionManager(deps) {
     _spillRejectedPayload(session, verb, body) {
       if (!body) return '';
       try {
+        const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
         this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
-        return ` — your ${verb} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+        return ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
         return ` — WARNING: your ${verb} body could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
@@ -7628,6 +7629,7 @@ function createSessionManager(deps) {
       if (how === 'none') return '';
       const off = ` — this capability is off for this seat; retrying will bounce the same way, and only the operator can turn it on (Edit Session → Intents)`;
       const body = String(intent.body);
+      const bytes = Buffer.byteLength(body);
       if (how === 'spill') {
         const used = (session._deniedSpills || (session._deniedSpills = new Map())).get(label) || 0;
         if (used < DENIED_SPILL_CAP) {
@@ -7635,15 +7637,15 @@ function createSessionManager(deps) {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
             this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
-            return `${off}. Your ${label} body (${body.length} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+            return `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
             log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
-            return `${off}. WARNING: your ${label} body (${body.length} bytes) could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
+            return `${off}. WARNING: your ${label} body (${bytes} bytes) could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
           }
         }
-        return `${off}. Your ${label} body (${body.length} bytes) was NOT saved — ${DENIED_SPILL_CAP} bodies for this verb have already been spilled this session and the rest are dropped; it exists only in your own turn`;
+        return `${off}. Your ${label} body (${bytes} bytes) was NOT saved — ${DENIED_SPILL_CAP} bodies for this verb have already been spilled this session and the rest are dropped; it exists only in your own turn`;
       }
-      return `${off}. Your ${label} body (${body.length} bytes) was NOT saved and exists only in your own turn`;
+      return `${off}. Your ${label} body (${bytes} bytes) was NOT saved and exists only in your own turn`;
     }
 
     static CONTEXT_COMMANDS = {
@@ -9430,7 +9432,8 @@ function createSessionManager(deps) {
         ? ''
         : '(no reply path)';
 
-      if (body.length > MSG_SPILL_THRESHOLD) {
+      const bytes = Buffer.byteLength(body);
+      if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
         this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
@@ -9442,8 +9445,8 @@ function createSessionManager(deps) {
         // The marker rides the pointer line (not the spilled file, which may be
         // read after the register has already drifted).
         return target.agentType === 'claude'
-          ? `${marked} Message (${body.length} bytes) attached: @${filePath} ${trailer}`
-          : `${marked} Message (${body.length} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
+          ? `${marked} Message (${bytes} bytes) attached: @${filePath} ${trailer}`
+          : `${marked} Message (${bytes} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
       }
       return `${prefix} ${body}${trailer ? ' ' + trailer : ''}`;
     }

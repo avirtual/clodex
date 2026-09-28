@@ -258,7 +258,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
 
 function whichBin(cmd) {
   if (!cmd) return null;
-  if (cmd.includes('/')) { try { fs.accessSync(cmd, fs.constants.X_OK); return cmd; } catch { return null; } }
+  if (cmd.includes('/')) { try { fs.accessSync(cmd, fs.constants.X_OK); return fs.statSync(cmd).isFile() ? cmd : null; } catch { return null; } }
   for (const d of (process.env.PATH || '').split(path.delimiter).filter(Boolean)) {
     const p = path.join(d, cmd);
     try { fs.accessSync(p, fs.constants.X_OK); if (fs.statSync(p).isFile()) return p; } catch {}
@@ -1070,6 +1070,7 @@ function readSessionMeta(file) {
   }
   for (const ln of lines) {
     if (!ln.includes('"type":"user"')) continue;
+    if (!ln.includes('"tool_result"')) { turns++; continue; }
     let content;
     try { content = JSON.parse(ln).message?.content; } catch { continue; }
     if (Array.isArray(content) && content.length && content.every((b) => b && b.type === 'tool_result')) continue;
@@ -2527,7 +2528,7 @@ const toolCache = createToolCache({ whichBin });
     accounts, moveAccountByModel,
     sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceTrigger,
     readVoiceCapability: readVoiceCapabilityCached,
-    readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts,
+    readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts, whichBin,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
     probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, resolveDeployFolder,
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,

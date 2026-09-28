@@ -497,7 +497,7 @@ function initStores(userDataPath, {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
       this._unreadable = primary.state === 'unreadable';
-      if (primary.state === 'ok') persistRefusedLogged = false;
+      if (primary.state !== 'unreadable') persistRefusedLogged = false;
       let all = primary.value;
       if (primary.state !== 'ok') {
         const bak = readStoreJson(PERSIST_FILE + '.bak');
@@ -522,6 +522,7 @@ function initStores(userDataPath, {
         }
         return false;
       }
+      let ok = true;
       try {
         if (!launchBakTaken) {
           launchBakTaken = true;
@@ -533,10 +534,11 @@ function initStores(userDataPath, {
         }
         atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
       } catch (e) {
+        ok = false;
         console.error('persistence save failed:', e);
       }
       if (touched) this._writeSeatJson(touched, entries.find((s) => s && s.name === touched) || null);
-      return true;
+      return ok;
     },
     list() {
       return this._load();

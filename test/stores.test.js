@@ -134,6 +134,45 @@ test('persistence: after the file becomes readable again, the warn re-arms', { s
   }
 });
 
+test('persistence: _save reports false when the write itself fails, true once it lands', { skip: isRoot && 'root writes a read-only dir' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    fs.chmodSync(userData, 0o555);
+    let r;
+    const lines = captureConsoleError(() => { r = stores.persistence._save([{ name: 'b', type: 'claude', workspaceId: 'default' }]); });
+    assert.ok(lines.some((l) => l.includes('persistence save failed')), 'ENTER: the write threw and was swallowed');
+    assert.strictEqual(r, false);
+    fs.chmodSync(userData, 0o755);
+    assert.strictEqual(stores.persistence._save([{ name: 'b', type: 'claude', workspaceId: 'default' }]), true);
+  } finally {
+    try { fs.chmodSync(userData, 0o755); } catch {}
+    cleanup();
+  }
+});
+
+test('persistence: an ABSENT sessions.json re-arms the not-persisted warn too', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    fs.chmodSync(file, 0o000);
+    const lines = captureConsoleError(() => {
+      stores.persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+      fs.chmodSync(file, 0o600);
+      fs.unlinkSync(file);
+      stores.persistence._load();
+      fs.writeFileSync(file, '[]', { mode: 0o000 });
+      fs.chmodSync(file, 0o000);
+      stores.persistence.upsert({ name: 'c', type: 'claude', workspaceId: 'default' });
+    });
+    assert.strictEqual(lines.filter((l) => l.includes('not persisted')).length, 2);
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    cleanup();
+  }
+});
+
 test('persistence: seat.json mirrors the record beside the seat, and only when the home exists', () => {
   const why = 'the snapshot is what a move-to-peer tars next to the seat dir and what an operator '
     + 'inspecting ~/.clodex/sessions/<name>/ reads. Nothing in v1 reads it back, so the only thing '
@@ -3995,6 +4034,30 @@ test('envScopes: set throws on an invalid key, the deny key, and a newline value
     assert.throws(() => envScopes.set('global', 'CLODEX_REMOTE_TOKEN', 'leak', false), /reserved/);
     assert.throws(() => envScopes.set('global', 'OK', 'a\nb', false), /newline/);
     assert.deepStrictEqual(envScopes.getScope('global'), {}, 'nothing landed');
+  } finally { cleanup(); }
+});
+
+for (const key of ['__proto__', 'constructor', 'prototype']) {
+  test(`envScopes: an env KEY named ${key} is refused as reserved`, () => {
+    const { stores, cleanup } = freshStores();
+    try {
+      const { envScopes } = stores;
+      envScopes.set('global', 'KEEP', 'v', false);
+      const prior = envScopes.getScope('global');
+      assert.throws(() => envScopes.set('global', key, 'x', false), new RegExp(`^Error: env key "${key}" is not allowed \\(reserved name\\)$`));
+      const scopeAfter = envScopes.getScope('global');
+      assert.deepStrictEqual(Object.getPrototypeOf(scopeAfter), Object.prototype, 'ENTER: the scope object kept its prototype');
+      assert.deepStrictEqual(scopeAfter, { KEEP: { value: 'v', secret: false } });
+      assert.deepStrictEqual(scopeAfter, prior);
+    } finally { cleanup(); }
+  });
+}
+
+test('envScopes: __PROTO (no trailing underscores) is still an ordinary key', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.envScopes.set('global', '__PROTO', 'x', false);
+    assert.deepStrictEqual(stores.envScopes.getScope('global'), { __PROTO: { value: 'x', secret: false } });
   } finally { cleanup(); }
 });
 
