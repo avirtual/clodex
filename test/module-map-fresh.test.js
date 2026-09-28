@@ -17,7 +17,7 @@ const MAP_DIR = path.join(REPO, 'docs', 'map');
 const EXPECTED_MAPS = [
   'engine.md',
 
-  // 'ipc-handlers.md',
+  'ipc-handlers.md',
 
   'renderer.md',
 
