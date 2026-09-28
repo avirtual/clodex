@@ -81,6 +81,59 @@ test('persistence: an unreadable sessions.json is not replaced by an upsert', { 
   }
 });
 
+function captureConsoleError(fn) {
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => { lines.push(a.map(String).join(' ')); };
+  try { fn(); } finally { console.error = orig; }
+  return lines;
+}
+
+test('persistence: an unreadable sessions.json makes upsert/remove SKIP, not throw, and warns once', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    const before = fs.readFileSync(file);
+    fs.chmodSync(file, 0o000);
+    assert.throws(() => fs.readFileSync(file), /EACCES|EPERM/, 'ENTER: the file is unreadable');
+    const lines = captureConsoleError(() => {
+      for (let i = 0; i < 2; i++) {
+        assert.doesNotThrow(() => stores.persistence.upsert({ name: 'c', type: 'claude', workspaceId: 'default' }));
+        assert.doesNotThrow(() => stores.persistence.remove('a'));
+        assert.doesNotThrow(() => stores.persistence.setHoldUntil('a', Date.now() + 1000));
+      }
+    });
+    assert.strictEqual(lines.filter((l) => l.includes('not persisted')).length, 1);
+    fs.chmodSync(file, 0o600);
+    assert.deepStrictEqual(fs.readFileSync(file), before, 'the unreadable file was left byte-for-byte');
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    cleanup();
+  }
+});
+
+test('persistence: after the file becomes readable again, the warn re-arms', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    fs.chmodSync(file, 0o000);
+    assert.throws(() => fs.readFileSync(file), /EACCES|EPERM/, 'ENTER: the file is unreadable');
+    const lines = captureConsoleError(() => {
+      stores.persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+      fs.chmodSync(file, 0o600);
+      stores.persistence._load();
+      fs.chmodSync(file, 0o000);
+      stores.persistence.upsert({ name: 'c', type: 'claude', workspaceId: 'default' });
+    });
+    assert.strictEqual(lines.filter((l) => l.includes('not persisted')).length, 2);
+  } finally {
+    try { fs.chmodSync(file, 0o600); } catch {}
+    cleanup();
+  }
+});
+
 test('persistence: seat.json mirrors the record beside the seat, and only when the home exists', () => {
   const why = 'the snapshot is what a move-to-peer tars next to the seat dir and what an operator '
     + 'inspecting ~/.clodex/sessions/<name>/ reads. Nothing in v1 reads it back, so the only thing '
@@ -3958,6 +4011,18 @@ test('envScopes: prototype-pollution guard — __proto__/constructor/prototype s
     // Object.prototype was never touched.
     assert.strictEqual(({}).K, undefined, 'no key leaked onto Object.prototype');
     assert.strictEqual(({}).polluted, undefined);
+  } finally { cleanup(); }
+});
+
+test('envScopes: a scope stored as null heals on set and is skipped by remove', () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'env-scopes.json');
+  try {
+    fs.writeFileSync(file, JSON.stringify({ global: {}, workspaces: { ws1: null } }));
+    assert.doesNotThrow(() => stores.envScopes.remove('ws1', 'K'));
+    fs.writeFileSync(file, JSON.stringify({ global: {}, workspaces: { ws1: null } }));
+    stores.envScopes.set('ws1', 'K', 'v', false);
+    assert.deepStrictEqual(stores.envScopes.getScope('ws1'), { K: { value: 'v', secret: false } });
   } finally { cleanup(); }
 });
 

@@ -2772,7 +2772,11 @@ function registerIpcHandlers(deps) {
     // Persist the record HERE, not only inside createWindow: the web host stubs
     // createWindow, so without this upsert a browser New Workspace jumps to an id
     // that never reaches workspaces.json. Desktop's own upsert then no-ops.
-    workspaces.upsert({ id, name: 'New Workspace', bounds: null });
+    try {
+      workspaces.upsert({ id, name: 'New Workspace', bounds: null });
+    } catch (e) {
+      log.warn('workspace', `new workspace ${id} not persisted: ${(e && e.message) || e}`);
+    }
     createWindow(id);
     refreshAppMenu();
     refreshTrayMenu();

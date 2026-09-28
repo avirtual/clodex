@@ -61,3 +61,21 @@ test('workspace:new pre-upsert makes createWindow\'s own upsert a no-op (single 
   const id = handler({});
   assert.equal(records.filter((w) => w.id === id).length, 1, 'exactly one record for the new id');
 });
+
+test('workspace:new still opens the window when the workspaces store throws on upsert', () => {
+  const handlers = new Map();
+  const created = [];
+  const warns = [];
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
+    workspaces: { get: () => null, upsert: () => { throw new Error('workspaces.json could not be read; refusing to save over it'); } },
+    createWindow: (id) => { created.push(id); },
+    refreshAppMenu: () => {}, refreshTrayMenu: () => {},
+    log: { info() {}, error() {}, warn: (...a) => warns.push(a.join(' ')) },
+  });
+  let id;
+  assert.doesNotThrow(() => { id = handlers.get('workspace:new')({}); });
+  assert.ok(/^ws-/.test(id), 'the handler returned the minted id');
+  assert.deepEqual(created, [id]);
+  assert.equal(warns.length, 1);
+});

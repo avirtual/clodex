@@ -61,3 +61,8 @@ The `__proto__` / `constructor` / `prototype` denylist stays beside the
 `Object.hasOwn` guards in `envScopes`. `data.workspaces['__proto__'] = {}`
 sets that object's prototype instead of creating an own key, so `set` would
 persist nothing and still report ok; hasOwn cannot turn that into a real write.
+
+## persistence
+
+sessions.json saves skip with one warning rather than throw when the file could not be read, because
+kill()/the exit path/destroy() and keepwarm callbacks write it outside any IPC handler.
