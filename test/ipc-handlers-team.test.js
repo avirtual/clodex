@@ -750,3 +750,43 @@ for (const [channel, expected] of [
     } finally { d.cleanup(); }
   });
 }
+
+test('team:delete refuses a team whose done ticket is still in the verify loop', async () => {
+  const d = mkDeleteDoor({ tickets: [{ id: 't1', role: 'hand', assignee: 't-hand-t1', state: 'done', loopStep: 'verify',
+    worktree: { branch: 'tl-1', path: path.join(os.tmpdir(), 'no-such-t1-wt') } }] });
+  try {
+    assert.ok(d.exists(), 'ENTER: the directory exists before the delete');
+    const res = await d.del();
+    assert.strictEqual(res.ok, false);
+    assert.deepStrictEqual(res.blockedBy, { seats: [], tickets: ['t1'] });
+    assert.ok(d.exists(), 'the team directory is still there');
+  } finally { d.cleanup(); }
+});
+
+test('team:activity names a HELD verify as held, not as in review', () => {
+  const d = mkActivityDoor({
+    tickets: [{ id: 't1', state: 'done', role: 'hand', assignee: 'shop-hand-t1', title: 'held', loopStep: 'verify',
+      reviewRound: 1, verifyHold: { step: 'verify: suite', recovery: 'hand' }, openedAt: 1 }],
+    sessions: [{ name: 'shop-hand-t1', agentType: 'claude' }],
+  });
+  try {
+    const a = d.activity();
+    assert.deepStrictEqual(a.tickets.open, [{ id: 't1', title: 'held', assignee: 'shop-hand-t1', step: 'held', since: null, round: null }]);
+    assert.deepStrictEqual(a.roles.hand.live, [{ seat: 'shop-hand-t1', ticket: 't1', step: 'held' }]);
+  } finally { d.cleanup(); }
+});
+
+test("team:activity's role last-landing and the landed list agree on the newest", () => {
+  const d = mkActivityDoor({
+    tickets: [
+      { id: 't1', state: 'done', role: 'hand', title: 'one', closedOut: true, acceptedAt: NOW - 100, closedAt: NOW - 300 },
+      { id: 't2', state: 'done', role: 'hand', title: 'two', closedOut: true, acceptedAt: NOW - 200, closedAt: NOW - 200 },
+    ],
+    sessions: [],
+  });
+  try {
+    const a = d.activity();
+    assert.strictEqual(a.roles.hand.last.id, 't1');
+    assert.strictEqual(a.tickets.landed[0].id, 't1');
+  } finally { d.cleanup(); }
+});

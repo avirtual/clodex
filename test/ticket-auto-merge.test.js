@@ -3996,3 +3996,46 @@ test('t1237: a boot-requeued merge still waiting in the chain is cancelled by a 
     `the skipped chain entry says why. Logs:\n${f.logs.map((l) => l.msg).join('\n')}`);
   assert.strictEqual(f.one().loopStep, 'verify', 'the rework round is left to the loop');
 });
+
+test('an accept that closes the ticket out while the merge resolves its target stamps no MERGE FAILED and escalates nothing', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  let f = null;
+  f = mkMerge({
+    repo,
+    gitOver: {
+      mergeTargetFor: async (team) => {
+        const board = f.tstore.load(f.team.root);
+        Object.assign(board[0], { closedOut: true, acceptedAt: Date.now(), acceptedBy: 'lead' });
+        f.tstore.save(f.team.root, board);
+        git(repo.dir, ['branch', '-D', 'tl-1']);
+        return require('../git-worktree').mergeTargetFor(team);
+      },
+    },
+  });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.throws(() => git(repo.dir, ['rev-parse', '--verify', '--quiet', 'tl-1']), 'ENTER: tl-1 no longer resolves');
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: the accept closed the ticket out');
+  assert.strictEqual(f.one().mergeError, undefined);
+  assert.deepStrictEqual(f.esc(), []);
+});
+
+test('a branch that moves CHANGELOG.md out of the root is not told no entry is owed', async () => {
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  git(repo.dir, ['checkout', '-q', 'tl-1']);
+  fsReal.mkdirSync(pathReal.join(repo.dir, 'docs'), { recursive: true });
+  git(repo.dir, ['mv', 'CHANGELOG.md', 'docs/CHANGELOG.md']);
+  git(repo.dir, ['commit', '-q', '-m', 'move the changelog']);
+  git(repo.dir, ['checkout', '-q', 'master']);
+  const f = mkMerge({ repo, ticketOver });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge happened');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
+  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'CHANGELOG.md')), 'ENTER: the root CHANGELOG.md is gone');
+  assert.doesNotMatch(notes[0].body, /no entry is owed/);
+});

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Tickets: Delete Team and role removal now refuse while a done ticket is still in the verify loop or awaiting merge; a `task cancel` with no reason still tells the working seat to stop; a ticket the lead closed out is no longer stamped MERGE FAILED by a merge that resolved late; an accept whose board save fails after the teardown reports what was removed instead of "nothing"; a held verify shows as held, not "in review"; a branch that moves CHANGELOG.md is no longer told "no entry is owed"; a child directory named `..something` is no longer treated as escaping the tree.
 - Team popover ▸ Roles: the reviewer role's template is now a picker over the installed reviewer templates (the team's own first, then the library), so a box whose library is read-only can point its reviewer at another template instead of editing the stock one; agents still cannot repoint a reviewer through [agent:team role-set].
 - Codex stream seats: a refused sandbox/approval flag written as --flag=value is now stripped whatever its arity (only the arity-1 form was), so it can no longer reach the app-server argv.
 - Templates: "Export as Template…" reports a failed save instead of closing silently (the library is read-only inside a sandbox box); a failed template removal now says why, and a box pinned to a commit says so once in its rebuild toast.

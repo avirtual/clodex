@@ -803,7 +803,7 @@ test('a team with a live seat gets the ERROR dialog naming both lists, and is no
   assert.deepStrictEqual(opts.buttons, ['OK'], 'no Delete button on this arm at all');
   assert.strictEqual(opts.message, 'Team "good" is in use');
   assert.strictEqual(opts.detail,
-    'Live seats: a, b. Open tickets: t3, t7. Retire the seats and close or cancel the tickets, then delete.');
+    'Live seats: a, b. In-flight tickets: t3, t7. Retire the seats and close or cancel the tickets, then delete.');
   // Response 0 IS the confirm response on the other arm; the team surviving it
   // is what proves this arm never reaches the delete rather than reaching it
   // with a button the operator did not press.
@@ -823,7 +823,7 @@ test('a blocked team names only the half that blocks — the instruction is neve
   const d2 = mkDialog(0);
   await menusWith(ticketsOnly.getTeams, [], d2).menus.buildTeamsMenu()
     .submenu.find((r) => r.label === 'Delete Team…').submenu[0].click();
-  assert.strictEqual(d2.shown[0].detail, 'Open tickets: t3. Close or cancel the tickets, then delete.');
+  assert.strictEqual(d2.shown[0].detail, 'In-flight tickets: t3. Close or cancel the tickets, then delete.');
 });
 
 test('a broken team\'s confirm says the manifest could not be read, and deleting it works', async () => {

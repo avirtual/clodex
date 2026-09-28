@@ -457,7 +457,7 @@ function seatCwdInTree(root, seatCwd, treePath) {
   if (!root || !seatCwd) return treePath;
   const rel = nodePath.relative(nodePath.resolve(root), nodePath.resolve(seatCwd));
   if (!rel) return treePath;
-  if (rel.startsWith('..') || nodePath.isAbsolute(rel)) return treePath;
+  if (rel === '..' || rel.startsWith('..' + nodePath.sep) || nodePath.isAbsolute(rel)) return treePath;
   return nodePath.join(treePath, rel);
 }
 
@@ -842,7 +842,8 @@ function createTicketMethods(deps, shared) {
       const tickets = [];
       try {
         for (const tk of ticketsStore.load(team.root)) {
-          if (tk && tk.assignee === roleKey && tk.state === 'open') tickets.push(tk.id);
+          if (!tk || (tk.role !== roleKey && tk.assignee !== roleKey)) continue;
+          if (tk.state === 'open' || (tk.state === 'done' && (tk.loopStep || tk.mergeWaiting))) tickets.push(tk.id);
         }
       } catch { tickets.push('<ticket check unavailable>'); }
       return { seats: [...seats], tickets };
@@ -856,7 +857,9 @@ function createTicketMethods(deps, shared) {
       }
       const tickets = [];
       for (const tk of ticketsStore.load(team.root)) {
-        if (tk && tk.state !== 'done' && tk.state !== 'cancelled') tickets.push(tk.id);
+        if (!tk || tk.state === 'cancelled') continue;
+        if (tk.state !== 'done'
+          || tk.loopStep || tk.mergeWaiting || (!tk.closedOut && tk.worktree && tk.worktree.branch)) tickets.push(tk.id);
       }
       let saved = null;
       try {
@@ -884,11 +887,13 @@ function createTicketMethods(deps, shared) {
         };
       }
 
+      const landedAt = (t) => (t.acceptedAt != null ? t.acceptedAt : (t.closedAt != null ? t.closedAt : null));
+
       const seatTicket = (seatName) => {
         for (const t of tickets) {
           if (t.assignee !== seatName) continue;
           if (t.state === 'open') return { ticket: t.id, step: 'working' };
-          if (t.state === 'done' && t.loopStep === 'verify') return { ticket: t.id, step: 'verify' };
+          if (t.state === 'done' && t.loopStep === 'verify') return { ticket: t.id, step: t.verifyHold ? 'held' : 'verify' };
         }
         return { ticket: null, step: null };
       };
@@ -916,7 +921,7 @@ function createTicketMethods(deps, shared) {
         }
         const landed = (t.state === 'done' && t.closedOut) || t.state === 'cancelled';
         if (!landed) continue;
-        const at = t.acceptedAt != null ? t.acceptedAt : (t.closedAt != null ? t.closedAt : null);
+        const at = landedAt(t);
         if (at == null) continue;
         if (bucket.last && bucket.last.at >= at) continue;
         bucket.last = {
@@ -961,7 +966,8 @@ function createTicketMethods(deps, shared) {
           let since = null;
           let round = null;
           let run = null;
-          if (inVerify) {
+          if (inVerify && t.verifyHold) step = 'held';
+          else if (inVerify) {
             step = 'review';
             round = (Number(t.reviewRound) || 0) + 1;
             const vp = t.verifyPhase && typeof t.verifyPhase === 'object' ? t.verifyPhase : null;
@@ -989,7 +995,7 @@ function createTicketMethods(deps, shared) {
           continue;
         }
         if (!((t.state === 'done' && t.closedOut) || t.state === 'cancelled')) continue;
-        const at = t.closedAt != null ? t.closedAt : (t.acceptedAt != null ? t.acceptedAt : null);
+        const at = landedAt(t);
         if (at == null) continue;
         landedRows.push({
           id: t.id,
@@ -2038,7 +2044,20 @@ function createTicketMethods(deps, shared) {
       // is a rule someone must re-apply to every arm added later; a finally is
       // the same rule enforced by control flow.
       let deferred = false;
+      const abandonedWhy = () => {
+        const now = this._loadTicket(team, ticketId);
+        if (!now) return 'gone';
+        if (now.state !== 'done') return `${now.state}, not done`;
+        if (this._verdictRejectedSince(now, landedOn)) return `back from a rejection of this ACCEPT (rework round ${now.reworkRound})`;
+        if (now.closedOut) return 'still done but ACCEPTED and closed out';
+        return null;
+      };
       const fail = (step, evidence, tried) => {
+        const why = merged === null ? abandonedWhy() : null;
+        if (why) {
+          log.info('ticket', `auto-merge for ${ticketId} ABANDONED at ${step}: the ticket is ${why} — nothing was merged, no MERGE FAILED stamped`);
+          return;
+        }
         // Stamped BEFORE the DM, because the DM is the arm that can fail. The
         // board carries what the DM may not.
         this._stampMergeError(team, ticketId, step);
@@ -2303,12 +2322,8 @@ function createTicketMethods(deps, shared) {
         // A SYNCHRONOUS field read, which is what makes it safe here: re-checking
         // a condition an await could have changed is exactly what an await here
         // would break.
-        const stillDone = this._loadTicket(team, ticketId);
-        if (!stillDone || stillDone.state !== 'done' || stillDone.closedOut || this._verdictRejectedSince(stillDone, landedOn)) {
-          const why = !stillDone ? 'gone'
-            : stillDone.state !== 'done' ? `${stillDone.state}, not done`
-            : this._verdictRejectedSince(stillDone, landedOn) ? `back from a rejection of this ACCEPT (rework round ${stillDone.reworkRound})`
-            : 'still done but ACCEPTED and closed out';
+        const why = abandonedWhy();
+        if (why) {
           log.info('ticket', `auto-merge for ${ticketId} ABANDONED at the merge step: the ticket is ${why} — nothing was merged`);
           return;
         }
@@ -2549,7 +2564,7 @@ function createTicketMethods(deps, shared) {
     async _mergeTouchedChangelog(team, base, head) {
       try {
         if (!base || !head) return { known: false, error: 'the merge did not report both ends of its range' };
-        const d = await gitWorktree.diffText(team.root, base, head)
+        const d = await gitWorktree.diffText(team.root, base, head, { noRenames: true })
           .catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
         if (!d || !d.ok || typeof d.text !== 'string') {
           return { known: false, error: (d && d.error) || 'git diff returned nothing readable' };
@@ -2586,9 +2601,8 @@ function createTicketMethods(deps, shared) {
         // The shapes it misreads are the ones MEASURED, not a closed set: this
         // comment said "exactly one shape", then "THREE shapes", and a fourth
         // turned up in the next round. Do not re-close the set. Known: a nested
-        // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a rename
-        // into the root file and a multi-segment prefix (`diff.srcPrefix 'i/w/'`)
-        // read as OWED; a rename OUT of it reads as "no CHANGELOG.md — none owed".
+        // `docs/CHANGELOG.md` under `diff.noprefix` reads as CHANGED; a
+        // multi-segment prefix (`diff.srcPrefix 'i/w/'`) reads as OWED.
         //
         // The pattern is NOT widened to chase these: testing each side
         // independently, or allowing `[^\s]+\/`, swallows nested paths and trades
@@ -3598,7 +3612,7 @@ function createTicketMethods(deps, shared) {
           // tells no one, leaving the lead waiting on a confirmation that never comes.
           case 'accept': this._taskAccept(session, team, intent, reply).catch((e) => {
             log.warn('intent', `task accept ${intent.id} by ${session.name} failed: ${e.message}`);
-            reply(`error: accept ${intent.id || ''} failed: ${e.message} — nothing was removed`);
+            reply(`error: accept ${intent.id || ''} failed: ${e.message}`);
           }); break;
           case 'park': this._taskPark(session, team, intent, reply); break;
           case 'list': this._taskList(session, team, intent, reply); break;
@@ -5337,7 +5351,7 @@ function createTicketMethods(deps, shared) {
         return { cwd: root, fallback: `role cwd "${rel}" does not exist under the team root (Clodex never creates it) — the seat was spawned at the root of its checkout instead` };
       }
       const within = path.relative(realRoot, realCwd);
-      if (within.startsWith('..') || path.isAbsolute(within)) {
+      if (within === '..' || within.startsWith('..' + path.sep) || path.isAbsolute(within)) {
         return { cwd: root, fallback: `role cwd "${rel}" resolves outside the team root (it is a symlink to ${realCwd}) — the seat was spawned at the root of its checkout instead` };
       }
       // Compared by ROOT, not by name: two manifests can name the same root only
@@ -8891,7 +8905,7 @@ function createTicketMethods(deps, shared) {
       recordEvent(ticket, { at: ticket.closedAt, kind: 'cancel', by: session.name, reason: reason.split('\n')[0] });
       ticketsStore.save(team.root, tickets);
       const seat = ticketStarted(ticket) && !ticket.parked ? this._ticketAssigneeSeat(team, ticket) : null;
-      if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
+      if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason || 'cancelled by the lead — stop work on it'}`, false, `[ticket ${ticket.id} cancelled]`);
       this._reconcileTickets(team);
       const adv = {};
       const next = seat ? this._advanceSeat(team, seat, ticket, adv) : null;
@@ -9734,7 +9748,13 @@ function createTicketMethods(deps, shared) {
       const complete = !!seatName && ephemeralSeat && !downgrade
         && !!removed && removed.ok !== false && removed.worktreeRemoved !== false
         && del.ok === true && !del.skipped;
-      return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete);
+      try {
+        return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete);
+      } catch (e) {
+        log.error('ticket', `accept ${ticket.id} by ${by}: the board save after the teardown failed: ${e.message}`);
+        return { ok: false, closedOut: false,
+          text: `error: ticket ${ticket.id}: ${parts.join('; ')} — but the board could NOT be updated (${e.message}) — the ticket still reads done and unaccepted` };
+      }
     },
 
     // Park an ALREADY-OPEN ticket, or the unpark direction if it is parked. A
