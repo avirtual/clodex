@@ -118,7 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## _armBootNudge
-Measured 2026-09-28, claude 2.1.283 `--resume` of a 61 MB transcript: first `\x1b[?2004h` at +0.18 s, no pty output from +1.0 s, input loop reading at ~+20 s.
-Both the unit's `\r` and a +4 s nudge were consumed by the CLI's "Removed 1 invisible character · review and press Enter to send" gate.

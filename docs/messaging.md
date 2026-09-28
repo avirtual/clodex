@@ -270,17 +270,14 @@ dictated draft through, `drainPending` claimed the directory destructively, and
 the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
 `.passive.` park came back active, and a passive park never earns a turn.
 
-Any unit written into a fresh seat within `INJECT_BOOT_MAXWAIT` of the readiness edge that
-produces no turn within `BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty, once the seat
-has produced output AFTER the write, has then been quiet `BOOT_NUDGE_QUIET_MS` (1s), and no draft is
-open. A `--resume` loading a large transcript announces bracketed paste, then goes silent while its
-input loop is not reading stdin, and later reads everything buffered as ONE paste — the unit's own
-Enter and any Enter sent during the silence land as content, and the message sits in the composer
-unsubmitted. Silence is therefore not readiness: the CLI's echo of the unit is the first evidence the
-bytes were read, so no echo yet, further output, or an open draft each re-arm the nudge for another
-`BOOT_NUDGE_QUIET_MS` rather than firing, and a half-typed line is never submitted for the operator.
-The nudge is cleared by the turn edge and by kill, gives up `BOOT_NUDGE_MAXWAIT_MS` (120s) after the
-write, and logs `boot-drain nudge for <seat>` when it fires. The boot replay pass waits for the
+Any unit written into a fresh seat within `INJECT_BOOT_MAXWAIT` of the readiness edge that produces no turn within
+`BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty, once the seat has produced output AFTER the write, has then been
+quiet `BOOT_NUDGE_QUIET_MS` (1s), and no draft is open. A `--resume` loading a large transcript is silent while its input
+loop is not reading stdin, then reads everything buffered as ONE paste, so the unit's Enter and any Enter sent during the
+silence land as content and the message sits in the composer unsubmitted (measured: 61 MB resume, first `\x1b[?2004h` at
++0.18s, loop reading at ~+20s, both Enters eaten by the "Removed 1 invisible character · review and press Enter" gate).
+Silence is not readiness: no echo yet, further output, or an open draft each re-arm the nudge for `BOOT_NUDGE_QUIET_MS`
+rather than firing. The nudge is cleared by the turn edge and by kill, gives up `BOOT_NUDGE_MAXWAIT_MS` (120s) after the write, and logs `boot-drain nudge for <seat>` when it fires. The boot replay pass waits for the
 inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spawn-path spec is stamped before the pass looks for its stamp.
 
 ### Parking & resend (pending-store.js)
