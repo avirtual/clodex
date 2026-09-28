@@ -944,7 +944,7 @@ function accountOfRow(name) {
 // dance as the Edit Session save path).
 function restartSessionWithReattach(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+  const snap = rowSnapshot(name, item);
   return window.api.restartSession(name).then((res) => {
     if (!res || !res.ok) {
       alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
@@ -960,7 +960,7 @@ function restartSessionWithReattach(name) {
 const movingFailed = new Map();
 function moveSessionWithPicker(name) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+  const snap = rowSnapshot(name, item);
   const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
   return window.api.selectDirectory().then((dir) => {
     if (!dir) return;
@@ -1008,7 +1008,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   if (movingToPeer.has(name)) return;
   pendingPeerMove.clear();
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+  const snap = rowSnapshot(name, item);
   if (!item) snap.cwd = cwd || '';
   const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
   pendingPeerMove.set(name, async (farCwd) => {
@@ -1121,7 +1121,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
     case 'reattach':
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = { ...rowSnapshot(name, prior), account: accountOfRow(name) };
+        const snap = rowSnapshot(name, prior);
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
         // `background` marks the agent-initiated emitters (ticket seat, spawn
         // intent, reviewer). The reload respawn sends no flag and keeps focus.
@@ -1206,7 +1206,7 @@ function startRename(item, nameEl, sessionName) {
     });
     input.replaceWith(newNameEl);
     if (!wanted) return;
-    const snap = { ...rowSnapshot(sessionName, item), label: null, account: accountOfRow(sessionName) };
+    const snap = { ...rowSnapshot(sessionName, item), label: null };
     const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
     window.api.renameSession(sessionName, wanted).then((res) => {
       if (!res || !res.ok) {

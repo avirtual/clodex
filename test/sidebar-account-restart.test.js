@@ -6,10 +6,6 @@
 // account is not re-derived by any of those rebuilds — it rides `session:list`,
 // which they do not read — so a path that fails to snapshot it drops the chip on
 // every restart until the next meta refresh happens to repaint it.
-//
-// `accountOfRow` is the shared helper all six sites take it from, so it is the
-// unit under test; the SOURCE assertion below is what keeps the six call sites
-// honest, since renderer.js is DOM-bound and cannot be required.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -46,26 +42,29 @@ test('accountOfRow answers null for a default row and for a row that is already 
 });
 
 test('every restart path snapshots the account and passes it to the rebuild', () => {
-  // The six sites that destroy and rebuild a row. Each must take the account
-  // from the shared helper (or, for the args-save path, recompute it from the env
-  // it is about to write) and hand it to addSessionToSidebar as the 8th argument.
-  const rebuilds = [...rendererSrc.matchAll(/addSessionToSidebar\(([^;]*?)\);/g)]
-    .map((m) => m[0].replace(/\s+/g, ' '));
-  // Only the rebuild sites take a snapshot; the fresh-spawn sites derive the
-  // account from the create result or pass none, so they are excluded by name.
-  const restarts = rebuilds.filter((c) => /snapAccount/.test(c));
-  assert.strictEqual(restarts.length, 6,
-    `expected the six restart rebuilds to carry snapAccount, found ${restarts.length}:\n${rebuilds.join('\n')}`);
+  const fn = (name) => {
+    const start = rendererSrc.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `ENTER: ${name} was not found in the shipped renderer`);
+    return rendererSrc.slice(start, rendererSrc.indexOf('\n}\n', start) + 2);
+  };
+  const added = [];
+  const env = {
+    streamSeatNames: new Set(), sidebarMeta: new Map(),
+    markSeatIo() {}, createTerminal() {}, markSeatEffort() {}, markSeatPosture() {},
+    addSessionToSidebar: (...a) => added.push(a),
+  };
+  const names = Object.keys(env);
+  const { rowSnapshot, rebuildLiveRow } = new Function(...names,
+    `${fn('rowSnapshot')}\n${fn('rebuildLiveRow')}\nreturn { rowSnapshot, rebuildLiveRow };`)(...names.map((n) => env[n]));
+  const row = { dataset: { type: 'claude', cwd: '/w', account: 'sub-2' }, querySelector: () => null };
+  rebuildLiveRow('s', rowSnapshot('s', row), {});
+  rebuildLiveRow('s', rowSnapshot('s', { dataset: { type: 'claude', cwd: '/w' }, querySelector: () => null }), {});
+  assert.deepStrictEqual(added.map((a) => a[7]), ['sub-2', null]);
 
-  // ENTER: snapAccount is DEFINED at each of those sites, not merely referenced —
-  // a free identifier would be a ReferenceError only on the restart itself.
-  const defs = [...rendererSrc.matchAll(/const snapAccount = /g)];
-  assert.strictEqual(defs.length, 6, 'one definition per rebuild site');
+  const rebuildSites = [...rendererSrc.matchAll(/\brebuildLiveRow\(/g)].length - 1;
+  assert.strictEqual(rebuildSites, 9, 'every live-row rebuild goes through rebuildLiveRow');
 
-  // Five take it off the row; the args-save path must NOT, because that dialog
-  // can CHANGE the account and the row still holds the pre-edit value.
-  const fromRow = [...rendererSrc.matchAll(/const snapAccount = accountOfRow\(/g)];
-  assert.strictEqual(fromRow.length, 5, 'five snapshot the row');
   assert.match(rendererSrc, /const snapAccount = env === undefined\s*\n\s*\? accountOfRow\(name\)\s*\n\s*: accountFromEnv\(/,
     'the args-save path recomputes from the env it is saving, falling back to the row for a peer save');
+  assert.match(rendererSrc, /rebuildLiveRow\(name, \{ \.\.\.snap, account: snapAccount,/, 'the args-save rebuild carries the recomputed account');
 });

@@ -48668,7 +48668,7 @@ ${detail}` });
       }
       function restartSessionWithReattach(name) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+        const snap = rowSnapshot(name, item);
         return window.api.restartSession(name).then((res) => {
           if (!res || !res.ok) {
             alert(`Restart failed: ${res && res.error ? res.error : "unknown error"}`);
@@ -48683,7 +48683,7 @@ ${detail}` });
       var movingFailed = /* @__PURE__ */ new Map();
       function moveSessionWithPicker(name) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+        const snap = rowSnapshot(name, item);
         const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
         return window.api.selectDirectory().then((dir) => {
           if (!dir) return;
@@ -48734,7 +48734,7 @@ ${detail}` });
         if (movingToPeer.has(name)) return;
         pendingPeerMove.clear();
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = { ...rowSnapshot(name, item), account: accountOfRow(name) };
+        const snap = rowSnapshot(name, item);
         if (!item) snap.cwd = cwd || "";
         const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
         pendingPeerMove.set(name, async (farCwd) => {
@@ -48851,7 +48851,7 @@ ${detail}` });
           case "reattach":
             if (type) {
               const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-              const snap = { ...rowSnapshot(name, prior), account: accountOfRow(name) };
+              const snap = rowSnapshot(name, prior);
               rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
               switchToNewSession(name, { agentInitiated: background === true });
             }
@@ -48928,7 +48928,7 @@ ${detail}` });
           });
           input.replaceWith(newNameEl);
           if (!wanted) return;
-          const snap = { ...rowSnapshot(sessionName, item), label: null, account: accountOfRow(sessionName) };
+          const snap = { ...rowSnapshot(sessionName, item), label: null };
           const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
           window.api.renameSession(sessionName, wanted).then((res) => {
             if (!res || !res.ok) {
