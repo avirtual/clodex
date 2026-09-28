@@ -5476,8 +5476,8 @@ function createSessionManager(deps) {
         // because a wire session cannot reach a transition without a counted
         // event having set lastEventTs first: reachability, not Math.max.
         s.activityState = state;
-        if (state !== 'idle') s._turnStartedAt = Date.now();
         s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
+        if (state !== 'idle') s._turnStartedAt = Date.now();
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
       if (s && state !== 'idle') s.lastMainStop = null;
@@ -5820,7 +5820,8 @@ function createSessionManager(deps) {
         const held = session._injectQueue.splice(0);
         for (const e of held) {
           if (e && typeof e.produce === 'function') this._streamEnqueueSystem(session, '', e.produce, 'queued flush');
-          else this._streamEnqueueSystem(session, e && e.opts ? e.text : e, null, 'queued flush');
+          else if (e && e.opts) this._streamEnqueueSystem(session, e.text, null, 'queued flush', null, e.opts.parkKey || null);
+          else this._streamEnqueueSystem(session, e, null, 'queued flush');
         }
         return;
       }
@@ -6743,6 +6744,12 @@ function createSessionManager(deps) {
       const reason = (typeof notice.reason === 'string' ? notice.reason : '').replace(/\s+/g, ' ').trim().slice(0, 200);
       const body = `notice: Clodex restarted and is running again (reboot requested at ${when}${reason ? `: ${reason}` : ''}).`;
 
+      const noticeKey = `reboot-notice:${at}`;
+      const parkNotice = (text) => {
+        claimParkedByKey(PENDING_DIR, notice.name, noticeKey);
+        parkDelivery(PENDING_DIR, notice.name, text, this._nextParkSeq(), null, false, this._bornFor(notice.name), noticeKey);
+      };
+
       const target = this.sessions.get(notice.name);
       // An armed retry means an offer for THIS notice is already in flight, so a
       // second restore is not a second delivery opportunity — it only re-stamps an
@@ -6761,8 +6768,7 @@ function createSessionManager(deps) {
       if (target && target.agentType) {
         try {
           if (target.agentType === 'claude') {
-            const finalText = this._buildDeliveryText(target, 'reboot', body, 'dm');
-            parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
+            parkNotice(this._buildDeliveryText(target, 'reboot', body, 'dm'));
             this._armParkCap(target);
             this._armRebootNoticeFlush(target);
             // Park is a promise to deliver, not a receipt — so this branch does NOT
@@ -6793,10 +6799,7 @@ function createSessionManager(deps) {
         return;
       }
       try {
-        const finalText = this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm');
-        parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
-        try { store.set({ pendingRebootNotice: { ...notice, attempts: priorAttempts + 1 } }); }
-        catch (e) { log.error('intent', `reboot notice attempt-stamp failed: ${e.message}`); }
+        parkNotice(this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm'));
         log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume; retained until a turn confirms it`);
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
@@ -6880,12 +6883,6 @@ function createSessionManager(deps) {
     // inference, not confirmation: a turn the operator caused would satisfy it
     // too. That costs at most one duplicate notice, whereas trusting the claim
     // costs the message.
-    _turnSinceRebootPark(target, parkedAt) {
-      const stop = target.lastMainStop;
-      if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) return true;
-      return Number.isFinite(target._turnStartedAt) && target._turnStartedAt >= parkedAt;
-    }
-
     _armRebootNoticeRetry(target, notice) {
       const attempt = (Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0) + 1;
       const store = getUiSettings && getUiSettings();
@@ -6915,6 +6912,12 @@ function createSessionManager(deps) {
       target._rebootNoticeRetryFire = fire;
       target._rebootNoticeRetryDelay = delay;
       target._rebootNoticeRetryTimer = setTimeout(fire, delay);
+    }
+
+    _turnSinceRebootPark(target, parkedAt) {
+      const stop = target.lastMainStop;
+      if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) return true;
+      return Number.isFinite(target._turnStartedAt) && target._turnStartedAt > parkedAt;
     }
 
     _handleRemindIntent(session, spec, body) {
@@ -9988,7 +9991,7 @@ function createSessionManager(deps) {
         if (!onDisk(file)) {
           armed.delete(file);
           for (const [f, a] of armed) {
-            if (onDisk(f)) { this._armParkedDrainFallback(session, f, a.periodMs, a.deadline, drained); return; }
+            if (onDisk(f)) { this._armParkedDrainFallback(session, f, a.periodMs, a.deadline, false); return; }
             armed.delete(f);
           }
           return;

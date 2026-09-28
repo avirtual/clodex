@@ -1588,7 +1588,7 @@ test('reboot notice: [agent:reboot] arms pendingRebootNotice (name/at/reason) al
 // deliveries (_deliverMessage) and parks (the parkDelivery dep). Note: a LIVE
 // CLAUDE seat now PARKS (T30 boot-safety) — it shows up in `parks`, not
 // `delivered`; a live CODEX seat and the offline path behave as before.
-function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false } = {}) {
+function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false, onDisk = false } = {}) {
   const state = { pendingRebootNotice: notice };
   const delivered = [];
   const parks = [];
@@ -1598,7 +1598,14 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
       set: (partial) => { Object.assign(state, partial); return { ...state }; },
     }),
     getPersistence: () => ({ list: () => [], get: (n) => (n === (notice && notice.name) ? persisted : null) }),
-    parkDelivery: (_dir, name, text) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text }); },
+    parkDelivery: (_dir, name, text, _seq, _id, _passive, _born, key) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text, key }); },
+    ...(onDisk ? {
+      claimParkedByKey: (_dir, name, key) => {
+        const before = parks.length;
+        for (let i = parks.length - 1; i >= 0; i--) if (parks[i].name === name && key && parks[i].key === key) parks.splice(i, 1);
+        return { ids: [], claimed: before - parks.length };
+      },
+    } : {}),
     PENDING_DIR: '/tmp/pending-x',
     // Same reason as mkPark's: unwired, _armParkCap does setTimeout(fn, undefined),
     // which fires on the NEXT TICK rather than in 5 minutes. Every test here was
@@ -22451,12 +22458,14 @@ test('t1199: seatInterrupt sends the codec frame on a live stream seat and refus
   c.h.m.sessions.delete('pty1');
 });
 
-test('a jsonl-activity seat that takes a turn after the park is presumed delivered', () => {
+test('a jsonl-activity seat that takes a turn after the park is presumed delivered', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const { m, state, parks, disarm } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
   });
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  t.mock.timers.tick(1);
   m._emitActivity('a', 'thinking');
   m._emitActivity('a', 'idle');
   assert.strictEqual(m.sessions.get('a').activityState, 'idle', 'ENTER: the real activity edges ran');
@@ -22515,4 +22524,28 @@ test('an offline reboot notice survives its park until the seat resumes', () => 
   m.maybeDeliverRebootNotice();
   assert.strictEqual(parks.length, 1, 'ENTER: parked for the offline seat');
   assert.ok(state.pendingRebootNotice !== null, 'the settings copy is the durable one until a turn confirms it');
+});
+
+test('a reboot notice parked offline and re-offered once the seat is live nets one copy on disk', () => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, onDisk: true,
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked while the seat was offline');
+  assert.ok(state.pendingRebootNotice, 'ENTER: retained for the next offer');
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws2' });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'the live offer supersedes the offline copy instead of stacking a second notice');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'and the ladder starts at its first rung');
+  disarm();
+});
+
+test('a reboot notice re-offered to a seat that stays offline keeps one copy on disk', () => {
+  const { m, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, onDisk: true,
+  });
+  m.maybeDeliverRebootNotice();
+  m.maybeDeliverRebootNotice();
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'launch after launch, the archived seat holds one notice, not one per launch');
 });
