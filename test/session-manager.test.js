@@ -21925,6 +21925,23 @@ test('stream seat H2: a pending drain on a busy seat queues a producer that clai
   assert.strictEqual(hasActivePending(PENDING, 'sh8'), false);
 });
 
+test('stream seat outbox: a queued producer item projects to a non-empty labelled row', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sh8p');
+  const path = require('node:path');
+  const { parkDelivery, hasActivePending } = require('../pending-store');
+  const { outboxRowOf } = require('../renderer/lib/outbox-rows');
+  const PENDING = path.join(h.root, 'pending');
+  h.m.seatSend('sh8p', 'go');
+  parkDelivery(PENDING, 'sh8p', '[agent:from clodex] parked', '1.000000001', null, false, h.m._bornFor('sh8p'));
+  h.m._drainPendingAtIdle(h.m.sessions.get('sh8p'));
+  const rows = h.m.seatOutbox('sh8p').items.map(outboxRowOf);
+  assert.strictEqual(rows.length, 1, 'ENTER: the producer row is queued');
+  assert.deepStrictEqual(rows, [{ origin: 'system', badge: { glyph: null, label: 'system' }, text: 'pending mail', images: 0 }]);
+  assert.strictEqual(hasActivePending(PENDING, 'sh8p'), true, 'projecting the row claims nothing');
+});
+
 test('stream seat H2.1: after a tool-boundary drain, an init inside the result hold keeps the seat busy and the queued text waits for the second result', async (t) => {
   const { mock } = require('node:test');
   const h = mkStreamSeatManager();
