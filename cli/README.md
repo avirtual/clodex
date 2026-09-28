@@ -93,8 +93,8 @@ and, with no node configured, talks to the box's own engine (`(local engine)`:
 the wire token from `CLODEX_REMOTE_TOKEN` or the engine's `remote.env`, on its
 remote port) — so `clodexctl get sessions` works as-is. On a node the ssh
 installer set up, `clodexctl` is on PATH too, but its wire token lives in the
-service's systemd drop-in, not in the shell: pass `--token` or `CLODEX_TOKEN`,
-or `create node` / `use node` once. Those, `CLODEX_URL`, and `--url` always
+service's systemd drop-in, not in the shell: pass `--url http://127.0.0.1:<port> --token T`
+(a token alone names no transport and is rejected), or `create node` / `use node` once. Those, `CLODEX_URL`, and `--url` always
 override the local-engine default.
 
 `cli/` remains a standalone package — installable on a box that has never seen

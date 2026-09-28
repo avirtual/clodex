@@ -29,8 +29,8 @@ Per-session `intentSource`, decided in `SessionManager.create`:
   non-assistant entry / 1s silence → `_scanJsonlText`.
 - **bash PTY** — bash sessions are private (no registry, socket, or watcher);
   `_scanPtyOutput` line-buffers raw PTY stdout. bash has no `agentType`, so
-  only dm / who / resend work; context, memory, spawn, and file intents are
-  agent-only and short-circuit.
+  only dm / who / resend / name work; every other intent is agent-only and
+  short-circuits.
 
 All paths converge on `_extractIntents` → `parseIntent` (per line) →
 `_handleIntent`.

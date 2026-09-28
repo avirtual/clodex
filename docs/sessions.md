@@ -445,9 +445,10 @@ continuing is held until the reply finishes, since everything after it is episod
 bytes anyway. The whole file is copied to a `.bak` under the scratch root (outside
 `run/<name>/`, which the respawn deletes, and outside `~/.claude/projects/`, whose
 `*.jsonl` glob feeds the CLI's own picker), `[0, cutOffset)` is written to a temp
-file, fsynced and renamed over the original. The `.bak` is removed only once the
-respawned CLI has written its first **assistant** record past the summary; any
-failure before that renames it back.
+file, fsynced and renamed over the original. The `.bak` is kept — each later cut
+prunes siblings older than `SCRATCH_BAK_TTL_MS` (7 days, `_scratchPruneBaks`) — and
+any failure before the respawn lands copies it back over the transcript
+(`_scratchRestore`).
 
 **The respawn** takes **Move's shape, not `kill()` and not reload**: `_moving`,
 pty kill, wait for exit, then `create()` on the same `sessionId`. `kill()` would
@@ -588,9 +589,9 @@ a bash row — `dropRecord === !agentType && !expected`. They are computed toget
 because a flag added to one and not the other makes an expected exit also drop
 the record.
 
-`_cleanup` runs on every exit path; the parked-DM dir is removed **only on
-explicit user-kill** (`_userKilled`) — unconditional removal would eat
-parked mail on restart/quit. Archive keeps `_userKilled` false so it doesn't.
+`_cleanup` runs on every exit path and never removes the parked-DM dir, under any
+gate — restart routes through `kill()` too; a stale successor's mail is filtered at
+read by `drainPending`'s `born` stamp.
 
 **✕ / Cmd+W = archive, not delete** (reshaped v0.15.x, PR #1). Both stop the
 PTY but **keep** the record, stamped `archivedAt` (`manager.archive` →
@@ -705,9 +706,10 @@ file is complete only once the CLI exits) and hands
 kind except `run`, `pending/<name>/`, the memory load log and the seat's reminder
 rows. `farCwd` defaults to the seat's own cwd and is `path.resolve`d, since the far
 `begin` refuses a cwd resolution would change. What does NOT travel: `execCommands`
-and privileged intents (a peer must not mint privilege there), `run/`, wire warmth,
-and the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
-`pluginGrants`, `wireLabel`, `ticketId`, `holdUntil`, `rosterSentAt`), `movedTo`
+and privileged intents (a peer must not mint privilege there), `run/`, wire warmth
+(a timed `holdUntil`; the perpetual `keepWarmAlways` seat flag does travel), and
+the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
+`pluginGrants`, `wireLabel`, `ticketId`, `rosterSentAt`), `movedTo`
 (a seat moved on from a box it was already moved to must not carry the old
 destination), and anything behind a symlink inside a seat kind (the walk takes
 real files only). A file name outside `[A-Za-z0-9._-]` is not dropped but REFUSED,
@@ -967,7 +969,7 @@ see §4.)
   ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
   (`forgetSession`) and DO drop the record, as do right-click Delete Session…
   and Delete Workspace…. "✕ archives" is true only of a live row.
-- Parked-DM dir removal is gated on `_userKilled` — archive leaves it false.
+- `_cleanup` never removes parked DMs (`pending/<name>/`) — `_userKilled` is also true on restart.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.
 - The append-prompt channel is static per protocol (see messaging.md §6);
   hook script bytes are test-pinned.
