@@ -2084,8 +2084,6 @@ function createTicketMethods(deps, shared) {
         // see this: accept leaves it at `done`, so the gate above passes and a
         // deferred retry walks into a teardown that already happened — the
         // worktree removed, the branch deleted, `ticket.worktree` never cleared.
-        // STEP 2 then asks git about a ref that is gone, takes `fail()`, and
-        // stamps MERGE FAILED back onto the row the accept just cleared.
         //
         // `closedOut`, NOT `acceptedAt`: `_finishAccept` stamps `acceptedAt` on
         // EVERY arm, including the two that do NOT close out, where the merge is
@@ -2263,8 +2261,7 @@ function createTicketMethods(deps, shared) {
             // reject` or `task cancel` in the same window reopens the ticket, and
             // a row in rework advertising a pending merge is the same false claim
             // by the other verb.
-            const stillPending = this._loadTicket(team, ticketId);
-            if (stillPending && stillPending.state === 'done' && !stillPending.closedOut && !this._verdictRejectedSince(stillPending, landedOn)) {
+            if (!abandonedWhy()) {
               deferred = true;
               this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
             }
@@ -2701,7 +2698,7 @@ function createTicketMethods(deps, shared) {
           changelogLine,
           // False once the loop has closed out; on a REOPEN it is true but its
           // verb is not, and the step line has already said it.
-          ...(closedOutOk || (closeOut && closeOut.reopened) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
+          ...(closedOutOk || (closeOut && (closeOut.reopened || closeOut.tornDown)) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
         this._stampMerged(team, ticketId, sha);
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticketId} MERGED]`);
@@ -3159,7 +3156,7 @@ function createTicketMethods(deps, shared) {
             if (used.seats.length || used.tickets.length) {
               const parts = [];
               if (used.seats.length) parts.push(`seat(s): ${used.seats.join(', ')}`);
-              if (used.tickets.length) parts.push(`open ticket(s): ${used.tickets.join(', ')}`);
+              if (used.tickets.length) parts.push(`in-flight ticket(s): ${used.tickets.join(', ')}`);
               reply(`error: role "${name}" is in use — ${parts.join('; ')}; reassign/retire them first`);
               return;
             }
@@ -3175,7 +3172,7 @@ function createTicketMethods(deps, shared) {
             if (used.seats.length || used.tickets.length) {
               const parts = [];
               if (used.seats.length) parts.push(`seat(s): ${used.seats.join(', ')}`);
-              if (used.tickets.length) parts.push(`open ticket(s): ${used.tickets.join(', ')}`);
+              if (used.tickets.length) parts.push(`in-flight ticket(s): ${used.tickets.join(', ')}`);
               reply(`error: role "${from}" is in use — ${parts.join('; ')}; reassign/retire them first`);
               return;
             }
@@ -9752,6 +9749,7 @@ function createTicketMethods(deps, shared) {
       } catch (e) {
         log.error('ticket', `accept ${ticket.id} by ${by}: the board save after the teardown failed: ${e.message}`);
         return { ok: false, closedOut: false,
+          tornDown: true,
           text: `error: ticket ${ticket.id}: ${parts.join('; ')} — but the board could NOT be updated (${e.message}) — the ticket still reads done and unaccepted` };
       }
     },

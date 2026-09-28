@@ -95,8 +95,8 @@ function teamInUseDetail(check) {
   if (check.seats.length) parts.push(`Live seats: ${check.seats.join(', ')}.`);
   if (check.tickets.length) parts.push(`In-flight tickets: ${check.tickets.join(', ')}.`);
   const fix = check.seats.length && check.tickets.length
-    ? 'Retire the seats and close or cancel the tickets, then delete.'
-    : (check.seats.length ? 'Retire the seats, then delete.' : 'Close or cancel the tickets, then delete.');
+    ? 'Retire the seats and accept or cancel the tickets, then delete.'
+    : (check.seats.length ? 'Retire the seats, then delete.' : 'Accept or cancel the tickets, then delete.');
   parts.push(fix);
   return parts.join(' ');
 }

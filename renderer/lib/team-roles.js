@@ -311,7 +311,7 @@ function formatBlockedBy(blockedBy) {
     parts.push(`seat(s): ${blockedBy.seats.join(', ')}`);
   }
   if (Array.isArray(blockedBy.tickets) && blockedBy.tickets.length) {
-    parts.push(`open ticket(s): ${blockedBy.tickets.join(', ')}`);
+    parts.push(`in-flight ticket(s): ${blockedBy.tickets.join(', ')}`);
   }
   return parts.join('; ');
 }
@@ -440,7 +440,7 @@ function ticketRoleNote(info, now) {
   if (live.length === 1) {
     const s = live[0];
     if (!s.ticket) return String(s.seat);
-    return `${onTicket(s)} (${s.step === 'verify' ? 'in review' : 'working'})`;
+    return `${onTicket(s)} (${s.step === 'verify' ? 'in review' : s.step === 'held' ? 'held' : 'working'})`;
   }
   if (live.length > 1) return `${live.length} seats: ${live.map(onTicket).join(', ')}`;
   const open = (info && Array.isArray(info.open)) ? info.open : [];

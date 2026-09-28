@@ -40,7 +40,6 @@
 ### Hazards
 - Dropping the refused result from `reviewerModelArgs` silently spawns a reviewer on the default model the operator did not configure.
 - `ignoreCwdDir` overwrites any .gitignore whose content is not exactly a star line, which dirties a tree that tracks one there.
-- `seatCwdInTree` treats only `..` or a `../` prefix as an escape, so a real subdirectory named `..cache` maps into the tree.
 
 ## Spawn intent and team activity — createTicketMethods … _forgetTeam
 
@@ -424,7 +423,7 @@
 
 ### Hazards
 - `_closeOutMergedTicket` counts commits before destroy and the branch delete, and moving the count below them turns every reply into the unknown case.
-- `_closeOutMergedTicket` catches a board-save throw after its teardown and replies with what was removed plus that the ticket still reads unaccepted.
+- Letting the board save after `_closeOutMergedTicket`'s teardown throw uncaught makes the accept reply claim nothing was removed after the tree and branch are gone.
 - `_closeOutMergedTicket` re-reads the board for the mergeError veto after its awaits, and reading the entry snapshot lets a stamp landed mid-accept be torn down.
 - The dirty-tree arm of `_closeOutMergedTicket` skips the branch delete on purpose, since the second accept it invites reads the branch back through isMerged.
 
