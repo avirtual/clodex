@@ -327,41 +327,43 @@ test('t673: [agent:context reload] preserves a reviewer seat\'s template', async
     'the reload passes the seat\'s shellDeny through — a dropped read respawns the shell reviewer uncapped');
 });
 
-test('restartSession and an args-edit restart preserve a reviewer seat\'s template, same as the reload arm', async () => {
-  const run = async (label, go) => {
-    const eng = mkEngine();
-    const entry = {
-      name: 'rv', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-9',
-      ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
-      reviewerTemplate: 'clodex-team-reviewer-shell',
-    };
-    eng.stores.persistence.upsert(entry);
-    liveSession(eng, 'rv', entry);
-    const { seen, removals } = probe(eng);
-    const res = await go(eng);
-    assert.strictEqual(res.ok, true, `${label} succeeded`);
-    assertEntered(seen, removals, 'rv', label);
-    const rec = seen[0].recordAtCreate;
-    assert.strictEqual(rec && rec.reviewerTemplate, 'clodex-team-reviewer-shell',
-      `${label} must carry the template, or the review row is attributed to the default arm`);
-    assert.strictEqual(rec.reviewTicket, 't1', `${label} keeps the ticket too`);
-    assert.strictEqual(rec.ephemeral, true, `${label} keeps ephemeral too`);
+async function assertReviewerTemplateKept(label, go) {
+  const eng = mkEngine();
+  const entry = {
+    name: 'rv', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-9',
+    ephemeral: true, reviewFor: 'lead', reviewTicket: 't1',
+    reviewerTemplate: 'clodex-team-reviewer-shell',
   };
-  await run('restartSession', (eng) => eng.restartSession('rv', {}, 'default'));
-  await run('applySessionArgs({restart:true})', (eng) => eng.applySessionArgs('rv', { extraArgs: [], restart: true }, 'default'));
-});
+  eng.stores.persistence.upsert(entry);
+  liveSession(eng, 'rv', entry);
+  const { seen, removals } = probe(eng);
+  const res = await go(eng);
+  assert.strictEqual(res.ok, true, `${label} succeeded`);
+  assertEntered(seen, removals, 'rv', label);
+  const rec = seen[0].recordAtCreate;
+  assert.strictEqual(rec && rec.reviewerTemplate, 'clodex-team-reviewer-shell',
+    `${label} must carry the template, or the review row is attributed to the default arm`);
+  assert.strictEqual(rec.reviewTicket, 't1', `${label} keeps the ticket too`);
+  assert.strictEqual(rec.ephemeral, true, `${label} keeps ephemeral too`);
+}
 
-test('a resume-switch restart keeps the switched-to id in the seat\'s history, on success and on failure', async () => {
-  const setup = () => {
-    const eng = mkEngine();
-    const entry = { name: 'h', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN };
-    eng.stores.persistence.upsert(entry);
-    eng.stores.persistence.setSessionId('h', 'A');
-    liveSession(eng, 'h', entry);
-    return eng;
-  };
+test('restartSession and an args-edit restart preserve a reviewer seat\'s template, same as the reload arm: restartSession', () =>
+  assertReviewerTemplateKept('restartSession', (eng) => eng.restartSession('rv', {}, 'default')));
 
-  const ok = setup();
+test('restartSession and an args-edit restart preserve a reviewer seat\'s template, same as the reload arm: applySessionArgs', () =>
+  assertReviewerTemplateKept('applySessionArgs({restart:true})', (eng) => eng.applySessionArgs('rv', { extraArgs: [], restart: true }, 'default')));
+
+function setupResumeSwitch() {
+  const eng = mkEngine();
+  const entry = { name: 'h', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN };
+  eng.stores.persistence.upsert(entry);
+  eng.stores.persistence.setSessionId('h', 'A');
+  liveSession(eng, 'h', entry);
+  return eng;
+}
+
+test('a resume-switch restart keeps the switched-to id in the seat\'s history, on success and on failure: success', async () => {
+  const ok = setupResumeSwitch();
   const { seen, removals } = probe(ok);
   const res = await ok.restartSession('h', { resumeId: 'B' }, 'default');
   assert.strictEqual(res.ok, true, 'the switch succeeded');
@@ -369,8 +371,10 @@ test('a resume-switch restart keeps the switched-to id in the seat\'s history, o
   assert.strictEqual(seen[0].args[4], 'B', 'ENTER: the switch took the resume path with the chosen id');
   assert.deepStrictEqual(seen[0].recordAtCreate.sessionIds, ['A', 'B'],
     'the switched-to conversation must stay in the seat\'s history, or it reads as foreign once the seat clears');
+});
 
-  const bad = setup();
+test('a resume-switch restart keeps the switched-to id in the seat\'s history, on success and on failure: failure', async () => {
+  const bad = setupResumeSwitch();
   const failed = probe(bad);
   bad.manager.create = async (...args) => { failed.seen.push({ args }); throw new Error('spawn refused'); };
   const res2 = await bad.restartSession('h', { resumeId: 'B' }, 'default');
