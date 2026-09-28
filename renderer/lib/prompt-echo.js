@@ -24,7 +24,7 @@ function sameTriplet(a, b) {
 }
 
 function isBgParam(p) {
-  if (p === '49' || p === '48') return true;
+  if (p === '49' || p === '48' || p.startsWith('48:')) return true;
   const n = Number(p);
   if (!Number.isInteger(n)) return false;
   return (n >= 40 && n <= 47) || (n >= 100 && n <= 107);

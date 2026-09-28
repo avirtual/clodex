@@ -8,7 +8,7 @@ const BASIC = [
 ];
 const CUBE = [0, 95, 135, 175, 215, 255];
 
-const ESCAPE_RE = /\x1b\[([0-?]*)([ -/]*)([@-~])|\x1b\][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[P^_][\s\S]*?(?:\x1b\\|$)|\x1b[ -/]*[0-~]?|\x9b[0-?]*[ -/]*[@-~]/g;
+const ESCAPE_RE = /\x1b\[([0-?]*)([ -/]*)([@-~])|\x1b\][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[P^_][\s\S]*?(?:\x1b\\|$)|\x1b\[[0-?]*[ -/]*$|\x1b[ -/]*[0-~]?|\x9b[0-?]*[ -/]*[@-~]/g;
 
 function rgb([r, g, b]) { return `rgb(${r},${g},${b})`; }
 
@@ -39,10 +39,32 @@ function extendedColor(params, i) {
   return { color: null, skip: params.length };
 }
 
+function colonColor(sub) {
+  if (sub[1] === 5) return color256(sub[2]);
+  if (sub[1] === 2) {
+    const at = sub.length >= 6 ? 3 : 2;
+    const [r, g, b] = sub.slice(at, at + 3);
+    return byte(r) && byte(g) && byte(b) ? rgb([r, g, b]) : null;
+  }
+  return null;
+}
+
+function setColor(state, code, color) {
+  if (color === null) return;
+  if (code === 38) state.fg = color;
+  else state.bg = color;
+}
+
 function applySgr(state, paramText) {
-  const params = paramText === '' ? [0] : paramText.split(/[;:]/).map((p) => (p === '' ? 0 : Number(p)));
+  const groups = paramText.split(';').map((g) => g.split(':').map((p) => (p === '' ? 0 : Number(p))));
+  const params = groups.map((g) => g[0]);
   for (let i = 0; i < params.length; i++) {
     const p = params[i];
+    if (groups[i].length > 1) {
+      if (p === 4) state.underline = groups[i][1] !== 0;
+      else if (p === 38 || p === 48) setColor(state, p, colonColor(groups[i]));
+      continue;
+    }
     if (p === 0) Object.assign(state, initialState());
     else if (p === 1) state.bold = true;
     else if (p === 2) state.dim = true;
@@ -59,8 +81,7 @@ function applySgr(state, paramText) {
     else if (p === 49) state.bg = null;
     else if (p === 38 || p === 48) {
       const { color, skip } = extendedColor(params, i);
-      if (p === 38) state.fg = color;
-      else state.bg = color;
+      setColor(state, p, color);
       i += skip;
     }
   }

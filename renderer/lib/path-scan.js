@@ -29,7 +29,7 @@ const EXTENSIONS = [
 // silently restarts at the slash — yielding `/x/y.js`, a WRONG absolute path
 // rather than a miss.
 const PATH_RE = new RegExp(
-  String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join('|')})\b(?::\d+)?`,
+  String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join('|')})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
   'g',
 );
 
@@ -38,17 +38,36 @@ const PATH_RE = new RegExp(
 // peek on a file that was never local. Matched separately and excluded.
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
+function trimUrl(url) {
+  const opens = url.split('(').length;
+  let closes = url.split(')').length;
+  let end = url.length;
+  for (;;) {
+    const c = url[end - 1];
+    if (c !== undefined && `.,;:!?'"`.includes(c)) end -= 1;
+    else if (c === ')' && closes > opens) { end -= 1; closes -= 1; }
+    else break;
+  }
+  return url.slice(0, end);
+}
+
+function urlMatches(text) {
+  const out = [];
+  URL_RE.lastIndex = 0;
+  for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
+    const url = trimUrl(u[0]);
+    out.push({ start: u.index, end: u.index + url.length, text: url });
+  }
+  return out;
+}
+
 // Returns [{ start, end, text, path, line }] — half-open offsets into `text`,
 // `path` without the `:line` suffix, `line` a number or null. Ordered by start.
 function scanPaths(text) {
   if (typeof text !== 'string' || !text) return [];
 
-  const urls = [];
-  URL_RE.lastIndex = 0;
-  for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
-    urls.push([u.index, u.index + u[0].length]);
-  }
-  const inUrl = (i) => urls.some(([a, b]) => i >= a && i < b);
+  const urls = urlMatches(text);
+  const inUrl = (i) => urls.some((u) => i >= u.start && i < u.end);
 
   const out = [];
   PATH_RE.lastIndex = 0;
@@ -83,10 +102,9 @@ function scanLinks(text) {
   if (typeof text !== 'string' || !text) return [];
 
   const marks = [];
-  URL_RE.lastIndex = 0;
-  for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
-    if (!isExternallyOpenable(u[0])) continue;
-    marks.push({ start: u.index, end: u.index + u[0].length, span: { kind: 'url', text: u[0] } });
+  for (const u of urlMatches(text)) {
+    if (!isExternallyOpenable(u.text)) continue;
+    marks.push({ start: u.start, end: u.end, span: { kind: 'url', text: u.text } });
   }
   for (const h of scanPaths(text)) {
     marks.push({

@@ -274,6 +274,20 @@ test('the turn-end record renders no row of its own', () => {
   assert.deepStrictEqual(m.pane.childNodes[0].childNodes.map((n) => n.textContent), ['2.5s']);
 });
 
+for (const row of [
+  { ms: 59600, want: '1m 0s' },
+  { ms: 119600, want: '2m 0s' },
+  { ms: 9960, want: '10s' },
+  { ms: 9940, want: '9.9s' },
+]) {
+  test(`a turn footer of ${row.ms}ms carries into the next unit instead of printing 60s`, () => {
+    const m = mount();
+    m.render([{ id: 'e1', kind: 'turn-end', ts: null, turn: 0, durationMs: row.ms, messageCount: 1 }]);
+    assert.strictEqual(m.pane.childNodes[0].childNodes.length, 1);
+    assert.deepStrictEqual(m.pane.childNodes[0].childNodes.map((n) => n.textContent), [row.want]);
+  });
+}
+
 test('a theme change rebuilds command output with the new echo palette and leaves other rows alone', () => {
   const doc = fakeDocument();
   const pane = doc.createElement('div');
@@ -1434,6 +1448,14 @@ for (const c of ticketCases) {
     if (c.link) assert.ok(!body.textContent.includes(c.preview), body.textContent);
   });
 }
+
+test('a ticket inbound whose attachment tail was cut by the cap keeps its whole lead in the preview', () => {
+  const m = mount();
+  m.render([{ ...inb('i1', 1, 'clodex', '[ticket t9 RESPEC] close with done'), attached: { path: ATT, bytes: 2337 }, truncated: true }]);
+  const box = boxOf(m, 'i1');
+  assert.ok(box.className.includes('tr-ticket'), box.className);
+  assert.strictEqual(boxHeadOf(box).childNodes[2].textContent, 'close with done');
+});
 
 test('one ticket shape: a multi-line task done puts the target before the label, the first line inline and the rest behind + 1 more line', () => {
   const m = mount();

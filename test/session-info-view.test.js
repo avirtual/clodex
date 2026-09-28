@@ -93,3 +93,34 @@ test('formatters keep small costs readable and large ones short', () => {
   assert.strictEqual(fmtAge(50 * 3600000), '2d 2h');
   assert.strictEqual(fmtAge(-1), null);
 });
+
+test("an age that cannot be computed drops its row instead of printing 'null ago'", () => {
+  const now = 1e12;
+  const sections = buildSections({ type: 'claude', createdAt: now + 120000, transcript: { bytes: 5, lastTs: 'garbage' } }, now);
+  const session = sec(sections, 'Session');
+  const context = sec(sections, 'Context');
+  assert.strictEqual(val(context, 'transcript'), '5 B');
+  assert.strictEqual(val(session, 'type'), 'claude');
+  assert.ok(!keys(session).includes('created'));
+  assert.ok(!keys(context).includes('last write'));
+  const future = sec(buildSections({ transcript: { bytes: 5, lastTs: new Date(now + 5000).toISOString() } }, now), 'Context');
+  assert.deepStrictEqual(keys(future), ['transcript']);
+  assert.ok(sections.every((s) => s.rows.every((r) => !/null/.test(String(r.v)))));
+});
+
+test('a cost scope with no known amount is omitted, not shown blank', () => {
+  const cost = sec(buildSections({ session: { usd: null, turns: 3 }, run: { usd: NaN }, sinceCompact: { estUsd: 0.25, compacted: true } }), 'Cost');
+  assert.strictEqual(val(cost, 'since last compact'), '$0.2500');
+  assert.deepStrictEqual(keys(cost), ['since last compact']);
+  assert.ok(cost.rows.every((r) => typeof r.v === 'string'));
+});
+
+test('a value that rounds up to the next tier is shown in that tier', () => {
+  assert.strictEqual(fmtTokens(999600), '1.0M');
+  assert.strictEqual(fmtTokens(999400), '999k');
+  assert.strictEqual(fmtBytes(999600), '1 MB');
+  assert.strictEqual(fmtBytes(999600000), '1.0 GB');
+  assert.strictEqual(fmtUsd(99.999), '$100');
+  assert.strictEqual(fmtUsd(0.99999), '$1.00');
+  assert.strictEqual(fmtUsd(0.99994), '$0.9999');
+});

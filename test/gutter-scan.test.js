@@ -87,6 +87,11 @@ test('prose separated from a header by an unrelated row does not resolve', () =>
   assert.strictEqual(findGutterFile(above), null);
 });
 
+test('a blank row between a finished block and a numbered row ends the search', () => {
+  assert.strictEqual(findGutterFile(['', '   27 +  foo', '  ⎿  Added 3 lines', '● Update(CHANGELOG.md)']), null);
+  assert.strictEqual(findGutterFile(['', '  ', '● Read(a.js)']), null);
+});
+
 // Shipped broken: a gutter row whose CONTENT mentions `Update(file.js)` was read
 // as a header, so every row below it linked to a file that was never edited —
 // and the miss only appeared a few lines in, where the quotation happened to be.
@@ -135,6 +140,17 @@ test('a shortened header path is returned as printed', () => {
   assert.deepStrictEqual(findGutterFile(['● Update(…/tasks/HANDOFF.md)']),
     { path: '…/tasks/HANDOFF.md', distance: 1 });
 });
+
+for (const [row, path] of [
+  ['● Update(app/(marketing)/page.tsx)', 'app/(marketing)/page.tsx'],
+  ['● Edit(a (1).js)', 'a (1).js'],
+  ['● Update(a.js) (done)', 'a.js'],
+  ['● Read(a.js) · 3 lines', 'a.js'],
+]) {
+  test(`a header path containing a closing paren is returned whole: ${row}`, () => {
+    assert.deepStrictEqual(findGutterFile([row]), { path, distance: 1 });
+  });
+}
 
 test('bad input is refused rather than thrown on', () => {
   assert.strictEqual(findGutterFile(null), null);

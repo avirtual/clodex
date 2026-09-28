@@ -2,13 +2,14 @@
 
 const SAFE_SCHEME = /^https?:\/\//i;
 const MAX_QUOTE_DEPTH = 8;
-const FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
+const FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
 const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
 const ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
 const LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
-const INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(([^)\s]*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+const WORD_CHAR = /\w/;
+const INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
 
 function safeHref(raw) {
   const href = String(raw == null ? '' : raw).trim().replace(/^<+/, '').replace(/>+$/, '');
@@ -29,13 +30,29 @@ function splitRow(line) {
   return s.replace(/\\\|/g, '\u0000').split('|').map((c) => c.replace(/\u0000/g, '|').trim());
 }
 
+function fenceOf(line) {
+  const m = FENCE.exec(line);
+  return m && !(m[1][0] === '`' && m[2].includes('`')) ? m : null;
+}
+
 function startsBlock(line) {
   return !line.trim()
-    || FENCE.test(line)
+    || fenceOf(line) !== null
     || HEADING.test(line)
     || QUOTE.test(line)
     || BULLET.test(line)
     || ORDERED.test(line);
+}
+
+function endsRun(lines, j) {
+  return !lines[j].trim()
+    || startsBlock(lines[j])
+    || (lines[j].includes('|') && isTableRule(lines[j + 1]));
+}
+
+function intraword(s, m) {
+  return (m[6] !== undefined || m[8] !== undefined)
+    && (WORD_CHAR.test(s.charAt(m.index - 1)) || WORD_CHAR.test(s.charAt(INLINE.lastIndex)));
 }
 
 function appendInline(parent, text, doc) {
@@ -44,6 +61,11 @@ function appendInline(parent, text, doc) {
   let at = 0;
   let m = INLINE.exec(s);
   while (m !== null) {
+    if (intraword(s, m)) {
+      INLINE.lastIndex = m.index + 1;
+      m = INLINE.exec(s);
+      continue;
+    }
     if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
     if (m[1] !== undefined) {
       const code = doc.createElement('code');
@@ -80,19 +102,20 @@ function appendInline(parent, text, doc) {
 }
 
 function renderFence(lines, i, parent, doc) {
-  const open = FENCE.exec(lines[i]);
+  const open = fenceOf(lines[i]);
   const marker = open[1][0];
   const body = [];
   let j = i + 1;
   while (j < lines.length) {
-    const close = FENCE.exec(lines[j]);
-    if (close && close[1][0] === marker && close[2] === '') break;
+    const close = fenceOf(lines[j]);
+    if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2].trim() === '') break;
     body.push(lines[j]);
     j++;
   }
   const pre = doc.createElement('pre');
   const code = doc.createElement('code');
-  if (LANG.test(open[2])) code.setAttribute('data-lang', open[2]);
+  const lang = open[2].trim().split(/\s+/)[0];
+  if (LANG.test(lang)) code.setAttribute('data-lang', lang);
   code.textContent = body.join('\n');
   pre.appendChild(code);
   parent.appendChild(pre);
@@ -137,7 +160,7 @@ function renderList(lines, i, parent, doc) {
       j++;
       continue;
     }
-    if (texts.length && lines[j].trim() && !startsBlock(lines[j])) {
+    if (texts.length && !endsRun(lines, j)) {
       texts[texts.length - 1] += ` ${lines[j].trim()}`;
       j++;
       continue;
@@ -185,8 +208,7 @@ function renderTable(lines, i, parent, doc) {
 function renderParagraph(lines, i, parent, doc) {
   const body = [lines[i].trim()];
   let j = i + 1;
-  while (j < lines.length && lines[j].trim() && !startsBlock(lines[j])
-    && !(lines[j].includes('|') && isTableRule(lines[j + 1]))) {
+  while (j < lines.length && !endsRun(lines, j)) {
     body.push(lines[j].trim());
     j++;
   }
@@ -201,7 +223,7 @@ function renderBlocks(lines, parent, doc, depth = 0) {
   while (i < lines.length) {
     const line = lines[i];
     if (!line.trim()) { i++; continue; }
-    if (FENCE.test(line)) { i = renderFence(lines, i, parent, doc); continue; }
+    if (fenceOf(line)) { i = renderFence(lines, i, parent, doc); continue; }
     const h = HEADING.exec(line);
     if (h) {
       const heading = doc.createElement(`h${h[1].length}`);

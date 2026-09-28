@@ -2,16 +2,12 @@
 // value->string helpers used across the sidebar, status bar, popovers, and
 // report/cost panels.
 //
-// Two are not strictly pure and are documented as such:
-//   - esc() uses the global `document` (HTML-escape via a detached node); it
-//     works at renderer runtime but must not be CALLED under node --test (no
-//     document). Requiring the module is fine; the tests exercise the others.
-//     textContent→innerHTML escapes & < > but NOT quotes, so esc() ALSO escapes
-//     " and ' explicitly — quote-escaping is safe in both text and attribute
-//     contexts, closing attribute-injection for any interpolation into value="…".
-//   - shortPath() replaces $HOME with ~, so it needs homeDir. It derives its
-//     own copy here (identical to renderer.js's `require('os').homedir()`),
-//     keeping the moved body byte-identical instead of threading a param.
+// esc() uses the global `document` (HTML-escape via a detached node); it
+// works at renderer runtime but must not be CALLED under node --test (no
+// document). Requiring the module is fine; the tests exercise the others.
+// textContent→innerHTML escapes & < > but NOT quotes, so esc() ALSO escapes
+// " and ' explicitly — quote-escaping is safe in both text and attribute
+// contexts, closing attribute-injection for any interpolation into value="…".
 
 const homeDir = require('os').homedir();
 
@@ -19,18 +15,6 @@ function esc(str) {
   const d = document.createElement('div');
   d.textContent = str;
   return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-}
-
-// Shorten a path by replacing $HOME with ~ and showing only the last 2 segments
-function shortPath(p) {
-  if (!p) return '';
-  let s = p;
-  if (s.startsWith(homeDir)) s = '~' + s.slice(homeDir.length);
-  const parts = s.split('/').filter(Boolean);
-  if (parts.length > 2) {
-    return (s.startsWith('/') ? '/' : '') + '…/' + parts.slice(-2).join('/');
-  }
-  return s;
 }
 
 // Last path segment for the sidebar's second line ("~" for home itself);
@@ -50,12 +34,11 @@ function fmtMinutes(remaining_s) {
 // Compact token count: 201234 -> "201k", 1000000 -> "1M".
 // The type guard is a SECURITY boundary, not tidiness: callers interpolate the
 // result straight into innerHTML without esc(), and peer-supplied JSON reaches
-// here unvalidated. Both comparisons below are false for a non-numeric string,
-// so the old tail `String(n)` handed the caller its own payload back verbatim.
+// here unvalidated.
 // Anything not a finite number formats as '0' — never as itself.
 function fmtTokens(n) {
   if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
-  if (n >= 1e6) { const m = n / 1e6; return (Number.isInteger(m) ? m : m.toFixed(1)) + 'M'; }
+  if (Math.round(n / 1000) >= 1000) return `${+(n / 1e6).toFixed(1)}M`;
   if (n >= 1000) return Math.round(n / 1000) + 'k';
   return String(n);
 }
@@ -68,8 +51,10 @@ function fmtCountdown(remaining_s) {
 function fmtAgo(ts) {
   const s = Math.max(0, (Date.now() - ts) / 1000);
   if (s < 60) return 'now';
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(s / 3600);
+  if (h < 24) return `${h}h ago`;
   return `${Math.round(s / 86400)}d ago`;
 }
 
@@ -81,8 +66,8 @@ function fmtUsd(n) {
 }
 function fmtDur(s) {
   if (!s) return '';
-  if (s >= 3600) return (s / 3600).toFixed(1) + 'h';
-  if (s >= 60) return Math.round(s / 60) + 'm';
+  if (Math.round(s / 60) >= 60) return (s / 3600).toFixed(1) + 'h';
+  if (Math.round(s) >= 60) return Math.round(s / 60) + 'm';
   return Math.round(s) + 's';
 }
 function shortTs(iso) {
@@ -96,7 +81,7 @@ function shortTs(iso) {
 function fmtBustTokens(n) {
   if (!n) return '0';
   if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
-  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`;
+  if (n >= 1000) { const k = n / 1000; return `${k.toFixed(+k.toFixed(1) >= 10 ? 0 : 1)}k`; }
   return String(n);
 }
 
@@ -104,12 +89,12 @@ function fmtBytes(n) {
   if (!(n > 0)) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0, v = n;
-  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  while (Math.round(v) >= 1024 && i < u.length - 1) { v /= 1024; i++; }
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
 module.exports = {
-  esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo,
+  esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo,
   fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes,
 };
 
