@@ -84,7 +84,17 @@ test('the far folder is the local one with the home prefix swapped, and only acr
         note: 'The peer runs win32; the folder was guessed from yours — check it exists there.',
       },
     },
+    {
+      why: 'a local home outside the table (root on a headless linux box): the far platform is known, so still warn',
+      arg: {
+        cwd: '/root/app', farPlatform: 'darwin', platform: null,
+        homedir: '/root', username: null,
+      },
+      want: { cwd: '/root/app', note: NOTE_DARWIN },
+    },
   ];
+  assert.deepStrictEqual(localFromHome('/root'), { platform: null, username: null },
+    'ENTER: the unknown-local row above is what the real caller derives from a /root home');
   assert.deepStrictEqual(rows.map((r) => farCwdGuess(r.arg)), rows.map((r) => r.want));
 });
 
@@ -121,8 +131,8 @@ test('the local platform and user are DERIVED from homedir — the browser bundl
       ...localFromHome('/'),
       homedir: '/',
     }),
-    { cwd: '/srv/app', note: null },
-    'a browser that never got a welcome home guesses nothing and says nothing, rather than throwing',
+    { cwd: '/srv/app', note: NOTE_LINUX },
+    'a browser that never got a welcome home guesses nothing and still warns, rather than throwing',
   );
 });
 
