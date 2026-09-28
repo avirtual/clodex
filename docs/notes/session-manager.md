@@ -118,3 +118,7 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
+
+## escapeSafeTail
+Resyncs only across sequences `TERM_ESCAPE_RE` matches; a cut inside a colon-parameter SGR (`\x1b[4:3m`), a DCS, or an OSC body over 4096 characters still starts mid-sequence.
+So does a cut between the `\x1b` and the `\\` of an OSC's closing `\x1b\\`: the lone `\\` is left at the head.

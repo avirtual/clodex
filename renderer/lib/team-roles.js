@@ -183,7 +183,7 @@ function isReviewerTemplateRow(row) {
 }
 
 function reviewerTemplateOptionGroups(rows, team, stored) {
-  const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
+  const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin && templateRowFor(rows, team, t.name) === t);
   const groups = templateOptionGroups(reviewers, team, stored).slice(1);
   const installed = templateRowFor(rows, team, stored);
   if (!installed || isReviewerTemplateRow(installed)) return groups;

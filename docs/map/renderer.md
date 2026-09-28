@@ -48,7 +48,7 @@ payloads are documented in `docs/renderer-events.md`.
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| startWorkspaceRename | inline rename of the workspace from the sidebar header, also fired by the `request-rename-workspace` push | `#workspace-name`, `document.title` | window.api.setWorkspaceName | unpinned |
+| startWorkspaceRename | inline rename of the workspace from the sidebar header, also fired by the `request-rename-workspace` push; the header and title change only after setWorkspaceName resolves, and a refusal is a toast | `#workspace-name`, `document.title` | window.api.setWorkspaceName, showToast | workspace-rename-header.test.js |
 | addFailedSessionToSidebar | renders a restore- or move-failed seat as a "failed — click to retry" row; ✕ forgets the record | sidebar DOM, `sidebarMeta` | rebuildLiveRow, window.api.retrySpawnSession | exited-seat-row.test.js renderer-source-pins.test.js seat-io-marker.test.js |
 | addArchivedSessionToSidebar | renders an archived or moved-to-peer seat as a dimmed row; click unarchives and resumes, ✕ deletes the record | sidebar DOM, `sidebarMeta` | window.api.unarchiveSession, rebuildLiveRow | exited-seat-row.test.js renderer-source-pins.test.js seat-io-marker.test.js |
 | rowSnapshot | captures a live row's identity (type, cwd, label, backend, team, effort, posture, io, noWire, fixFor, account) from its dataset | reads row dataset, `streamSeatNames`, `sidebarMeta` | none | exited-seat-row.test.js seat-io-marker.test.js sidebar-account-restart.test.js |

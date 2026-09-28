@@ -3386,7 +3386,7 @@ test('renameWorkspaceScope: a new name with quotes or a newline is refused, leav
     const file = path.join(registryDir, 'agents', 'a1.md');
     const before = fs.readFileSync(file, 'utf-8');
     assert.match(before, /workspace: old/, 'ENTER: the scoped file is on disk');
-    for (const to of ['"quoted"', "'single'", '"', "'", 'new\nsessions: victim', 'new\rsessions: victim']) {
+    for (const to of ['"quoted"', "'single'", '"', "'", 'new\nsessions: victim', 'new\rsessions: victim', 'new\u2028sessions: victim', 'new\u2029sessions: victim']) {
       assert.strictEqual(stores.renameWorkspaceScope('old', to), 0, JSON.stringify(to));
       assert.strictEqual(fs.readFileSync(file, 'utf-8'), before, JSON.stringify(to));
     }
@@ -3394,6 +3394,8 @@ test('renameWorkspaceScope: a new name with quotes or a newline is refused, leav
     stores.workspaces.list();
     assert.throws(() => stores.workspaces.setName('default', 'new\nsessions: victim'), /control/);
     assert.throws(() => stores.workspaces.setName('default', 'tab\there'), /control/);
+    assert.throws(() => stores.workspaces.setName('default', 'new\u2028sessions: victim'), /control/);
+    assert.throws(() => stores.workspaces.setName('default', 'new\u2029sessions: victim'), /control/);
   } finally { cleanup(); }
 });
 

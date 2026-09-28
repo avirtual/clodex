@@ -628,6 +628,20 @@ test('t1377 r1: an installed stored template that is not a reviewer one is label
   assert.strictEqual(gone.label, 'ghost (missing)', 'a truly absent stem keeps the missing label');
 });
 
+test('t1377 r2: a library reviewer template shadowed by a same-name team template that is not a reviewer one is not offered', () => {
+  const { reviewerTemplateOptionGroups } = require('../renderer/lib/team-roles');
+  const rows = [
+    { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+    { name: 'strict', systemPromptFile: 'clodex-team-reviewer-strict' },
+    { name: 'strict', systemPromptFile: 'box-strict', team: 'box' },
+  ];
+  const values = reviewerTemplateOptionGroups(rows, 'box', '').flatMap((g) => g.options).map((o) => o.value);
+  assert.ok(values.includes('clodex-team-reviewer'), `ENTER: an unshadowed library reviewer is offered: ${values}`);
+  assert.ok(!values.includes('strict'), `the shadowed library row resolves to the team one, so it is not offered: ${values}`);
+  const other = reviewerTemplateOptionGroups(rows, 'other', '').flatMap((g) => g.options).map((o) => o.value);
+  assert.ok(other.includes('strict'), 'a team without the shadowing template still sees the library row');
+});
+
 // `reservedRoleTemplate: a reserved role with no stored template…` above hardcodes
 // the two stems, so it only asserts the renderer agrees with itself: a cold review
 // mutated team-tickets.js's DEFAULT_LEAD_TEMPLATE /

@@ -96,9 +96,8 @@ function execRunStatusReply(execRuns, rawBody, now) {
       if (longest < 0 || tails[i].length > tails[longest].length) longest = i;
     }
     if (longest >= 0 && tails[longest].length) {
-      const cut = dropLast(tails[longest]);
-      over -= tails[longest].length - cut.length;
-      tails[longest] = cut;
+      tails[longest] = dropLast(tails[longest]);
+      over = render().length - EXEC_STATUS_REPLY_MAX;
       continue;
     }
     let widest = -1;
@@ -8236,8 +8235,9 @@ function createSessionManager(deps) {
         }
       }
       if (prior && prior.closing) {
-        reply(`[agent:scratch] mark refused: ${prior.closing.verb} already pending for mark ${prior.nonce}${label ? ` (${label})` : ''} — `
-          + `it fires first. Not marked; mark again after it settles.`);
+        const verb = label ? 'mark' : 'begin';
+        reply(`[agent:scratch] ${verb} refused: ${prior.closing.verb} already pending for mark ${prior.nonce}${label ? ` (${label})` : ''} — `
+          + `it fires first. Not marked; ${verb} again after it settles.`);
         return null;
       }
       if (prior && prior._closeTimer) clearTimeout(prior._closeTimer);

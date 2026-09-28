@@ -42982,7 +42982,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         return !!row && typeof row.systemPromptFile === "string" && row.systemPromptFile.startsWith("clodex-team-reviewer");
       }
       function reviewerTemplateOptionGroups(rows, team, stored) {
-        const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
+        const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin && templateRowFor(rows, team, t.name) === t);
         const groups = templateOptionGroups(reviewers, team, stored).slice(1);
         const installed = templateRowFor(rows, team, stored);
         if (!installed || isReviewerTemplateRow(installed)) return groups;
@@ -48504,13 +48504,18 @@ ${detail}` });
           newSpan.id = "workspace-name";
           newSpan.className = "workspace-name";
           newSpan.dataset.tip = "Double-click to rename workspace";
-          newSpan.textContent = newName;
+          newSpan.textContent = current;
           input.replaceWith(newSpan);
-          if (commit && newName !== current) {
-            currentWorkspaceName = newName;
+          if (!commit || newName === current) return;
+          try {
             await window.api.setWorkspaceName(newName);
-            document.title = newName;
+          } catch (e) {
+            showToast(`Rename failed: ${e && e.message || "unknown error"}`, { kind: "error", duration: 1e4 });
+            return;
           }
+          currentWorkspaceName = newName;
+          newSpan.textContent = newName;
+          document.title = newName;
         };
         input.addEventListener("blur", () => finish(true));
         input.addEventListener("keydown", (e) => {
