@@ -2703,7 +2703,7 @@ for (const [label, manifest, verdict] of DEPLESS_ROWS) {
 }
 
 test('a linked node_modules leaves the tree clean when the root ignores only `node_modules/`', async () => {
-  const root = mkTmpRoot('clodex-nm-slash-root-');
+  const root = mkTmpRoot('clodex-depless-root-');
   git(root, ['init', '-q', '-b', 'master']);
   git(root, ['config', 'user.email', 't@t.t']);
   git(root, ['config', 'user.name', 'T']);
@@ -2711,7 +2711,7 @@ test('a linked node_modules leaves the tree clean when the root ignores only `no
   git(root, ['add', '.gitignore']);
   git(root, ['commit', '-q', '-m', 'base']);
   fsReal.mkdirSync(pathReal.join(root, 'node_modules', 'a'), { recursive: true });
-  const tree = pathReal.join(mkTmpRoot('clodex-nm-slash-trees-'), 'tree');
+  const tree = pathReal.join(mkTmpRoot('clodex-depless-tree-'), 'tree');
   git(root, ['worktree', 'add', '-q', '-b', 'tl-nm', tree]);
   const f = mkLoop({ repo: mkRepo() });
 
