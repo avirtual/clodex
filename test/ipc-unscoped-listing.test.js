@@ -126,7 +126,7 @@ test('the per-workspace recent cwd lists survive the real uiSettings store and a
   const path = require('path');
   const { initStores } = require('../stores.js');
   const { mkTmpRoot } = require('./lib/tmp-roots');
-  const dir = mkTmpRoot('clodex-cwd-mru-');
+  const dir = mkTmpRoot('clodex-uisettings-');
   const open = () => initStores(dir, {
     log: { info: () => {}, error: () => {} },
     registryDir: path.join(dir, 'registry'),
