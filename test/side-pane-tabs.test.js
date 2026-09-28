@@ -525,6 +525,18 @@ test('side-pane tabs: Keep editing on an agent-change banner stays dismissed whe
   assert.strictEqual(reduceTabs(rewrote.set, { type: 'loaded', id: 'a', peek: { ok: true, mtime: 400, content: 'x' } }).effect, 'banner');
 });
 
+test('side-pane tabs: Keep editing on a peek-raised banner still re-raises for a later change it never saw', () => {
+  const peek = (mtime) => ({ type: 'loaded', id: 'a', peek: { ok: true, mtime, content: 'x' } });
+  let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100 })], 'a');
+  const raised = reduceTabs(s, peek(200));
+  assert.strictEqual(raised.effect, 'banner', 'ENTER: the first external change raised the banner from a peek');
+  s = reduceTabs(raised.set, { type: 'keep', id: 'a' }).set;
+  assert.strictEqual(reduceTabs(s, peek(300)).effect, 'banner');
+  let c = reduceTabs(raised.set, { type: 'changed', id: 'a', visible: true }).set;
+  c = reduceTabs(c, { type: 'keep', id: 'a' }).set;
+  assert.strictEqual(reduceTabs(c, peek(300)).effect, null, 'an agent-change banner kept, then its first peek, stays dismissed');
+});
+
 test('side-pane tabs: a mtime seen under a banner does not outlive a save or a render that adopts a new one', () => {
   const peek300 = { type: 'loaded', id: 'a', peek: { ok: true, mtime: 300, content: 'x' } };
   let s = set([tab('a', { path: '/w/a.js', view: 'edit', dirty: true, mtime: 100, seenMtime: 200 })], 'a');

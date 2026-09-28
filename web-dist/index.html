@@ -41031,7 +41031,7 @@ void main() {
       function agentChanged(set, a) {
         const tab = set.tabs.find((t) => t.id === a.id);
         if (!tab) return { set, effect: null };
-        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true, kept: false }), effect: "banner" };
+        if (tab.dirty) return { set: patchTab(set, a.id, { banner: true, kept: false, seenMtime: null }), effect: "banner" };
         if (a.visible) return { set, effect: "reload" };
         return { set: patchTab(set, a.id, { stale: true }), effect: null };
       }
@@ -41044,7 +41044,7 @@ void main() {
         const mtime = a.peek && a.peek.ok ? a.peek.mtime : null;
         if (tab.dirty) {
           if (mtime != null && mtime !== (tab.seenMtime ?? tab.mtime)) {
-            if (tab.kept) return { set: patchTab(set, a.id, { deleted: false, seenMtime: mtime, kept: false }), effect: null };
+            if (tab.kept && tab.seenMtime == null) return { set: patchTab(set, a.id, { deleted: false, seenMtime: mtime, kept: false }), effect: null };
             return { set: patchTab(set, a.id, { banner: true, deleted: false, seenMtime: mtime }), effect: "banner" };
           }
           return { set: patchTab(set, a.id, { deleted: false, kept: false }), effect: null };
