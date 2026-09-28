@@ -25465,16 +25465,6 @@ ${i3.join("\n")}
         d.textContent = str;
         return d.innerHTML.replace(/"/g, "&quot;").replace(/'/g, "&#39;");
       }
-      function shortPath(p) {
-        if (!p) return "";
-        let s = p;
-        if (s.startsWith(homeDir)) s = "~" + s.slice(homeDir.length);
-        const parts = s.split("/").filter(Boolean);
-        if (parts.length > 2) {
-          return (s.startsWith("/") ? "/" : "") + "\u2026/" + parts.slice(-2).join("/");
-        }
-        return s;
-      }
       function baseName(p) {
         if (!p) return "";
         if (p === homeDir || p === "~") return "~";
@@ -25486,10 +25476,7 @@ ${i3.join("\n")}
       }
       function fmtTokens(n) {
         if (typeof n !== "number" || !Number.isFinite(n)) return "0";
-        if (n >= 1e6) {
-          const m = n / 1e6;
-          return (Number.isInteger(m) ? m : m.toFixed(1)) + "M";
-        }
+        if (Math.round(n / 1e3) >= 1e3) return `${+(n / 1e6).toFixed(1)}M`;
         if (n >= 1e3) return Math.round(n / 1e3) + "k";
         return String(n);
       }
@@ -25500,8 +25487,10 @@ ${i3.join("\n")}
       function fmtAgo(ts) {
         const s = Math.max(0, (Date.now() - ts) / 1e3);
         if (s < 60) return "now";
-        if (s < 3600) return `${Math.round(s / 60)}m ago`;
-        if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+        const m = Math.round(s / 60);
+        if (m < 60) return `${m}m ago`;
+        const h = Math.round(s / 3600);
+        if (h < 24) return `${h}h ago`;
         return `${Math.round(s / 86400)}d ago`;
       }
       function fmtUsd(n) {
@@ -25512,8 +25501,8 @@ ${i3.join("\n")}
       }
       function fmtDur(s) {
         if (!s) return "";
-        if (s >= 3600) return (s / 3600).toFixed(1) + "h";
-        if (s >= 60) return Math.round(s / 60) + "m";
+        if (Math.round(s / 60) >= 60) return (s / 3600).toFixed(1) + "h";
+        if (Math.round(s) >= 60) return Math.round(s / 60) + "m";
         return Math.round(s) + "s";
       }
       function shortTs(iso) {
@@ -25525,14 +25514,17 @@ ${i3.join("\n")}
       function fmtBustTokens(n) {
         if (!n) return "0";
         if (typeof n !== "number" || !Number.isFinite(n)) return "0";
-        if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+        if (n >= 1e3) {
+          const k = n / 1e3;
+          return `${k.toFixed(+k.toFixed(1) >= 10 ? 0 : 1)}k`;
+        }
         return String(n);
       }
       function fmtBytes(n) {
         if (!(n > 0)) return "0 B";
         const u = ["B", "KB", "MB", "GB", "TB"];
         let i = 0, v = n;
-        while (v >= 1024 && i < u.length - 1) {
+        while (Math.round(v) >= 1024 && i < u.length - 1) {
           v /= 1024;
           i++;
         }
@@ -25540,7 +25532,6 @@ ${i3.join("\n")}
       }
       module.exports = {
         esc,
-        shortPath,
         baseName,
         fmtTokens,
         fmtCountdown,
@@ -25979,13 +25970,14 @@ ${i3.join("\n")}
       "use strict";
       var SAFE_SCHEME = /^https?:\/\//i;
       var MAX_QUOTE_DEPTH = 8;
-      var FENCE = /^ {0,3}(`{3,}|~{3,})\s*(\S*)\s*$/;
+      var FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\n]*?)[ \t]*$/;
       var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
       var QUOTE = /^ {0,3}> ?(.*)$/;
       var BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
       var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
       var LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
-      var INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(([^)\s]*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
+      var WORD_CHAR = /\w/;
+      var INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
       function safeHref(raw) {
         const href = String(raw == null ? "" : raw).trim().replace(/^<+/, "").replace(/>+$/, "");
         return SAFE_SCHEME.test(href) ? href : null;
@@ -26002,12 +25994,23 @@ ${i3.join("\n")}
       function startsBlock(line) {
         return !line.trim() || FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || BULLET.test(line) || ORDERED.test(line);
       }
+      function endsRun(lines, j) {
+        return !lines[j].trim() || startsBlock(lines[j]) || lines[j].includes("|") && isTableRule(lines[j + 1]);
+      }
+      function intraword(s, m) {
+        return (m[6] !== void 0 || m[8] !== void 0) && (WORD_CHAR.test(s.charAt(m.index - 1)) || WORD_CHAR.test(s.charAt(INLINE.lastIndex)));
+      }
       function appendInline(parent, text, doc) {
         const s = String(text == null ? "" : text);
         INLINE.lastIndex = 0;
         let at = 0;
         let m = INLINE.exec(s);
         while (m !== null) {
+          if (intraword(s, m)) {
+            INLINE.lastIndex = m.index + 1;
+            m = INLINE.exec(s);
+            continue;
+          }
           if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
           if (m[1] !== void 0) {
             const code = doc.createElement("code");
@@ -26049,13 +26052,14 @@ ${i3.join("\n")}
         let j = i + 1;
         while (j < lines.length) {
           const close = FENCE.exec(lines[j]);
-          if (close && close[1][0] === marker && close[2] === "") break;
+          if (close && close[1][0] === marker && close[1].length >= open[1].length && close[2] === "") break;
           body.push(lines[j]);
           j++;
         }
         const pre = doc.createElement("pre");
         const code = doc.createElement("code");
-        if (LANG.test(open[2])) code.setAttribute("data-lang", open[2]);
+        const lang = open[2].split(/\s+/)[0];
+        if (LANG.test(lang)) code.setAttribute("data-lang", lang);
         code.textContent = body.join("\n");
         pre.appendChild(code);
         parent.appendChild(pre);
@@ -26098,7 +26102,7 @@ ${i3.join("\n")}
             j++;
             continue;
           }
-          if (texts.length && lines[j].trim() && !startsBlock(lines[j])) {
+          if (texts.length && !endsRun(lines, j)) {
             texts[texts.length - 1] += ` ${lines[j].trim()}`;
             j++;
             continue;
@@ -26143,7 +26147,7 @@ ${i3.join("\n")}
       function renderParagraph(lines, i, parent, doc) {
         const body = [lines[i].trim()];
         let j = i + 1;
-        while (j < lines.length && lines[j].trim() && !startsBlock(lines[j]) && !(lines[j].includes("|") && isTableRule(lines[j + 1]))) {
+        while (j < lines.length && !endsRun(lines, j)) {
           body.push(lines[j].trim());
           j++;
         }
@@ -26500,18 +26504,30 @@ ${i3.join("\n")}
         "hcl"
       ];
       var PATH_RE = new RegExp(
-        String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})\b(?::\d+)?`,
+        String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
         "g"
       );
       var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
-      function scanPaths(text) {
-        if (typeof text !== "string" || !text) return [];
-        const urls = [];
+      function trimUrl(url) {
+        let s = url.replace(/[.,;:!?'"]+$/, "");
+        while (s.endsWith(")") && s.split("(").length < s.split(")").length) {
+          s = s.slice(0, -1).replace(/[.,;:!?'"]+$/, "");
+        }
+        return s;
+      }
+      function urlMatches(text) {
+        const out = [];
         URL_RE.lastIndex = 0;
         for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
-          urls.push([u.index, u.index + u[0].length]);
+          const url = trimUrl(u[0]);
+          out.push({ start: u.index, end: u.index + url.length, text: url });
         }
-        const inUrl = (i) => urls.some(([a, b]) => i >= a && i < b);
+        return out;
+      }
+      function scanPaths(text) {
+        if (typeof text !== "string" || !text) return [];
+        const urls = urlMatches(text);
+        const inUrl = (i) => urls.some((u) => i >= u.start && i < u.end);
         const out = [];
         PATH_RE.lastIndex = 0;
         for (let m = PATH_RE.exec(text); m; m = PATH_RE.exec(text)) {
@@ -26532,10 +26548,9 @@ ${i3.join("\n")}
       function scanLinks(text) {
         if (typeof text !== "string" || !text) return [];
         const marks = [];
-        URL_RE.lastIndex = 0;
-        for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
-          if (!isExternallyOpenable(u[0])) continue;
-          marks.push({ start: u.index, end: u.index + u[0].length, span: { kind: "url", text: u[0] } });
+        for (const u of urlMatches(text)) {
+          if (!isExternallyOpenable(u.text)) continue;
+          marks.push({ start: u.start, end: u.end, span: { kind: "url", text: u.text } });
         }
         for (const h of scanPaths(text)) {
           marks.push({
@@ -26565,9 +26580,9 @@ ${i3.join("\n")}
     "renderer/lib/gutter-scan.js"(exports, module) {
       "use strict";
       var GUTTER_RE = /^(\s*)(\d+)(?=\s|$)/;
-      var HEADER_RE = /\b(?:Update|Edit|MultiEdit|Write|Create|Read|NotebookEdit)\(([^)\s][^)]*)\)/;
+      var HEADER_RE = /\b(?:Update|Edit|MultiEdit|Write|Create|Read|NotebookEdit)\((?:(?=[^)\s])((?:[^()]|\([^()]*\))+)\)\s*$|([^)\s][^)]*)\))/;
       var SUMMARY_RE = /^[\s⎿└├│╰─]*(?:Added|Removed|Updated|Wrote|Read)\b/;
-      var GLYPH_ONLY_RE = /^[\s⎿└├│╰─]*$/;
+      var GLYPH_ONLY_RE = /^\s*[⎿└├│╰─][\s⎿└├│╰─]*$/;
       function matchGutterRow(text) {
         if (typeof text !== "string" || !text) return null;
         const m = GUTTER_RE.exec(text);
@@ -26583,7 +26598,7 @@ ${i3.join("\n")}
           if (typeof row !== "string") return null;
           if (matchGutterRow(row)) continue;
           const h = HEADER_RE.exec(row);
-          if (h) return { path: h[1].trim(), distance: i + 1 };
+          if (h) return { path: (h[1] || h[2]).trim(), distance: i + 1 };
           if (SUMMARY_RE.test(row) || GLYPH_ONLY_RE.test(row)) continue;
           return null;
         }
@@ -31998,7 +32013,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         [255, 255, 255]
       ];
       var CUBE = [0, 95, 135, 175, 215, 255];
-      var ESCAPE_RE = /\x1b\[([0-?]*)([ -/]*)([@-~])|\x1b\][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[P^_][\s\S]*?(?:\x1b\\|$)|\x1b[ -/]*[0-~]?|\x9b[0-?]*[ -/]*[@-~]/g;
+      var ESCAPE_RE = /\x1b\[([0-?]*)([ -/]*)([@-~])|\x1b\][\s\S]*?(?:\x07|\x1b\\|$)|\x1b[P^_][\s\S]*?(?:\x1b\\|$)|\x1b\[[0-?]*[ -/]*$|\x1b[ -/]*[0-~]?|\x9b[0-?]*[ -/]*[@-~]/g;
       function rgb([r, g, b]) {
         return `rgb(${r},${g},${b})`;
       }
@@ -32027,10 +32042,30 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return { color: null, skip: params.length };
       }
+      function colonColor(sub) {
+        if (sub[1] === 5) return color256(sub[2]);
+        if (sub[1] === 2) {
+          const at = sub.length >= 6 ? 3 : 2;
+          const [r, g, b] = sub.slice(at, at + 3);
+          return byte(r) && byte(g) && byte(b) ? rgb([r, g, b]) : null;
+        }
+        return null;
+      }
+      function setColor(state, code, color) {
+        if (color === null) return;
+        if (code === 38) state.fg = color;
+        else state.bg = color;
+      }
       function applySgr(state, paramText) {
-        const params = paramText === "" ? [0] : paramText.split(/[;:]/).map((p) => p === "" ? 0 : Number(p));
+        const groups = paramText.split(";").map((g) => g.split(":").map((p) => p === "" ? 0 : Number(p)));
+        const params = groups.map((g) => g[0]);
         for (let i = 0; i < params.length; i++) {
           const p = params[i];
+          if (groups[i].length > 1) {
+            if (p === 4) state.underline = groups[i][1] !== 0;
+            else if (p === 38 || p === 48) setColor(state, p, colonColor(groups[i]));
+            continue;
+          }
           if (p === 0) Object.assign(state, initialState());
           else if (p === 1) state.bold = true;
           else if (p === 2) state.dim = true;
@@ -32049,8 +32084,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           else if (p === 49) state.bg = null;
           else if (p === 38 || p === 48) {
             const { color, skip } = extendedColor(params, i);
-            if (p === 38) state.fg = color;
-            else state.bg = color;
+            setColor(state, p, color);
             i += skip;
           }
         }
@@ -32114,7 +32148,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return a && b && a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
       }
       function isBgParam(p) {
-        if (p === "49" || p === "48") return true;
+        if (p === "49" || p === "48" || p.startsWith("48:")) return true;
         const n = Number(p);
         if (!Number.isInteger(n)) return false;
         return n >= 40 && n <= 47 || n >= 100 && n <= 107;
@@ -32644,11 +32678,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
       }
       function durationText(ms) {
-        const s = ms / 1e3;
-        if (s < 10) return `${s.toFixed(1)}s`;
-        if (s < 60) return `${Math.round(s)}s`;
-        const m = Math.floor(s / 60);
-        return `${m}m ${Math.round(s - m * 60)}s`;
+        if (ms < 9950) return `${(ms / 1e3).toFixed(1)}s`;
+        const t = Math.round(ms / 1e3);
+        return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${t % 60}s`;
       }
       function baseName(p) {
         const parts = String(p).split("/");
@@ -32811,14 +32843,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
         row.appendChild(text);
         return withTime(doc, row, rec);
       }
+      function attachedLead(rec) {
+        const cut = rec.attached ? rec.text.indexOf("Message (") : -1;
+        return cut < 0 ? rec.text : rec.text.slice(0, cut);
+      }
       function inboundRow(doc, rec, ctx, boxed) {
         const row = headRow(doc, "tr-inbound", rec);
         const text = el(doc, "span", "tr-head-text");
         if (rec.via === "subagent") row.dataset.via = "subagent";
         if (!boxed) text.appendChild(inboundBadge(doc, rec));
         if (rec.attached) {
-          const cut = rec.text.indexOf("Message (");
-          const lead = (cut < 0 ? rec.text : rec.text.slice(0, cut)).trim();
+          const lead = attachedLead(rec).trim();
           if (lead) appendProse(doc, text, `${lead} `, ctx);
           text.appendChild(el(doc, "span", "tr-dim", `${bytesText(rec.attached.bytes)} `));
           text.appendChild(linkNode(doc, { kind: "path", text: baseName(rec.attached.path), path: rec.attached.path }, "", ctx));
@@ -32908,7 +32943,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function ticketParts(rec) {
         const { id, tag } = rec.ticket;
-        const text = rec.attached ? rec.text.slice(0, rec.text.indexOf("Message (")) : rec.text;
+        const text = attachedLead(rec);
         if (rec.kind !== "reply") return { chip: tag ? `${id} ${tag}` : id, message: text.replace(/^\[ticket [^\]]*\]\s*/, "") };
         const m = /^ticket t\d+[ \t]*([^\s:]*):?[ \t]*/.exec(text);
         const state = m ? m[1] : "";
@@ -40556,22 +40591,22 @@ void main() {
       "use strict";
       function fmtUsd(v) {
         if (typeof v !== "number" || !isFinite(v)) return null;
-        if (v >= 100) return `$${v.toFixed(0)}`;
-        return v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
+        if (+v.toFixed(2) >= 100) return `$${v.toFixed(0)}`;
+        return +v.toFixed(4) >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`;
       }
       function fmtInt(v) {
         return typeof v === "number" && isFinite(v) ? v.toLocaleString("en-US") : null;
       }
       function fmtTokens(n) {
         if (typeof n !== "number" || !isFinite(n)) return null;
-        if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+        if (Math.round(n / 1e3) >= 1e3) return `${(n / 1e6).toFixed(1)}M`;
         if (n >= 1e3) return `${Math.round(n / 1e3)}k`;
         return String(n);
       }
       function fmtBytes(n) {
         if (typeof n !== "number" || !isFinite(n)) return null;
-        if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-        if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+        if (Math.round(n / 1e6) >= 1e3) return `${(n / 1e9).toFixed(1)} GB`;
+        if (Math.round(n / 1e3) >= 1e3) return `${Math.round(n / 1e6)} MB`;
         if (n >= 1e3) return `${Math.round(n / 1e3)} KB`;
         return `${n} B`;
       }
@@ -40586,6 +40621,10 @@ void main() {
       function row(k, v, tip) {
         return v == null ? null : { k, v, tip };
       }
+      function ago(ms) {
+        const age = fmtAge(ms);
+        return age == null ? null : `${age} ago`;
+      }
       function aboutSection(info, now) {
         const rows = [
           row("type", info.type ? `${info.type}${info.backend ? ` \xB7 ${info.backend}` : ""}` : null),
@@ -40593,7 +40632,7 @@ void main() {
           row("team", info.team),
           row(
             "created",
-            info.createdAt ? `${fmtAge(now - info.createdAt)} ago` : null,
+            info.createdAt ? ago(now - info.createdAt) : null,
             info.createdAt ? new Date(info.createdAt).toLocaleString() : null
           ),
           row("conversation", info.sessionId ? info.sessionId.slice(0, 8) : null, info.sessionId),
@@ -40630,27 +40669,27 @@ void main() {
         const rows = [];
         const sc = info.sinceCompact;
         if (sc && typeof sc.estUsd === "number") {
-          rows.push({
-            k: sc.compacted ? "since last compact" : "since start",
-            v: fmtUsd(sc.estUsd),
-            tip: sc.compacted ? "Spend since the most recent compact boundary" : "This conversation has never compacted"
-          });
+          rows.push(row(
+            sc.compacted ? "since last compact" : "since start",
+            fmtUsd(sc.estUsd),
+            sc.compacted ? "Spend since the most recent compact boundary" : "This conversation has never compacted"
+          ));
         }
-        if (info.run) rows.push({ k: "this run", v: fmtUsd(info.run.usd), tip: "Since the agent's CLI process started (resets when the seat respawns)" });
+        if (info.run) rows.push(row("this run", fmtUsd(info.run.usd), "Since the agent's CLI process started (resets when the seat respawns)"));
         if (info.session) {
-          rows.push({ k: "this conversation", v: fmtUsd(info.session.usd), tip: "Whole current conversation, across app restarts. Reset by /clear." });
+          rows.push(row("this conversation", fmtUsd(info.session.usd), "Whole current conversation, across app restarts. Reset by /clear."));
         }
         const a = info.agent;
         if (a && a.total > 0) {
           const partial = a.known < a.total;
-          rows.push({
-            k: "this agent, all time",
-            v: fmtUsd(a.usd),
-            tip: partial ? `Every conversation this seat has held. ${a.known} of ${a.total} are still in the ledger \u2014 older ones have been pruned, so the real figure is higher.` : `Every conversation this seat has held (${a.total}), summed. Never resets.`
-          });
+          rows.push(row(
+            "this agent, all time",
+            fmtUsd(a.usd),
+            partial ? `Every conversation this seat has held. ${a.known} of ${a.total} are still in the ledger \u2014 older ones have been pruned, so the real figure is higher.` : `Every conversation this seat has held (${a.total}), summed. Never resets.`
+          ));
           if (partial) rows.push({ k: "", v: `${a.known}/${a.total} conversations in the ledger`, tip: null });
         }
-        return { title: "Cost", rows };
+        return { title: "Cost", rows: rows.filter(Boolean) };
       }
       function activitySection(info) {
         const a = info.agent || {};
@@ -40673,7 +40712,7 @@ void main() {
           row("messages", fmtInt(ctx.messages)),
           row("strip level", info.stripLevel ? `L${info.stripLevel}` : null, "Thinking-block stripping configured for this session"),
           row("transcript", t ? fmtBytes(t.bytes) : null, t && t.lines ? `${fmtInt(t.lines)} records on disk` : null),
-          row("last write", t && t.lastTs ? `${fmtAge(now - Date.parse(t.lastTs))} ago` : null)
+          row("last write", t && t.lastTs ? ago(now - Date.parse(t.lastTs)) : null)
         ].filter(Boolean);
         return { title: "Context", rows };
       }
@@ -48003,7 +48042,7 @@ ${detail}` });
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
-      var { esc, shortPath, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
+      var { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, bustRow } = require_render_html();
       var { effortOptions } = require_effort_options();
       var { renderMarkdown } = require_render_markdown();
