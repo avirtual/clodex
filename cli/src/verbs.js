@@ -382,6 +382,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, unf
         lastSeq = Math.max(lastSeq, seq);
         emit(page);
       }
+    } catch {
     } finally {
       refetching = false;
       if (pending) { pending = false; refetch(); }
