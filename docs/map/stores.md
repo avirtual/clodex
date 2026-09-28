@@ -56,7 +56,7 @@
 | `sanitizeSpeakRate` | an integer words-per-minute rate in 80..400, else the shipped 210 | none | none | spoken-replies.test.js |
 
 ### Invariants
-- `sanitizeBoxes` returns null only for a missing key, so a deliberately emptied boxes list survives rather than re-seeding the default box.
+- `sanitizeBoxes` returns null only for non-array input, so a deliberately emptied boxes list survives rather than re-seeding the default box.
 - `sanitizeBoxes` gives each fallback config its own mounts array rather than the DEFAULT_SANDBOX_CONFIG singleton.
 - `sanitizeTerminalReports` resolves an absent or legacy-false key to off, so an upgrade never grants the capability on its own.
 
@@ -71,7 +71,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `initStores` | the factory: derives every path from its userDataPath and registryDir arguments, runs migrations and seeders, returns the store set | every file below; closure sets unreadableLogged, quarantinedFiles, launchBakTaken | readStoreJson, migratePromptsJson, seedLibraryDefaults, seedEnvDefaults | stores.test.js engine-registry-dir-seam.test.js env-defaults-seed.test.js |
-| `readStoreJson` | reads one JSON store as absent, ok with a value, quarantined (unparseable, moved to a .corrupt- sibling) or unreadable | quarantinedFiles, unreadableLogged, the file's .corrupt- sibling | fs-util via callers | unpinned |
+| `readStoreJson` | reads one JSON store as absent, ok with a value, quarantined (unparseable, moved to a .corrupt- sibling) or unreadable | quarantinedFiles, unreadableLogged, the file's .corrupt- sibling | none (fs directly) | unpinned |
 | `refuseUnreadable` | throws the refusing-to-save error a store raises instead of writing over a file it could not read | none | none | unpinned |
 
 ### Invariants
@@ -109,7 +109,7 @@
 | `setIo` | stores io as stream or pty, always explicit | sessions.json | _save | stores.test.js stream-seat-restart.test.js |
 | `setVoice` | stores a VOICE_MODES voice mode; false on a bad mode or missing record | sessions.json | _save | stores.test.js voice-engine.test.js |
 | `setRosterSent` | stamps rosterSentAt with now | sessions.json | _save | stores.test.js session-manager.test.js |
-| `setIntents` | stores a per-session intent allowlist only when it diverges from the all-enabled default | sessions.json | _save | stores.test.js plugin-scope.test.js |
+| `setIntents` | stores any array (even empty) as the intent allowlist and deletes the key on null, so the seat follows the living default | sessions.json | _save | stores.test.js plugin-scope.test.js |
 | `setPluginGrants` | stores pluginId:capability grant tokens; an absent key means no plugin reaches the seat | sessions.json | _save | plugin-scope.test.js |
 | `setPlugins` | stores the per-seat plugin allowlist, where an empty array is a real value | sessions.json | _save | plugin-scope.test.js session-manager.test.js |
 | `setCwd` | stores cwd only when it is a non-empty string | sessions.json | _save | stores.test.js session-move.test.js |
@@ -120,9 +120,9 @@
 | `markDigested` | appends a session id to digested, deduped and capped at the last 50 | sessions.json | _save | hint-arm.test.js memory-load.test.js |
 
 ### Invariants
-- `_save` refuses (returns false, logs once per launch) while `_load` has flagged sessions.json unreadable, so persistence skips rather than throws and never replaces a file it could not read.
+- `_save` refuses (returns false, logs once per unreadable stretch, re-armed when `_load` finds the file readable) while `_load` has flagged sessions.json unreadable, so persistence skips rather than throws and never replaces a file it could not read.
 - `_save` snapshots the pre-launch sessions.json to .bak once per process, and only when the current file parses.
-- `remove` is the single record drop, and CLAUDE.md's record-dropper list (kill, destroy, Delete Session, Delete Workspace, forget, team-retire discard, reviewer graveyard, spawn-failure rollbacks) is the full set of its callers.
+- `remove` is the single record drop, and CLAUDE.md's record-dropper list (kill, destroy, Delete Session, Delete Workspace, forget, team-retire discard, reviewer graveyard, spawn-failure rollbacks including the remote import-create rollback, and the gated natural-exit drop of a non-agent session) is the full set of its callers.
 - `remove` passes no touched name to `_save`, so it leaves the seat.json mirror of the dropped record as it is.
 - `_writeSeatJson` writes only into an existing seat dir, so a mirror never creates a seat directory.
 
@@ -137,10 +137,10 @@
 |---|---|---|---|---|
 | `_file` | the confined path of one library file; a name that escapes its root throws | none | path-confine.confineOrThrow | unpinned |
 | `_sameFile` | true when two template names resolve to one inode (a case-only rename on a case-insensitive disk) | none | _file | unpinned |
-| `_read` | one parsed template, or null for a refused name, a missing file or bad JSON | library/templates/<name>.json | _file | path-confine.test.js |
-| `_write` | writes one template at mode 0600 with its id dropped and its name stamped | library/templates/<name>.json | ensureDir, _file | unpinned |
-| `save` | edit-save with rename-in-place: carries forward only non-editor-owned keys of the prior file, then removes the old name | library/templates/*.json | _read, _write, _sameFile | stores.test.js |
-| `saveByName` | overwrites the case-insensitively matching template, keeping its original filename casing | library/templates/*.json | _write | stores.test.js app-menus-plugins.test.js |
+| `_read` | one parsed template, or null for a refused name, a missing file or bad JSON | registryDir/library/templates/<name>.json | _file | path-confine.test.js |
+| `_write` | writes one template at mode 0600 with its id dropped and its name stamped | registryDir/library/templates/<name>.json | ensureDir, _file | unpinned |
+| `save` | edit-save with rename-in-place: carries forward only non-editor-owned keys of the prior file, then removes the old name | registryDir/library/templates/*.json | _read, _write, _sameFile | stores.test.js |
+| `saveByName` | overwrites the case-insensitively matching template, keeping its original filename casing | registryDir/library/templates/*.json | _write | stores.test.js app-menus-plugins.test.js |
 
 ### Invariants
 - `_file` confines the suffixed basename, because the suffix is what becomes a path.
@@ -181,8 +181,8 @@
 |---|---|---|---|---|
 | `_dir` | the confined library/prompts/<kind> dir; kind is caller-supplied on every verb | none | path-confine.confineOrThrow | path-confine.test.js |
 | `slugifyPromptName` | a lowercase filename-safe slug of a legacy prompt title, with a timestamped fallback | none | none | unpinned |
-| `migratePromptsJson` | one-shot: copies legacy prompts.json entries into library/prompts/append as .md files, then renames the source .migrated | prompts.json, library/prompts/append/*.md | slugifyPromptName, _file | unpinned |
-| `migrateTemplatesJson` | one-shot: copies legacy templates.json entries into library/templates, first slug wins, then renames the source .migrated | templates.json, library/templates/*.json | _file | stores.test.js |
+| `migratePromptsJson` | one-shot: copies legacy prompts.json entries into library/prompts/append as .md files, then renames the source .migrated | userData prompts.json, registryDir/library/prompts/append/*.md | slugifyPromptName, _file | unpinned |
+| `migrateTemplatesJson` | one-shot: copies legacy templates.json entries into library/templates, first slug wins, then renames the source .migrated | userData templates.json, registryDir/library/templates/*.json | _file | stores.test.js |
 
 ### Invariants
 - `_dir` confines the kind segment because list, raw and remove take it unchecked; only save allow-lists it against PROMPT_KINDS.
@@ -213,7 +213,7 @@
 ### Hazards
 - agent-defaults.json does not load through `readStoreJson`, so an unparseable file reads as empty and the next `setStrip` saves over it.
 - Treating an empty list in `getDefaultSkillDeny` as absent re-imposes the floor on a user who chose deny nothing.
-- `getDefaultSkillDeny` is a read that can write, so calling it against an unparseable agent-defaults.json saves over that file.
+- `getDefaultSkillDeny` is a read that writes: the first read of a stored plain list rewrites agent-defaults.json through `setDefaultSkillDeny`, so a caller expecting a pure getter gets a disk write.
 
 ## Agent, skill and exec libraries — listFor … raw
 
@@ -295,7 +295,7 @@
 - `get` and `set` return env-resolved ports, remoteBasePath and proxyUrl, so feeding `get` output back into `set` bakes an env override onto disk.
 - In `set`, plugins is a whole-bag replace, ctxReminderThresholds a per-row merge and pendingRebootNotice presence-keyed; swapping any rule makes a deletion unrepresentable or drops rows.
 - Collapsing the absent-versus-blank split for voiceSubmitPhrase or speakVoice in `set` makes clear-to-default keep the custom value.
-- peerShellEnabled in `_load` must key on the raw peers key's presence, not its type, or a junk value falls through to the legacy grant.
+- peerShellEnabled in `_load` must key on the presence of the raw peerShellEnabled key, not its type, or a junk value falls through to the legacy grant read by `legacyShellGrant`.
 
 ## skills-seen.json, setup.json and the workspace-scope rewrite — record … renameWorkspaceScope
 
@@ -311,7 +311,7 @@
 - `record` writes only on growth, so a steady-state skill roster never rewrites the file.
 
 ### Hazards
-- `renameWorkspaceScope` strips any quoting and writes the new name bare, so a workspace name with YAML-significant characters lands as broken frontmatter.
+- `renameWorkspaceScope` does not preserve quoting: it writes the new name bare, so a name whose own first and last characters are matching quotes is stripped on the next read.
 - Unlike the other small stores, setupMarker `write` lets a write error propagate, so its caller must handle the throw.
 
 ## Library seeding — sha256 … seedLibraryDefaults
