@@ -1001,9 +1001,6 @@ function createSessionManager(deps) {
     }
 
     async _buildWire() {
-      const { WireProxy } = require('./wire/proxy');
-      const { isSubagentRole } = require('./wire/role');
-      const { ShadowDiff } = require('./wire/shadow');
       let warmth = null;
       try {
         const { WarmthStore } = require('./wire/warmth');
@@ -1047,6 +1044,19 @@ function createSessionManager(deps) {
         }
       }
       this._holdKeeper = hold;
+      try {
+        return await this._startWire(warmth, hold);
+      } catch (e) {
+        if (hold) { try { hold.stop(); } catch {} }
+        if (this._holdKeeper === hold) this._holdKeeper = null;
+        throw e;
+      }
+    }
+
+    async _startWire(warmth, hold) {
+      const { WireProxy } = require('./wire/proxy');
+      const { isSubagentRole } = require('./wire/role');
+      const { ShadowDiff } = require('./wire/shadow');
       let spillShownStore = null;
       try {
         const { SpillShownStore } = require('./wire/spill-shown-store');
@@ -1143,13 +1153,7 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'wire-spill-cut-error', ...ev });
         log.warn('intent', `spill-cut-error ${ev.agent} forwarded uncut: ${ev.error}`);
       });
-      try {
-        await wire.listen();
-      } catch (e) {
-        if (hold) { try { hold.stop(); } catch {} }
-        if (this._holdKeeper === hold) this._holdKeeper = null;
-        throw e;
-      }
+      await wire.listen();
       this._shadow = new ShadowDiff((rec) => this._shadowLog(rec));
       wire.on('turn.completed', (t) => {
         try {
@@ -2301,7 +2305,7 @@ function createSessionManager(deps) {
           ptyProc.onExit((ev) => ptyExitRoute(ev));
         }
       } catch (e) {
-        abandonHint();
+        unwindSpawn();
         const d = collectSystemDiagnostics();
         const resolved = cmd && cmd.includes('/') ? cmd : whichBin(cmd);
         const warning = diagWarning(d);
@@ -2351,8 +2355,12 @@ function createSessionManager(deps) {
           registry.register(name, socketPath, cwd);
         } catch (e) {
           if (e.code !== 'EEXIST') { unwindSpawn(); throw e; }
-          const existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
-          const existing = JSON.parse(existingRaw);
+          let existingRaw = null;
+          let existing = {};
+          try {
+            existingRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
+            existing = JSON.parse(existingRaw) || {};
+          } catch {}
           if (existingRaw !== blockerRaw) blockerLive = null;
         // The pre-bind probe OVERRIDES isStaleRegistration: proven-not-live wins even
         // when the pid check says "live, and not ours", because that check answers
@@ -2876,7 +2884,7 @@ function createSessionManager(deps) {
       };
       if (ptyProc) {
         ptyExitRoute = onProcExit;
-        for (const ev of ptyEarly.splice(0)) onProcExit(ev);
+        setImmediate(() => { for (const ev of ptyEarly.splice(0)) onProcExit(ev); });
       } else {
         const opening = typeof streamCodec.open === 'function' ? streamCodec.open() : null;
         if (Array.isArray(opening) && opening.length) {

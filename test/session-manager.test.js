@@ -3336,6 +3336,7 @@ test('team-retire: a discarded seat LIVING IN its tree is killed first, and the 
         list: () => [],
         get: (n) => (n === 'team-runner'
           ? { name: n, ephemeral: true, worktree: { path: made.path, branch: 't905', main: repoDir } } : null),
+        upsert: () => {},
       }),
       gitWorktree: {
         // The REAL remove, against the REAL tree the seat's cwd names.
@@ -4541,7 +4542,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null } = {}) {
   const root = mkTmpRoot('clodex-hint-');
   const registered = [];
   const hints = [];
@@ -4625,6 +4626,8 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     diagSummary: () => '',
     log: { info() {}, warn: (scope, msg) => warns.push(msg), error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
+    ...(pluginHooks ? { getPluginHooks: () => pluginHooks } : {}),
+    ...(isAlive ? { isAlive } : {}),
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -4788,7 +4791,56 @@ test('a pty that exits during the registry and transport awaits still sends sess
   m._sendToSession = (...a) => { sent.push(a); };
   setTimeout(() => { if (exitCb) exitCb({ exitCode: 1 }); }, 10);
   await spawn('seat', {});
+  await new Promise((r) => setImmediate(r));
   assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
+});
+
+test('a pty that exits synchronously inside its own spawn reports create before exit', async () => {
+  const events = [];
+  const { m, spawn } = mkHintProbe({
+    pluginHooks: { fireCreate: () => events.push('create'), fireExit: () => events.push('exit') },
+    ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { cb({ exitCode: 1 }); }, kill() {} }),
+  });
+  const sent = [];
+  m._sendToSession = (...a) => { sent.push(a); };
+  await spawn('seat', {});
+  await new Promise((r) => setImmediate(r));
+  assert.ok(sent.some((a) => a[1] === 'session-exit'), 'ENTER: the buffered exit was replayed');
+  assert.deepStrictEqual(events, ['create', 'exit']);
+});
+
+test('a pty whose onExit attach throws is killed, and no session is left behind', async () => {
+  let killed = 0;
+  const { m, spawn } = mkHintProbe({
+    ptySpawn: () => ({ pid: 999, onData() {}, onExit() { throw new Error('attach failed'); }, kill() { killed++; } }),
+  });
+  await assert.rejects(() => spawn('seat', {}), /attach failed/);
+  assert.strictEqual(killed, 1);
+  assert.strictEqual(m.sessions.has('seat'), false);
+});
+
+test('a corrupt agent.json at the name collision falls back to the pid-only verdict', async () => {
+  const registers = [];
+  const unregisters = [];
+  let first = true;
+  const probed = [];
+  const { m, spawn, root } = mkHintProbe({
+    isAlive: (pid) => { probed.push(pid); return false; },
+    registry: {
+      register: (n) => {
+        registers.push(n);
+        if (first) { first = false; throw Object.assign(new Error('exists'), { code: 'EEXIST' }); }
+      },
+      unregister: (n) => unregisters.push(n),
+    },
+  });
+  fsReal.mkdirSync(runDirForReal(root, 'seat'), { recursive: true });
+  fsReal.writeFileSync(pathForReal(root, 'seat', 'registry'), '{not json');
+  await spawn('seat', {});
+  assert.deepStrictEqual(registers, ['seat', 'seat'], 'ENTER: the EEXIST arm re-registered');
+  assert.deepStrictEqual(probed, [undefined], 'the verdict came from the pid check alone');
+  assert.deepStrictEqual(unregisters, ['seat'], 'a pid-less record is stale by the pid-only verdict');
+  assert.ok(m.sessions.has('seat'));
 });
 
 test('spawner-hint (t151): the abandon-clear is silent when this seat set nothing', async () => {
@@ -16090,6 +16142,38 @@ test('two overlapping _ensureWire calls share one wire', async () => {
   }
 });
 
+test('a throw after the wire listens stops the hold keeper and rejects _ensureWire', async () => {
+  const { WireProxy } = require('../wire/proxy');
+  const { HoldKeeper } = require('../wire/hold');
+  const origListen = WireProxy.prototype.listen;
+  const origStart = HoldKeeper.prototype.start;
+  const origStop = HoldKeeper.prototype.stop;
+  const wires = [];
+  let listened = 0;
+  let started = 0;
+  let stopped = 0;
+  WireProxy.prototype.listen = async function (...a) { wires.push(this); const v = await origListen.apply(this, a); listened++; return v; };
+  HoldKeeper.prototype.start = function (...a) { started++; return origStart.apply(this, a); };
+  HoldKeeper.prototype.stop = function (...a) { stopped++; return origStop.apply(this, a); };
+  const { m } = mkRecovery();
+  m._broadcast = () => {};
+  const realShadowLog = m._shadowLog.bind(m);
+  m._shadowLog = (rec) => { if (rec && rec.type === 'wire-up') throw new Error('post-listen boom'); return realShadowLog(rec); };
+  try {
+    await assert.rejects(() => m._ensureWire(), /post-listen boom/);
+    assert.strictEqual(listened, 1, 'ENTER: listen() resolved, so the throw came from past it');
+    assert.strictEqual(started, 1, 'ENTER: a keeper was started');
+    assert.strictEqual(stopped, 1, 'the keeper was stopped');
+    assert.strictEqual(m._holdKeeper, null);
+  } finally {
+    WireProxy.prototype.listen = origListen;
+    HoldKeeper.prototype.start = origStart;
+    HoldKeeper.prototype.stop = origStop;
+    for (const w of wires) await w.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+});
+
 // ── t313: two bodyless siblings in ONE turn are two emissions, not a repeat ──
 //
 // The dedupe key short-circuited on `sub`, so `[agent:task start t210]` and
@@ -21219,6 +21303,20 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
   };
   return { m, create, line, store, sessionIds, spawns, hookCalls, reaps, logs, handles, watchers, root, stopAll };
 }
+
+test('a stream seat that comes up without a pid is killed like any other failed spawn', async (t) => {
+  const handle = { pid: 0, killed: 0, kill() { handle.killed += 1; }, send: () => Promise.resolve(), close() {} };
+  const h = mkStreamSeatManager({
+    extraDeps: {
+      spawnStreamSeat: () => handle,
+      collectSystemDiagnostics: () => ({}), whichBin: () => null, diagWarning: () => '', diagSummary: () => '',
+    },
+  });
+  t.after(() => h.stopAll());
+  await assert.rejects(() => h.create('st-nopid'), /no pid/);
+  assert.strictEqual(handle.killed, 1);
+  assert.strictEqual(h.m.sessions.has('st-nopid'), false);
+});
 
 const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
 
