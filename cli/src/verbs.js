@@ -636,9 +636,6 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
     });
   }).catch((e) => { try { if (stream) stream.close(); } catch {} waitAc.abort(); throw e; });
   try { if (stream) stream.close(); } catch {}
-  // The wait can settle via onError/turnEnd while a snapshot/send fetch is
-  // still wedged in flight; abort it unconditionally or its socket keeps node
-  // alive (bin sets exitCode, never exit()). Idempotent, harmless when spent.
   waitAc.abort();
 
       // Print from the first assistant entry on (drops our echoed user message). The whole
