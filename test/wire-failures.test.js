@@ -224,7 +224,7 @@ test('corrupt gzip: the lost receipt is reported as a tee-failure so the seat\'s
 
     const res = await request(proxy.port, route, '{}');
     assert.equal(res.status, 200);
-    assert.equal(events['turn.started'].length, 1, `${provider} ${contentType}: the turn started`);
+    assert.equal(events['turn.started'].length, provider === 'anthropic' ? 1 : 0, `${provider} ${contentType}: turn.started is anthropic-only`);
     assert.ok(await whenEvent(events, 'tee-failure'), `${provider} ${contentType}: tee-failure emitted`);
     assert.equal(events['tee-failure'].length, 1);
     assert.match(events['tee-failure'][0].error, /decompressor died/);
