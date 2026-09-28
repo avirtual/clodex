@@ -13288,6 +13288,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         if (t.quietMs !== null) parts.push(`quiet ${humanizeAge(t.quietMs)}`);
         return parts.join(" \xB7 ");
       }
+      function pendingRoundWord(vp) {
+        if (vp && vp.phase === "suite") return vp.run === 2 ? "re-measuring\u2026" : "suite running\u2026";
+        return "awaiting verdict";
+      }
       function hitAgeText(h, now) {
         const closed = h && (h.state === "done" || h.state === "cancelled");
         if (!closed) return "";
@@ -13400,6 +13404,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       module.exports.humanizeAge = humanizeAge;
       module.exports.ageLine = ageLine;
       module.exports.hitAgeText = hitAgeText;
+      module.exports.pendingRoundWord = pendingRoundWord;
       module.exports.summaryText = summaryText;
       module.exports.projectLabel = projectLabel;
       module.exports.projectOptionText = projectOptionText;
@@ -13685,9 +13690,9 @@ Cancelled tickets are not counted as done.`)) return;
             if (at === null || at === void 0) return `${verb} at an unknown time`;
             return `${verb} ${humanizeAge(Date.now() - at)} ago`;
           }
-          function roundBlock(r) {
+          function roundBlock(r, vp) {
             const box = el("div", "tv-round");
-            const head = el("div", "tv-round-head", `Round ${r.round} \u2014 ${r.verdict || "awaiting verdict"}`);
+            const head = el("div", "tv-round-head", `Round ${r.round} \u2014 ${r.verdict || pendingRoundWord(vp)}`);
             if (r.reviewedAt !== null && r.reviewedAt !== void 0) {
               head.appendChild(el("span", "tv-round-age", stamp(r.reviewedAt, "reviewed")));
             }
@@ -13766,7 +13771,7 @@ Cancelled tickets are not counted as done.`)) return;
             const rounds = Array.isArray(t.rounds) ? t.rounds : [];
             wrap.appendChild(el("div", "tv-section-head", `Review rounds (${rounds.length})`));
             if (!rounds.length) wrap.appendChild(el("div", "tv-empty", "no review rounds recorded"));
-            else for (const r of rounds) wrap.appendChild(roundBlock(r));
+            else for (const r of rounds) wrap.appendChild(roundBlock(r, t.verifyPhase));
             if (t.mergeMsg !== null && t.mergeMsg !== void 0) {
               wrap.appendChild(el("div", "tv-section-head", "Merge"));
               wrap.appendChild(el("pre", "tv-spec", t.mergeMsg));
@@ -43100,6 +43105,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         parts.push(t && t.assignee ? String(t.assignee) : "unassigned");
         const step = t && t.step != null ? String(t.step) : "";
         if (step === "review") parts.push(`in review (round ${Number(t.round) || 1})`);
+        else if (step === "suite") {
+          const when = activityTime(t.since, now);
+          const word = Number(t.run) === 2 ? "re-measuring" : "suite running";
+          parts.push(when ? `${word} (since ${when})` : word);
+        } else if (step === "reviewer-spawn") parts.push("spawning reviewer");
         else if (step === "working") {
           const when = activityTime(t.since, now);
           parts.push(when ? `working since ${when}` : "working");

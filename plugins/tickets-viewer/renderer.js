@@ -36,6 +36,11 @@ function ageLine(t) {
   return parts.join(' · ');
 }
 
+function pendingRoundWord(vp) {
+  if (vp && vp.phase === 'suite') return vp.run === 2 ? 're-measuring…' : 'suite running…';
+  return 'awaiting verdict';
+}
+
 function hitAgeText(h, now) {
   const closed = h && (h.state === 'done' || h.state === 'cancelled');
   if (!closed) return '';
@@ -191,6 +196,7 @@ module.exports.feedRowText = feedRowText;
 module.exports.humanizeAge = humanizeAge;
 module.exports.ageLine = ageLine;
 module.exports.hitAgeText = hitAgeText;
+module.exports.pendingRoundWord = pendingRoundWord;
 module.exports.summaryText = summaryText;
 module.exports.projectLabel = projectLabel;
 module.exports.projectOptionText = projectOptionText;
@@ -547,9 +553,9 @@ module.exports.activate = (rhost) => {
       return `${verb} ${humanizeAge(Date.now() - at)} ago`;
     }
 
-    function roundBlock(r) {
+    function roundBlock(r, vp) {
       const box = el('div', 'tv-round');
-      const head = el('div', 'tv-round-head', `Round ${r.round} — ${r.verdict || 'awaiting verdict'}`);
+      const head = el('div', 'tv-round-head', `Round ${r.round} — ${r.verdict || pendingRoundWord(vp)}`);
       if (r.reviewedAt !== null && r.reviewedAt !== undefined) {
         head.appendChild(el('span', 'tv-round-age', stamp(r.reviewedAt, 'reviewed')));
       }
@@ -629,7 +635,7 @@ module.exports.activate = (rhost) => {
       const rounds = Array.isArray(t.rounds) ? t.rounds : [];
       wrap.appendChild(el('div', 'tv-section-head', `Review rounds (${rounds.length})`));
       if (!rounds.length) wrap.appendChild(el('div', 'tv-empty', 'no review rounds recorded'));
-      else for (const r of rounds) wrap.appendChild(roundBlock(r));
+      else for (const r of rounds) wrap.appendChild(roundBlock(r, t.verifyPhase));
 
       if (t.mergeMsg !== null && t.mergeMsg !== undefined) {
         wrap.appendChild(el('div', 'tv-section-head', 'Merge'));

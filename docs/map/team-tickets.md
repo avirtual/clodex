@@ -319,6 +319,7 @@
 - `_runTicketLoop` reaches the lead only through `_escalateTicket` and tears nothing down on any arm.
 - `_runTicketLoop` clears the verify hold in its finally on every non-fail, non-superseded exit rather than at each arm.
 - `_runTicketLoop` re-loads after each await and bails when the step left verify or the rework round moved, reaping its runner via `_reapRunner`.
+- `_runTicketLoop` stamps the verify phase before each suite run and before the review step, and `fail`, a spawned or refused reviewer, a landed verdict and `_rejectTicketFromLoop` clear it.
 - `_runTicketSuite` pins the lock to the root checkout while tests run in the tree, and reports could-not-run as ran false, which the loop escalates rather than rejects.
 
 ### Hazards
@@ -340,6 +341,7 @@
 | `_stampVerifyHold` | re-load, set or clear the verify hold and its event, null being a no-op when absent | tickets.json verifyHold | recordEvent | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
 | `_slowTestsOwned` | the slow test names that appear in test files the branch changed since its merge base or recorded base | none | _slowTestsOwnedFrom, gitWorktree.mergeBase | ticket-loop-verify.test.js |
 | `_reapRunner` | kills an abandoned suite runner pid that is still alive, never this process | none | _killRunner | sigkill-pid-census.test.js |
+| `_stampVerifyPhase` | re-load, set or clear the verify phase the board renders (suite run 1 or 2, reviewer spawn), null being a no-op when absent | tickets.json verifyPhase | none | ticket-loop-verify.test.js |
 | `_setLoopStep` | re-load, set or clear the loop step and end the stall episode | tickets.json loopStep, lastActivityAt, nudgedAt | none | ticket-loop-verify.test.js |
 | `_writeTicketSuiteFailure` | preserves a red run's output as a per-ticket per-round stamped file in the task dir, written aside and renamed | task dir suite-failure file | _ticketDiffDest, ensureDir | ticket-loop-verify.test.js ticket-auto-merge.test.js |
 | `_writeTicketDiff` | writes the round's review diff into the confined task dir and stamps it on the round | task dir review diff, tickets.json rounds | _ticketDiffDest, _stampRoundFile | review-verdict-ticket.test.js ticket-loop-verify.test.js |

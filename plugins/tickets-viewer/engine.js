@@ -918,10 +918,18 @@ function ticketDetail(payload) {
         : [],
       report: str(rec.report),
       rounds: ticketRounds(rec, dir, id),
+      verifyPhase: verifyPhaseRow(rec),
       mergeMsg: mergeRaw === null ? null : capText(mergeRaw),
       taskDirPath: dir || null,
     },
   };
+}
+
+function verifyPhaseRow(rec) {
+  const vp = rec && rec.verifyPhase;
+  if (!vp || typeof vp !== 'object' || (vp.phase !== 'suite' && vp.phase !== 'reviewer')) return null;
+  if (rec.state !== 'done' || (rec.loopStep !== 'verify' && rec.loopStep !== 'review')) return null;
+  return { phase: vp.phase, since: num(vp.since), run: vp.phase === 'suite' ? (Number(vp.run) === 2 ? 2 : 1) : null };
 }
 
 function snippetAround(text, at, len) {

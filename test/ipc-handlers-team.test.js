@@ -563,6 +563,29 @@ test('team:activity reads a never-started ticket as backlog, and a parked or und
   } finally { d.cleanup(); }
 });
 
+test('team:activity names the verify phase of a done ticket: suite run, re-measure, reviewer spawn, review', () => {
+  const vt = (id, over) => ({ id, state: 'done', role: 'hand', assignee: `shop-hand-${id}`, title: id, loopStep: 'verify', openedAt: Number(id.slice(1)), ...over });
+  const d = mkActivityDoor({
+    tickets: [
+      vt('t1', { verifyPhase: { phase: 'suite', since: NOW - 130000, run: 1 } }),
+      vt('t2', { verifyPhase: { phase: 'suite', since: NOW - 40000, run: 2 } }),
+      vt('t3', { verifyPhase: { phase: 'reviewer', since: NOW - 1000 }, loopStep: 'review' }),
+      vt('t4', {}),
+      vt('t5', { loopStep: 'review', reviewRound: 1 }),
+    ],
+    sessions: [],
+  });
+  try {
+    assert.deepStrictEqual(d.activity().tickets.open, [
+      { id: 't1', title: 't1', assignee: 'shop-hand-t1', step: 'suite', since: NOW - 130000, round: 1, run: 1 },
+      { id: 't2', title: 't2', assignee: 'shop-hand-t2', step: 'suite', since: NOW - 40000, round: 1, run: 2 },
+      { id: 't3', title: 't3', assignee: 'shop-hand-t3', step: 'reviewer-spawn', since: NOW - 1000, round: 1 },
+      { id: 't4', title: 't4', assignee: 'shop-hand-t4', step: 'review', since: null, round: 1 },
+      { id: 't5', title: 't5', assignee: 'shop-hand-t5', step: 'review', since: null, round: 2 },
+    ]);
+  } finally { d.cleanup(); }
+});
+
 test('team:activity picks the LAST landing by timestamp, and names a failed merge as its outcome', () => {
   const withT3 = mkActivityDoor({ tickets: A_BOARD, sessions: [] });
   try {

@@ -1911,6 +1911,68 @@ test('a round-1 re-measure stamp does not ride into round 2', async () => {
     'and the round-2 reviewer is told nothing about a re-measure that did not happen this round');
 });
 
+function tracePhases(f) {
+  const seen = [];
+  const at = (where) => {
+    const vp = f.one().verifyPhase;
+    seen.push(vp ? `${where}:${vp.phase}${vp.run ? `/${vp.run}` : ''}:${typeof vp.since}` : `${where}:none`);
+  };
+  const suite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => { at('suite'); return suite(...args); };
+  const spawn = f.m._spawnTicketReview.bind(f.m);
+  f.m._spawnTicketReview = (...args) => { at('spawn'); return spawn(...args); };
+  return seen;
+}
+
+test('t1355: a green verify stamps suite run 1, then reviewer, and the phase is gone once the reviewer spawned and the verdict landed', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand',
+    verifyPhase: { phase: 'reviewer', since: 1 } }]);
+  const seen = tracePhases(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'ENTER: the green run reached a reviewer');
+  assert.deepStrictEqual(seen, ['suite:suite/1:number', 'spawn:reviewer:number']);
+  assert.ok(!('verifyPhase' in f.one()), 'a spawned reviewer ends the spawn phase');
+  f.tstore.save(f.team.root, [{ ...f.one(), verifyPhase: { phase: 'reviewer', since: 1 } }]);
+  const landed = f.m._landVerdictOnTicket(f.seat('rev', repo.dir), 't1', '- **VERDICT**: ACCEPT\n- **MUST-FIX**: none');
+  assert.ok(landed, 'ENTER: the verdict landed');
+  assert.ok(!('verifyPhase' in f.one()), 'the verdict clears the phase');
+});
+
+test('t1355: a red-then-green verify stamps suite run 1, suite run 2, then reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flaky' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const seen = tracePhases(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: the suite ran twice');
+  assert.deepStrictEqual(seen, ['suite:suite/1:number', 'suite:suite/2:number', 'spawn:reviewer:number']);
+});
+
+test('t1355: a branch red twice is rejected with no verify phase left on the record', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flakyred' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const seen = tracePhases(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(seen, ['suite:suite/1:number', 'suite:suite/2:number'], 'ENTER: both runs were stamped');
+  assert.strictEqual(f.one().state, 'open', 'ENTER: the loop rejected the ticket');
+  assert.ok(!('verifyPhase' in f.one()), 'the reject clears the phase');
+});
+
 test('a re-measure that is red too rejects, carrying BOTH runs` failing names', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');

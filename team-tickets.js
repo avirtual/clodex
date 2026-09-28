@@ -955,13 +955,22 @@ function createTicketMethods(deps, shared) {
       const openRows = [];
       const landedRows = [];
       for (const t of tickets) {
-        const inVerify = t.state === 'done' && t.loopStep === 'verify';
+        const inVerify = t.state === 'done' && (t.loopStep === 'verify' || t.loopStep === 'review');
         if (t.state === 'open' || inVerify) {
           let step = 'working';
           let since = null;
           let round = null;
-          if (inVerify) { step = 'review'; round = (Number(t.reviewRound) || 0) + 1; }
-          else if (t.parked) step = 'parked';
+          let run = null;
+          if (inVerify) {
+            step = 'review';
+            round = (Number(t.reviewRound) || 0) + 1;
+            const vp = t.verifyPhase && typeof t.verifyPhase === 'object' ? t.verifyPhase : null;
+            if (vp && (vp.phase === 'suite' || vp.phase === 'reviewer')) {
+              step = vp.phase === 'suite' ? 'suite' : 'reviewer-spawn';
+              since = typeof vp.since === 'number' ? vp.since : null;
+              if (vp.phase === 'suite') run = Number(vp.run) === 2 ? 2 : 1;
+            }
+          } else if (t.parked) step = 'parked';
           else if (t.undeliveredAt) step = 'undelivered';
           else if (!ticketStarted(t)) step = 'backlog';
           else since = typeof t.startedAt === 'number' ? t.startedAt : null;
@@ -974,6 +983,7 @@ function createTicketMethods(deps, shared) {
               step,
               since,
               round,
+              ...(run == null ? {} : { run }),
             },
           });
           continue;
@@ -1389,6 +1399,7 @@ function createTicketMethods(deps, shared) {
       ticket.verdict = m[1].toUpperCase();
       ticket.mustFix = extractMustFix(verdict);
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
+      delete ticket.verifyPhase;
       ticket.reviewedAt = Date.now();
       ticket.lastActivityAt = ticket.reviewedAt;
       recordEvent(ticket, { at: ticket.reviewedAt, kind: 'verdict', by: session.name, verdict: ticket.verdict, round: ticket.reviewRound });
@@ -6527,6 +6538,7 @@ function createTicketMethods(deps, shared) {
         delete ticket.runnerPid;
         delete ticket.runnerOwner;
         ticket.loopStep = 'verify';
+        delete ticket.verifyPhase;
         // THE RE-VERIFY WINDOW. Cleared HERE, in the same write that re-stamps the
         // step — not in `_runTicketLoop`, which is fired unawaited below and whose
         // own clear is a `finally` that runs at the END. Either gap leaves the
@@ -6683,6 +6695,7 @@ function createTicketMethods(deps, shared) {
       // succeeded re-run verify and put a SECOND reviewer on one branch.
       const fail = (step, evidence, tried, recovery) => {
         held = true;
+        this._stampVerifyPhase(team, ticketId, null);
         // ONE predicate for the stamp AND the message, deliberately a single
         // binding rather than the same test written twice. They must agree: a
         // recovery prescribed without a stamp names a `task done` the re-entry
@@ -6865,6 +6878,7 @@ function createTicketMethods(deps, shared) {
         this._stampSuiteRemeasured(team, ticketId, null);
         this._stampSuiteSlow(team, ticketId, null);
         const runOpts = { onSpawn: (pid) => { ownPid = pid; this._stampRunnerPid(team, ticketId, pid); } };
+        this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 1 });
         let suite = await this._runTicketSuite(team, ticket, null, runOpts);
         // Checks 1-3 were milliseconds of git; this await is MINUTES, and the
         // entry guard above is now a snapshot that old. A lead `task accept`
@@ -6882,6 +6896,7 @@ function createTicketMethods(deps, shared) {
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
+          this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
           if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
@@ -7000,6 +7015,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
         this._spawnTicketReview(team, ticketId, written.path, delta.path);
@@ -7518,6 +7534,7 @@ function createTicketMethods(deps, shared) {
         // pair this header calls never-diverging.
         appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
+        delete ticket.verifyPhase;
         delete ticket.mergedNudgedAt;
         delete ticket.escalationUndelivered;
         delete ticket.mergeError;
@@ -7901,6 +7918,18 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _stampVerifyPhase(team, ticketId, phase) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!phase) { if (!('verifyPhase' in rec)) return; delete rec.verifyPhase; } else rec.verifyPhase = phase;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `verify phase stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
     _stampMerged(team, ticketId, sha) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -8258,6 +8287,7 @@ function createTicketMethods(deps, shared) {
       // blocker for this step — there is no session to spawn from.
       const leadSession = this.sessions.get(team.lead);
       if (!leadSession) {
+        this._stampVerifyPhase(team, ticketId, null);
         this._escalateTicket(team, ticketId, 'review: spawn',
           `the team lead ${team.lead} has no live session to spawn a reviewer from`,
           'verify passed and the diff was written; no reviewer spawned');
@@ -8289,6 +8319,7 @@ function createTicketMethods(deps, shared) {
           // reply, so it needs its own test — the error branch below never sees
           // it, and a log line about it reaches nobody who can install the prompt.
           if (/boots UNBRIEFED/.test(m)) {
+            this._stampVerifyPhase(team, ticketId, null);
             // keepHold: the seat DID spawn and still carries reviewTicket. An
             // unbriefed reviewer may never emit a verdict — but if it does, the
             // hold is what lets that verdict land on the ticket instead of
@@ -8299,10 +8330,12 @@ function createTicketMethods(deps, shared) {
             return;
           }
           if (/^error:/i.test(m)) {
+            this._stampVerifyPhase(team, ticketId, null);
             this._escalateTicket(team, ticketId, 'review: spawn', m,
               'verify passed and the diff was written; the reviewer spawn was refused');
             return;
           }
+          this._stampVerifyPhase(team, ticketId, null);
           log.info('intent', `ticket ${ticketId} review spawned: ${m}`);
         },
       });
@@ -9803,8 +9836,16 @@ function createTicketMethods(deps, shared) {
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const row = (t) =>
         `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+      const verifyMark = (t) => {
+        if (t.state !== 'done' || t.verifyHold || (t.loopStep !== 'verify' && t.loopStep !== 'review')) return '';
+        const vp = t.verifyPhase && typeof t.verifyPhase === 'object' ? t.verifyPhase : null;
+        const age = vp && typeof vp.since === 'number' ? ` (${humanizeAge(now - vp.since)})` : '';
+        if (vp && vp.phase === 'suite') return Number(vp.run) === 2 ? ` in verify: re-measuring${age}` : ` in verify: suite run 1${age}`;
+        if (vp && vp.phase === 'reviewer') return ' in verify: spawning reviewer';
+        return ` in verify: review round ${(Number(t.reviewRound) || 0) + 1}`;
+      };
       const closedRow = (t) =>
-        `${t.id} [${t.state}] ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}]${verifyMark(t)} ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];

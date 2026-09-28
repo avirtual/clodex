@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Tickets board and team popover now show what the loop is doing with a done ticket — "suite running (since 14:02)", "re-measuring", "spawning reviewer" — instead of "in review" from the moment of task done, so a reviewer that has not appeared yet is not mistaken for a stall.
+
 - Reminders, notifications, per-agent defaults and the skills-seen record are now loaded the way sessions/workspaces/settings are: a corrupt file is moved aside instead of being overwritten on the next save, and an unreadable one refuses saves until it is readable again; the env-defaults seeding guard under tests now checks the directory the env store actually lives in.
 - Docs: docs/map/stores.md — a symbol-level map of stores.js (16 regions, 117 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/engine.md — a symbol-level map of engine.js (15 regions, 101 rows), gated by test/module-map-fresh.test.js.
