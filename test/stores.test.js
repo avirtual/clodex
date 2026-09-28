@@ -243,6 +243,26 @@ test('persistence: seat.json is refreshed by the name-keyed SETTERS, not upsert 
   } finally { cleanup(); }
 });
 
+test('persistence: a failed sessions.json write does not advance seat.json past the record', { skip: isRoot && 'root writes a read-only dir' }, () => {
+  const { stores, registryDir, userData, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    migrateSeatLayout({ root: registryDir, names: ['a'], fs });
+    stores.persistence.upsert({ name: 'a', sessionId: 's1' });
+    const seatFile = path.join(registryDir, 'sessions', 'a', 'seat.json');
+    fs.chmodSync(userData, 0o555);
+    const lines = captureConsoleError(() => stores.persistence.setSessionId('a', 's2'));
+    assert.ok(lines.some((l) => l.includes('persistence save failed')), 'ENTER: the sessions.json write failed');
+    fs.chmodSync(userData, 0o755);
+    const seat = JSON.parse(fs.readFileSync(seatFile, 'utf8'));
+    assert.strictEqual(seat.sessionId, 's1');
+    assert.deepStrictEqual(seat, stores.persistence.get('a'));
+  } finally {
+    try { fs.chmodSync(userData, 0o755); } catch {}
+    cleanup();
+  }
+});
+
 test('persistence: snapshotSeat rewrites under the NEW name after a rename', () => {
   const { stores, registryDir, cleanup } = freshStores();
   try {
@@ -892,6 +912,20 @@ test('persistence: entries missing workspaceId migrate to the default id', () =>
 // carries no synthetic id. These cases exercise that fs shape.
 const tplFile = (registryDir, name) =>
   path.join(registryDir, 'library', 'templates', `${name}.json`);
+
+test('templates: save refuses a template with no name, and never reads undefined.json as a prior', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    const dir = path.join(registryDir, 'library', 'templates');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'undefined.json'), JSON.stringify({ carried: 'x' }));
+    assert.ok(fs.existsSync(path.join(dir, 'undefined.json')), 'ENTER: the stray prior exists');
+    stores.templates.save({ name: 'fresh', type: 'claude' });
+    assert.strictEqual(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(dir, 'fresh.json'), 'utf-8')), 'carried'), false);
+    assert.throws(() => stores.templates.save({ type: 'claude' }), /name/);
+    assert.throws(() => stores.templates.save({ name: '', type: 'claude' }), /name/);
+  } finally { cleanup(); }
+});
 
 test('templates: save/list/remove over per-file storage', () => {
   const { registryDir, stores, cleanup } = freshStores();
@@ -3172,6 +3206,32 @@ test('t950: a stored explicit skill deny is upgraded to the deferred form, keepi
   } finally { cleanup(); }
 });
 
+test('t950: the skill-deny upgrade does not run against a skills-seen record it could not read', { skip: isRoot && 'root reads a 000 file' }, () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const seenFile = path.join(userData, 'skills-seen.json');
+  let stores = null;
+  stores = initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json'),
+    knownSkillNames: () => ['builtin-a', 'builtin-b', ...stores.skillsSeen.list()] });
+  try {
+    stores.skillsSeen.record(['synced-a', 'synced-b']);
+    stores.agentDefaults.setDefaultSkillDeny(['synced-a']);
+    fs.chmodSync(seenFile, 0o000);
+    captureConsoleError(() => assert.deepStrictEqual(stores.skillsSeen.list(), [], 'ENTER: the record is unreadable'));
+    let got;
+    captureConsoleError(() => { got = stores.agentDefaults.getDefaultSkillDeny(); });
+    assert.deepStrictEqual(got, ['synced-a']);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(userData, 'agent-defaults.json'), 'utf-8'))['*'].denySkills, ['synced-a']);
+  } finally {
+    try { fs.chmodSync(seenFile, 0o600); } catch {}
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
 test('t950: an already-deferred store is returned verbatim and the file is never rewritten', () => {
   const { stores, file, cleanup } = skillUpgradeStores(['code-review', 'design', 'dataviz']);
   try {
@@ -3307,6 +3367,25 @@ test('renameWorkspaceScope: rewrites matching workspace lines, counts, preserves
     assert.strictEqual(stores.renameWorkspaceScope('trading', 'Markets'), 0, 'old name already gone');
     assert.strictEqual(stores.renameWorkspaceScope('Markets', 'Markets'), 0, 'unchanged name');
     assert.strictEqual(stores.renameWorkspaceScope('', 'X'), 0, 'blank old name');
+  } finally { cleanup(); }
+});
+
+test('renameWorkspaceScope: a new name with quotes or a newline is refused, leaving the frontmatter intact', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    const src = '---\ndescription: d\nworkspace: old\n---\nb';
+    stores.agentLibrary.save('a1', src);
+    const file = path.join(registryDir, 'agents', 'a1.md');
+    const before = fs.readFileSync(file, 'utf-8');
+    assert.match(before, /workspace: old/, 'ENTER: the scoped file is on disk');
+    for (const to of ['"quoted"', "'single'", 'new\nsessions: victim', 'new\rsessions: victim']) {
+      assert.strictEqual(stores.renameWorkspaceScope('old', to), 0, JSON.stringify(to));
+      assert.strictEqual(fs.readFileSync(file, 'utf-8'), before, JSON.stringify(to));
+    }
+    assert.strictEqual(stores.renameWorkspaceScope('old', 'a: b'), 1, 'a plain name still rescopes');
+    stores.workspaces.list();
+    assert.throws(() => stores.workspaces.setName('default', 'new\nsessions: victim'), /control/);
+    assert.throws(() => stores.workspaces.setName('default', 'tab\there'), /control/);
   } finally { cleanup(); }
 });
 
@@ -3686,6 +3765,27 @@ test('reminders: missing file -> [], add mints an id + createdAt, list round-tri
   } finally { cleanup(); }
 });
 
+test('reminders: add throws when the write itself fails, so the remind intent can bounce', { skip: isRoot && 'root writes a read-only dir' }, () => {
+  const { stores, userData, cleanup } = freshStores();
+  try {
+    stores.reminders.add({ agent: 't1', kind: 'in', spec: 'in 5m', nextFireAt: Date.now() + 3e5 });
+    fs.chmodSync(userData, 0o555);
+    const lines = captureConsoleError(() => {
+      assert.throws(() => stores.reminders.add({ agent: 't1', kind: 'in', spec: 'in 5m', nextFireAt: Date.now() + 3e5 }));
+    });
+    assert.ok(lines.some((l) => l.includes('reminders save failed')), 'ENTER: the write failed');
+    assert.strictEqual(stores.reminders.listForAgent('t1').length, 1);
+    const id = stores.reminders.list()[0].id;
+    captureConsoleError(() => {
+      assert.doesNotThrow(() => stores.reminders.markFired(id, Date.now(), null));
+      assert.doesNotThrow(() => stores.reminders.remove(id));
+    });
+  } finally {
+    try { fs.chmodSync(userData, 0o755); } catch {}
+    cleanup();
+  }
+});
+
 test('reminders: listForAgent filters by agent', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3785,6 +3885,25 @@ test('notifications: missing file -> [], add mints id + createdAt, readAt=null, 
     assert.deepStrictEqual(stores.notifications.list().map(n => n.id), [rec.id]);
     assert.strictEqual(stores.notifications.unreadCount(), 1);
   } finally { cleanup(); }
+});
+
+test('notifications: add throws, and emits nothing, when the write itself fails', { skip: isRoot && 'root writes a read-only dir' }, () => {
+  const { stores, userData, cleanup } = freshStores();
+  try {
+    stores.notifications.add({ from: 'a', body: 'first' });
+    const kinds = [];
+    stores.notifications.onChange((p) => kinds.push(p.kind));
+    fs.chmodSync(userData, 0o555);
+    const lines = captureConsoleError(() => {
+      assert.throws(() => stores.notifications.add({ from: 'b', body: 'x' }));
+    });
+    assert.ok(lines.some((l) => l.includes('notifications save failed')), 'ENTER: the write failed');
+    assert.deepStrictEqual(kinds, []);
+    assert.strictEqual(stores.notifications.list().length, 1);
+  } finally {
+    try { fs.chmodSync(userData, 0o755); } catch {}
+    cleanup();
+  }
 });
 
 test('notifications: list is chronological (append order = createdAt order)', () => {

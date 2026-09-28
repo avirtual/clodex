@@ -536,7 +536,7 @@ function initStores(userDataPath, {
         ok = false;
         console.error('persistence save failed:', e);
       }
-      if (touched) this._writeSeatJson(touched, entries.find((s) => s && s.name === touched) || null);
+      if (ok && touched) this._writeSeatJson(touched, entries.find((s) => s && s.name === touched) || null);
       return ok;
     },
     list() {
@@ -915,7 +915,8 @@ function initStores(userDataPath, {
     // Rename-in-place: the caller passes the OLD name as `id` and the NEW one as
     // `name`. Dest-collision is the caller's check; this trusts it.
     save(template) {
-      const prior = this._read(template.id);
+      if (typeof template?.name !== 'string' || !template.name) throw new Error('template name required');
+      const prior = (typeof template.id === 'string' && template.id) ? this._read(template.id) : null;
       const merged = {};
       if (prior) for (const [k, v] of Object.entries(prior)) {
         if (!EDITOR_OWNED.has(k)) merged[k] = v;
@@ -990,6 +991,7 @@ function initStores(userDataPath, {
       this._save(all);
     },
     setName(id, name) {
+      if (/[\x00-\x1f\x7f]/.test(String(name))) throw new Error('workspace name may not contain control characters');
       const all = this._load();
       const w = all.find(x => x.id === id);
       if (w) { w.name = name; this._save(all); }
@@ -1178,6 +1180,7 @@ function initStores(userDataPath, {
       let known;
       try { known = knownSkillNames(); } catch { return stored; }
       if (!Array.isArray(known) || !known.length) return stored;
+      if (!skillsSeen.readable()) return stored;
       const denied = new Set(stored);
       const upgraded = deferredSkillDeny(known.filter((n) => typeof n === 'string' && n && !denied.has(n)));
       this.setDefaultSkillDeny(upgraded);
@@ -1370,7 +1373,8 @@ function initStores(userDataPath, {
       if (this._unreadable) refuseUnreadable(REMINDERS_FILE);
       try {
         atomicWriteFileSync(REMINDERS_FILE, JSON.stringify(entries, null, 2));
-      } catch (e) { console.error('reminders save failed:', e); }
+        return true;
+      } catch (e) { console.error('reminders save failed:', e); return false; }
     },
     _mintId(all) {
       for (let i = 0; i < 50; i++) {
@@ -1397,7 +1401,7 @@ function initStores(userDataPath, {
         ...(ticket ? { ticket } : {}),
       };
       all.push(rec);
-      this._save(all);
+      if (!this._save(all)) throw new Error('reminders.json could not be written');
       return rec;
     },
     remove(id) {
@@ -1446,7 +1450,8 @@ function initStores(userDataPath, {
       if (this._unreadable) refuseUnreadable(NOTIFICATIONS_FILE);
       try {
         atomicWriteFileSync(NOTIFICATIONS_FILE, JSON.stringify(entries, null, 2));
-      } catch (e) { console.error('notifications save failed:', e); }
+        return true;
+      } catch (e) { console.error('notifications save failed:', e); return false; }
     },
     _mintId(all) {
       for (let i = 0; i < 50; i++) {
@@ -1480,7 +1485,7 @@ function initStores(userDataPath, {
         readAt: null,
       };
       all.push(rec);
-      this._save(all);
+      if (!this._save(all)) throw new Error('notifications.json could not be written');
       this._emit({ kind: 'added', id: rec.id, unread: this.unreadCount(), note: rec });
       return rec;
     },
@@ -1756,6 +1761,10 @@ function initStores(userDataPath, {
       if (r.state !== 'ok' || !Array.isArray(r.value)) return [];
       return [...new Set(r.value.filter((s) => typeof s === 'string' && s))].sort();
     },
+    readable() {
+      this.list();
+      return !this._unreadable && !quarantinedFiles.has(SKILLS_SEEN_FILE);
+    },
     record(names) {
       if (!Array.isArray(names) || !names.length) return this.list();
       const cur = this.list();
@@ -1794,6 +1803,10 @@ function initStores(userDataPath, {
     const from = String(oldName == null ? '' : oldName).trim();
     const to = String(newName == null ? '' : newName).trim();
     if (!from || from === to) return 0;
+    if (/[\r\n]/.test(to) || /^(["']).*\1$/s.test(to)) {
+      if (log) log.warn?.('stores', `refusing to rescope library files to workspace name ${JSON.stringify(to)}: frontmatter cannot hold it`);
+      return 0;
+    }
     let count = 0;
     for (const dir of [AGENTS_DIR, SKILLS_LIB_DIR]) {
       let files;
@@ -1958,10 +1971,7 @@ function initStores(userDataPath, {
       const fresh = stranded.filter((s) => reported[s.rel] !== s.shippedHash);
       if (fresh.length && notifications) {
         // Recording a hash as announced is a promise that the operator was
-        // told, and only a note that survived to disk keeps it. `add` cannot
-        // report the failure that matters -- `_save` swallows a write error and
-        // `add` returns the record regardless -- so read the record back rather
-        // than trusting the return. On any doubt the hash is NOT advanced, so
+        // told, and only a note that survived to disk keeps it. On any doubt the hash is NOT advanced, so
         // the next launch retries: the same "announce, never swallow" direction
         // the corrupt-state read above takes, for the same reason.
         let delivered = false;
@@ -1999,6 +2009,12 @@ function initStores(userDataPath, {
     }
   }
 
+  function isHomeRegistry(dir) {
+    const home = path.resolve(os.homedir(), '.clodex');
+    if (path.resolve(dir) === home) return true;
+    try { return fs.realpathSync(dir) === fs.realpathSync(home); } catch { return false; }
+  }
+
   function seedLibraryDefaults() {
     // Safety net, NOT a substitute for the registryDir seam (t359): under
     // `node --test`, refuse to seed the operator's real home. The suite seeded
@@ -2012,7 +2028,7 @@ function initStores(userDataPath, {
     // seeding silently suppressed — expect an unseeded library there rather
     // than debugging it as a seed bug.
     if (process.env.NODE_TEST_CONTEXT
-        && registryDir === path.join(os.homedir(), '.clodex')) {
+        && isHomeRegistry(registryDir)) {
       // Optional-call: several initStores callers pass {info, error} only, so a
       // bare log.warn would make the safety net itself the crash.
       if (log) log.warn?.('stores', 'refusing to seed the real ~/.clodex under node --test; pass seams.registryDir');

@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Stores: a note or reminder whose save fails is now refused instead of acknowledged (a shout acked as delivered but lost; `[agent:remind]` reporting "scheduled" for a reminder that never fired); a workspace rename containing quotes or newlines is refused rather than corrupting the memory frontmatter; a stale skills-seen file no longer denies skills you had enabled at an upgrade; seat.json is not rewritten after a failed sessions.json write.
 - Codex stream seats: a refused sandbox/approval flag written as --flag=value is now stripped whatever its arity (only the arity-1 form was), so it can no longer reach the app-server argv.
 - Templates: "Export as Template…" reports a failed save instead of closing silently (the library is read-only inside a sandbox box); a failed template removal now says why, and a box pinned to a commit says so once in its rebuild toast.
 - Sandbox web UI: saving or removing a library template inside a box no longer fails silently — the library is a read-only mount there, so the editor now opens library templates with Save disabled and says to edit them on the host or save a team copy, and a write that does fail reports its error instead of leaving the dialog open.

@@ -92,7 +92,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `_load` | persistence: every session record from sessions.json, recovering from .bak when the primary is not ok, backfilling workspaceId | sessions.json, sessions.json.bak, this._unreadable | readStoreJson | stores.test.js |
-| `_save` | persistence: atomic whole-array write, a one-per-launch .bak of the prior file, and a seat.json mirror of the touched record; false when refused or failed | sessions.json, sessions.json.bak, launchBakTaken, persistRefusedLogged | fs-util.atomicWriteFileSync, _writeSeatJson | stores.test.js |
+| `_save` | persistence: atomic whole-array write, a one-per-launch .bak of the prior file, and a seat.json mirror of the touched record written only when the sessions.json write landed; false when refused or failed | sessions.json, sessions.json.bak, launchBakTaken, persistRefusedLogged | fs-util.atomicWriteFileSync, _writeSeatJson | stores.test.js |
 | `listForWorkspace` | the session records of one workspace id | sessions.json | _load | app-menus-plugins.test.js exited-seat-row.test.js |
 | `_writeSeatJson` | mirrors one record into sessions/<name>/seat.json under registryDir, only when the seat layout is active and the dir exists | seat.json under registryDir | clodex-paths.seatDirFor, seat-layout.seatLayoutActive | unpinned |
 | `snapshotSeat` | forces a seat.json write from the current record | seat.json | _writeSeatJson | stores.test.js |
@@ -139,7 +139,7 @@
 | `_sameFile` | true when two template names resolve to one inode (a case-only rename on a case-insensitive disk) | none | _file | unpinned |
 | `_read` | one parsed template, or null for a refused name, a missing file or bad JSON | registryDir/library/templates/<name>.json | _file | path-confine.test.js |
 | `_write` | writes one template at mode 0600 with its id dropped and its name stamped | registryDir/library/templates/<name>.json | ensureDir, _file | unpinned |
-| `save` | edit-save with rename-in-place: carries forward only non-editor-owned keys of the prior file, then removes the old name | registryDir/library/templates/*.json | _read, _write, _sameFile | stores.test.js |
+| `save` | edit-save with rename-in-place: throws without a string name; carries forward only non-editor-owned keys of the prior file named by a string id, then removes the old name | registryDir/library/templates/*.json | _read, _write, _sameFile | stores.test.js |
 | `saveByName` | overwrites the case-insensitively matching template, keeping its original filename casing | registryDir/library/templates/*.json | _write | stores.test.js app-menus-plugins.test.js |
 
 ### Invariants
@@ -159,7 +159,7 @@
 | `_load` | workspaces: the workspace list, or the default workspace when the file is unreadable | workspaces.json, this._unreadable | readStoreJson | stores.test.js |
 | `_save` | workspaces: atomic whole-list write; throws the refusal when the file was unreadable | workspaces.json | refuseUnreadable, fs-util.atomicWriteFileSync | stores.test.js |
 | `list` | workspaces: every workspace, writing the default one when the file is empty | workspaces.json | _load, _save | stores.test.js |
-| `setName` | renames one workspace by id | workspaces.json | _save | stores.test.js |
+| `setName` | renames one workspace by id; throws on a name with control characters | workspaces.json | _save | stores.test.js |
 | `setBounds` | stores one workspace's window bounds | workspaces.json | _save | unpinned |
 | `setView` | shallow-merges a view patch into one workspace | workspaces.json | _save | stores.test.js restore-active-tab.test.js |
 | `setZoomFactor` | stores a non-1 zoom factor, deleting it at 1 | workspaces.json | _save | stores.test.js |
@@ -201,7 +201,7 @@
 | `setStrip` | stores or clears one agent's strip level | agent-defaults.json | _save | stores.test.js |
 | `getDefaultDeny` | the default tool deny list: the user's list when present (even empty), else the in-code floor | agent-defaults.json | _load | stores.test.js optimized-mode-subset.test.js |
 | `setDefaultDeny` | stores the default tool deny list under the reserved star key | agent-defaults.json | _save | stores.test.js |
-| `getDefaultSkillDeny` | the default skill deny list, floor when absent; a stored plain list is rewritten once into the deferred form over the known skill names and saved | agent-defaults.json | skills-off.deferredSkillDeny, setDefaultSkillDeny | stores.test.js optimized-late-skills.test.js |
+| `getDefaultSkillDeny` | the default skill deny list, floor when absent; a stored plain list is rewritten once into the deferred form over the known skill names and saved, unless skills-seen.json is unreadable or was quarantined this launch | agent-defaults.json | skills-off.deferredSkillDeny, setDefaultSkillDeny, skillsSeen.readable | stores.test.js optimized-late-skills.test.js |
 | `setDefaultSkillDeny` | stores the default skill deny list | agent-defaults.json | _save | stores.test.js |
 | `getDefaultBuiltinDeny` | the default builtin-agent deny list, user list or floor | agent-defaults.json | _load | stores.test.js |
 | `setDefaultBuiltinDeny` | stores the default builtin-agent deny list | agent-defaults.json | _save | stores.test.js |
@@ -241,7 +241,7 @@
 | `_load` | reminders: the reminder array, or empty on absence, quarantine, unreadability or a non-array | reminders.json, this._unreadable | readStoreJson | stores.test.js |
 | `_mintId` | a 6-char lowercase base36 id unique in the current array, falling back to a time-based id | none | none | unpinned |
 | `listForAgent` | the reminders owned by one seat name | reminders.json | _load | remind-scheduler.test.js stores.test.js |
-| `add` | reminders: appends a record with id, createdAt, lastFiredAt null and ticket only when bound, and persists it | reminders.json | _mintId, _save | stores.test.js session-manager.test.js |
+| `add` | reminders: appends a record with id, createdAt, lastFiredAt null and ticket only when bound, and persists it; throws when the write fails | reminders.json | _mintId, _save | stores.test.js session-manager.test.js |
 | `markFired` | stamps lastFiredAt and the next fire time on one reminder | reminders.json | _save | stores.test.js |
 | `renameAgent` | moves every reminder of a renamed seat to the new name, returning the count | reminders.json | _save | remind-scheduler.test.js stores.test.js |
 
@@ -272,7 +272,6 @@
 
 ### Hazards
 - `onChange` has no unsubscribe, so a caller that registers per window or per connection leaks listeners for the process lifetime.
-- The notifications `_save` swallows a write error while add still emits added, so a caller that must know the note landed reads it back, as `seedRoot` does.
 
 ## ui-settings.json — warnUiSettingsMode … set
 
@@ -301,10 +300,11 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
+| `readable` | skillsSeen: re-reads skills-seen.json and reports false when it is unreadable or was quarantined this launch | skills-seen.json, quarantinedFiles | list | stores.test.js |
 | `record` | unions new skill names into skills-seen.json, writing only when the set grew | skills-seen.json | list, refuseUnreadable, fs-util.atomicWriteFileSync | optimized-late-skills.test.js |
 | `read` | setupMarker: first-run setup is done only when setup.json parses with a string completedAt | setup.json under registryDir | none | first-run-setup.test.js |
 | `write` | setupMarker: stamps completion time, version and a SETUP_CHOICES choice (default skipped); a write error reaches the caller | setup.json under registryDir | fs-util.atomicWriteFileSync | first-run-setup.test.js |
-| `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
+| `renameWorkspaceScope` | rewrites workspace frontmatter from an old to a new display name across agent and skill .md files, leading fence only; refuses (0, logged) a new name holding CR/LF or wrapped in matching quotes; returns the count | agents/*.md, skills/*.md under registryDir | fs-util.atomicWriteFileSync | stores.test.js |
 
 ### Invariants
 - `renameWorkspaceScope` matches the trimmed old name exactly, the same comparison visibleTo makes, so a rename cannot orphan a scoped item it would otherwise match.
@@ -312,7 +312,6 @@
 - `record` reads through `readStoreJson` via list: an unparseable skills-seen.json is quarantined, and an unreadable one makes `record` throw through `refuseUnreadable` instead of writing.
 
 ### Hazards
-- `renameWorkspaceScope` does not preserve quoting: it writes the new name bare, so a name whose own first and last characters are matching quotes is stripped on the next read.
 - Unlike the other small stores, setupMarker `write` lets a write error propagate, so its caller must handle the throw.
 
 ## Library seeding — sha256 … seedLibraryDefaults
@@ -321,7 +320,7 @@
 |---|---|---|---|---|
 | `sha256` | hex SHA-256 of a buffer, the seed manifest's content identity | none | none | stores.test.js |
 | `seedRoot` | reconciles one shipped seed tree into its destination by hash manifest: unedited copies upgrade, edited ones are kept, withheld updates are reported once | destRoot files, destRoot/.seed-state.json, destRoot/.seed-report.json, notifications.json | sha256, fs-util.atomicWriteFileSync, notifications add | unpinned |
-| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir is the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js engine-registry-dir-seam.test.js |
+| `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir resolves (or realpaths) to the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js engine-registry-dir-seam.test.js |
 
 ### Invariants
 - `seedRoot` overwrites a present file only when it still matches its stamp and the shipped bytes moved; a file matching neither is stranded and reported, never repaired.
@@ -332,7 +331,6 @@
 ### Hazards
 - Overwriting a stranded file in `seedRoot` destroys an operator edit, because a stale shipped copy and an edit have the same hash shape.
 - The dedupe token of `seedRoot` lives under registryDir while the inbox lives under userData, so two hosts with different data dirs share one token.
-- The guard in `seedLibraryDefaults` compares registryDir to the homedir path by exact string, so a symlinked or trailing-slash spelling bypasses it.
 
 ## env-scopes.json and shipped env defaults — safeScope … restore
 
