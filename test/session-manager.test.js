@@ -13380,10 +13380,10 @@ test('t1016 flag day: `[agent:notify-user]` is an UNKNOWN intent, bouncing like 
 // the REAL parseRemindSpec drives the list/cancel/schedule split.
 const { parseRemindSpec: parseRemindSpecReal } = require('../remind-schedule');
 
-function mkRemind({ addResult, cancelResult = false, listResult = [] } = {}) {
+function mkRemind({ addResult, addThrows = null, cancelResult = false, listResult = [] } = {}) {
   const calls = { add: [], cancel: [], list: [] };
   const scheduler = {
-    add: (agent, spec, body) => { calls.add.push({ agent, spec, body }); return addResult || { ok: true, record: { id: 'ab12', kind: parseRemindSpecReal(spec).kind } }; },
+    add: (agent, spec, body) => { calls.add.push({ agent, spec, body }); if (addThrows) throw addThrows; return addResult || { ok: true, record: { id: 'ab12', kind: parseRemindSpecReal(spec).kind } }; },
     cancel: (agent, id) => { calls.cancel.push({ agent, id }); return cancelResult; },
     listForAgent: (agent) => { calls.list.push(agent); return listResult; },
   };
@@ -13413,6 +13413,15 @@ test('_handleRemindIntent: a bad spec bounces loudly with the parser error', () 
   assert.strictEqual(calls.add.length, 0); // never reached the scheduler
   assert.match(replies.at(-1), /^\[agent:remind\] /);
   assert.match(replies.at(-1), /at least 60s/);
+});
+
+test('_handleRemindIntent: a scheduler whose store refuses the save bounces loudly, audits nothing', () => {
+  const err = 'reminders.json could not be read; refusing to save over it';
+  const { m, session, replies, ipc, calls } = mkRemind({ addThrows: new Error(err) });
+  m._handleRemindIntent(session, 'every 30m', 'check the build');
+  assert.deepStrictEqual(calls.add, [{ agent: 't1', spec: 'every 30m', body: 'check the build' }]);
+  assert.deepStrictEqual(replies, [`[agent:remind] reminder NOT armed — ${err}`]);
+  assert.deepStrictEqual(ipc.filter((x) => x.type === 'remind'), []);
 });
 
 test('_handleRemindIntent: list with no schedules replies "none"', () => {
@@ -13459,10 +13468,10 @@ test('_handleRemindIntent: scheduler add failure (past at) bounces with its erro
 // ally, broadcast one `notify` ipc line. Tone matches exec/remind — SILENT on a
 // clean add, LOUD `[agent:shout] …` bounce on an empty body or an over-cap
 // (16KB) body. A fake store captures adds; a notifyOS spy captures the toast.
-function mkNotify() {
+function mkNotify({ addThrows = null } = {}) {
   const added = [], toasts = [], ipc = [];
   const store = {
-    add: (rec) => { added.push(rec); return { id: 'nt01', ...rec }; },
+    add: (rec) => { added.push(rec); if (addThrows) throw addThrows; return { id: 'nt01', ...rec }; },
   };
   const m = mk({
     getNotifications: () => store,
@@ -13475,6 +13484,20 @@ function mkNotify() {
   const session = { name: 't1', agentType: 'claude', workspaceId: 'ws-1' };
   return { m, session, added, toasts, ipc, replies };
 }
+
+test('_handleShoutIntent: a store that refuses the save bounces loudly, raises nothing, archives nothing', () => {
+  const err = 'notifications.json could not be read; refusing to save over it';
+  const { m, session, added, toasts, ipc, replies } = mkNotify({ addThrows: new Error(err) });
+  session.fixFor = 'x';
+  let archived = 0;
+  m.archive = () => { archived += 1; };
+  m._handleShoutIntent(session, 'DEPLOY OK need a decision');
+  assert.strictEqual(added.length, 1);
+  assert.deepStrictEqual(replies, [`[agent:shout] note NOT delivered — ${err}`]);
+  assert.deepStrictEqual(toasts, []);
+  assert.deepStrictEqual(ipc, []);
+  assert.strictEqual(archived, 0);
+});
 
 test('_handleShoutIntent: valid note is silent, stored, toasted, and broadcast', () => {
   const { m, session, added, toasts, ipc, replies } = mkNotify();

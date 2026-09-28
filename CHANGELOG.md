@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Sandbox: a work volume first populated by the image user is fully re-owned on a Linux host, a desktop uid with no passwd entry no longer breaks box start, and Stop no longer overwrites port numbers you were still typing.
+- A seat's [agent:shout] or [agent:remind] now bounces with the reason when the inbox or reminders file is unreadable, instead of dropping the note into the log; the skill catalog still opens when skills-seen.json cannot be read.
 - Tickets board and team popover now show what the loop is doing with a done ticket — "suite running (since 14:02)", "re-measuring", "spawning reviewer" — instead of "in review" from the moment of task done, so a reviewer that has not appeared yet is not mistaken for a stall.
 
 ## 5.90.0 — 2026-09-28

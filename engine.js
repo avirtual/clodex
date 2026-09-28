@@ -1833,10 +1833,14 @@ function readSkillCatalog({ name = null, cwd = null, type = null } = {}) {
   const scan = name ? parseSkillRoster(name) : emptyRoster();
   let discovered;
   if (name) {
-    skillsSeen.record(scan.roster);
+    try { skillsSeen.record(scan.roster); } catch (e) { log.warn('skills', `skills-seen not recorded: ${e.message}`); }
     discovered = scan.roster;
   } else {
-    discovered = skillsSeen.record(sweepDiscoveredSkills());
+    const swept = sweepDiscoveredSkills();
+    try { discovered = skillsSeen.record(swept); } catch (e) {
+      log.warn('skills', `skills-seen not recorded: ${e.message}`);
+      discovered = swept;
+    }
   }
   const names = [...new Set([
     ...CLAUDE_SKILLS,
