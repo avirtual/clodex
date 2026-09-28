@@ -88,6 +88,13 @@ not a fallback. Pick whichever fits your box:
    npm i -g ./cli
    ```
 
+Inside a Clodex box (the sandbox image, or a node the ssh installer set up)
+`clodexctl` is already on PATH and, with no node configured, talks to the box's
+own engine (`(local engine)`: the wire token from `CLODEX_REMOTE_TOKEN` or the
+engine's `remote.env`, on its remote port) — so `clodexctl get sessions` works
+as-is. `create node` / `use node`, `CLODEX_URL`/`CLODEX_TOKEN`, and
+`--url`/`--token` still override.
+
 `cli/` remains a standalone package — installable on a box that has never seen
 Clodex, requiring only `node:*` builtins and its own siblings, never an app
 file. That holds of the SHIPPED tree (`cli/src` and `cli/bin`, the *JS* `files`

@@ -370,3 +370,24 @@ exit 0`,
   assert.match(r.stdout, /::sudo-cmd sudo loginctl enable-linger tester/,
     `the exact sudo command is still offered; got: ${JSON.stringify(r.stdout)}`);
 });
+
+test('link_clodexctl: a fresh HOME gets ~/.local/bin/clodexctl symlinked to the checkout, after npm-install', () => {
+  const root = mkTmpRoot('link-clodexctl-');
+  const home = mkTmpDirIn(root, 'home-');
+  const src = mkTmpDirIn(root, 'src-');
+  const bin = mkTmpDirIn(root, 'bin-');
+  linkReal(bin, ['mkdir', 'ln']);
+  const r = spawnSync(BASH, ['-c', [extractFn('link_clodexctl'), 'link_clodexctl'].join('\n')], {
+    encoding: 'utf8',
+    env: { HOME: home, PATH: bin, SRC_DIR: src },
+  });
+  assert.strictEqual(r.status, 0, `link_clodexctl exited ${r.status}: ${r.stderr}`);
+  const link = path.join(home, '.local', 'bin', 'clodexctl');
+  assert.ok(fs.lstatSync(link).isSymbolicLink());
+  assert.strictEqual(fs.readlinkSync(link), path.join(src, 'cli', 'bin', 'clodexctl.js'));
+
+  const script = fs.readFileSync(SCRIPT, 'utf8');
+  const call = script.indexOf('\nlink_clodexctl || fail clodexctl');
+  assert.ok(call > script.indexOf('\nok npm-install\n'), 'the link step runs after the source + npm-install steps');
+  assert.ok(script.indexOf('\nok npm-install\n') > script.indexOf('\ncd "$SRC_DIR"'), 'ENTER: anchors found in order');
+});

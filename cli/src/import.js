@@ -102,6 +102,12 @@ function safeTransport(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json')) || {}) {
+  const remotePort = Number.isInteger(ui.remotePort) ? ui.remotePort : DEFAULT_REMOTE_PORT;
+  const token = parseEnvFile(path.join(dataDir, 'remote.env'))[SANDBOX_TOKEN_KEY] || null;
+  return { url: `http://127.0.0.1:${remotePort}`, token };
+}
+
 // Build the candidate context list from a userData dir. Each candidate:
 //   { name, entry?, action:'add'|'skip', reason?, tokenState:'set'|'none' }
 // `entry` is present only for importable ones (url|ssh + optional token). This
@@ -113,13 +119,12 @@ function collectCandidates(dataDir) {
 
   // 1) The local engine itself → `local`.
   {
-    const remotePort = Number.isInteger(ui.remotePort) ? ui.remotePort : DEFAULT_REMOTE_PORT;
-    const token = parseEnvFile(path.join(dataDir, 'remote.env'))[SANDBOX_TOKEN_KEY] || null;
+    const { url, token } = localEngine(dataDir, ui);
     const reasons = [];
     if (ui.remoteEnabled === false) reasons.push('wire is OFF — flip remote access in Preferences');
     out.push({
       name: 'local',
-      entry: { url: `http://127.0.0.1:${remotePort}`, ...(token ? { token } : {}) },
+      entry: { url, ...(token ? { token } : {}) },
       action: 'add',
       reason: reasons.length ? reasons.join('; ') : null,
       tokenState: token ? 'set' : 'none',
@@ -212,6 +217,6 @@ function renderReport(results, meta) {
 
 module.exports = {
   DEFAULT_REMOTE_PORT, DEFAULT_SANDBOX_WIRE_PORT, SANDBOX_TOKEN_KEY,
-  parseEnvFile, platformDataDirs, resolveDataDir, collectCandidates,
+  parseEnvFile, platformDataDirs, resolveDataDir, localEngine, collectCandidates,
   applyImport, renderReport, safeTransport,
 };
