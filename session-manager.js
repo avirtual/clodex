@@ -391,7 +391,7 @@ function nearMissFormHint(text) {
 // id that is by construction not in the array, so a preserved list cannot
 // suppress a digest that is due. That is what makes it safe here where a bare
 // timestamp is not.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate'];
 
 // The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
 // is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
@@ -7654,7 +7654,7 @@ function createSessionManager(deps) {
           // here, a reloaded ticket seat reads as the operator's standing seat
           // at accept: no teardown, a leaked worktree, and a reply claiming it
           // is not a one-shot ticket seat.
-          this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate']);
+          this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
           const cwd = this.resumeCwdOf(entry);
           await this.create(
             name, entry.type, cwd, entry.extraArgs || [], resumeId, entry.workspaceId,
