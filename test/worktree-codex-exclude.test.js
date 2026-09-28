@@ -63,7 +63,7 @@ test('t1076: a failure is returned as a sentence, never thrown', () => {
 });
 
 test('t1076: a TRACKED .codex/.gitignore is left alone and the worktree stays clean', () => {
-  const root = mkTmpRoot('t1076-tracked-');
+  const root = mkTmpRoot('t1076-exclude-');
   const repo = path.join(root, 'repo');
   fs.mkdirSync(path.join(repo, '.codex'), { recursive: true });
   git(repo, 'init', '-q', '-b', 'master');
