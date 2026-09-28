@@ -36,13 +36,13 @@ const GUTTER_RE = /^(\s*)(\d+)(?=\s|$)/;
 // capitalized word before a paren", for the same reason path-scan allowlists
 // extensions: the permissive version claims ordinary output like `Note(see
 // below)`. Widening it is a deliberate act.
-const HEADER_RE = /\b(?:Update|Edit|MultiEdit|Write|Create|Read|NotebookEdit)\(([^)\s][^)]*)\)/;
+const HEADER_RE = /\b(?:Update|Edit|MultiEdit|Write|Create|Read|NotebookEdit)\((?:(?=[^)\s])((?:[^()]|\([^()]*\))+)\)\s*$|([^)\s][^)]*)\))/;
 
 // The summary line between a header and its gutter (`⎿  Added 3 lines`), plus
 // the tree glyphs the CLI draws the block with. These sit INSIDE a real block,
 // so the upward walk has to step over them without treating them as a break.
 const SUMMARY_RE = /^[\s⎿└├│╰─]*(?:Added|Removed|Updated|Wrote|Read)\b/;
-const GLYPH_ONLY_RE = /^[\s⎿└├│╰─]*$/;
+const GLYPH_ONLY_RE = /^\s*[⎿└├│╰─][\s⎿└├│╰─]*$/;
 
 // Where the number sits on a gutter row: { start, end, line } with 0-based
 // half-open offsets, matching scanPaths' coordinate space. null when the row is
@@ -78,7 +78,7 @@ function findGutterFile(above) {
     // the gutter test comes FIRST; only a non-gutter row can be a header.
     if (matchGutterRow(row)) continue;
     const h = HEADER_RE.exec(row);
-    if (h) return { path: h[1].trim(), distance: i + 1 };
+    if (h) return { path: (h[1] || h[2]).trim(), distance: i + 1 };
     // Anything that is not another part of this block ends the search. This is
     // the whole false-positive defence — see the header comment.
     if (SUMMARY_RE.test(row) || GLYPH_ONLY_RE.test(row)) continue;
