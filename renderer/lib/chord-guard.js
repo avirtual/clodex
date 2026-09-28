@@ -22,6 +22,7 @@ const MODAL_OVERLAY_CLASSES = [
   'prompt-modal-overlay',
   'plugin-overlay',
   'clx-modal-bg',
+  'dock-sheet',
 ];
 
 function openOverlayIds({ byId, byClass }) {
