@@ -1015,6 +1015,33 @@ test('up twice with our own ports "busy" keeps the three ports byte-stable', asy
   assert.strictEqual(settings._state().peers[0].url, 'http://127.0.0.1:7820');
 });
 
+test('manager: a sibling box\'s published ports are taken even while its container is down', async () => {
+  const ud = freshUserData();
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const settings = fakeSettings({ boxes: [
+    { id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_CONFIG } },
+    { id: 'test', label: 'test', config: { ...DEFAULT_CONFIG } },
+  ] });
+  const mgr = createSandboxManager({ registryDir: reg,
+    getUiSettings: () => settings,
+    getUserDataPath: () => ud,
+    spawn: okComposeSpawn(),
+    isPortInUse: () => Promise.resolve(false),
+  });
+  const first = await mgr.get('sandbox').writeComposeFile();
+  assert.deepStrictEqual(first.ports, { web: 7810, wirescope: 7811, wire: 7820 });
+  const second = mgr.get('test');
+  fs.mkdirSync(path.dirname(second.composePath()), { recursive: true });
+  fs.copyFileSync(mgr.get('sandbox').composePath(), second.composePath());
+  const bumped = await second.writeComposeFile();
+  assert.deepStrictEqual(bumped.ports, { web: 7812, wirescope: 7813, wire: 7821 });
+  const yaml = fs.readFileSync(second.composePath(), 'utf8');
+  assert.ok(yaml.includes('"127.0.0.1:7812:8080"'));
+  assert.ok(!yaml.includes('"127.0.0.1:7810:'));
+  const again = await mgr.get('sandbox').writeComposeFile();
+  assert.deepStrictEqual(again.ports, { web: 7810, wirescope: 7811, wire: 7820 });
+});
+
 test('up: a GENUINE squatter on 7810 (not our own port) still bumps', async () => {
   const settings = fakeSettings();
   const ud = freshUserData();

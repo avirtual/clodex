@@ -471,6 +471,7 @@ function createSandbox(deps = {}) {
   const writeBoxConfig = deps.writeBoxConfig
     || ((next) => { getUiSettings().set({ sandbox: next }); });
   const serialize = deps.serialize || ((fn) => fn());
+  const siblingComposePaths = deps.siblingComposePaths || (() => []);
 
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
@@ -595,12 +596,20 @@ function createSandbox(deps = {}) {
     return { remote: env.CLODEX_REMOTE_TOKEN, web: env.CLODEX_WEB_TOKEN };
   }
 
+  function siblingPorts() {
+    const out = [];
+    for (const file of siblingComposePaths()) {
+      try { out.push(...parseOwnPorts(fs.readFileSync(file, 'utf8'))); } catch {}
+    }
+    return out;
+  }
+
   async function buildBusySet(config, ownPorts) {
     const own = new Set(ownPorts || []);
-    const set = new Set();
+    const set = new Set(siblingPorts());
     for (const start of [config.webPort, config.wirescopePort, config.wirePort]) {
       for (let p = start; p < start + PORT_SCAN_WINDOW; p++) {
-        try { if (await isPortInUse(p) && !own.has(p)) set.add(p); } catch { /* treat as free */ }
+        try { if (!set.has(p) && await isPortInUse(p) && !own.has(p)) set.add(p); } catch { /* treat as free */ }
       }
     }
     return set;
@@ -855,6 +864,11 @@ function createSandboxManager(deps = {}) {
       label: box.label || boxId,
       subdir: subdirFor(boxId),
       serialize,
+      siblingComposePaths: () => listBoxes()
+        .filter((b) => b && b.id && b.id !== boxId)
+        .map((b) => get(b.id))
+        .filter(Boolean)
+        .map((inst) => inst.composePath()),
       detect: () => detectCache.get(),
       invalidateDetect: () => detectCache.invalidate(),
       readBoxConfig: () => {
