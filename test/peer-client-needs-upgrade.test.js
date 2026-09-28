@@ -7,11 +7,12 @@ const { PeerConnection } = require('../peer-client');
 const { serveDialect } = require('./lib/peer-dialect');
 
 function box(dialect) {
-  const state = { attaches: 0, resourceFetches: 0, helloTicks: 0, streams: [], dialect, version: '1' };
+  const state = { attaches: 0, resourceFetches: 0, failResources: 0, helloTicks: 0, streams: [], dialect, version: '1' };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
     if (p === '/api/peer/hello') state.helloTicks++;
     if (p === '/api/resources') state.resourceFetches++;
+    if (p === '/api/resources' && state.resourceFetches <= state.failResources) return res.writeHead(500).end();
     if (serveDialect(p, res, state.dialect, state.version)) return;
     if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -152,5 +153,19 @@ test('the document is fetched once per hello identity, not once per hello tick',
     await waitFor('several hello ticks against one unchanging identity', () => state.helloTicks >= 6);
     assert.strictEqual(state.resourceFetches, 1,
       `the document was fetched ${state.resourceFetches}x across ${state.helloTicks} hello ticks`);
+  } finally { teardown(conn, server, state); }
+});
+
+test('a failed resources fetch is retried on the next hello tick, not only on an identity change', async () => {
+  const { server, state } = box('old');
+  state.failResources = 1;
+  const port = await listen(server);
+  const conn = connect(port, 25);
+  conn.start();
+  try {
+    await waitFor('the first resources fetch to fail', () => state.resourceFetches >= 1);
+    await waitFor('several hello ticks to pass', () => state.helloTicks >= 3);
+    await waitFor('needsUpgrade to go true', () => conn.needsUpgrade === true);
+    assert.ok(state.resourceFetches >= 2, 'the document was fetched again after the failure');
   } finally { teardown(conn, server, state); }
 });

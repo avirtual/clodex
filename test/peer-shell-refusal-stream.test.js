@@ -185,3 +185,22 @@ test('an unmapped status still refuses out loud', async () => {
     teardown(conn, server, state);
   }
 });
+
+test('a seat refused and then re-granted re-opens on the next wtermOpen', async () => {
+  const { server, state } = box({ status: 501 });
+  const port = await listen(server);
+  const closed = [];
+  const conn = connect(port, (ch, id, seat, text) => {
+    if (ch === 'peer-wterm-closed') closed.push(text);
+  });
+  conn.start();
+  try {
+    await waitFor('the peer to come online', () => conn.online);
+    conn.wtermOpen('refused', 'w1', () => {});
+    await waitFor('the refusal to be reported', () => closed.length >= 1 && state.refused === 1);
+    conn.wtermOpen('refused', 'w1', () => {});
+    await waitFor('the second open to reach the box', () => state.refused === 2, 2000);
+  } finally {
+    teardown(conn, server, state);
+  }
+});

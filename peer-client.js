@@ -158,6 +158,9 @@ class PeerConnection {
     this.sessions = [];               // last fetched session list
     this._helloTimer = null;
     this._eventsReq = null;
+    this._eventsOpening = false;
+    this._dialectKnown = false;
+    this._dialectProbing = false;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
     // seat -> { req, wanted, backoff, timer, opening, owners } for peer TERMINAL
@@ -258,7 +261,8 @@ class PeerConnection {
         const lostShell = prev && peerHasShellCap(prev.caps) && !peerHasShellCap(next.caps);
         this.hello = next;
         if (lostShell) this._dropAllWterm('revoked');
-        if (identityChanged) this._probeDialect(next);
+        if (identityChanged) this._dialectKnown = false;
+        if (identityChanged || (!this._dialectKnown && !this._dialectProbing)) this._probeDialect(next);
         this._setOnline(true);
         if (wasOffline) {
           this._refreshSessions();
@@ -293,10 +297,16 @@ class PeerConnection {
   }
 
   _probeDialect(hello) {
-    if (!(hello.caps || []).includes('resources')) return this._setNeedsUpgrade(true);
+    if (!(hello.caps || []).includes('resources')) {
+      this._dialectKnown = true;
+      return this._setNeedsUpgrade(true);
+    }
+    this._dialectProbing = true;
     this._request('GET', '/api/resources', null, (err, body) => {
+      this._dialectProbing = false;
       if (this._stopped) return;
       if (err || !body || !body.ok) return;
+      this._dialectKnown = true;
       const sessions = (body.resources || []).find((r) => r && r.name === 'sessions');
       const subs = sessions && sessions.subresources;
       this._setNeedsUpgrade(!(subs && Array.isArray(subs.attach)));
@@ -344,7 +354,8 @@ class PeerConnection {
   }
 
   _openEvents() {
-    if (this._stopped || this._eventsReq) return;
+    if (this._stopped || this._eventsReq || this._eventsOpening) return;
+    this._eventsOpening = true;
     this._sse('/api/events', {
       onEvent: (event, data) => {
         if (event === 'sessions') this._refreshSessions();
@@ -359,6 +370,7 @@ class PeerConnection {
         }
       },
       onOpen: (req) => {
+        this._eventsOpening = false;
         this._eventsReq = req;
 // Resync unconditionally: SSE has no replay, so any 'sessions' events emitted
 // while disconnected are lost. A compose recreate severs this feed faster than
@@ -368,6 +380,7 @@ class PeerConnection {
       },
       onStable: () => { this._eventsBackoff = RECONNECT_MIN_MS; },
       onClose: () => {
+        this._eventsOpening = false;
         this._eventsReq = null;
         if (this._stopped || !this.online) return;
         const delay = this._eventsBackoff;
@@ -439,7 +452,14 @@ class PeerConnection {
           this._emit('peer-exit', this.id, name, data.exitCode);
         }
       },
-      onOpen: (req) => { att.opening = false; att.req = req; },
+      onOpen: (req) => {
+        if (!att.wanted || this._stopped || this._attachments.get(name) !== att) {
+          try { req.destroy(); } catch {}
+          return;
+        }
+        att.opening = false;
+        att.req = req;
+      },
       onStable: () => { att.backoff = RECONNECT_MIN_MS; },
       onClose: () => {
         att.opening = false;
@@ -955,6 +975,7 @@ class PeerConnection {
         ...this._authHeaders(),
       },
     }, (res) => {
+      res.setEncoding('utf8');
       let buf = '';
       let tooLarge = false;
       res.on('data', (c) => {
@@ -990,6 +1011,7 @@ class PeerConnection {
         ...this._authHeaders(),
       },
     }, (res) => {
+      res.setEncoding('utf8');
       let buf = '';
       let tooLarge = false;
       res.on('data', (c) => {
@@ -1051,11 +1073,10 @@ class PeerConnection {
       if (res.statusCode !== 200) {
         // Reported before the destroy so the refusal is recorded before the
         // close door can run — the door reconnects, which is the one thing a
-        // refusal must not cause. Today either order works, because destroy
-        // raises its error asynchronously and onRefused would still land first;
-        // this ordering is what keeps that timing from being load-bearing.
+        // refusal must not cause.
         if (onRefused) { try { onRefused(res.statusCode); } catch {} }
         req.destroy();
+        close();
         return;
       }
       onOpen(req);
