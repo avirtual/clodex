@@ -54,7 +54,7 @@ test('no registered IPC channel calls the unscoped manager.list()', () => {
 // behaviour too. Registration-only harness, same shape as
 // drawer-services-seam.test.js: a Proxy stubs every dep the registration
 // touches, and the four this handler actually needs are real.
-function registerAndCapture({ sessions, workspaceOfSender }) {
+function registerAndCapture({ sessions, workspaceOfSender, uiSettings = { get: () => ({ recentCwds: [] }), set: () => {} } }) {
   const handlers = new Map();
   const capture = {
     handle: (ch, fn) => handlers.set(ch, fn),
@@ -64,7 +64,7 @@ function registerAndCapture({ sessions, workspaceOfSender }) {
       list: () => sessions,
       listForWorkspace: (workspaceId) => sessions.filter((s) => s.workspaceId === workspaceId),
     },
-    uiSettings: { get: () => ({ recentCwds: [] }), set: () => {} },
+    uiSettings,
   };
   const stub = () => () => {};
   const deps = new Proxy(capture, {
@@ -103,4 +103,40 @@ test('session:cwdSuggestions counts only the sender workspace\'s sessions', () =
   // An unknown workspace gets nothing, not everything — the failure mode of a
   // scoping bug that falls back to the global list.
   assert.deepStrictEqual(handler({ workspaceId: 'ws-none' }).popular, []);
+});
+
+test('session:cwdSuggestions does not return a cwd noted from another workspace', () => {
+  let stored = { recentCwds: ['/legacy/flat'] };
+  const uiSettings = { get: () => stored, set: (partial) => { stored = { ...stored, ...partial }; } };
+  const handlers = registerAndCapture({ sessions: [], workspaceOfSender: (e) => e.sender.ws, uiSettings });
+
+  assert.deepStrictEqual(handlers.get('session:noteCwd')({ sender: { ws: 'ws-2' } }, '/secret/ws2'), { ok: true },
+    'ENTER: noteCwd from ws-2 landed');
+  assert.deepStrictEqual(handlers.get('session:noteCwd')({ sender: { ws: 'ws-1' } }, '/proj/ws1'), { ok: true });
+
+  const one = handlers.get('session:cwdSuggestions')({ sender: { ws: 'ws-1' } });
+  assert.strictEqual(one.recent.includes('/secret/ws2'), false, 'ws-1 received a cwd noted from ws-2');
+  assert.deepStrictEqual(one.recent, ['/proj/ws1']);
+  assert.deepStrictEqual(handlers.get('session:cwdSuggestions')({ sender: { ws: 'ws-2' } }).recent, ['/secret/ws2']);
+  assert.deepStrictEqual(handlers.get('session:cwdSuggestions')({ sender: { ws: 'default' } }).recent, ['/legacy/flat'],
+    'the pre-split flat list stays the default workspace\'s');
+});
+
+test('the per-workspace recent cwd lists survive the real uiSettings store and a reload', () => {
+  const path = require('path');
+  const { initStores } = require('../stores.js');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const dir = mkTmpRoot('clodex-uisettings-');
+  const open = () => initStores(dir, {
+    log: { info: () => {}, error: () => {} },
+    registryDir: path.join(dir, 'registry'),
+    resourcesDir: path.join(dir, '__no_seed__'),
+  }).uiSettings;
+  const handlers = registerAndCapture({ sessions: [], workspaceOfSender: (e) => e.sender.ws, uiSettings: open() });
+  handlers.get('session:noteCwd')({ sender: { ws: 'ws-1' } }, '/proj/ws1');
+  handlers.get('session:noteCwd')({ sender: { ws: 'ws-2' } }, '/secret/ws2');
+
+  const reloaded = registerAndCapture({ sessions: [], workspaceOfSender: (e) => e.sender.ws, uiSettings: open() });
+  assert.deepStrictEqual(reloaded.get('session:cwdSuggestions')({ sender: { ws: 'ws-1' } }).recent, ['/proj/ws1']);
+  assert.deepStrictEqual(reloaded.get('session:cwdSuggestions')({ sender: { ws: 'ws-2' } }).recent, ['/secret/ws2']);
 });

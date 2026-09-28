@@ -123,6 +123,20 @@ test('narrowing plugins + a restart that FAILS: the failure arm writes the prune
     'and the pruned grants, or a failed restart silently restores a revoked capability');
 }));
 
+test('a restart that FAILS keeps the edited plugin list and exec grants, like every other edited field', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'f', type: 'claude', cwd: '/tmp', plugins: ['p-old'], execCommands: ['old-grant'] });
+  eng.manager.create = async () => { throw new Error('spawn refused'); };
+
+  const res = await eng.applySessionArgs('f', { extraArgs: [], restart: true, plugins: ['p-new'], execCommands: ['new-grant'] }, 'default');
+  assert.strictEqual(res.ok, false, 'ENTER: create threw, so the catch arm is the one that wrote the record');
+  assert.match(res.error, /spawn refused/);
+
+  const rec = eng.stores.persistence.get('f');
+  assert.deepStrictEqual({ plugins: rec.plugins, execCommands: rec.execCommands }, { plugins: ['p-new'], execCommands: ['new-grant'] },
+    'a failed restart must not restore a de-selected plugin or a revoked exec grant');
+});
+
 test('a restart that does NOT touch plugins leaves the persisted gate and grants byte-identical', async () => withRows(async () => {
   const eng = mkEngine();
   const before = {

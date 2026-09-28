@@ -209,3 +209,47 @@ test('foreignNotice: status.foreign → a warn notice naming the owner, read-onl
   assert.strictEqual(foreignNotice({ state: 'absent', foreign: '' }), null);
   assert.strictEqual(foreignNotice(null), null);
 });
+
+test('the row toggle acts on the box\'s current state, not the state at render', async () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const { fakeDocument } = require('./lib/fake-dom');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const sliceFn = (name) => {
+    const start = src.indexOf(`async function ${name}(`);
+    assert.ok(start > 0, `ENTER: ${name} was located`);
+    return src.slice(start, src.indexOf('\n}\n', start) + 2);
+  };
+  const doc = fakeDocument();
+  const withClassList = (el) => Object.assign(el, {
+    classList: { toggle() {}, add() {}, remove() {} },
+    append(...kids) { for (const k of kids) el.appendChild(k); },
+  });
+  const document = { ...doc, createElement: (tag) => withClassList(doc.createElement(tag)) };
+  const sbBoxList = document.createElement('div');
+  Object.defineProperty(sbBoxList, 'innerHTML', { set() { sbBoxList.replaceChildren(); } });
+  let state = 'stopped';
+  const calls = [];
+  const ctx = {
+    document, sbBoxList,
+    sbBoxes: [{ id: 'b', label: 'B' }], sbCurrentBox: 'b', sbBusy: false, sbGate: null,
+    sandboxStatusNotice: statusNotice, sandboxForeignNotice: foreignNotice, sandboxActionGate, boxRowStartGated,
+    applyActionGate() {}, selectBox() {}, refreshSandboxStatus: async () => {}, showToast() {},
+    window: { api: {
+      sandboxDetect: async () => ({ present: true, running: true }),
+      sandboxStatus: async () => ({ state }),
+      sandboxUp: async (id) => { calls.push('up'); return { ok: true, id }; },
+      sandboxDown: async (id) => { calls.push('down'); return { ok: true, id }; },
+    } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(`${sliceFn('renderBoxList')}\n${sliceFn('toggleBox')}`, ctx);
+  await ctx.renderBoxList();
+  state = 'running';
+  const tog = sbBoxList.childNodes[0].childNodes[2];
+  assert.strictEqual(tog.className, 'secondary sandbox-box-toggle', 'ENTER: the row toggle was found');
+  tog.listeners.click({ stopPropagation() {} });
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(calls, ['down']);
+});

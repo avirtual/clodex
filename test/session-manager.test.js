@@ -4609,6 +4609,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
       },
     },
     notifyOS: () => {},
+    cleanupClaudeHook: () => {}, cleanupAgentPlugin: () => {}, cleanupSkills: () => {},
     // Only reached on the pty.spawn failure path, which the abandon-clear tests
     // drive; without them the real ENOENT is masked by a TypeError.
     collectSystemDiagnostics: () => ({}),
@@ -4742,6 +4743,45 @@ test('spawner-hint (t151): the abandon-clear covers EVERY throw site past the PO
     assert.deepStrictEqual(hints.map((h) => h.opts), [{ on: false }, { clear: true }],
       `${label} → the orphaned route is cleared on the way out`);
   }
+});
+
+test('every create() throw after pty.spawn kills the pty it spawned', async () => {
+  const cases = [
+    ['"already running elsewhere" refusal', {
+      socketLive: true,
+      registry: { register: () => { throw Object.assign(new Error('exists'), { code: 'EEXIST' }); }, unregister: () => {} },
+      seedRegistry: { pid: 999999, socket: '/tmp/clodex-blocker.sock' },
+    }, /already running elsewhere/],
+    ['transport.start() failure', {
+      transportStart: () => { throw new Error('EADDRINUSE'); },
+    }, /EADDRINUSE/],
+    ['registry.register non-EEXIST rethrow', {
+      registry: { register: () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); }, unregister: () => {} },
+    }, /EACCES/],
+  ];
+  for (const [label, opts, re] of cases) {
+    let killed = 0;
+    const { spawn, root } = mkHintProbe({ ...opts, ptySpawn: () => ({ pid: 999, onData() {}, onExit() {}, kill() { killed++; } }) });
+    if (opts.seedRegistry) {
+      fsReal.mkdirSync(runDirForReal(root, 'seat'), { recursive: true });
+      fsReal.writeFileSync(pathForReal(root, 'seat', 'registry'), JSON.stringify(opts.seedRegistry));
+    }
+    await assert.rejects(() => spawn('seat', { CLODEX_SPAWNER_HINT: 'off' }), re, label);
+    assert.strictEqual(killed, 1, `${label} → the spawned pty is killed, not left running as a second --resume`);
+  }
+});
+
+test('a pty that exits during the registry and transport awaits still sends session-exit', async () => {
+  let exitCb = null;
+  const { m, spawn } = mkHintProbe({
+    transportStart: () => new Promise((r) => setTimeout(r, 50)),
+    ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }),
+  });
+  const sent = [];
+  m._sendToSession = (...a) => { sent.push(a); };
+  setTimeout(() => { if (exitCb) exitCb({ exitCode: 1 }); }, 10);
+  await spawn('seat', {});
+  assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
 });
 
 test('spawner-hint (t151): the abandon-clear is silent when this seat set nothing', async () => {
@@ -6911,6 +6951,7 @@ test('t82 the status NOTICES stay passive: done and cancel must not wake a seat'
   assert.strictEqual(f.urgents[0], false, 'a done-report rides passively — it reaches the lead with their next turn');
   // cancel: lead → assignee.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec three' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: cancel delivered to the assignee');
@@ -7178,6 +7219,23 @@ test('task done: a dead lead ({error}) keeps the ticket OPEN and bounces (MF3 pa
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
   assert.strictEqual(f.one('t1').state, 'open', 'not closed — report went nowhere');
   assert.ok(f.injected.some((x) => /report NOT delivered, ticket kept open/.test(x)));
+});
+
+test('a held re-close with an unreachable lead does not claim the ticket is open', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const ts = f.load();
+  Object.assign(ts[0], { state: 'done', closedAt: 2, closedBy: 'team-hand', loopStep: 'verify',
+    verifyHold: { step: 'verify: diff', recovery: 'hand' } });
+  f.tstore.save(f.team.root, ts);
+  f.m._gatedDeliver = () => ({ error: 'x' });
+  f.injected.length = 0;
+  f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' });
+  const r = f.injected.find((x) => /report NOT delivered/.test(x));
+  assert.ok(r, `ENTER: the re-close reached the delivery and bounced: ${JSON.stringify(f.injected)}`);
+  assert.ok(!/kept open/.test(r), 'the ticket is done and held, not open');
+  assert.match(r, /verify: diff/, 'the reply names the hold step');
 });
 
 test('task done: a NON-assignee is bounced (no close, no delivery)', () => {
@@ -7565,7 +7623,7 @@ test('task reject: rejecting a non-DONE ticket is bounced', () => {
   assert.ok(f.injected.some((x) => /reject reopens a DONE ticket; t1 is open/.test(x)));
 });
 
-test('task cancel: works on an assigned ticket (reason to assignee) and a backlog ticket', () => {
+test('task cancel: works on an assigned ticket and a backlog ticket', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'assigned one' });
@@ -7573,11 +7631,22 @@ test('task cancel: works on an assigned ticket (reason to assignee) and a backlo
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'not needed' });
   assert.strictEqual(f.one('t1').state, 'cancelled');
-  assert.deepStrictEqual(f.gated, [{ target: 'team-hand', sender: 'lead', body: '[ticket t1 cancelled] not needed' }]);
+  assert.deepStrictEqual(f.gated, [], 'an unstarted role ticket resolves to no seat, so the reason goes to nobody');
   f.gated.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', who: null, body: '' });
   assert.strictEqual(f.one('t2').state, 'cancelled', 'backlog ticket cancels too');
   assert.deepStrictEqual(f.gated, [], 'no reason + no live assignee → no delivery');
+});
+
+test('cancelling an unstarted role ticket tells no sibling', () => {
+  const f = mkTasks();
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'filed for later' });
+  assert.strictEqual(f.one('t1').startedAt, null, 'ENTER: t1 is unstarted');
+  f.gated.length = 0;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'not needed' });
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+  assert.deepStrictEqual(f.gated, [], 'the first live hand is working something else and was never told about t1');
 });
 
 // ---------------------------------------------------------------------------
@@ -7947,6 +8016,22 @@ test('task accept: an empty branch is NOT stamped as merged', async () => {
   assert.strictEqual(f.one('t1').revival.mergedInto, null, 'and the acceptance write does not restore the claim');
 });
 
+test('a ticket accepted before and after its merge records where it merged', async () => {
+  const answer = { ok: true, merged: false, base: 'master' };
+  const f = mkAccept(answer);
+  openAndDone(f);
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.ok(f.one('t1').revival, 'ENTER: the first accept stamped the revival link');
+  assert.deepStrictEqual(f.destroyed, [], 'ENTER: the not-merged accept kept the seat');
+
+  answer.merged = true;
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'ENTER: the second accept took the merged arm');
+  assert.strictEqual(f.one('t1').revival.mergedInto, 'master', 'the merge is recorded on the stamp');
+});
+
 // ── t535: a recovered merge failure must stop shouting, but only where it is
 // actually over ────────────────────────────────────────────────────────────
 // The canonical recovery from a failed auto-merge is: the loop stamps the
@@ -8270,8 +8355,7 @@ test('t351: cancelling an UNSTARTED backlog ticket delivers nothing to a seat mi
 
   assert.deepStrictEqual(f.gated.filter((g) => /in flight/.test(g.body)), [],
     'the seat`s own in-flight spec must not come back at it — a hand reading a fresh dispatch compacts and starts over, discarding the work');
-  assert.deepStrictEqual(f.gated.map((g) => [g.target, g.body]), [['team-hand', '[ticket t2 cancelled] never mind']],
-    'only the cancellation notice goes out');
+  assert.deepStrictEqual(f.gated, [], 'nothing goes out — the unstarted ticket was never the seat`s');
   assert.ok(!f.injected.some((x) => /next:/.test(x)), 'and the lead is not told a hand-off happened');
 });
 
@@ -10912,6 +10996,21 @@ test('t767: a mutator throw on a role that already owns its derived template res
   assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
 });
 
+test('role-add with model: refuses to overwrite a template another role names', () => {
+  const f = mkTeamModel();
+  fsReal.mkdirSync(pathReal.dirname(f.tplFile('foo')), { recursive: true });
+  fsReal.writeFileSync(f.tplFile('foo'), JSON.stringify({ ...f.shippedHand, name: 'foo', extraArgs: ['--model', 'claude-sonnet-5[1m]'] }));
+  f.tm.addRole('team', 'bar', { brief: 'bar', template: 'foo' });
+  assert.strictEqual(f.tm.loadManifest('team').roles.bar.template, 'foo', 'ENTER: role bar names template foo');
+  const before = fsReal.readFileSync(f.tplFile('foo'));
+
+  f.m._handleTeam(f.seat, { type: 'team', sub: 'role-add', name: 'foo', model: 'haiku', body: 'x' });
+
+  assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('foo')), before, 'templates/foo.json is byte-identical');
+  assert.match(f.last(), /error:.*\bbar\b/, f.last());
+  assert.strictEqual(f.tm.loadManifest('team').roles.foo, undefined, 'no role foo was added');
+});
+
 test('t767: a role-set WITHOUT model: writes no template at all (every path byte-identical to pre-t767)', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', dispatch: 'worktree', body: 'new brief' });
@@ -11107,6 +11206,19 @@ test('t751 create: a granted seat writes team.json with the root and the default
   assert.match(reply, /lead shop-lead/);
   assert.match(reply, /dir .*teams\/shop/);
   assert.match(reply, /Next: spawn the lead in that root/, 'and told what to do next — the lead seat does not exist yet');
+});
+
+test('a create refused by createTeam leaves a fresh root untouched', async () => {
+  const f = mkTeamCreate();
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: '' });
+  assert.ok(f.teamExists('shop'), 'ENTER: the first create landed');
+  f.injected.length = 0;
+  const fresh = pathReal.join(f.home, 'fresh');
+
+  await f.m._handleIntent('a', { type: 'team-create', name: 'shop', root: fresh, lead: null, body: '' });
+
+  assert.ok(f.injected.some((t) => /already exists/.test(t)), `ENTER: the duplicate was refused: ${f.injected.join(' | ')}`);
+  assert.strictEqual(fsReal.existsSync(fresh), false, 'the fresh root was neither created nor git-initialized');
 });
 
 test('t751 create: an UNGRANTED seat gets no manifest and no reply at all', async () => {
@@ -15958,6 +16070,19 @@ test('t188: a replayed turn fires a repeated exec ONCE, and the DEDUPER is what 
   }
 });
 
+test('two overlapping _ensureWire calls share one wire', async () => {
+  const { m } = mkRecovery();
+  m._broadcast = () => {};
+  const [a, b] = await Promise.all([m._ensureWire(), m._ensureWire()]);
+  try {
+    assert.strictEqual(a, b, 'the second caller received the first caller\'s wire, not a second proxy');
+  } finally {
+    await a.close();
+    if (b !== a) await b.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+  }
+});
+
 // ── t313: two bodyless siblings in ONE turn are two emissions, not a repeat ──
 //
 // The dedupe key short-circuited on `sub`, so `[agent:task start t210]` and
@@ -16216,6 +16341,30 @@ test('spawn worktree: the seat boots IN the worktree, on its branch, recorded fo
   assert.strictEqual(head, 't999');
   assert.deepStrictEqual(m._worktreeSet, [{ name: 'child', wt: { path: createdCwd, branch: 't999' } }],
     'the worktree must be recorded on the session, or Delete Session… cannot remove it');
+
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('a throw after create() keeps the live seat\'s worktree', async () => {
+  const { root, repo } = mkGitRepo();
+  const m = mkWtManager(repo);
+  let createdCwd = 'UNSET';
+  m.create = async (...args) => {
+    createdCwd = args[2];
+    m.sessions.set(args[0], { name: args[0], agentType: 'claude', cwd: args[2] });
+    return { name: args[0] };
+  };
+  m._applyTemplatePersistence = () => { throw new Error('x'); };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: repo };
+  m.sessions.set('a', spawner);
+
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: repo, worktree: 't997' });
+  await until(() => m._replies.length);
+
+  assert.notStrictEqual(createdCwd, 'UNSET', `ENTER: create() ran — replies: ${JSON.stringify(m._replies)}`);
+  assert.ok(fsReal.existsSync(createdCwd), 'the live seat\'s worktree is still on disk');
+  assert.ok(!m._replies.some((r) => /^(\[agent:spawn\] )?error:/.test(r)),
+    `no reply reports an error for a running seat: ${JSON.stringify(m._replies)}`);
 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
@@ -18755,6 +18904,40 @@ test('task accept: a spawn seat is ARCHIVED, and the reply says so', async () =>
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+test('a second accept on a no-branch ticket changes nothing', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo, { dispatch: 'spawn' });
+  f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.m._injectText = () => {};
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
+  f.m.destroy = async () => ({ ok: true });
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await until(() => f.m.sessions.has('team-hand-1'));
+  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done');
+
+  const said = [];
+  const accept = () => f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
+  await accept();
+  const first = f.one('t1');
+  assert.ok(first.closedOut && first.acceptedAt, 'ENTER: the first accept closed the ticket out');
+  const acceptedAt = first.acceptedAt;
+  await accept();
+
+  const t = f.one('t1');
+  assert.strictEqual((t.events || []).filter((e) => e.kind === 'accept').length, 1, 'one accept event, not two');
+  assert.strictEqual(t.acceptedAt, acceptedAt, 'acceptedAt is not re-stamped');
+  assert.deepStrictEqual(archived, ['team-hand-1'], 'no second archive');
+  assert.strictEqual(said.length, 2, 'ENTER: two replies');
+  assert.match(said[1], /already accepted/, 'the second reply says the ticket was already accepted');
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
 // The other half of D5's split, and the reason it is a split at all: a STANDING
 // seat reaching the same arm must still be left alone. Without this control the
 // test above is satisfied by an arm that archives everything, which would retire
@@ -19095,6 +19278,27 @@ test('destroy reports live on the worktree arms too, so a ticket seat row is not
     { ok: true, worktreeRemoved: false, error: 'busy', path: '/wt/t900', live: false },
     'and so does the failure return: the row must go whether or not the tree did');
   assert.deepStrictEqual(removals, ['/wt/t900', '/wt/t900'], 'both arms really reached the removal');
+});
+
+test('destroy of a live worktree seat whose tree removal fails keeps a record naming the tree', async () => {
+  const records = new Map([['alive-wt', { name: 'alive-wt', cwd: '/wt/t901', worktree: { path: '/wt/t901', branch: 't901' } }]]);
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [...records.values()],
+      get: (n) => records.get(n) || null,
+      remove: (n) => { records.delete(n); },
+      upsert: (e) => { records.set(e.name, e); },
+    }),
+    gitWorktree: { removeWorktree: async () => ({ ok: false, error: 'busy' }) },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  m.sessions.set('alive-wt', { name: 'alive-wt', pty: { pid: 0, kill: () => { m.sessions.delete('alive-wt'); } } });
+  const r = await m.destroy('alive-wt');
+  assert.deepStrictEqual(r, { ok: true, worktreeRemoved: false, error: 'busy', path: '/wt/t901', live: true },
+    'ENTER: the live seat reached the removal-failed return');
+  assert.strictEqual(records.get('alive-wt')?.worktree?.path, '/wt/t901',
+    'the standing tree is still named by a record after kill() dropped the live one');
+  assert.ok(records.get('alive-wt').archivedAt > 0, 'and that record is archived, as an already-dead seat\'s would be');
 });
 
 test('renderer deleteSessionRow removes the row itself when destroy reports live:false', () => {

@@ -48136,6 +48136,7 @@ ${detail}` });
       var dialogReservedNames = /* @__PURE__ */ new Set();
       var dialogReservedSets = reservedSets(null);
       var lastTeamAutoName = null;
+      var lastTeamNameAuto = null;
       var nameHint = document.getElementById("name-hint");
       var dialogNameState = { ok: true, kind: "free", message: "" };
       var dialogToolGate = { ok: true, disabled: false, notice: null };
@@ -48384,11 +48385,7 @@ ${detail}` });
             return;
           }
           item.remove();
-          markSeatIo(entry.name, res.io || entry.io);
-          createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-          markSeatEffort(entry.name, entry.effort);
-          markSeatPosture(entry.name, entry.posture);
+          rebuildLiveRow(entry.name, entry, { io: res.io });
           switchSession(entry.name);
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
@@ -48426,20 +48423,15 @@ ${detail}` });
   `;
         item.addEventListener("click", async (e) => {
           if (e.target.closest(".session-close")) return;
-          await window.api.unarchiveSession(entry.name);
           const res = await window.api.retrySpawnSession(entry.name);
           if (!res || !res.ok) {
             alert(`Resume failed: ${res && res.error || "unknown error"}`);
             return;
           }
+          await window.api.unarchiveSession(entry.name);
           item.remove();
           sidebarMeta.delete(entry.name);
-          markSeatIo(entry.name, res.io || entry.io);
-          createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-          markSeatEffort(entry.name, entry.effort);
-          markSeatPosture(entry.name, entry.posture);
-          if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
+          rebuildLiveRow(entry.name, entry, { io: res.io });
           switchSession(entry.name);
           refreshSidebarView();
         });
@@ -48464,23 +48456,51 @@ ${detail}` });
         const why = entry.exitSignal ? `signal ${entry.exitSignal}` : `code ${entry.exitCode ?? "?"}`;
         return `exited (${why}) \u2014 click to resume`;
       }
+      function rowSnapshot(name, item) {
+        const nameEl = item ? item.querySelector(".session-name") : null;
+        const displayed = nameEl ? nameEl.textContent : name;
+        const d = item ? item.dataset : {};
+        return {
+          name,
+          type: d.type || null,
+          cwd: d.cwd || "",
+          label: displayed && displayed !== name ? displayed : null,
+          backend: d.backend || null,
+          team: d.team || null,
+          effort: d.effort || null,
+          posture: d.posture || null,
+          io: streamSeatNames.has(name) ? "stream" : "pty",
+          noWire: d.noWire === "1",
+          fixFor: d.fixFor || null,
+          account: d.account || null,
+          createdAt: (sidebarMeta.get(name) || {}).createdAt || null
+        };
+      }
+      function rebuildLiveRow(name, snap, res = {}) {
+        markSeatIo(name, res.io || snap.io);
+        createTerminal(name);
+        addSessionToSidebar(
+          name,
+          res.type || snap.type,
+          res.cwd || snap.cwd,
+          snap.label || null,
+          res.backend ?? snap.backend ?? null,
+          res.team !== void 0 ? res.team || null : snap.team || null,
+          (res.noWire ?? snap.noWire) === true,
+          snap.account || null,
+          snap.fixFor || null
+        );
+        markSeatEffort(name, snap.effort);
+        markSeatPosture(name, snap.posture);
+        if (snap.createdAt) sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, createdAt: snap.createdAt });
+      }
       function exitedRowSnapshot(name, code, meta) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!item) return null;
-        const nameEl = item.querySelector(".session-name");
-        const displayed = nameEl ? nameEl.textContent : name;
+        const { account, fixFor, ...snap } = rowSnapshot(name, item);
         return {
-          name,
-          type: item.dataset.type,
-          cwd: item.dataset.cwd || "",
-          label: displayed && displayed !== name ? displayed : null,
-          backend: item.dataset.backend || null,
-          team: item.dataset.team || null,
-          noWire: item.dataset.noWire === "1",
-          io: streamSeatNames.has(name) ? "stream" : "pty",
-          effort: item.dataset.effort || null,
-          posture: item.dataset.posture || null,
-          createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+          ...snap,
+          ...fixFor ? { fixFor } : {},
           exitCode: typeof code === "number" ? code : null,
           exitSignal: meta && meta.signal || null
         };
@@ -48518,12 +48538,7 @@ ${detail}` });
           }
           item.remove();
           sidebarMeta.delete(entry.name);
-          markSeatIo(entry.name, res.io || entry.io);
-          createTerminal(entry.name);
-          addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true);
-          markSeatEffort(entry.name, entry.effort);
-          markSeatPosture(entry.name, entry.posture);
-          if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
+          rebuildLiveRow(entry.name, entry, { io: res.io });
           switchSession(entry.name);
           refreshSidebarView();
         });
@@ -48545,21 +48560,8 @@ ${detail}` });
       }
       var archivingSessions = /* @__PURE__ */ new Map();
       function archivedRowEntry(name, item) {
-        const nameEl = item.querySelector(".session-name");
-        const displayed = nameEl ? nameEl.textContent : name;
-        const meta = sidebarMeta.get(name) || {};
-        return {
-          name,
-          type: item.dataset.type,
-          cwd: item.dataset.cwd || "",
-          label: displayed && displayed !== name ? displayed : null,
-          backend: item.dataset.backend || null,
-          team: item.dataset.team || null,
-          effort: item.dataset.effort || null,
-          posture: item.dataset.posture || null,
-          archivedAt: Date.now(),
-          createdAt: meta.createdAt || null
-        };
+        const { account, fixFor, ...snap } = rowSnapshot(name, item);
+        return { ...snap, ...fixFor ? { fixFor } : {}, archivedAt: Date.now() };
       }
       async function archiveSessionRow(name) {
         movingFailed.delete(name);
@@ -48667,26 +48669,14 @@ ${detail}` });
       }
       function restartSessionWithReattach(name) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snapAccount = accountOfRow(name);
-        const snapType = item ? item.dataset.type || null : null;
-        const snapCwd = item ? item.dataset.cwd : null;
-        const snapBackend = item ? item.dataset.backend || null : null;
-        const snapTeam = item ? item.dataset.team || null : null;
-        const snapNoWire = item ? item.dataset.noWire === "1" : false;
-        const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
-        const snapEffort = item ? item.dataset.effort || null : null;
-        const snapPosture = item ? item.dataset.posture || null : null;
+        const snap = rowSnapshot(name, item);
         return window.api.restartSession(name).then((res) => {
           if (!res || !res.ok) {
             alert(`Restart failed: ${res && res.error ? res.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            markSeatIo(name, res.io || snapIo);
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, snapTeam, snapNoWire, snapAccount);
-            markSeatEffort(name, snapEffort);
-            markSeatPosture(name, snapPosture);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
             switchSession(name);
           }
         });
@@ -48694,13 +48684,8 @@ ${detail}` });
       var movingFailed = /* @__PURE__ */ new Map();
       function moveSessionWithPicker(name) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snapType = item ? item.dataset.type || null : null;
-        const snapBackend = item ? item.dataset.backend || null : null;
-        const snapNoWire = item ? item.dataset.noWire === "1" : false;
-        const snapAccount = accountOfRow(name);
-        const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
-        const snapEffort = item ? item.dataset.effort || null : null;
-        const snapPosture = item ? item.dataset.posture || null : null;
+        const snap = rowSnapshot(name, item);
+        const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
         return window.api.selectDirectory().then((dir) => {
           if (!dir) return;
           return window.api.moveSession(name, dir).then((res) => {
@@ -48727,11 +48712,7 @@ ${detail}` });
               return;
             }
             if (snapType || res.type) {
-              markSeatIo(name, snapIo);
-              createTerminal(name);
-              addSessionToSidebar(name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, snapNoWire, snapAccount);
-              markSeatEffort(name, snapEffort);
-              markSeatPosture(name, snapPosture);
+              rebuildLiveRow(name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team });
               switchSession(name);
             }
             showToast(`${name} moved to ${res.cwd}, restarting`, { name });
@@ -48754,19 +48735,9 @@ ${detail}` });
         if (movingToPeer.has(name)) return;
         pendingPeerMove.clear();
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snapType = item ? item.dataset.type || null : null;
-        const snapBackend = item ? item.dataset.backend || null : null;
-        const snapCwd = item ? item.dataset.cwd || "" : cwd || "";
-        const snapTeam = item ? item.dataset.team || null : null;
-        const nameEl = item ? item.querySelector(".session-name") : null;
-        const displayed = nameEl ? nameEl.textContent : name;
-        const snapLabel = displayed && displayed !== name ? displayed : null;
-        const snapCreatedAt = (sidebarMeta.get(name) || {}).createdAt || null;
-        const snapNoWire = item ? item.dataset.noWire === "1" : false;
-        const snapAccount = accountOfRow(name);
-        const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
-        const snapEffort = item ? item.dataset.effort || null : null;
-        const snapPosture = item ? item.dataset.posture || null : null;
+        const snap = rowSnapshot(name, item);
+        if (!item) snap.cwd = cwd || "";
+        const { type: snapType, backend: snapBackend, effort: snapEffort, posture: snapPosture } = snap;
         pendingPeerMove.set(name, async (farCwd) => {
           if (movingToPeer.has(name)) return { ok: false, error: "move already in progress" };
           const toast = showToast(`Moving ${name} to ${peerLabel}\u2026`, { sticky: true, name });
@@ -48784,17 +48755,11 @@ ${detail}` });
           if (res && res.ok) {
             const dropped = res.dropped && res.dropped.length ? ` (did not travel: ${res.dropped.join(", ")})` : "";
             removeSession(name, { keepPersisted: true });
+            const { account, fixFor, ...archived } = snap;
             addArchivedSessionToSidebar({
-              name,
-              type: snapType,
-              cwd: snapCwd,
-              label: snapLabel,
-              backend: snapBackend,
-              team: snapTeam,
-              effort: snapEffort,
-              posture: snapPosture,
+              ...archived,
+              ...fixFor ? { fixFor } : {},
               archivedAt: Date.now(),
-              createdAt: snapCreatedAt,
               movedTo: { peer: peerId, peerLabel: res.peer || peerLabel, farCwd: res.farCwd }
             });
             refreshSidebarView();
@@ -48803,20 +48768,7 @@ ${detail}` });
           }
           if (res && res.kept) {
             if (res.respawned) {
-              markSeatIo(name, snapIo);
-              createTerminal(name);
-              addSessionToSidebar(
-                name,
-                res.type || snapType,
-                res.cwd,
-                snapLabel,
-                snapBackend,
-                res.team || null,
-                snapNoWire,
-                snapAccount
-              );
-              markSeatEffort(name, snapEffort);
-              markSeatPosture(name, snapPosture);
+              rebuildLiveRow(name, snap, { type: res.type, cwd: res.cwd, team: res.team });
               switchSession(name);
             } else {
               const row = {
@@ -48899,10 +48851,9 @@ ${detail}` });
             break;
           case "reattach":
             if (type) {
-              const snapAccount = accountOfRow(name);
-              markSeatIo(name, io);
-              createTerminal(name);
-              addSessionToSidebar(name, type, cwd, null, backend || null, null, noWire === true, snapAccount);
+              const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+              const snap = rowSnapshot(name, prior);
+              rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
               switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
@@ -48970,7 +48921,7 @@ ${detail}` });
           const typed = input.value.trim();
           const newNameEl = document.createElement("div");
           newNameEl.className = "session-name";
-          const wanted = commit && typed && typed !== sessionName ? typed : null;
+          const wanted = commit && typed && typed !== sessionName && typed !== current ? typed : null;
           newNameEl.textContent = wanted || current;
           newNameEl.addEventListener("dblclick", (e) => {
             e.stopPropagation();
@@ -48978,11 +48929,8 @@ ${detail}` });
           });
           input.replaceWith(newNameEl);
           if (!wanted) return;
-          const snapType = item ? item.dataset.type || null : null;
-          const snapEffort = item ? item.dataset.effort || null : null;
-          const snapPosture = item ? item.dataset.posture || null : null;
-          const snapBackend = item ? item.dataset.backend || null : null;
-          const snapAccount = accountOfRow(sessionName);
+          const snap = { ...rowSnapshot(sessionName, item), label: null };
+          const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
           window.api.renameSession(sessionName, wanted).then((res) => {
             if (!res || !res.ok) {
               if (res && res.kept) {
@@ -49011,11 +48959,9 @@ ${detail}` });
               return;
             }
             removeSession(sessionName, { keepPersisted: true });
-            markSeatIo(res.name, streamSeatNames.has(sessionName) ? "stream" : "pty");
             streamSeatNames.delete(sessionName);
             seatViewMemory.delete(sessionName);
-            createTerminal(res.name);
-            addSessionToSidebar(res.name, res.type || snapType, res.cwd, null, res.backend ?? snapBackend, res.team || null, res.noWire === true, snapAccount);
+            rebuildLiveRow(res.name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team, noWire: res.noWire });
             switchSession(res.name);
             showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
           });
@@ -49299,8 +49245,12 @@ ${detail}` });
         return h;
       }
       var metaRefreshInFlight = false;
+      var metaRefreshQueued = null;
       async function refreshSidebarMeta({ includePr = true } = {}) {
-        if (metaRefreshInFlight) return;
+        if (metaRefreshInFlight) {
+          metaRefreshQueued = { includePr };
+          return;
+        }
         metaRefreshInFlight = true;
         try {
           const res = await window.api.sidebarMeta({ includePr });
@@ -49311,7 +49261,10 @@ ${detail}` });
           }
         } catch {
         } finally {
+          const next = metaRefreshQueued;
           metaRefreshInFlight = false;
+          metaRefreshQueued = null;
+          if (next) refreshSidebarMeta(next);
         }
         try {
           const live = await window.api.listSessions();
@@ -49781,12 +49734,21 @@ ${detail}` });
           if (!item || !range) return;
           const value = composer.value;
           if (item.kind === "control" && run) {
-            composer.value = "";
+            const cut = value.slice(range.start, range.end);
+            composer.value = value.slice(0, range.start) + value.slice(range.end);
             composer.dispatchEvent(new Event("input", { bubbles: true }));
+            const restore = () => {
+              if (composer.value !== value.slice(0, range.start) + value.slice(range.end)) return;
+              composer.value = value.slice(0, range.start) + cut + value.slice(range.end);
+              composer.dispatchEvent(new Event("input", { bubbles: true }));
+            };
             Promise.resolve(window.api.seatControl(name, String(item.name).replace(/^\//, ""))).then((res) => {
-              if (res && res.ok === false) showToast(`${item.name} failed: ${res.error || "unknown error"}`, { kind: "error", name });
-              else pull(true);
+              if (res && res.ok === false) {
+                restore();
+                showToast(`${item.name} failed: ${res.error || "unknown error"}`, { kind: "error", name });
+              } else pull(true);
             }).catch((err) => {
+              restore();
               showToast(`${item.name} failed: ${err && err.message ? err.message : err}`, { kind: "error", name });
             });
             return;
@@ -50438,7 +50400,6 @@ ${detail}` });
           teamRow.style.display = "none";
           if (teamToggle) teamToggle.checked = false;
           if (teamFields) teamFields.style.display = "none";
-          lastTeamAutoName = null;
           if (!authoring) refreshTeamForCwd();
         }
       }
@@ -51041,8 +51002,10 @@ ${detail}` });
           } catch {
             dialogTeamNames = [];
           }
-          if (teamNameInput && !teamNameInput.value.trim()) {
+          if (token !== teamForCwdToken) return;
+          if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
             teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+            lastTeamNameAuto = teamNameInput.value;
           }
         }
       }
@@ -51125,6 +51088,7 @@ ${detail}` });
         }
         if (teamToggle) teamToggle.checked = false;
         if (teamNameInput) teamNameInput.value = "";
+        lastTeamNameAuto = null;
         if (teamRoleSelect) teamRoleSelect.value = "hand";
         if (teamFields) teamFields.style.display = "none";
         dialogTeamMode = null;
@@ -51160,6 +51124,7 @@ ${detail}` });
         dialogReservedNames = reservedUnion(dialogReservedSets);
         if (!prefill && inputName.value === defaultName) {
           inputName.value = bumpDefaultName(defaultName, dialogReservedNames);
+          lastTeamAutoName = inputName.value;
         }
         refreshNameValidity();
         dialogHostSettings = settings;
@@ -51261,7 +51226,7 @@ ${detail}` });
         {
           const { model, rest } = splitModelArg(t.extraArgs || []);
           inputModel.value = model;
-          inputArgs.value = rest.join(" ");
+          inputArgs.value = formatArgs(rest);
           if (inputEffort) fillEffort(inputEffort, t.type, typeof t.effort === "string" && t.effort || "");
         }
         argsHint.textContent = ARGS_HINTS[t.type] || "";
@@ -51321,12 +51286,15 @@ ${detail}` });
       }
       function parseArgs(str) {
         const out = [];
-        const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+        const re = /(?:"[^"]*"|'[^']*'|[^\s"']+|["'])+/g;
         let m;
         while ((m = re.exec(str)) !== null) {
-          out.push(m[1] !== void 0 ? m[1] : m[2] !== void 0 ? m[2] : m[3]);
+          out.push(m[0].replace(/"([^"]*)"|'([^']*)'/g, (_, d, q) => d !== void 0 ? d : q));
         }
         return out;
+      }
+      function formatArgs(rest) {
+        return rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
       }
       function expandPath(p) {
         if (!p) return p;
@@ -51543,7 +51511,11 @@ ${detail}` });
         showToast(`"${hostDir}" isn't reachable in the sandbox \u2014 type a container path, or mount the folder from the Sandboxes panel.`, { kind: "warn", duration: 9e3 });
       }
       dialogOverlay.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") submitDialog();
+        if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+        const tag = e.target && e.target.tagName;
+        if (tag === "TEXTAREA" || tag === "BUTTON" || tag === "SUMMARY") return;
+        e.preventDefault();
+        submitDialog();
       });
       dialogOverlay.addEventListener("mousedown", (e) => {
         if (e.target === dialogOverlay) closeDialog();
@@ -51576,7 +51548,7 @@ ${detail}` });
         {
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
           inputModel.value = model;
-          inputArgs.value = rest.join(" ");
+          inputArgs.value = formatArgs(rest);
           if (inputEffort) fillEffort(inputEffort, inputType.value, tpl && typeof tpl.effort === "string" && tpl.effort || "");
         }
         argsHint.textContent = ARGS_HINTS[inputType.value] || "";
@@ -51623,54 +51595,61 @@ ${detail}` });
         dialogOverlay.classList.remove("hidden");
         setTimeout(() => inputName.select(), 50);
       }
+      var templateSaveInFlight = false;
       async function saveTemplateFromForm() {
-        const name = inputName.value.trim();
-        if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
-          inputName.style.borderColor = "#e94560";
-          return;
-        }
-        const cfg = collectFormConfig();
-        if (editingTemplateTeam) {
-          const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
-          if (res && res.ok === false) {
-            alert(`Could not save into team ${editingTemplateTeam}: ${res.error || "unknown error"}`);
-            return;
-          }
-          closeDialog();
-          await refreshTemplatesDropdown();
-          if (templatesDrawerRefresh) templatesDrawerRefresh();
-          return;
-        }
-        if (editingTemplateBundle) {
-          const res = await window.api.writePluginBundleFile(
-            editingTemplateBundle.id,
-            "templates",
-            name,
-            JSON.stringify({ ...cfg, name }, null, 2)
-          );
-          if (res && res.ok === false) {
-            alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || "unknown error"}`);
-            return;
-          }
-          closeDialog();
-          await refreshTemplatesDropdown();
-          if (templatesDrawerRefresh) templatesDrawerRefresh();
-          return;
-        }
-        if (editingTemplateId) {
-          const list = (await window.api.listTemplates()).filter((t) => !t.team);
-          const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
-          if (clash) {
+        if (templateSaveInFlight) return;
+        templateSaveInFlight = true;
+        try {
+          const name = inputName.value.trim();
+          if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) {
             inputName.style.borderColor = "#e94560";
             return;
           }
-          await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
-        } else {
-          await window.api.saveTemplateByName({ ...cfg, name });
+          const cfg = collectFormConfig();
+          if (editingTemplateTeam) {
+            const res = await window.api.saveTeamTemplate(editingTemplateTeam, name, { ...cfg, name });
+            if (res && res.ok === false) {
+              alert(`Could not save into team ${editingTemplateTeam}: ${res.error || "unknown error"}`);
+              return;
+            }
+            closeDialog();
+            await refreshTemplatesDropdown();
+            if (templatesDrawerRefresh) templatesDrawerRefresh();
+            return;
+          }
+          if (editingTemplateBundle) {
+            const res = await window.api.writePluginBundleFile(
+              editingTemplateBundle.id,
+              "templates",
+              name,
+              JSON.stringify({ ...cfg, name }, null, 2)
+            );
+            if (res && res.ok === false) {
+              alert(`Could not save into the ${editingTemplateBundle.name} plugin: ${res.error || "unknown error"}`);
+              return;
+            }
+            closeDialog();
+            await refreshTemplatesDropdown();
+            if (templatesDrawerRefresh) templatesDrawerRefresh();
+            return;
+          }
+          if (editingTemplateId) {
+            const list = (await window.api.listTemplates()).filter((t) => !t.team);
+            const clash = list.find((t) => t.id !== editingTemplateId && (t.name || "").toLowerCase() === name.toLowerCase());
+            if (clash) {
+              inputName.style.borderColor = "#e94560";
+              return;
+            }
+            await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
+          } else {
+            await window.api.saveTemplateByName({ ...cfg, name });
+          }
+          closeDialog();
+          await refreshTemplatesDropdown();
+          if (templatesDrawerRefresh) templatesDrawerRefresh();
+        } finally {
+          templateSaveInFlight = false;
         }
-        closeDialog();
-        await refreshTemplatesDropdown();
-        if (templatesDrawerRefresh) templatesDrawerRefresh();
       }
       window.api.onTranscriptChanged((name) => {
         for (const cb of [...transcriptChangedSubs]) cb(name);
@@ -51987,6 +51966,11 @@ ${detail}` });
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         return item ? item.dataset.type || null : null;
       }
+      function seatTypeOf(name) {
+        const peer = name ? sessions.get(name)?.peer : null;
+        const far = peer ? (peerStatuses.get(peer.id)?.sessions || []).find((s) => s.name === peer.name)?.type : null;
+        return far || sessionTypeOf(name);
+      }
       function activeIsAgent() {
         const t = activeSession ? sessionTypeOf(activeSession) : null;
         return isAgentType(t);
@@ -52218,7 +52202,7 @@ ${detail}` });
         if (tSeg) segs.push(`<span class="px-seg" data-tip="${esc(tSeg.tip)}">${esc(tSeg.text)}</span>`);
         const rSeg = reqSeg(p);
         if (rSeg) segs.push(`<span class="px-seg" data-tip="${esc(rSeg.tip)}">${esc(rSeg.text)}</span>`);
-        if (p.warmth && adapterFor(sessionTypeOf(activeSession))?.caps.warmth) {
+        if (p.warmth && adapterFor(seatTypeOf(activeSession))?.caps.warmth) {
           let txt;
           if (dead) {
             txt = "\u{1F525} ?";
@@ -52569,6 +52553,7 @@ Click for live activity`;
         for (const name of proxyState.keys()) {
           applyWarmBadge(name);
           checkWarmthCooldown(name);
+          applySubagents(name);
         }
         for (const el of sessionList.querySelectorAll(".session-item[data-thinking-since], .session-item[data-compacting-since]")) applyThinkBadge(el);
         tickProxyBar();
@@ -52770,7 +52755,12 @@ Click for live activity`;
               okBtn.textContent = "Create";
             }
             if (!res || !res.ok) {
-              errEl.textContent = res && res.error || "could not create the team";
+              const msg = res && res.error || "could not create the team";
+              if (!overlay.isConnected) {
+                showToast(`Create team ${name} failed: ${msg}`, { kind: "error", duration: 12e3 });
+                return;
+              }
+              errEl.textContent = msg;
               errEl.classList.remove("hidden");
               return;
             }
@@ -53419,7 +53409,6 @@ Click for live activity`;
           setPrefsEnvState(res && res.error || "Environment scopes unavailable on this host.", "error");
           return;
         }
-        setPrefsEnvState("");
         const vars = res.vars || [];
         if (!vars.length) {
           const empty = document.createElement("span");
@@ -53451,6 +53440,7 @@ Click for live activity`;
               setPrefsEnvState(r && r.error || "Delete failed.", "error");
               return;
             }
+            setPrefsEnvState("");
             refreshPrefsEnv();
           });
           row.append(editBtn, delBtn);
@@ -53521,7 +53511,6 @@ Click for live activity`;
           if (prefsAccountModel) prefsAccountModel.textContent = "";
           return;
         }
-        setPrefsAccountsState("");
         const accounts = res.accounts || [];
         let live = [];
         try {
@@ -53586,6 +53575,7 @@ Click for live activity`;
                 setPrefsAccountsState(r && r.error || "Remove failed.", "error");
                 return;
               }
+              setPrefsAccountsState("");
               refreshPrefsAccounts();
             });
           }
@@ -53857,15 +53847,15 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
           wsLogsSize.textContent = `${wsLogsSizeText()} \u2014 clearing\u2026`;
           const r = await window.api.wirescopePrune({ olderThan: older, tier: "receipts", scope: "all" });
           if (!r || !r.ok || !r.data) {
-            wsLogsSize.textContent = r && r.error ? `Error: ${r.error}` : "Clear failed";
+            showToast(`Clear failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
             return;
           }
         } catch (e) {
-          wsLogsSize.textContent = `Error: ${e && e.message || e}`;
+          showToast(`Clear failed: ${e && e.message || e}`, { kind: "error", duration: 12e3 });
         } finally {
           wsLogsClearBusy = false;
+          await refreshWsLogs();
         }
-        await refreshWsLogs();
       });
       function renderRemoteStatus(st) {
         if (!st) return;
@@ -55443,7 +55433,7 @@ ${res.stderr}` : "");
           if (rowStartGated) tog.title = sn.foreign && sn.foreign.text || sbGate.reason || "";
           tog.addEventListener("click", (e) => {
             e.stopPropagation();
-            toggleBox(b.id, sn.running);
+            toggleBox(b.id);
           });
           row.append(dot, label, tog);
           row.addEventListener("click", () => selectBox(b.id));
@@ -55473,10 +55463,13 @@ ${res.stderr}` : "");
         await renderBoxList();
         await refreshSandboxStatus();
       }
-      async function toggleBox(id, running) {
+      async function toggleBox(id) {
         if (sbBusy) return;
         sbBusy = true;
+        let running = false;
         try {
+          const s = await window.api.sandboxStatus(id);
+          running = sandboxStatusNotice(s && s.state).running;
           const r = running ? await window.api.sandboxDown(id) : await window.api.sandboxUp(id);
           if (!r || r.ok === false) {
             showToast(`Sandbox ${running ? "stop" : "start"} failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
@@ -56141,7 +56134,7 @@ ${res.stderr}` : "");
         {
           const { model, rest } = splitModelArg(res.extraArgs || []);
           argsModel.value = model;
-          argsInput.value = rest.map((a) => /\s/.test(a) ? `"${a}"` : a).join(" ");
+          argsInput.value = formatArgs(rest);
         }
         if (argsEffort) fillEffort(argsEffort, res.type, typeof res.effort === "string" && res.effort || "");
         const isAgent = isAgentType(res.type);
@@ -56286,11 +56279,7 @@ ${res.stderr}` : "");
         const name = argsEditingName;
         const source = argsEditingSource;
         const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snapType = existing ? existing.dataset.type || null : null;
-        const snapCwd = existing ? existing.dataset.cwd : null;
-        const snapBackend = existing ? existing.dataset.backend || null : null;
-        const snapNoWire = existing ? existing.dataset.noWire === "1" : false;
-        const snapIo = streamSeatNames.has(name) ? "stream" : "pty";
+        const snap = rowSnapshot(name, existing);
         const snapAccount = env === void 0 ? accountOfRow(name) : accountFromEnv(formatEnvLines(env), argsAccounts || []);
         closeArgsDialog();
         const res = source ? await source.save({
@@ -56316,10 +56305,8 @@ ${res.stderr}` : "");
         }
         if (res.restarted) {
           if (source) source.onRestarted();
-          else if (snapType) {
-            markSeatIo(name, res.io || snapIo);
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null, res.backend ?? snapBackend, null, snapNoWire, snapAccount);
+          else if (snap.type) {
+            rebuildLiveRow(name, { ...snap, account: snapAccount, effort: effort !== void 0 ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
             switchSession(name);
           }
         }

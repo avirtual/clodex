@@ -67,17 +67,21 @@ function mkRenderer(extra = {}) {
     refreshSidebarView() {},
     peerStatuses: new Map(),
     openPeerSessionDialog() {},
+    seatViewMemory: new Map(),
+    alert() {},
     ...extra,
   };
   const names = Object.keys(env);
   const body = [
     slice('const seatIoKind', '\n}\n'),
     fnSrc('markSeatEffort'), fnSrc('markSeatPosture'),
+    fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'),
     fnSrc('exitedRowSnapshot'), fnSrc('archivedRowEntry'),
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
     fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'), fnSrc('startRename'),
-    'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename };',
+    fnSrc('restartSessionWithReattach'),
+    'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename, restartSessionWithReattach };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, created, mkNode, ...fns };
@@ -343,4 +347,134 @@ test('a rename that fails but keeps the seat carries its effort level on the fai
   await new Promise((r) => setImmediate(r));
   assert.ok(renamed, 'ENTER: the rename reached renameSession');
   assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture, /failed/.test(r.className)]), [['s', 'xhigh', 'bypass', true]]);
+});
+
+const flush = () => new Promise((r) => setImmediate(r));
+const noTarget = { target: { closest: () => null } };
+
+test('a failed resume of an archived row leaves the record archived', async () => {
+  const calls = [];
+  const api = {
+    unarchiveSession: async () => { calls.push('unarchive'); },
+    retrySpawnSession: async () => { calls.push('retry'); return { ok: false, error: 'x' }; },
+  };
+  const h = mkRenderer({ window: { api } });
+  h.addArchivedSessionToSidebar({ name: 'a', type: 'claude', cwd: '/w' });
+  await h.rows[0].on.click(noTarget);
+  assert.deepStrictEqual(calls, ['retry']);
+  assert.match(h.rows[0].className, /archived/);
+});
+
+test('a successful resume of an archived row un-archives the record after the spawn', async () => {
+  const calls = [];
+  const api = {
+    unarchiveSession: async () => { calls.push('unarchive'); },
+    retrySpawnSession: async () => { calls.push('retry'); return { ok: true }; },
+  };
+  const h = mkRenderer({ window: { api } });
+  h.addArchivedSessionToSidebar({ name: 'a', type: 'claude', cwd: '/w' });
+  await h.rows[0].on.click(noTarget);
+  assert.deepStrictEqual(calls, ['retry', 'unarchive']);
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, /archived/.test(r.className)]), [['a', false]]);
+});
+
+const fixEntry = { name: 's', type: 'claude', cwd: '/w', fixFor: 'box1' };
+const liveFixRow = (h) => h.addSessionToSidebar('s', 'claude', '/w', null, null, null, false, null, 'box1');
+const rebuildPaths = [
+  { path: 'retry', rebuilt: 's', run: async (h, api) => {
+    api.retrySpawnSession = async () => ({ ok: true });
+    h.addFailedSessionToSidebar({ ...fixEntry });
+    await h.rows[0].on.click(noTarget);
+  } },
+  { path: 'resume', rebuilt: 's', run: async (h, api) => {
+    api.unarchiveSession = async () => ({ ok: true });
+    api.retrySpawnSession = async () => ({ ok: true });
+    h.addArchivedSessionToSidebar({ ...fixEntry });
+    await h.rows[0].on.click(noTarget);
+  } },
+  { path: 'restart', rebuilt: 's', run: async (h, api) => {
+    api.restartSession = async (n) => { h.env.removeSession(n); return { ok: true }; };
+    liveFixRow(h);
+    await h.restartSessionWithReattach('s');
+  } },
+  { path: 'move', rebuilt: 's', run: async (h, api) => {
+    api.selectDirectory = async () => '/d';
+    api.moveSession = async (n) => { h.env.removeSession(n); return { ok: true, type: 'claude', cwd: '/d' }; };
+    liveFixRow(h);
+    await h.moveSessionWithPicker('s');
+  } },
+  { path: 'rename', rebuilt: 't', run: async (h, api) => {
+    api.renameSession = async () => ({ ok: true, name: 't', type: 'claude', cwd: '/w' });
+    liveFixRow(h);
+    h.startRename(h.rows[0], { textContent: 's', replaceWith() {} }, 's');
+    const input = h.created[h.created.length - 1];
+    input.value = 't';
+    input.on.blur();
+    await flush();
+  } },
+];
+
+test('every rebuild path carries a fix seat\'s chip onto the rebuilt row', async () => {
+  const got = [];
+  for (const { path, rebuilt, run } of rebuildPaths) {
+    const api = {};
+    const h = mkRenderer({ window: { api }, applyFixChip: (item, f) => { if (f) item.dataset.fixFor = f; } });
+    await run(h, api);
+    const row = h.rows.find((r) => r.dataset.name === rebuilt && !/failed|archived/.test(r.className));
+    assert.ok(row, `ENTER: the ${path} path rebuilt a live row for ${rebuilt}`);
+    got.push([path, row.dataset.fixFor]);
+  }
+  assert.deepStrictEqual(got, [['retry', 'box1'], ['resume', 'box1'], ['restart', 'box1'], ['move', 'box1'], ['rename', 'box1']]);
+});
+
+test('a restart keeps the row\'s label, team, wire-off flag, effort and posture', async () => {
+  const api = {};
+  const h = mkRenderer({ window: { api } });
+  api.restartSession = async (n) => { h.env.removeSession(n); return { ok: true }; };
+  h.addSessionToSidebar('s', 'claude', '/w', 'lab', null, 'T', true);
+  const byClass = h.rows[0].querySelector;
+  h.rows[0].querySelector = (sel) => (sel === '.session-name' ? { textContent: 'lab' } : byClass(sel));
+  h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
+  await h.restartSessionWithReattach('s');
+  assert.strictEqual(h.rows.length, 1, 'ENTER: one rebuilt row');
+  const r = h.rows[0];
+  assert.deepStrictEqual([r.dataset.team, r.dataset.noWire, r.dataset.effort, r.dataset.posture, /<div class="session-name">lab<\/div>/.test(r.innerHTML)],
+    ['T', '1', 'xhigh', 'bypass', true]);
+});
+
+test('a rename re-applies the seat\'s effort and posture on the rebuilt row', async () => {
+  const api = { renameSession: async () => ({ ok: true, name: 't', type: 'claude', cwd: '/w' }) };
+  const h = mkRenderer({ window: { api } });
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.markSeatEffort('s', 'xhigh');
+  h.markSeatPosture('s', 'bypass');
+  h.startRename(h.rows[0], { textContent: 's', replaceWith() {} }, 's');
+  const input = h.created[h.created.length - 1];
+  input.value = 't';
+  input.on.blur();
+  await flush();
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.dataset.effort, r.dataset.posture]), [['t', 'xhigh', 'bypass']]);
+});
+
+test('an archived entry keeps the seat\'s io and wire-off flag', () => {
+  const h = mkRenderer();
+  h.markSeatIo('s', 'stream');
+  h.addSessionToSidebar('s', 'claude', '/w', null, null, null, true);
+  const e = h.archivedRowEntry('s', h.rows[0]);
+  assert.deepStrictEqual({ ...e, archivedAt: 0 },
+    { name: 's', type: 'claude', cwd: '/w', label: null, backend: null, team: null, effort: null, posture: null, io: 'stream', noWire: true, archivedAt: 0, createdAt: null });
+});
+
+test('blurring an unedited rename box on a labelled row does not rename', async () => {
+  const calls = [];
+  const api = { renameSession: async (...a) => { calls.push(a); return { ok: true, name: a[1], type: 'claude', cwd: '/w' }; } };
+  const h = mkRenderer({ window: { api } });
+  h.addSessionToSidebar('seat1', 'claude', '/w', 'x2');
+  h.startRename(h.rows[0], { textContent: 'x2', replaceWith() {} }, 'seat1');
+  const input = h.created[h.created.length - 1];
+  assert.strictEqual(input.value, 'x2', 'ENTER: the rename box is seeded with the label');
+  input.on.blur();
+  await flush();
+  assert.strictEqual(calls.length, 0);
 });
