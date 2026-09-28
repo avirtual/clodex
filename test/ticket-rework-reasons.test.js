@@ -55,8 +55,9 @@ const SHIPPED_REVIEWER_TEMPLATE = {
 };
 
 const SEED_DIR = mkTmpRoot('clodex-t618-seed-');
+initStores(mkTmpRoot('clodex-t618-ud-'), { log: console, registryDir: SEED_DIR });
 
-function mkRepo() {
+function buildRepo() {
   const dir = mkTmpRoot('clodex-t618-repo-');
   const git = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
   git(['init', '-q', '-b', 'master']);
@@ -71,6 +72,14 @@ function mkRepo() {
   git(['add', 'work.txt']);
   git(['commit', '-q', '-m', 'work']);
   git(['checkout', '-q', 'master']);
+  return dir;
+}
+
+const REPO_TEMPLATE = buildRepo();
+
+function mkRepo() {
+  const dir = mkTmpRoot('clodex-t618-repo-');
+  fsReal.cpSync(REPO_TEMPLATE, dir, { recursive: true });
   return dir;
 }
 
