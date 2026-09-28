@@ -584,7 +584,8 @@ function startWorkspaceRename() {
       return;
     }
     currentWorkspaceName = newName;
-    if (document.getElementById('workspace-name') === newSpan) newSpan.textContent = newName;
+    const live = document.getElementById('workspace-name');
+    if (live) live.textContent = newName;
     document.title = newName;
   };
 

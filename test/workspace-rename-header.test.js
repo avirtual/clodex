@@ -125,3 +125,16 @@ test('escaping a rename opened while an earlier one was in flight shows the name
   second.handlers.keydown({ key: 'Escape', stopPropagation() {} });
   assert.strictEqual(world.header.textContent, 'New');
 });
+
+test('an earlier rename that resolves after an overlapping one was escaped writes its name into the live header', async () => {
+  let resolve;
+  const api = load(() => new Promise((r) => { resolve = r; }));
+  rename(api, 'New');
+  api.start();
+  world.header.handlers.keydown({ key: 'Escape', stopPropagation() {} });
+  assert.strictEqual(world.header.textContent, 'Old', 'ENTER: the escaped rename put back the not-yet-saved name');
+  resolve(true);
+  await flush();
+  assert.strictEqual(world.header.textContent, 'New');
+  assert.strictEqual(world.title, 'New');
+});
