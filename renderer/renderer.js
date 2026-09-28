@@ -2753,7 +2753,6 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     teamRow.style.display = 'none';
     if (teamToggle) teamToggle.checked = false;
     if (teamFields) teamFields.style.display = 'none';
-    lastTeamAutoName = null;
     if (!authoring) refreshTeamForCwd();
   }
 }
@@ -3351,6 +3350,7 @@ async function refreshTeamForCwd() {
     if (teamJoinFields) teamJoinFields.style.display = 'none';
     if (teamCreateFields) teamCreateFields.style.display = '';
     try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
+    if (token !== teamForCwdToken) return;
     if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
       teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
       lastTeamNameAuto = teamNameInput.value;
@@ -3909,9 +3909,9 @@ async function pickSandboxCwd(hostDir) {
 }
 
 dialogOverlay.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter' || e.isComposing) return;
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
   const tag = e.target && e.target.tagName;
-  if (tag === 'TEXTAREA' || tag === 'BUTTON') return;
+  if (tag === 'TEXTAREA' || tag === 'BUTTON' || tag === 'SUMMARY') return;
   e.preventDefault();
   submitDialog();
 });

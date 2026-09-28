@@ -296,6 +296,8 @@ test('Enter inside the env textarea or on Cancel does not submit the New Session
   f.overlayKey(ev({ tagName: 'TEXTAREA', id: 'input-env' }));
   f.overlayKey(ev({ tagName: 'BUTTON', id: 'btn-cancel' }));
   f.overlayKey(ev({ tagName: 'INPUT', id: 'input-cwd' }, { isComposing: true }));
+  f.overlayKey(ev({ tagName: 'INPUT', id: 'input-cwd' }, { keyCode: 229 }));
+  f.overlayKey(ev({ tagName: 'SUMMARY', id: 'tools-section' }));
   f.overlayKey(ev({ tagName: 'INPUT', id: 'input-name' }));
   assert.deepStrictEqual(f.closed, ['submitDialog'], 'only the name-field Enter may submit');
   assert.deepStrictEqual(prevented, ['input-name'], 'the submitting Enter must be preventDefault-ed');

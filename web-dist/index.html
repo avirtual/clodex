@@ -50439,7 +50439,6 @@ ${detail}` });
           teamRow.style.display = "none";
           if (teamToggle) teamToggle.checked = false;
           if (teamFields) teamFields.style.display = "none";
-          lastTeamAutoName = null;
           if (!authoring) refreshTeamForCwd();
         }
       }
@@ -51042,6 +51041,7 @@ ${detail}` });
           } catch {
             dialogTeamNames = [];
           }
+          if (token !== teamForCwdToken) return;
           if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
             teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
             lastTeamNameAuto = teamNameInput.value;
@@ -51550,9 +51550,9 @@ ${detail}` });
         showToast(`"${hostDir}" isn't reachable in the sandbox \u2014 type a container path, or mount the folder from the Sandboxes panel.`, { kind: "warn", duration: 9e3 });
       }
       dialogOverlay.addEventListener("keydown", (e) => {
-        if (e.key !== "Enter" || e.isComposing) return;
+        if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
         const tag = e.target && e.target.tagName;
-        if (tag === "TEXTAREA" || tag === "BUTTON") return;
+        if (tag === "TEXTAREA" || tag === "BUTTON" || tag === "SUMMARY") return;
         e.preventDefault();
         submitDialog();
       });

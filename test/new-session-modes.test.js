@@ -921,6 +921,52 @@ test('ticking Join on a fresh dialog replaces the default session name with the 
   assert.strictEqual(inputName.value, 't-hand');
 });
 
+test('picking a template before ticking Join still replaces the default session name', () => {
+  const recordDefault = extract(/\n  (if \(!prefill && inputName\.value === defaultName\) \{\n[\s\S]*?\n  \})\n/, "openDialog's default-name block");
+  const typeReset = extract(/\n  (if \(teamRow\) \{\n    teamRow\.style\.display = 'none';[\s\S]*?\n  \})\n\}\n/, "applyTypeDefaults' team-row block");
+  const suggest = slice('function updateTeamJoinNameSuggestion(', '\nasync function refreshCwdSuggestions(', 'updateTeamJoinNameSuggestion');
+  const roleKey = slice('function roleKeyForJoin(', '\nlet teamForCwdToken', 'roleKeyForJoin');
+  const inputName = { value: 'session-3' };
+  let refreshed = 0;
+  new Function('inputName', 'teamRoleSelect', 'teamRolePromptSelect', 'sessionNameTaken', 'refreshNameValidity',
+    'bumpDefaultName', 'dialogReservedNames', 'refreshTeamForCwd',
+    `let lastTeamAutoName = null; let dialogTeamMode = 'join'; let dialogTeamName = 't';
+     const prefill = null; const defaultName = 'session-3'; const authoring = false;
+     const teamRow = { style: {} }, teamToggle = { checked: true }, teamFields = { style: {} };
+     ${roleKey}\n${suggest}\n${recordDefault}\n${typeReset}\nupdateTeamJoinNameSuggestion();`)(
+    inputName, { value: 'hand' }, null, () => false, () => {}, (n) => n, new Set(), () => { refreshed++; });
+  assert.strictEqual(refreshed, 1, 'ENTER: the team-row block ran');
+  assert.strictEqual(inputName.value, 't-hand');
+});
+
+test('a stale cwd refresh landing after a newer one does not overwrite the team name', async () => {
+  const fn = slice('async function refreshTeamForCwd(', '\nfunction dedupeTeamName(', 'refreshTeamForCwd');
+  const dedupe = slice('function dedupeTeamName(', '\nasync function populateTeamRolePrompts(', 'dedupeTeamName');
+  const slug = slice('function slugifyTeamName(', '\nfunction roleKeyForJoin(', 'slugifyTeamName + pathBasename');
+  const inputCwd = { value: '/Users/u' };
+  const teamNameInput = { value: '' };
+  const pending = [];
+  const window = { api: { teamForCwd: async () => ({ team: null }), teamNames: () => new Promise((r) => pending.push(r)) } };
+  const refresh = new Function('window', 'inputCwd', 'teamNameInput', 'teamRow', 'inputType', 'isAgentType', 'currentPlacement',
+    'expandPath', 'homeDir',
+    `let dialogMode = 'create'; let dialogTeamMode = null; let dialogTeamName = null; let dialogTeamNames = [];
+     let teamForCwdToken = 0; let lastTeamNameAuto = null;
+     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null;
+     ${slug}\n${dedupe}\n${fn}\nreturn refreshTeamForCwd;`)(
+    window, inputCwd, teamNameInput, { style: {} }, { value: 'claude' }, () => true, () => 'host', (p) => p, '/Users/u');
+  const a = refresh();
+  await new Promise((r) => setImmediate(r));
+  inputCwd.value = '/p/foo';
+  const b = refresh();
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(pending.length, 2, 'ENTER: both refreshes reached teamNames');
+  pending[1]({ names: [] });
+  await b;
+  pending[0]({ names: [] });
+  await a;
+  assert.strictEqual(teamNameInput.value, 'foo');
+});
+
 test('the Create team name follows the folder picked after the home-dir prefill', async () => {
   const fn = slice('async function refreshTeamForCwd(', '\nfunction dedupeTeamName(', 'refreshTeamForCwd');
   const dedupe = slice('function dedupeTeamName(', '\nasync function populateTeamRolePrompts(', 'dedupeTeamName');
