@@ -710,13 +710,13 @@ function createSandbox(deps = {}) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
     return serialize(async () => {
+      const owner = await foreignOwner();
+      if (owner) return foreignError(owner);
       const d = await detect();
       if (d && d.running && d.compose === false) {
         invalidateDetect();
         return { ok: false, error: DOCKER_NO_COMPOSE_MSG };
       }
-      const owner = await foreignOwner();
-      if (owner) return foreignError(owner);
       try { ensureBoxTokens(); } catch (e) {
         return { ok: false, error: `token provision failed: ${(e && e.message) || e}` };
       }

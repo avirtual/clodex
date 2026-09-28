@@ -33,7 +33,7 @@ const {
 // arg-vector assertions (rebuild's up/pull/build choices).
 function composeSubcommands(calls) {
   return calls
-    .filter((a) => a.includes('compose'))
+    .filter((a) => a.includes('compose') && a.includes('-f'))
     .map((a) => a.slice(a.indexOf('-f') + 2));
 }
 
@@ -900,10 +900,11 @@ test('up: a docker-gone failure maps to the friendly message, invalidates the ca
 test('up: detect says running without Compose → refused with the install-compose message, no compose file', async () => {
   const settings = fakeSettings();
   const calls = [];
+  const ud = freshUserData();
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
     spawn: (cmd, args, opts) => { calls.push(args); return fakeSpawn({ code: 0 })(cmd, args, opts); },
     getUiSettings: () => settings,
-    getUserDataPath: () => TMP_USERDATA,
+    getUserDataPath: () => ud,
     isPortInUse: () => Promise.resolve(false),
     detect: async () => ({ present: true, running: true, compose: false }),
   });
@@ -911,7 +912,8 @@ test('up: detect says running without Compose → refused with the install-compo
   const r = await sb.up();
   assert.deepStrictEqual(r, { ok: false, error: DOCKER_NO_COMPOSE_MSG });
   assert.strictEqual(fs.existsSync(sb.composePath()), false);
-  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(composeSubcommands(calls), []);
+  assert.ok(!fs.existsSync(path.join(sb.sandboxDir(), 'auth.env')));
   assert.strictEqual(settings._state().peers.length, 0);
 });
 
