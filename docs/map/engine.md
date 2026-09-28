@@ -130,7 +130,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 - `resolveSystemPromptFile`, `readAppendBodies` and `readSystemPromptBody` share one precedence — plugin ref, team-owned copy, library — so a spawn never reads a prompt from a different source than the dialog showed.
 - `teamPromptRows` filters a caller-supplied kind against PROMPT_KINDS before `teamPromptStems` uses it as a path segment.
 - `listAllTemplates` and `listAllPrompts` annotate a library row a team shadows instead of dropping it, so the operator sees both copies.
-- `stripLevelOf`, `autoCompactOf` and `isDigested` are handed to the SessionManager and the proxy poller, so the three agree on one reading of a persisted record.
+- `stripLevelOf` is handed to both the SessionManager and the proxy poller, `autoCompactOf` to the poller alone and `isDigested` to the SessionManager alone, so each reading of a persisted record has one definition.
 
 ### Hazards
 
@@ -146,7 +146,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 ### Invariants
 
-- `commonMemoryRecall` is the only recorded name in this stretch; memoryStore, memoryLoad, commonMemoryStore, semanticRanker, hintArm, voiceOriginArm and selectionArm are constructed around it as anonymous consts, all handed to the SessionManager.
+- `commonMemoryRecall` is the only recorded name in this stretch; memoryStore, memoryLoad, commonMemoryStore, semanticRanker, hintArm, voiceOriginArm and selectionArm are constructed around it as anonymous consts; memoryStore, memoryLoad and the three arms are handed to the SessionManager, while commonMemoryStore and semanticRanker reach it only through `commonMemoryRecall` and hintArm.
 - `commonMemoryRecall` binds the set name here because recall takes an agent and common units belong to none.
 - `commonMemoryRecall` reads `library/common-memory`, a sibling of `library/memory` like `memory-loadlog` and `memory-vectors.json`, because every entry under `library/memory` enumerates as an agent.
 
@@ -294,7 +294,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 - `restartSession` and `applySessionArgs` wait for the old process to leave `manager.sessions` before `create`, so the re-create does not race "session already exists".
 - `waitForSessionExit` keeps its default above kill's SIGKILL fallback, so a stuck process is reaped before the restart gives up.
-- `applySessionArgs` passes the resolved patch values, never `beforeKill`'s, to `create`, because create rebuilds the record from its positional arguments alone.
+- `applySessionArgs` passes `create` the resolved value for every edited field, never `beforeKill`'s, because create rebuilds the record from its positional arguments alone.
 - `restoreSessionsForWorkspace` runs on every workspace open, so the reboot notice and lost-exec delivery it fires must stay idempotent.
 - `readCtxFor` is a const declared after the SessionManager deps object, which is why that object reaches it through an arrow wrapper rather than by value.
 
@@ -303,7 +303,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 - `restartSession` and `applySessionArgs` each keep a hand-written preserved-field list that must stay in step with each other and with session-manager's reload arm.
 - `restartSession` carrying `rosterSentAt` into a fresh restart suppresses the roster for the new conversation, and dropping `createdAt` re-mints the seat's birth time.
 - `applySessionArgs` failure arm must restate every edited field on the re-upserted record, or the edits persisted before the kill revert.
-- `applySessionArgs` with an unknown name and no restart returns ok after no-op setters, unlike `applySessionSkills`, which refuses it.
+- `applySessionArgs` calls `resolveSessionArgsPatch(patch, beforeKill)` before its unknown-name check, so the resolver must keep tolerating a null prior record or an unknown name throws instead of being refused.
 
 ## Remote, peer, sandbox and ctl wiring (unnamed) — applySessionSkills … deliverExecResult
 
@@ -329,7 +329,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 ### Hazards
 
-- `getRemoteServer` style getters handed to remote-wiring close over `let`s declared after the call, so invoking one during construction hits the temporal dead zone.
+- `getPeerManager` style getters handed to remote-wiring close over `let`s declared after the call (the peer and tunnel managers, the sandbox manager, the drawer ptys), so invoking one during construction hits the temporal dead zone.
 - `getSandboxManager` exposing a manager on a headless host hands docker and container lifecycle to a web client, which is why headless-main.js turns `enableSandbox` off inside a box.
 - `getCtlService` must stay the only route to the ctl service, because selectionArm resolves its scrubber through `ctlService` per call and a second token list would drift.
 
