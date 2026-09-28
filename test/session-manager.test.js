@@ -15121,7 +15121,7 @@ function mkWithPluginHost(overrides = {}) {
   const injected = [];
   const m = mk({
     getPersistence: () => ({ list: () => [], get: () => ({ intents: ['branch'] }) }),
-    log: (...a) => { void a; },
+    log: { info() {}, warn() {}, error() {}, debug() {} },
     getPluginHooks: () => ({
       handleFor: (name) => {
         const s = m.sessions.get(name);

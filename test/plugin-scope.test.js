@@ -849,7 +849,7 @@ test('a plugin\'s grammar line reaches only a seat that HAS it', () => withReset
     getPersistence: () => ({ list: () => [], get: () => null }),
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
-    fs, log: () => {},
+    fs, log: { info() {}, warn() {}, error() {}, debug() {} },
   });
   const m = new SessionManager();
   const recipeFor = (plugins) => ({
