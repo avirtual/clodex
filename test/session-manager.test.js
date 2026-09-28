@@ -7947,6 +7947,22 @@ test('task accept: an empty branch is NOT stamped as merged', async () => {
   assert.strictEqual(f.one('t1').revival.mergedInto, null, 'and the acceptance write does not restore the claim');
 });
 
+test('a ticket accepted before and after its merge records where it merged', async () => {
+  const answer = { ok: true, merged: false, base: 'master' };
+  const f = mkAccept(answer);
+  openAndDone(f);
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.ok(f.one('t1').revival, 'ENTER: the first accept stamped the revival link');
+  assert.deepStrictEqual(f.destroyed, [], 'ENTER: the not-merged accept kept the seat');
+
+  answer.merged = true;
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', who: null, body: '' },
+    (msg) => f.injected.push(msg));
+  assert.deepStrictEqual(f.destroyed, ['team-hand'], 'ENTER: the second accept took the merged arm');
+  assert.strictEqual(f.one('t1').revival.mergedInto, 'master', 'the merge is recorded on the stamp');
+});
+
 // ── t535: a recovered merge failure must stop shouting, but only where it is
 // actually over ────────────────────────────────────────────────────────────
 // The canonical recovery from a failed auto-merge is: the loop stamps the
