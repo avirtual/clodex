@@ -188,6 +188,9 @@ test('roles popover: closing with a dirty row asks before discarding', () => {
     /if \(popover\.contains\(e\.target\)\) return;\n\s*closeTeamRolesPopover\(\);/,
     /e\.key === 'Escape' && !popover\.classList\.contains\('hidden'\)\) closeTeamRolesPopover\(\)/,
   ]) assert.match(POPOVER, re, '✕, Done, outside-mousedown and Escape all route through the guarded close');
+  assert.match(sliceBetween(POPOVER, '  async function openTeamRolesPopover(name, anchorEl) {', '\n  }\n'),
+    /^  async function openTeamRolesPopover\(name, anchorEl\) \{\n\s*if \(!popover\.classList\.contains\('hidden'\) && !confirmDiscardRoleEdits\(listEl, \(m\) => window\.confirm\(m\)\)\) return;\n/,
+    're-opening over a dirty popover (right-click a team header, the Teams menu) asks before renderRows rebuilds the list');
   assert.ok(!/^\s*closeTeamRolesPopover\(\);/m.test(POPOVER.replace(/if \(popover\.contains\(e\.target\)\) return;\n\s*closeTeamRolesPopover\(\);/, '')),
     'a close that leads somewhere else (template editor, new-session dialog) must stop when the operator keeps their edits');
 });

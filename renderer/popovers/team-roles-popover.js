@@ -1133,6 +1133,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   }
 
   async function openTeamRolesPopover(name, anchorEl) {
+    if (!popover.classList.contains('hidden') && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     setStatus('');
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset

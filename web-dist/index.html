@@ -44084,6 +44084,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           sel.value = chosen ? chosen.value : "";
         }
         async function openTeamRolesPopover(name, anchorEl) {
+          if (!popover.classList.contains("hidden") && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           setStatus("");
           helpPanel.classList.add("hidden");
           resetDrag(popover);
