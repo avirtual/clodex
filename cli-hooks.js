@@ -81,10 +81,10 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
 set -euo pipefail
 INPUT="$(cat)"
 TPATH="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).transcript_path||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
-[ -z "$TPATH" ] && exit 0
-TMPLINK="${linkPath}.tmp.$$"
-ln -sf "$TPATH" "$TMPLINK"
-mv -f "$TMPLINK" "${linkPath}"
+if [ -n "$TPATH" ]; then
+  TMPLINK="${linkPath}.tmp.$$"
+  { ln -sf "$TPATH" "$TMPLINK" && mv -f "$TMPLINK" "${linkPath}"; } || rm -f "$TMPLINK" 2>/dev/null || true
+fi
 SRC="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).source||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
 if [ "$SRC" = "clear" ] || [ "$SRC" = "compact" ]; then
   ${INTERP} - "${promptCacheDir}" <<'RESETEOF' || true
@@ -176,21 +176,20 @@ exit 0
     const liveScriptPath = pathFor(REGISTRY_DIR, name, 'bashLiveScript');
     fs.writeFileSync(liveScriptPath, `#!/bin/bash
 [ -e "${livePath}/.watching" ] || exit 0
-IN="$(cat)"
-${INTERP} - "${require.resolve('./bash-live')}" "$IN" "${livePath}" <<'JSEOF' 2>/dev/null
-try { require(process.argv[2]).writeObserver(process.argv[3], process.argv[4]); } catch (e) {}
+IFS= read -r -d '' JS <<'JSEOF' || true
+try { require(process.argv[2]).writeObserver(require("fs").readFileSync(0, "utf8"), process.argv[3]); } catch (e) {}
 JSEOF
+${INTERP} -e "$JS" - "${require.resolve('./bash-live')}" "${livePath}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
     const guardScriptPath = pathFor(REGISTRY_DIR, name, 'bashGuardScript');
     fs.writeFileSync(guardScriptPath, `#!/bin/bash
-IN="$(cat)"
-${INTERP} - "$CLODEX_TICKET" "$IN" <<'JSEOF' 2>/dev/null
+IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const ticket = process.argv[2];
   let d = null;
-  try { d = JSON.parse(process.argv[3]); } catch (e) { process.exit(0); }
+  try { d = JSON.parse(require("fs").readFileSync(0, "utf8")); } catch (e) { process.exit(0); }
   const cmd = d && d.tool_input && d.tool_input.command;
   if (typeof cmd !== "string" || !cmd) process.exit(0);
   const BS = String.fromCharCode(92);
@@ -312,6 +311,7 @@ try {
     permissionDecisionReason: "ticket " + ticket + ": stage only the paths you edited (git add <path>…) — a whole-tree add sweeps a subagent's in-flight revert into your commit." } }));
 } catch (e) {}
 JSEOF
+${INTERP} -e "$JS" - "$CLODEX_TICKET" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
@@ -319,15 +319,14 @@ exit 0
     const pollGuardScriptPath = pathFor(REGISTRY_DIR, name, 'pollGuardScript');
     fs.writeFileSync(pollGuardScriptPath, `#!/bin/bash
 [ -n "$CLODEX_TICKET" ] || exit 0
-IN="$(cat)"
-${INTERP} - "$CLODEX_TICKET" "$IN" "${pollStatePath}" <<'JSEOF' 2>/dev/null
+IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const fs = require("fs");
   const ticket = process.argv[2];
-  const statePath = process.argv[4];
+  const statePath = process.argv[3];
   if (!ticket || !statePath) process.exit(0);
   let d = null;
-  try { d = JSON.parse(process.argv[3]); } catch (e) { process.exit(0); }
+  try { d = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { process.exit(0); }
   if (!d || d.agent_id) process.exit(0);
   const put = (body) => {
     try {
@@ -362,6 +361,7 @@ try {
     permissionDecisionReason: "ticket " + ticket + ": third identical Bash call in a row (" + norm.slice(0, 60) + "). Polling cannot make a result arrive sooner and each poll re-bills your whole context. END YOUR TURN — the exec, monitor, subagent or reminder result wakes you. If you genuinely must re-run it, do other work first." } }));
 } catch (e) {}
 JSEOF
+${INTERP} -e "$JS" - "$CLODEX_TICKET" "${pollStatePath}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
@@ -396,14 +396,16 @@ JSEOF
     // UserPromptSubmit if stdin is absent/unparseable. Read stdin only AFTER the
     // dir guard so the empty case stays a stat-and-exit with no python spawn.
     fs.writeFileSync(pendingScriptPath, `#!/bin/bash
-[ -d "${pendingDir}" ] || exit 0
-IN="$(cat)"
-${INTERP} - "${pendingDir}" "$IN" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}" <<'JSEOF'
+if [ ! -d "${pendingDir}" ]; then
+  set -- "${pendingDir}".draining.*
+  [ -e "$1" ] || exit 0
+fi
+IFS= read -r -d '' JS <<'JSEOF' || true
 const fs = require('fs'), path = require('path');
 const d = process.argv[2];
 let ev = 'UserPromptSubmit';
 try {
-  const _in = JSON.parse(process.argv[3]);
+  const _in = JSON.parse(fs.readFileSync(0, 'utf8'));
   ev = _in.hook_event_name || ev;
   // A subagent's tool calls fire the PARENT session's PostToolUse hook, but the
   // additionalContext returned lands in the SUBAGENT's context, not the main
@@ -423,7 +425,7 @@ try {
 // os.path.realpath never throws on a missing path; fs.realpathSync does, so this
 // helper preserves the non-throwing contract for the top-level msgroot compute.
 function realpath(p) { try { return fs.realpathSync(p); } catch (e) { return path.resolve(p); } }
-const msgroot = process.argv[4] ? realpath(process.argv[4]) : '';
+const msgroot = process.argv[3] ? realpath(process.argv[3]) : '';
 function inline_spill(t) {
   const m = t.match(/attached: @(\\S+)/);
   if (!m) return t;               // no spill pointer => nothing to inline
@@ -451,7 +453,7 @@ function inline_spill(t) {
 // giving it one is a worse coupling than the problem). Mirrors drainPending's
 // expectedBorn exactly; the two drainers stay single-source-of-truth. Empty =>
 // no expectation => deliver everything, the safe direction.
-const born_self = process.argv[5] ? Number(process.argv[5]) : null;
+const born_self = process.argv[4] ? Number(process.argv[4]) : null;
 // Put a claimed entry back under its original basename (seq order + resend id
 // survive), write-then-rename like parkDelivery. Best-effort: a failed restore
 // must not abort the drain and lose the rest of the batch.
@@ -477,10 +479,38 @@ function restore_parked(base, raw) {
     let dfd;
     try { dfd = fs.openSync(d, 'r'); fs.fsyncSync(dfd); } catch (e4) {}
     finally { if (dfd !== undefined) { try { fs.closeSync(dfd); } catch (e5) {} } }
+    return true;
   } catch (e) {
     try { fs.rmSync(tmp, { force: true }); } catch (e2) {}
+    return false;
   }
 }
+function pid_alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+function rehome_orphans() {
+  const parent = path.dirname(d);
+  const prefix = path.basename(d) + '.draining.';
+  let siblings = [];
+  try { siblings = fs.readdirSync(parent); } catch (e) { return; }
+  for (const s of siblings) {
+    if (!s.startsWith(prefix)) continue;
+    const pid = Number(s.slice(s.lastIndexOf('.') + 1));
+    if (!Number.isInteger(pid) || pid <= 0 || pid_alive(pid)) continue;
+    const mine = d + '.draining.rehome.' + process.pid;
+    try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
+    let ok = true;
+    let files = [];
+    try { files = fs.readdirSync(mine).filter(function (n) { return n.endsWith('.json'); }); } catch (e) { ok = false; }
+    for (const f of files) {
+      try {
+        if (fs.existsSync(path.join(d, f)) || !restore_parked(f, fs.readFileSync(path.join(mine, f), 'utf8'))) ok = false;
+      } catch (e) { ok = false; }
+    }
+    if (ok) { try { fs.rmSync(mine, { recursive: true, force: true }); } catch (e) {} }
+  }
+}
+rehome_orphans();
 const claim = d + '.draining.hook.' + process.pid;
 try {
   fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
@@ -508,13 +538,14 @@ for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.
     texts.push(inline_spill(obj.text));
   } catch (e) {}                  // skip a corrupt entry, never abort the drain
 }
-fs.rmSync(claim, { recursive: true, force: true });
 if (texts.length) {
   console.log(JSON.stringify({ hookSpecificOutput: {
     hookEventName: ev,
     additionalContext: texts.join('\\n\\n') } }));
 }
+fs.rmSync(claim, { recursive: true, force: true });
 JSEOF
+${INTERP} -e "$JS" - "${pendingDir}" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}"
 `, { mode: 0o700 });
 
     // This hook only READS the file — it never consumes it, so the reminder
@@ -809,7 +840,7 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     if (holdsOurs(backupPath)) {
       try { fs.unlinkSync(backupPath); } catch {}
     }
-    if (fs.existsSync(hooksPath) && !fs.existsSync(backupPath) && !holdsOurs(hooksPath)) {
+    if (fs.existsSync(hooksPath) && !holdsOurs(hooksPath)) {
       fs.copyFileSync(hooksPath, backupPath);
     }
     fs.writeFileSync(hooksPath, body);
@@ -849,19 +880,23 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
+    let ours = false;
+    try {
+      ours = fs.readFileSync(hooksPath, 'utf8')
+        === codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
+    } catch {}
     if (fs.existsSync(backupPath)) {
-      fs.renameSync(backupPath, hooksPath);
+      if (ours) {
+        try { fs.renameSync(backupPath, hooksPath); } catch {}
+      } else {
+        try { fs.unlinkSync(backupPath); } catch {}
+      }
     } else if (fs.existsSync(hooksPath)) {
       // Remove ONLY a file that still holds the config we generated. With two
       // codex seats in one cwd the backup is made once (guarded) and consumed
       // by whichever exits first, restoring the user's file — so the second
       // exit arrives with no backup and the ORIGINAL on disk. Unlinking on
       // "no backup exists" deleted it. Never remove what we did not write.
-      let ours = false;
-      try {
-        ours = fs.readFileSync(hooksPath, 'utf8')
-          === codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
-      } catch {}
       if (ours) {
         try { fs.unlinkSync(hooksPath); } catch {}
         try { fs.rmdirSync(codexDir); } catch {}

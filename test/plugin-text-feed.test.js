@@ -1085,3 +1085,71 @@ test('a repoint flushes pending TEXT too — the mirror image of the same lie', 
     w._fd = null;
   } finally { fs.rmSync(reg, { recursive: true, force: true }); }
 });
+
+test('a multibyte character split across two reads reaches onText intact', () => {
+  const { createJsonlWatcher } = require('../jsonl-watcher');
+  const dir = mkTmpRoot('clodex-utf8-');
+  try {
+    const file = path.join(dir, 'transcript.jsonl');
+    const text = 'a'.repeat(100) + '—tail';
+    const line = Buffer.from(JSON.stringify({
+      type: 'assistant', requestId: 'r1',
+      message: { stop_reason: 'end_turn', content: [{ type: 'text', text }] },
+    }) + '\n');
+    const cut = line.indexOf(Buffer.from('—')) + 1;
+    fs.writeFileSync(file, line.subarray(0, cut));
+    const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: dir });
+    const flushes = [];
+    const w = new JsonlWatcher('seat', (t) => flushes.push(t));
+    w._fd = fs.openSync(file, 'r');
+    w._position = 0;
+    w._readLines();
+    fs.appendFileSync(file, line.subarray(cut));
+    w._readLines();
+    w.stop();
+    assert.strictEqual(flushes.length, 1);
+    assert.strictEqual(flushes[0], text);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a repoint whose open fails leaves the watcher with no fd rather than the closed one', () => {
+  const { createJsonlWatcher } = require('../jsonl-watcher');
+  const { pathFor, runDirFor } = require('../clodex-paths');
+  const reg = mkTmpRoot('clodex-repoint3-');
+  const realOpen = fs.openSync;
+  try {
+    const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: reg });
+    fs.mkdirSync(runDirFor(reg, 'seat'), { recursive: true });
+    const link = pathFor(reg, 'seat', 'transcript');
+    const a = path.join(reg, 'a.jsonl');
+    const b = path.join(reg, 'b.jsonl');
+    fs.writeFileSync(a, '');
+    fs.writeFileSync(b, '');
+    fs.symlinkSync(a, link);
+    const w = new JsonlWatcher('seat', () => {});
+    w._poll();
+    clearTimeout(w._timer);
+    assert.notStrictEqual(w._fd, null);
+    fs.unlinkSync(link);
+    fs.symlinkSync(b, link);
+    let thrown = 0;
+    fs.openSync = (...args) => {
+      if (thrown++ === 0) throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+      return realOpen(...args);
+    };
+    try {
+      w._poll();
+      clearTimeout(w._timer);
+    } finally {
+      fs.openSync = realOpen;
+    }
+    assert.strictEqual(thrown, 1);
+    assert.strictEqual(w._fd, null);
+    w.stop();
+  } finally {
+    fs.openSync = realOpen;
+    fs.rmSync(reg, { recursive: true, force: true });
+  }
+});

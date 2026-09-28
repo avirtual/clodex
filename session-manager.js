@@ -9989,7 +9989,7 @@ function createSessionManager(deps) {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
           } : null,
           onCapFire: () => {
-            log.warn('inject', `quiet-gate cap fired for ${session.name} — injected through active typing (${INJECT_QUIET_MAXWAIT / 1000}s cap)`);
+            log.warn('inject', `quiet-gate cap fired for ${session.name} — injected through active typing or dictation (${INJECT_QUIET_MAXWAIT / 1000}s cap)`);
             this._broadcast('ipc-message', {
               ts: Date.now(), from: 'clodex', to: session.name, kind: 'inject-cap',
               body: `inject quiet-gate cap fired (${INJECT_QUIET_MAXWAIT / 1000}s) — possible splice through a live draft`,

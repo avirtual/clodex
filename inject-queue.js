@@ -120,6 +120,7 @@ class InjectQueue {
     // and read as ONE paste-like chunk, so the trailing Enter lands as content
     // instead of submitting. Runs before the quiet-gate: a virgin seat has no
     // draft to protect but may not accept input yet.
+    const parkable = !!(divert || produce);
     const readySince = this._now();
     let readyDeferred = false;
     while (!this._isDead()
@@ -156,21 +157,19 @@ class InjectQueue {
       if (produced == null || produced === '') return;
       text = produced;
     }
-    if (this._isDead()) { this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
     if (divert) {
       let claimed = false;
       try { claimed = !!divert(text); } catch {}
       if (claimed) return;
     }
-    // Only a splice through LIVE typing is worth warning about; a hint hold that
-    // hit the cap injects into an idle prompt and is not the same event.
     if (deferred && this._onCapFire
-      && this._now() - (this._lastHumanInputAt() || 0) < this._quietMs) {
+      && (this._now() - (this._lastHumanInputAt() || 0) < this._quietMs || this._speakingNow())) {
       try { this._onCapFire(text); } catch {}
     }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
-    if (this._isDead()) { this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
     // \n→\r makes every interior newline an ENTER if node-pty splits this write
     // across reads — the body submits early and the remainder lands as a second
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
@@ -183,7 +182,7 @@ class InjectQueue {
     }
     this._write(out);
     await this._sleep(this._settleMsFor(text));
-    if (this._isDead()) { this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
     this._write('\r');                                 // Enter — closes the unit
     if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }
   }

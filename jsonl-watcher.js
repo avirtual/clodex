@@ -21,6 +21,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { StringDecoder } = require('string_decoder');
 const { readerFor } = require('./transcript-readers');
 const { extractFileTouches } = require('./file-touch');
 const { pathFor } = require('./clodex-paths');
@@ -29,6 +30,8 @@ const { pathFor } = require('./clodex-paths');
 // identifiers, which broke every non-wire agent spawn at watcher.start()).
 const POLL_INTERVAL = 250; // ms
 const TURN_COMPLETE_TIMEOUT = 1000; // ms
+const READ_CHUNK = 65536;
+const MAX_READ_PER_POLL = 4 * 1024 * 1024;
 
 function createJsonlWatcher({ REGISTRY_DIR }) {
   class JsonlWatcher {
@@ -49,6 +52,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._pendingText = null;
       this._pendingTime = 0;
       this._readBuf = '';
+      this._decoder = new StringDecoder('utf8');
       this._activityState = 'idle';
       this._activityTurnEnd = false;
       this._pendingInterrupted = false;
@@ -85,6 +89,7 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
       this._flushPending();
       if (this._fd !== null) {
         try { fs.closeSync(this._fd); } catch {}
+        this._fd = null;
       }
     }
 
@@ -105,10 +110,12 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
           this._flushPending();
           if (this._fd !== null) {
             try { fs.closeSync(this._fd); } catch {}
+            this._fd = null;
           }
           this._fd = fs.openSync(target, 'r');
           this._currentTarget = target;
           this._readBuf = '';
+          this._decoder = new StringDecoder('utf8');
           // Belt to the flush above's braces: bounds the no-text-ever case,
           // where _flushPending emits nothing and touches would otherwise
           // accumulate for the watcher's life.
@@ -134,14 +141,22 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
     }
 
     _readLines() {
-      const buf = Buffer.alloc(8192);
-      let bytesRead;
-      try {
-        bytesRead = fs.readSync(this._fd, buf, 0, buf.length, this._position);
+      const buf = Buffer.alloc(READ_CHUNK);
+      let total = 0;
+      let failed = false;
+      for (;;) {
+        let bytesRead;
+        try {
+          bytesRead = fs.readSync(this._fd, buf, 0, buf.length, this._position);
+        } catch { failed = true; break; }
         this._position += bytesRead;
-      } catch { return; }
+        total += bytesRead;
+        if (bytesRead > 0) this._readBuf += this._decoder.write(buf.subarray(0, bytesRead));
+        if (bytesRead < buf.length || total >= MAX_READ_PER_POLL) break;
+      }
+      if (failed && total === 0) return;
 
-      if (bytesRead === 0) {
+      if (total === 0) {
         // No new data — check turn-complete timeout
         if (this._pendingText && (Date.now() - this._pendingTime) > TURN_COMPLETE_TIMEOUT) {
           this._flushPending();
@@ -149,7 +164,6 @@ function createJsonlWatcher({ REGISTRY_DIR }) {
         return;
       }
 
-      this._readBuf += buf.toString('utf-8', 0, bytesRead);
       const lines = this._readBuf.split('\n');
       this._readBuf = lines.pop() || '';
 

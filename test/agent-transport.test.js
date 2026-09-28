@@ -288,3 +288,41 @@ test('register mints run/<name> as the REAL dir, with sessions/<n>/run linking t
   assert.ok(fs.existsSync(path.join(real, 'agent.json')),
     'so the registry entry it just wrote lands in the REAL dir under run/');
 });
+
+test('isAlive: pid 0 and negative pids are not alive', () => {
+  const REGISTRY_DIR = tmp();
+  const { isAlive, registry } = mk(REGISTRY_DIR);
+  assert.strictEqual(isAlive(0), false);
+  assert.strictEqual(isAlive(-1), false);
+  const sock = path.join(REGISTRY_DIR, 'zero.sock');
+  fs.writeFileSync(sock, '');
+  fs.mkdirSync(runDirFor(REGISTRY_DIR, 'zero'), { recursive: true });
+  fs.writeFileSync(regFile(REGISTRY_DIR, 'zero'), JSON.stringify({ name: 'zero', socket: sock, pid: 0 }));
+  assert.strictEqual(registry.cleanup(), 1);
+});
+
+test("stop(): a predecessor's deferred close never unlinks a successor bound to the same path", async () => {
+  const net = require('net');
+  const REGISTRY_DIR = tmp();
+  const { Transport } = mk(REGISTRY_DIR);
+  const sock = path.join(REGISTRY_DIR, 'seat.sock');
+  const A = new Transport(sock, () => {});
+  await A.start();
+  const client = net.createConnection(sock);
+  await new Promise((r) => client.once('connect', r));
+  const p = A.stop();
+  const seen = [];
+  const B = new Transport(sock, (m) => seen.push(m));
+  await B.start();
+  try {
+    assert.strictEqual(await Transport.isSocketLive(sock), true);
+    client.destroy();
+    await p;
+    assert.strictEqual(await Transport.send(sock, { x: 1 }), true);
+    for (let i = 0; i < 50 && seen.length === 0; i++) await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(seen, [{ x: 1 }]);
+  } finally {
+    client.destroy();
+    await B.stop();
+  }
+});
