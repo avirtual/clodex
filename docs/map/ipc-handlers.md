@@ -275,7 +275,7 @@
 | `handle:setup:state` | the first-run setup marker | setup marker (read) | setupMarker.read | first-run-setup.test.js |
 | `handle:setup:complete` | records the first-run choice (and default session mode unless skipped), throwing on an unknown choice | setup marker, ui-settings defaultSessionMode | stores.SETUP_CHOICES, setupMarker.write | first-run-setup.test.js |
 | `handle:settings:set` | merges a settings patch and resyncs terminal reports, status scripts, wirescope, remote server and peers | ui-settings | syncTerminalReports, rebuildAllStatusScripts, syncRemoteServer, syncPeerManager | terminal-reports-pref.test.js default-session-mode.test.js |
-| `handle:remote:status` | whether the remote server runs, its port and last error | none | getRemoteServer, getRemoteError | unpinned |
+| `handle:remote:status` | whether the remote server runs, its port and last error | ui-settings (read) | getRemoteServer, getRemoteError | unpinned |
 | `handle:remote:setToken` | sets or clears the operator wire token and rebuilds the server gate, returning only hasToken | remote token file | setRemoteToken, refreshRemoteToken | unpinned |
 | `handle:envScopes:get` | a global or workspace env scope's vars, secrets returned as hasValue without the value | env scopes store (read) | envScopes.getScope | env-scopes-ipc.test.js |
 | `handle:envScopes:set` | sets one var in a global or workspace scope, optionally secret | env scopes store | envScopes.set | env-scopes-ipc.test.js |
@@ -394,6 +394,7 @@
 ### Hazards
 - Resolving `wtermOwner` with the non-strict helper creates an owner no dropper ever matches, stranding the far shell.
 - Passing an @-bearing name past `peerSeat` becomes null at the far side, which is the key of the seatless workspace shell.
+- A host that leaves workspaceOfSenderStrict undefined turns `wtermOwner` and `wtermWorkspace` back into the loose helper with no error.
 
 ## Default deny lists, theme and wirescope — handle:defaults:setToolDeny … handle:wirescope:prune
 
@@ -463,6 +464,7 @@
 - `on:peer:header-menu` offers Pause offline as well as online, since the info popover only renders its pause for an online peer with a version.
 
 ### Hazards
+- `on:session:context-menu` items run their click on the host on every transport, so Open in Terminal launches a host Terminal even from a web client.
 - Switching the Open in Terminal item of `on:session:context-menu` to exec routes an agent-supplied cwd through /bin/sh, where $(...) runs.
 - `handle:session:exportMarkdown` writes wherever the save dialog answers; on the web host that is the exports dir, not the operator's desktop.
 
@@ -505,13 +507,13 @@
 | `on:session:focused` | records the seat the operator is looking at, with the strictly resolved sender window | focused seat via manager | manager.noteFocusedSession, manager.windowForWorkspace | external-tap-trigger.test.js |
 
 ### Invariants
-- The seat channels from `handle:seat:send` to `on:seat:draft` refuse unless `surfaceOfSender` answers desktop, and every one checks the seat is in the sender's workspace.
+- `handle:seat:send`, `handle:seat:commands`, `handle:seat:control`, `handle:seat:permission`, `handle:seat:interrupt` and `on:seat:draft` refuse unless `surfaceOfSender` answers desktop; `handle:seat:image-upload` is the exception, gated on the sender's workspace and agent type only, because the web shim uploads through it.
 - `on:voice:markOrigin` and `on:voice:unmarkOrigin` carry no text or id, so a doctored payload cannot choose what the agent is told or which hint is cleared.
 - `on:voice:recording` and `on:voice:draft` carry no timestamp; main stamps its own clock so a renderer cannot hold injection open.
 - `on:session:focused` resolves the sender strictly, so a dying window's last report maps to no window instead of the default workspace's.
 
 ### Hazards
-- `on:pty-input` takes any seat name with no workspace check, so it is the one input path that trusts the renderer's name.
+- `on:pty-input`, like `handle:prompts:inject`, takes any seat name with no workspace check.
 - Resolving `on:session:focused` with the loose helper lets a closing window move the microphone of whatever window holds the default workspace.
 
 ## Restore, retry, forget and workspaces — handle:app:restore-sessions … handle:workspace:setName
