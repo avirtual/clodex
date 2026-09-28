@@ -18,6 +18,7 @@ const http = require('node:http');
 const WebSocket = require('ws');
 
 const { createWebHost, viewerOnHost } = require('../web-host');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silentLog = { info() {}, warn() {}, error() {} };
 
@@ -605,7 +606,7 @@ test('a malformed percent-escape under /exports/ answers 400 and raises no uncau
 });
 
 test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 5987 filename and raises no uncaught exception', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wh-exports-'));
+  const dir = mkTmpRoot('wh-exports-');
   fs.mkdirSync(path.join(dir, 'exports'));
   const names = ['отчёт.md', 'a\nb'];
   for (const n of names) fs.writeFileSync(path.join(dir, 'exports', n), `body:${n}`);
@@ -623,7 +624,7 @@ test('an exported file with a non-Latin-1 or CR/LF name downloads with an RFC 59
       assert.ok(r.cd.includes(`filename*=UTF-8''${encodeURIComponent(n)}`), r.cd);
       assert.match(r.cd, /filename="[\x20-\x7e]+"/);
     }
-  } finally { trap.release(); agent.destroy(); host.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+  } finally { trap.release(); agent.destroy(); host.close(); }
 });
 
 test('a session that leaves the workspace listing while attached does not leak its ring into a same-named successor\'s replay', async () => {
