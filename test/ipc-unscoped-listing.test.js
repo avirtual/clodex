@@ -121,3 +121,22 @@ test('session:cwdSuggestions does not return a cwd noted from another workspace'
   assert.deepStrictEqual(handlers.get('session:cwdSuggestions')({ sender: { ws: 'default' } }).recent, ['/legacy/flat'],
     'the pre-split flat list stays the default workspace\'s');
 });
+
+test('the per-workspace recent cwd lists survive the real uiSettings store and a reload', () => {
+  const path = require('path');
+  const { initStores } = require('../stores.js');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const dir = mkTmpRoot('clodex-cwd-mru-');
+  const open = () => initStores(dir, {
+    log: { info: () => {}, error: () => {} },
+    registryDir: path.join(dir, 'registry'),
+    resourcesDir: path.join(dir, '__no_seed__'),
+  }).uiSettings;
+  const handlers = registerAndCapture({ sessions: [], workspaceOfSender: (e) => e.sender.ws, uiSettings: open() });
+  handlers.get('session:noteCwd')({ sender: { ws: 'ws-1' } }, '/proj/ws1');
+  handlers.get('session:noteCwd')({ sender: { ws: 'ws-2' } }, '/secret/ws2');
+
+  const reloaded = registerAndCapture({ sessions: [], workspaceOfSender: (e) => e.sender.ws, uiSettings: open() });
+  assert.deepStrictEqual(reloaded.get('session:cwdSuggestions')({ sender: { ws: 'ws-1' } }).recent, ['/proj/ws1']);
+  assert.deepStrictEqual(reloaded.get('session:cwdSuggestions')({ sender: { ws: 'ws-2' } }).recent, ['/secret/ws2']);
+});
