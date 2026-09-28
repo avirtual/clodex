@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Test suite: the standing set of slow subjects that tripped every post-merge run is fixed at the mechanism (the shipped library is seeded and the fixture git repo built once per file, then copied per case) or allowlisted with its measured reason (real git and bin subprocess chains), so a ticket is no longer rejected for slowness in files it did not change.
 
 - Docs: docs/map/stores.md — a symbol-level map of stores.js (16 regions, 117 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/engine.md — a symbol-level map of engine.js (15 regions, 101 rows), gated by test/module-map-fresh.test.js.
