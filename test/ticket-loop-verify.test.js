@@ -1924,7 +1924,7 @@ function tracePhases(f) {
   return seen;
 }
 
-test('t1355: a green verify stamps suite run 1, then reviewer, and the phase is gone once the reviewer spawned and the verdict landed', async () => {
+test('t1355: _stampVerifyPhase on a green verify stamps suite run 1, then reviewer, and the phase is gone once the reviewer spawned and the verdict landed', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'green' });

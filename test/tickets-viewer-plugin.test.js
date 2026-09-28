@@ -2166,6 +2166,7 @@ test('tickets-viewer: `ticket` serves a record\'s own rounds[] plus verdictText 
           verdictText: 'VERDICT: REWORK\n\nfix the thing\n',
           diffStat: { files: 2, added: 5, removed: 3 },
         }],
+        verifyPhase: null,
         mergeMsg: 'Merge t7: the work\n',
         taskDirPath: dir,
       },
