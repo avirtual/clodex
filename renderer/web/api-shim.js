@@ -192,18 +192,17 @@ function isLoopbackHost(hostname) {
 // `127.0.0.1:<pinned>` on the VIEWER's machine, so it looks exactly like a tab
 // opened on the box. Those two are the cases with opposite answers, so the
 // discriminator has to be explicit — `peer-wiring.js` marks the tunnelled tab it
-// opens (`pageUrl`), and this reads that mark. Anything unmarked and non-loopback
-// is plainly a remote viewer.
+// opens (`pageUrl`), and this reads that mark.
 //
-// DELIBERATE behaviour change, not an oversight: a browser ON the box that
-// reached the page by LAN name or IP (`http://box.local:7890`) is judged remote,
-// so its loopback links now toast instead of opening — they would have worked.
-// Accepted because the alternative is unanswerable from in here: that tab is
-// byte-for-byte identical to one opened from another machine at the same
-// address, and guessing "local" for both restores the defect for every real
-// remote viewer. This errs toward a suppressed link that says why.
+// The engine also stamps `viewerOnHost` into the welcome frame from the socket's
+// peer address, so a same-machine tab reached as 0.0.0.0 or `box.local` counts
+// as on-box; an unmarked non-loopback tab is remote only when that fact is absent.
+// Order: (a) the mark is checked first and `viewerOnHost` never overrides it — a
+// tunnelled tab's socket IS loopback, so the fact is true exactly where the mark
+// must refuse; (b) the fact only widens the hostname test. An operator's own
+// `ssh -L` also lands on loopback and reads as on-host: accepted, it is theirs.
 function browserSharesEngineHost() {
-  return isLoopbackHost(location.hostname) && !VIA_TUNNEL;
+  return !VIA_TUNNEL && (isLoopbackHost(location.hostname) || (welcomeInfo !== null && welcomeInfo.viewerOnHost === true));
 }
 
 // The rule, as a pure predicate. True → the url must not be opened.

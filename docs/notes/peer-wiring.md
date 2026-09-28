@@ -20,6 +20,7 @@ as a port on *our* loopback, which for a url peer is the wrong machine;
 `browserSharesEngineHost` in `renderer/web/api-shim.js` already answers from the
 origin once the tab is served from the peer's own address rather than a local
 forward.
+The engine also reports `viewerOnHost` (web-host welcome, from the socket's peer address) so a same-machine tab reached by a non-loopback spelling still counts as on-box; the mark is checked first and wins.
 
 The token gate is honoured by the same rule as the tunnel path — a gated box
 returns its address and pops no window — but not through `webPopAllowed`, which

@@ -631,6 +631,27 @@ test('browserSharesEngineHost: a tunnelled tab is loopback-served and still NOT 
   }
 });
 
+test('browserSharesEngineHost: the engine viewerOnHost widens a non-loopback spelling but never beats the tunnel mark', async () => {
+  const welcome = (ws, viewerOnHost) => ws.onmessage({ data: JSON.stringify({ t: 'welcome', workspaceId: 'w1', home: '/h', viewerOnHost }) });
+  for (const [hostname, search, onHost, want] of [
+    ['0.0.0.0', '?workspace=w1', true, true],
+    ['mac.local', '?workspace=w1', true, true],
+    ['0.0.0.0', '?workspace=w1', false, false],
+    ['127.0.0.1', '?workspace=w1&via=tunnel', true, false],
+    ['box.internal', '?workspace=w1', false, false],
+  ]) {
+    const { shim, restore } = loadShim({ hostname, search });
+    try {
+      shim.start();
+      const ws = FakeWS.last;
+      ws.onopen();
+      welcome(ws, onHost);
+      await tick();
+      assert.equal(shim.browserSharesEngineHost(), want, `${hostname}${search} viewerOnHost=${onHost}`);
+    } finally { restore(); }
+  }
+});
+
 test('t445 finding 1+2: the sandbox open-in-browser link is SUPPRESSED with a reason on a tunnelled tab', async () => {
   // End to end at the exact url `sandbox-view.js openUrl` composes. t442's gate
   // keys on the proxy origin, so this url is invisible to it — before this rule
