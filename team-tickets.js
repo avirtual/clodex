@@ -6408,7 +6408,8 @@ function createTicketMethods(deps, shared) {
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
         // unreachable lead — an interval that can outlive its context or its process.
-        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ${reentry ? `ticket stays held at "${heldAt}"` : 'ticket kept open'}; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+        const kept = reentry ? `ticket stays held at "${heldAt}" (${holdRecoveryText(ticket.verifyHold && ticket.verifyHold.recovery, ticket.id).trim()})` : 'ticket kept open';
+        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ${kept}; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       }
       ticket.state = 'done';
       // FIRST close only. A re-entry is the same close being re-verified, not a
@@ -7532,11 +7533,11 @@ function createTicketMethods(deps, shared) {
           '',
           `WHY: ${firstLine || 'the test suite failed on the branch'}`,
           '',
-          replacedClause
-            ? `A replacement seat is being spawned with the rework as its first write, and the ticket is open again; `
-              + `the failing test names are on the record. If the spawn fails, a separate notice follows. ${NOTHING_TORN_DOWN}`
+          (replacedClause
+            ? 'A replacement seat is being spawned with the rework as its first write, and the ticket is open again; '
+              + 'the failing test names are on the record. If the spawn fails, a separate notice follows. '
             : 'The rework reached the seat and the ticket is open again; the failing test names are on'
-              + ` the record and in the seat's copy. ${NOTHING_TORN_DOWN}`,
+              + " the record and in the seat's copy. ") + NOTHING_TORN_DOWN,
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
         if (r && r.error) {

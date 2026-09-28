@@ -6911,6 +6911,7 @@ test('t82 the status NOTICES stay passive: done and cancel must not wake a seat'
   assert.strictEqual(f.urgents[0], false, 'a done-report rides passively — it reaches the lead with their next turn');
   // cancel: lead → assignee.
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'spec three' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't2', body: '' });
   f.gated.length = 0; f.urgents.length = 0;
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't2', body: 'never mind' });
   assert.strictEqual(f.gated.length, 1, 'ENTER: cancel delivered to the assignee');
