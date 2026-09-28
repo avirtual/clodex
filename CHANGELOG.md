@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sidebar: an Active status chosen in a workspace that had no saved view survives the next open; a peer row that fails validation is expanded so its error is visible; Settings lists a context-threshold override for a model family Clodex ships no row for.
 - Docs: an ssh-installed node's clodexctl context needs --url with its --token (a token alone names no transport); cli/README corrected.
 - Sandbox on Linux: a work volume whose root was already re-owned by 5.90.0 but whose files were not is fixed on the next start; a peer note claimed into an unreadable inbox is logged and skipped instead of crashing the claim.
 - Sandbox: a work volume first populated by the image user is fully re-owned on a Linux host, a desktop uid with no passwd entry no longer breaks box start, and Stop no longer overwrites port numbers you were still typing.
