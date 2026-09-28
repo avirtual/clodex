@@ -344,6 +344,19 @@ test('a clean far refusal carries no installed pointer', async () => {
   assert.strictEqual(out.installed, null);
 });
 
+test('a far refusal of a seat that was not live here does not start it', async () => {
+  const { m, created, shipped } = mkMove({
+    entries: [{ ...BASE, archivedAt: 900 }],
+    reply: { ok: false, error: 'far: name taken' },
+  });
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(shipped.length, 1, 'the ship ran and was refused');
+  assert.strictEqual(created.length, 0, 'nothing was live here, so nothing is respawned');
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.kept, true);
+  assert.notStrictEqual(out.respawned, true);
+});
+
 test('a second moveToPeer while one is in flight is refused off _movingNames', async () => {
   const { m } = mkMove();
   m._movingNames.add('seat');

@@ -192,7 +192,7 @@ test('with the SOURCE window closed the destination is still told', () => {
   assert.strictEqual(windows.ws2.received[0][0], 'session:moved-in');
 });
 
-test('an archived row moves record-only and its moved-in carries archived:true', () => {
+test('an archived row moved to another workspace also leaves the source window', () => {
   const { m, store, windows } = mkFixture({
     entries: [{ ...LIVE_ENTRY, archivedAt: 900, movedTo: null }],
   });
@@ -202,8 +202,8 @@ test('an archived row moves record-only and its moved-in carries archived:true',
     { ok: true, name: 'seat', workspaceId: 'ws2', workspaceName: 'Research', live: false });
   assert.strictEqual(store[0].workspaceId, 'ws2');
 
-  assert.deepStrictEqual(windows.ws1.received, [],
-    'nothing is live here, so the source window gets no moved-out');
+  assert.deepStrictEqual(windows.ws1.received, [['session:moved-out', { name: 'seat' }]],
+    'the source window drops its row whether or not the seat is live');
   assert.deepStrictEqual(windows.ws2.received, [['session:moved-in', {
     name: 'seat',
     type: 'claude',
