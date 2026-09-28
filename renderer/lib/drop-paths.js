@@ -8,14 +8,15 @@
 // (that guard is for move-only extractions).
 
 // Paths made only of these bytes read identically bare or quoted — leave them
-// bare so the common case stays clean. Anything else (spaces, quotes, shell
-// metacharacters, unicode) gets POSIX single-quoting, with embedded single
-// quotes closed-escaped-reopened ('\'').
+// bare so the common case stays clean.
 const BARE_SAFE = /^[A-Za-z0-9_\/.+,~=-]+$/;
 
 function shellQuotePath(p) {
   const s = String(p);
   if (BARE_SAFE.test(s)) return s;
+  if (/[\x00-\x1f\x7f]/u.test(s)) {
+    return `$'${s.replace(/[\\'\x00-\x1f\x7f]/gu, (c) => (c === '\\' || c === "'" ? `\\${c}` : `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`))}'`;
+  }
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 

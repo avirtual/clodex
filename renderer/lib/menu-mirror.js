@@ -1,6 +1,6 @@
 'use strict';
 
-const { PASTE_OPEN, PASTE_CLOSE } = require('./composer-voice');
+const { bracketPaste } = require('./composer-voice');
 
 const BACKSPACE = '\x7f';
 const ESCAPE = '\x1b';
@@ -8,7 +8,7 @@ const MIRROR_DRAFT = /^\/\S*$/u;
 const ARROWS = { ArrowDown: '\x1b[B', ArrowUp: '\x1b[A' };
 
 const isMirrorDraft = (text) => typeof text === 'string' && MIRROR_DRAFT.test(text);
-const paste = (text) => `${PASTE_OPEN}${text}${PASTE_CLOSE}`;
+const paste = bracketPaste;
 const lengthOf = (text) => Array.from(text).length;
 const completionOf = (name) => String(name || '').split(/\s/u)[0];
 

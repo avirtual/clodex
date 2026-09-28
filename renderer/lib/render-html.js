@@ -17,25 +17,26 @@ const { BUST_FAULT } = require('./constants');
 // body omits every unchanged line between hunks. So the gutter has to be
 // replayed per line and re-seeded at each header — running one counter through
 // the whole diff puts every hunk after the first off by the gap git dropped.
-// Returns one entry per input line: a number to show, or null for lines that
-// occupy no position in either file (headers, `\ No newline`).
 function diffLineNumbers(lines) {
-  let oldN = null; let newN = null;
+  let oldN = null; let newN = null; let oldLeft = 0; let newLeft = 0;
   return lines.map((ln) => {
     if (ln.startsWith('@@')) {
-      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(ln);
+      const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(ln);
       oldN = m ? Number(m[1]) : null;
-      newN = m ? Number(m[2]) : null;
-      return null;
+      newN = m ? Number(m[3]) : null;
+      oldLeft = m ? Number(m[2] ?? 1) : 0;
+      newLeft = m ? Number(m[4] ?? 1) : 0;
+      return { n: null, inHunk: false };
     }
-    // Order matters: `---`/`+++` are file headers, not del/add lines, and they
-    // appear before the first `@@` where the counters are still null anyway.
-    if (oldN == null || ln.startsWith('+++') || ln.startsWith('---')
-      || ln.startsWith('diff ') || ln.startsWith('index ') || ln.startsWith('\\') || ln === '') return null;
-    if (ln.startsWith('+')) return newN++;
-    if (ln.startsWith('-')) return oldN++;
+    const inHunk = oldLeft > 0 || newLeft > 0;
+    if (oldN == null || ln.startsWith('\\') || (ln === '' && !inHunk)) return { n: null, inHunk };
+    if (!inHunk && (ln.startsWith('+++') || ln.startsWith('---')
+      || ln.startsWith('diff ') || ln.startsWith('index '))) return { n: null, inHunk };
+    if (ln.startsWith('+')) { newLeft = Math.max(0, newLeft - 1); return { n: newN++, inHunk }; }
+    if (ln.startsWith('-')) { oldLeft = Math.max(0, oldLeft - 1); return { n: oldN++, inHunk }; }
+    oldLeft = Math.max(0, oldLeft - 1); newLeft = Math.max(0, newLeft - 1);
     oldN++;
-    return newN++;
+    return { n: newN++, inHunk };
   });
 }
 
@@ -44,11 +45,12 @@ function diffLineNumbers(lines) {
 // change to its default output is a change every conforming plugin sees.
 function renderDiffHtml(diff, opts = {}) {
   const lines = diff.split('\n');
-  const nums = opts.lineNumbers ? diffLineNumbers(lines) : null;
-  const w = nums ? String(Math.max(1, ...nums.map(n => (n == null ? 0 : n)))).length : 0;
+  const state = diffLineNumbers(lines);
+  const nums = opts.lineNumbers ? state.map((st) => st.n) : null;
+  const w = nums ? String(nums.reduce((m, n) => (n != null && n > m ? n : m), 1)).length : 0;
   return lines.map((ln, i) => {
     let cls = 'diff-ctx';
-    if (ln.startsWith('+++') || ln.startsWith('---') || ln.startsWith('diff ') || ln.startsWith('index ')) cls = 'diff-file';
+    if (!state[i].inHunk && (ln.startsWith('+++') || ln.startsWith('---') || ln.startsWith('diff ') || ln.startsWith('index '))) cls = 'diff-file';
     else if (ln.startsWith('@@')) cls = 'diff-hunk';
     else if (ln.startsWith('+')) cls = 'diff-add';
     else if (ln.startsWith('-')) cls = 'diff-del';
@@ -196,8 +198,8 @@ function bustRow(t, base, sid) {
   const mag = `<span class="bust-mag">${fmtBustTokens(t.write_tokens)} tok rewritten${t.write_frac != null ? ` · ${Math.round(t.write_frac * 100)}%` : ''}</span>`;
   // Deep-link into wirescope's per-turn navigator (v0.6.20 adds bust-jump nav).
   const turnLink = (base && sid && t.i != null)
-    ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (⌘-click for browser)">turn ${t.i} →</span>`
-    : `<span class="bust-turn-static">turn ${t.i != null ? t.i : '?'}</span>`;
+    ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}&turn=${t.i}`)}" title="Open this turn in the wirescope navigator (⌘-click for browser)">turn ${esc(String(t.i))} →</span>`
+    : `<span class="bust-turn-static">turn ${t.i != null ? esc(String(t.i)) : '?'}</span>`;
   const stampStr = t.ts ? fmtBustStamp(t.ts) : '';
   const stamp = stampStr ? `<span class="bust-stamp">${esc(stampStr)}</span>` : '';
   // The bytes that actually diverged: 40 chars each side of the first differing

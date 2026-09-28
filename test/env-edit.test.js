@@ -72,3 +72,19 @@ test('formatEnvLines round-trips a flat map back to KEY=value lines', () => {
   assert.deepStrictEqual(parseEnvLines(text).env, { AWS_PROFILE: 'acct', REGION: 'us-east-1' });
   assert.strictEqual(formatEnvLines(null), '');
 });
+
+test('prototype-reserved keys (__proto__, constructor, prototype) are dropped AND reported in skipped, matching env-scopes UNSAFE_KEYS', () => {
+  const { env, skipped } = parseEnvLines('__proto__=x\nconstructor=y\nprototype=z\nOK=1');
+  assert.deepStrictEqual(env, { OK: '1' });
+  assert.strictEqual(skipped.length, 3);
+  for (const s of skipped) assert.match(s.reason, /reserved/);
+  const { envKeyError } = require('../env-scopes');
+  for (const k of ['__proto__', 'constructor', 'prototype']) assert.ok(envKeyError(k, 'v'), `server also refuses ${k}`);
+});
+
+test('a lone CR ends a line, so a CR-only paste sets every var instead of one CR-bearing value', () => {
+  const { env, skipped } = parseEnvLines('A=x\rB=y\nOK=1');
+  assert.deepStrictEqual(env, { A: 'x', B: 'y', OK: '1' });
+  assert.deepStrictEqual(skipped, []);
+  for (const v of Object.values(env)) assert.doesNotMatch(v, /[\r\n]/);
+});

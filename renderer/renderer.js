@@ -2396,7 +2396,7 @@ function createTerminal(name, peer = null) {
       append: (added) => {
         for (const { n, chip, path } of added) {
           composerEl.value += chip;
-          if (path) pastedImagePaths[n] = path;
+          pastedImagePaths[n] = path || null;
         }
         if (menuMirror.on()) syncMenuMirror();
         const end = composerEl.value.length;

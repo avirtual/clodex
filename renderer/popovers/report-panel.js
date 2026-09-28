@@ -11,17 +11,16 @@
 // score) — disk-based so it reads the full session capture, even on ended
 // sessions. We only turn its structured findings into prose and assert the
 // invariants it ships. Schema locked with wirescope; bump on report_version.
-//
-// DOM-bound, so no unit tests per the R1 rule — move-only fidelity is the
-// guarantee.
 
-const { esc, fmtTokens, fmtUsd, fmtDur, shortTs } = require('../lib/format');
+const { esc, fmtTokens, fmtUsd, fmtDur, shortTs, fmtAgo } = require('../lib/format');
 const { REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('../lib/constants');
 
 function initReportPanel({ popoverApi, ctxCatLabel }) {
   const reportOverlay = document.getElementById('report-overlay');
   const reportNameEl = document.getElementById('report-name');
   const reportBody = document.getElementById('report-body');
+  const num = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+  let reportSeq = 0;
 
   function closeReportPanel() { reportOverlay.classList.add('hidden'); reportOverlay.dataset.name = ''; }
 
@@ -30,14 +29,18 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     reportOverlay.dataset.name = name;
     reportBody.innerHTML = '<div class="rep-note">Analyzing session capture…</div>';
     reportOverlay.classList.remove('hidden');
+    const my = ++reportSeq;
     const res = await popoverApi(name).report();
     // Bail if the modal was closed/retargeted while the scan was in flight.
-    if (reportOverlay.dataset.name !== name || reportOverlay.classList.contains('hidden')) return;
+    if (my !== reportSeq || reportOverlay.dataset.name !== name || reportOverlay.classList.contains('hidden')) return;
     if (!res || !res.ok) {
       reportBody.innerHTML = `<div class="rep-note">${esc(res && res.error ? res.error : 'Report unavailable')}</div>`;
       return;
     }
-    try { reportBody.innerHTML = renderReport(res.data); }
+    const stale = res.stale
+      ? `<div class="rep-note">showing the last successful report (${esc(fmtAgo(res.at || Date.now()))})${res.error ? ' — ' + esc(String(res.error)) : ''}</div>`
+      : '';
+    try { reportBody.innerHTML = stale + renderReport(res.data); }
     catch (e) { reportBody.innerHTML = `<div class="rep-note">Could not render report: ${esc(String((e && e.message) || e))}</div>`; }
   }
 
@@ -79,7 +82,7 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     const rows = w.by_type.map((t) => {
       const conf = t.confidence || 'medium';
       const meta = [`<span class="rep-conf rep-conf-${esc(conf)}">${esc(conf)}</span>`];
-      if (t.items) meta.push(`<span>${t.items} item${t.items === 1 ? '' : 's'}</span>`);
+      if (num(t.items)) meta.push(`<span>${num(t.items)} item${t.items === 1 ? '' : 's'}</span>`);
       if (t.tokens) meta.push(`<span>${fmtTokens(t.tokens)} tok</span>`);
       return `<div class="rep-find"><div class="rep-find-top">` +
         `<span class="rep-find-title">${esc(WASTE_LABELS[t.type] || t.type)}</span>` +
@@ -98,7 +101,7 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     const sc = d.scope || {};
     const subs = (sc.agents || []).filter((a) => a.line === 'subagent');
     const span = (sc.first_ts && sc.last_ts) ? ` · ${esc(shortTs(sc.first_ts))} → ${esc(shortTs(sc.last_ts))}` : '';
-    const scope = `${sc.requests || 0} requests · ${sc.turns || 0} turns` +
+    const scope = `${num(sc.requests)} requests · ${num(sc.turns)} turns` +
       (subs.length ? ` · ${subs.length} subagent line${subs.length === 1 ? '' : 's'}` : '') +
       (sc.models && sc.models.length ? ` · ${esc(sc.models.join(', '))}` : '') + span;
     return `<div class="rep-verdict">` +
@@ -120,7 +123,7 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     const legend = c.by_bucket.map((b) =>
       `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_BUCKET_COLOR[b.bucket] || '#888'}"></span>` +
       `<span class="rep-leg-name">${esc(REP_BUCKET_LABEL[b.bucket] || b.bucket)}</span>` +
-      `<span class="rep-leg-nums">${fmtUsd(b.usd)} · ${b.pct}%</span></div>`).join('');
+      `<span class="rep-leg-nums">${fmtUsd(b.usd)} · ${num(b.pct)}%</span></div>`).join('');
     // cache_misses is a localised drill-down of the cache_write_rewrite bucket
     // (already counted in by_bucket per the schema invariant) — render as a
     // sub-note, NEVER as an added segment.
@@ -166,7 +169,7 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
       `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_CAT_COLOR[c.category] || '#888'}"></span>` +
       `<span class="rep-leg-name">${esc(ctxCatLabel(c.category))}</span>` +
       `<span class="rep-leg-nums">${fmtTokens(c.v)}${unit}</span></div>`).join('');
-    const sub = `<div class="rep-sub">${fmtTokens(per)}${unit} re-sent ${resent}× = ` +
+    const sub = `<div class="rep-sub">${fmtTokens(per)}${unit} re-sent ${num(resent)}× = ` +
       `${fmtTokens(p.total_resent_tokens || 0)} total` +
       (unused ? ` · <b>${fmtTokens(unused)}${unit} never used</b>` : '') +
       (p.stable === false ? ' · estimate' : '') + `</div>`;

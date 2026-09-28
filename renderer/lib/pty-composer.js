@@ -1,11 +1,11 @@
 'use strict';
 
-const { PASTE_OPEN, PASTE_CLOSE } = require('./composer-voice');
+const { bracketPaste } = require('./composer-voice');
 
 const IMAGE_CHIP_RE = /\[Image #(\d+)\] ?/gu;
 
 function ptyComposerWrites(text) {
-  return [`${PASTE_OPEN}${String(text)}${PASTE_CLOSE}`, '\r'];
+  return [bracketPaste(text), '\r'];
 }
 
 function pasteKind(items) {
@@ -21,7 +21,10 @@ function imageChip(n) {
 
 function expandImageChips(text, paths) {
   const map = paths || {};
-  return String(text).replace(IMAGE_CHIP_RE, (chip, n) => (map[n] ? `Image #${n}: ${map[n]} ` : ''));
+  return String(text).replace(IMAGE_CHIP_RE, (chip, n) => {
+    if (!Object.hasOwn(map, n)) return chip;
+    return map[n] ? `Image #${n}: ${map[n]} ` : '';
+  });
 }
 
 function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, writePty }) {
