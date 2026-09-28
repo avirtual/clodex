@@ -744,7 +744,7 @@ function createRemoteWiring(deps) {
       setRemoteServer(null);
     });
     if (!constructed) return;
-    startPending = run.then(settleStart);
+    startPending = run.then(settleStart).catch((e) => log.error('remote', `deferred sync failed: ${e.message}`));
   }
 
   // The four peer-terminal callbacks, or an all-null bundle when nothing grants

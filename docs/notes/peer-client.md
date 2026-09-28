@@ -21,7 +21,8 @@ a peer main now tunnels to.
 
 ## _probeDialect
 
-t938: one fetch per hello IDENTITY, not per tick. `identityChanged` already
+t938: one successful fetch per hello IDENTITY, not per tick; a failed one is
+retried on the next tick. `identityChanged` already
 re-fires on a version or caps change, which is every way the far side's dialect
 can move under a live connection, so a per-tick fetch would buy nothing at
 fifteen round trips a minute per peer. A hello whose caps omit `resources` is

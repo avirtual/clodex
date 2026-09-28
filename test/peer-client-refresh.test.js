@@ -91,7 +91,7 @@ test('an SSE reopen resyncs the session list (Rebuild/recreate gap regression)',
   }
 });
 
-test('two openEvents calls before the first 200 open one stream, not two', () => {
+test('two openEvents calls before the first 200 open one stream, not two', async () => {
   const conn = new PeerConnection({
     id: 'box', label: 'box', url: 'http://127.0.0.1:1', emit: () => {}, helloIntervalMs: 10000,
   });
@@ -104,7 +104,9 @@ test('two openEvents calls before the first 200 open one stream, not two', () =>
   assert.strictEqual(calls[0].p, '/api/events');
   conn._openEvents();
   assert.strictEqual(calls.length, 1, 'a second open while the first is in flight is refused');
+  conn._eventsBackoff = 10;
   calls[0].opts.onClose();
-  assert.strictEqual(conn._eventsOpening, false, 'a failed open clears the in-flight mark');
+  await waitFor(() => calls.length === 2);
+  assert.strictEqual(calls[1].p, '/api/events', 'a failed open is retried on backoff');
   conn.stop();
 });
