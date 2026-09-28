@@ -1712,12 +1712,12 @@ test('reboot notice: no armed notice → a clean no-op (no deliver, no park, no 
 
 // ── Task 28 amendment (contrarian review) ───────────────────────────────────
 
-test('reboot notice: relaunchApp throwing CLEARS the armed flag (no false success later)', async () => {
+test('reboot notice: relaunchApp throwing CLEARS the armed flag and the rate-limit stamp', async () => {
   const { m, state, relaunches } = mkReboot({ intents: ['reboot'], relaunchThrows: true });
   await m._handleIntent('a', { type: 'reboot', body: 'x' });
   assert.strictEqual(relaunches.length, 0, 'relaunch threw');
   assert.strictEqual(state.pendingRebootNotice, null, 'notice cleared — the process did not die');
-  assert.ok(state.lastRebootAt > 0, 'rate-limit stamp still holds (no rapid-retry window)');
+  assert.ok(!state.lastRebootAt, 'no stamp: a relaunch that never happened must not rate-limit the retry');
 });
 
 test('reboot notice: a settings-write failure at reboot time does NOT abort the relaunch', async () => {

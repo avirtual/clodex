@@ -123,7 +123,7 @@ test('a throwing resolveTeam degrades to empty instead of killing the exec path'
   // take out an unrelated command.
   const { m, spawned, REGISTRY_DIR } = harness({
     resolveTeam: () => { throw new Error('broken manifest'); },
-    entry: DEF,
+    entry: { ...DEF, argv: ['/bin/sh', '/s.sh'], cwd: undefined },
   });
   try {
     m._handleExecIntent({ name: 'a', agentType: 'claude', cwd: '/proj/alpha' }, 'digest', '{}');
