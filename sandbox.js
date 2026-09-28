@@ -7,6 +7,7 @@
 const cp = require('child_process');
 const crypto = require('crypto');
 const net = require('net');
+const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
@@ -224,7 +225,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -248,6 +249,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   } else {
     L.push(`    image: ${image.image}`);
   }
+  if (hostUser) L.push('    user: "0:0"');
   // Loopback publishes — the v1 trust boundary (only this machine reaches them).
   L.push('    ports:');
   L.push(`      - "127.0.0.1:${ports.web}:${CONTAINER_PORTS.web}"`);
@@ -260,6 +262,10 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`      CLODEX_WIRESCOPE_PUBLIC_URL: "\${CLODEX_WIRESCOPE_PUBLIC_URL:-http://localhost:${ports.wirescope}}"`);
   L.push('      TBH_CREDENTIAL_BACKEND: file');
   L.push('      XDG_DATA_HOME: /home/clodex/.local/share');
+  if (hostUser) {
+    L.push(`      CLODEX_HOST_UID: "${hostUser.uid}"`);
+    L.push(`      CLODEX_HOST_GID: "${hostUser.gid}"`);
+  }
   if (authEnvFile) {
     L.push('    env_file:');
     L.push(`      - ${yamlQuote(authEnvFile)}`);
@@ -472,6 +478,8 @@ function createSandbox(deps = {}) {
     || ((next) => { getUiSettings().set({ sandbox: next }); });
   const serialize = deps.serialize || ((fn) => fn());
   const siblingComposePaths = deps.siblingComposePaths || (() => []);
+  const platform = deps.platform || process.platform;
+  const userInfo = deps.userInfo || os.userInfo;
 
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
@@ -615,6 +623,12 @@ function createSandbox(deps = {}) {
     return set;
   }
 
+  function hostUser() {
+    if (platform !== 'linux') return null;
+    const { uid, gid } = userInfo();
+    return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
+  }
+
   async function writeComposeFile() {
     const config = getConfig();
     const image = await resolveImageForConfig(config);
@@ -633,6 +647,7 @@ function createSandbox(deps = {}) {
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
+      hostUser: hostUser(),
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });

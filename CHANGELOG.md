@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Sandboxes on a Linux host no longer crash-loop with EACCES on /data: the box starts as root, remaps its `clodex` user to the host uid/gid, and drops to it, so bind-mounted state dirs and work dirs are writable on both sides; and a second box no longer reuses a sibling box's published ports while that sibling is down.
 - Docs: docs/map/renderer.md — a symbol-level map of renderer/renderer.js (19 regions, 134 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/session-manager.md — a symbol-level map of session-manager.js (20 regions, 197 rows), gated by test/module-map-fresh.test.js.
 - Docs: docs/map/team-tickets.md — a symbol-level map of team-tickets.js (20 regions, 133 rows), gated by test/module-map-fresh.test.js.

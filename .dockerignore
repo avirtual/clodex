@@ -20,6 +20,7 @@ deploy
 # image, and excluding docker/ keeps the context small (Dockerfile is read via -f,
 # not from the context).
 docker
+!docker/web/entrypoint.sh
 
 # Not needed at build or runtime.
 .git

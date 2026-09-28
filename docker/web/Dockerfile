@@ -78,6 +78,8 @@ RUN npm ci --omit=dev --ignore-scripts \
 COPY . .
 COPY --from=builder /build/web-dist ./web-dist
 RUN ln -s /app/cli/bin/clodexctl.js /usr/local/bin/clodexctl
+COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint
+RUN chmod 0755 /usr/local/bin/clodex-entrypoint
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).
@@ -125,6 +127,12 @@ ENV HOME=/home/clodex \
 USER clodex
 EXPOSE 8080
 
-# No ENTRYPOINT wrapper: compose `init: true` supplies PID-1 reaping (PTYs fork
-# real process trees; without a reaper, zombies accumulate).
+# ENTRYPOINT is docker/web/entrypoint.sh (installed as clodex-entrypoint). Run as
+# USER clodex it execs CMD unchanged. On a Linux host sandbox.js starts the box as
+# root (compose `user: "0:0"` overrides USER) with CLODEX_HOST_UID/GID: the script
+# remaps clodex to the host uid/gid so bind mounts are writable on both sides,
+# chowns only image-owned paths, then drops to clodex via setpriv.
+# compose `init: true` supplies PID-1 reaping (PTYs fork real process trees;
+# without a reaper, zombies accumulate).
+ENTRYPOINT ["/usr/local/bin/clodex-entrypoint"]
 CMD ["node", "headless-main.js"]

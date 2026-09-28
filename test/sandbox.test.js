@@ -1212,6 +1212,42 @@ test('writeComposeFile: ensure-dirs the host library sources and binds them read
   assert.ok(!yaml.includes('library/templates'));
 });
 
+async function composeFor(platform) {
+  const ud = freshUserData();
+  const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
+  const sb = createSandbox({
+    getUiSettings: () => fakeSettings(),
+    getUserDataPath: () => ud,
+    registryDir: reg,
+    isPortInUse: () => Promise.resolve(false),
+    repoRoot: '/repo',
+    platform,
+    userInfo: () => ({ uid: 1002, gid: 1003, username: 'op' }),
+  });
+  await sb.writeComposeFile();
+  const plain = generateCompose({
+    image: DEV_IMAGE, ports: { web: 7810, wirescope: 7811, wire: 7820 }, workDir: null, authEnvFile: null,
+    libDir: reg, hostname: SANDBOX_PEER_ID, stateDir: sb.stateDir(),
+  });
+  return { yaml: fs.readFileSync(sb.composePath(), 'utf8'), plain };
+}
+
+test('writeComposeFile: on a linux host the box starts as root with the host uid/gid to remap to', async () => {
+  const { yaml, plain } = await composeFor('linux');
+  const stripped = yaml.split('\n').filter((l) => !/^    user: "0:0"$|^      CLODEX_HOST_(UID|GID): /.test(l)).join('\n');
+  assert.strictEqual(stripped, plain);
+  assert.ok(yaml.includes('\n    user: "0:0"\n    ports:\n'));
+  assert.ok(yaml.includes('\n      XDG_DATA_HOME: /home/clodex/.local/share\n      CLODEX_HOST_UID: "1002"\n      CLODEX_HOST_GID: "1003"\n'));
+});
+
+test('writeComposeFile: on darwin and win32 the compose carries no user or host ids', async () => {
+  for (const platform of ['darwin', 'win32']) {
+    const { yaml, plain } = await composeFor(platform);
+    assert.strictEqual(yaml, plain, platform);
+    assert.ok(!/user:|CLODEX_HOST_/.test(yaml), platform);
+  }
+});
+
 test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxes/<id> and binds them', async () => {
   const ud = freshUserData();
   const reg = mkTmpDirIn(TMP_USERDATA, 'reg-');
