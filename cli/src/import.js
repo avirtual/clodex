@@ -102,6 +102,14 @@ function safeTransport(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+const NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const RESERVED_NAMES = new Set(['__proto__', 'constructor', 'prototype']);
+const BOX_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function validNodeName(name) {
+  return NODE_NAME_RE.test(name) && !RESERVED_NAMES.has(name);
+}
+
 function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json')) || {}, env = process.env) {
   const remotePort = Number.isInteger(ui.remotePort) ? ui.remotePort : DEFAULT_REMOTE_PORT;
   const envToken = env[SANDBOX_TOKEN_KEY] && String(env[SANDBOX_TOKEN_KEY]).trim();
@@ -136,7 +144,14 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
   for (const p of Array.isArray(ui.peers) ? ui.peers : []) {
     if (!p || typeof p !== 'object') continue;
     const label = typeof p.label === 'string' && p.label ? p.label : (p.sshHost || p.url || p.id);
-    if (!safeTransport(label)) continue;
+    if (!safeTransport(label)) {
+      out.push({ name: '(unnamed peer)', action: 'skip', reason: 'no usable name/transport (refused)', tokenState: 'none' });
+      continue;
+    }
+    if (!validNodeName(label)) {
+      out.push({ name: String(label), action: 'skip', reason: 'label is not a valid node name', tokenState: 'none' });
+      continue;
+    }
     if (p.disabled === true) {
       out.push({ name: String(label), action: 'skip', reason: 'peer disabled', tokenState: p.token ? 'set' : 'none' });
       continue;
@@ -162,6 +177,10 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
   for (const box of Array.isArray(ui.boxes) ? ui.boxes : []) {
     if (!box || typeof box !== 'object' || !safeTransport(box.id)) continue;
     const id = box.id;
+    if (!BOX_ID_RE.test(id) || !validNodeName(id)) {
+      out.push({ name: String(id), action: 'skip', reason: 'box id outside the box-id grammar', tokenState: 'none' });
+      continue;
+    }
     const cfg = (box.config && typeof box.config === 'object') ? box.config : {};
     const wirePort = Number.isInteger(cfg.wirePort) ? cfg.wirePort : DEFAULT_SANDBOX_WIRE_PORT;
     const subdir = id === 'sandbox' ? 'sandbox' : `sandbox-${id}`;
@@ -186,10 +205,18 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
 // never touched. Skipped candidates (disabled/tokenless) pass through as-is.
 function applyImport(store, candidates, { force = false } = {}) {
   const next = { current: store.current || null, contexts: { ...(store.contexts || {}) } };
+  const onEntry = next.contexts;
+  next.contexts = { ...onEntry };
+  const seen = new Set();
   const results = [];
   for (const c of candidates) {
     if (c.action === 'skip') { results.push({ ...c, result: 'skipped', reason: c.reason }); continue; }
-    const exists = Object.prototype.hasOwnProperty.call(next.contexts, c.name);
+    if (seen.has(c.name)) {
+      results.push({ ...c, result: 'skipped', reason: `duplicate name in import (${c.name} already imported in this run)` });
+      continue;
+    }
+    seen.add(c.name);
+    const exists = Object.prototype.hasOwnProperty.call(onEntry, c.name);
     if (exists && !force) {
       results.push({ ...c, result: 'skipped', reason: 'exists, skipped — --force to overwrite' });
       continue;

@@ -197,6 +197,62 @@ test('applyImport: collision skips by default, --force overwrites, current untou
   assert.strictEqual(forced.store.current, 'local');
 });
 
+test('import refuses a peer whose label is not a valid node name, with a visible skip row', () => {
+  const dir = fixture({ ui: { peers: [
+    { id: 'p1', label: 'My Box', sshHost: 'box1' },
+    { id: 'p2', label: '__proto__', url: 'http://x' },
+    { id: 'p3', label: 'constructor', url: 'http://y' },
+  ] } });
+  const cands = imp.collectCandidates(dir, { env: {} });
+  for (const n of ['My Box', '__proto__', 'constructor']) {
+    const row = cands.find((c) => c.name === n);
+    assert.ok(row, `a row for ${n}`);
+    assert.strictEqual(row.action, 'skip', n);
+    assert.match(row.reason, /node name/);
+    assert.strictEqual(row.entry, undefined);
+  }
+});
+
+test('a peer with no string label and an argv sshHost still yields a visible refused skip row', () => {
+  const dir = fixture({ ui: { peers: [{ sshHost: ['sh', '-c', 'x'] }] } });
+  const cands = imp.collectCandidates(dir, { env: {} });
+  assert.strictEqual(cands.length, 2);
+  const row = cands.find((c) => c.name !== 'local');
+  assert.strictEqual(row.action, 'skip');
+  assert.match(row.reason, /refused/);
+  assert.strictEqual(row.name, '(unnamed peer)');
+});
+
+test('a box id outside the box-id grammar is skipped, not path-joined', () => {
+  const dir = fixture({ ui: { boxes: [{ id: '../x' }] }, sandboxTokens: { 'sandbox-../x': 't' } });
+  const cands = imp.collectCandidates(dir, { env: {} });
+  const row = cands.find((c) => c.name === '../x');
+  assert.ok(row);
+  assert.strictEqual(row.action, 'skip');
+  assert.match(row.reason, /box id/);
+  assert.strictEqual(row.entry, undefined);
+});
+
+test('applyImport flags a duplicate candidate name within one run instead of overwriting the earlier candidate', () => {
+  const store = { current: null, contexts: {} };
+  const cands = [
+    { name: 'local', entry: { url: 'http://127.0.0.1:7900' }, action: 'add', tokenState: 'none' },
+    { name: 'local', entry: { url: 'http://peer:7900' }, action: 'add', tokenState: 'none' },
+  ];
+  for (const force of [true, false]) {
+    const { store: next, results } = imp.applyImport(store, cands, { force });
+    assert.strictEqual(next.contexts.local.url, 'http://127.0.0.1:7900');
+    assert.strictEqual(results[0].result, 'added');
+    assert.strictEqual(results[1].result, 'skipped');
+    assert.match(results[1].reason, /duplicate/);
+  }
+  const pre = { current: null, contexts: { local: { url: 'http://old' } } };
+  const forced = imp.applyImport(pre, cands, { force: true });
+  assert.strictEqual(forced.results[0].result, 'overwritten');
+  assert.match(forced.results[1].reason, /duplicate/);
+  assert.strictEqual(forced.store.contexts.local.url, 'http://127.0.0.1:7900');
+});
+
 // ── end-to-end through main.run against a fixture + a tmp contexts file ───────
 function tmpCtxFile() {
   return path.join(mkTmpRoot('clx-cf-'), 'contexts.json');
