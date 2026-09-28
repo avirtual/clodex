@@ -6,7 +6,7 @@ coordinators; everything else is a module with an explicit interface.
 
 This file answers "where does code live", one line per module naming what it
 OWNS. One level down, `docs/map/` holds symbol-level maps of the
-giant modules, gated by `test/module-map-fresh.test.js` (none yet). The
+giant modules, gated by `test/module-map-fresh.test.js`. The
 subsystem docs answer "how does it work and what must I not break":
 
 - [sessions.md](sessions.md) — session lifecycle: create/argv, hooks,
