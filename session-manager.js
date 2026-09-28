@@ -80,9 +80,13 @@ function execRunStatusReply(execRuns, rawBody, now) {
     const h = headOf(r, i);
     return tails[i] ? `${h}: ${tails[i]}` : h;
   }).join('; ')}` + EXEC_STATUS_REPLY_CLOSING;
+  const endsHigh = (str) => {
+    const c = str.charCodeAt(str.length - 1);
+    return c >= 0xD800 && c <= 0xDBFF;
+  };
   const dropLast = (str) => {
     const cut = str.slice(0, -1);
-    return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+    return endsHigh(cut) ? cut.slice(0, -1) : cut;
   };
 
   let over = render().length - EXEC_STATUS_REPLY_MAX;
@@ -107,7 +111,7 @@ function execRunStatusReply(execRuns, rawBody, now) {
     over = render().length - EXEC_STATUS_REPLY_MAX;
   }
   for (let i = 0; i < tails.length; i++) {
-    if (/[\uD800-\uDBFF]$/.test(tails[i])) tails[i] = tails[i].slice(0, -1);
+    if (endsHigh(tails[i])) tails[i] = tails[i].slice(0, -1);
   }
   return render();
 }

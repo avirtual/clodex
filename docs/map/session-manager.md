@@ -4,7 +4,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed by code point, then each head's cmd clipped, to stay inside a 400-char cap | none (pure) | execElapsedLabel | exec-run-status-query.test.js |
+| `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed by code point, then each head's cmd clipped, to stay inside a 400-char cap | none (pure) | execElapsedLabel | unpinned |
 | `isScratchCutText` | true when a text starts with a scratch briefing prefix or the handoff-continue line, i.e. a manager-injected scratch cut | none | scratchRealArrivals | unpinned |
 | `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.resolveModelId | unpinned |
 | `bootNudgeProbeOf` | the first non-blank line of injected bytes, paste markers and Ctrl-U stripped, as up to 32 ink-visible chars to look for in the echo | none (pure) | inkVisibleText | unpinned |
