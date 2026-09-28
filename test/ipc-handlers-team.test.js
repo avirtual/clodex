@@ -765,14 +765,14 @@ test('team:delete refuses a team whose done ticket is still in the verify loop',
 
 test('team:activity names a HELD verify as held, not as in review', () => {
   const d = mkActivityDoor({
-    tickets: [{ id: 't1', state: 'done', role: 'hand', assignee: 'shop-hand-t1', title: 'held', loopStep: 'verify',
+    tickets: [{ id: 't1', state: 'done', role: 'hand', assignee: 'shop-hand-1', title: 'held', loopStep: 'verify',
       reviewRound: 1, verifyHold: { step: 'verify: suite', recovery: 'hand' }, openedAt: 1 }],
-    sessions: [{ name: 'shop-hand-t1', agentType: 'claude' }],
+    sessions: [{ name: 'shop-hand-1', agentType: 'claude' }],
   });
   try {
     const a = d.activity();
-    assert.deepStrictEqual(a.tickets.open, [{ id: 't1', title: 'held', assignee: 'shop-hand-t1', step: 'held', since: null, round: null }]);
-    assert.deepStrictEqual(a.roles.hand.live, [{ seat: 'shop-hand-t1', ticket: 't1', step: 'held' }]);
+    assert.deepStrictEqual(a.tickets.open, [{ id: 't1', title: 'held', assignee: 'shop-hand-1', step: 'held', since: null, round: null }]);
+    assert.deepStrictEqual(a.roles.hand.live, [{ seat: 'shop-hand-1', ticket: 't1', step: 'held' }]);
   } finally { d.cleanup(); }
 });
 
