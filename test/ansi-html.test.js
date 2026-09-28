@@ -30,6 +30,15 @@ const SGR_TABLE = [
   ['bg 256', `${E}48;5;21mx`, 'background-color:rgb(0,0,255)'],
   ['0 resets all', `${E}1;3;4;31;42m${E}0mx`, ''],
   ['bare m resets', `${E}1m${E}mx`, ''],
+  ['fg truecolor colon form with a colorspace id', `${E}38:2:0:255:0:0mx`, 'color:rgb(255,0,0)'],
+  ['fg truecolor colon form with an empty colorspace', `${E}38:2::255:0:0mx`, 'color:rgb(255,0,0)'],
+  ['fg truecolor colon form without a colorspace', `${E}38:2:255:0:0mx`, 'color:rgb(255,0,0)'],
+  ['bg truecolor colon form with a colorspace id', `${E}48:2:0:1:2:3mx`, 'background-color:rgb(1,2,3)'],
+  ['fg 256 colon form', `${E}38:5:196mx`, 'color:rgb(255,0,0)'],
+  ['4:3 curly underline is underline only', `${E}4:3mx`, 'text-decoration:underline'],
+  ['4:0 clears underline only', `${E}1;4m${E}4:0mx`, 'font-weight:bold'],
+  ['a truncated 38;5 leaves the earlier fg in place', `${E}31;38;5mx`, 'color:rgb(205,49,49)'],
+  ['a truncated 48;2 leaves the earlier bg in place', `${E}42;48;2;1mx`, 'background-color:rgb(13,188,121)'],
   ['combined order', `${E}4;3;2;1;38;2;9;8;7;48;5;16mx`, 'font-weight:bold;opacity:0.6;font-style:italic;text-decoration:underline;color:rgb(9,8,7);background-color:rgb(0,0,0)'],
 ];
 
@@ -61,4 +70,11 @@ test('text holding < and & comes back as literal characters, never as markup', (
 
 test('newlines and tabs survive; other control characters are dropped', () => {
   assert.deepStrictEqual(ansiRuns('a\tb\r\nc\x07'), [{ text: 'a\tb\nc', style: '' }]);
+});
+
+test('a trailing incomplete CSI is dropped rather than shown as digits', () => {
+  assert.deepStrictEqual(ansiRuns(`a${E}1mb${E}3`), [
+    { text: 'a', style: '' },
+    { text: 'b', style: 'font-weight:bold' },
+  ]);
 });

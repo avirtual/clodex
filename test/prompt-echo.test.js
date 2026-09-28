@@ -107,6 +107,21 @@ const ROWS = [
     expect: `${ESC}[48;2;10;11;12ma${ESC}[48;5;231mb${ESC}[38;2;0;0;0mc`,
   },
   {
+    name: '48:5:n colon form is a real background change and clears the gate',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[48:5:231mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[48:5:231mb${ESC}[38;2;0;0;0mc`,
+  },
+  {
+    name: '48:2 with a colourspace id is a real background change and clears the gate',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[48:2:1:215:119:87mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[48:2:1:215:119:87mb${ESC}[38;2;0;0;0mc`,
+  },
+  {
+    name: '38:5:n and 58:5:n colon forms do not clear the gate',
+    input: [`${ESC}[48;2;240;240;240ma${ESC}[38:5:231;58:5:44mb${ESC}[38;2;0;0;0mc`],
+    expect: `${ESC}[48;2;10;11;12ma${ESC}[38:5:231;58:5:44mb${ESC}[38;2;17;18;19mc`,
+  },
+  {
     // 58 is UNDERLINE colour, not text and not background: it neither ends the
     // run nor gets substituted -- even spelled with the echo's own black triplet,
     // which is the row that catches a fix routing 58 into substitute().
