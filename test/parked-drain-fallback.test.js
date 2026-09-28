@@ -401,3 +401,26 @@ test('the fallback delivers nothing — and claims nothing happened — when ano
       + 'next one is missed');
   } finally { app.stop(); }
 });
+
+test('a second active park armed while the first\'s timer is pending still gets a fallback', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('reviewer-1');
+    clearTimeout(s._parkedDrainFallbackTimer);
+    s._parkedDrainFallbackTimer = null;
+    const B = pendingStore.parkDelivery(app.PENDING_DIR, 'reviewer-1', '[agent:from lead] SECOND PARK', '2');
+    const A = '1.json';
+    const onDisk = (f) => fs.existsSync(path.join(app.PENDING_DIR, 'reviewer-1', f));
+    assert.ok(!onDisk(A) && onDisk(B), 'ENTER: only B is on disk — A was already claimed by another drainer');
+    const drains = [];
+    const real = app.m._drainPendingAtBootReady.bind(app.m);
+    app.m._drainPendingAtBootReady = (seat) => { drains.push(seat.name); };
+    app.m._armParkedDrainFallback(s, A, 50, Date.now() + 1000);
+    app.m._armParkedDrainFallback(s, B, 50, Date.now() + 1000);
+    await new Promise((r) => setTimeout(r, 120));
+    assert.ok(onDisk(B), 'ENTER: B is still parked, so a fallback is still owed');
+    assert.ok(drains.length > 0 || s._parkedDrainFallbackTimer != null,
+      'B must keep a live fallback after A\'s pass finds A gone — otherwise nothing is left to drain it');
+    app.m._drainPendingAtBootReady = real;
+  } finally { app.stop(); }
+});

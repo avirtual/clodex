@@ -1588,7 +1588,7 @@ test('reboot notice: [agent:reboot] arms pendingRebootNotice (name/at/reason) al
 // deliveries (_deliverMessage) and parks (the parkDelivery dep). Note: a LIVE
 // CLAUDE seat now PARKS (T30 boot-safety) — it shows up in `parks`, not
 // `delivered`; a live CODEX seat and the offline path behave as before.
-function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false } = {}) {
+function mkNotice({ notice, live = false, persisted = null, deliverThrows = false, parkThrows = false, onDisk = false } = {}) {
   const state = { pendingRebootNotice: notice };
   const delivered = [];
   const parks = [];
@@ -1598,7 +1598,14 @@ function mkNotice({ notice, live = false, persisted = null, deliverThrows = fals
       set: (partial) => { Object.assign(state, partial); return { ...state }; },
     }),
     getPersistence: () => ({ list: () => [], get: (n) => (n === (notice && notice.name) ? persisted : null) }),
-    parkDelivery: (_dir, name, text) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text }); },
+    parkDelivery: (_dir, name, text, _seq, _id, _passive, _born, key) => { if (parkThrows) throw new Error('park boom'); parks.push({ name, text, key }); },
+    ...(onDisk ? {
+      claimParkedByKey: (_dir, name, key) => {
+        const before = parks.length;
+        for (let i = parks.length - 1; i >= 0; i--) if (parks[i].name === name && key && parks[i].key === key) parks.splice(i, 1);
+        return { ids: [], claimed: before - parks.length };
+      },
+    } : {}),
     PENDING_DIR: '/tmp/pending-x',
     // Same reason as mkPark's: unwired, _armParkCap does setTimeout(fn, undefined),
     // which fires on the NEXT TICK rather than in 5 minutes. Every test here was
@@ -1680,7 +1687,7 @@ test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive 
   disarm();
 });
 
-test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag clears', () => {
+test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag retained', () => {
   const { m, state, delivered, parks } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' },
   });
@@ -1690,7 +1697,7 @@ test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag 
   assert.strictEqual(parks[0].name, 'a');
   // Parked text is the full delivery form — a single clean [agent:from reboot] prefix, no doubling.
   assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex restarted and is running again \(reboot requested at/);
-  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
+  assert.ok(state.pendingRebootNotice, 'flag retained until the resumed seat takes a turn');
 });
 
 test('reboot notice: a GONE requester (no persisted entry) drops, flag still clears', () => {
@@ -1763,7 +1770,7 @@ test('reboot notice: a stale (>7d) notice that errors is DROPPED, not retained f
   assert.strictEqual(state.pendingRebootNotice, null, 'stale-beyond-useful notice cleared on error');
 });
 
-test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + cleared', () => {
+test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + retained', () => {
   // A {failed:true} persisted entry still HAS a record — it's recoverable, so the
   // notice parks by name (drains on a successful retry) rather than being dropped.
   const { m, state, delivered, parks } = mkNotice({
@@ -1772,7 +1779,7 @@ test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + c
   m.maybeDeliverRebootNotice();
   assert.strictEqual(delivered.length, 0);
   assert.strictEqual(parks.length, 1, 'parked, not dropped — a failed restore is not gone');
-  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared on a successful park');
+  assert.ok(state.pendingRebootNotice, 'flag retained on a park — a park is not a receipt');
 });
 
 test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', () => {
@@ -22714,4 +22721,96 @@ test('_scanPtyOutput: carriage-return-only progress output keeps the line buffer
   const chunk = '\rprogress 50%'.repeat(5000);
   for (let fed = 0; fed < 4 * 1024 * 1024; fed += chunk.length) m._scanPtyOutput(s, chunk);
   assert.ok(s.lineBuffer.length <= 64 * 1024, `lineBuffer ${s.lineBuffer.length}`);
+});
+
+test('a jsonl-activity seat that takes a turn after the park is presumed delivered', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: 'x' }, live: true,
+  });
+  t.after(disarm);
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked');
+  t.mock.timers.tick(1);
+  m._emitActivity('a', 'thinking');
+  m._emitActivity('a', 'idle');
+  assert.strictEqual(m.sessions.get('a').activityState, 'idle', 'ENTER: the real activity edges ran');
+  assert.ok(!m.sessions.get('a').lastMainStop, 'ENTER: no wire stop — this seat has no tee');
+  fireRebootRetry(m, 'a');
+  assert.ok(state.pendingRebootNotice === null && parks.length === 1,
+    'a turn seen on the activity edge is a turn: the notice clears and is not re-parked');
+});
+
+test('the compact guard gets a full INJECT_HOLD_TIMEOUT from when it goes up', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const m = mk({ INJECT_HOLD_TIMEOUT: 10_000 });
+  const s = { name: 'g', agentType: 'claude', activityState: 'thinking' };
+  m.sessions.set('g', s);
+  m._maybeFlushInjectQueue = () => {};
+  m._injectText(s, 'x');
+  assert.ok(s._injectQueue && s._injectQueue.length === 1 && s._injectHoldTimer, 'ENTER: held behind the busy turn');
+  t.mock.timers.tick(9_000);
+  s.activityState = 'idle';
+  m._armCompactGuard(s);
+  t.mock.timers.tick(1_000);
+  assert.strictEqual(s._compactGuard, true,
+    'the guard went up 1s ago — the busy hold\'s leftover deadline must not release it');
+});
+
+test('a stream seat\'s turn-end drain holds a queued operator item while its hint is pending', async (t) => {
+  const stub = {
+    encodeUser: (text) => ({ stub: text }),
+    decode: () => ({ kind: 'result' }),
+  };
+  const { streamFor: realStreamFor } = require('../cli-adapters');
+  const h = mkStreamSeatManager({
+    streamFor: (type) => (type === 'claude' ? { ...realStreamFor('claude'), codec: 'stub-codec' } : null),
+    loadStreamCodec: () => stub,
+  });
+  t.after(() => h.stopAll());
+  await h.create('sth');
+  const s = h.m.sessions.get('sth');
+  t.after(() => clearTimeout(s._streamHoldTimer));
+  h.m.seatSend('sth', 'first');
+  assert.strictEqual(s.streamBusy, true, 'ENTER: the first send opened a turn');
+  h.m.seatSend('sth', 'second');
+  assert.strictEqual(s.outbox.length, 1, 'ENTER: the operator item is queued behind the busy turn');
+  s._armWait = { until: Date.now() + 60_000 };
+  const sent = h.handles[0].sent.length;
+  h.line('sth', { any: 1 });
+  assert.strictEqual(h.handles[0].sent.length, sent, 'the queued item waits for its hint instead of going at turn end');
+  assert.strictEqual(s.streamBusy, false, 'and the turn did end');
+});
+
+test('an offline reboot notice survives its park until the seat resumes', () => {
+  const { m, state, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' },
+  });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked for the offline seat');
+  assert.ok(state.pendingRebootNotice !== null, 'the settings copy is the durable one until a turn confirms it');
+});
+
+test('a reboot notice parked offline and re-offered once the seat is live nets one copy on disk', (t) => {
+  const { m, state, parks, disarm } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, onDisk: true,
+  });
+  t.after(disarm);
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'ENTER: parked while the seat was offline');
+  assert.ok(state.pendingRebootNotice, 'ENTER: retained for the next offer');
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws2' });
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'the live offer supersedes the offline copy instead of stacking a second notice');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'and the ladder starts at its first rung');
+});
+
+test('a reboot notice re-offered to a seat that stays offline keeps one copy on disk', () => {
+  const { m, parks } = mkNotice({
+    notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' }, onDisk: true,
+  });
+  m.maybeDeliverRebootNotice();
+  m.maybeDeliverRebootNotice();
+  m.maybeDeliverRebootNotice();
+  assert.strictEqual(parks.length, 1, 'launch after launch, the archived seat holds one notice, not one per launch');
 });
