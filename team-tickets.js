@@ -2450,7 +2450,9 @@ function createTicketMethods(deps, shared) {
           // `state` FIRST: a reopened row can still carry an older `acceptedAt`.
           const rejectedSince = !!row && this._verdictRejectedSince(row, landedOn);
           const reopened = row && (row.state !== 'done' || rejectedSince);
-          const acceptedInFlight = !reopened && row && ((row.acceptedAt && row.acceptedAt >= mergeStartedAt) || row.closedOut);
+          const acceptedInFlight = !reopened && row && (row.acceptedAt || row.closedOut);
+          const duringSuite = !!(row && ((row.acceptedAt && row.acceptedAt >= mergeStartedAt) || row.closedOut));
+          const when = duringSuite ? 'while the post-merge suite ran' : 'before the merge landed';
           // `closedOut`, NOT the stamp, picks that accept's SENTENCE: `!m.ok` and
           // `!m.merged` stamp and keep a tree that, called a close-out, is never
           // mentioned again. Neither records a reason, so neither is quoted.
@@ -2459,7 +2461,7 @@ function createTicketMethods(deps, shared) {
           if (reopened) {
             log.info('ticket', `ticket ${ticketId} was reopened (${row.state}) while the post-merge suite ran — the merge stands and the loop tore nothing down`);
           } else if (acceptedInFlight) {
-            log.info('ticket', `ticket ${ticketId} was accepted by ${who} while the post-merge suite ran — the loop reports that instead of closing out again`);
+            log.info('ticket', `ticket ${ticketId} was accepted by ${who} ${when} — the loop reports that instead of closing out again`);
           }
           closeOut = !row
             ? { ok: false, closedOut: false, text: `the ticket row for ${ticketId} could not be re-read after the merge` }
@@ -2471,7 +2473,7 @@ function createTicketMethods(deps, shared) {
                   text: `ticket ${ticketId} accepted — ${who} accepted it while the post-merge suite ran` }
                 : acceptedInFlight
                   ? { ok: false, closedOut: false, already: true,
-                    text: `${who} accepted it while the post-merge suite ran, but that accept did not finish the cleanup `
+                    text: `${who} accepted it ${when}, but that accept did not finish the cleanup `
                       + '(tree or branch kept)' }
                   : await this._closeOutMergedTicket(team, row, fresh, { by: 'ticket-loop' });
         } catch (e) {
@@ -9383,6 +9385,7 @@ function createTicketMethods(deps, shared) {
           const row = fresh.find((t) => t.id === ticket.id);
           if (row && row.revival && (row.revival.mergeVetoed || row.revival.mergedInto === undefined)) {
             if (row.revival.mergeVetoed) row.revival.mergeVetoedClearedAt = Date.now();
+            row.revival.accepted = true;
             row.revival.mergedInto = (measured && c.count === 0) ? null : m.base;
             delete row.revival.mergeVetoed;
             row.lastActivityAt = Date.now();

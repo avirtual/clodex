@@ -703,8 +703,15 @@ test('an accept made before the merge is not reported as made during the suite',
 
   const notes = f.landed();
   assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice went out');
-  assert.ok(!notes[0].body.includes('while the post-merge suite ran'),
-    `an accept that landed before the merge is not reported as landing during the suite. Got:\n${notes[0].body}`);
+  const body = notes[0].body;
+  assert.ok(!body.includes('while the post-merge suite ran'),
+    `an accept that landed before the merge is not reported as landing during the suite. Got:\n${body}`);
+  assert.ok(body.includes('lead accepted it before the merge landed, but that accept did not finish the cleanup'),
+    `the notice says when the accept landed. Got:\n${body}`);
+  assert.strictEqual(f.one().closedOut, undefined, 'the pre-merge accept did not close the ticket out');
+  assert.ok(!body.includes('Closed out:'), `so the notice claims no close-out. Got:\n${body}`);
+  assert.ok(body.includes('Step owed:'), 'and the accept is still owed');
+  assert.notStrictEqual(git(repo.dir, ['branch', '--list', 'tl-1']).trim(), '', 'the branch is kept');
 });
 
 test('a throw after the merge landed escalates with the revert command instead of rejecting', async () => {
@@ -728,6 +735,7 @@ test('reject clears a stale undelivered merge escalation', async () => {
     loopStep: undefined, verdict: 'ACCEPT', mergeError: 'clean-tree',
     escalationUndelivered: { step: 'clean-tree', body: 'b' },
   } });
+  assert.ok(f.one().escalationUndelivered && f.one().mergeError, 'ENTER: the stale escalation and mark are on the saved row');
   const replies = [];
   f.m._taskReject(f.m.sessions.get('lead'), f.team,
     { id: 't1', body: 'round 2: the tree needs another pass' }, (msg) => replies.push(msg));
