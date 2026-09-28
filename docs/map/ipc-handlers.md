@@ -125,9 +125,9 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `handle:templates:list` | every seat template, library and team-owned | templates store (read) | listAllTemplates | team-roles.test.js |
-| `handle:templates:save` | saves a template and returns the library list | templates store | templates.save, refreshAppMenu | app-menus-plugins.test.js |
-| `handle:templates:saveByName` | saves a template keyed by name, returning it and the list | templates store | templates.saveByName, refreshAppMenu | app-menus-plugins.test.js |
-| `handle:templates:remove` | deletes a template (a refused name deletes nothing) and returns the list | templates store | templates.remove, refreshAppMenu | app-menus-plugins.test.js |
+| `handle:templates:save` | saves a template and returns `{ok, templates}`; a store throw answers `{ok:false, error, templates}` | templates store | templates.save, refreshAppMenu | app-menus-plugins.test.js library-template-save-ipc.test.js |
+| `handle:templates:saveByName` | saves a template keyed by name, returning it and the list; a store throw answers `{ok:false, error, templates}` | templates store | templates.saveByName, refreshAppMenu | app-menus-plugins.test.js library-template-save-ipc.test.js |
+| `handle:templates:remove` | deletes a template and returns `{ok, templates}`; a refused name, or an id still listed after the store's remove (a swallowed EROFS in a box), answers `{ok:false, error, templates}` | templates store | templates.remove, refreshAppMenu | app-menus-plugins.test.js library-template-save-ipc.test.js |
 | `handle:templates:saveTeam` | writes a template into a team's own dir | team templates dir | team-prompt-dir.teamTemplateSave, teamTemplateList | team-template-save-ipc.test.js team-file-intents.test.js |
 | `handle:templates:removeTeam` | deletes a team-owned template | team templates dir | team-prompt-dir.teamTemplateRemove, teamTemplateList | team-template-save-ipc.test.js |
 | `handle:templates:exportFromSession` | saves a persisted session's spawn config as a named template, writing opt-out fields only when set | templates store, sessions.json (read) | persistence.get, templates.saveByName | app-menus-plugins.test.js |
@@ -163,7 +163,6 @@
 
 ### Hazards
 - Writing `intents: []` from `handle:templates:exportFromSession` for an all-enabled seat freezes every intent off onto the template.
-- `handle:templates:remove` swallows a refused name and still returns the list, so the caller cannot read success from the reply alone.
 
 ## Seat reads, transcript and wire telemetry — handle:prompts:inject … handle:proxy:setStripLevel
 
@@ -425,7 +424,7 @@
 |---|---|---|---|---|
 | `withBox` | runs a callback against one sandbox box, or a no-such-sandbox refusal | none | getSandbox | unpinned |
 | `handle:sandbox:detect` | whether docker is usable, host-wide and not box-scoped | none | sandbox manager detect | engine-sandbox-seam.test.js |
-| `handle:sandbox:self` | whether this engine runs inside a box, and its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner | none | runningInSandboxBox | engine-sandbox-seam.test.js |
+| `handle:sandbox:self` | whether this engine runs inside a box, its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner, and whether the library templates dir is writable there | none | runningInSandboxBox, templates.dirWritable | engine-sandbox-seam.test.js |
 | `handle:sandbox:status` | one box's status | box container (read) | withBox | unpinned |
 | `handle:sandbox:openWeb` | opens a box's web UI with its token in the external browser | none | withBox, openExternal | sandbox-open-web.test.js |
 | `handle:sandbox:getConfig` | one box's config | box config (read) | withBox | unpinned |

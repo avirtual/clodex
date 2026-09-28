@@ -3871,6 +3871,8 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 /* New Session tool-doctor gate notice (Task 12): shown when the selected type's
    CLI isn't on PATH. Ships hidden; the .sandbox-dot inside colors it error. */
 #new-session-tool-notice.hidden { display: none; }
+#template-library-note.hidden { display: none; }
+#template-library-note { margin: 8px 0; font-size: 13px; color: var(--warn, #d9a44f); }
 #new-session-tool-notice { color: var(--error, #d9534f); display: flex; align-items: center; gap: 8px; }
 /* "Install <tool>…" button on the missing-CLI notice (Task 14): spawns the
    visible bash installer. Compact, sits to the right of the remedy text. */

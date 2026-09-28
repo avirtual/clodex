@@ -1036,3 +1036,70 @@ test('a second saveTemplateFromForm while one is in flight saves nothing', async
   await save();
   assert.strictEqual(saves, 2, 'the guard is released after the save');
 });
+
+const { createButtonState } = require('../renderer/lib/name-validity');
+
+function libraryLockHarness(libraryWritable) {
+  const btnCreate = { disabled: false, title: '' };
+  const hidden = new Set(['hidden']);
+  const templateLibraryNote = {
+    textContent: '',
+    classList: { toggle: (c, on) => { if (on) hidden.add(c); else hidden.delete(c); } },
+  };
+  const edLock = slice('async function openTemplateEditor(', '\nasync function saveTemplateFromForm(', 'the template editor')
+    .match(/^ {2}applyLibraryLock\([^\n]*\);$/m);
+  const openLock = slice('async function openDialog(', '\nfunction populateHostCatalogs(', 'openDialog')
+    .match(/^ {2}applyLibraryLock\([^\n]*\);$/m);
+  assert.ok(edLock && openLock, 'ENTER: both dialog entries apply the library lock');
+  const note = extract(/\n(const LIBRARY_READONLY_NOTE = [^\n]*;)\n/, 'LIBRARY_READONLY_NOTE');
+  const api = new Function('btnCreate', 'templateLibraryNote', 'createButtonState', 'libraryWritable', `
+    ${note}
+    let templateLibraryLocked = false;
+    let dialogMode = 'create';
+    const dialogNameState = { ok: true, message: '' };
+    const dialogToolGate = { ok: true, disabled: false, notice: null };
+    const createInFlight = false;
+    ${extract(/\n(function refreshCreateButton\(\) \{[\s\S]*?\n\})\n/, 'refreshCreateButton')}
+    ${extract(/\n(function applyLibraryLock\([\s\S]*?\n\})\n/, 'applyLibraryLock')}
+    return {
+      editor(bundle, editingTemplateTeam) { ${edLock[0]} dialogMode = 'template'; refreshCreateButton(); },
+      openDialog() { ${openLock[0]} dialogMode = 'create'; refreshCreateButton(); },
+      NOTE: LIBRARY_READONLY_NOTE,
+    };
+  `)(btnCreate, templateLibraryNote, createButtonState, libraryWritable);
+  return { api, btnCreate, templateLibraryNote, noteVisible: () => !hidden.has('hidden') };
+}
+
+test('t1375: a read-only library opens library templates with Save disabled and the note shown; team rows and New Session stay enabled', () => {
+  const h = libraryLockHarness(false);
+  h.api.editor(null, null);
+  assert.strictEqual(h.btnCreate.disabled, true, 'a library row cannot be saved onto a :ro mount');
+  assert.strictEqual(h.btnCreate.title, h.api.NOTE);
+  assert.ok(h.noteVisible(), 'the dialog says why');
+  assert.strictEqual(h.templateLibraryNote.textContent, h.api.NOTE);
+  h.api.editor(null, 'clodex');
+  assert.strictEqual(h.btnCreate.disabled, false, 'a team row saves onto the writable dot volume');
+  assert.ok(!h.noteVisible());
+  h.api.editor(null, null);
+  h.api.editor({ id: 'plug' }, null);
+  assert.strictEqual(h.btnCreate.disabled, false, 'a plugin bundle row is not a library row');
+  h.api.editor(null, null);
+  h.api.openDialog();
+  assert.strictEqual(h.btnCreate.disabled, false, 'New Session after a locked template edit is Create again');
+  assert.ok(!h.noteVisible());
+  const w = libraryLockHarness(true);
+  w.api.editor(null, null);
+  assert.strictEqual(w.btnCreate.disabled, false, 'a writable library locks nothing');
+  assert.ok(htmlSrc.includes('<div id="template-library-note" class="dialog-note hidden"></div>'), 'the note ships hidden in the dialog');
+});
+
+test('t1375: saveTemplateFromForm reports ok:false on both library arms instead of closing the dialog', () => {
+  const body = slice('async function saveTemplateFromForm(', '\nwindow.api.onTranscriptChanged(', 'saveTemplateFromForm');
+  const arms = body.slice(body.indexOf('if (editingTemplateId) {'));
+  for (const call of ['window.api.saveTemplate({', 'window.api.saveTemplateByName({']) {
+    const at = arms.indexOf(`const res = await ${call}`);
+    assert.ok(at > 0, `ENTER: ${call} result is kept`);
+    assert.match(arms.slice(at), /^[^\n]*\n\s*if \(res && res\.ok === false\) \{\n\s*alert\(`Could not save template: \$\{res\.error\}`\);\n\s*return;/,
+      `${call} failure alerts and leaves the dialog open`);
+  }
+});

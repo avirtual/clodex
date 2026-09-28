@@ -5653,6 +5653,14 @@ input.env-locked {
 #new-session-tool-notice.hidden {
   display: none;
 }
+#template-library-note.hidden {
+  display: none;
+}
+#template-library-note {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--warn, #d9a44f);
+}
 #new-session-tool-notice {
   color: var(--error, #d9534f);
   display: flex;
@@ -10391,6 +10399,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
            PATH — Create is disabled and this carries the install remedy. Ships
            hidden; bash never trips it. Same visual language as the docker notice. -->
       <div id="new-session-tool-notice" class="sandbox-row hidden"></div>
+      <div id="template-library-note" class="dialog-note hidden"></div>
       <div class="dialog-actions">
         <button id="btn-save-template" class="secondary" type="button" title="Save these settings as a reusable template">Save as Template…</button>
         <div style="flex: 1;"></div>
@@ -34629,7 +34638,7 @@ helper=${d.helperPath}`;
           }
         }
       }
-      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, bundleSectionsOf, refreshPluginCatalog }) {
+      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog }) {
         const bundleGroups = (kind) => typeof bundleSectionsOf === "function" ? bundleSectionsOf(kind) : [];
         const revealBundle = (sec) => {
           if (!sec.dir || !window.api.fileReveal) return;
@@ -35348,7 +35357,8 @@ Opening it here and saving would overwrite the file with what this editor could 
             el.querySelector('[data-action="delete"]').addEventListener("click", async (e) => {
               e.stopPropagation();
               if (!confirm(`Delete template "${t.name}"?`)) return;
-              await window.api.removeTemplate(t.id);
+              const res = await window.api.removeTemplate(t.id);
+              if (res && res.ok === false) showToast(`Could not remove template: ${res.error}`, { kind: "error", duration: 1e4 });
               refreshTemplatesList();
             });
             for (const btn of el.querySelectorAll('[data-action="team"]')) {
@@ -48252,14 +48262,26 @@ ${detail}` });
       var dialogNameState = { ok: true, kind: "free", message: "" };
       var dialogToolGate = { ok: true, disabled: false, notice: null };
       var createInFlight = false;
+      var libraryWritable = true;
+      var templateLibraryLocked = false;
+      var LIBRARY_READONLY_NOTE = "The library is a read-only mount inside a sandbox box \u2014 edit this template on the host, or save a copy into a team (Roles \u25B8 Save as team template)";
+      var templateLibraryNote = document.getElementById("template-library-note");
       function nameFieldEls() {
         return { input: inputName, hint: nameHint, overlay: dialogOverlay };
       }
       function refreshCreateButton() {
-        const state = createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode, inFlight: createInFlight });
+        const state = templateLibraryLocked ? { disabled: true, title: LIBRARY_READONLY_NOTE } : createButtonState({ nameState: dialogNameState, toolGate: dialogToolGate, mode: dialogMode, inFlight: createInFlight });
         btnCreate.disabled = state.disabled;
         btnCreate.title = state.title;
         return state;
+      }
+      function applyLibraryLock(locked) {
+        templateLibraryLocked = locked;
+        if (templateLibraryNote) {
+          templateLibraryNote.textContent = locked ? LIBRARY_READONLY_NOTE : "";
+          templateLibraryNote.classList.toggle("hidden", !locked);
+        }
+        refreshCreateButton();
       }
       function refreshNameValidity() {
         dialogNameState = dialogMode === "template" ? { ok: true, kind: "free", message: "" } : nameFieldState(inputName.value, dialogReservedSets);
@@ -51180,6 +51202,7 @@ ${detail}` });
         editingTemplateTeam = null;
         editingTemplateAppendPrev = [];
         inputName.readOnly = false;
+        applyLibraryLock(false);
         overlayDismissed = false;
         if (toolOverlay) toolOverlay.classList.add("hidden");
         setDialogMode("create");
@@ -51377,7 +51400,11 @@ ${detail}` });
           showToast("That template comes from a plugin \u2014 remove it from the plugin folder.", { kind: "warn" });
           return;
         }
-        await window.api.removeTemplate(id);
+        const res = await window.api.removeTemplate(id);
+        if (res && res.ok === false) {
+          showToast(`Could not remove template: ${res.error}`, { kind: "error", duration: 1e4 });
+          return;
+        }
         await refreshTemplatesDropdown();
         inputTemplate.value = "";
       });
@@ -51390,6 +51417,10 @@ ${detail}` });
           return;
         }
         const res = await window.api.saveTemplateByName({ name, ...collectFormConfig() });
+        if (res && res.ok === false) {
+          alert(`Could not save template: ${res.error}`);
+          return;
+        }
         await refreshTemplatesDropdown();
         if (res && res.template) inputTemplate.value = res.template.id;
         if (templatesDrawerRefresh) templatesDrawerRefresh();
@@ -51596,8 +51627,9 @@ ${detail}` });
         }
       }
       function submitDialog() {
-        if (dialogMode === "template") saveTemplateFromForm();
-        else doCreate();
+        if (dialogMode === "template") {
+          if (!templateLibraryLocked) saveTemplateFromForm();
+        } else doCreate();
       }
       document.getElementById("btn-new").addEventListener("click", () => openDialog());
       document.getElementById("btn-new-sandbox").addEventListener("click", () => openSandboxDialog());
@@ -51657,6 +51689,7 @@ ${detail}` });
         inputType.value = tpl && tpl.type || "claude";
         inputName.value = tpl && tpl.name || "";
         inputName.readOnly = !!bundle || !!editingTemplateTeam;
+        applyLibraryLock(!libraryWritable && !bundle && !editingTemplateTeam);
         inputCwd.value = tpl && tpl.cwd || homeDir;
         {
           const { model, rest } = splitModelArg(tpl && tpl.extraArgs || []);
@@ -51753,9 +51786,17 @@ ${detail}` });
               inputName.style.borderColor = "#e94560";
               return;
             }
-            await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
+            const res = await window.api.saveTemplate({ ...cfg, id: editingTemplateId, name });
+            if (res && res.ok === false) {
+              alert(`Could not save template: ${res.error}`);
+              return;
+            }
           } else {
-            await window.api.saveTemplateByName({ ...cfg, name });
+            const res = await window.api.saveTemplateByName({ ...cfg, name });
+            if (res && res.ok === false) {
+              alert(`Could not save template: ${res.error}`);
+              return;
+            }
           }
           closeDialog();
           await refreshTemplatesDropdown();
@@ -53280,6 +53321,7 @@ Click for live activity`;
       var { refreshDiagBanner, refreshAuthBanner } = initBanners({ openInstallSession, getBoxLabel: () => sandboxSelfLabel });
       Promise.resolve(window.api.sandboxSelf && window.api.sandboxSelf()).then((self2) => {
         if (self2 && self2.inBox && typeof self2.label === "string") sandboxSelfLabel = self2.label;
+        if (self2 && self2.libraryWritable === false) libraryWritable = false;
       }).catch(() => {
       });
       window.api.onRequestSwitchSession((name) => switchSession(name));
@@ -56483,6 +56525,7 @@ ${res.stderr}` : "");
         setAgentLibCache,
         setSkillLibCache,
         openTemplateEditor,
+        showToast,
         bundleSectionsOf,
         refreshPluginCatalog: async () => {
           try {

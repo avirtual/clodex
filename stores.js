@@ -902,6 +902,10 @@ function initStores(userDataPath, {
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
     },
+    dirWritable() {
+      try { fs.accessSync(TEMPLATES_DIR, fs.constants.W_OK); return true; }
+      catch (e) { return !!e && e.code === 'ENOENT'; }
+    },
     _write(name, template) {
       ensureDir(TEMPLATES_DIR);
       const { id, ...body } = template;
