@@ -3,6 +3,7 @@
 const LABEL_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const PLANS = new Set(['pro', 'max', 'team', 'api', 'unknown']);
 const DEFAULT_LABEL = 'default';
+const { RESERVED_LABELS } = require('./renderer/lib/account-select');
 const SHARED_LINKS = ['projects', 'plugins', 'skills', 'agents', 'commands'];
 
 function modelOfArgs(argv) {
@@ -105,7 +106,7 @@ function createAccounts(deps = {}) {
   function sanitizeRow(raw) {
     if (!raw || typeof raw !== 'object') return null;
     const label = String(raw.label || '');
-    if (!LABEL_RE.test(label) || label === DEFAULT_LABEL) return null;
+    if (!LABEL_RE.test(label) || RESERVED_LABELS.has(label)) return null;
     const configDir = String(raw.configDir || '');
     if (!path.isAbsolute(configDir)) return null;
     return {
@@ -233,7 +234,7 @@ function createAccounts(deps = {}) {
   }
 
   function mint(label) {
-    if (!LABEL_RE.test(String(label || '')) || label === DEFAULT_LABEL) {
+    if (!LABEL_RE.test(String(label || '')) || RESERVED_LABELS.has(label)) {
       throw new Error(`invalid account label "${label}" — must match ${LABEL_RE}`);
     }
     const dir = path.join(accountsDir, label);
@@ -266,6 +267,7 @@ function createAccounts(deps = {}) {
     const want = String(label || '');
     if (!LABEL_RE.test(want)) throw new Error(`invalid account label "${label}" — must match ${LABEL_RE}`);
     if (want === DEFAULT_LABEL) throw new Error(`"${DEFAULT_LABEL}" is the implicit account and cannot be added`);
+    if (RESERVED_LABELS.has(want)) throw new Error(`"${want}" is reserved and cannot be added`);
     if (!PLANS.has(plan)) throw new Error(`invalid plan "${plan}" — one of ${[...PLANS].join('|')}`);
     const rows = load();
     if (rows.some((a) => a.label === want)) throw new Error(`account "${want}" already exists`);

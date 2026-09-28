@@ -6,6 +6,7 @@ const { parseEnvLines } = require('./env-edit');
 const ENV_KEY = 'CLAUDE_CONFIG_DIR';
 const DEFAULT_LABEL = 'default';
 const CUSTOM_LABEL = 'custom';
+const RESERVED_LABELS = new Set([DEFAULT_LABEL, CUSTOM_LABEL]);
 
 function normDir(p) {
   const s = String(p == null ? '' : p);
@@ -122,6 +123,7 @@ module.exports = {
   ENV_KEY,
   DEFAULT_LABEL,
   CUSTOM_LABEL,
+  RESERVED_LABELS,
   abbrevHome,
   accountFromEnv,
   envWithAccount,
