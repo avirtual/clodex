@@ -1465,6 +1465,23 @@ test('setRole: C1 refuses reviewer + lead, C4 validates template, throws on miss
   assert.strictEqual(team.roles.hand.template, 'fable-lead', 'valid template name accepted');
 });
 
+test('t1377: setRole lets the OPERATOR repoint the reviewer template; the intent path and lead stay refused', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  assert.throws(() => tm.setRole('shop', 'reviewer', { template: 'clodex-team-reviewer-shell' }), /operator-owned topology/,
+    'without the opt-in the reviewer template is still locked — an agent must never repoint its own reviewer');
+  assert.throws(() => tm.setRole('shop', 'lead', { template: 'x' }, { operator: true }), /operator-owned topology/,
+    'the opt-in widens the reviewer only; lead stays account-only');
+  assert.throws(() => tm.setRole('shop', 'reviewer', { brief: 'x' }, { operator: true }), /operator-owned topology/,
+    'the opt-in adds template, not every field');
+  const team = tm.setRole('shop', 'reviewer', { template: 'clodex-team-reviewer-shell' }, { operator: true });
+  assert.strictEqual(team.roles.reviewer.template, 'clodex-team-reviewer-shell');
+  const onDisk = JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf-8'));
+  assert.strictEqual(onDisk.roles.reviewer.template, 'clodex-team-reviewer-shell', 'the pick reached team.json');
+});
+
 test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on missing', () => {
   const home = mkHome();
   const root = mkTmpRoot('proj-');

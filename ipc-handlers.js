@@ -9,6 +9,7 @@ const { nameConflict } = require('./session-manager');
 // from a second one would drift from the delivery it is supposed to agree with.
 const { isDraftOpen } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, RESERVED_ROLE_KEYS, defaultLeadSeat } = require('./team-manifest');
+const { REVIEWER_PROMPT_PREFIX } = require('./team-tickets');
 const { resolveAccountLabel } = require('./accounts');
 const { teamPreflight } = require('./team-preflight');
 const {
@@ -259,11 +260,29 @@ function registerIpcHandlers(deps) {
     if ((k === 'prompt' || k === 'brief') && s.length > 40) s = `${s.slice(0, 40)}…`;
     return `${k}=${s}`;
   }).join(', ');
+  const reviewerTemplateError = (teamName, stem) => {
+    const isReviewer = (t) => !!t && typeof t.systemPromptFile === 'string' && t.systemPromptFile.startsWith(REVIEWER_PROMPT_PREFIX);
+    let rows = [];
+    try { rows = typeof listAllTemplates === 'function' ? (listAllTemplates() || []) : []; } catch { rows = []; }
+    const own = rows.filter((t) => t && t.team === teamName);
+    let library = [];
+    try { library = manager && typeof manager._reviewerTemplateNames === 'function' ? manager._reviewerTemplateNames() : []; } catch { library = []; }
+    const ownHit = own.find((t) => t.name === stem);
+    if (ownHit ? isReviewer(ownHit) : library.includes(stem)) return null;
+    const ownNames = own.filter(isReviewer).map((t) => t.name);
+    const known = [...ownNames, ...library.filter((n) => !ownNames.includes(n))];
+    return `"${stem}" is not a reviewer template — a reviewer template's system prompt must be ${REVIEWER_PROMPT_PREFIX}*; available: [${known.join(', ')}]`;
+  };
+
   handle('team:setRole', (_e, team, role, patch) => {
     try {
       const bad = accountPatchError(patch);
       if (bad) return { ok: false, error: bad };
-      const saved = setRole(team, role, patch);
+      if (role === 'reviewer' && patch && typeof patch === 'object' && 'template' in patch) {
+        const notReviewer = reviewerTemplateError(team, patch.template);
+        if (notReviewer) return { ok: false, error: notReviewer };
+      }
+      const saved = setRole(team, role, patch, { operator: true });
       log.info('team', `role "${role}" on team "${team}" saved: ${fmtPatch(patch)}`);
       return { ok: true, team: saved };
     } catch (err) { return { ok: false, error: err.message }; }

@@ -36,7 +36,7 @@ function scrollsItself(selectorRe) {
 }
 
 function editableBodyMarkup() {
-  const arm = /\} else \{([\s\S]*?)\n      \}\n/.exec(popover.slice(popover.indexOf('if (row.readOnly) {')));
+  const arm = /\n      \} else \{([\s\S]*?)\n      \}\n/.exec(popover.slice(popover.indexOf('if (row.readOnly) {')));
   assert.ok(arm, 'ENTER: found the editable (else) arm of the row renderer');
   const m = /body\.innerHTML =\n([\s\S]*?);\n/.exec(arm[1]);
   assert.ok(m, 'ENTER: found the editable arm\'s body.innerHTML assignment');

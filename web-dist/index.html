@@ -42952,6 +42952,19 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         return groups;
       }
+      function isReviewerTemplateRow(row) {
+        return !!row && typeof row.systemPromptFile === "string" && row.systemPromptFile.startsWith("clodex-team-reviewer");
+      }
+      function reviewerTemplateOptionGroups(rows, team, stored) {
+        const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
+        const groups = templateOptionGroups(reviewers, team, stored).slice(1);
+        const installed = templateRowFor(rows, team, stored);
+        if (!installed || isReviewerTemplateRow(installed)) return groups;
+        return groups.map((g) => ({
+          ...g,
+          options: g.options.map((o) => o.value === stored && o.label === `${stored} (missing)` ? { value: stored, label: `${stored} (not a reviewer template)`, title: `"${stored}" is installed, but its system prompt is not clodex-team-reviewer*` } : o)
+        }));
+      }
       function templateRowFor(rows, team, value) {
         if (!value) return null;
         const list = Array.isArray(rows) ? rows : [];
@@ -43002,7 +43015,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       }
       function reservedRoleNote(key) {
         if (key === "lead") return "Runs the team. Its role is fixed so the team always has one, but its template \u2014 including which model it runs \u2014 is yours to edit below.";
-        if (key === "reviewer") return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but its template \u2014 including which model it runs \u2014 is yours to edit below.";
+        if (key === "reviewer") return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but which template it runs is yours to pick below.";
         return "Managed by Clodex \u2014 no changes needed here.";
       }
       var RESERVED_ROLE_TEMPLATE = { lead: "clodex-team-lead", reviewer: "clodex-team-reviewer" };
@@ -43270,6 +43283,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templateRowFor,
         templatePlatform,
         accountOptions,
+        isReviewerTemplateRow,
+        reviewerTemplateOptionGroups,
         reservedRemovalWarning,
         rowFormValues,
         syncRowDirty,
@@ -43335,6 +43350,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templateRowFor,
         templatePlatform,
         accountOptions,
+        reviewerTemplateOptionGroups,
         rowFormValues,
         syncRowDirty,
         snapshotRowForm,
@@ -43618,10 +43634,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           span.textContent = platform || "";
           span.hidden = !platform;
         }
-        function buildTemplateControl(stored) {
+        function buildTemplateControl(stored, groups = templateOptionGroups(templateRows, teamName(), stored)) {
           const select = document.createElement("select");
           select.dataset.f = "template";
-          for (const group of templateOptionGroups(templateRows, teamName(), stored)) {
+          for (const group of groups) {
             let parent = select;
             if (group.label !== null) {
               parent = document.createElement("optgroup");
@@ -43910,26 +43926,30 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               {
                 const holder = body.querySelector('.team-role-ro-field[data-field="template"]');
                 const name = reservedRoleTemplate(row.key, row.template);
-                const val = document.createElement("span");
-                val.className = "ro-val";
-                val.textContent = name || "\u2014";
-                holder.appendChild(val);
-                const platform = platformBadge();
-                paintPlatformBadge(platform, name);
-                holder.appendChild(platform);
-                const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
-                const open = document.createElement("button");
-                open.type = "button";
-                open.className = "secondary team-role-template-open";
-                open.textContent = "Open";
-                open.title = tplRow ? "Edit this template \u2014 its model, tools and prompts \u2014 in the template editor." : `no template named "${name}" is installed for this team or in the library`;
-                open.disabled = !tplRow;
-                open.addEventListener("click", () => {
-                  if (!tplRow) return;
-                  if (!closeTeamRolesPopover()) return;
-                  if (typeof openTemplate === "function") openTemplate(tplRow);
-                });
-                holder.appendChild(open);
+                const picker = row.key === "reviewer" ? buildTemplateControl(name, reviewerTemplateOptionGroups(templateRows, teamName(), name)) : null;
+                if (picker) holder.append(picker.select, picker.platform, picker.open);
+                else {
+                  const val = document.createElement("span");
+                  val.className = "ro-val";
+                  val.textContent = name || "\u2014";
+                  holder.appendChild(val);
+                  const platform = platformBadge();
+                  paintPlatformBadge(platform, name);
+                  holder.appendChild(platform);
+                  const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
+                  const open = document.createElement("button");
+                  open.type = "button";
+                  open.className = "secondary team-role-template-open";
+                  open.textContent = "Open";
+                  open.title = tplRow ? "Edit this template \u2014 its model, tools and prompts \u2014 in the template editor." : `no template named "${name}" is installed for this team or in the library`;
+                  open.disabled = !tplRow;
+                  open.addEventListener("click", () => {
+                    if (!tplRow) return;
+                    if (!closeTeamRolesPopover()) return;
+                    if (typeof openTemplate === "function") openTemplate(tplRow);
+                  });
+                  holder.appendChild(open);
+                }
               }
               if (row.key === "lead" && stage === "normal") body.appendChild(buildLeadSeatBlock(manifest));
               if (REMOVABLE_RESERVED_ROLE_KEYS.has(row.key)) {
@@ -44233,7 +44253,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           if (act === "save") {
             const v = rowFormValues(rowEl);
-            const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim() } : buildSavePatch(v);
+            const shownTemplate = JSON.parse(rowEl._saved || "{}").template;
+            const reviewerTemplate = role === "reviewer" ? String(v.template || "").trim() : "";
+            const repicked = reviewerTemplate && reviewerTemplate !== shownTemplate;
+            const patch = rowEl.classList.contains("read-only") ? { account: String(v.account || "").trim(), ...repicked ? { template: reviewerTemplate } : {} } : buildSavePatch(v);
             const res = await window.api.teamSetRole(name, role, patch);
             await afterMutation(res, `role "${role}" saved`);
           } else if (act === "rename") {

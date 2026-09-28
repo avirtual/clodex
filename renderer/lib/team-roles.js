@@ -178,6 +178,23 @@ function templateOptionGroups(rows, team, stored) {
   return groups;
 }
 
+function isReviewerTemplateRow(row) {
+  return !!row && typeof row.systemPromptFile === 'string' && row.systemPromptFile.startsWith('clodex-team-reviewer');
+}
+
+function reviewerTemplateOptionGroups(rows, team, stored) {
+  const reviewers = (Array.isArray(rows) ? rows : []).filter((t) => isReviewerTemplateRow(t) && !t.plugin);
+  const groups = templateOptionGroups(reviewers, team, stored).slice(1);
+  const installed = templateRowFor(rows, team, stored);
+  if (!installed || isReviewerTemplateRow(installed)) return groups;
+  return groups.map((g) => ({
+    ...g,
+    options: g.options.map((o) => (o.value === stored && o.label === `${stored} (missing)`
+      ? { value: stored, label: `${stored} (not a reviewer template)`, title: `"${stored}" is installed, but its system prompt is not clodex-team-reviewer*` }
+      : o)),
+  }));
+}
+
 function templateRowFor(rows, team, value) {
   if (!value) return null;
   const list = Array.isArray(rows) ? rows : [];
@@ -243,7 +260,7 @@ function accountOptions(accounts, stored) {
 // reserved key gets a safe generic line.
 function reservedRoleNote(key) {
   if (key === 'lead') return 'Runs the team. Its role is fixed so the team always has one, but its template — including which model it runs — is yours to edit below.';
-  if (key === 'reviewer') return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but its template — including which model it runs — is yours to edit below.";
+  if (key === 'reviewer') return "Independently checks the lead's work. The role is locked so a lead can never rewrite its own reviewer, but which template it runs is yours to pick below.";
   return 'Managed by Clodex — no changes needed here.';
 }
 
@@ -737,6 +754,7 @@ function usesByRole(planItems, roleKeys) {
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, preflightByRole, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
+  isReviewerTemplateRow, reviewerTemplateOptionGroups,
   reservedRemovalWarning,
   rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits, DISCARD_ROLE_EDITS_PROMPT,
   parseDuration, formatDuration, formatBlockedBy,

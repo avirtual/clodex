@@ -5,7 +5,7 @@
 // bypassing popoverApi (the local-vs-peer data seam — a team manifest is
 // host-local, never peer-fetched).
 //
-// lead + reviewer rows are READ-ONLY (operator-owned topology, C1): their
+// lead + reviewer rows are READ-ONLY bar reviewer's template pick (C1): their
 // DEFINITIONS can't be edited or renamed here — the mutators bounce that anyway,
 // so we don't offer a control that only errors. What each grows is the decision
 // that IS the operator's: which seat fills `lead` (t420), whether the team has a
@@ -31,6 +31,7 @@ const {
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
+  reviewerTemplateOptionGroups,
   rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits,
 } = require('../lib/team-roles');
 const { anchorRect, makeDraggable, resetDrag } = require('../lib/popover-drag');
@@ -379,10 +380,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     span.hidden = !platform;
   }
 
-  function buildTemplateControl(stored) {
+  function buildTemplateControl(stored, groups = templateOptionGroups(templateRows, teamName(), stored)) {
     const select = document.createElement('select');
     select.dataset.f = 'template';
-    for (const group of templateOptionGroups(templateRows, teamName(), stored)) {
+    for (const group of groups) {
       let parent = select;
       if (group.label !== null) {
         parent = document.createElement('optgroup');
@@ -775,8 +776,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       if (!expanded) body.classList.add('hidden');
       el.appendChild(body);
       if (row.readOnly) {
-        // Reserved (lead/reviewer): locked EXCEPT `account`, whose seats are too
-        // short-lived to edit any other way. SECURITY: all three are agent-written
+        // SECURITY: all three are agent-written
         // — brief/prompt are ESCAPED TEXT between tags, account takes its `.value`
         // by property, never into an attribute.
         el.classList.add('read-only');
@@ -793,28 +793,34 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
         {
           const holder = body.querySelector('.team-role-ro-field[data-field="template"]');
           const name = reservedRoleTemplate(row.key, row.template);
-          const val = document.createElement('span');
-          val.className = 'ro-val';
-          val.textContent = name || '—';
-          holder.appendChild(val);
-          const platform = platformBadge();
-          paintPlatformBadge(platform, name);
-          holder.appendChild(platform);
-          const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
-          const open = document.createElement('button');
-          open.type = 'button';
-          open.className = 'secondary team-role-template-open';
-          open.textContent = 'Open';
-          open.title = tplRow
-            ? 'Edit this template — its model, tools and prompts — in the template editor.'
-            : `no template named "${name}" is installed for this team or in the library`;
-          open.disabled = !tplRow;
-          open.addEventListener('click', () => {
-            if (!tplRow) return;
-            if (!closeTeamRolesPopover()) return;
-            if (typeof openTemplate === 'function') openTemplate(tplRow);
-          });
-          holder.appendChild(open);
+          const picker = row.key === 'reviewer'
+            ? buildTemplateControl(name, reviewerTemplateOptionGroups(templateRows, teamName(), name))
+            : null;
+          if (picker) holder.append(picker.select, picker.platform, picker.open);
+          else {
+            const val = document.createElement('span');
+            val.className = 'ro-val';
+            val.textContent = name || '—';
+            holder.appendChild(val);
+            const platform = platformBadge();
+            paintPlatformBadge(platform, name);
+            holder.appendChild(platform);
+            const tplRow = name ? templateRowFor(templateRows, teamName(), name) : null;
+            const open = document.createElement('button');
+            open.type = 'button';
+            open.className = 'secondary team-role-template-open';
+            open.textContent = 'Open';
+            open.title = tplRow
+              ? 'Edit this template — its model, tools and prompts — in the template editor.'
+              : `no template named "${name}" is installed for this team or in the library`;
+            open.disabled = !tplRow;
+            open.addEventListener('click', () => {
+              if (!tplRow) return;
+              if (!closeTeamRolesPopover()) return;
+              if (typeof openTemplate === 'function') openTemplate(tplRow);
+            });
+            holder.appendChild(open);
+          }
         }
         // The lead ROLE stays locked; which SEAT fills it does not (t420).
         // Gated on `normal` because a non-normal stage ALREADY hoisted a lead
@@ -1229,10 +1235,12 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     }
     if (act === 'save') {
       const v = rowFormValues(rowEl);
-      // buildSavePatch OMITS a blank template (setRole throws NAME_RE on ''); a
-      // reserved row sends `account` alone, the only key setRole lets one patch.
+      // buildSavePatch OMITS a blank template (setRole throws NAME_RE on '').
+      const shownTemplate = JSON.parse(rowEl._saved || '{}').template;
+      const reviewerTemplate = role === 'reviewer' ? String(v.template || '').trim() : '';
+      const repicked = reviewerTemplate && reviewerTemplate !== shownTemplate;
       const patch = rowEl.classList.contains('read-only')
-        ? { account: String(v.account || '').trim() }
+        ? { account: String(v.account || '').trim(), ...(repicked ? { template: reviewerTemplate } : {}) }
         : buildSavePatch(v);
       const res = await window.api.teamSetRole(name, role, patch);
       await afterMutation(res, `role "${role}" saved`);

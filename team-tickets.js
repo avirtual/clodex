@@ -11002,4 +11002,4 @@ function createTicketMethods(deps, shared) {
   };
 }
 
-module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCwdDir };
+module.exports = { createTicketMethods, ticketCloseLine, ticketCloseVerb, ticketTaskDirLine, ignoreCwdDir, REVIEWER_PROMPT_PREFIX };

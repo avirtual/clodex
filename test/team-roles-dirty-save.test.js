@@ -208,3 +208,112 @@ test('syncRowDirty: a row never snapshotted is not dirty', () => {
   assert.strictEqual(syncRowDirty(row), false);
   assert.strictEqual(save.disabled, true);
 });
+
+function fakeEl(tag) {
+  const e = {
+    tagName: tag, children: [], dataset: {}, listeners: {},
+    appendChild(c) { this.children.push(c); return c; },
+    append(...cs) { this.children.push(...cs); },
+    addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); },
+  };
+  return e;
+}
+
+function descendants(el, tag) {
+  const out = [];
+  for (const c of el.children || []) {
+    if (c.tagName === tag) out.push(c);
+    out.push(...descendants(c, tag));
+  }
+  return out;
+}
+
+function renderReservedTemplate(rowKey, stored, templateRows) {
+  const document = { createElement: fakeEl };
+  const shared = {
+    document, templateRows, teamName: () => 'box',
+    templateOptionGroups: lib.templateOptionGroups, templateRowFor: lib.templateRowFor,
+    reviewerTemplateOptionGroups: lib.reviewerTemplateOptionGroups, reservedRoleTemplate: lib.reservedRoleTemplate,
+    platformBadge: () => fakeEl('span'), paintPlatformBadge: () => {},
+    closeTeamRolesPopover: () => true, openTemplate: () => {},
+  };
+  const btcSrc = sliceBetween(POPOVER, '  function buildTemplateControl(', '\n    return { select, open, platform };\n  }\n');
+  const btcNames = Object.keys(shared);
+  shared.buildTemplateControl = new Function(...btcNames, `${btcSrc}\nreturn buildTemplateControl;`)(
+    ...btcNames.map((n) => shared[n]));
+  const start = "        {\n          const holder = body.querySelector('.team-role-ro-field[data-field=\"template\"]');";
+  const armSrc = sliceBetween(POPOVER, start, '\n        // The lead ROLE stays locked').replace(/\n        \/\/ The lead ROLE stays locked$/, '');
+  const holder = fakeEl('div');
+  const body = { querySelector: (sel) => (sel === '.team-role-ro-field[data-field="template"]' ? holder : null) };
+  const names = Object.keys(shared);
+  new Function('row', 'body', ...names, armSrc)({ key: rowKey, template: stored }, body, ...names.map((n) => shared[n]));
+  return holder;
+}
+
+const PICK_ROWS = [
+  { name: 'clodex-team-reviewer', systemPromptFile: 'clodex-team-reviewer' },
+  { name: 'clodex-team-hand', systemPromptFile: 'clodex-team-hand' },
+  { name: 'codex-reviewer', systemPromptFile: 'clodex-team-reviewer-codex' },
+  { name: 'box-reviewer', systemPromptFile: 'clodex-team-reviewer', team: 'box' },
+  { name: 'box-hand', systemPromptFile: 'clodex-team-hand', team: 'box' },
+  { name: 'far-reviewer', systemPromptFile: 'clodex-team-reviewer', team: 'far' },
+  { name: 'plug-reviewer', systemPromptFile: 'clodex-team-reviewer', plugin: 'p' },
+  { name: 'clodex-team-lead', systemPromptFile: 'clodex-team-lead' },
+];
+
+test('t1377: the reviewer row renders a template picker over reviewer templates only, team first; lead renders none', () => {
+  const holder = renderReservedTemplate('reviewer', 'codex-reviewer', PICK_ROWS);
+  const selects = descendants(holder, 'select');
+  assert.strictEqual(selects.length, 1, 'the reviewer row carries one select');
+  const select = selects[0];
+  assert.strictEqual(select.dataset.f, 'template', 'it is the row\'s template field, so rowFormValues reads it');
+  assert.deepStrictEqual(descendants(select, 'option').map((o) => o.value),
+    ['box-reviewer', 'clodex-team-reviewer', 'codex-reviewer'],
+    'exactly the reviewer-purpose rows: this team\'s first, then the library; no (none), no plugin, no other team');
+  assert.strictEqual(select.value, 'codex-reviewer', 'the stored template is selected');
+
+  const lead = renderReservedTemplate('lead', '', PICK_ROWS);
+  assert.strictEqual(descendants(lead, 'select').length, 0, 'the lead row keeps its read-only template text');
+
+  const { row, field, save } = fakeRow({ fields: { account: '' }, readOnly: true });
+  field.template = select;
+  select.closest = (sel) => (sel === '[data-f]' ? select : sel === '.team-role-row' ? row : null);
+  const q = row.querySelector;
+  row.querySelector = (sel) => (sel === '[data-f="template"]' ? select : q(sel));
+  snapshotRowForm(row);
+  assert.strictEqual(save.disabled, true, 'ENTER: a freshly rendered reviewer row has nothing to save');
+  const handlers = {};
+  new Function('listEl', 'syncRowDirty', rowEditBlock())({ addEventListener: (t, fn) => { handlers[t] = fn; } }, syncRowDirty);
+  select.value = 'box-reviewer';
+  handlers.change({ target: select });
+  assert.strictEqual(save.disabled, false, 'picking another reviewer template lights Save');
+});
+
+function compileSaveArm() {
+  const arm = sliceBetween(POPOVER, "    if (act === 'save') {", "    } else if (act === 'rename') {")
+    .replace(/    \} else if \(act === 'rename'\) \{$/, '    }');
+  return new Function('rowEl', 'role', 'name', 'act', 'window', 'afterMutation', 'rowFormValues', 'buildSavePatch',
+    `return (async () => {\n${arm}\n})();`);
+}
+
+async function saveReviewer({ account, template }, shown) {
+  const { row, field } = fakeRow({ fields: { account: shown.account, template: shown.template }, readOnly: true });
+  snapshotRowForm(row);
+  field.account.value = account;
+  field.template.value = template;
+  const sent = [];
+  const window = { api: { teamSetRole: async (...a) => { sent.push(a); return { ok: true }; } } };
+  await compileSaveArm()(row, 'reviewer', 'box', 'save', window, async () => {}, rowFormValues, buildSavePatch);
+  assert.strictEqual(sent.length, 1, 'ENTER: the save arm called teamSetRole once');
+  return sent[0][2];
+}
+
+test('t1377 r1: a reviewer save sends `template` only when the operator changed the pick', async () => {
+  const shown = { account: '', template: 'clodex-team-reviewer' };
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'clodex-team-reviewer' }, shown), { account: 'work' },
+    'an account-only save is {account} alone — the displayed default must not be written as an explicit template');
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'box-reviewer' }, shown),
+    { account: 'work', template: 'box-reviewer' }, 'a changed pick is sent');
+  assert.deepStrictEqual(await saveReviewer({ account: 'work', template: 'reviewer' }, { account: '', template: 'reviewer' }),
+    { account: 'work' }, 'an unchanged non-reviewer stored template never rides an account save into the purpose refusal');
+});
