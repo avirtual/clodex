@@ -3076,8 +3076,8 @@ function createSessionManager(deps) {
     _streamReleaseHeld(s) {
       if (s._dead || s.streamBusy || !s.outbox.length) { s._streamHeldSince = 0; return; }
       if (this._streamHintHeld(s)) { this._streamHoldPoll(s); return; }
-      s._streamHeldSince = 0;
       this._streamTurnEnd(s);
+      s._streamHeldSince = 0;
     }
 
     _streamHoldPoll(s) {
@@ -3251,6 +3251,11 @@ function createSessionManager(deps) {
     _streamTurnEnd(s) {
       this._clearStreamInitWatchdog(s);
       s.streamBusy = false;
+      if (s.outbox.length && this._streamHintHeld(s)) {
+        this._emitActivity(s.name, 'idle', true);
+        this._streamHoldPoll(s);
+        return;
+      }
       const w = s.outbox.findIndex((q) => q.wire);
       const queued = s.outbox.splice(0, w === 0 ? 1 : (w > 0 ? w : s.outbox.length));
       if (queued.length) this._streamOutboxChanged(s);
@@ -5471,6 +5476,7 @@ function createSessionManager(deps) {
         // because a wire session cannot reach a transition without a counted
         // event having set lastEventTs first: reachability, not Math.max.
         s.activityState = state;
+        if (state !== 'idle') s._turnStartedAt = Date.now();
         s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
         if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       }
@@ -5728,6 +5734,8 @@ function createSessionManager(deps) {
 
     _armCompactGuard(session) {
       session._compactGuard = true;
+      clearTimeout(session._injectHoldTimer);
+      session._injectHoldTimer = null;
       this._armInjectValve(session);
     }
 
@@ -5812,7 +5820,7 @@ function createSessionManager(deps) {
         const held = session._injectQueue.splice(0);
         for (const e of held) {
           if (e && typeof e.produce === 'function') this._streamEnqueueSystem(session, '', e.produce, 'queued flush');
-          else this._streamEnqueueSystem(session, e, null, 'queued flush');
+          else this._streamEnqueueSystem(session, e && e.opts ? e.text : e, null, 'queued flush');
         }
         return;
       }
@@ -5828,6 +5836,18 @@ function createSessionManager(deps) {
       clearTimeout(session._injectHoldTimer);
       session._injectHoldTimer = null;
       session._injectQueue = [];
+      let run = [];
+      for (const e of queue) {
+        if (!e || !e.opts) { run.push(e); continue; }
+        this._flushInjectRun(session, run);
+        run = [];
+        this._injectText(session, e.text || '', { ...e.opts, bypassHold: true });
+      }
+      this._flushInjectRun(session, run);
+    }
+
+    _flushInjectRun(session, queue) {
+      if (!queue.length) return;
       // Mixed queue: plain texts and unclaimed producers, in arrival order. If any
       // entry is a producer the whole flush becomes one, so the claim still happens
       // at write time — joining eagerly here would re-introduce the eager claim on
@@ -6306,7 +6326,13 @@ function createSessionManager(deps) {
           }
           const target = this.sessions.get(claimed.name);
           if (!target || target._dead) {
-            reply(`can't deliver "${intent.id}": ${claimed.name} is gone.`);
+            let kept = false;
+            if (getPersistence().get(claimed.name)) {
+              try { parkDelivery(PENDING_DIR, claimed.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(claimed.name), claimed.key); kept = true; } catch {}
+            }
+            reply(kept
+              ? `${claimed.name} is not running; kept parked as ${intent.id} — it delivers when the seat resumes.`
+              : `can't deliver "${intent.id}": ${claimed.name} is gone. The message was:\n${claimed.text}`);
             break;
           }
           const verdict = shouldHoldDm({
@@ -6321,7 +6347,7 @@ function createSessionManager(deps) {
             try { parkDelivery(PENDING_DIR, target.name, claimed.text, this._nextParkSeq(), intent.id, false, this._bornFor(target.name), claimed.key); reparked = true; } catch {}
             reply(reparked
               ? `${target.name} is ${verdict.reason}; re-parked as ${intent.id} — it'll deliver after the dialog is answered.`
-              : `${target.name} is ${verdict.reason} and re-parking failed — try [agent:resend ${intent.id}] again shortly.`);
+              : `${target.name} is ${verdict.reason} and re-parking failed, so nothing holds ${intent.id} any more. The message was:\n${claimed.text}`);
             break;
           }
           this._injectText(target, claimed.text, { parkable: true, parkId: intent.id, parkKey: claimed.key || null });
@@ -6769,8 +6795,9 @@ function createSessionManager(deps) {
       try {
         const finalText = this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm');
         parkDelivery(PENDING_DIR, notice.name, finalText, this._nextParkSeq(), null, false, this._bornFor(notice.name));
-        log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume`);
-        clear();
+        try { store.set({ pendingRebootNotice: { ...notice, attempts: priorAttempts + 1 } }); }
+        catch (e) { log.error('intent', `reboot notice attempt-stamp failed: ${e.message}`); }
+        log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume; retained until a turn confirms it`);
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
       }
@@ -6796,8 +6823,7 @@ function createSessionManager(deps) {
         // A turn since the park means a drain already ran and the seat processed
         // input — forcing here would splice for nothing. Same signal the retry
         // ladder uses, and the seeded spawn stop is excluded for the same reason.
-        const stop = target.lastMainStop;
-        if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) {
+        if (this._turnSinceRebootPark(target, parkedAt)) {
           log.debug('inject', `reboot notice flush for ${target.name} skipped — seat took a turn since the park`);
           return;
         }
@@ -6854,6 +6880,12 @@ function createSessionManager(deps) {
     // inference, not confirmation: a turn the operator caused would satisfy it
     // too. That costs at most one duplicate notice, whereas trusting the claim
     // costs the message.
+    _turnSinceRebootPark(target, parkedAt) {
+      const stop = target.lastMainStop;
+      if (stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt) return true;
+      return Number.isFinite(target._turnStartedAt) && target._turnStartedAt >= parkedAt;
+    }
+
     _armRebootNoticeRetry(target, notice) {
       const attempt = (Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0) + 1;
       const store = getUiSettings && getUiSettings();
@@ -6869,9 +6901,7 @@ function createSessionManager(deps) {
         target._rebootNoticeRetryTimer = null;
         if (target._dead) return;
         // A turn since the park is the delivered-enough signal; clear and stop.
-        const stop = target.lastMainStop;
-        const turned = !!(stop && !stop.seeded && Number.isFinite(stop.ts) && stop.ts > parkedAt);
-        if (turned) {
+        if (this._turnSinceRebootPark(target, parkedAt)) {
           if (store) {
             try { store.set({ pendingRebootNotice: null }); }
             catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
@@ -8222,10 +8252,11 @@ function createSessionManager(deps) {
       let parked = 0;
       for (const e of queue) {
         if (!e || typeof e.produce === 'function') { if (e) kept.push(e); continue; }
-        const text = typeof e === 'string' ? e : String(e);
+        const o = typeof e === 'object' && e.opts ? e.opts : null;
+        const text = typeof e === 'string' ? e : (o ? e.text : String(e));
         if (!text) continue;
         try {
-          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), null, false, null, null);
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), (o && o.parkId) || null, false, null, (o && o.parkKey) || null);
           parked++;
         } catch (err) {
           log.warn('intent', `scratch ${session.name}: parking a held inject failed: ${err.message}`);
@@ -9639,7 +9670,9 @@ function createSessionManager(deps) {
         // Held as an ENTRY, not as text — see above. Flattening here would claim
         // now and hold the bytes in memory for the whole hold, so a process that
         // dies during a compact window or a permission dialog loses them.
-        (session._injectQueue = session._injectQueue || []).push(produce ? { produce } : text);
+        const carry = opts.parkable || opts.human === true || typeof opts.onDivert === 'function';
+        const entry = carry ? { ...(produce ? { produce } : { text }), opts } : (produce ? { produce } : text);
+        (session._injectQueue = session._injectQueue || []).push(entry);
         this._armInjectValve(session);
         return;
       }
@@ -9943,14 +9976,23 @@ function createSessionManager(deps) {
     // the handle when the seat dies.
     _armParkedDrainFallback(session, file, periodMs, deadline, drained = false) {
       if (!session || session.agentType !== 'claude') return;
+      const armed = session._parkedDrainFallbackFiles || (session._parkedDrainFallbackFiles = new Map());
+      if (!armed.has(file)) armed.set(file, { periodMs, deadline });
       if (session._parkedDrainFallbackTimer) return;   // earliest arm governs, like the park cap
-      const stillParked = () => {
-        try { return fs.existsSync(path.join(PENDING_DIR, session.name, file)); } catch { return false; }
+      const onDisk = (f) => {
+        try { return fs.existsSync(path.join(PENDING_DIR, session.name, f)); } catch { return false; }
       };
       session._parkedDrainFallbackTimer = setTimeout(() => {
         session._parkedDrainFallbackTimer = null;
         if (session._dead) return;
-        if (!stillParked()) return;                    // this park was claimed — nothing owed
+        if (!onDisk(file)) {
+          armed.delete(file);
+          for (const [f, a] of armed) {
+            if (onDisk(f)) { this._armParkedDrainFallback(session, f, a.periodMs, a.deadline, drained); return; }
+            armed.delete(f);
+          }
+          return;
+        }
         // Re-arm rather than yield outright: the drain may bail (draft open, or its
         // producer claims nothing) and would leave the park silent and permanent.
         // Extending the deadline is what keeps this from expiring while deferring.

@@ -1680,7 +1680,7 @@ test('reboot notice: a LIVE CODEX requester keeps the active inject (no passive 
   disarm();
 });
 
-test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag clears', () => {
+test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag retained', () => {
   const { m, state, delivered, parks } = mkNotice({
     notice: { name: 'a', at: Date.now(), reason: '' }, live: false, persisted: { type: 'claude' },
   });
@@ -1690,7 +1690,7 @@ test('reboot notice: an OFFLINE-but-resumable requester is PARKED by name, flag 
   assert.strictEqual(parks[0].name, 'a');
   // Parked text is the full delivery form — a single clean [agent:from reboot] prefix, no doubling.
   assert.match(parks[0].text, /^\[agent:from reboot\] notice: Clodex restarted and is running again \(reboot requested at/);
-  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared');
+  assert.ok(state.pendingRebootNotice, 'flag retained until the resumed seat takes a turn');
 });
 
 test('reboot notice: a GONE requester (no persisted entry) drops, flag still clears', () => {
@@ -1763,7 +1763,7 @@ test('reboot notice: a stale (>7d) notice that errors is DROPPED, not retained f
   assert.strictEqual(state.pendingRebootNotice, null, 'stale-beyond-useful notice cleared on error');
 });
 
-test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + cleared', () => {
+test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + retained', () => {
   // A {failed:true} persisted entry still HAS a record — it's recoverable, so the
   // notice parks by name (drains on a successful retry) rather than being dropped.
   const { m, state, delivered, parks } = mkNotice({
@@ -1772,7 +1772,7 @@ test('reboot notice: a FAILED-restore seat is resumable, not gone → parked + c
   m.maybeDeliverRebootNotice();
   assert.strictEqual(delivered.length, 0);
   assert.strictEqual(parks.length, 1, 'parked, not dropped — a failed restore is not gone');
-  assert.strictEqual(state.pendingRebootNotice, null, 'flag cleared on a successful park');
+  assert.ok(state.pendingRebootNotice, 'flag retained on a park — a park is not a receipt');
 });
 
 test('reboot notice: the echoed reason is de-newlined and capped (~200 chars)', () => {
