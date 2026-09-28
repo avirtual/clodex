@@ -466,12 +466,18 @@ function createPeerWiring(deps) {
     // no URL is ever composed, so a forward for it would be one nothing can use
     // — and the gating decision stays where t30b put it rather than being
     // re-derived here.
-    if (!tokenGated) openPeerWirescope(key, dest);
-    const res = ensureWebTunnelManager().open({
-      id: key, sshHost: dest.sshHost, remotePort: webHost.port,
-      ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
-    });
-    // A refused web open leaves the companion raised two lines above with
+    if (tokenGated) closePeerWirescope(key); else openPeerWirescope(key, dest);
+    let res;
+    try {
+      res = ensureWebTunnelManager().open({
+        id: key, sshHost: dest.sshHost, remotePort: webHost.port,
+        ...(dest.cloud ? { [dest.cloud.kind]: dest.cloud.block } : {}),
+      });
+    } catch (e) {
+      closePeerWirescope(key);
+      throw e;
+    }
+    // A refused web open leaves the companion raised with
     // nothing to decorate. Unreachable today — the refusals the supervisor can
     // still return here are all caught earlier in this function — but the
     // ordering is what creates the window, so it is closed where the ordering

@@ -34,7 +34,7 @@ const { createPeerWiring } = require('../peer-wiring');
 // raise no wirescope forward at all, and an index would silently slide the web
 // manager into the wirescope slot and assert against the wrong recorder.
 
-function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows = false, webOpenRefuses = false } = {}) {
+function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows = false, webOpenRefuses = false, webOpenThrows = false } = {}) {
   const store = { peers, peerAttached: {}, peerControlled: {}, peerVisible: {} };
   const uiSettings = { get: () => store, set: (p) => Object.assign(store, p) };
   const externals = [];      // every URL handed to the operator's browser
@@ -47,6 +47,7 @@ function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows =
       open(o) {
         if (openThrows && rec.role === 'wirescope') throw new Error('supervisor exploded');
         if (webOpenRefuses && rec.role === 'web') return { ok: false, error: 'refused' };
+        if (webOpenThrows && rec.role === 'web') throw new Error('web supervisor exploded');
         rec.opened.push(o);
         return { ok: true, status: { id: o.id, state: 'down', url: null } };
       },
@@ -319,6 +320,15 @@ test('a REFUSED web open unwinds the companion raised moments earlier', () => {
   } finally { h.restore(); }
 });
 
+test('a THROWING web open unwinds the companion raised moments earlier', () => {
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH }, webOpenThrows: true });
+  try {
+    assert.throws(() => h.wiring.openPeerWeb('p1'), /web supervisor exploded/);
+    assert.equal(h.wirescope().opened.length, 1, 'the companion was raised before the throw');
+    assert.deepEqual(h.wirescope().closed, ['p1'], 'and the companion did not outlive it');
+  } finally { h.restore(); }
+});
+
 // ── The token-gated decision is respected, not worked around ─────────────────
 
 test('SECURITY-adjacent: a token-gated peer gets NO wirescope forward and NO composed URL', () => {
@@ -337,6 +347,20 @@ test('SECURITY-adjacent: a token-gated peer gets NO wirescope forward and NO com
     assert.equal(h.mgrs.length, 1, 'no wirescope forward was raised for a page that will not be opened');
     h.emitWebUp('p1', 'http://127.0.0.1:45001');
     assert.deepEqual(h.externals, [], 'and still no browser at a 401');
+  } finally { h.restore(); }
+});
+
+test('a re-open after the box turns token-gated tears down the companion raised by the earlier ungated open', () => {
+  const st = { p1: { webHost: { port: 8080, tokenGated: false }, wirescope: { port: 7800 } } };
+  const h = makeWiring({ peers: [SSH], statuses: st });
+  try {
+    h.wiring.openPeerWeb('p1');
+    assert.equal(h.wirescope().opened.length, 1, 'the ungated open raised the companion');
+    st.p1.webHost.tokenGated = true;
+    const res = h.wiring.openPeerWeb('p1');
+    assert.equal(res.tokenGated, true);
+    assert.equal(h.wirescope().opened.length, 1, 'no second companion for the gated open');
+    assert.deepEqual(h.wirescope().closed, ['p1'], 'and the ungated one is torn down');
   } finally { h.restore(); }
 });
 

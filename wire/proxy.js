@@ -93,7 +93,7 @@ function rewriteChatgptRequest(upstreamPath, headers) {
 function detectSse(contentType, chatgptMode, method, upstreamPath) {
   if ((contentType || '').toLowerCase().includes('text/event-stream')) return true;
   if (chatgptMode && method === 'POST') {
-    const p = upstreamPath.replace(/\/+$/, '');
+    const p = upstreamPath.replace(/\/+$/, '').replace(/^\/v1(?=\/)/, '');
     if (p === '/responses' || p === '/chat/completions') return true;
   }
   return false;
@@ -456,7 +456,13 @@ class WireProxy extends EventEmitter {
       upstreamUrl = new URL(upstreamBase.replace(/\/+$/, '') + upstreamPath + (query || ''));
     } catch (e) {
       this.stats.requestsErrored += 1;
+      this.emit('proxy-error', { agent, reqId, error: `bad upstream url: ${e.message}` });
       return this._json(res, 502, { error: `bad upstream url: ${e.message}` });
+    }
+    if (upstreamUrl.protocol !== 'http:' && upstreamUrl.protocol !== 'https:') {
+      this.stats.requestsErrored += 1;
+      this.emit('proxy-error', { agent, reqId, error: `bad upstream url: unsupported protocol ${upstreamUrl.protocol}` });
+      return this._json(res, 502, { error: `bad upstream url: unsupported protocol ${upstreamUrl.protocol}` });
     }
 
     // Main line only: a subagent, title side-call or quota probe shares the
@@ -755,6 +761,8 @@ class WireProxy extends EventEmitter {
                 thinking: thinking || null,
                 thinkingTruncated,
               });
+            } else if (decomp.dead && !dead) {
+              fail(new Error('decompressor died; receipt withheld'));
             }
           } catch (e) { fail(e); }
           this.emit('stream-end', { agent, reqId });
@@ -785,6 +793,7 @@ class WireProxy extends EventEmitter {
         if (closed) return;
         closed = true;
         decomp.end(() => {
+          if (decomp.dead && !dead) fail(new Error('decompressor died; receipt withheld'));
           if (dead || decomp.dead) return; // no receipt off a truncated view
           try {
             let parsed = null;

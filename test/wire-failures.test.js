@@ -204,6 +204,55 @@ test('corrupt gzip: observer dies quietly, client gets exact bytes', async (t) =
 
 });
 
+test('corrupt gzip: the lost receipt is reported as a tee-failure so the seat\'s activity and recovery are released', async (t) => {
+  for (const contentType of ['text/event-stream', 'application/json']) {
+    const { server, port } = await serveOnce((req, res) => {
+      res.writeHead(200, { 'content-type': contentType, 'content-encoding': 'gzip' });
+      res.end(Buffer.from('this is definitely not gzip', 'utf8'));
+    });
+    t.after(() => server.close());
+    const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${port}` } });
+    await proxy.listen();
+    t.after(() => proxy.close());
+    const events = collect(proxy, ['turn.started', 'turn.completed', 'tee-failure']);
+
+    const res = await request(proxy.port, '/agent/t/v1/messages', '{}');
+    assert.equal(res.status, 200);
+    assert.equal(events['turn.started'].length, 1, `${contentType}: the turn started`);
+    assert.ok(await whenEvent(events, 'tee-failure'), `${contentType}: tee-failure emitted`);
+    assert.equal(events['tee-failure'].length, 1);
+    assert.match(events['tee-failure'][0].error, /decompressor died/);
+    assert.equal(events['turn.completed'].length, 0);
+  }
+});
+
+test('an upstream base with a non-http scheme answers 502 and emits proxy-error instead of throwing', async (t) => {
+  const proxy = new WireProxy({ upstreams: { anthropic: 'localhost:1' } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['proxy-error', 'turn.started']);
+
+  const res = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}');
+  assert.equal(res.status, 502);
+  assert.equal(events['proxy-error'].length, 1);
+  const again = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}');
+  assert.equal(again.status, 502, 'the host is still serving');
+  assert.equal(events['proxy-error'].length, 2);
+});
+
+test('a bad upstream url pairs its turn.started with a proxy-error', async (t) => {
+  const proxy = new WireProxy({ upstreams: { anthropic: 'not a url' } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.started', 'proxy-error', 'turn.completed']);
+
+  const res = await request(proxy.port, '/agent/t/v1/messages', '{"messages":[]}');
+  assert.equal(res.status, 502);
+  assert.equal(events['turn.started'].length, 1);
+  assert.equal(events['proxy-error'].length, 1);
+  assert.match(events['proxy-error'][0].error, /bad upstream url/);
+});
+
 test('valid gzip SSE: observer decodes, client gets the compressed bytes', async (t) => {
   const SSE = 'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"gz ok"}}\n\n';
   const gz = zlib.gzipSync(Buffer.from(SSE, 'utf8'));
