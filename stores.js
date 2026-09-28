@@ -916,21 +916,22 @@ function initStores(userDataPath, {
     // `name`. Dest-collision is the caller's check; this trusts it.
     save(template) {
       if (typeof template?.name !== 'string' || !template.name) throw new Error('template name required');
-      const prior = (typeof template.id === 'string' && template.id) ? this._read(template.id) : null;
+      const priorId = (typeof template.id === 'string' && template.id) ? template.id : null;
+      const prior = priorId ? this._read(priorId) : null;
       const merged = {};
       if (prior) for (const [k, v] of Object.entries(prior)) {
         if (!EDITOR_OWNED.has(k)) merged[k] = v;
       }
       Object.assign(merged, template);
       this._write(template.name, merged);
-      if (template.id && template.id !== template.name && this._sameFile(template.id, template.name)) {
-        fs.renameSync(this._file(template.id), this._file(template.name));
-      } else if (template.id && template.id !== template.name) {
+      if (priorId && priorId !== template.name && this._sameFile(priorId, template.name)) {
+        fs.renameSync(this._file(priorId), this._file(template.name));
+      } else if (priorId && priorId !== template.name) {
         // Rename cleanup. A refused `id` is swallowed here and that is not the
         // false-green the other verbs had: _write() confines on the way IN, so
         // a name-illegal id can never name a file this store wrote, and there
         // is nothing for a caller to learn from the refusal.
-        try { fs.unlinkSync(this._file(template.id)); } catch {}
+        try { fs.unlinkSync(this._file(priorId)); } catch {}
       }
     },
     // Case-insensitive scan that overwrites the matching EXACT filename, keeping
@@ -1803,7 +1804,7 @@ function initStores(userDataPath, {
     const from = String(oldName == null ? '' : oldName).trim();
     const to = String(newName == null ? '' : newName).trim();
     if (!from || from === to) return 0;
-    if (/[\r\n]/.test(to) || /^(["']).*\1$/s.test(to)) {
+    if (/[\r\n]/.test(to) || (to.startsWith('"') && to.endsWith('"')) || (to.startsWith("'") && to.endsWith("'"))) {
       if (log) log.warn?.('stores', `refusing to rescope library files to workspace name ${JSON.stringify(to)}: frontmatter cannot hold it`);
       return 0;
     }

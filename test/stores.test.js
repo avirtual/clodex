@@ -3206,31 +3206,39 @@ test('t950: a stored explicit skill deny is upgraded to the deferred form, keepi
   } finally { cleanup(); }
 });
 
-test('t950: the skill-deny upgrade does not run against a skills-seen record it could not read', { skip: isRoot && 'root reads a 000 file' }, () => {
-  const userData = mkTmpRoot('stores-ud-');
-  const registryDir = mkTmpRoot('stores-reg-');
-  const seenFile = path.join(userData, 'skills-seen.json');
-  let stores = null;
-  stores = initStores(userData, { log: console, registryDir,
-    resourcesDir: path.join(registryDir, '__no_seed__'),
-    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
-    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json'),
-    knownSkillNames: () => ['builtin-a', 'builtin-b', ...stores.skillsSeen.list()] });
-  try {
-    stores.skillsSeen.record(['synced-a', 'synced-b']);
-    stores.agentDefaults.setDefaultSkillDeny(['synced-a']);
-    fs.chmodSync(seenFile, 0o000);
-    captureConsoleError(() => assert.deepStrictEqual(stores.skillsSeen.list(), [], 'ENTER: the record is unreadable'));
-    let got;
-    captureConsoleError(() => { got = stores.agentDefaults.getDefaultSkillDeny(); });
-    assert.deepStrictEqual(got, ['synced-a']);
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(userData, 'agent-defaults.json'), 'utf-8'))['*'].denySkills, ['synced-a']);
-  } finally {
-    try { fs.chmodSync(seenFile, 0o600); } catch {}
-    fs.rmSync(userData, { recursive: true, force: true });
-    fs.rmSync(registryDir, { recursive: true, force: true });
-  }
-});
+for (const [mode, breakIt] of [
+  ['unreadable', (f) => fs.chmodSync(f, 0o000)],
+  ['quarantined', (f) => fs.writeFileSync(f, '{not json')],
+]) {
+  test(`t950: the skill-deny upgrade does not run against a skills-seen record it could not read (${mode})`, { skip: isRoot && mode === 'unreadable' && 'root reads a 000 file' }, () => {
+    const userData = mkTmpRoot('stores-ud-');
+    const registryDir = mkTmpRoot('stores-reg-');
+    const seenFile = path.join(userData, 'skills-seen.json');
+    let stores = null;
+    stores = initStores(userData, { log: console, registryDir,
+      resourcesDir: path.join(registryDir, '__no_seed__'),
+      skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+      envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json'),
+      knownSkillNames: () => ['builtin-a', 'builtin-b', ...stores.skillsSeen.list()] });
+    const origWarn = console.warn;
+    console.warn = () => {};
+    try {
+      stores.skillsSeen.record(['synced-a', 'synced-b']);
+      stores.agentDefaults.setDefaultSkillDeny(['synced-a']);
+      breakIt(seenFile);
+      captureConsoleError(() => assert.deepStrictEqual(stores.skillsSeen.list(), [], 'ENTER: the record is lost to this read'));
+      let got;
+      captureConsoleError(() => { got = stores.agentDefaults.getDefaultSkillDeny(); });
+      assert.deepStrictEqual(got, ['synced-a']);
+      assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(userData, 'agent-defaults.json'), 'utf-8'))['*'].denySkills, ['synced-a']);
+    } finally {
+      console.warn = origWarn;
+      try { fs.chmodSync(seenFile, 0o600); } catch {}
+      fs.rmSync(userData, { recursive: true, force: true });
+      fs.rmSync(registryDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('t950: an already-deferred store is returned verbatim and the file is never rewritten', () => {
   const { stores, file, cleanup } = skillUpgradeStores(['code-review', 'design', 'dataviz']);
@@ -3378,7 +3386,7 @@ test('renameWorkspaceScope: a new name with quotes or a newline is refused, leav
     const file = path.join(registryDir, 'agents', 'a1.md');
     const before = fs.readFileSync(file, 'utf-8');
     assert.match(before, /workspace: old/, 'ENTER: the scoped file is on disk');
-    for (const to of ['"quoted"', "'single'", 'new\nsessions: victim', 'new\rsessions: victim']) {
+    for (const to of ['"quoted"', "'single'", '"', "'", 'new\nsessions: victim', 'new\rsessions: victim']) {
       assert.strictEqual(stores.renameWorkspaceScope('old', to), 0, JSON.stringify(to));
       assert.strictEqual(fs.readFileSync(file, 'utf-8'), before, JSON.stringify(to));
     }

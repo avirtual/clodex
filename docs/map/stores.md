@@ -252,7 +252,7 @@
 - `_load` goes through `readStoreJson`: an unparseable reminders.json is quarantined, and an unreadable one makes every `_save` throw through `refuseUnreadable` until a later `_load` reads it.
 
 ### Hazards
-- The reminder `_save` logs and swallows a write error, so `add` returns a record that may not be on disk.
+- `markFired` and `remove` log and ignore a failed write because `_fireRecord` calls them unguarded from the timer; making them throw takes the timer down.
 
 ## notifications.json (inbox) — onChange … unreadCount
 
