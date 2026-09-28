@@ -77,6 +77,37 @@ test('docker/web/Dockerfile evicts the base image node account and pins clodex t
   assert.match(user, /^RUN userdel -r node \\\n && useradd --uid 1001 --create-home --shell \/bin\/bash clodex \\/);
 });
 
+test('docker/web/Dockerfile ships no duplicate layer and no build cache', () => {
+  const all = instructions(DOCKERFILE);
+  const runs = all.filter((i) => /^RUN\b/.test(i));
+  const useradd = all.findIndex((i) => /^RUN\b/.test(i) && i.includes('useradd'));
+  const muse = all.findIndex((i) => /^RUN mkdir -p \/opt\/muse\b/.test(i));
+  assert.ok(useradd >= 0 && muse >= 0, 'ENTER: the useradd RUN and the muse RUN exist');
+  assert.ok(useradd < muse, 'the useradd RUN precedes the muse RUN');
+  assert.match(all[muse], /chown -R clodex:clodex \/opt\/muse\b/);
+  const museChowns = runs.filter((i) => i.includes('chown -R clodex:clodex /opt/muse'));
+  assert.deepStrictEqual(museChowns, [all[muse]], 'only the muse RUN chowns /opt/muse');
+
+  const runtime = all.findIndex((i) => /^FROM \S+ AS runtime$/.test(i));
+  assert.ok(runtime >= 0, 'ENTER: the runtime stage');
+  const npmRuns = all.slice(runtime).filter((i) => /^RUN\b/.test(i) && /\bnpm i -g\b|\bnpm ci\b/.test(i));
+  assert.strictEqual(npmRuns.length, 2, 'ENTER: the npm i -g RUN and the npm ci RUN');
+  for (const r of npmRuns) assert.ok(r.includes('npm cache clean --force'), `cache cleaned in the same RUN: ${r}`);
+  const ci = npmRuns.find((i) => /\bnpm ci\b/.test(i));
+  assert.ok(ci.includes('rm -rf /root/.cache/node-gyp'));
+  assert.ok(ci.includes('rm -rf node_modules/node-pty/prebuilds'));
+
+  assert.ok(all.every((i) => !/chown -R clodex:clodex [^\n]*\/app\b/.test(i)), 'no recursive /app chown');
+  const appChowns = all.filter((i) => /(^|\s)chown clodex:clodex \/app(\s|$)/m.test(i));
+  assert.strictEqual(appChowns.length, 1, 'exactly one non-recursive /app chown');
+
+  const workdir = all.indexOf('WORKDIR /app');
+  assert.ok(workdir >= 0, 'ENTER: WORKDIR /app');
+  const appCopies = all.slice(workdir).filter((i) => /^COPY\b/.test(i) && !/\s\/usr\/local\/bin\//.test(i));
+  assert.strictEqual(appCopies.length, 3, 'ENTER: the three COPYs into /app');
+  for (const c of appCopies) assert.match(c, /^COPY (?:--\S+ )*--chown=clodex:clodex\b/);
+});
+
 test('entrypoint: not root or no host ids → execs the command unchanged, before touching anything', () => {
   const lines = ENTRYPOINT.split('\n');
   const guard = lines.indexOf('if [ "$(id -u)" != 0 ] || [ -z "$CLODEX_HOST_UID" ] || [ -z "$CLODEX_HOST_GID" ]; then');
