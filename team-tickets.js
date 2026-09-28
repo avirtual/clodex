@@ -4104,7 +4104,8 @@ function createTicketMethods(deps, shared) {
       const what = prior.kind === 'redirect'
         ? `${prior.label || 'rejection'} for ${prior.ticketId}` : `spec for ${prior.ticketId}`;
       if (spent) {
-        let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+        let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
+        if (team && team.solo) team = this._soloOpenerTeam(team, ticketsStore.load(team.root).find((t) => t.id === prior.ticketId));
         log.error('intent', `${what} was displaced on ${session.name} with its redelivery budget spent — escalating`);
         if (team) {
           this._escalateTicket(team, prior.ticketId,
@@ -4208,12 +4209,13 @@ function createTicketMethods(deps, shared) {
       const isRedirect = u.kind === 'redirect';
       const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
       const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
-      let team; try { team = resolveTeam(session.cwd); } catch { team = null; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
       // Still queued, and the timer is re-armed unconditionally — the retry is the
       // whole point of not consuming it.
       if (!team) { this._armSpecOwedTimer(session); return; }
       queue.shift();
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      team = this._soloOpenerTeam(team, ticket);
       // The three drops, taken with _checkSpecConfirm's own tests rather than new
       // ones that could disagree with it: closed while we waited, reassigned to a
       // live seat that is already working it, or resolving to nobody at all.
@@ -4499,6 +4501,12 @@ function createTicketMethods(deps, shared) {
     //     cleared it — a terminal idle with the latch still set is unreachable;
     //   - a seat blocked on a permission dialog re-arms below instead of firing,
     //     so a dialog answered ten minutes later is still checked afterwards.
+    _soloOpenerTeam(team, ticket) {
+      if (!team || !team.solo || !ticket) return team;
+      const add = (Array.isArray(ticket.events) ? ticket.events : []).find((e) => e && e.kind === 'add');
+      return { ...team, lead: add && add.by ? add.by : null };
+    },
+
     _checkSpecConfirm(session) {
       const u = session._specUnconfirmed;
       if (!u || session._dead) return;
@@ -4527,9 +4535,10 @@ function createTicketMethods(deps, shared) {
         session._specUnconfirmed = null;
         return;
       }
-      let team; try { team = resolveTeam(session.cwd); } catch { return; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return; }
       if (!team) return;
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
+      team = this._soloOpenerTeam(team, ticket);
       // Closed while we waited — nothing left to redeliver.
       if (!ticket || ticket.state !== 'open') { session._specUnconfirmed = null; return; }
       // Who holds the ticket NOW. The two ways that stops being this session are
@@ -4873,22 +4882,23 @@ function createTicketMethods(deps, shared) {
     // nature, so the caller keeps its one-shot armed for the next edge.
     _replayOpenTickets(session) {
       if (!session || !session.agentType || session._dead) return true;
-      let team; try { team = resolveTeam(session.cwd); } catch { return true; }
+      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return true; }
       if (!team) return true;
       const open = this._openTicketsFor(team, session.name);
       if (!open.length) return true;
       let held = false;
       for (const t of open) {
+        const board = this._soloOpenerTeam(team, t);
         const d = t.deliveredTo;
         if (d && d.seat === session.name && d.incarnation === session.incarnation) continue;
         // `_openTicketsFor` matches a ROLE ticket to every seat filling that role,
         // but _deliverTicketSpec re-resolves to the FIRST live seat with it. Without
         // this, two seats on one role send the spec to seat #1 twice and stamp it
         // with seat #2, which received nothing.
-        if (this._ticketAssigneeSeat(team, t) !== session.name) continue;
+        if (this._ticketAssigneeSeat(board, t) !== session.name) continue;
         if (!t.spec) continue;   // hand-edited record — delivering it injects literal "undefined"
-        const stamp = () => this._stampSpecDelivered(team, t.id, session, { repin: true });
-        const r = this._deliverTicketSpec(team, t, t.spec, 'clodex-team', true, true, false, stamp);
+        const stamp = () => this._stampSpecDelivered(board, t.id, session, { repin: true });
+        const r = this._deliverTicketSpec(board, t, t.spec, 'clodex-team', true, true, false, stamp);
         // `held` is the one non-delivery worth retrying: it is a property of the seat
         // at this instant, not of the ticket. `self` and `undelivered` are structural
         // and would be identical on every later pass.
@@ -6398,8 +6408,7 @@ function createTicketMethods(deps, shared) {
         // Spilled like every other rejecting return, and MORE needed here: the others
         // invite an immediate retry, this one tells the sender to wait on an
         // unreachable lead — an interval that can outlive its context or its process.
-        // Keeping the ticket open preserves the ticket's state, never the report.
-        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ticket kept open; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+        if (r && r.error) { reply(`error: ${r.error} — report NOT delivered, ${reentry ? `ticket stays held at "${heldAt}"` : 'ticket kept open'}; re-fire [agent:task done ${ticket.id}] once ${lead} is reachable${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       }
       ticket.state = 'done';
       // FIRST close only. A re-entry is the same close being re-verified, not a
@@ -7523,8 +7532,11 @@ function createTicketMethods(deps, shared) {
           '',
           `WHY: ${firstLine || 'the test suite failed on the branch'}`,
           '',
-          'The rework reached the seat and the ticket is open again; the failing test names are on'
-          + ` the record and in the seat's copy. ${NOTHING_TORN_DOWN}`,
+          replacedClause
+            ? `A replacement seat is being spawned with the rework as its first write, and the ticket is open again; `
+              + `the failing test names are on the record. If the spawn fails, a separate notice follows. ${NOTHING_TORN_DOWN}`
+            : 'The rework reached the seat and the ticket is open again; the failing test names are on'
+              + ` the record and in the seat's copy. ${NOTHING_TORN_DOWN}`,
         ].join('\n');
         const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
         if (r && r.error) {
@@ -8710,7 +8722,7 @@ function createTicketMethods(deps, shared) {
       ticket.lastActivityAt = ticket.closedAt;
       recordEvent(ticket, { at: ticket.closedAt, kind: 'cancel', by: session.name, reason: reason.split('\n')[0] });
       ticketsStore.save(team.root, tickets);
-      const seat = this._ticketAssigneeSeat(team, ticket);
+      const seat = ticketStarted(ticket) && !ticket.parked ? this._ticketAssigneeSeat(team, ticket) : null;
       if (reason && seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason}`, false, `[ticket ${ticket.id} cancelled]`);
       this._reconcileTickets(team);
       const next = seat ? this._advanceSeat(team, seat, ticket) : null;
@@ -8985,6 +8997,10 @@ function createTicketMethods(deps, shared) {
       // accumulates dead rows. ARCHIVED, never destroyed — no worktree to
       // reclaim, and its work may be UNCOMMITTED in the shared checkout.
       if (!branch) {
+        if (ticket.closedOut && ticket.acceptedAt) {
+          reply(`ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt).toLocaleTimeString()} — nothing was changed${this._spillRejectedPayload(session, 'task accept', note)}`);
+          return;
+        }
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
         let archived = false;
         if (ephemeralSeat && seatName && this.sessions.has(seatName)) {

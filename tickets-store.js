@@ -178,7 +178,10 @@ function extractMustFix(verdictText) {
   const lines = String(verdictText == null ? '' : verdictText).split('\n');
   const body = [];
   let inSection = false;
-  for (const line of lines) {
+  const isMustFixAt = (i) => { const h = sectionHeader(lines[i]); return !!h && /^MUST/i.test(h.keyword); };
+  let start = lines.findIndex((line, i) => !/^[ \t]*>/.test(line) && isMustFixAt(i));
+  if (start < 0) start = 0;
+  for (const line of lines.slice(start)) {
     const h = sectionHeader(line);
     if (h) {
       const isMustFix = /^MUST/i.test(h.keyword);

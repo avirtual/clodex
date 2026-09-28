@@ -561,6 +561,23 @@ test("the loop's reject replaces a heavy seat the same way the lead's does", asy
     'and the notice names the FRESH seat as the holder — naming the archived one would send the lead to a dead row');
 });
 
+test('a replacement seat that fails to spawn is not reported as reached', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  ready(f, world, { tok: OVER });
+  f.m.create = async () => { throw new Error('boom'); };
+
+  const r = f.m._rejectTicketFromLoop(f.team, 't1', 'SUITE RED: three failures in widget.test.js', { notifyLead: true });
+  await settle();
+
+  assert.strictEqual(r.ok, true, 'ENTER: the loop reject succeeded');
+  const toLead = f.gated.filter((g) => g.target === 'lead');
+  assert.ok(toLead.some((g) => g.body.includes('REJECTED by the loop')), 'ENTER: the lead was notified');
+  assert.ok(!toLead.some((g) => g.body.includes('The rework reached the seat')),
+    `no lead delivery claims the rework reached a seat that never spawned: ${JSON.stringify(toLead)}`);
+  assert.ok(f.injected.some((t) => /boom/.test(t)), `the spawn failure reaches the lead: ${JSON.stringify(f.injected)}`);
+});
+
 // ── a follow-up must-fix is new work too ───────────────────────────────────
 
 test('a follow-up must-fix onto a heavy seat replaces it, exactly as a reopen does', async () => {
