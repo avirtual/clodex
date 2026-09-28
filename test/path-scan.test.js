@@ -65,14 +65,15 @@ test('a trailing colon with no digits is not a line number', () => {
   ]);
 });
 
-// `tf` sits before `tfvars` in the allowlist, so the alternation reaches it
-// first and only the `\b` after the group stops `main.tfvars` from being
-// claimed as `main.tf` plus stray text. Dropping that `\b` — or sorting the
-// list — silently truncates every prefix pair.
 test('an extension that prefixes another still matches the longer one whole', () => {
   assert.deepStrictEqual(hits('terraform.tfvars and network.tf').map((h) => h.path),
     ['terraform.tfvars', 'network.tf']);
   assert.deepStrictEqual(hits('terraform.tfstate').map((h) => h.path), ['terraform.tfstate']);
+});
+
+test('a known extension followed by a further unknown extension is not claimed as the shorter file', () => {
+  assert.deepStrictEqual(hits('see app.js. then').map((h) => h.path), ['app.js']);
+  assert.deepStrictEqual(hits('see app.js.map and bundle.css.gz'), []);
 });
 
 test('finds infra paths with a line number', () => {
@@ -201,6 +202,22 @@ test('markup butted against a URL is absorbed into the url span, not lost', () =
   assert.ok(url.text.includes('<img'), 'expected the greedy tail to absorb the markup');
   assert.strictEqual(spans.map((x) => x.text).join(''), s);
 });
+
+for (const [s, want] of [
+  ['(see https://a.com/x).', 'https://a.com/x'],
+  ['go to https://b.com.', 'https://b.com'],
+  ['see https://a.com/x, and more', 'https://a.com/x'],
+  ['read https://en.wikipedia.org/wiki/Foo_(bar)', 'https://en.wikipedia.org/wiki/Foo_(bar)'],
+  ['(read https://en.wikipedia.org/wiki/Foo_(bar)).', 'https://en.wikipedia.org/wiki/Foo_(bar)'],
+]) {
+  test(`trailing sentence punctuation and an unbalanced closing paren stay outside the url span: ${s}`, () => {
+    const spans = scanLinks(s);
+    const url = spans.find((x) => x.kind === 'url');
+    assert.ok(url, 'expected a url span');
+    assert.strictEqual(url.text, want);
+    assert.strictEqual(spans.map((x) => x.text).join(''), s);
+  });
+}
 
 test('spans are gapless, ordered and cover the whole string', () => {
   const s = 'a.js:1 then https://x.dev/b and c/d.md tail';
