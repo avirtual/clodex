@@ -59,12 +59,11 @@ teammate.
 - `[agent:task reject <id>]` + the must-fixes as the body — the only rework
   channel: it reopens a done ticket and delivers the must-fixes in one step;
   must-fixes sent by dm never reach the ticket. On a seat past the compact
-  threshold it replaces the seat (same branch and tree, fresh context).
-  An ACCEPT whose nits are comment or CHANGELOG prose is
-  merged: carry the nits to the next ticket on that file. Reject an ACCEPT only
-  for a false coverage claim ("pinned by X", "covered by test Y") or a false
-  user-facing CHANGELOG line; any other reject of an ACCEPT is a process defect
-  on your side.
+  threshold it replaces the seat (same branch and tree, fresh context). An
+  ACCEPT whose nits are comment or CHANGELOG prose is merged: carry the nits to
+  the next ticket on that file. Reject an ACCEPT only for a false coverage claim
+  ("pinned by X", "covered by test Y") or a false user-facing CHANGELOG line;
+  any other reject of an ACCEPT is a process defect on your side.
 - `[agent:task respec <id>]` + the corrected spec — fixes an open ticket in
   place (reject bounces on open ones; cancel-and-refile burns the id). It is
   delivered if the ticket is dispatched; otherwise it is recorded and the reply
@@ -93,9 +92,9 @@ teammate.
   show more. There is no `rejected` filter; an unknown one bounces with the
   valid set.
 - Each intent in a reply is acked separately, possibly out of order; a missing
-  ack is not a dropped verb. Before re-emitting, end the
-  turn and read `[agent:task list]` — a re-sent start bounces "already started"
-  and names the holder.
+  ack is not a dropped verb. Before re-emitting, end the turn and read
+  `[agent:task list]` — a re-sent start bounces "already started" and names
+  the holder.
 
 ## Branch per ticket
 
