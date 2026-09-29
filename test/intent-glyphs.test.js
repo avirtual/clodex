@@ -30,7 +30,7 @@ const CARD_ROWS = [
   ['[agent:exec clodex-team] {}', '▸', 'run', 'clodex-team', []],
   ['[agent:remind in 10m] check', '◷', 'remind', 'in 10m', []],
   ['[agent:remind every 30m] check', '◷', 'remind', 'every 30m', []],
-  ['[agent:remind list]', '◷', 'reminders', null, []],
+  ['[agent:remind list]', '◷', 'list reminders', null, []],
   ['[agent:remind cancel 3]', '◷', 'unremind', '3', []],
   ['[agent:shout] merge blocked', '⚑', 'shout', 'you', []],
   ['[agent:team-review] look', '◐', 'review', null, []],

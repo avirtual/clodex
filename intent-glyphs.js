@@ -32,7 +32,7 @@ const CORE = {
   exec: () => g('▸', 'run'),
   remind: (i) => {
     const word = String(i.spec || '').split(/\s+/)[0];
-    if (word === 'list') return g('◷', 'reminders');
+    if (word === 'list') return g('◷', 'list reminders');
     if (word === 'cancel') return g('◷', 'unremind');
     return g('◷', 'remind');
   },

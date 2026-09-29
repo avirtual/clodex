@@ -26358,7 +26358,7 @@ ${i3.join("\n")}
         exec: () => g("\u25B8", "run"),
         remind: (i) => {
           const word = String(i.spec || "").split(/\s+/)[0];
-          if (word === "list") return g("\u25F7", "reminders");
+          if (word === "list") return g("\u25F7", "list reminders");
           if (word === "cancel") return g("\u25F7", "unremind");
           return g("\u25F7", "remind");
         },
@@ -30499,7 +30499,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // what makes this row different from dm/memory/task.
         { type: "term", parse: parseTerm, bodyMode: NONE },
         { type: "exec", parse: parseExec, bodyMode: () => "json" },
-        { type: "remind", parse: parseRemind, bodyMode: GREEDY },
+        { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/.test(i.spec) ? "none" : "greedy" },
         { type: "shout", parse: parseShout, bodyMode: GREEDY },
         { type: "team-review", parse: parseTeamReview, bodyMode: GREEDY },
         { type: "review-done", parse: parseReviewDone, bodyMode: GREEDY },
