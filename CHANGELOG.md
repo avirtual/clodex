@@ -33,6 +33,7 @@ blocks a release.
 - clodexctl: the contexts file is saved through a symlink instead of replacing it with a regular file, and undeploy's region lookup no longer matches Object.prototype keys.
 - Peering: releasing control while the acquire is in flight no longer shows a "released" error chip; the park-cap timer sees mail orphaned by a dead drainer; the own-scope test selector now picks up tests that pin a changed non-JS resource by file name.
 - Deploy: `/api/peer/hello` advertises a process-level `bootId`; `clodexctl deploy ssm` token delivery now waits for the engine's `bootId` to change before deleting its throwaway session, so a poll that lands before the restart or after it both end with the session gone — the OAuth token no longer lingers in a leaked session's scrollback. Old engines without the field keep the previous behaviour.
+- Wire stripping: new sessions default to level 2, ticket hands start with stripping off (they are short-lived, so the one-time re-cache never pays back), and choosing Off in New Session now sticks instead of reverting to the level the name last ran at.
 
 ## 5.92.0 — 2026-09-29
 
