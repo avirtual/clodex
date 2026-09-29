@@ -632,8 +632,8 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
   (the SSM port-forward): a throwaway bash session is spawned over the wire, the
   drop-in is typed in (the token rides a shell **variable assignment**, never a
   process argv), written `0600` to `clodex.service.d/claude-token.conf`, and the
-  service restarted. The restart drops the wire (the delivery session dies with
-  it); the engine comes back with `claude` authenticated. The token appears in
+  service restarted. The restart drops the wire; the engine comes back with
+  `claude` authenticated. The token appears in
   **no** SSM parameter, argv, `-o json`, or trail. Same file format as the ssh
   flavor (raw token or a `CLAUDE_CODE_OAUTH_TOKEN=…` line).
 - **The claude/codex CLIs are installed** by the pinned installer (best-effort,

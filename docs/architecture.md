@@ -664,8 +664,9 @@ the checkout, so the claim runs straight after `create()` and again in the catch
 and splitting them is worse than either half — writing this seat's pointer alone
 on the reuse path leaves two records naming one tree, which is the collision the
 scan exists to close.
-`resolveSeatShape` takes the template's `systemPromptFile` when the template names
-one and the role's `prompt` otherwise — except that, on both arms (`_teamRolePromptStem`), a team-owned role
+`resolveSeatShape` takes the template's `systemPromptFile` when the template
+names one and the role's `prompt` otherwise — except that, on both arms
+(`_teamRolePromptStem`), a team-owned role
 prompt outranks a seeded or implied template — and a role prompt that did not ride as the system prompt is appended
 after the team block by `_teamBlockFor` (session-manager.js), so nothing is
 dropped.

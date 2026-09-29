@@ -1817,12 +1817,12 @@ test('a conflicting merge escalates with the conflict and leaves the tree unwedg
 });
 
 test('t698: a CHANGELOG-only adjacent-insert conflict is unioned, landed, and named in the notice', async () => {
-  // The commonest merge-step escalation in the log: every ticket writes its
-  // bullet at the head of `## Unreleased`, so the second of two in-flight
-  // tickets ALWAYS conflicts there even when nothing else overlaps. The loop
-  // now keeps both bullets and carries on to the post-merge suite; the subject
-  // above (`a conflicting merge escalates`) conflicts on base.txt and still
-  // escalates, which is the other half of the pair.
+  // The commonest merge-step escalation in the log: two in-flight tickets
+  // inserting at the same point in `## Unreleased` ALWAYS conflict there, even
+  // when nothing else overlaps. The loop now keeps both bullets and carries on
+  // to the post-merge suite; the subject above (`a conflicting merge
+  // escalates`) conflicts on base.txt and still escalates, which is the other
+  // half of the pair.
   const repo = mkRepo();
   const CL = '# Changelog\n\nintro\n\n## Unreleased\n\n- old bullet one\n\n## 5.0.0\n';
   fsReal.writeFileSync(pathReal.join(repo.dir, 'CHANGELOG.md'), CL);

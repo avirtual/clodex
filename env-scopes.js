@@ -9,10 +9,10 @@
 //     process.env  <  global  <  workspace  <  session  <  node-local override
 //
 // - process.env       the engine's base env (already post-
-//                     scrubInheritedClaudeMarkers at startup — main.js:54 /
-//                     headless-main.js:103). We do NOT re-scrub: a scope-set
-//                     CLAUDE_* value is deliberate operator config and must
-//                     survive, only the INHERITED base is scrubbed.
+//                     scrubInheritedClaudeMarkers at startup in both entry
+//                     points). We do NOT re-scrub: a scope-set CLAUDE_* value
+//                     is deliberate operator config and must survive, only the
+//                     INHERITED base is scrubbed.
 // - global            GUI-managed, applies to every wrapper PTY on this node.
 // - workspace         keyed by workspaceId, applies to that workspace's sessions.
 // - session           per-spawn, rides create()'s env param (+ the wire + the CLI)

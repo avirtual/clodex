@@ -540,8 +540,7 @@ test('git(): carries the exit code, so "no" is separable from "could not tell"',
 
 const CHANGELOG_BASE = '# Changelog\n\nintro\n\n## Unreleased\n\n- old bullet one\n\n## 5.0.0\n';
 
-// Insert `line` directly under the `## Unreleased` heading — the spot every
-// ticket writes, and therefore the spot two tickets always collide on.
+// Insert `line` directly under the `## Unreleased` heading.
 function underUnreleased(body, line) {
   return body.replace('## Unreleased\n\n', `## Unreleased\n\n${line}\n`);
 }
