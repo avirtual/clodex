@@ -103,3 +103,16 @@ test('a live files push during a first open whose cwd is not known yet dims noth
     assert.doesNotMatch(h.body(), /file-row-out|Dimmed rows/);
   } finally { h.restore(); }
 });
+
+test('a forgotten session\'s cwd is unknown again, so a later push dims nothing', async () => {
+  const h = harness(async () => ({ ok: true, cwd: '/w', files: [row('/w/src/a.js')] }));
+  try {
+    await h.api.openFilesPopover('a', fakeEl());
+    h.push('a', [row('/w/src/a.js'), row('/elsewhere/b.js')]);
+    assert.match(h.body(), /file-row file-row-out" data-path="\/elsewhere\/b\.js"/, 'ENTER: the known cwd dimmed the outside row');
+    h.api.forget('a');
+    h.push('a', [row('/w/src/a.js'), row('/elsewhere/b.js')]);
+    assert.match(h.body(), /data-path="\/elsewhere\/b\.js"/, 'ENTER: the push reached the rows');
+    assert.doesNotMatch(h.body(), /file-row-out|Dimmed rows/);
+  } finally { h.restore(); }
+});
