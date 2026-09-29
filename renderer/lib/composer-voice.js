@@ -8,12 +8,15 @@ const VOICE_STOP_TRIES = 2;
 const PASTE_OPEN = '\x1b[200~';
 const PASTE_CLOSE = '\x1b[201~';
 
-const PASTE_MARK = /\x1b\[20[01]~/gu;
+const PASTE_MARK = /^\x1b\[20[01]~$/u;
 
 function bracketPaste(text) {
-  let body = String(text);
-  for (let prev; prev !== body;) { prev = body; body = body.replace(PASTE_MARK, ''); }
-  return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
+  const out = [];
+  for (const ch of String(text)) {
+    out.push(ch);
+    if (ch === '~' && PASTE_MARK.test(out.slice(-6).join(''))) out.length -= 6;
+  }
+  return `${PASTE_OPEN}${out.join('')}${PASTE_CLOSE}`;
 }
 
 function applyDraft(value, span, text) {

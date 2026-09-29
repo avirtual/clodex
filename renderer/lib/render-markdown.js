@@ -9,6 +9,7 @@ const BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
 const ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
 const LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
 const WORD_CHAR = /\w/;
+const BLANK = /\s/;
 const INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
 
 function safeHref(raw) {
@@ -99,6 +100,16 @@ function appendInline(parent, text, doc) {
   }
   if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
   return parent;
+}
+
+function trimClosingHashes(text) {
+  let end = text.length;
+  while (end > 0 && BLANK.test(text[end - 1])) end--;
+  let hashes = end;
+  while (hashes > 0 && text[hashes - 1] === '#') hashes--;
+  let start = hashes;
+  while (start > 0 && BLANK.test(text[start - 1])) start--;
+  return hashes < end && start < hashes ? text.slice(0, start) : text;
 }
 
 function renderFence(lines, i, parent, doc) {
@@ -227,7 +238,7 @@ function renderBlocks(lines, parent, doc, depth = 0) {
     const h = HEADING.exec(line);
     if (h) {
       const heading = doc.createElement(`h${h[1].length}`);
-      appendInline(heading, h[2].replace(/\s+#+\s*$/, ''), doc);
+      appendInline(heading, trimClosingHashes(h[2]), doc);
       parent.appendChild(heading);
       i++;
       continue;

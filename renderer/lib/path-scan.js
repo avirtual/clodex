@@ -29,7 +29,7 @@ const EXTENSIONS = [
 // silently restarts at the slash — yielding `/x/y.js`, a WRONG absolute path
 // rather than a miss.
 const PATH_RE = new RegExp(
-  String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join('|')})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
+  String.raw`(?:~\/|(?:(?<![\w.@+\/-])|(?<=\/)(?![\w.@+-])|(?!\d)(?<=:\d+))(?:\.{0,2}\/)?)[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join('|')})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
   'g',
 );
 
