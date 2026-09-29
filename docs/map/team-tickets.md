@@ -265,7 +265,8 @@
 | `_existingTicketTree` | the ticket's recorded worktree when git still lists it, it is on disk, unlocked, unprunable and unheld, else null | reads git worktree list and the filesystem | gitWorktree.listWorktrees, _ticketTreeHolder | preserve-tree-handoff.test.js rework-context-gate.test.js |
 | `_templateShape` | a template name resolved into the create() seat shape with env allowlisted and privileged intents stripped | reads team templates and the library | readTeamJson, filterTemplateEnv, withoutPrivilegedIntentsFor | resolve-seat-shape.test.js team-templates-exec.test.js |
 | `_resolveRoleCwd` | the absolute boot dir for a role's cwd, falling back to the team root with a printed reason; never throws or creates | reads the filesystem | _roleCwdRel, resolveTeam | unpinned |
-| `resolveSeatShape` | the ONE seat shape both team spawn paths hand create(), with the review purpose adding the reviewer cap and allowlists | reads persistence for the lead's extraArgs | _templateShape, _resolveRoleCwd, resolveAccount, reviewerModelArgs | resolve-seat-shape.test.js reviewer-read-token-cap.test.js |
+| `_teamRolePromptStem` | the role's prompt stem when the team's own prompts/system copy outranks the template (no template, or the seeded one whose stem is the role key), else null; shared by both resolveSeatShape arms | reads the team's prompts/system dir | teamPromptFile | resolve-seat-shape.test.js |
+| `resolveSeatShape` | the ONE seat shape both team spawn paths hand create(), with the review purpose adding the reviewer cap and allowlists | reads persistence for the lead's extraArgs | _templateShape, _resolveRoleCwd, _teamRolePromptStem, resolveAccount, reviewerModelArgs | resolve-seat-shape.test.js reviewer-read-token-cap.test.js |
 | `_spawnTicketSeat` | the one-shot seat spawner behind start, assign and rework: acquire or reuse the tree, spawn, deliver the spec, roll back on failure | persistence seat stub and worktree, tickets.json worktree and pin, git worktree on disk | _existingTicketTree, resolveSeatShape, _deliverTicketSpec, _linkWorktreeNodeModules | preserve-tree-handoff.test.js ticket-loop-verify.test.js session-manager.test.js |
 | `_spawnTicketSeat.claimTree` | writes this seat's worktree record and clears every other record naming the same tree by realpath | persistence worktree records | none | preserve-tree-handoff.test.js worktree-restart-preserve.test.js |
 
@@ -274,6 +275,7 @@
 - `_mintTicketSeat` returns a recorded branch over the derived one, because a branch is an identity minted once.
 - `_spawnTicketSeat` reserves the persistence stub synchronously before any await, and on spawn mode skips tree acquisition entirely so no git call sits on the dispatch path.
 - `claimTree` writes the seat's worktree and runs the one-tree-one-record realpath scan together, not gated on reuse.
+- `_teamRolePromptStem` decides the system prompt stem for both purposes: a NAMED template (or a review override) keeps its own prompt, a seeded one yields to the team's copy.
 
 ### Hazards
 - Falling back to the team root when createWorktree fails in `_spawnTicketSeat` has the hand commit onto the operator's checked-out branch.

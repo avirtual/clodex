@@ -528,7 +528,7 @@ plugin reference and is unaffected. The library seeder never writes under
 ## How a role finds its prompt
 
 A seat's system prompt is the template's `systemPromptFile` when the template
-names one; otherwise it is the role's `prompt`. A role `prompt` that did not
+names one; otherwise it is the role's `prompt`. For ticket and reviewer seats there is one exception: if the template is the copy the team was created with (its stem is the role key) and the team has its own copy of the role's `prompt`, the role's prompt wins. A role `prompt` that did not
 become the system prompt is appended after the team block, so a role's briefing
 is never dropped: the template supplies the persona, the role supplies the
 delta. When both name the same stem it is applied once. This holds for ticket

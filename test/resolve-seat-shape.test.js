@@ -1573,6 +1573,51 @@ test('a renamed role\'s own template still counts as seeded: the team\'s own pro
   assert.strictEqual(m.resolveSeatShape(team, 'writer', 'review', LEAD).systemPromptFile, 'writer');
 });
 
+const T1425_ROWS = [
+  {
+    row: '(a) seeded template, team prompt present',
+    def: { prompt: 'role-prompt', template: 'hand' },
+    files: {
+      'templates/hand.json': { name: 'hand', type: 'claude', systemPromptFile: 'tpl-prompt' },
+      'prompts/system/role-prompt.md': 'the team wrote this one\n',
+    },
+    want: 'role-prompt',
+  },
+  {
+    row: '(b) named template, team prompt present',
+    def: { prompt: 'role-prompt', template: 'named-tpl' },
+    library: [{ name: 'named-tpl', type: 'claude', systemPromptFile: 'tpl-prompt' }],
+    files: { 'prompts/system/role-prompt.md': 'the team wrote this one\n' },
+    want: 'tpl-prompt',
+  },
+  {
+    row: '(c) seeded template, team prompt absent',
+    def: { prompt: 'role-prompt', template: 'hand' },
+    files: { 'templates/hand.json': { name: 'hand', type: 'claude', systemPromptFile: 'tpl-prompt' } },
+    want: 'tpl-prompt',
+  },
+  {
+    row: '(d) no template',
+    def: { prompt: 'role-prompt' },
+    files: {},
+    want: 'role-prompt',
+  },
+];
+
+for (const r of T1425_ROWS) {
+  test(`t1425 _teamRolePromptStem on the ticket arm: ${r.row} → ${r.want}`, () => {
+    const m = managerWith(r.library || []);
+    const team = t891Team({ hand: r.def }, r.files);
+    const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
+    if (r.def.template) {
+      assert.strictEqual(shape.tpl && shape.tpl.systemPromptFile, 'tpl-prompt',
+        'ENTER: the template resolved and carries its own prompt, so the stem below is a choice between two real sources');
+    }
+    assert.strictEqual(shape.systemPromptFile, r.want,
+      'Bogdan ruling 2026-09-29: a ticket seat follows the reviewer rule — only a template stem EQUAL to the role key is the seeded copy the team\'s own prompt outranks');
+  });
+}
+
 test('t891: the SHIPPED reviewer template really is what the stock role now names', () => {
   assert.strictEqual(STOCK_ROLE_DEFS.reviewer.template, 'clodex-team-reviewer',
     'a stock def naming a template that does not ship is a role pointing at nothing, and the resolver would fall through to DEFAULT_REVIEWER_TEMPLATE and hide it');
