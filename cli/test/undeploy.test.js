@@ -355,7 +355,7 @@ test('undeploy node: a flavor FLAG forces the teardown when the record has none'
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
 });
 
-test('undeploy never overwrites a contexts file it could not parse', async () => {
+test('undeploy refuses a contexts file that fails to parse', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
   const bytes = '{"current":"mybox","contexts":{"mybox":{"url":"http://x","token":"t"}';

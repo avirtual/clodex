@@ -322,7 +322,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 ### Invariants
 
-- `applySessionSkills` is the last recorded name before an unnamed stretch that builds, in order, remote-wiring (`syncRemoteServer`, `refreshRemoteToken`), the peer/tunnel `let`s and peer-wiring, the sandbox manager, the ctl service and the drawer ptys; the rows here are the handle's accessors onto those bindings.
+- `applySessionSkills` is the last recorded name before an unnamed stretch that builds, in order, remote-wiring (`syncRemoteServer`, `refreshRemoteToken`, `shutdownRemoteServer`), the peer/tunnel `let`s and peer-wiring, the sandbox manager, the ctl service and the drawer ptys; the rows here are the handle's accessors onto those bindings.
 - `getRemoteServer`, `getPeerManager`, `getTunnelManager` and `getWebTunnelManager` stay closures over their `let`s, because the sync calls reassign them and shutdown nulls them.
 - `getPeerManager` reads a binding that peer-wiring writes through its set half, the get+set singleton pair convention for module-written values.
 - `getSandboxManager` returns null rather than a stub when the host declines the sandbox, so every consumer must null-check it.
