@@ -739,6 +739,7 @@ const taskReply = (id, turn, body) => {
 };
 const isHidden = (n) => /\btr-hidden\b/.test(n.className);
 const shown = (turn) => turn.childNodes.filter((n) => !isHidden(n)).map((n) => n.className);
+const END = 'tr-row tr-prose tr-segs tr-turn-end-prose';
 const rowsOf = (turn) => turn.childNodes.filter((n) => !/\btr-footer\b/.test(n.className));
 
 test('in Conversation mode internal rows and tool blocks carry tr-hidden while prompts, prose and ticket lifecycle rows do not; Internals clears it', () => {
@@ -788,7 +789,7 @@ test('in Conversation mode a turn with no conversation row is hidden, and a turn
   const turns = () => m.pane.childNodes.map((n) => [rowsOf(n).map((c) => c.dataset.id || c.className).join(','), isHidden(n)]);
   m.rows.setMode('conversation');
   const fold = 'tr-row tr-turn-fold';
-  assert.deepStrictEqual(turns(), [['p1,i0', false], [fold, true], [fold, false], [fold, false], ['m5,a5', false]]);
+  assert.deepStrictEqual(turns(), [['p1,i0', false], [fold, true], [`${fold},${END}`, false], [`${fold},${END}`, false], ['m5,a5', false]]);
   m.rows.setMode('internals');
   assert.deepStrictEqual(turns().filter(([, h]) => h), []);
 });
@@ -989,7 +990,7 @@ test('runs: a reminder→prose turn folds to its head and a reminder→apiError 
     inb('m1', 1, 'reminder', 'continue'), talk('a1', 1, 'carrying on'),
     inb('m2', 2, 'reminder', 'continue'), { id: 'a2', kind: 'assistant', ts: null, turn: 2, apiError: true, text: 'API Error: 500' },
   ]);
-  assert.deepStrictEqual(shown(turnOf(m, 'm1')), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turnOf(m, 'm1')), ['tr-row tr-turn-fold', END]);
   assert.deepStrictEqual(shown(turnOf(m, 'm2')), ['tr-row tr-notice tr-notice-error', 'tr-row tr-footer tr-run-toggle']);
   assert.deepStrictEqual([isHidden(turnOf(m, 'm1')), isHidden(turnOf(m, 'm2'))], [false, false]);
 });
@@ -1271,7 +1272,7 @@ test('folds: a machine-driven turn in Conversation mode shows one fold head with
   m.render(accepted());
   const turn = turnOf(m, 'i1');
   assert.ok(/\btr-turn-folded\b/.test(turn.className));
-  assert.deepStrictEqual(shown(turn), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turn), ['tr-row tr-turn-fold', END]);
   const head = turn.childNodes[0];
   assert.strictEqual(findCls(head, 'tr-sender-name')[0].textContent, 'ticket-loop');
   assert.strictEqual(findCls(head, 'tr-ticket-chip')[0].textContent, 't1272 ACCEPT');
@@ -1281,8 +1282,54 @@ test('folds: a machine-driven turn in Conversation mode shows one fold head with
   head.listeners.click();
   const open = turnOf(m, 'i1');
   assert.ok(!/\btr-turn-folded\b/.test(open.className));
-  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-footer', END]);
   assert.strictEqual(open.childNodes[0].childNodes[0].textContent, '▾');
+});
+
+const closing = (text) => [
+  inb('i1', 1, 'ticket-loop', '[ticket t1272 ACCEPT] t1272-x accepted'),
+  call('t1', 'Bash', 'git log'), said('a1', 1, text), ended('e1', 1, 15000),
+];
+const holding = (turn, text) => turn.childNodes.filter((n) => n.textContent.includes(text));
+
+test('folds: a closed fold shows the turn-end prose as its own visible row after the fold head, at turn level', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render(closing('[agent:task list]\nall merged, nothing left'));
+  const turn = turnOf(m, 'i1');
+  assert.ok(/\btr-turn-folded\b/.test(turn.className), 'ENTER: the ticket turn folds');
+  const rows = holding(turn, 'all merged, nothing left');
+  assert.deepStrictEqual(rows.map(cls), [END]);
+  assert.strictEqual(isHidden(rows[0]), false);
+  assert.ok(turn.childNodes.indexOf(rows[0]) > turn.childNodes.indexOf(findCls(turn, 'tr-turn-fold')[0]));
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /^\.tr-turn-folded > :not\(\.tr-turn-fold\):not\(\.tr-turn-end-prose\) \{ display: none; \}/m);
+  assert.match(css, /^\.tr-turn > \.tr-row\.tr-turn-end-prose \{ margin-left: 0; \}/m);
+});
+
+test('folds: an open fold renders the turn-end prose once, as the turn\'s last row, and keeps the rest of its record in the body', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render(closing('[agent:task list]\nall merged, nothing left'));
+  turnOf(m, 'i1').childNodes[0].listeners.click();
+  const turn = turnOf(m, 'i1');
+  assert.ok(!/\btr-turn-folded\b/.test(turn.className));
+  assert.strictEqual(turn.textContent.split('all merged, nothing left').length, 2);
+  const last = turn.childNodes[turn.childNodes.length - 1];
+  assert.strictEqual(last.className, END);
+  assert.ok(last.textContent.includes('all merged, nothing left'));
+  assert.strictEqual(isHidden(last), false);
+  assert.strictEqual(findCls(rowIn(m, 'a1'), 'intent-card').length, 1);
+});
+
+test('folds: a closed fold shows filed turn-end prose with its filed label visible, after the fold head', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render(closing(`[agent:exec clodex-run-tests] {}\nNotes — 1.1 KB filed at ${FILED}`));
+  const turn = turnOf(m, 'i1');
+  assert.ok(/\btr-turn-folded\b/.test(turn.className), 'ENTER: the ticket turn folds');
+  const rows = holding(turn, 'filed · ');
+  assert.deepStrictEqual(rows.map(cls), [END]);
+  assert.strictEqual(isHidden(rows[0]), false);
+  assert.strictEqual(findCls(rows[0], 'tr-spill-label')[0].textContent, '▸ ▢ 1.1 KB filed · ');
+  assert.ok(turn.childNodes.indexOf(rows[0]) > turn.childNodes.indexOf(findCls(turn, 'tr-turn-fold')[0]));
 });
 
 test('folds: Internals mode has no fold head, and switching back re-folds a turn the operator has not opened', () => {
@@ -1292,11 +1339,11 @@ test('folds: Internals mode has no fold head, and switching back re-folds a turn
   assert.deepStrictEqual(findCls(m.pane, 'tr-turn-fold'), []);
   assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-box tr-box-folded tr-ticket', 'tr-row tr-tool-block', 'tr-row tr-prose', 'tr-row tr-footer']);
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', END]);
   turnOf(m, 'i1').childNodes[0].listeners.click();
   m.rows.setMode('internals');
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-prose', 'tr-row tr-footer']);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-footer', END]);
   assert.strictEqual(turnOf(m, 'i1').childNodes[0].getAttribute('aria-expanded'), 'true');
 });
 
@@ -1317,7 +1364,7 @@ test('folds: an opened fold in Conversation hides its tool block; Internals and 
 
   const r = mount({ mode: 'conversation' });
   r.render([ask('p1', 1), talk('a1', 1), inb('m2', 2, 'reminder', 'continue'), call('t2', 'Bash', 'ls', 'ok', { turn: 2 }), talk('a2', 2, 'carrying on')]);
-  assert.deepStrictEqual(shown(turnOf(r, 'm2')), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turnOf(r, 'm2')), ['tr-row tr-turn-fold', END]);
   clickToggle(r);
   const opened = findCls(turnOf(r, 'm2'), 'tr-tool-block')[0];
   assert.ok(opened);
@@ -1334,7 +1381,7 @@ test('folds: the operator\'s mid-turn prompt inside a ticket-loop turn keeps the
 test('folds: in a talk turn followed by a reminder turn, the run expander reveals the reminder', () => {
   const m = mount({ mode: 'conversation' });
   m.render([ask('p1', 1), talk('a1', 1), inb('m2', 2, 'reminder', 'continue'), talk('a2', 2, 'carrying on')]);
-  assert.deepStrictEqual(shown(turnOf(m, 'm2')), ['tr-row tr-turn-fold']);
+  assert.deepStrictEqual(shown(turnOf(m, 'm2')), ['tr-row tr-turn-fold', END]);
   assert.strictEqual(togglesOf(m).length, 1);
   clickToggle(m);
   assert.strictEqual(findCls(turnOf(m, 'm2'), 'tr-turn-fold').length, 0);

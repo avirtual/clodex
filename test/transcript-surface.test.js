@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { surfaceOf, segmentSurface, turnDriver, turnFolds } = require('../renderer/lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('../renderer/lib/transcript-surface');
 
 const C = 'conversation';
 const I = 'internals';
@@ -169,6 +169,26 @@ test('turnFolds: a machine-driven turn holding the operator\'s mid-turn prompt o
   assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'queued' }], C), false);
   assert.strictEqual(turnFolds([notice, tool, { kind: 'prompt', text: 'hi', source: 'mid-turn', state: 'delivered' }], C), false);
   assert.strictEqual(turnFolds([notice, tool, { kind: 'inbound', from: 'user', text: 'from the panel' }], C), false);
+});
+
+const endTexts = (records) => {
+  const end = turnEndProse(records);
+  return end && end.segs.map((seg) => seg.text);
+};
+const endDriver = { kind: 'inbound', from: 'ticket-loop', text: '[ticket t1 ACCEPT] x', ticket: { id: 't1', tag: 'ACCEPT' } };
+const END_ROWS = [
+  ['prose after the last intent', [endDriver, said(intent('task', 'list'), prose('done'))], ['done']],
+  ['prose only before the last intent', [endDriver, said(prose('narration'), intent('exec'))], null],
+  ['prose only in an earlier assistant record', [endDriver, said(prose('checking'), intent('exec')), tool, said(intent('exec'))], null],
+  ['a trailing filed pointer', [endDriver, said(intent('exec'), { kind: 'prose', text: 'Notes — 1.1 KB filed at /x/y.md', spill: { path: '/x/y.md', bytes: 1100 } })], ['Notes — 1.1 KB filed at /x/y.md']],
+  ['blank trailing prose', [endDriver, said(intent('exec'), prose(' \n '))], null],
+  ['a record with no segments', [endDriver, tool, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'carrying on' }], ['carrying on']],
+];
+
+test('turnEndProse: one literal row per case, the prose after the last intent of the turn\'s last assistant record', () => {
+  for (const [name, records, want] of END_ROWS) assert.deepStrictEqual(endTexts(records), want, name);
+  const spilled = END_ROWS[3][1];
+  assert.deepStrictEqual(turnEndProse(spilled), { rec: spilled[1], segs: [spilled[1].segments[1]] });
 });
 
 test('ENTER: every record kind userRecords emits has a driver row', () => {
