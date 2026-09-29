@@ -45,7 +45,7 @@ test('invalid JSON is a usage error', () => {
   assert.throws(() => C.load(f, { warn: () => {} }), /not valid JSON/);
 });
 
-test('save goes through a temp file and leaves no *.tmp-* behind', () => {
+test('save leaves no *.tmp-* behind', () => {
   const f = tmpFile();
   C.save({ current: null, contexts: { a: { url: 'http://a' } } }, f);
   C.save({ current: 'a', contexts: { a: { url: 'http://a' } } }, f);

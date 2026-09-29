@@ -753,7 +753,7 @@ Login (`accounts.js`'s **Log in**) spawns a `bash` seat that runs
 | event | stream seat |
 |---|---|
 | **Archive (✕ / Cmd+W)** | `closeInput()`. An idle seat then exits by itself in about 1 s (S9). A busy seat gets `interrupt` first. SIGTERM follows at 2 s, and SIGKILL at 5 s (the existing fallback). The persistence effects are unchanged (`archivedAt`). |
-| **Delete / kill** | The same signal sequence. The record-dropping is exactly today's, per the list in CLAUDE.md, and no new `remove()` site is added. |
+| **Delete / kill** | The same signal sequence. The record-dropping is exactly today's, per the list in docs/sessions.md, and no new `remove()` site is added. |
 | **Natural exit** | This is rare: the process lives until stdin closes. A crash of the CLI (non-zero exit, or a signal) goes through the normal crash toast, and the record is kept. |
 | **Seat directory** | Unchanged. `sessions/<seat>/` gains `turns.jsonl` (§4.3). `run/<seat>/agent.json` gains `cli: {pid, startedAt, sessionId}` (§0.2). Because `run/` is deleted on exit, the boot reap reads the record **before** `create()` re-mints `run/<seat>/`. |
 | **Hooks with no PTY** | Subject to M12, they keep doing everything except the statusline: the SessionStart link and memory digest, the UserPromptSubmit drains, the PreToolUse observer and guards, the PostToolUse console spool and `bash-guard`. The Notification hook's permission kind is superseded by `can_use_tool`. |

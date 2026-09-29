@@ -361,17 +361,17 @@ test('a standing seat on a merged branch keeps its session, its record and its t
   assert.ok(f.persistence.get('helper'), 'its persistence record survives');
   assert.strictEqual(exists(wt), true, 'and its checkout is still on disk');
   assert.match(msg, /LEFT RUNNING/, 'the reply says the seat was kept, rather than claiming a retire');
-  // The prompt tells the lead a delete on this row is an ATTEMPT that
-  // "ordinarily fails", and that was prose about git's behaviour with nothing
-  // measuring it. Measured here rather than asserted: `git branch -d` refuses
-  // while any worktree has the branch checked out, and row 4 keeps the tree by
-  // design, so the ref survives an arm that really did try to delete it. Both
-  // halves are needed — the survival alone is equally true of a build that
+  // The prompt tells the lead a delete on this row is an ATTEMPT that "ordinarily
+  // fails", and that was prose about git's behaviour with nothing measuring it.
+  // Measured here rather than asserted: `git branch -d` refuses while any worktree
+  // has the branch checked out, and the `standing assignee, or no record` row keeps
+  // the tree by design, so the ref survives an arm that really did try to delete
+  // it. Both halves are needed — the survival alone is equally true of a build that
   // stopped attempting the delete, which is the distinction the row draws.
   assert.ok(branches(f).includes('landed'),
     'the merged branch SURVIVES: git branch -d refuses a branch the kept worktree has checked out');
   assert.match(msg, /branch landed could NOT be deleted/,
-    'and the reply reports a refused attempt, not a skip — row 4 attempts the delete and git declines');
+    'and the reply reports a refused attempt, not a skip — the `standing assignee, or no record` row attempts the delete and git declines');
   assert.strictEqual(f.one('t1').closedOut, true, 'the ticket still closes out — the BRANCH did merge');
 });
 

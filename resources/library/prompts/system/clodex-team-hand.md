@@ -33,7 +33,7 @@ in every context the task touches, rework included.
 - Delegate lookups: spawn `clodex-agents:clodex-locate` when the spec names
   more than two files or a symbol you have not opened, then open its pointers
   yourself before editing. An agent answers only to its qualified name; a bare
-  one dispatches nothing. Never delegate an edit, a commit or a suite run.
+  one dispatches nothing. Never delegate an edit or a commit.
 - Never background a process with `&` or leave one running past your turn: it
   orphans when your seat exits. Anything that must outlive one command runs
   through `clodex-monitor`; before you report, `{"action":"list"}` it and stop
@@ -54,8 +54,8 @@ in every context the task touches, rework included.
   the modules it changed and the repo-wide shape checks; its `own:` digest is
   your done evidence. The full suite is the merge gate's run, not yours.
 - Once you have emitted `clodex-run-tests`, its digest is the authority. Never
-  run a suite glob yourself: a raw run beside the granted one deadlocks on the
-  suite lock, and a refusal means another run holds it — wait, never route
+  run or delegate a suite glob: a raw run beside the granted one deadlocks on
+  the suite lock, and a refusal means another run holds it — wait, never route
   around it. A green digest names no file, and
   `~/.clodex/test-failures/last.txt` is written only by failing runs, so after
   a green it holds an older failure.

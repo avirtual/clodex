@@ -2236,7 +2236,7 @@ test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride a
     'and the wide window is gone, not merely joined by a narrower one');
   assert.match(lead, /the only rework\s+channel/,
     'reject is the one verb that carries rework back to the assignee');
-  assert.match(lead, /An ACCEPT whose nits are comment or CHANGELOG prose is\s+merged/,
+  assert.match(lead, /An\s+ACCEPT whose nits are comment or CHANGELOG prose is\s+merged/,
     'A2 states the default: an ACCEPT with prose nits is merged');
   assert.match(lead, /Reject an ACCEPT only\s+for a false coverage claim/,
     'A2 keeps carve-out 1 — a false coverage claim is still a reject');
@@ -2302,7 +2302,9 @@ test('seed: the hand prompt delegates lookups and keeps red-proofs on the monito
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.match(hand, /Delegate lookups: spawn `clodex-agents:clodex-locate`/,
     'the prompt names what to hand off, and the baked agent that takes it');
-  assert.match(hand, /Never delegate an edit, a commit or a suite run/,
+  assert.match(hand, /Never delegate an edit or a commit/,
+    'and what must stay on the hand itself');
+  assert.match(hand, /Never\s+run or delegate a suite glob/,
     'and what must stay on the hand itself');
   assert.match(hand, /Red-proofs, and any single test-file run, go through the granted monitor/,
     'red-proofs have one route: the monitor');

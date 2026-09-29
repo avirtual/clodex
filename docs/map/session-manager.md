@@ -222,7 +222,7 @@
 
 ### Hazards
 
-- The full record-dropper set is CLAUDE.md's Session lifecycle list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
+- The full record-dropper set is docs/sessions.md's "Every record-dropper" list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
 - `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live; its comment calling that a second `clearHintForRecord` call is inaccurate.
 - `rename` spells out the 26-argument `create` call a third time (with `move` and `moveToPeer`), so a new `create` parameter must be added to all three or a respawn silently drops it.
 
