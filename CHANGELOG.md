@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.93.0 — 2026-09-29
+
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 - Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
 - Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
