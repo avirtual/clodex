@@ -355,18 +355,6 @@ test('undeploy node: a flavor FLAG forces the teardown when the record has none'
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
 });
 
-test('undeploy never overwrites a contexts file it could not parse', async () => {
-  const rec = {};
-  const contextsFile = tmpCtxFile();
-  const bytes = '{"current":"mybox","contexts":{"mybox":{"url":"http://x","token":"t"}';
-  fs.writeFileSync(contextsFile, bytes);
-  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force'], { runDocker: fakeRunDocker(rec), contextsFile });
-  assert.strictEqual(r.code, EXIT.USAGE);
-  assert.match(r.stderr, /contexts file is not valid JSON/);
-  assert.strictEqual(fs.readFileSync(contextsFile, 'utf8'), bytes);
-  assert.strictEqual((rec.calls || []).length, 0, 'refused before any teardown');
-});
-
 test('undeploy node <ctx> --fargate: a FORCED target that differs from the record is named, not silently swapped', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod: {

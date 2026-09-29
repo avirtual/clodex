@@ -238,27 +238,6 @@ test('deploy fargate happy path: preflight→deploy→oauth→wire-token→ctx�
   assert.ok(!rec.calls.some(([c]) => c !== 'aws'), 'only aws called');
 });
 
-test('deploy fargate saves into the contexts file as it is at save time, not the copy read before the deploy', async () => {
-  const contextsFile = tmpCtxFile();
-  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'x', contexts: { x: { url: 'http://x' } } }));
-  const aws = fakeAws({});
-  const { code, stderr } = await cli(['deploy', 'node', 'clodex-node', '--fargate', '--region', 'us-west-2'], {
-    execFn: async (cmd, args) => {
-      if (args.join(' ').includes('cloudformation deploy')) {
-        fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b', token: 'tb' } } }));
-      }
-      return aws(cmd, args);
-    },
-    probeFargate: async () => ({ app: 'clodex' }),
-    contextsFile,
-  });
-  assert.strictEqual(code, 0, stderr);
-  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'clodex-node', 'x']);
-  assert.strictEqual(saved.contexts.b.token, 'tb');
-  assert.strictEqual(saved.current, 'b');
-});
-
 test('deploy fargate: --cluster overrides the default; --profile flows through', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();

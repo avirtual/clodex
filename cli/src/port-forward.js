@@ -131,7 +131,7 @@ function startProbe({ url, fetchFn = fetch, intervalMs = PROBE_INTERVAL_MS, time
 // and a foreground hold, not a WireClient (there is no request/response here,
 // just a held tunnel).
 async function portForward({ flags, args, printer, io = {} }) {
-  const store = contexts.loadOrEmpty(io.contextsFile, { readOnly: true });
+  const store = safeLoad(io);
   const ctx = contexts.resolve(store, { ctxName: flags.ctx || null, env: io.env || process.env, flags });
 
   if (ctx.url) {
@@ -209,6 +209,11 @@ async function portForward({ flags, args, printer, io = {} }) {
     try { if (offSignal) offSignal(); } catch {}
     try { if (t) t.close(); } catch {}
   }
+}
+
+function safeLoad(io) {
+  try { return contexts.load(io.contextsFile, { warn: () => {} }); }
+  catch { return { current: null, contexts: {} }; }
 }
 
 module.exports = { portForward, parseForwardSpec, installSignal, startProbe, PROBE_INTERVAL_MS, PROBE_TIMEOUT_MS, PROBE_FAILS };

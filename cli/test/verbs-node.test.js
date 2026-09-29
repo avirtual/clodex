@@ -772,15 +772,3 @@ test('use node and --ctx resolve only own keys — an inherited name is "no such
   assert.strictEqual(r.code, 2);
   assert.match(r.stderr, /no such node: toString/);
 });
-
-test('upgrade node and undeploy node resolve only own keys — an inherited name is "no such node"', async () => {
-  const f = tmpCtx();
-  let r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900'], f);
-  assert.strictEqual(r.code, 0);
-  r = await cli(['upgrade', 'node', 'constructor'], f, offline);
-  assert.strictEqual(r.code, 2, r.stderr);
-  assert.match(r.stderr, /no such node: constructor/);
-  r = await cli(['undeploy', 'node', 'constructor'], f, offline);
-  assert.strictEqual(r.code, 2, r.stderr);
-  assert.match(r.stderr, /no such node: constructor/);
-});

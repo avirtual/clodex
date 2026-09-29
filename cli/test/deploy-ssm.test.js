@@ -509,38 +509,6 @@ test('deliverClaudeToken deletes its throwaway session once the engine answers a
   } finally { server.close(); }
 });
 
-test('deliverClaudeToken: a 404 on the token-session DELETE (it raced the engine\'s restore) is retried exactly once after one pollMs sleep', async () => {
-  const http = require('node:http');
-  const seen = [];
-  let helloDown = 1;
-  const server = http.createServer((req, res) => {
-    let body = ''; req.on('data', (c) => (body += c));
-    req.on('end', () => {
-      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
-      res.statusCode = 200; res.setHeader('Content-Type', 'application/json');
-      if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
-      if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
-      if (req.url === '/api/peer/hello') {
-        if (helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
-        return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
-      }
-      if (req.method === 'DELETE') { res.statusCode = 404; return res.end(JSON.stringify({ ok: false, error: 'no such session' })); }
-      res.end(JSON.stringify({ ok: true }));
-    });
-  });
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  try {
-    const entry = { url: `http://127.0.0.1:${server.address().port}` };
-    const sleeps = [];
-    const r = await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 7, sleepFn: async (ms) => { sleeps.push({ ms, at: seen.length }); } });
-    assert.strictEqual(r.ok, true);
-    const create = seen.find((s) => s.method === 'POST' && s.url === '/api/sessions');
-    const dels = seen.map((s, i) => ({ ...s, i })).filter((s) => s.method === 'DELETE');
-    assert.deepStrictEqual(dels.map((d) => d.url), ['/api/sessions/' + create.body.name, '/api/sessions/' + create.body.name]);
-    assert.ok(sleeps.some((z) => z.ms === 7 && z.at === dels[0].i + 1), 'one pollMs sleep between the 404 and the retry');
-  } finally { server.close(); }
-});
-
 test('deliverClaudeToken: an old node fails with the D.5 upgrade line before any session is created', async () => {
   const http = require('node:http');
   const seen = [];

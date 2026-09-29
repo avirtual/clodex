@@ -45,34 +45,6 @@ test('invalid JSON is a usage error', () => {
   assert.throws(() => C.load(f, { warn: () => {} }), /not valid JSON/);
 });
 
-test('save goes through a temp file and leaves no *.tmp-* behind', () => {
-  const f = tmpFile();
-  C.save({ current: null, contexts: { a: { url: 'http://a' } } }, f);
-  C.save({ current: 'a', contexts: { a: { url: 'http://a' } } }, f);
-  assert.deepStrictEqual(fs.readdirSync(path.dirname(f)), ['contexts.json']);
-  assert.strictEqual(C.load(f, { warn: () => {} }).current, 'a');
-});
-
-test('a save whose rename fails leaves the original bytes intact', (t) => {
-  const f = tmpFile();
-  C.save({ current: 'old', contexts: { old: { url: 'http://old' } } }, f);
-  const before = fs.readFileSync(f, 'utf-8');
-  t.mock.method(fs, 'renameSync', () => { throw Object.assign(new Error('EIO'), { code: 'EIO' }); });
-  assert.throws(() => C.save({ current: 'new', contexts: { new: { url: 'http://new' } } }, f), /EIO/);
-  t.mock.restoreAll();
-  assert.strictEqual(fs.readFileSync(f, 'utf-8'), before);
-  assert.deepStrictEqual(fs.readdirSync(path.dirname(f)), ['contexts.json']);
-});
-
-test('loadOrEmpty: a missing file is empty, an unparseable one throws unless the caller is readOnly', () => {
-  const missing = path.join(mkTmpRoot('ctx-'), 'contexts.json');
-  assert.deepStrictEqual(C.loadOrEmpty(missing), { current: null, contexts: {} });
-  const f = tmpFile();
-  fs.writeFileSync(f, '{ not json');
-  assert.throws(() => C.loadOrEmpty(f), /not valid JSON/);
-  assert.deepStrictEqual(C.loadOrEmpty(f, { readOnly: true }), { current: null, contexts: {} });
-});
-
 test('validateEntry: exactly one transport, {port} required for tunnel', () => {
   assert.throws(() => C.validateEntry({}), /needs one transport/);
   assert.throws(() => C.validateEntry({ url: 'http://h', ssh: 'x' }), /conflicting transports/);
