@@ -22668,6 +22668,13 @@ test('streamCodecCtx reads a codex -m model with an attached value', async (t) =
   assert.strictEqual(c.created[0].model, 'gpt-x');
 });
 
+test('streamCodecCtx reads a codex -m=NAME model like the other spellings', async (t) => {
+  const c = mkCodexStreamSeat({ extraArgs: ['-m=gpt-x'] });
+  t.after(() => c.h.stopAll());
+  await c.create('cxm2');
+  assert.strictEqual(c.created[0].model, 'gpt-x');
+});
+
 test('t1372: stripCodexStreamArgs drops the = and short forms of refused flags, keeps unknown tokens, and drops an arity-0 flag= form too', async (t) => {
   const c = mkCodexStreamSeat({ extraArgs: ['--sandbox=workspace-write', '-s', 'danger-full-access', '-a', 'on-request', '--model=gpt-x', '-m', 'gpt-y', '--keep'] });
   t.after(() => c.h.stopAll());
