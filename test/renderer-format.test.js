@@ -97,6 +97,13 @@ test('fmtTokens / fmtBustTokens: values that round up to the next unit render in
   assert.strictEqual(F.fmtBustTokens(9940), '9.9k');
 });
 
+test('fmtBustTokens: a million or more reads in M, as fmtTokens does', () => {
+  assert.strictEqual(F.fmtBustTokens(999_499), '999k');
+  assert.strictEqual(F.fmtBustTokens(1_000_000), '1M');
+  assert.strictEqual(F.fmtBustTokens(1_250_000), '1.3M');
+  assert.strictEqual(F.fmtTokens(1_250_000), '1.3M');
+});
+
 test('fmtAgo / fmtDur / fmtBytes: a value that rounds up to the next unit is shown in that unit', (t) => {
   t.mock.method(Date, 'now', () => 1e12);
   assert.strictEqual(F.fmtAgo(1e12 - 3570e3), '1h ago');

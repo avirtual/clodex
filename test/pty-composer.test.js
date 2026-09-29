@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler } = require('../renderer/lib/pty-composer');
 const { clipboardImages } = require('../renderer/lib/clipboard-images');
-const { PASTE_OPEN, PASTE_CLOSE } = require('../renderer/lib/composer-voice');
+const { PASTE_OPEN, PASTE_CLOSE, bracketPaste } = require('../renderer/lib/composer-voice');
 
 test('a draft is written as a bracketed paste then a carriage return', () => {
   assert.deepStrictEqual(ptyComposerWrites('hello'), [`${PASTE_OPEN}hello${PASTE_CLOSE}`, '\r']);
@@ -31,6 +31,19 @@ test('a draft carrying a paste-close marker cannot end the bracketed paste early
   assert.strictEqual(body, `${PASTE_OPEN}ab\ncd${PASTE_CLOSE}`);
   assert.strictEqual(ptyComposerWrites('a\x1b[20\x1b[201~1~b\nc')[0], `${PASTE_OPEN}ab\nc${PASTE_CLOSE}`, 'a marker nested inside another cannot reassemble itself');
   assert.strictEqual(ptyComposerWrites('a\x1b\x1b[201~b')[0], `${PASTE_OPEN}a\x1bb${PASTE_CLOSE}`);
+});
+
+test('a marker that only forms once an inner marker is removed is removed too', () => {
+  assert.strictEqual(bracketPaste('\x1b[20\x1b[200~0~'), `${PASTE_OPEN}${PASTE_CLOSE}`);
+});
+
+test('20,000 nested marker fragments are scrubbed in linear time', () => {
+  const nested = '\x1b[20'.repeat(20000) + '0~'.repeat(20000);
+  const t0 = performance.now();
+  const out = bracketPaste(nested);
+  const ms = performance.now() - t0;
+  assert.strictEqual(out, `${PASTE_OPEN}${PASTE_CLOSE}`);
+  assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
 });
 
 test('an empty draft still yields the two writes', () => {

@@ -143,6 +143,9 @@ const BLOCKS = [
   ['atx heading', '# Title', 'h1{Title}'],
   ['deep heading', '###### six', 'h6{six}'],
   ['closed heading', '## Title ##', 'h2{Title}'],
+  ['a # butted against heading text is not a closing run', '## foo#bar', 'h2{foo#bar}'],
+  ['only the closing # run and the blanks around it are trimmed', '# a # b #  ', 'h1{a # b}'],
+  ['trailing blanks with no closing # run stay', '## foo  ', 'h2{foo  }'],
   ['paragraph', 'plain words', 'p{plain words}'],
   ['hard-wrapped paragraph folds', 'one\ntwo', 'p{one two}'],
   ['two paragraphs', 'one\n\ntwo', 'p{one}p{two}'],
@@ -155,6 +158,7 @@ const BLOCKS = [
   ['blockquote holds blocks', '> # in\n>\n> out', 'blockquote{h1{in}p{out}}'],
   ['fenced code', '```\nraw *text*\n```', 'pre{code{raw *text*}}'],
   ['fenced code keeps its language', '```js\nlet x;\n```', 'pre{code[data-lang=js]{let x;}}'],
+  ['a blank before the fence language is skipped', '``` js\nlet x;\n```', 'pre{code[data-lang=js]{let x;}}'],
   ['tilde fence', '~~~\nx\n~~~', 'pre{code{x}}'],
   ['unclosed fence runs to the end', '```\na\nb', 'pre{code{a\nb}}'],
   ['inline code', 'a `b` c', 'p{a code{b} c}'],
@@ -182,6 +186,15 @@ for (const [name, src, expected] of BLOCKS) {
     assert.strictEqual(shapeOf(render(src).frag), expected);
   });
 }
+
+test('a heading with a 20,000-blank run before a non-# character renders in linear time, untrimmed', () => {
+  const blanks = ' '.repeat(20000);
+  const t0 = performance.now();
+  const { frag } = render(`# x${blanks}y`);
+  const ms = performance.now() - t0;
+  assert.strictEqual(shapeOf(frag), `h1{x${blanks}y}`);
+  assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
+});
 
 test('pipe table renders a head and a body', () => {
   const { frag } = render('| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |');
