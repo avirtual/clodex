@@ -5378,6 +5378,20 @@ function createTicketMethods(deps, shared) {
       return resolveAccount(label);
     },
 
+    // A stem EQUAL to the role key is the copy create seeded, not a naming — the
+    // team's own `prompts/system/<role>.md` still outranks it (t791). A NAMED one
+    // keeps its own: `reviewer:clodex-team-reviewer-shell` must not spawn a shell
+    // seat briefed by the team's copy of the no-shell prompt.
+    _teamRolePromptStem(team, roleKey, templateOverride) {
+      const def = (team && team.roles && team.roles[roleKey]) || null;
+      const seededTpl = !!(def && def.template && def.template === roleKey);
+      const explicitTpl = !!(templateOverride || (def && def.template && !seededTpl));
+      const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
+        ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
+        : null;
+      return (ownRolePrompt && !explicitTpl) ? def.prompt : null;
+    },
+
     // The ONE seat shape both team spawn paths pass to create(). They diverged
     // silently twice — the review path hand-rolled a second copy of the env
     // allowlist filter against the same constant, so either copy could be edited
@@ -5473,7 +5487,8 @@ function createTicketMethods(deps, shared) {
           // verbatim, so no --model is ever refused and there is nothing to
           // report. Present so both purposes return one key set.
           modelRefused: null,
-          systemPromptFile: (shape && shape.systemPromptFile) || (def && def.prompt) || null,
+          systemPromptFile: this._teamRolePromptStem(team, roleKey, null)
+            || (shape && shape.systemPromptFile) || (def && def.prompt) || null,
           appendPromptFiles: (shape && shape.appendPromptFiles) || [],
           execCommands: (shape && shape.execCommands) || [],
           // `[]` (everything gated) is a real value that must apply; null means the
@@ -5534,21 +5549,10 @@ function createTicketMethods(deps, shared) {
 
       const modelArgs = reviewerModelArgs(shape && shape.extraArgs, seatAdapter);
 
-      // A stem EQUAL to the role key is the copy create seeded, not a naming — the
-      // team's own `prompts/system/<role>.md` still outranks it (t791). A NAMED one
-      // keeps its own: `reviewer:clodex-team-reviewer-shell` must not spawn a shell
-      // seat briefed by the team's copy of the no-shell prompt.
-      const seededTpl = !!(def && def.template && def.template === roleKey);
-      const explicitTpl = !!(templateOverride || (def && def.template && !seededTpl));
-      const ownRolePrompt = (def && typeof def.prompt === 'string' && def.prompt)
-        ? teamPromptFile({ fs, path }, team, 'system', def.prompt)
-        : null;
-      let systemPromptFile =
-        (ownRolePrompt && !explicitTpl)
-          ? def.prompt
-          : ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
-            ? tpl.systemPromptFile
-            : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
+      let systemPromptFile = this._teamRolePromptStem(team, roleKey, templateOverride)
+        || ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)
+          ? tpl.systemPromptFile
+          : ((def && def.prompt) || REVIEWER_FALLBACK.systemPromptFile));
       // The template is agent-writable: promptLibrary._file throws on a traversing
       // stem and resolvePromptFile's unwired fallback is a bare path.join, so reject it
       // here and fall back to the default; the stem rides back on `promptEscaped`.
