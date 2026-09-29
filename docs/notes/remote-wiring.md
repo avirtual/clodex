@@ -25,7 +25,9 @@ that gives it effect.
 
 The boot log fires in `start()`'s `then`, gated on the server having just been
 constructed. `syncRemoteServer` runs on every settings write on the box, so an
-ungated line would log on writes that started nothing.
+ungated line would log on writes that started nothing, and on a start that
+`stop()` cancelled mid-flight: that promise still resolves, so the line is also
+gated on `running`.
 
 `log` is injected, so `log.info` can throw. It is wrapped in its own
 `try {} catch {}` because the surrounding `.catch` is the BIND-failure handler:

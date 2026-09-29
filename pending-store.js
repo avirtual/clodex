@@ -151,6 +151,7 @@ function rehomeOrphans(root, name) {
 
 function hasActivePending(root, name) {
   try {
+    rehomeOrphans(root, name);
     return fs.readdirSync(agentDir(root, name))
       .some((f) => f.endsWith('.json') && !f.startsWith('.') && !f.endsWith('.passive.json'));
   } catch {
@@ -173,6 +174,7 @@ function hasPending(root, name) {
 // we report 0 — claimed means committed for delivery, no longer "waiting".
 function countPending(root, name) {
   try {
+    rehomeOrphans(root, name);
     return fs.readdirSync(agentDir(root, name))
       .filter((f) => f.endsWith('.json') && !f.startsWith('.')).length;
   } catch {
@@ -341,4 +343,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };

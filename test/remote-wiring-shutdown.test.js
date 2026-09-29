@@ -11,9 +11,10 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 function fixture() {
   const tmp = mkTmpRoot('remote-wiring-shutdown-');
   let srv = null;
+  const infos = [];
   const deps = {
     path, fs, os,
-    log: { info() {}, error() {} },
+    log: { info: (tag, msg) => { infos.push(msg); }, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR: tmp, OUTBOX_DIR: path.join(tmp, 'outbox'), SELF_LABEL: 'testbox',
@@ -46,16 +47,19 @@ function fixture() {
   const orig = remoteMod.RemoteServer;
   remoteMod.RemoteServer = function () {
     constructed++;
-    return {
+    let stopped = false;
+    const fake = {
+      running: false,
       start() {
         let resolve;
         const p = new Promise((r) => { resolve = r; });
-        starts.push(resolve);
+        starts.push(() => { fake.running = !stopped; resolve(); });
         return p;
       },
-      stop() { stops++; },
+      stop() { stops++; stopped = true; fake.running = false; },
       port: 0, basePath: '', notifySessions() {}, setWtermCallbacks() {},
     };
+    return fake;
   };
   const wiring = createRemoteWiring(deps);
   return {
@@ -64,6 +68,7 @@ function fixture() {
     constructed: () => constructed,
     stops: () => stops,
     server: () => srv,
+    servingLines: () => infos.filter((m) => /serving on/.test(m)),
     restore() {
       remoteMod.RemoteServer = orig;
     },
@@ -110,4 +115,23 @@ test('a sync or token refresh arriving after shutdown builds nothing, pending st
     assert.strictEqual(f.stops(), 1);
     assert.strictEqual(f.server(), null);
   } finally { f.restore(); }
+});
+
+test('a start stopped before it resolved logs no serving-on line; a start that completes logs one', async () => {
+  const f = fixture();
+  try {
+    f.wiring.syncRemoteServer();
+    f.wiring.shutdownRemoteServer();
+    f.starts[0]();
+    await settle();
+    assert.deepStrictEqual(f.servingLines(), []);
+  } finally { f.restore(); }
+
+  const g = fixture();
+  try {
+    g.wiring.syncRemoteServer();
+    g.starts[0]();
+    await settle();
+    assert.strictEqual(g.servingLines().length, 1);
+  } finally { g.restore(); }
 });
