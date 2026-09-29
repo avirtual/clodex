@@ -2129,7 +2129,7 @@ test('seed: shipped team prompts brief their load-bearing protocol verbs', () =>
 // gone; the doesNotMatch arms below are what stops a revert restoring either.
 test('seed: shipped team prompts carry the comment rule, in both directions', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /Your diff adds ZERO comment lines/,
+  assert.match(hand, /Your diff adds zero comment lines/,
     'hand prompt states the flat zero, not a budget to spend');
   assert.match(hand, /Not net zero — zero/,
     'and rules out the net-zero reading the gate alone invites');
@@ -2143,11 +2143,11 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
     'and the note-naming convention the same gate resolves');
   assert.match(hand, /never by line number/,
     'which carries the line-number rot rule onto notes');
-  assert.match(hand, /the NEIGHBOUR your\s+insertion now sits between/,
+  assert.match(hand, /the neighbour your\s+insertion now sits between/,
     'hand prompt keeps the neighbour check: the sentence that breaks is rarely the one edited');
-  assert.match(hand, /DELETE what the code no longer backs/,
+  assert.match(hand, /Delete what the code no longer backs/,
     'and deletion over qualification as the repair — a rewrite resets apparent freshness unverified');
-  assert.match(hand, /Do NOT sweep the whole file/,
+  assert.match(hand, /Do not sweep the whole file/,
     'hand prompt bounds the check to its own hunks');
   assert.doesNotMatch(hand, /drive it to zero/,
     'the whole-file category sweep is gone from the hand prompt on purpose');
@@ -2167,22 +2167,15 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
 // Every hand this week ended a ticket at 180-320k, and the audited one was 58%
 // tool results — sed/grep over a 9,900-line module, with the Agent tool loaded
 // and unused. The delegate bullet above was already there, so the missing half
-// was a bound on what the hand reads ITSELF. That bound existed only in the
-// clodex team's private append copy, where no other team's hand could see it,
-// so it moves into the SYSTEM prompt and leaves the append: the doesNotMatch
-// arm is what stops a revert restoring the duplicate and re-splitting the rule
-// across two files that then drift.
+// was a bound on what the hand reads ITSELF.
 test('seed: the hand prompt bounds what a hand reads into its own context', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.match(hand, /## Tool results/,
     'the budget rule has a section of its own in the system prompt, not a line buried in a bullet');
   assert.match(hand, /never `cat` a file over 200 lines/,
     'with the read ceiling stated as a hard number a hand cannot negotiate');
-  assert.match(hand, /END YOUR TURN/,
+  assert.match(hand, /end your turn/,
     'and the anti-polling rule names the alternative, since a hand polls when it has nothing else to do');
-  const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
-  assert.doesNotMatch(append, /Bound what you pull into your own context/,
-    'the append copy no longer duplicates the rule — it moved to the system prompt, where every team sees it');
 });
 
 // A prompt is a claim on a path no execution passes through: nothing throws when
@@ -2194,8 +2187,8 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.doesNotMatch(hand, /Never commit, push/,
     'the hand prompt must not still carry the reversed "never commit" rule');
-  assert.match(hand, /Commit to YOUR OWN branch/, 'hand is told to commit to its own branch');
-  assert.match(hand, /NEVER push/, 'hand is still barred from pushing');
+  assert.match(hand, /Commit to your own branch/, 'hand is told to commit to its own branch');
+  assert.match(hand, /never push/, 'hand is still barred from pushing');
   assert.match(hand, /Merging your branch is not yours/, 'hand knows merging is not its job');
   assert.match(lead, /worktree:<branch>/, 'lead prompt names the spawn form that mints the worktree');
   // t524: both prompts told the LEAD to merge by hand, while `_landVerdictOnTicket`
@@ -2227,18 +2220,15 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
 // review, and the lead is told not to buy a second cold review over the prose
 // that survives. Landing one without the other is worse than neither — A1 alone
 // leaves the lead still rejecting ACCEPTs, A2 alone merges prose nothing swept.
-// Measured baselines are IN the prompts on purpose (39% of later rounds followed
-// an ACCEPT; 15 of 27 later-round findings were a fix falsifying its neighbour):
-// a bare instruction reads as taste and is the first thing an agent trades away
-// under time pressure. The carve-outs are the load-bearing half of A2 — without
+// The carve-outs are the load-bearing half of A2 — without
 // them it reads as "never reject prose", which would merge a false coverage
 // claim, the one kind of prose whose reader cannot check it.
 test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride along', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
-  assert.match(hand, /before you close, and again after\s+every rework fix/,
+  assert.match(hand, /Before you close, and again after\s+every rework fix/,
     'A1 fires at both points the fix can falsify a neighbour, not only at close');
-  assert.match(hand, /it is the NEIGHBOUR your\s+insertion now sits between/,
+  assert.match(hand, /it is the neighbour your\s+insertion now sits between/,
     'A1 names the orphaning mechanism: the neighbour breaks, not the line you edited');
   assert.match(hand, /5 lines of context/,
     'A1 opens the hunk with the narrow window — 25 lines was a re-read of the file per hunk');
@@ -2718,53 +2708,34 @@ test('t548: the unscoped `removes nothing` predicate separates the false claim f
 // the fix (the verb on every dispatch) is pinned in session-manager.test.js.
 test('seed: the hand prompt denies both false beliefs about closing a ticket', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /is an INTENT you emit/,
+  assert.match(hand, /is an intent you emit/,
     'the hand is told plainly that task done is an intent, not a command it must be granted');
   assert.match(hand, /not an exec command, it needs no grant/,
     'and the exec-registry confusion is named, since that is the belief a seat actually held');
-  assert.match(hand, /A dm carrying your report does NOT close the ticket/,
+  assert.match(hand, /A dm carrying your report does not close the ticket/,
     'and that reporting by dm leaves the ticket open');
   assert.match(hand, /indistinguishable from the lead's side/,
     'and why nobody catches it: the report arrives complete either way');
 });
 
-// The compact rule is a THRESHOLD with an exception, and both prompt copies must
-// carry the same one: hand-673 spent three rework rounds reaching 300k under an
-// append copy that said "Do not compact" flat, while the system copy said to
-// compact at 100k on a NEW dispatch only. The doesNotMatch arm guards against
-// the flat ban returning ALONGSIDE the new rule, not merely replacing it —
-// the positive assertions above already catch a plain revert. `~150k` is
-// pinned as a literal in both files rather than derived, since the whole rule
-// is the number.
 const REPO_APPEND_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'append');
-test('seed: both hand prompt copies compact on REWORK past 150k, and never at done', () => {
+test('seed: the hand prompt compacts on REWORK past 150k, and never at done', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
-  for (const [label, text] of [['system', hand], ['append', append]]) {
-    assert.match(text, /~150k/, `${label} copy names the rework threshold as a literal`);
-    assert.match(text, /Never compact at `done`|Not at `done`/,
-      `${label} copy keeps the done carve-out — a compact there discards what rework needs`);
-    assert.match(text, /JOURNAL\.md and the verdict file/,
-      `${label} copy says what the pickup note must point at, or the compact loses the thread`);
-    // Ordering, not mere presence: a compact that runs before the journal is
-    // written loses exactly what the pickup note is supposed to point at.
-    assert.match(text, /journal the (state of the )?branch( state)? first/,
-      `${label} copy puts the journal BEFORE the compact`);
-    // Anchored at the journal step, not at the file's FIRST compact intent —
-    // the system copy's START CLEAN bullet already carries one above this rule.
-    const j = text.indexOf('journal the');
-    assert.ok(j > 0, `ENTER: ${label} copy actually contains the journal step being ordered`);
-    assert.ok(text.indexOf('[agent:context compact]', j) > j,
-      `${label} copy puts a compact intent AFTER the journal step, not before it`);
-    assert.doesNotMatch(text, /^Do not compact\. /m,
-      `${label} copy must not carry the flat ban that made a hand work a rework at 300k`);
-  }
-  // The append copy is the one that lost work: its red-proof revert is a
-  // `git checkout`, which cannot be undone for anything uncommitted.
-  assert.match(append, /COMMIT before you red-proof/,
-    'the append copy tells a hand to commit before reverting for a red-proof');
-  assert.match(append, /destroys it with nothing to restore\s+from/,
-    'and names the consequence, which is why the sentence is there rather than a bare "commit often"');
+  assert.strictEqual(fs.existsSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md')), false,
+    'the hand prompt is one file: no append copy to drift from it');
+  assert.match(hand, /~150k/, 'the rework threshold is a literal');
+  assert.match(hand, /don't compact mid-ticket or at `done`/,
+    'the done carve-out survives — a compact there discards what rework needs');
+  assert.match(hand, /JOURNAL\.md and the verdict file/,
+    'the pickup note says what it points at, or the compact loses the thread');
+  const j = hand.indexOf('journal the branch state');
+  assert.ok(j > 0, 'ENTER: the prompt actually contains the journal step being ordered');
+  assert.ok(hand.indexOf('[agent:context compact]', j) > j,
+    'the compact intent comes AFTER the journal step, not before it');
+  assert.doesNotMatch(hand, /^Do not compact\. /m,
+    'the flat ban that made a hand work a rework at 300k is gone');
+  assert.match(hand, /red-proof every test you add that guards a production change: commit; revert/i,
+    'a red-proof commits before it reverts — a revert that reaches uncommitted work destroys it');
 });
 
 // The base-commit check is a PAIR: the lead cites the commit, the hand acts on
@@ -2774,32 +2745,28 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
   assert.match(hand, /merge-base --is-ancestor/, 'hand is given the check to run');
-  assert.match(hand, /Stop and tell the lead/,
+  assert.match(hand, /stop and report/,
     'and told to stop — the failure mode is treating the mismatch as drift and working on');
   assert.match(lead, /Cite the commit your spec was written against/,
     'lead is told to supply the commit the hand checks against');
 });
 
-// t682: the Agent tool is being restored to the hand seat, and the prompts
-// must tell a hand what to delegate (lookups, verify loops) versus what stays
-// on it (every edit and commit).
-test('seed: the hand prompts carry the delegate-lookups-and-verify rule', () => {
+test('seed: the hand prompt delegates lookups and keeps red-proofs on the monitor', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  const append = fs.readFileSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md'), 'utf-8');
-  assert.match(hand, /DELEGATE THE LOOKUPS AND THE VERIFY LOOPS/,
-    'the system prompt tells a hand what to hand off to a subagent');
-  assert.match(hand, /Never delegate an edit/,
+  assert.match(hand, /Delegate lookups: spawn `clodex-agents:clodex-locate`/,
+    'the prompt names what to hand off, and the baked agent that takes it');
+  assert.match(hand, /Never delegate an edit, a commit, a red-proof or a\s+suite run/,
     'and what must stay on the hand itself');
-  assert.match(hand, /never the full suite from an\s+agent/,
-    'the full suite still goes through the granted command only, never a delegated agent');
-  assert.match(hand, /spawn `clodex-agents:clodex-locate`/,
-    'LOCATE names the baked agent, not a protocol the hand has to write out');
-  assert.match(hand, /spawn `clodex-agents:clodex-redproof`/,
-    'and so does VERIFY');
-  assert.doesNotMatch(append, /fails ~44 tests/,
+  assert.match(hand, /Red-proofs, and any single test-file run, go through the granted monitor/,
+    'red-proofs have one route: the monitor');
+  assert.match(hand, /never your own shell, never a subagent/,
+    'and the two contradicted routes are ruled out by name');
+  assert.doesNotMatch(hand, /spawn `clodex-agents:clodex-redproof`/,
+    'the subagent red-proof route is gone, not merely joined by the monitor');
+  assert.doesNotMatch(hand, /fails ~44 tests/,
     'the stale claim that a raw run always fails ~44 tests on missing deps is gone');
-  assert.match(append, /links `node_modules` into every ticket tree/,
-    'the append copy now says why a single test file runs fine raw in a ticket tree');
+  assert.match(hand, /links `node_modules`\s+into every ticket tree/,
+    'the prompt says why a single test file runs as-is in a ticket tree');
 });
 
 // T52: the reviewer seat DEFINITION now ships as a template (the DATA
