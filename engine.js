@@ -1872,7 +1872,7 @@ function applySessionSkills(name, disabledSkills, injectSkills) {
 
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
-const { syncRemoteServer, refreshRemoteToken } = createRemoteWiring({
+const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
@@ -2465,6 +2465,7 @@ const toolCache = createToolCache({ whichBin });
     if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} }
     try { proxyPoller.stop(); } catch {}
     try { if (remindScheduler) remindScheduler.stop(); } catch {}
+    try { shutdownRemoteServer(); } catch {}
     if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
     if (peerManager) { try { peerManager.stopAll(); } catch {} peerManager = null; }
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
