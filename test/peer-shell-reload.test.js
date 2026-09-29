@@ -142,6 +142,9 @@ test('a reload re-opens the seat: one stream, one shell, and a snapshot for the 
     assert.deepStrictEqual(watched(server), ['alice'],
       'ENTER: a stream really was open before the reload, so the counts below are about the reload');
     assert.deepStrictEqual(spawns, ['alice'], 'ENTER: and exactly one shell had been asked for');
+    await waitFor('the first replay at the consumer', () => chan(conn, 'peer-wterm-replay').length === 1);
+    assert.strictEqual(chan(conn, 'peer-wterm-replay').length, 1,
+      'ENTER: the first replay had landed before the reload, so the count of 2 below is about the re-open');
 
     reloadRenderer(conn);
 
