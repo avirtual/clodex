@@ -7,7 +7,7 @@ const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../p
 const { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
-const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require('../proxy-util');
+const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput, proxyReceivedAt } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
 const { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require('./lib/render-html');
@@ -2533,7 +2533,7 @@ function switchSession(name) {
   if (window.api.getProxySnapshot) {
     window.api.getProxySnapshot(name).then((p) => {
       if (!p) return;
-      proxyState.set(name, { payload: p, at: typeof p.ts === 'number' ? p.ts : Date.now() });
+      proxyState.set(name, { payload: p, at: proxyReceivedAt(p) });
       applyWarmBadge(name);
       if (activeSession === name) renderProxyBar();
     }).catch(() => {});
@@ -4863,7 +4863,7 @@ function acceptWireQuota(payload, at = Date.now()) {
 }
 
 window.api.onSessionProxy((name, payload) => {
-  proxyState.set(name, { payload, at: payload && typeof payload.ts === 'number' ? payload.ts : Date.now() });
+  proxyState.set(name, { payload, at: proxyReceivedAt(payload) });
   applyWarmBadge(name);
   applySubagents(name);
   refreshQuotaChip();
@@ -8972,7 +8972,7 @@ function mountRestoredSession(entry) {
   if (typeof entry.ctxTok === 'number' && typeof entry.ctxSize === 'number' && entry.ctxSize > 0) {
     ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === 'number' ? entry.ctxCost : null, model: entry.ctxModel || null });
   }
-  if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: typeof entry.proxy.ts === 'number' ? entry.proxy.ts : Date.now() }); applyWarmBadge(entry.name); }
+  if (entry.proxy) { proxyState.set(entry.name, { payload: entry.proxy, at: proxyReceivedAt(entry.proxy) }); applyWarmBadge(entry.name); }
   if (typeof entry.pendingCount === 'number') applyPendingBadge(entry.name, entry.pendingCount);
 }
 

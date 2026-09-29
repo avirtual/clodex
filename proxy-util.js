@@ -664,8 +664,18 @@ function shapeProxyRecord(r, probe, now = Date.now()) {
   };
 }
 
+function stampServedAge(p, now = Date.now()) {
+  if (!p || typeof p.ts !== 'number') return p;
+  return { ...p, ageMs: Math.max(0, now - p.ts) };
+}
+
+function proxyReceivedAt(p, now = Date.now()) {
+  return p && typeof p.ageMs === 'number' ? now - p.ageMs : now;
+}
+
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
+  stampServedAge, proxyReceivedAt,
   shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, fmtQuotaResetTight, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   QUOTA_WINDOW_LABEL,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,

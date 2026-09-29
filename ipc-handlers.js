@@ -7,7 +7,7 @@ const { nameConflict } = require('./session-manager');
 // The SAME predicate the inject queue gates deliveries on. Required directly
 // rather than injected so there is one draft notion: a focus decision computed
 // from a second one would drift from the delivery it is supposed to agree with.
-const { isDraftOpen } = require('./proxy-util');
+const { isDraftOpen, stampServedAge } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, RESERVED_ROLE_KEYS, defaultLeadSeat } = require('./team-manifest');
 const { REVIEWER_PROMPT_PREFIX } = require('./team-tickets');
 const { resolveAccountLabel } = require('./accounts');
@@ -884,7 +884,7 @@ function registerIpcHandlers(deps) {
     return box ? { ok: true, rev, records, source: res.source, outbox: box.items, ...p.fields } : { ok: true, rev, records, source: res.source };
   });
 
-  handle('proxy:snapshot', (_e, name) => proxyPoller.snapshot(name));
+  handle('proxy:snapshot', (_e, name) => stampServedAge(proxyPoller.snapshot(name)));
 
   // The account plan quota a window can show before any turn is forwarded.
   // Without this read a restored reading would sit on disk until the next
