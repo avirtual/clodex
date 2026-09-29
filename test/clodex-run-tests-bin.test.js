@@ -933,6 +933,44 @@ test('scope own: a root-level policy file is no subject — every branch edits C
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+for (const [changed, quoterSelected] of [['web-dist/index.html', false], ['renderer/index.html', true]]) {
+  test(`scope own: ${changed} ${quoterSelected ? 'selects' : 'does not select'} a test quoting its bare basename`, () => {
+    const root = mkRoot();
+    try {
+      mkBranchRepo(root, {
+        extraOnMaster: {
+          'web-dist/index.html': '<p>built</p>\n',
+          'renderer/index.html': '<p>source</p>\n',
+          'test/quotes-index.test.js': `${EMPTY_TEST}const F = 'index.html';\n`,
+          'test/names-changed.test.js': `${EMPTY_TEST}const P = '${changed}';\n`,
+          'test/unrelated.test.js': EMPTY_TEST,
+        },
+        onBranch: ({ put: p, git: g }) => {
+          p(changed, '<p>changed</p>\n');
+          g('commit', '-aqm', 'branch work');
+        },
+      });
+      const r = run(root, '{"scope":"own"}');
+      const rec = stubRecord(root);
+      assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+      assert.ok(rec.argv.includes('test/names-changed.test.js'),
+        `ENTER: a test naming ${changed} literally must be selected whatever the basename rule says`);
+      assert.strictEqual(rec.argv.includes('test/quotes-index.test.js'), quoterSelected,
+        quoterSelected
+          ? 'renderer/index.html is a source file: a test quoting \'index.html\' may pin it through path.join'
+          : 'web-dist/index.html is the build output and shares its basename with renderer/index.html: '
+            + 'every build:web would pull each \'index.html\'-quoting test into own scope');
+      assert.ok(!rec.argv.includes('test/unrelated.test.js'),
+        'ENTER: the by-subject row would be non-empty for the wrong reason');
+      const bySubject = quoterSelected ? 2 : 1;
+      assertDigest(r.digest,
+        `[${path.basename(root)}] own: 1/1 green (${WALL}) — `
+        + `${OWN_SCANNERS.length + bySubject} files: 0 changed, ${bySubject} by subject, `
+        + `${OWN_SCANNERS.length} scanners`);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
 test('scope own: a non-.js subject pinned through path.join segments is selected by its quoted file name', () => {
   const root = mkRoot();
   try {
