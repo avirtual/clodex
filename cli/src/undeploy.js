@@ -50,7 +50,7 @@ function defaultPrompt(question) {
 // ── shared: ctx cleanup ──────────────────────────────────────────────────────
 // One helper for all flavors (unit-tested once). Removes every stored context
 // the matchFn selects; clears store.current when it named a removed one.
-// --keep-ctx opts out. A missing/unreadable store is tolerated (nothing to do).
+// --keep-ctx opts out.
 function ctxCleanup({ flags, printer, io, matchFn }) {
   const json = !!flags.json;
   const emit = (o) => printer.json(o);
@@ -59,7 +59,7 @@ function ctxCleanup({ flags, printer, io, matchFn }) {
     else printer.line('context kept (--keep-ctx)');
     return;
   }
-  const store = safeLoadContexts(io);
+  const store = contexts.loadOrEmpty(io.contextsFile);
   const removed = [];
   for (const [name, entry] of Object.entries(store.contexts)) {
     if (matchFn(name, entry)) removed.push(name);
@@ -77,11 +77,6 @@ function ctxCleanup({ flags, printer, io, matchFn }) {
   contexts.save(store, io.contextsFile);
   if (json) emit({ type: 'context', action: 'removed', names: removed, clearedCurrent });
   else printer.line(`removed context ${removed.map((n) => `"${n}"`).join(', ')}${clearedCurrent ? ' (was current — cleared)' : ''}`);
-}
-
-function safeLoadContexts(io) {
-  try { return contexts.load(io.contextsFile, { warn: () => {} }); }
-  catch { return { current: null, contexts: {} }; }
 }
 
 // ── argv builders (pure; leading tool token doubles as exec + dry-run display) ─
@@ -160,8 +155,8 @@ function forcedFlavor(flags) {
 }
 
 function storedDeploy(name, io) {
-  const store = safeLoadContexts(io);
-  const entry = store.contexts[name];
+  const store = contexts.loadOrEmpty(io.contextsFile);
+  const entry = Object.hasOwn(store.contexts, name) ? store.contexts[name] : undefined;
   if (!entry) return { known: false, stored: null, entry: null, inferred: null };
   const dep = entry.deploy;
   if (dep && typeof dep === 'object' && dep.flavor) return { known: true, stored: dep, entry, inferred: null };
@@ -218,7 +213,7 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
   const execFn = io.execFn || execFileP;
 
   const ctxKey = ctxName || stackName;
-  const ctxStore = safeLoadContexts(io);
+  const ctxStore = contexts.loadOrEmpty(io.contextsFile);
   const ctxEntry = ctxStore.contexts[ctxKey];
   const ctxSsm = ctxEntry && ctxEntry.ssm && typeof ctxEntry.ssm === 'object' ? ctxEntry.ssm : null;
   let region = flags.region ? String(flags.region) : null;
