@@ -504,8 +504,8 @@ test('the lead is told the merge landed, and that a repo with NO changelog owes 
 // ever threaded) were pinned only in their negative direction.
 //
 // So this one pays for a REAL linked worktree and a REAL ephemeral record: they
-// are what `_closeOutMergedTicket` reads to reach row 1, and a stub of either
-// would put the assertions back to measuring the fixture.
+// are what `_closeOutMergedTicket` reads to reach the `tree clean` row, and a
+// stub of either would put the assertions back to measuring the fixture.
 test('t825: a green merge retires the seat, removes the tree, deletes the ref, and REPORTS it', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
