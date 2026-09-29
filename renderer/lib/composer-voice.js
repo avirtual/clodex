@@ -9,10 +9,13 @@ const PASTE_OPEN = '\x1b[200~';
 const PASTE_CLOSE = '\x1b[201~';
 
 const PASTE_MARK = /^\x1b\[20[01]~$/u;
+const HAS_PASTE_MARK = /\x1b\[20[01]~/u;
 
 function bracketPaste(text) {
+  const body = String(text);
+  if (!HAS_PASTE_MARK.test(body)) return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
   const out = [];
-  for (const ch of String(text)) {
+  for (const ch of body) {
     out.push(ch);
     if (ch === '~' && PASTE_MARK.test(out.slice(-6).join(''))) out.length -= 6;
   }

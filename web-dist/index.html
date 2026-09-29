@@ -26527,9 +26527,10 @@ ${i3.join("\n")}
         "hcl"
       ];
       var PATH_RE = new RegExp(
-        String.raw`(?:~\/|(?:(?<![\w.@+\/-])|(?<=\/)(?![\w.@+-])|(?!\d)(?<=:\d+))(?:\.{0,2}\/)?)[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
-        "g"
+        String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
+        "y"
       );
+      var PATH_CHAR = /[\w.@+-]/;
       var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
       function trimUrl(url) {
         const opens = url.split("(").length;
@@ -26554,13 +26555,26 @@ ${i3.join("\n")}
         }
         return out;
       }
+      function mayStartPath(text, i) {
+        const c = text[i];
+        if (c === "~" || i === 0) return true;
+        const prev = text[i - 1];
+        if (prev === "/") return c === "/";
+        return !PATH_CHAR.test(prev);
+      }
       function scanPaths(text) {
         if (typeof text !== "string" || !text) return [];
         const urls = urlMatches(text);
         const inUrl = (i) => urls.some((u) => i >= u.start && i < u.end);
         const out = [];
-        PATH_RE.lastIndex = 0;
-        for (let m = PATH_RE.exec(text); m; m = PATH_RE.exec(text)) {
+        let from = 0;
+        for (let i = 0; i < text.length; i++) {
+          if (i !== from && !mayStartPath(text, i)) continue;
+          PATH_RE.lastIndex = i;
+          const m = PATH_RE.exec(text);
+          if (!m) continue;
+          from = i + m[0].length;
+          i = from - 1;
           if (inUrl(m.index)) continue;
           const hit = m[0];
           const colon = hit.lastIndexOf(":");
@@ -31327,9 +31341,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var PASTE_OPEN = "\x1B[200~";
       var PASTE_CLOSE = "\x1B[201~";
       var PASTE_MARK = /^\x1b\[20[01]~$/u;
+      var HAS_PASTE_MARK = /\x1b\[20[01]~/u;
       function bracketPaste(text) {
+        const body = String(text);
+        if (!HAS_PASTE_MARK.test(body)) return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
         const out = [];
-        for (const ch of String(text)) {
+        for (const ch of body) {
           out.push(ch);
           if (ch === "~" && PASTE_MARK.test(out.slice(-6).join(""))) out.length -= 6;
         }
