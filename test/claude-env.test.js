@@ -180,6 +180,30 @@ test('scrub: CLAUDE_CONFIG_DIR survives — it is the account config root, not s
   assert.deepStrictEqual(env, { CLAUDE_CONFIG_DIR: '/srv/claude-acct', PATH: '/usr/bin' });
 });
 
+const { dropInheritedConfigDir } = require('../claude-env');
+
+test('dropInheritedConfigDir: removes CLAUDE_CONFIG_DIR and returns it; absent key returns null and leaves env intact', () => {
+  const env = { CLAUDE_CONFIG_DIR: '/Users/x/.clodex/accounts/sub-2', CLAUDE_CODE_OAUTH_TOKEN: 'tok', PATH: '/usr/bin' };
+  assert.strictEqual(dropInheritedConfigDir(env), '/Users/x/.clodex/accounts/sub-2');
+  assert.deepStrictEqual(env, { CLAUDE_CODE_OAUTH_TOKEN: 'tok', PATH: '/usr/bin' });
+
+  const bare = { CLAUDE_CODE_OAUTH_TOKEN: 'tok', PATH: '/usr/bin' };
+  assert.strictEqual(dropInheritedConfigDir(bare), null);
+  assert.deepStrictEqual(bare, { CLAUDE_CODE_OAUTH_TOKEN: 'tok', PATH: '/usr/bin' });
+});
+
+test('desktop entry drops the inherited CLAUDE_CONFIG_DIR after the marker scrub; headless entry keeps it', () => {
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const main = read('main.js');
+  const scrubAt = main.indexOf("require('./claude-env').scrubInheritedClaudeMarkers(process.env);");
+  const dropAt = main.indexOf("require('./claude-env').dropInheritedConfigDir(process.env);");
+  assert.ok(scrubAt >= 0, 'main.js scrubs inherited markers');
+  assert.ok(dropAt > scrubAt, 'main.js drops CLAUDE_CONFIG_DIR after the scrub');
+  const headless = read('headless-main.js');
+  assert.ok(headless.includes('scrubInheritedClaudeMarkers(process.env)'));
+  assert.ok(!headless.includes('dropInheritedConfigDir'), 'headless-main.js keeps an inherited CLAUDE_CONFIG_DIR');
+});
+
 test('user layer follows CLAUDE_CONFIG_DIR: an account\'s settings.json Bedrock flag marks the seat tee-blind', () => {
   const d = mkDirs();
   const acct = mkTmpRoot('ce-home-');

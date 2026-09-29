@@ -33,6 +33,7 @@ blocks a release.
 - clodexctl: the contexts file is saved through a symlink instead of replacing it with a regular file, and undeploy's region lookup no longer matches Object.prototype keys.
 - Peering: releasing control while the acquire is in flight no longer shows a "released" error chip; the park-cap timer sees mail orphaned by a dead drainer; the own-scope test selector now picks up tests that pin a changed non-JS resource by file name.
 - Deploy: `/api/peer/hello` advertises a process-level `bootId`; `clodexctl deploy ssm` token delivery now waits for the engine's `bootId` to change before deleting its throwaway session, so a poll that lands before the restart or after it both end with the session gone — the OAuth token no longer lingers in a leaked session's scrollback. Old engines without the field keep the previous behaviour.
+- Accounts: launching Clodex from inside a seat that runs on another account no longer moves every default seat onto that account — the desktop app drops an inherited `CLAUDE_CONFIG_DIR` at startup.
 
 ## 5.92.0 — 2026-09-29
 

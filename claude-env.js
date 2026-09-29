@@ -101,4 +101,10 @@ function scrubInheritedClaudeMarkers(env) {
   return env;
 }
 
-module.exports = { isEnvTruthy, readEffectiveClaudeEnv, teeBlindBackend, scrubInheritedClaudeMarkers };
+function dropInheritedConfigDir(env) {
+  const dropped = env.CLAUDE_CONFIG_DIR;
+  delete env.CLAUDE_CONFIG_DIR;
+  return dropped === undefined ? null : dropped;
+}
+
+module.exports = { isEnvTruthy, readEffectiveClaudeEnv, teeBlindBackend, scrubInheritedClaudeMarkers, dropInheritedConfigDir };
