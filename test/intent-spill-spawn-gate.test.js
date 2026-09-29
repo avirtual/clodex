@@ -127,19 +127,17 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('Your two newest long intent bodies stay in your transcript in full; every earlier one is filed and the transcript keeps the intent head, a bracketed runtime note, and `[agent:end]`, and the ordinary confirmation is the only thing that follows, so a body is never lost and never needs re-sending'));
-    assert.ok(off.prompts[0].includes('Always write the body itself: a body you did not write does not exist, and the confirmation is something Clodex writes after delivery, never something you write.'),
+    assert.ok(off.prompts[0].includes('Your two newest stay in your transcript in full; earlier ones keep only the intent head, a bracketed runtime note and `[agent:end]`, so none needs re-sending'));
+    assert.ok(off.prompts[0].includes('Always write the full body yourself; never write the runtime note or a delivery confirmation.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
-    assert.ok(off.prompts[0].includes('Actions happen only by emitting the complete intent — head line, full body, terminator; describing, promising or referring to an action in prose performs nothing. Clodex may omit executed intent text from your retained history and report outcomes separately; those history edits are not a request form and never something you write.'),
+    assert.ok(off.prompts[0].includes('Only a complete intent acts: prose describing an action performs nothing, and Clodex\'s edits to your history are never a request form.'),
       'the two anchors: prose performs nothing, and a history edit is never a request form');
     assert.ok(!/receipt/.test(off.prompts[0]),
       'the word is gone with the shape: the receipt sentence was the counter-example seats imitated');
     assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');
     assert.ok(off.prompts[0].includes(
-      'On a turn Clodex injected (a dm, a ticket or exec reply, a reminder), prose after your last '
-      + 'intent — or a reply with no intent — is filed the same way once it passes 800 bytes and is the one case that still gets a `[clodex] … filed at …` note: '
-      + 'what the operator must know goes inside an intent, not after it — a dm from your '
-      + 'operator counts as typed.'),
+      'On an injected turn, prose after your last intent (or a reply with none) is filed the same '
+      + 'way past 800 bytes, with a `[clodex] … filed at …` note; a dm from your operator counts as typed.'),
     'and that its trailing prose on an injected turn goes the same way, so a pointer where its '
     + 'sign-off was does not read as the wire having eaten something');
     const norm = (s, r) => s.split(r).join('<root>');

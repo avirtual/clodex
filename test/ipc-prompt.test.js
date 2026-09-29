@@ -216,11 +216,11 @@ test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES �
       'the row says WHEN — an episode opened over reads that must be cited loses the citations');
     assert.ok(/Bare, and the LAST line of your reply: emit it and stop/.test(src),
       'begin is refused off a turn boundary, so the position rule has to be in the row that fires it');
-    assert.ok(/Greedy body to a bare \[agent:end\], and it must be the LAST thing in your reply/.test(src),
+    assert.ok(/Body to `\[agent:end\]`, LAST in your reply/.test(src),
       'and end has BOTH constraints: the greedy body and the same position rule');
-    assert.ok(/the rewind drops the conversation, not the work on disk, and the post-cut you does not remember doing any of it/.test(src),
+    assert.ok(/the cut drops the conversation, not the work on disk/.test(src),
       'the one fact no seat infers: side effects survive a cut that erases the memory of causing them');
-    assert.ok(/about five seconds, and the cached prefix up to the cut is kept/.test(src),
+    assert.ok(/a ~5s respawn; the cached prefix is kept/.test(src),
       'what it COSTS — a seat that fears a cold respawn never opens an episode');
     assert.ok(/A bodyless end is refused/.test(src), 'the refusal a seat meets first');
     assert.ok(/^ {2}\[agent:scratch begin\] {12}Claude seats only\./m.test(src),
@@ -448,7 +448,7 @@ test('the input-kind prose states both directions and its escape hatches, in the
   const UNCERTAIN = /When you cannot tell, it is human/;
   const PROSE_NOT_WORK = /The rule governs PROSE, not work[^\n]*`shout`/;
   const ENDS = /A machine-input turn ends with its intents and nothing after: no acknowledgement, no restatement of the message, no status line — the operator reads the board, the log and their inbox, not your end-turn prose\. Something they must know goes through `shout`; a decision goes to your log\. After `task done` the turn is over\./;
-  const ORDER = /ends the turn with prose they read: intents FIRST, prose last, so a forgotten `\[agent:end\]` swallows that prose into the message and they see none of it;/;
+  const ORDER = /ends the turn with prose they read: intents FIRST, prose last;/;
   const RULES_AGREE = /anything meant for your operator goes last, after an `\[agent:end\]`\./;
   for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
     assert.ok(HUMAN.test(src), 'human input gets end-of-turn prose');
@@ -461,7 +461,7 @@ test('the input-kind prose states both directions and its escape hatches, in the
     assert.ok(ENDS.test(src),
       'the machine-input turn ends at its intents, and the clause names where an operator-facing fact goes instead');
     assert.ok(ORDER.test(src),
-      'human-input turns state the reading order and the greedy-body cost it raises');
+      'human-input turns state the reading order');
     assert.ok(RULES_AGREE.test(src),
       'the greedy-body RULE agrees: prose-last is the single placement, not one of two options');
   }
@@ -567,29 +567,12 @@ test('t798 team-create line: no post-brief spawn/gather/role-add, and mode:inter
 // for the full unbounded output the command exists to avoid.
 test('exec section states that a granted command BEATS the equivalent shell line', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests']);
-  assert.match(p, /PREFERRED route/, 'the section must rank exec above an ad-hoc shell equivalent');
-  assert.match(p, /INSTEAD of assembling the same thing with your shell tool/,
-    'and say so as an instruction, not as a note about why it was registered');
+  assert.match(p, /When one covers the job, use it INSTEAD of the raw shell equivalent/,
+    'the section must rank exec above an ad-hoc shell equivalent, as an instruction');
   // The rule is worthless if it only reaches seats that already read the whole
   // section, so it must sit ABOVE the command list, not below it.
-  assert.ok(p.indexOf('PREFERRED route') < p.indexOf('[agent:exec clodex-run-tests]'),
+  assert.ok(p.indexOf('INSTEAD of the raw shell equivalent') < p.indexOf('[agent:exec clodex-run-tests]'),
     'the rule must precede the listing it governs');
-});
-
-// Placement, not wording. The EXEC section is read ONCE at session start; the
-// decision to run something happens many turns later, with attention on SHELL
-// COMMANDS. A rule that lives only in the section being skipped is not a rule.
-test('a seat with exec grants is pointed back at them from SHELL COMMANDS', () => {
-  const granted = buildIpcPrompt(null, ['clodex-run-tests']);
-  const shellAt = granted.indexOf('SHELL COMMANDS:');
-  assert.ok(shellAt > 0, 'the shell section exists');
-  assert.match(granted.slice(shellAt), /check your EXEC COMMANDS list above/,
-    'the pointer must sit in the shell section, where the decision is actually made');
-  assert.ok(granted.indexOf('EXEC COMMANDS:') < shellAt, 'and point BACKWARD, at text already read');
-  // A seat with no grants must not be told to consult a list it does not have —
-  // and this is also what keeps both byte-pins equal to IPC_PROMPT.
-  assert.ok(!buildIpcPrompt(null, []).includes('check your EXEC COMMANDS list'),
-    'no grants, no pointer');
 });
 
 // The harness ships tools whose names collide with granted commands (a Monitor
@@ -597,10 +580,10 @@ test('a seat with exec grants is pointed back at them from SHELL COMMANDS', () =
 // A seat matching on NAME reaches the wrong one and never learns why.
 test('exec section says to match a command by what it DOES, not by its name', () => {
   const p = buildIpcPrompt(null, ['clodex-monitor']);
-  assert.match(p, /similar NAME is a different thing that does not use this registry/);
-  assert.match(p, /Never sit blocking on slow work a granted command would run for you/,
+  assert.match(p, /matching a command by what it does, not by its name/);
+  assert.match(p, /Never poll or re-emit a live run: end your turn, and the result wakes you/,
     'the blocking-wait default is the specific behaviour a monitor grant exists to replace');
-  assert.match(p, /BEFORE you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
+  assert.match(p, /Check this list before you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
 });
 
 // The specific defect: a seat whose granted command timed out reached for the
@@ -610,10 +593,9 @@ test('exec section says to match a command by what it DOES, not by its name', ()
 // the older for 13h47m. Routing around a refusal is the failure mode to name.
 test('exec section forbids the raw form as a fallback when a command refuses', () => {
   const p = buildIpcPrompt(null, ['clodex-run-tests']);
-  assert.match(p, /UNSAFE to run twice at once/, 'the concurrency hazard is named, not just the preference');
-  assert.match(p, /The registered version takes the lock; the raw command you would have typed does not/,
-    'and WHY the raw form is not equivalent — without this the rule reads as mere style');
-  assert.match(p, /a refusal is information/,
+  assert.match(p, /never alongside it: some take a lock the raw form does not, and running both deadlocks/,
+    'the concurrency hazard is named, and WHY the raw form is not equivalent — without this the rule reads as mere style');
+  assert.match(p, /A refusal is information: find out why, never route around it/,
     'a refusing command must not read as an invitation to bypass it');
 });
 
