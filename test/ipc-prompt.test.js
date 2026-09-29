@@ -581,7 +581,6 @@ test('exec section states that a granted command BEATS the equivalent shell line
 test('exec section says to match a command by what it DOES, not by its name', () => {
   const p = buildIpcPrompt(null, ['clodex-monitor']);
   assert.match(p, /matching a command by what it does, not by its name/);
-  assert.match(p, /Never poll or re-emit a live run: end your turn, and the result wakes you/);
   assert.match(p, /Check this list before you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
 });
 
@@ -648,6 +647,8 @@ test('t81: the three false statements are GONE from the section', () => {
   assert.ok(/returns nothing on success/.test(p), 'the short-run truth stated instead');
   assert.ok(/acknowledges its start with a run number/.test(p), 'and the long-run truth');
   assert.ok(p.includes('[agent:exec status] {}'), 'the query that answers "is my run alive" is named');
+  assert.match(p, /Never poll or re-emit a live run: end your turn, and the result wakes you/,
+    'and that the answer arrives on its own, so the query is not a loop to spin');
   assert.ok(/stdout is never returned to you/.test(p), 'stdout-dropped stated');
   // The argv guarantee is the security shape and must SURVIVE the rewrite.
   assert.ok(/never write the command line itself/.test(p), 'argv guarantee kept');
@@ -752,4 +753,25 @@ test('t936: the REPLIES line teaches the no-reply marker, not a reply-format tra
     'the old per-dm trailer wording must not survive here: it describes bytes nothing emits');
   assert.strictEqual(buildIpcPrompt(['dm']).split('\n').filter((l) => l.startsWith('Replies arrive later')).length, 1,
     'a gated seat forks its own blob and must carry the same single line');
+});
+
+test('remind row: the kinds it says recur, fire once, or fire at every compact are remind-scheduler\'s', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'remind-scheduler.js'), 'utf8');
+  const kindSet = (name) => {
+    const m = src.match(new RegExp(`^const ${name} = new Set\\(\\[([^\\]]*)\\]\\);`, 'm'));
+    assert.ok(m, `ENTER: ${name} was found at source`);
+    return m[1].split(',').map((t) => t.trim().replace(/'/g, '')).sort();
+  };
+  const kinds = (clause) => [...new Set([...clause.matchAll(/`(?:\[agent:remind )?(every|in|at|cron|on compact)\b/g)]
+    .map((m) => m[1].replace(' ', '')))].sort();
+  for (const src2 of [IPC_PROMPT, buildIpcPrompt(['remind'])]) {
+    const row = src2.split('\n').find((l) => l.startsWith('  [agent:remind every <interval>]'));
+    assert.ok(row, 'ENTER: the remind row renders');
+    const [before, after] = row.split(' recur; ');
+    assert.ok(after && after.includes(' fire once; '), 'ENTER: the row states a recurring clause and a one-shot clause');
+    assert.deepStrictEqual(kinds(before.slice(before.lastIndexOf('. ') + 2)), kindSet('RECURRING'));
+    assert.deepStrictEqual(kinds(after.split(' fire once; ')[0]), kindSet('ONESHOT'));
+    assert.match(row, /`\[agent:remind on compact\] text` fires at every compact/,
+      'fireCompactFor keeps the record, so a row calling it one-shot gets it re-armed into duplicates');
+  }
 });

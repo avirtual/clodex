@@ -136,8 +136,8 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
       'the word is gone with the shape: the receipt sentence was the counter-example seats imitated');
     assert.ok(!off.prompts[0].includes('@spill'), 'no pointer token anywhere in the prompt');
     assert.ok(off.prompts[0].includes(
-      'On an injected turn, prose after your last intent (or a reply with none) is filed the same '
-      + 'way past 800 bytes, with a `[clodex] … filed at …` note; a dm from your operator counts as typed.'),
+      'On a machine-input turn, prose after your last intent (or a reply with none) is filed the same '
+      + 'way past 800 bytes, with a `[clodex] … filed at …` note.'),
     'and that its trailing prose on an injected turn goes the same way, so a pointer where its '
     + 'sign-off was does not read as the wire having eaten something');
     const norm = (s, r) => s.split(r).join('<root>');
