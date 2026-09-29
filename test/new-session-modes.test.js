@@ -101,7 +101,7 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
   // not described in the same terms cannot be compared by the person choosing.
   assert.match(rendererSrc, /standard: 'Runs the CLI with its own defaults — every tool, skill and agent\.'/,
     'renderer.js MODE_HINTS.standard names what standard includes');
-  assert.ok(htmlSrc.includes('New sessions run the CLI as installed — every tool, skill and agent.</span>'),
+  assert.ok(htmlSrc.includes('New sessions keep every tool, skill and agent the CLI ships with.</span>'),
     'the first-run setup dialog says the same of Standard');
 
   // The anti-degenerate half: the superseded wording must be GONE, not merely

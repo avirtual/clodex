@@ -522,6 +522,7 @@ function bootIdServer(bootIds) {
       if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
       if (req.url === '/api/peer/hello') {
         const bootId = bootIds[Math.min(hellos++, bootIds.length - 1)];
+        if (bootId === 503) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
         return res.end(JSON.stringify({ ok: true, app: 'clodex', bootId }));
       }
       res.end(JSON.stringify({ ok: true }));
@@ -533,6 +534,7 @@ function bootIdServer(bootIds) {
 for (const row of [
   { name: 'a bootId change with no failed poll (the restart finished before the first poll) deletes the throwaway session', bootIds: ['b1', 'b2'], deletes: 1 },
   { name: 'an unchanged bootId keeps polling until it changes, then deletes the throwaway session', bootIds: ['b1', 'b1', 'b1', 'b2'], deletes: 1, hellos: 4 },
+  { name: 'a failed poll between two unchanged bootIds does not delete; only the changed bootId does', bootIds: ['b1', 503, 'b1', 'b2'], deletes: 1, hellos: 4 },
 ]) {
   test(`deliverClaudeToken: ${row.name}`, async () => {
     const { server, seen } = bootIdServer(row.bootIds);
