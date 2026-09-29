@@ -12,7 +12,6 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Hooks and engine: a Codex seat still receives its identity when the transcript relink fails; a parked-mail drain interrupted mid-claim is re-homed by the next drain instead of lost; a second Clodex instance sharing a cwd no longer discards the user's Codex hooks backup on cleanup; `-m=NAME` is read as a model like the other spellings; a session moved between workspaces keeps its web scrollback ring.
 
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 - Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
@@ -25,6 +24,7 @@ blocks a release.
 - clodexctl: the contexts file is written atomically (temp + rename), undeploy refuses a contexts file that fails to parse instead of treating it as empty, node lookups no longer match Object.prototype keys, and the deploy token-delivery session cleanup retries once on a 404 that raced the engine's restore.
 - Renderer: bracketed-paste scrubbing, file-path scanning and markdown heading trimming are linear on crafted input (a 20,000-char run no longer stalls the composer), and bust/transcript token counts gain the M tier instead of printing "1000k".
 - Renderer: restarting a seat from any checklist popover keeps its label, backend, team, effort, posture and account on the rebuilt row; a respawn focus hint expires after 10 s so a later reattach of the same name cannot steal focus; Escape and the close chord still close a dialog stacked over the narrow-screen dock sheet; a dangling `--model` with no value is dropped from a seat's args.
+- Hooks and engine: a Codex seat still receives its identity when the transcript relink fails; a parked-mail drain interrupted mid-claim is re-homed by the next drain instead of lost; a second Clodex instance sharing a cwd no longer discards the user's Codex hooks backup on cleanup; `-m=NAME` is read as a model like the other spellings; a session moved between workspaces keeps its web scrollback ring.
 
 ## 5.92.0 — 2026-09-29
 
