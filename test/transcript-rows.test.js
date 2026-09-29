@@ -1320,6 +1320,13 @@ test('folds: an open fold renders the turn-end prose once, as the turn\'s last r
   assert.strictEqual(findCls(rowIn(m, 'a1'), 'intent-card').length, 1);
 });
 
+test('folds: narration followed by a running tool call stays inside the closed fold', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'ticket-loop', '[ticket t1 ACCEPT] x'), talk('a1', 1, 'checking'), call('t1', 'Bash', 'ls', 'pending')]);
+  assert.ok(/\btr-turn-folded\b/.test(turnOf(m, 'i1').className), 'ENTER: the ticket turn folds');
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold']);
+});
+
 test('folds: a closed fold shows filed turn-end prose with its filed label visible, after the fold head', () => {
   const m = mount({ mode: 'conversation' });
   m.render(closing(`[agent:exec clodex-run-tests] {}\nNotes — 1.1 KB filed at ${FILED}`));

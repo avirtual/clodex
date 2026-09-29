@@ -183,6 +183,8 @@ const END_ROWS = [
   ['a trailing filed pointer', [endDriver, said(intent('exec'), { kind: 'prose', text: 'Notes — 1.1 KB filed at /x/y.md', spill: { path: '/x/y.md', bytes: 1100 } })], ['Notes — 1.1 KB filed at /x/y.md']],
   ['blank trailing prose', [endDriver, said(intent('exec'), prose(' \n '))], null],
   ['a record with no segments', [endDriver, tool, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'carrying on' }], ['carrying on']],
+  ['narration followed by a tool call', [endDriver, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'checking' }, tool], null],
+  ['an API-error record', [endDriver, { kind: 'assistant', apiError: true, text: 'API Error: 500' }], null],
 ];
 
 test('turnEndProse: one literal row per case, the prose after the last intent of the turn\'s last assistant record', () => {
