@@ -249,7 +249,7 @@ test('a 20,000-dot run scans in linear time and still yields the path after it',
 });
 
 test('long runs of path characters with no extension scan in linear time', () => {
-  for (const run of ['a'.repeat(20000), 'a.'.repeat(10000), 'a/'.repeat(10000), '1'.repeat(20000)]) {
+  for (const run of ['a'.repeat(20000), '_.'.repeat(10000), 'a/'.repeat(10000), '1'.repeat(20000)]) {
     const t0 = performance.now();
     assert.deepStrictEqual(hits(run), []);
     const ms = performance.now() - t0;
