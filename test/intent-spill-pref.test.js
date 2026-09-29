@@ -90,7 +90,7 @@ test('saving the spill box does not disturb the pref it was modelled on', () => 
 
 test('the web bundle carries the same three halves as the renderer source', () => {
   const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
-  assert.ok(bundle.includes('id="prefs-intent-spill"'));
+  assert.ok(bundle.includes('id="prefs-intent-spill"'), 'web-dist/index.html lacks the prefs-intent-spill row');
   assert.match(bundle, /every earlier one appears in the transcript as the intent head, a bracketed runtime note and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation, and the terminal shows the filed path \(clickable\)/,
     'a rebuild is owed whenever the hint text moves, or the web operator reads the old promise');
   assert.match(bundle, /prefsIntentSpill = document\.getElementById\("prefs-intent-spill"\)/);
