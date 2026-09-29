@@ -725,7 +725,7 @@ test('a live seat with no record is not claimed to be a standing seat (not-merge
 // ── t486 r2: the drop must not outrun the removal ────────────────────────────
 //
 // r1 dropped the record BEFORE removeWorktree ran. That is the orphan
-// destroy()'s own header forbids, reached from the other side: a removal that
+// the map's per-return `destroy` invariant forbids, reached from the other side: a removal that
 // FAILS then leaves a checkout on disk with nothing naming it — path
 // unrecoverable, unmerged commits with it. The property is not an arm and not a
 // line: destroy() must never RETURN having dropped the record while the tree it

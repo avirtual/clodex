@@ -13,7 +13,7 @@
 // WHY THIS IS THE COSTLY ONE, and why the answer is not the intuitive one. The
 // worry about preserving a pointer is that it goes STALE. It does not go stale
 // here: a restart re-enters the same cwd and deliberately does not touch the
-// tree (destroy()'s own header says why — the restart paths kill and recreate
+// tree (the map's `destroy` invariant says why — the restart paths kill and recreate
 // the same seat, and destroying its checkout there would delete the tree out
 // from under a session that is coming right back), so the value copied back is
 // the one that was on the record microseconds earlier.
@@ -317,8 +317,8 @@ test('CONSEQUENCE: a STALE pointer to a hand-deleted tree drops the record — n
 // ------------------------------- the other two fields, same helper, one seam
 
 test('autoCompact and digested ride the same preserve, and the opt-OUT is what matters', async () => {
-  // Both went to ALWAYS_PRESERVE on their own arguments (see the header in
-  // session-manager.js), but they share this seam, so they share a fixture.
+  // Both went to ALWAYS_PRESERVE on their own arguments, but they share this
+  // seam, so they share a fixture.
   //
   // `autoCompact` is stored ONLY as the opt-OUT: `false` is written, and
   // enabling DELETES the key (stores.js setAutoCompact). So losing it does not

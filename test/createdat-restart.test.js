@@ -221,7 +221,7 @@ test('[agent:context reload] preserves createdAt across its cold respawn', async
 // always worked: on restore-on-launch the record is never removed, so create()'s
 // own `existingEntry` read is what preserves the stamp, with no help from
 // anybody. Pinning only the broken direction would leave the working one free to
-// break silently later, and the comment at session-manager.js:1458 claims both.
+// break silently later, and the map's createdAt invariant claims both.
 //
 // This drives the REAL create() — no spy — because the line under test IS
 // create()'s stamping line. Bash arm: it needs far fewer seams than the claude

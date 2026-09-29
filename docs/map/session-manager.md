@@ -58,7 +58,6 @@
 - `isStaleRegistration` returns true for any own-pid record although its comment scopes that clause to a session this process is not running, so a new caller passing a live seat's agent.json would force-clean a running registration.
 - `findPeerByOrigin` looks up label, id, host while `peerOriginSuffix` emits label, host, id, so a peer whose suffix is a shared host (tunnelled peers on 127.0.0.1) resolves to the first peer with that host.
 - `seatRelFiles` skips unreadable dirs and symlinks without a word, so a move-to-peer shipment silently omits them.
-- `deniedBodyDisposition`'s header says memory and context both split on sub, but context returns none for every sub and only memory reads it.
 
 ## createSessionManager factory, constructor and the wire runtime — createSessionManager … _onHoldLifecycle
 
@@ -82,13 +81,13 @@
 - `_startWire` keeps a per-batch fired Set on the wire path because the deduper allows wire-after-wire, while exempting exec from that intra-turn dedup.
 - `_onWireSessionRotated` ends the old sessionId's hold before reassigning `s.sessionId`, refuses ids in `s._leftSessionIds`, and resets `_holdRearmed` itself.
 - `_onHoldLifecycle` never erases a persisted keep-warm intent on a ping failure, and only a failures disarm reopens the re-arm gate.
+- `constructor` stamps `activityTs` from the ActivityTracker `onEvent` callback with Math.max, because `_emitActivity` fires only on a label change and an out-of-order event must not drag idleMs back into the hold band.
 
 ### Hazards
 
 - `_startWire`'s recovery replay dedups every intent type intra-turn, including exec, so a recovered turn holding two identical exec calls runs one while the live wire path would run both.
 - `_maybeRearmHold` must stay outside the rotation guard in `_startWire`, or the first turn after an app restart never re-arms, and it must stay main-line-only or a perpetual hold arms with no replayable entry.
 - `_buildWire` stops the hold keeper when `_startWire` throws but leaves the warmth store open, so a retry opens a second WarmthStore on the same sqlite file.
-- `constructor` comments `this.windows` as `workspaceId -> BrowserWindow` and `_wire` as shadow-only, both stale: handles are opaque objects (web-host literals too) and the wire dispatches real intents for wire-sourced seats.
 - `createSessionManager` reads spawnStreamSeat, reapBeforeResume, streamFor, loadStreamCodec, streamProc, speaker, claudeHome and the timing overrides off deps outside the destructure, so the destructure is not the full collaborator list.
 
 ## Windows, quota and the broadcast seam — _keepwarmRow … _broadcast
@@ -130,6 +129,8 @@
 - `_createReserved`'s pty data handler caps scrollback, forwards output through `_sendToSession` (which buffers up to 2MB in pendingOutput for a detached window), and arms the boot drain on the first bracketed-paste edge after BOOT_DRAIN_SETTLE_MS.
 - `_createReserved`'s exit handler runs a fixed order: `_dead` first, `_sendToSession` session-exit before `_cleanup`, remote notify, then persistence by `exitDisposition` (a bash natural exit removes the record, an unexpected agent exit stamps exitedAt), then `_cleanup`.
 - `_createReserved` buffers pty exit events and stream lines that arrive before the session exists and replays them once the exit handler and `_onStreamEvent` route are installed, so an early exit is not lost.
+- `_createReserved` stamps createdAt once, computed above the upsert and baked into the hook, and re-mints it whenever the record is gone, so every kill()-based restart must re-seed it through `_preserveAcrossRestart` before create.
+- `_createReserved`'s onSessionId clear branch calls `_noteSessionLeft` before `_holdKeeper.endSession`, whose synchronous hold event resolves the seat off the list, and duplicates `_onWireSessionRotated`'s handover on purpose because the symlink repoint usually arrives first.
 
 ### Hazards
 
@@ -193,6 +194,7 @@
 - `_armCtx` is the only place a hint base is resolved, using the live pref as a boolean and the spawn-captured base as the value, and preferring the exact proxyAgent route over the glob.
 - `_setMicTarget` is the only writer of the microphone target, and `voiceTap` calls it only after every `_voiceRoute` decline and before both the raise and the frame.
 - `noteVoiceRecording` keeps its own per-seat field plus a box-wide copy and computes the rising edge before stamping, so the lastUserInputTs readers are untouched.
+- `voiceTap` raises its window (show then focus) when the caller asks or the app is backgrounded, after the retarget and before the frame, so no path arms the recorder in a background app without raising first.
 
 ### Hazards
 
@@ -223,7 +225,7 @@
 ### Hazards
 
 - The full record-dropper set is docs/sessions.md's "Every record-dropper" list (not re-copied here so it cannot drift); `kill` and `destroy` are the two that live in this file, and a new getPersistence().remove() call site outside that list is a record dropped where nobody expects one.
-- `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live; its comment calling that a second `clearHintForRecord` call is inaccurate.
+- `destroy` on a live seat relies on `kill` having already cleared the proxy hint, since its dropRecord is a no-op when the seat was live.
 - `rename` spells out the 26-argument `create` call a third time (with `move` and `moveToPeer`), so a new `create` parameter must be added to all three or a respawn silently drops it.
 
 ## move, moveToWorkspace, moveToPeer — move … moveToPeer
@@ -285,8 +287,9 @@
 
 - `clearHintForRecord` must run before the record is removed and keep its spawnerHintSet gate, or a blind clear wipes an operator's out-of-band /_hint override.
 - `_notifyComposition` scopes teammates with findProjectRoot while `_teamLiveSeats` and `_projectRootFor` call themselves the one live-seat scope, so a teamless-repo divergence is possible.
-- `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds despite the helper claiming to absorb that omission.
+- `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds although ALWAYS_PRESERVE exists to carry them.
 - `_injectRoster` writing actively into a booting non-claude TUI leaves the roster as an unsubmitted draft; only the stashed team ref rendered by `_settleBoot` is safe.
+- `_stripClaimedTree` guards the kill-to-exit window in which a restarting seat is live but named by no record; a wholesale snapshot write-back there puts a second record on a tree another seat is committing in.
 
 ## Snapshots, list, workspace queries and the voice engine — list … killVoiceEngine
 
@@ -466,6 +469,7 @@
 - `removeMemoryUnit` and `setOperatorPin` scope the digest rebake to a best-effort try after the permanent store write, so a rebake failure never reports the write as failed.
 - `_handleContextIntent` refuses a body-less reload before `_coldRespawn` kills anything, so the live session stays intact.
 - `_coldRespawn` defers the kill and create with setImmediate so the JsonlWatcher that triggered it is not torn down inside its own callback.
+- `_deniedIntentPayload` never spills past its per-seat, per-verb cap, because a denied seat repeats the verb every turn and the spill sweep bounds file age, not write rate.
 
 ### Hazards
 
@@ -564,6 +568,8 @@
 - `_armDmConfirm` pegs the timer to the oldest unit and never restarts it on a later push, so a stream of dms cannot starve the report.
 - `_checkDmConfirm` only withdraws on transcript growth past the newest ripe baseline and never content-matches, so it can subtract a report but never manufacture one.
 - `_buildDeliveryText` puts the tag only on the spill pointer line and ends a claude @path with a space so the deferred Enter cannot select a different autocomplete file.
+- `_armDmConfirm` only detects and reports; it never retries, dedupes, orders or confirms a unit, because a duplicate dm can be expensive and concurrent writes destroy each other's unsubmitted draft.
+- `_deliverMessage` callers stamp delivery from onWrite rather than the return value, and arm consumption watchers only on an injected disposition.
 
 ### Hazards
 
@@ -600,6 +606,7 @@
 - `_flushParkedNow` drains everything as one joined injection with the hook's blank-line separator, never N sequential writes.
 - `_injectQueueFor` treats absent voice evidence as not speaking, so an unreadable screen delivers rather than wedging the seat.
 - `_armParkedDrainFallback` either delivers or leaves a timer armed on every pass, and defers to an armed boot drain timer instead of shortening BOOT_DRAIN_SETTLE_MS.
+- `_armParkedDrainFallback` scopes each pass to the file it was armed for, because hasActivePending is name-scoped and would force unrelated mail past the hold check in `_injectText`.
 
 ### Hazards
 

@@ -1,30 +1,5 @@
-// session-manager.js — the SessionManager class: PTY spawn/kill/restore,
-// per-session state, intent routing, DM delivery and parking, inject queue.
-//
-// ─── WINDOW BRIDGE / opaque-handle contract ─────────────────────────────────
-//
-// A handle is an OPAQUE OBJECT. Everything here touches exactly five methods:
-//
-//   .webContents.send(channel, ...args)
-//   .isDestroyed()
-//   .isFocused()
-//   .show() / .focus()
-//
-// …plus reference identity: `workspaceForWindow()` compares handles with `===`,
-// so a handle must be the same object at register time and at lookup time.
-//
-// The contract is this small on purpose, because it already has two
-// implementations: real Electron BrowserWindows (`main.js`) and plain objects
-// backed by a WebSocket connection (`web-host.js`, `handleFor`, a five-key
-// literal). `headless-main.js` runs this engine in a process with no electron
-// in it at all.
-//
-// So do not `require('electron')` here, and do not reach into a handle for
-// anything outside that list — no `BrowserWindow.fromWebContents`, no
-// `instanceof`, no geometry, no `webContents` member other than `.send`. Every
-// one of those works under Electron and is undefined under the web host, so it
-// fails only at runtime and only for browser clients. Widening the contract
-// means widening `handleFor` to match, in the same change.
+// ─── WINDOW BRIDGE / opaque-handle contract ─── a handle is touched only via .webContents.send, .isDestroyed(), .isFocused(), .show()/.focus() and === identity;
+// web-host handleFor builds plain literals, so widen it in the same change and never require('electron') here.
 
 const SHOUT_MAX_BYTES = 16 * 1024;
 
@@ -117,47 +92,16 @@ function execRunStatusReply(execRuns, rawBody, now) {
 
 const REBOOT_NOTICE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 
-// Retry-with-a-ceiling, NOT confirmed delivery — the distinction is the whole
-// reason this exists. Nothing in the stack acknowledges an injected message:
-// InjectQueue ends at a fire-and-forget pty.write, so "the notice was parked"
-// and "the notice arrived" are not the same claim and no layer here can tell
-// them apart. So the notice is re-offered a bounded number of times and then
-// given up on, deliberately.
-//
-// The delays are measured, not round: a resumed seat produced nothing for 105s
-// while a 41MB transcript re-rendered, and both existing margins
-// (BOOT_DRAIN_SETTLE_MS 750ms, INJECT_BOOT_MAXWAIT 20s) sit far inside that.
-// So the first retry clears the boot cap and the second clears the observed
-// re-render.
+// Retry with a ceiling, not confirmed delivery: nothing acknowledges an injected message, so the notice is re-offered a bounded number of times.
+// Measured delays: a resumed seat was silent for 105s re-rendering a 41MB transcript, so the second retry has to land after that.
 const REBOOT_NOTICE_RETRY_DELAYS = [30 * 1000, 120 * 1000];
 const REBOOT_NOTICE_MAX_ATTEMPTS = 3;
 
-// The notice's OWN deadline for a forced flush, separate from the generic park
-// cap (INJECT_QUIET_MAXWAIT, 5 min) it would otherwise inherit. A wake-up notice
-// that arrives five minutes after the wake is not a wake-up notice.
-//
-// Derived, and both bounds are load-bearing:
-//   > INJECT_BOOT_MAXWAIT (20s) — past the queue's readiness cap a polite drain
-//     either already happened or is not going to, so this cannot pre-empt one.
-//   < REBOOT_NOTICE_RETRY_DELAYS[0] (30s) — firing after the first re-park would
-//     flush TWO copies of the notice joined into one body. This bound holds for
-//     the FIRST, undeferred round only: a draft deferral re-arms past 30s, so a
-//     later round can join the ladder's re-park. Accepted, not overlooked — it
-//     costs one duplicated line, and a duplicate is the safe direction. Do not
-//     "fix" it by bounding the re-arm; see _armRebootNoticeFlush.
-//
-// This deadline does NOT make the retry ladder redundant, and the ladder must not
-// be simplified away now that it exists. The queue's readiness gate writes anyway
-// once INJECT_BOOT_MAXWAIT elapses, so on a slow seat — a measured 105s
-// transcript re-render — a flush at 25s can still evaporate into a booting CLI.
-// That is recoverable only because the ladder is there: the notice survives in
-// settings, the re-park follows, and the T+150s rung lands after the render.
+// Must sit above INJECT_BOOT_MAXWAIT (20s) and below REBOOT_NOTICE_RETRY_DELAYS[0] (30s), or two copies of the notice flush joined into one body.
+// It does not replace the retry ladder: a flush at 25s can still be lost into a booting CLI on a slow seat.
 const REBOOT_NOTICE_FLUSH_MS = 25 * 1000;
 
-// How long the pane must have been untouched before the forced flush is allowed
-// to fire. Comfortably longer than INJECT_QUIET_MS (2s), which is tuned to not
-// cut mid-WORD: this one has to clear a pause mid-COMPOSITION, and stopping to
-// think for a couple of seconds is ordinary.
+// Longer than INJECT_QUIET_MS (2s) on purpose: it must clear a pause mid-composition, not just mid-word.
 const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
@@ -343,29 +287,14 @@ const CLAUDE_SLASH_DESCRIPTIONS = Object.freeze({
 const STREAM_HINT_POLL_MS = 50;
 const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
-// ticketCloseLine and ticketTaskDirLine are re-exported below rather than used
-// here: they moved with the spec-delivery verbs, and tests import them from this
-// module's path. Removing the re-export as unused breaks those importers.
+// Imported only to re-export: tests import ticketCloseLine and ticketTaskDirLine from this module, so do not drop them as unused.
 const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
 
-// Process-life identity for a spawned session (ticket replay). Module-level and
-// NOT a deps seam: every value this is compared against was minted by the same
-// build, so an injectable generator could only ever be stubbed into agreeing with
-// itself. The pid is what makes it unique across app processes — the property the
-// whole replay condition rests on.
 let incarnationSeq = 0;
 function nextIncarnation() {
   return `${process.pid}.${Date.now().toString(36)}.${++incarnationSeq}`;
 }
 
-// First claude spawn on a fresh box (deployed node, sandbox container) hits
-// the CLI's interactive onboarding wizard — theme picker etc. — inside a PTY
-// nobody on a headless node is watching; a spawn into a folder the CLI has
-// never seen hits the "trust this folder?" prompt the same way. Pre-seed both
-// in ~/.claude.json. Merge-only: nothing to change is a no-write false,
-// unparseable JSON is never clobbered, any failure degrades to the prompt
-// (never blocks a spawn). Credentials are NOT touched here — the token rides
-// the service env (deploy --claude-token-file).
 function preseedClaudeOnboarding({ fs, path, homeDir, cwd }) {
   try {
     const p = path.join(homeDir, '.claude.json');
@@ -393,72 +322,15 @@ function preseedClaudeOnboarding({ fs, path, homeDir, cwd }) {
     return true;
   } catch { return false; }
 }
-// Names the correct form and stops there. It must never reconstruct and run
-// what the line probably meant: that would execute something nobody wrote,
-// which is worse than the bounce it replaces — the same rule the control-char
-// vetting already follows. Reveals nothing gated either, since the bounce lists
-// `term` for every seat whether or not it holds the grant.
 function nearMissFormHint(text) {
   if (!/^\[agent:term[\s\]]/.test(String(text || ''))) return '';
   return 'The term intent takes its command AFTER the closing bracket — `[agent:term exec] <command>`, not inside it. ';
 }
 
-// Fields _preserveAcrossRestart carries whether or not a caller asks. The test
-// for membership is that NO caller can regrow the field: append-only history
-// (sessionIds) and operator decisions no spawn argument carries (pluginGrants —
-// not a create() parameter, so create's rebuild upsert writes a record without
-// it) — AND that no caller re-asserts it after create(). That second clause is
-// what keeps `label`/`stripLevel` out: no caller can regrow them either, but
-// all three call sites deliberately re-assert them post-create, so moving them
-// here would make two writers for one field.
-// A field a restart can legitimately reset (rosterSentAt on a fresh
-// restart) must stay caller-controlled.
-// `wireLabel` is here for the same reason: it is seeded ONLY at the team-spawn
-// mint, nothing regrows it, and create() re-mints the proxy agent id from
-// `entry.wireLabel || name`. Dropped by an in-place restart, the ticket's
-// COST.json reads a null label and the spend bills to an unlabeled route.
-// `ticketId` rides that same mint: dropped, the seat reads as never minted.
-// `keepWarmAlways`/`holdUntil` pass both clauses too — written only by
-// setKeepWarmAlways/setHoldUntil off an operator action, absent from create()'s
-// argument list and its rebuild upsert, re-asserted by no caller. They must
-// move as a PAIR: ipc-handlers' wire:hold writes each by clearing the other, so
-// preserving one alone resurrects a seat holding both, and rearmPlan reads
-// `always` first — a stale `keepWarmAlways` would outrank the deadline the
-// operator actually set. Losing them is silent and unbounded: the perpetual
-// hold is the one mode whose seat nobody is sitting at, so no turn arrives to
-// notice the flag is gone and _maybeRearmHold never runs against anything.
-// `worktree` is here because ABSENT is the DANGEROUS state and stale is the safe
-// one — the reverse of the usual intuition about a preserved pointer. destroy()
-// reads `entry.worktree.path` to find the tree; with no pointer it takes the
-// `if (!worktree)` arm, drops the record and returns ok, leaving the checkout
-// with nothing in the APP naming it — the delete path can no longer find it and
-// reports success. A pointer to a tree that is already gone instead fails
-// removeWorktree, which KEEPS the record and rides the path out for the operator.
-// _ticketTreeHolder reads occupancy off the record too, so a reloaded seat
-// without it is invisible and its LIVE tree can be handed to a second seat.
-// `autoCompact` is stored ONLY as the opt-OUT (`false`; enabling deletes the
-// key), so losing it fails toward the more destructive default — autoCompactOf
-// reads absence as ON and compacts a seat the operator exempted.
-// `digested` is append-only history like `sessionIds`, and unlike `rosterSentAt`
-// it carries the conversation identity INSIDE its value: a fresh restart mints an
-// id that is by construction not in the array, so a preserved list cannot
-// suppress a digest that is due. That is what makes it safe here where a bare
-// timestamp is not.
+// Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
+// An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
 const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate'];
 
-// The delayed backstop SIGKILL for a pty that ignored `pty.kill()`. The `> 0`
-// is the whole function: `process.kill` reads non-positive pids as BROADCASTS,
-// not as process ids, and both callers reach it from a `setTimeout` five
-// seconds after the session object was captured.
-//   -1  signals EVERY process the user may signal — the entire desktop.
-//    0  signals our own process group — the whole app.
-// Neither is theoretical. A test fixture whose stub pty carried `pid: -1`
-// reached kill() and SIGKILLed ~277 processes (Dock, WindowServer, Terminal,
-// Chrome, Postgres) three times over, and the bare `catch {}` swallowed it so
-// nothing reached the log. A pid is not required to be real here: `pty` is an
-// injected seam, and an exited pty can leave the field undefined.
-// team-tickets.js's suite-runner guards the identical call for the identical
-// reason; that guard predates this one and did not reach this file.
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
     if (log) log.warn('session', `refusing SIGKILL for ${name}: pid is ${pid}, which would broadcast rather than target`);
@@ -513,14 +385,7 @@ async function reapPtyDescendants({ ptyPid, name, log, childProcess }) {
   return reapFromSnapshot({ rows: await psSnapshot(childProcess), ptyPid, name, log });
 }
 
-// A blocking registry file (agent.json) is STALE — safe to force-clean and
-// re-register over — when the process it names is dead, OR when it names OUR OWN
-// pid and the caller has already ruled out a live session of that name. The latter is the deterministic-
-// pid case: in Docker the engine is the same pid every boot, so an agent.json
-// surviving an unclean shutdown always points at the new engine itself and a bare
-// isAlive() check would read it as "running elsewhere" forever, wedging restore
-// and fresh create under that name. Desktop is unaffected — a genuinely-other
-// Clodex sharing ~/.clodex never has our pid.
+// A blocking agent.json naming our own pid is stale (Docker reuses one pid every boot), but only once the caller has ruled out a live session of that name.
 function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
@@ -530,10 +395,7 @@ function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving
   return { expected, dropRecord: !agentType && !expected, stampExited: !!agentType && !expected };
 }
 
-// node-pty's execvp failure in the forked child is silent (no stderr) — it
-// surfaces as a bare code-1 exit within a couple seconds of spawn. Excludes
-// deliberate exits, signals, and anything past the fast-fail window (a later
-// code-1 is a real crash, not a missing binary — the CLI clearly launched).
+// node-pty's execvp failure is silent: a bare code-1 exit inside the fast-fail window, while a later code-1 is a real crash.
 function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBin }) {
   if (expected || exitCode !== 1 || signal) return null;
   if (!(elapsedMs <= 5000)) return null;
@@ -541,61 +403,27 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
   return resolved ? null : (cmd || null);
 }
 
-// Name-collision decision for MINTING a new session. The name is the primary
-// key everywhere (run/<name>/ dir, agent.sock, [agent:dm] bus, renderer Map,
-// DOM data-name), so minting over any existing record — live OR merely
-// persisted/archived (archive KEEPS the record, stamped archivedAt) — would
-// overwrite it and split a name across two sidebar rows. This guards the mint
-// FRONT DOOR only (the session:create / team:create / team:join IPC, all via
-// spawnFromParams); the resume paths (restore-on-launch, unarchive→retry,
-// restart/reload) re-create a persisted name legitimately and DELIBERATELY
-// bypass this — that's the whole --resume design, and the mint-vs-resume axis is
-// the front-door-vs-restore-path distinction, NOT resumeId (an "adopt" mint
-// carries a resumeId but is still a mint; a persisted entry with no sessionId
-// resumes with resumeId=null).
 function nameConflict({ liveHas, persistedHas }) {
   if (liveHas) return 'live';
   if (persistedHas) return 'persisted';
   return null;
 }
 
-// How many payloads a seat may spill per denied verb, for its whole live session.
-// Not 1: intents are handled in sequence, so one turn carrying three denied dms
-// would keep an arbitrary one and destroy the rest. Not unbounded: see the rate
-// note on _deniedIntentPayload.
+// Not 1: a turn carrying three denied dms would keep an arbitrary one and destroy the rest.
 const DENIED_SPILL_CAP = 3;
 
-// What to do with the body of an intent the gate just refused. Keyed on the
-// INTENT rather than the type because `memory` splits on `sub`.
-//   'spill' — hand the payload back on disk. Reserved for bodies whose value IS
-//             the composition: prose the sender wrote once and cannot regenerate.
-//   'note'  — tell the sender the body is gone, write nothing.
-//   'none'  — say nothing, because nothing was lost.
-// 'note' is the DEFAULT on purpose. Silence about a destroyed payload is the
-// defect this function exists to fix, so it has to be argued for per verb (below,
-// `context` is the single case) rather than inherited by any verb nobody
-// classified — including a plugin verb that gains a greedy body later.
 function deniedBodyDisposition(intent) {
   if (!intent || !intent.body) return { how: 'none', label: null };
   switch (intent.type) {
     case 'dm': case 'shout': case 'remind':
       return { how: 'spill', label: intent.type };
     case 'memory':
-      // `remember` is the only sub with a greedy body; a future one that gained a
-      // body would be reported as lost rather than silently spilled under the
-      // wrong label.
       if (intent.sub === 'remember') return { how: 'spill', label: 'memory remember' };
       return { how: 'note', label: `memory ${intent.sub || ''}`.trim() };
-    // The one verb whose denial makes the body MOOT rather than lost: the
-    // compact/clear/reload did not happen, so the continuation note is still sitting
-    // in the context it was written for, and the post-reset self it addresses does
-    // not exist. Nothing to hand back, and a "your body was not saved" line here
-    // would be a false alarm.
+    // Denial makes the body moot rather than lost: the compact/clear/reload did not happen, so a body-not-saved line would be a false alarm.
     case 'context':
       return { how: 'none', label: null };
-    // exec's body is a JSON args object derived from the same line the sender just
-    // wrote, and it means nothing apart from the command that was refused. Lost, so
-    // it is reported; not composed, so it is not written to disk.
+    // exec's body is derived from the refused command, so it is reported as lost but never spilled to disk.
     default:
       return { how: 'note', label: intent.type };
   }
@@ -854,27 +682,14 @@ function createSessionManager(deps) {
     startTimeOf: streamSeatLib.kernelStartTime,
   };
 
-  // Which memory units are live in each agent's context. Every call site below
-  // is observer-grade, and partial deps objects (tests, the plugin harness)
-  // omit it — so an absent tracker must contribute nothing rather than throw
-  // inside a turn handler. An in-memory-only instance (no logDir, so no recall
-  // log) is the cheapest null object and keeps the read API's shape honest.
   const memLoad = memoryLoad || createMemoryLoad();
   const bundlesFor = (writeBundlePlugins && getPluginBundles) ? getPluginBundles : () => [];
   const writeBundles = (writeBundlePlugins && getPluginBundles) ? writeBundlePlugins : () => [];
-  // Partial deps objects inject composeDigest without its sibling. No tiering
-  // means nothing is recorded as loaded, which is the safe direction of the
-  // asymmetry — never the reverse.
   const tiersOf = digestTiers || (() => null);
 
-  // No-op stand-in for deps objects without an armer; engine.js always builds one and the contextHints pref gates inside it per call, so the draft fold must run regardless.
   const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
 
-  // Same shape, same reason, for the drawer selection. Its stand-in REPORTS the
-  // refusal rather than resolving to a bare success: the renderer prints what
-  // comes back on the operator's status line, and a silent `{armed:false}` would
-  // read as "nothing selected" on a host that simply never built the armer.
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
     release: () => Promise.resolve({ armed: false }),
@@ -883,17 +698,11 @@ function createSessionManager(deps) {
   };
   const selectionArm = selectionArmDep || NO_SELECTION_ARM;
 
-  // Same stand-in shape: a host that built no armer marks nothing, and the
-  // hands-free submit is unaffected.
   const voiceOriginArm = voiceOriginArmDep || { arm: () => false };
 
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
 
-  // A SILENT speaker when none is injected, rather than a bare destructure whose
-  // absence would be swallowed by the try/catch at each call site. Every test
-  // fixture builds this manager without one, and speech is observer-grade: a
-  // host that wires no speaker gets no narration, never a broken session.
   const speaker = deps.speaker || {
     speak: () => false, stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
   };
@@ -901,12 +710,8 @@ function createSessionManager(deps) {
   const claudeHome = deps.claudeHome || (() => path.join(os.homedir(), '.claude'));
 
   const ROSTER_SETTLE_MS = deps.rosterSettleMs || 400;
-  // Settle margin past the boot-ready rising edge, for the pending drain AND the
-  // InjectQueue's ready gate alike. The first mode-2004 (which latches
-  // _bootReadySeen) is Claude ANNOUNCING bracketed-paste during terminal setup —
-  // it can PRECEDE the readline loop actually accepting a submitted Enter, so a
-  // write at the edge lands in a composer the boot re-render then wipes.
-  // Injectable for tests (driven at 0); ~750ms in production.
+  // The first mode-2004 can precede the readline loop accepting Enter, so a write at the
+  // boot-ready edge lands in a composer the boot re-render wipes; ~750ms production settle.
   const BOOT_DRAIN_SETTLE_MS = Number.isFinite(deps.bootDrainSettleMs) ? deps.bootDrainSettleMs : 750;
   const BOOT_NUDGE_MS = Number.isFinite(deps.bootNudgeMs) ? deps.bootNudgeMs : 4000;
   const BOOT_NUDGE_QUIET_MS = Number.isFinite(deps.bootNudgeQuietMs) ? deps.bootNudgeQuietMs : 1000;
@@ -915,34 +720,14 @@ function createSessionManager(deps) {
   const ROSTER_MAX_WAIT_MS = deps.rosterMaxWaitMs || 10000;
   const STREAM_INIT_MS = Number.isFinite(deps.streamInitTimeoutMs) ? deps.streamInitTimeoutMs : STREAM_INIT_TIMEOUT_MS;
 
-  // How long an INJECTED unit has to produce a turn edge before the write is
-  // treated as lost. Not a stall threshold: it measures the FIRST turn after a
-  // write, and a seat that submitted anything at all has already cleared its
-  // latch, so this can never fire on a slow turn however long it runs.
-  //
-  // It lives HERE, not with the ticket verbs, because nothing in its value
-  // derives from the ticket lifecycle — it is a property of the inject/activity
-  // plumbing, and it now has three borrowers with only one of them ticket-shaped
-  // (the spec/redirect latch, the review-start nudge, and the dm latch below).
-  // Derived ONCE and lent to team-tickets.js through the shared bag: two
-  // `Number.isFinite(deps.specConfirmMs)` literals is the duplicated-default
-  // shape that drifts.
-  // Injectable for tests, which drive it LONG and call the checks directly — at
-  // 0 a check races the delivery it is meant to judge and reads a latch the
-  // production ordering never produces. 90s in production.
+  // Tests drive this long and call the checks directly: at 0 a check races the delivery it judges.
   const SPEC_CONFIRM_MS = Number.isFinite(deps.specConfirmMs) ? deps.specConfirmMs : 90 * 1000;
   const TURN_START_WINDOW_MS = Number.isFinite(deps.turnStartWindowMs) ? deps.turnStartWindowMs : 5000;
 
-  // How many outstanding dm units one seat's latch remembers. A bound, not a
-  // tuning: the latch reports rather than acts, so the only cost of a deep FIFO
-  // is memory on a seat nobody is reading. Overflow drops the OLDEST and counts
-  // it — the dropped unit's sender loses its notice, which is one more reason the
-  // broadcast is the load-bearing half of the report and not decoration.
   const DM_LATCH_CAP = Number.isFinite(deps.dmLatchCap) ? deps.dmLatchCap : 8;
 
-  // clodexHome is INJECTED, never left to the store's default: the board now
-  // resolves under it, so a test that repoints REGISTRY_DIR would otherwise read
-  // and write the operator's real ~/.clodex board.
+  // clodexHome is injected, not the store default, so a test repointing REGISTRY_DIR
+  // cannot read or write the operator's real ~/.clodex board.
   const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
 
   class SessionManager {
@@ -950,71 +735,34 @@ function createSessionManager(deps) {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
       this._creating = new Set();
-      this.windows = new Map(); // workspaceId -> window handle (opaque, see header)
-      // The seat the operator is LOOKING at, as last reported by a renderer.
-      // Global rather than per-window on purpose: the external tap has to pick
-      // ONE seat for the whole box, and the last report is the one that moved
-      // most recently — which is the window he is in.
+      this.windows = new Map();
+      // Global, not per-window: the external tap picks one seat for the whole box.
       this._focusedSession = null;
-      // WHICH SEAT HOLDS THE MICROPHONE. One name for the whole box, because
-      // there is one microphone: a seat may arm only if it IS this, so two
-      // seats cannot both hold it by construction. A per-seat "may I arm?"
-      // test cannot express that — a dozen seats each answering locally all
-      // answer yes, which is how the operator's speech reached two composers.
-      //
-      // NOT merged with _focusedSession above, which it tracks by default: an
-      // external tap moves this and deliberately does NOT move that, so after
-      // one tap the two differ, and a later untargeted tap must still route by
-      // the seat he is LOOKING at rather than the one he last named.
       this._micTarget = null;
-      // IS CLODEX THE FRONTMOST APPLICATION?
-      //
-      // Starts FALSE. Before any host has reported, no seat may arm: the
-      // opposite default records the room at launch, which is the failure.
       this._appFocused = false;
-      // Whether any host has EVER reported app focus. Distinct from the flag
-      // itself, which cannot carry it: `false` is both "backgrounded" and "no
-      // host answers this". The headless/browser host never reports — a remote
-      // operator must not arm a recorder attached to the HOST's microphone —
-      // and on that path the tap must not try to raise a window either, since
-      // there is no window to bring forward and the attempt only fans a
-      // `focus-hint` nobody asked for.
+      // Separate from _appFocused, whose false cannot tell backgrounded from no host reporting;
+      // the headless host never reports, so it must neither arm the host mic nor raise a window.
       this._appFocusReported = false;
-      // Box-wide recorder stamp — see noteVoiceRecording. Separate from the
-      // per-seat field of the same name because audio has no seat.
+      // Box-wide, separate from the per-seat field of the same name: audio has no seat.
       this._lastVoiceRecordingTs = 0;
       this._knownDmOrigins = new Set();
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
       this._ticketWatch = new Map();
-      // Ticket ids with a stall probe in flight. The probe is async (git), so
-      // without this two overlapping sweeps both pass the escalation gate and
-      // alarm twice on one stall.
+      // The probe is async (git); without this two overlapping sweeps both pass the gate and alarm twice.
       this._stallProbing = new Set();
       this._movingNames = new Set();
       this._wire = null;
       this._voiceEngine = null;
       this._voiceEnginePending = null;
       this._voiceOp = Promise.resolve();
-      this._shadow = null;     // wire-vs-jsonl intent differ
-      this._wireTelemetry = null; // W2 step-4 dark bridge (wire-telemetry.js)
+      this._shadow = null;
+      this._wireTelemetry = null;
       const { IntentDeduper, ActivityTracker } = require('./wire-intents');
       this._intentDeduper = new IntentDeduper();
       this._activity = new ActivityTracker((name, state, { turnEnd }) => {
         this._emitActivity(name, state, state === 'idle' && turnEnd);
       }, {
-        // activityTs is read as idleMs at four sites, one of which decides
-        // whether a dm is delivered or parked (shouldHoldDm). _emitActivity only
-        // fires on a LABEL CHANGE, so stamping there alone froze the clock for a
-        // seat that keeps working in one state — parking dms at a busy seat.
-        // Stamp from the wire event instead. Two separate properties, one per
-        // mechanism — do not merge them:
-        //   Math.max buys exactly one thing: an out-of-order event cannot drag
-        //   the clock backwards, which would inflate idleMs into the hold band.
-        //   The lastTranscriptWrite restore seed surviving is NOT Math.max's
-        //   doing — it holds because this callback never FIRES for traffic the
-        //   tracker did not count (sideCall, not-in-flight). Weaken those
-        //   filters and the seed goes, with nothing here to catch it.
         onEvent: (name, ts) => {
           const s = this.sessions.get(name);
           if (s) s.activityTs = Math.max(s.activityTs || 0, ts);
@@ -1022,18 +770,8 @@ function createSessionManager(deps) {
       });
     }
 
-
-    // The write goes through atomicWriteFileSync, not fs.writeFileSync. This is
-    // all-time per-session cost history rewritten IN FULL on wire-telemetry's 1s
-    // debounce, and WireTelemetry's constructor swallows a `read` parse error by design — so a
-    // torn write drops the whole ledger with nothing reporting it.
-    //
-    // Two consequences worth stating so neither is rediscovered as a mystery:
-    // `read` uses the INJECTED fs while `write` uses fs-util's own require('fs')
-    // — identical in production, but a future fake-fs fixture would get a
-    // split-brain pair. And the first atomic write tightens the ledger's mode to
-    // 0600 (the temp file is opened that way), where a bare write left it at the
-    // umask default.
+    // atomicWriteFileSync, not writeFileSync: this whole-history ledger is rewritten in full and
+    // WireTelemetry swallows a read parse error, so a torn write silently drops all of it.
     _wireTotalsPersist(totalsPath) {
       return {
         read: () => JSON.parse(fs.readFileSync(totalsPath, 'utf8')),
@@ -1064,12 +802,11 @@ function createSessionManager(deps) {
         try {
           const { HoldKeeper } = require('./wire/hold');
           const { HoldEntryStore } = require('./wire/hold-store');
-          // userData, NOT ~/.clodex/run/<name>/ — that is rm -rf'd on every exit
-          // path, and surviving exactly that is the point of this file.
+          // userData, not ~/.clodex/run/<name>/, which is rm -rf'd on every exit path.
           const entryStore = new HoldEntryStore({
             path: path.join(getUserDataPath(), 'wire-hold-entries.json'),
-            // MESSAGE only. The records carry request bytes and a bearer token;
-            // the shadow log must never gain a line holding either.
+            // Message only: the records carry request bytes and a bearer token,
+            // and the shadow log must never gain a line holding either.
             onError: (message) => this._shadowLog({ type: 'wire-hold-store-error', error: message }),
           });
           hold = new HoldKeeper({
@@ -1086,7 +823,7 @@ function createSessionManager(deps) {
             },
           });
           hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
-          hold.on('hold', (ev) => this._onHoldLifecycle(ev)); // operator-facing subset → clodex.log
+          hold.on('hold', (ev) => this._onHoldLifecycle(ev));
           hold.start();
           this._restorePerpetualHolds(hold);
         } catch (e) {
@@ -1126,27 +863,15 @@ function createSessionManager(deps) {
         onSpillShownError: (message) => this._shadowLog({ type: 'wire-spill-shown-store-error', error: message }),
         spillEnabled: () => getUiSettings().get().intentSpill === 'on',
       });
-      // Account plan quota rides the `anthropic-ratelimit-unified-*` response
-      // headers of every forwarded Claude turn. Header presence IS the gate for
-      // a READING: a codex turn carries none, so a codex seat yields no quota
-      // without anyone filtering by session type.
-      //
-      // The provider check is the second gate, and it covers what the first
-      // cannot: a 429 carries no ratelimit headers from ANY provider, so the
-      // store's 429 branch is reached on status alone and would file a codex
-      // refusal against the Claude org — turning the chip loud for a plan that
-      // was never refused. This wire is multi-provider.
+      // Header presence gates a reading; the provider check gates the 429 path, which carries no
+      // ratelimit headers from any provider and would file a codex refusal against the Claude org.
       wire.on('response', (ev) => {
         if (!ev || !ev.headers) return;
         if (ev.provider !== 'anthropic') return;
         const store = this.quotaStore();
         if (!store) return;
-        // Client bytes first: this event fires before the response head is
-        // written downstream, and the store's write is a synchronous disk sync.
-        // Doing it inline puts that sync on time-to-first-token for every
-        // Claude turn. Nothing here is ordering-sensitive — note() stamps its
-        // own timestamp and the key comes off the seat rather than off arrival
-        // order — so deferring costs no accuracy.
+        // Deferred: the store's write is a synchronous disk sync and this event fires
+        // before the response head goes downstream, so inline it delays time-to-first-token.
         setImmediate(() => {
           try {
             const account = this._accountForWireAgent(ev.agent);
@@ -1222,11 +947,8 @@ function createSessionManager(deps) {
             }
           }
           if (t.sideCall || t.compact || isSubagentRole(t.role)) return;
-          // Plugin turn-text feed. Positioned INSIDE the main-line filter above
-          // deliberately, and NOT gated on stop.is_turn: `turn.completed` fires
-          // per REQUEST (~4.4 per user turn), and gating would drop the text of
-          // every tool-loop hop — the same reason intent extraction below is not
-          // gated on it either.
+          // Inside the main-line filter and not gated on stop.is_turn: turn.completed fires per
+          // request, so gating would drop the text of every tool-loop hop.
           this._publishAgentText({
             session: t.agent, text: t.text, source: 'wire', truncated: t.truncated,
             isTurnEnd: !!(t.stop && t.stop.is_turn), files: t.files, reads: t.reads,
@@ -1241,26 +963,13 @@ function createSessionManager(deps) {
           const s = this.sessions.get(t.agent);
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
           if (s) s._flushTurnEnd = !!(t.stop && t.stop.is_turn);
-          // Already past the side-call / subagent filter above, so this is the
-          // main line's own text. `stop.is_turn` is the wire's truthful
-          // discriminator — the same one ActivityTracker trusts for its
-          // notification-worthy idle.
           this._maybeSpeak(t.agent, t.text, !!(t.stop && t.stop.is_turn));
           if (s && t.stop && t.stop.is_turn) this._maybeDeliverDigest(s, t.sessionId || s.sessionId);
           if (s && s.intentSource === 'wire') {
             if (s.sentinel) s.sentinel.noteWireHealthy();
-            // Per-batch Set: LOAD-BEARING, not a nicety. The deduper allows
-            // wire-after-wire (distinct turns), so two IDENTICAL intents in ONE
-            // turn's text both pass the cross-turn claim — this Set is the only
-            // thing stopping that intra-turn double-fire. Do not "simplify" away.
             const fired = new Set();
             for (const intent of intents) {
               const bkey = shadowIntentKey(t.agent, intent);
-              // exec is EXEMPT from intra-turn dedup: two identical registered-
-              // command calls in one turn are both legitimate emissions (an
-              // idempotent-but-intended retry, or two data packets that serialize
-              // the same), unlike a double-pasted dm. The cross-path claim below
-              // still guards against a tee-failure replay double-running it.
               if (intent.type !== 'exec' && fired.has(bkey)) {
                 log.warn('intent', `intra-turn dup ${intent.type} ${t.agent} — swallowed`);
                 if (ECHOED_DUP_TYPES.has(intent.type)) {
@@ -1288,14 +997,6 @@ function createSessionManager(deps) {
             if (t.sessionId && s.sessionId !== t.sessionId) {
               this._onWireSessionRotated(s, t.agent, t.sessionId);
             }
-            // Deliberately NOT inside the rotation guard above: the re-arm probe
-            // also has to run on the first turn after an app restart, where
-            // nothing rotated and the gate was never closed. Main-line-only is
-            // already guaranteed by the side-call/subagent early return further
-            // up, and it must stay that way: noteRequest is main-line-gated too,
-            // so a hold armed off a side call would have no replayable entry and
-            // holdDecision would skip forever — a state a perpetual hold, which
-            // never self-disarms, cannot get out of.
             this._maybeRearmHold(s, t.agent);
           } else if (s && s.agentType === 'claude') {
             for (const intent of intents) {
@@ -1333,13 +1034,8 @@ function createSessionManager(deps) {
           const s = this.sessions.get(ev.agent);
           if (s && s.intentSource === 'wire' && s.sentinel && !s.sentinel.recovering) {
             s.sentinel.armRecovery((text, touches) => {
-              // Published from the recovery replay too, and this is exactly the
-              // path that makes the feed AT-LEAST-ONCE rather than exactly-once:
-              // the tail replayed here overlaps the handover turn the wire may
-              // already have delivered. Intents survive that overlap through the
-              // content-keyed deduper below; raw text has no such key. Not
-              // publishing here would instead lose text precisely when the wire
-              // produced no receipt, which is the worse failure.
+              // Published here too so the feed is at-least-once: the replayed tail can overlap a turn the
+              // wire already delivered and raw text has no dedup key; skipping loses text when the wire gave no receipt.
               this._publishAgentText({
                 session: ev.agent, text, source: 'jsonl', truncated: false,
                 files: Array.isArray(touches) ? touches : [],
@@ -1396,9 +1092,6 @@ function createSessionManager(deps) {
       return null;
     }
 
-    // Conversations this seat has moved off, oldest first. Bounded: only the
-    // recent past can still have a turn in flight, and a long-lived seat clears
-    // many times. Written at BOTH handover sites.
     _noteSessionLeft(s, sid) {
       if (!sid) return;
       const left = s._leftSessionIds || (s._leftSessionIds = []);
@@ -1407,33 +1100,11 @@ function createSessionManager(deps) {
       if (left.length > 8) left.shift();
     }
 
-    // BACKSTOP path for the same handover onSessionId does. It runs only when the
-    // wire id is the first news of the clear — a wiped transcript symlink, where
-    // the sentinel never fired. On an ordinary clear the symlink beats the wire
-    // and this is normally unreachable — probabilistic, not structural, since a
-    // stalled event loop could let the wire win — so it must not be the only
-    // place the handover lives.
-    //
-    // A /clear mints a new wire sessionId under a live session. The keeper is
-    // keyed on that id, so the old conversation's hold must END here and the
-    // re-arm gate reopen for the new one on the same turn.
+    // Backstop for onSessionId's handover, normally unreachable because the symlink beats the wire;
+    // the handover must not live only here.
     _onWireSessionRotated(s, agent, newSessionId) {
-      // Never rotate BACKWARDS onto a conversation this seat has already left.
-      // The interleaving: the sentinel fires onSessionId(new), the handover there
-      // completes, a main-line turn re-arms the new id — and only THEN does a
-      // turn.completed still in flight from the old conversation land carrying
-      // the old id. The inequality at the call site holds, so without this the
-      // backstop would end the hold that was just handed over and reassign
-      // s.sessionId backwards. Corroboration below cannot be what stops it: it
-      // fails OPEN when realpathSync throws, and a momentarily unresolvable
-      // symlink is exactly what a clear transiently produces.
-      //
-      // "It self-heals on the next main-line turn" is not a defence for this
-      // feature — the seat it exists for is idle by definition, so the next turn
-      // is when the operator comes back, and the seat is cold by then.
-      //
-      // Backstop only. onSessionId is driven by the symlink, which IS the
-      // authority on which conversation is live, so it needs no such guard.
+      // Refuse rotating backwards onto a conversation this seat left: a late old-id turn would end the fresh
+      // hold, and the corroboration below fails open when a clear leaves the symlink transiently unresolvable.
       if (s._leftSessionIds && s._leftSessionIds.includes(newSessionId)) {
         this._shadowLog({ type: 'wire-stale-session', agent, sessionId: newSessionId });
         return;
@@ -1444,18 +1115,8 @@ function createSessionManager(deps) {
       }
       const oldSid = s.sessionId;
       this._noteSessionLeft(s, oldSid);
-      // Before the reassignment, or the old id is unreachable and its hold sits
-      // in _holds forever: holdDecision never disarms a PERPETUAL hold
-      // (`!hold.always` guards both the expired and max-pings branches) and a
-      // dead prefix only ever skips. tick() then re-hashes that conversation's
-      // whole message array — _entries retains the bytes — once a minute, per
-      // /clear, for the life of the app. A timed hold self-heals via the expired
-      // branch, which is why this was invisible before perpetual holds existed.
-      //
-      // endSession's cause is 'session-ended', which _onHoldLifecycle logs
-      // without touching the re-arm gate — the reset below is this path's own
-      // job and must stay here. Routing the handover through the 'failures'
-      // cause instead would reopen the gate twice and muddy which path owns it.
+      // Before the reassignment, or the old id's perpetual hold is unreachable and re-hashes forever;
+      // endSession's 'session-ended' cause leaves the re-arm gate to the reset below.
       if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
       s.sessionId = newSessionId;
       s._holdRearmed = false;
@@ -1463,18 +1124,8 @@ function createSessionManager(deps) {
       this._noteConversationForDigest(s, newSessionId);
     }
 
-    // STARTUP re-arm for PERPETUAL holds — the one mode whose purpose is a seat
-    // nobody is sitting at. _maybeRearmHold below restores the intent on the
-    // seat's next main-line turn, which an idle seat never takes: measured, an
-    // armed `always` hold sat 5.5 hours across a restart without a single ping
-    // while keepWarmAlways was on its record the whole time. This runs off
-    // _ensureWire instead, so no turn is required.
-    //
-    // Only the keeper's own persisted entries can arm here — a hold needs
-    // replayable last-request bytes, which is exactly what a restart loses and
-    // what wire/hold-store.js keeps for perpetual seats alone. The persistence
-    // record is the AUTHORITY on whether a given conversation may still be
-    // pinged, not the source of what to ping.
+    // Startup re-arm for perpetual holds, which an idle seat never gets from _maybeRearmHold (no turn);
+    // persistence only authorises a sessionId, the keeper's stored entries supply the replayable bytes.
     _restorePerpetualHolds(hold) {
       try {
         const perpetual = new Set();
@@ -1484,11 +1135,9 @@ function createSessionManager(deps) {
         }
         const r = hold.restorePerpetual({ accept: (sid) => perpetual.has(sid) });
         if (r.restored || r.declined || r.dropped) {
-          // Counts only — a name or an id here would be the first step toward a
-          // log line that carries what was replayed.
+          // Counts only: a name or id here would start logging what was replayed.
           log.info('keepwarm', `restored ${r.restored} perpetual hold(s) at startup ` +
-            // "declined" without a cause: the count also covers warmth-store
-            // errors, which are deliberately NOT treated as a cold prefix.
+            // 'declined' carries no cause: the count also covers warmth-store errors, which are not a cold prefix.
             `(${r.declined} declined, ${r.dropped} no longer armed)`);
         }
       } catch (e) {
@@ -1496,22 +1145,18 @@ function createSessionManager(deps) {
       }
     }
 
-    // Restore a persisted keep-warm intent onto the session's CURRENT wire id.
-    // Retried every main-line turn until it lands rather than latched once per
-    // spawn: arm() is warm-gated, so a first-turn decline would otherwise lose
-    // the hold silently.
+    // Retried every main-line turn until an arm lands, not latched once per spawn:
+    // arm() is warm-gated, so a first-turn decline would otherwise lose the hold silently.
     _maybeRearmHold(s, agent) {
       if (!this._holdKeeper || s._holdRearmed) return;
       try {
-        // Required here, not at module top: wire/* is loaded lazily by
-        // _ensureWire so a wire-less host never pulls it in. The keeper guard
-        // above means _ensureWire has already run, and require is cached.
+        // Required here, not at module top: wire/* loads lazily so a wire-less host never pulls it in.
         const { rearmPlan } = require('./wire/hold');
         const p = getPersistence();
         const rec = p.list().find((x) => x.name === agent);
         const plan = rearmPlan(rec && rec.holdUntil, Date.now(), !!(rec && rec.keepWarmAlways));
         if (!plan) {
-          s._holdRearmed = true; // nothing persisted — stop re-checking this spawn
+          s._holdRearmed = true;
         } else if (plan.clear) {
           p.setHoldUntil(agent, null);
           s._holdRearmed = true;
@@ -1520,14 +1165,12 @@ function createSessionManager(deps) {
           const r = plan.always
             ? this._holdKeeper.arm(s.sessionId, 0, { always: true })
             : this._holdKeeper.arm(s.sessionId, plan.hours);
-          // A perpetual re-arm has no `until` to write back; the seat flag
-          // in persistence is already the whole truth for it.
           if (r && r.armed && (r.always || r.until)) {
             s._holdRearmed = true;
             if (r.always) {
               log.info('keepwarm', `re-armed ${agent} perpetually (seat property)`);
             } else {
-              p.setHoldUntil(agent, Math.round(r.until * 1000)); // clamped truth
+              p.setHoldUntil(agent, Math.round(r.until * 1000)); // the keeper's clamped deadline, not plan.hours
               log.info('keepwarm', `re-armed ${agent} ${plan.hours.toFixed(2)}h remaining ` +
                 `until ${new Date(r.until * 1000).toISOString()}`);
             }
@@ -1549,22 +1192,8 @@ function createSessionManager(deps) {
         if (ev.event === 'disarmed') {
           if (ev.cause === 'off') return;
           const name = this._nameForWireSession(ev.session);
-          // A failure disarm is PROVISIONAL: it stops the LIVE hold and writes
-          // nothing. No ping failure — credential-shaped or not — may
-          // erase a persisted keep-warm intent, because a rejected replay is not
-          // evidence about what the operator asked for. The CLI owns the OAuth
-          // file and refreshes it on its next real turn, so an overnight 401 is
-          // transient (measured recovery: ~12 minutes) while the erase was
-          // permanent and silent. A `holdUntil` deadline is not cleared here
-          // either — it expires by TIME, and rearmPlan's lapse branch notices that.
-          //
-          // Reopening the gate is what makes the surviving flag mean anything:
-          // _maybeRearmHold latches _holdRearmed once an arm lands, so without
-          // this the intent would sit in sessions.json un-restored until the next
-          // /clear or app restart. Only 'failures' reopens it: 'off' returned
-          // above, 'expired'/'max-pings' are terminal for the timed holds that
-          // can reach them, and 'session-ended' already resets the gate on the
-          // rotation path that emits it.
+          // A failure disarm stops the live hold but never erases the persisted intent: the CLI refreshes its
+          // OAuth on its next turn, so an overnight 401 is transient (~12 minutes) and a rejected replay proves nothing.
           if (ev.cause === 'failures' && name) {
             const s = this.sessions.get(name);
             if (s) s._holdRearmed = false;
@@ -1600,9 +1229,6 @@ function createSessionManager(deps) {
 
     unregisterWindow(workspaceId) {
       this.windows.delete(workspaceId);
-      // Stops whatever is playing, from any seat in any workspace: the speaker
-      // is box-wide and cannot attribute an utterance to a session. Sessions
-      // survive a window close by design, so nothing else on this path would.
       try { speaker.stop(); } catch {}
     }
 
@@ -1632,23 +1258,14 @@ function createSessionManager(deps) {
       return out;
     }
 
-    // Account plan quota read off our own wire's response headers.
-    //
-    // Built on FIRST USE rather than in `_ensureWire`, and that is load-bearing
-    // for the restored reading: `_ensureWire` runs when the first wire-routed
-    // session spawns, which on a cold launch is AFTER the window asks for the
-    // quota it should already be able to show. Constructing here lets the
-    // startup read restore from disk with no wire and no session.
     quotaStore() {
       if (this._quotaStore !== undefined) return this._quotaStore;
       try {
         const { QuotaStore } = require('./wire/quota');
         this._quotaStore = new QuotaStore({
-          // userData, NOT ~/.clodex/run/<name>/ — that is rm -rf'd on every exit
-          // path, and surviving exactly that is the point of this file.
+          // userData, not run/<name>/, which is removed on every exit path.
           path: path.join(getUserDataPath(), 'wire-quota.sqlite'),
-          // MESSAGE only: these headers arrive on the same response as an
-          // authorization header, so nothing here hands the log an object.
+          // Message string only: these headers ride the same response as an authorization header, so never log an object.
           onError: (message) => this._shadowLog({ type: 'wire-quota-store-error', error: message }),
         });
       } catch (e) {
@@ -1664,11 +1281,6 @@ function createSessionManager(deps) {
       return { accounts: store.snapshotAll(), latest };
     }
 
-    // The plan quota is the ACCOUNT's, so it goes out on its own channel to
-    // every window rather than riding a per-session payload. Deliberately NOT folded
-    // into the wirescope poller's `session-proxy`: that poller returns early
-    // when no session has a wirescope base, which would make the wire source —
-    // the one that needs no external service — depend on one existing.
     _broadcastQuota() {
       const store = this.quotaStore();
       if (!store) return;
@@ -1805,13 +1417,8 @@ function createSessionManager(deps) {
       }
 
       let proxyBase = resolveProxyBase(proxy, getUiSettings());
-      // Wire-off: the seat's whole point is that ANTHROPIC_BASE_URL is
-      // never set for it — Anthropic's remote access refuses to attach when it
-      // is. Nulling proxyBase here is not a second switch: setupClaudeHook falls
-      // back to proxyBase whenever wireBase is absent, so skipping only the wire
-      // registration below would re-set the variable through the external proxy
-      // and defeat the flag entirely. Same reason the tee-blind case just below
-      // nulls it.
+      // Nulling proxyBase is the wire-off switch itself: setupClaudeHook falls back to proxyBase when wireBase is
+      // absent, so skipping only the wire registration would still set ANTHROPIC_BASE_URL through the external proxy.
       const wireOff = noWire === true;
       if (wireOff) proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
@@ -1833,9 +1440,6 @@ function createSessionManager(deps) {
       let intentSource = 'jsonl';
       let wireRouted = false;
       let spillArmedForRecord = false;
-      // Claude-arm only; stays null for codex/bash, which have no baked prompt
-      // and so no refresh path. Stashed on the session below so refreshPrompt()
-      // replays the SAME inputs (see _realIpcFor).
       let promptRecipe = null;
       const backend = agentType === 'claude' ? teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: mergedEnv })) : null;
       if (backend && proxyBase) {
@@ -1848,28 +1452,15 @@ function createSessionManager(deps) {
         const taken = new Set();
         for (const e of getPersistence().list()) if (e.proxyAgent) taken.add(e.proxyAgent);
         for (const s of this.sessions.values()) if (s.proxyAgent) taken.add(s.proxyAgent);
-        // The wire label, not the seat name, is what the id is minted FROM when
-        // the spawn path seeded one. A seat name outlives its ticket — it is
-        // recycled, retired, renamed — so spend keyed by it cannot be rolled up
-        // per ticket after the fact.
-        //
-        // Only the EXTERNAL proxy id carries this. The in-process wire's
-        // registerAgent() keeps taking the bare name: `t.agent` is a sessions-map
-        // key at ~10 call sites and wire-telemetry prunes against that map, so a
-        // divergent label there would silently drop every telemetry record.
+        // The external proxy id is minted from the wire label, not the seat name, which is recycled and renamed.
+        // registerAgent keeps the bare name: `t.agent` is a sessions-map key and wire-telemetry prunes against it.
         const existingEntry = getPersistence().get(name);
         const labelFrom = (existingEntry && existingEntry.wireLabel) || name;
         proxyAgent = resolveProxyAgentId({ name: labelFrom, fork, existing: existingEntry, taken });
       }
 
-      // CLODEX_SPAWNER_HINT=off|on — suppress (or force) wirescope's [wirescope]
-      // spawn-directive block for this seat's ROUTE. Fired here, before the PTY
-      // spawn, because the block rides inside the marked system prefix and
-      // carries the last system cache marker: a flip after the seat's first turn
-      // reshapes that prefix and costs a warm bust.
-      // Strict match, not a parser: this sits on an authority-adjacent path. The
-      // likely typos ('0', 'OFF', ' off') would otherwise fail silently, their only
-      // symptom a block reappearing in a prompt nobody reads — hence the warn.
+      // Fired before the PTY spawn: the hint rides the marked system prefix, so a flip after the first turn busts the cache.
+      // Strict match on purpose: a lenient parser would hide typos like 'OFF' behind a block that silently reappears.
       const hintWant = mergedEnv.CLODEX_SPAWNER_HINT;
       const hintValid = hintWant === 'off' || hintWant === 'on';
       let spawnerHintSet = false;
@@ -1885,9 +1476,8 @@ function createSessionManager(deps) {
         log.warn('session', `spawner-hint: CLODEX_SPAWNER_HINT=${JSON.stringify(hintWant)} not recognized (expected "off" or "on") — no hint set for ${name}`);
       }
 
-      // The POST above lands before the session exists, so kill() cannot clear it
-      // if create() throws on the way to sessions.set — the route would keep a row
-      // in a TTL-less table forever.
+      // The hint POST lands before the session exists, so kill() cannot clear it when create throws before sessions.set;
+      // the route would otherwise keep the row forever in a table with no TTL.
       const abandonHint = () => {
         if (!spawnerHintSet) return;
         try {
@@ -1895,33 +1485,10 @@ function createSessionManager(deps) {
         } catch {}
       };
 
-      // createdAt: stamped ONCE, at the session's first create. kill()+recreate
-      // (restart/restore) rebuilds the record from spawn args, so preserve any
-      // existing stamp rather than resetting it — the sidebar's "created" sort/
-      // group depends on it being stable across restarts.
-      // This read is only HALF the invariant: the restore-on-launch path keeps
-      // the record, so existingEntry carries the stamp — but every kill()-based
-      // restart REMOVES the record first, so existingEntry is null here and the
-      // `|| Date.now()` re-mints. The restart callers must therefore re-seed
-      // createdAt via _preserveAcrossRestart (engine.restartSession /
-      // applySessionArgs, and the [agent:context reload] respawn) BEFORE reaching
-      // this line — do not "tidy" the field out of those lists.
-      //
-      // Computed HERE, above the upsert that consumes it, because the claude arm
-      // bakes it into the generated pending-drain hook (setupClaudeHook) and the
-      // hook is written before the spawn. The one expression must stay single:
-      // recomputing `(existing && existing.createdAt) || Date.now()` down in hook
-      // setup would be a second copy that drifts the first time either is
-      // touched. Nothing between here and the upsert writes persistence.
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
       const { teamBlock, teamName, resolvedTeam, missingPrompt } = this._teamBlockFor(name, cwd, agentType, systemPromptFile);
-      // The GUI's relay of the one rule. `warnings` already rides the create()
-      // return into a renderer toast, so the operator who spawned this seat is
-      // told on the channel they are looking at. The intent callers read
-      // `missingPrompt` off the return instead and append it to their own reply —
-      // a toast is not visible to the agent that asked for the spawn.
       if (missingPrompt) warnings.push(missingPrompt);
 
       const librarySkills = [];
@@ -1954,12 +1521,8 @@ function createSessionManager(deps) {
             execCommands,
             spillArmed: spillVerbs.length > 0,
             spillExamples: existingEntry && existingEntry.ephemeral === true ? 1 : 2,
-            // Captured at spawn, exactly like `intents` beside it — refreshPrompt
-            // REPLAYS this object, so a member that re-read persistence would
-            // make clear/compact stage a delta the spawn never baked. A
-            // grant edited live therefore reaches the prompt on the seat's next
-            // respawn, which is the same deal the intent checklist already
-            // offers; the fire-time gate is what applies immediately.
+            // Captured at spawn like `intents`: refreshPrompt replays this object, so a member re-reading persistence
+            // would make clear/compact stage a delta the spawn never baked.
             pluginGrants: (existingEntry && existingEntry.pluginGrants) || null,
             plugins: Array.isArray(plugins) ? plugins : null,
             appendPromptFiles,
@@ -1967,18 +1530,13 @@ function createSessionManager(deps) {
             hasSystemFile: !!sysFile,
             ipcDisabled: mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1',
           };
-          // ONE call, both outputs. Not two calls at their respective use sites:
-          // readAppendBodies hits the disk, so a second call could legitimately
-          // read different bytes and put `args` and the baked prompt out of sync.
           const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam, name);
           args = cleaned;
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
           if (staleSettings !== -1) args.splice(staleSettings, 2);
-          // Register the agent with the in-process wire BEFORE the PTY exists
-          // (spawn-bound identity), chaining to the external proxy when one is
-          // set. A wire failure falls back to the normal path: a tee must never
-          // block a session from starting.
+          // Register with the in-process wire before the PTY exists (identity is spawn-bound), chaining to the external proxy.
+          // A wire failure falls back to the normal path: a tee must never block a session from starting.
           let wireBase = null;
           if (WIRE_SHADOW && !wireOff) {
             try {
@@ -2003,22 +1561,13 @@ function createSessionManager(deps) {
           }
           wireRouted = !!wireBase;
           if (wireBase && WIRE_INTENTS_LIVE) {
-            // A Bedrock/Vertex-backed session ignores the ANTHROPIC_BASE_URL our
-            // hook injects and routes straight to AWS/GCP, so its bytes never
-            // traverse the wire tee — turn.completed never fires and the wire
-            // intent scanner (plus its activity dot + touched-files) goes dark.
-            // Keep the wire registration (Bedrock just ignores it, harmless) but
-            // take intents from the JsonlWatcher, which reads the transcript
-            // regardless of backend. That lands the session in the already-
-            // supported wireRouted && intentSource==='jsonl' state (same as codex
-            // / a wire-failed spawn) — no new code path.
+            // Bedrock/Vertex seats route straight to AWS/GCP and ignore the injected ANTHROPIC_BASE_URL, so the wire tee never sees
+            // turn.completed; keep the registration but take intents from the JsonlWatcher, which reads the transcript.
             if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
             else intentSource = 'wire';
           }
-          // Whether OUR hooks are installed at all. A user-supplied --settings in
-          // extraArgs replaces the whole hooks block, so ipcdelta.sh (and every
-          // other drain) is absent for that session — which is load-bearing for
-          // the frozen prompt below, not just cosmetic.
+          // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
+          // for that seat, which the frozen-prompt decision below depends on.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
             if (Array.isArray(disabledSkills) && disabledSkills.includes('*')
@@ -2053,11 +1602,8 @@ function createSessionManager(deps) {
               });
             }
           }
-          // Both overlays ride --plugin-dir but gate on DIFFERENT flags: a
-          // user-supplied plugin dir replaces the skills scaffold by intent,
-          // yet cannot express the agent library, so it must not drop it.
-          // Sampled BEFORE the agents block pushes its own, or the skills gate
-          // reads our push as the user's and drops every injected skill.
+          // Sample before the agents block pushes its own --plugin-dir, or the skills gate reads our push as the user's
+          // and drops every injected skill; a user plugin dir replaces the skills scaffold but must not drop the agent library.
           const userPluginDir = args.includes('--plugin-dir');
           const agentRecords = effectiveInjectedAgents(name, agents);
           const injectedAgents = [];
@@ -2085,8 +1631,6 @@ function createSessionManager(deps) {
           } else {
             cleanupSkills('claude', name);
           }
-          // The CLI's own warning for three of these goes to a log the
-          // operator doesn't read, and initialPrompt gets none at all.
           for (const rec of injectedAgents) {
             const dropped = DROPPED_AGENT_FIELDS.filter((f) => (rec.meta || {})[f]);
             if (dropped.length) {
@@ -2096,9 +1640,8 @@ function createSessionManager(deps) {
           try {
             if (injectedSkills.length) {
               const deny = Array.isArray(denyBuiltins) ? denyBuiltins : [];
-              // Every injected agent matches by QUALIFIED name — a skill saying
-              // `subagent_type: "test-runner"` does not dispatch even with
-              // test-runner enabled. Built-ins keep bare names.
+              // Injected agents match by qualified name only (a skill naming a bare `test-runner` does not dispatch);
+              // built-ins keep bare names.
               const enabled = new Set([
                 ...injectedAgents.map((a) => a.qualified),
                 ...BUILTIN_AGENTS.filter((b) => !deny.includes(b)),
@@ -2122,22 +1665,8 @@ function createSessionManager(deps) {
             args.push('--system-prompt-file', sysFile);
           }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-          // FREEZE on resume (see ipc-prompt-cache.js). create() runs on
-          // restore-with---resume too, so writing `realIpc` unconditionally here
-          // changed the system prompt under continuing conversations and cost
-          // 111k-139k tokens a time. A resume re-bakes the bytes this conversation
-          // was BORN with and stages any change as a diff for the ipcdelta drain.
-          //
-          // Three conditions:
-          //   resumeId    — there is a conversation to protect at all.
-          //   !mint       — a MINT regenerates even when it carries a resumeId (an
-          //                 "adopt"), because reusing a same-named dead session's
-          //                 frozen bytes would bake a stranger's prompt.
-          //   hookInstalled — no freeze without a channel. A user --settings means
-          //                 ipcdelta.sh was never installed, so a staged delta can
-          //                 never be delivered; freezing there is permanent silent
-          //                 staleness, strictly worse than the rewrite this module
-          //                 exists to avoid.
+          // Freeze on resume only with resumeId, !mint and hookInstalled: a mint must regenerate (a dead namesake's frozen bytes are
+          // a stranger's prompt), and without ipcdelta.sh a staged delta is never delivered, so freezing is permanent staleness.
           if (resumeId && !mint && !hookInstalled) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
@@ -2145,20 +1674,8 @@ function createSessionManager(deps) {
           const freeze = reuse && !freshBake;
           const baked = bakePrompt(REGISTRY_DIR, name, realIpc, freeze,
             { snapshot: freeze ? this._snapshotBlockFor(name, cwd, accountDir, resumeId) : null });
-          // First producer on the notice queue (notice-queue.js).
-          //
-          // Per-session HERE rather than a fan-out at app startup: a fan-out
-          // only reaches sessions that exist when it runs, so a seat archived
-          // now and unarchived in three weeks would learn nothing.
-          //
-          // A record with no version at all yields no notice: versionNoticeFor
-          // needs both sides, and inventing a floor would announce an upgrade we
-          // cannot describe.
-          //
-          // The else is the boundary side. The producer guard above is not enough
-          // on its own: it sits on the producer while an undrained notice sits
-          // on the consumer, so a mint would still be DELIVERED whatever the
-          // dead namesake enqueued before it died.
+          // Enqueue per session here, not in a startup fan-out (a seat unarchived weeks later would learn nothing);
+          // the else clears so a mint never delivers the undrained notice of a dead namesake.
           try {
             if (reuse) {
               const notice = versionNoticeFor(existingEntry && existingEntry.appVersion, appVersion);
@@ -2167,11 +1684,8 @@ function createSessionManager(deps) {
               clearNotices(REGISTRY_DIR, name);
             }
           } catch { /* an advisory must never block a spawn */ }
-          // Link + dir so the write never depends on hook-setup ordering having
-          // run first: both are side effects of setupClaudeHook, which is SKIPPED
-          // when the caller supplies its own --settings, so without them a
-          // --settings session ENOENTs here and is exempt from the seat layout
-          // forever (ensureSeatLink never adopts a real legacy dir).
+          // Link and dir are made here because setupClaudeHook, which normally makes them, is skipped for a user --settings;
+          // without them the write ENOENTs and the seat is exempt from the seat layout (ensureSeatLink never adopts a real legacy dir).
           ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, baked, { mode: 0o600 });
@@ -2312,18 +1826,8 @@ function createSessionManager(deps) {
           args = [...extraArgs];
       }
 
-      // Applied AFTER the scope merge, in env-scopes.js's app-owned-key slot:
-      // these override any value an env scope set, deliberately. CLODEX_HOME
-      // belongs here because a seat that runs scripts/task-ledger.js or
-      // clodex-team.js from its own shell must land on the same tree as the
-      // exec route already does — a scope-set value would resurrect exactly the
-      // split those pins closed.
-      // FORCE_HYPERLINK: a CLI that gates OSC 8 emission on a TERM_PROGRAM
-      // allowlist reads it from OUR process env, so its hyperlinks would appear
-      // when Clodex is launched from a terminal and vanish when launched from
-      // Finder. Forcing it removes that inheritance. Click-to-open does NOT
-      // depend on this — it scans rendered text (renderer.js, registerLinkProvider)
-      // precisely because the Claude CLI is not observed to emit OSC 8 either way.
+      // App-owned keys applied after the scope merge override env scopes: CLODEX_HOME must match the tree the exec route uses,
+      // and FORCE_HYPERLINK removes inheritance of how Clodex was launched (terminal vs Finder); link clicks scan rendered text.
       const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
@@ -2379,19 +1883,11 @@ function createSessionManager(deps) {
         ensureDir(runDirFor(REGISTRY_DIR, name));
         socketPath = pathFor(REGISTRY_DIR, name, 'socket');
 
-        // Probe the blocking record's socket BEFORE binding: Transport.start()
-        // unlinks socketPath (which is name-derived, so it is the SAME path a live
-        // blocker listens on) before it listens, so any probe made after the bind
-        // answers "live" unconditionally — for a ghost exactly as for a real agent.
-        // The registry records a bare pid, and after an unclean shutdown the OS
-        // recycles it, so isAlive() alone reports a stranger's process as our agent
-        // and wedges the name. Best-effort: an unreadable record leaves this null and
-        // the EEXIST branch falls back to the pid-only verdict it always had.
+        // Probe before binding: Transport.start() unlinks the name-derived socketPath, so a probe after the bind reports live even
+        // for a ghost whose recycled pid isAlive() would otherwise wedge the name; a null verdict keeps the pid-only check.
         let blockerLive = null;
-        // The exact bytes the verdict describes. The probe awaits, so another
-        // actor can replace the record while we are dialing; a verdict about the
-        // record we READ must not be applied to a different record we find later
-        // (that is how `blockerLive === false` would force-clean a live agent).
+        // The verdict describes these bytes only: the probe awaits, so a record replaced meanwhile must not inherit it
+        // (else `blockerLive === false` force-cleans a live agent).
         let blockerRaw = null;
         try {
           blockerRaw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'registry'), 'utf-8');
@@ -2401,13 +1897,8 @@ function createSessionManager(deps) {
           }
         } catch {}
 
-        // Register FIRST, bind SECOND. socketPath is name-derived, so it is the very
-        // path a blocking agent is listening on: Transport.start() unlinks it as its
-        // first statement, and force-cleaning a stale record unlinks existing.socket —
-        // either one, done after our own bind, pulls the inode out from under a live
-        // net.Server, which then keeps listening with no error and no event and is
-        // permanently unreachable. With this order every unlink happens while nothing
-        // of ours is listening, and a refusal returns having touched nothing.
+        // Register first, bind second: Transport.start() and a force-clean both unlink the name-derived socket, and doing so after
+        // our own bind pulls the inode from under a live net.Server that keeps listening, unreachable.
         try {
           registry.register(name, socketPath, cwd);
         } catch (e) {
@@ -2419,16 +1910,8 @@ function createSessionManager(deps) {
             existing = JSON.parse(existingRaw) || {};
           } catch {}
           if (existingRaw !== blockerRaw) blockerLive = null;
-        // The pre-bind probe OVERRIDES isStaleRegistration: proven-not-live wins even
-        // when the pid check says "live, and not ours", because that check answers
-        // from the pid alone. blockerLive === null means no answer, so the pid-only
-        // verdict stands. A proven-LIVE socket also vetoes the own-pid clause: two
-        // concurrent creates of one name both pass the sessions.has() check at the top
-        // of create() (the map is not written until past the bind), and without the
-        // veto the second would unlink the first's socket and rebind, leaving a live
-        // server on a detached inode. This does not re-wedge the deterministic-pid
-        // Docker case: a listening server belongs to the ENGINE, so "our pid AND
-        // something is listening" can only mean this process is bound to that name.
+        // Proven-not-live overrides isStaleRegistration (null keeps the pid verdict); proven-live vetoes the own-pid clause, since
+        // two concurrent creates both pass sessions.has() before the map is written and the second would rebind over the first.
           if (blockerLive === false || (blockerLive !== true && isStaleRegistration(existing.pid, process.pid, isAlive))) {
             registry.unregister(name);
             try { fs.unlinkSync(existing.socket); } catch {}
@@ -2471,82 +1954,43 @@ function createSessionManager(deps) {
         forked: !!fork,
         workspaceId,
         proxyAgent, proxyBase,
-        // Recorded from the POST actually made, not re-read in kill(): the env
-        // can change under a live seat, and a clear driven by the new value
-        // would either leak a row or clear one this seat never set.
+        // Recorded from the POST actually made, not re-read in kill(): env can change under a live seat, and a clear
+        // driven by the new value would leak a row or clear one this seat never set.
         spawnerHintSet,
-        // Ticket-replay incarnation key. Minted here and NEVER persisted, so that
-        // its absence from a resumed record is itself the signal that this process
-        // has not been handed its open tickets' specs (_replayOpenTickets).
-        // `sessionId` cannot serve — it is assigned from `resumeId` above, so
-        // a --resume carries the SAME id, which is exactly the case that loses a
-        // delivery.
-        //
-        // pid + ms + counter because this is the only value in create() that must
-        // be unique ACROSS processes: a fresh process colliding with its
-        // predecessor's key would read its own tickets as already delivered and
-        // replay nothing.
+        // Never persisted: its absence from a resumed record is the signal that this process was not handed its open tickets'
+        // specs (_replayOpenTickets); sessionId cannot serve because --resume carries the same id.
         incarnation: nextIncarnation(),
-        // The tri-state as REQUESTED (false=off, string=explicit, null=follow the
-        // pref), kept alongside the base it resolved to: _armCtx has to re-resolve
-        // per draft, and the base alone cannot say whether an explicit route or a
-        // pref that has since been unticked produced it.
-        // NOT named `proxy`: `_handleSpawnIntent` and `_handleTeamReview` read
-        // `spawner.proxy ?? null` / `session.proxy ?? null` off the live session,
-        // which have always resolved to null (the field lived only in the
-        // persistence record). Naming it `proxy` here silently makes a child
-        // inherit its spawner's route — a real decision, but not this one.
+        // Not named `proxy`: _handleSpawnIntent and _handleTeamReview read `.proxy ?? null` off the live session and expect null,
+        // so naming it proxy would make a child silently inherit its spawner's route.
         proxyRequested: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         intentSource, wireRouted, backend, noWire: wireOff, sentinel: null,
         ...(fixHost ? { fixFor: fixHost } : {}),
         fileTouches: [],
         filedRing: this._seedFiledRing(name),
-        // Called defensively because this runs AFTER the agent socket is bound:
-        // an observer dep that is merely absent must degrade to "no feed" (which
-        // `_noteSubagentTurn` already handles), never throw out of create() and
-        // strand a listening socket.
+        // Defensive because this runs after the agent socket is bound: an absent observer dep must degrade to no feed,
+        // never throw out of create() and strand a listening socket.
         subagentStore: createSubagentStore ? createSubagentStore() : null,
-        // Peer-visibility facts ([agent:who] labels, dm hold gate): state from
-        // _emitActivity (transition-deduped), timestamp from every counted wire
-        // event (the ActivityTracker onEvent seam). Restores seed from the resumed
-        // transcript's mtime (= last real turn) — seeding "now" would make every
-        // GUI restart reset idle clocks, mislabeling long-cold peers as fresh
-        // and letting DMs to them past the hold gate for 30 minutes.
+        // Restores seed from the resumed transcript's mtime (the last real turn): seeding now would reset idle clocks on every GUI
+        // restart and let DMs to long-cold peers past the hold gate for 30 minutes.
         activityState: 'idle',
-        // Math.min clamps a FUTURE mtime (NFS, rsync -t, a clock step). It used
-        // to self-correct on the next transition, which assigned Date.now(); the
-        // clock is monotonic now, so a future seed would stick forever, keep
-        // idleMs negative, and make `idleMs < DM_HOLD_IDLE_MS` trivially true —
-        // that seat could never be held again.
+        // Math.min clamps a future mtime (NFS, rsync -t, clock step): a future seed would stick, keep idleMs negative,
+        // and make `idleMs < DM_HOLD_IDLE_MS` always true, so the seat could never be held.
         activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(), Date.now()),
         needsAttention: null,
-        // Auto-compact atPrompt seed. A freshly spawned or resumed CLI is by
-        // definition parked at its input prompt — permission dialogs don't
-        // survive PTY death. Without this seed, a GUI restart wipes the
-        // in-memory turn.completed stamp and an idle restored session can NEVER
-        // pass the atPrompt guard (its next turn would re-warm the cache,
-        // mooting the compact). Invalidated on any keystroke (write()) or turn
-        // start (_emitActivity) — only a fresh terminal wire receipt re-proves
-        // the prompt after that. Unproxied sessions are still blocked by the
-        // payload.linked guard, so seeding unconditionally is safe.
+        // A spawned or resumed CLI is parked at its prompt; without this seed a GUI restart wipes the turn.completed stamp
+        // and an idle restored seat can never pass the auto-compact atPrompt guard.
         lastMainStop: { isTurn: true, ts: Date.now(), seeded: true },
         lastSubmitInjected: false,
         bootResumeId: resumeId || null,
         promptRecipe,
-        // Recompute rather than re-write: setupClaudeHook already wrote the
-        // digest file pre-spawn, and rewriting here would race the CLI's
-        // SessionStart hook cat-ing it (writeFileSync isn't atomic).
+        // Recompute, do not re-write: setupClaudeHook already wrote the digest file pre-spawn, and a rewrite here
+        // would race the SessionStart hook cat-ing it (writeFileSync is not atomic).
         digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
 
-      // Which units this spawn's digest actually puts in context. Recomposed
-      // here rather than reported from writeClaudeDigestFile: the hook cats the
-      // digest only for source=startup|clear|compact (see the script in
-      // cli-hooks.js), so a RESUMED session receives none — the bake happens
-      // either way, and recording it would claim FULL for units the model never
-      // saw. That is the suppressing direction of the asymmetry, so a resume
-      // records nothing and the units stay ABSENT.
+      // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
+      // recording it would claim FULL for units the model never saw, hence a resume records nothing.
       if (agentType === 'claude' && !resumeId) {
         try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
       }
@@ -2555,16 +1999,8 @@ function createSessionManager(deps) {
         name, type, cwd,
         extraArgs,
         createdAt,
-        // The version this seat is running under AS OF THIS SPAWN — the baseline
-        // the next spawn compares against to decide whether it owes a "Clodex was
-        // upgraded" notice (notice-queue.js). Written for every type, not just
-        // claude: a value that is only sometimes present is a baseline whose
-        // absence means two different things.
-        //
-        // Unconditional, and it must stay so. This is the ADVANCE half of an
-        // edge-triggered comparison: the read above happens before this line,
-        // so omitting the write on any path leaves the old version on the
-        // record and every subsequent resume re-enqueues the same notice.
+        // Written unconditionally: this is the advance half of the upgrade-notice comparison, and omitting it on any path
+        // leaves the old version so every later resume re-enqueues the same notice.
         appVersion,
         sessionId: resumeId || null,
         workspaceId,
@@ -2573,20 +2009,12 @@ function createSessionManager(deps) {
         appendPromptFiles: Array.isArray(appendPromptFiles) ? appendPromptFiles : [],
         proxy: typeof proxy === 'string' ? normalizeProxyBase(proxy) : (proxy === false ? false : null),
         proxyAgent,
-        // Written UNCONDITIONALLY, including the `false` that looks redundant on a
-        // fresh record: upsert spread-MERGES (stores.js), so omitting it on the
-        // no-hint path leaves a stale `true` from an earlier spawn, and the
-        // record-dropping exits below would then clear a row this seat never set.
-        // The live path reads the session flag; only the exits that run without a
-        // session (forget, reviewer sweep) need it here.
+        // Written unconditionally, even `false`: upsert spread-merges (stores.js), so omitting it leaves a stale `true` and the
+        // exits that drop the record without a session (forget, reviewer sweep) would clear a row this seat never set.
         spawnerHintSet,
         agents: Array.isArray(agents) ? agents : [],
-        // Written UNCONDITIONALLY like spawnerHintSet above, for the same reason:
-        // upsert spread-MERGES, so omitting `false` leaves a stale `true` from an
-        // earlier spawn and the seat silently stays wire-off after being turned
-        // back on. Absence and false mean the same thing here (unlike `intents`,
-        // whose absence is a distinct living default), so there is nothing to lose
-        // by writing the boolean every time.
+        // Written unconditionally like spawnerHintSet: upsert spread-merges, so omitting `false` leaves a stale `true`
+        // and the seat silently stays wire-off after being turned back on.
         noWire: wireOff,
         intentSpill: spillArmedForRecord && wireRouted,
         io: streamIo ? 'stream' : 'pty',
@@ -2598,28 +2026,14 @@ function createSessionManager(deps) {
         ...(Array.isArray(shellDeny) ? { shellDeny } : {}),
         disabledSkills: Array.isArray(disabledSkills) ? disabledSkills : [],
         injectSkills: Array.isArray(injectSkills) ? injectSkills : [],
-        // Intent-gate allowlist is spawn-time config (it bakes into the append
-        // blob — see buildIpcPrompt in the claude/codex arms), so it's a create()
-        // param persisted by create()'s OWN upsert, not a post-create seed. That's
-        // what makes it survive kill()+recreate restarts, which drop the record and
-        // rebuild it from spawn args only (stripLevel's re-assert comment documents
-        // that hole). Conditional: an ABSENT list (all-enabled default) must stay
-        // absent — never freeze `intents: null` onto the record — while `[]`
-        // (everything gated) is a real value that persists.
+        // Persisted by create's own upsert so it survives kill()+recreate, which rebuilds the record from spawn args only;
+        // an absent list must stay absent (never freeze `intents: null`) while `[]` is a real value.
         ...(Array.isArray(intents) ? { intents: intents.map(String) } : {}),
-        // Same conditional-omit rule as `intents` above: freezing `plugins: null`
-        // onto the record writes a value where the absent list means core-shipped only.
+        // Same conditional-omit rule as `intents`: an absent plugins list means core-shipped only, never freeze `null`.
         ...(Array.isArray(plugins) ? { plugins: plugins.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
-        // Session-scope env. Persisted on the entry so --resume respawns with the
-        // SAME env (the wrong AWS identity on restart would be silent and
-        // dangerous). An empty/absent env is NOT a distinct value — absent ≡ {} ≡
-        // "no session env" — so omit it and let the merge fall through to
-        // global/workspace scopes. sanitizeFlat re-applies the key/deny/newline
-        // gate at the PERSISTENCE door too: a deny-listed key or newline value
-        // must not land on sessions.json even inert, and it is what a later
-        // --resume reads back — the spawn merge already drops junk, so the record
-        // must match.
+        // Persisted so --resume respawns with the same env (a wrong AWS identity would be silent); sanitizeFlat re-applies the
+        // key/deny/newline gate at the persistence door so a junk key or value never lands on sessions.json.
         ...(() => {
           const clean = sanitizeFlat(sessionEnv);
           return Object.keys(clean).length ? { env: clean } : {};
@@ -2635,19 +2049,9 @@ function createSessionManager(deps) {
         session.sessionId = sessionId;
         getPersistence().setSessionId(name, sessionId);
         if (sessionId && priorSid !== sessionId) this._repointStreamTranscript(session, sessionId);
-        // A CHANGED id is /clear — whatever was offered is no longer in front of
-        // the model, so the offer cooldown ends early. Read before noteSession,
-        // which owns the same transition but reports nothing back. The first id
+        // Must run before memLoad.noteSession, which owns the same transition but reports nothing back; the first id
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
-          // The keep-warm handover rides THIS edge. The symlink repoint reports
-          // the clear seconds before the new conversation's first upstream
-          // response, so by then the assignment above has made
-          // _onWireSessionRotated's `s.sessionId !== t.sessionId` test false and
-          // it does NOT run on an ordinary clear — it keeps the same lines for
-          // the wiped-symlink backstop, a second site on purpose, so do not
-          // consolidate. noteSessionLeft goes FIRST: endSession emits `hold`
-          // synchronously, and that row resolves the seat name off this list.
           this._noteSessionLeft(session, priorSid);
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
@@ -2655,20 +2059,15 @@ function createSessionManager(deps) {
           this._voidScratchMark(session,
             'the conversation was cleared after the mark — every mark is gone and nothing can be cut. '
             + 'Your summary is in your own turn above; carry on from it.');
-          // BEFORE the continuation: the clear discarded every delivered delta,
-          // so the whole gap is re-staged for the fresh conversation's first turn.
-          // The CLI rebuilds the new conversation's system block from its own
-          // snapshot rather than re-reading the prompt file (measured), so the
-          // frozen prompt is left alone here too.
+          // Refresh before the continuation: the clear discarded every delivered delta, so the gap is re-staged for the new
+          // conversation's first turn. The CLI rebuilds its system block from its own snapshot, so the frozen prompt file is left alone.
           const snapshotSid = session.forked ? sessionId : priorSid;
           session.forked = false;
           try { this.refreshPrompt(name, 'clear', { sid: snapshotSid }); } catch { /* never block the continuation on a refresh */ }
           this._firePostClearContinuation(session);
         }
-        // /clear mints a new conversation id, which is how the transcript
-        // symlink repoint reports it. noteSession only resets on a CHANGE — the
-        // first id (attach, resume) adopts, or the digest recorded microseconds
-        // earlier in create() would be wiped by the very event that carried it.
+        // noteSession resets only on a change, so the first id (attach, resume) adopts; otherwise the digest recorded in
+        // create() a moment earlier would be wiped by the very event that carried it.
         try { memLoad.noteSession(name, sessionId); } catch { /* observer-grade */ }
         this._noteConversationForDigest(session, sessionId);
       };
@@ -2787,7 +2186,7 @@ function createSessionManager(deps) {
         const readCtx = () => {
           try {
             const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
-            if (raw === lastRaw) return; // push on any field change (pct or tokens)
+            if (raw === lastRaw) return;
             lastRaw = raw;
             const c = parseCtxFile(raw);
             if (c.pct != null) {
@@ -2797,34 +2196,15 @@ function createSessionManager(deps) {
                 try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
-              // An ephemeral seat is never nudged: it is retired at `done`, the
-              // moment a compact would cost it exactly the context its rework
-              // needs. Suppressed HERE, not inside ctxReminderFor, which stays
-              // pure. Read off the persistence record, never re-derived from the
-              // name shape.
-              //
-              // Read here rather than memoized at create: get() re-reads
-              // ui-settings.json, so an edited threshold applies to a running
-              // session without a restart. A failed read resolves to the shipped
-              // defaults, never to no reminder.
-              //
-              // Gated on the floor rather than on the shipped nudge: no override
-              // can fire below it, because sanitizeThresholdPair drops a row
-              // whose nudge is under CTX_THRESHOLD_MIN. So this skips the
-              // ui-settings.json re-parse for the whole quiet life of a session
-              // without capping how low an operator can set the threshold.
+              // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the
+              // ui-settings re-parse for a quiet session without capping how low an operator can set the threshold.
               let ctxOverrides = null;
               if (c.tok >= CTX_THRESHOLD_MIN) {
                 try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
               }
               let warn = ctxReminderFor(c.tok, ctxThresholdsFor(c.model, ctxOverrides));
-              // Read lazily at the first over-threshold tick, not eagerly at
-              // create: get() re-parses the whole of sessions.json and _load()
-              // can WRITE it (the workspaceId backfill), while the record may be
-              // seeded just after create. Memoized only on a record actually
-              // returned — a missing or throwing read leaves it unset, so the
-              // seat stays NUDGED and a later tick can still settle it, rather
-              // than being silently silenced by a failed read.
+              // Ephemeral seats are never nudged (a compact costs the context their rework needs), suppressed here so ctxReminderFor stays pure.
+              // Read the record lazily and memoize only a returned one, so a failed read leaves the seat nudged rather than silenced.
               if (warn) {
                 if (session._ephemeralSeat === undefined) {
                   let rec = null;
@@ -2887,9 +2267,8 @@ function createSessionManager(deps) {
             session._bootDrainTimer = setTimeout(() => {
               session._bootDrainTimer = null;
               this._drainPendingAtBootReady(session);
-              // Same margin, same reason: a ticket spec written before the readline
-              // loop is up is wiped by the boot re-render, and the replay stamps it
-              // delivered — so the loss is silent until the NEXT respawn.
+              // Same margin: a ticket spec written before the readline loop is up is wiped by the boot re-render, and the replay
+              // stamps it delivered, so the loss is silent until the next respawn.
               this._replayWhenQueueEmpty(session);
             }, BOOT_DRAIN_SETTLE_MS);
           }
@@ -2903,9 +2282,8 @@ function createSessionManager(deps) {
       });
 
       const onProcExit = ({ exitCode, signal }) => {
-        // The native fd is gone the moment the process exits; any later
-        // write/resize/kill into node-pty throws an uncaught Napi::Error that
-        // aborts the whole app (SIGABRT). Mark dead so deferred ops bail.
+        // Mark dead first: after exit any node-pty write/resize/kill throws an uncaught Napi::Error that aborts the app (SIGABRT),
+        // so deferred ops bail on _dead.
         session._dead = true;
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
         const { expected, dropRecord, stampExited } = exitDisposition({
@@ -2919,9 +2297,8 @@ function createSessionManager(deps) {
           expected, exitCode, signal,
           elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
         });
-        // Send the exit event BEFORE cleanup so the renderer can still resolve
-        // the session → workspace → window mapping. Otherwise the sidebar
-        // tab sticks around as a "dead" entry.
+        // Send session-exit before _cleanup so the renderer can still resolve session to workspace to window,
+        // or the sidebar tab sticks around as a dead entry.
         this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null, missingTool });
         this._broadcast('ipc-message', {
           type: 'exit', from: name, to: 'exit',
@@ -2968,24 +2345,17 @@ function createSessionManager(deps) {
           session._replayAtInit = !!session._replayTicketsPending;
         } else if (session.agentType !== 'claude') {
           session._bootSettling = true;
-          session._bootSettleSince = Date.now();   // absolute-wait cap anchor
-          // That cap is NOT wall-clock: _settleBoot runs only from _armBootSettle,
-          // which runs only from onData, so a codex seat emitting nothing never
-          // settles and would lose its spec for the life of the process. The reason
-          // this arm has no ordinary fallback — never fire while boot output is
-          // streaming — says nothing about a seat that has produced no output at all,
-          // so the timer below fires only in that case (`!_bootSettleTimer` ⇒ onData
-          // never ran).
+          session._bootSettleSince = Date.now();
+          // The cap is not wall-clock: _settleBoot runs only from _armBootSettle, which runs only from onData, so a silent codex
+          // seat never settles; this timer fires only when onData never ran (`!_bootSettleTimer`).
           session._replayFallbackTimer = setTimeout(() => {
             session._replayFallbackTimer = null;
-            if (session._bootSettleTimer) return;   // output seen; the settle owns it
+            if (session._bootSettleTimer) return;
             this._replayTicketsOnce(session);
           }, INJECT_BOOT_MAXWAIT);
         } else {
-          // Claude's replay rides the same BOOT_DRAIN_SETTLE_MS defer as the drain.
-          // The fallback covers a seat that never emits mode-2004 at all — the
-          // edge-armed drain never runs there, and without this its spec is lost for
-          // the life of the process.
+          // Claude's replay rides the same BOOT_DRAIN_SETTLE_MS defer as the drain; the fallback covers a seat that never emits
+          // mode-2004, where the edge-armed drain never runs and the spec would be lost for the life of the process.
           this._armReplayFallback(session, INJECT_BOOT_MAXWAIT, Date.now() + 3 * INJECT_BOOT_MAXWAIT);
         }
       }
@@ -3557,23 +2927,15 @@ function createSessionManager(deps) {
         }
         s.lastMainStop = null;
         if (s.needsAttention) this._setAttention(s, null);
-        // Draft accumulation for hint arming. Inside the isHumanPtyInput gate on
-        // purpose: injected text (dm delivery, nudges, ticket bodies) must never
-        // reach the accumulator, and reusing this gate is what guarantees it
-        // rather than a second predicate that can drift from this one.
         this._foldDraft(s, data, wasInPaste);
       }
       try { s.pty.write(data); } catch {}
     }
 
-    // Accumulate the draft and arm a hint against it. Never awaited and never
-    // able to throw into write(): a hint is worth nothing next to the user's
-    // keystroke reaching the PTY.
     _foldDraft(s, data, wasInPaste) {
       try {
-        // The WHOLE previous result carries forward, not just the text: the
-        // cursor and the desync flag are what make this a line editor rather
-        // than an append-only buffer.
+        // Carry the whole previous result forward, not just the text: the cursor and the desync flag
+        // are what make this a line editor rather than an append-only buffer.
         const r = foldDraft(s._draftState || s._draft || '', data, wasInPaste);
         s._draftState = r;
         s._draft = r.draft;
@@ -3597,158 +2959,69 @@ function createSessionManager(deps) {
         landed = arm.onDraft(key, draft, this._armCtx(s), { final: true, overflow, desync });
         arm.onSubmit(key);
       } catch (e) { log.debug('hint', `submit arm failed for ${key}: ${e.message}`); }
-      // The CLI's hook drains the attachment queue on this same submit, so
-      // the pending list has served its purpose. Holding it longer would
-      // suppress a peek for text the transcript now carries anyway — once
-      // it is IN the conversation, re-selecting it is an ordinary selection
-      // about an ordinary part of the context.
-      //
-      // The renderer is told because its status line claims a delivery that
-      // had not happened yet; this is the event that makes the claim true
-      // and then retires it.
+      // Retire the pending selection list on submit: holding it longer would suppress a peek
+      // for text the transcript now carries.
       try {
         if (selectionArm.onSubmit(key)) this._sendToSession(key, 'selection-sent', key);
       } catch {}
       return landed;
     }
 
-    // The EXACT route when we have it, a glob only as a fallback. A glob is
-    // fnmatchcase on the proxy side, so `clodex-clodex-*` also matches
-    // `clodex-clodex-hand-4f2a` — arming for one agent would arm every agent
-    // whose name extends it.
+    // Prefer the exact route: the glob is fnmatchcase at the proxy, so `clodex-clodex-*` also
+    // matches `clodex-clodex-hand-4f2a` and would arm every agent whose name extends it.
     _armCtx(s) {
       return {
         agent: s.name,
-        // Re-resolved every draft, not read straight off the session: `proxyBase`
-        // was captured at SPAWN, so unticking traffic optimization left a routed
-        // session POSTing hints at a wirescope that had just been stopped — and a
-        // rejected POST does not release the pre-arm's hold, so the inject queue
-        // then sat for its full cap before delivering.
-        // Re-resolution and NOT the live pref alone: an explicitly-routed session
-        // keeps its hints when the global pref is off. Used only as a BOOLEAN —
-        // the value is the CAPTURED base, because that is the one the child's env
-        // was baked with, so editing proxyUrl mid-session correctly does not move
-        // it. That also makes a null capture win on its own, which preserves the
-        // spawn-time decisions re-resolution cannot reconstruct.
+        // Re-resolved per draft against the live pref, used only as a boolean: reading proxyBase off
+        // the session alone keeps POSTing hints after traffic optimization is unticked.
         base: resolveProxyBase(s.proxyRequested, getUiSettings()) ? s.proxyBase : null,
         route: s.proxyAgent || `${PROXY_AGENT_PREFIX}${s.name}-*`,
       };
     }
 
-    // The drawer's selection. The PEEK half is routed through _armCtx like every
-    // other hint so the route grammar and the proxy-off rule have ONE
-    // implementation — a second base resolution here would re-introduce the
-    // captured-base bug that comment describes. The ATTACH half ignores all of
-    // it: a hard copy goes into the seat's queue file for the CLI's own hook,
-    // so it works with wirescope off entirely.
-    //
-    // A session that is not in the map is not an error the operator needs to see:
-    // it is a selection that outlived the tab it came from (the debounce fires
-    // ~300ms after the drag, and a session can die inside that window).
     armSelection(name, payload) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return Promise.resolve({ armed: false, reason: 'no such session' });
       return selectionArm.arm(s.name, payload || {}, this._armCtx(s));
     }
 
-    // Routed through _armCtx like every other hint, which is what keeps the
-    // captured-vs-live base rule and the route grammar in one place.
-    //
-    // Returns nothing and awaits nothing: the caller is one write away from
-    // sending the operator's message, and the marker is worth less than that
-    // write. A seat that is gone is not an error — the submit it would have
-    // marked cannot happen either.
+    // Must not await or throw: the caller is one write away from sending the operator's message.
+    // Routed through _armCtx so the base rule and route grammar stay in one place.
     markVoiceOrigin(name) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       try { voiceOriginArm.arm(this._armCtx(s)); } catch {}
     }
 
-    // The submit that marker was armed for stood down. Same shape as its
-    // neighbour for the same reason — the renderer calls this from paths the
-    // operator's own keystroke runs on.
-    //
-    // A seat that is gone needs no unwind: the marker is one-shot and dies with
-    // its TTL, and there is no next turn on a dead seat to mislabel.
     unmarkVoiceOrigin(name) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       try { voiceOriginArm.disarm(this._armCtx(s)); } catch {}
     }
 
-    // The renderer saw the CLI's recording indicator lit on this seat. Stamped
-    // as a LEVEL the renderer keeps refreshing, not an edge, and the difference
-    // is what bounds the failure: an edge-shaped signal whose "stopped" event is
-    // lost — window closed, seat switched, renderer gone — leaves the seat
-    // marked speaking forever, and forever means every message to it is
-    // deferred. A stamp that must be refreshed decays on its own instead.
-    //
-    // Its OWN field. `lastUserInputTs` has three readers (the inject gate, the
-    // reboot-notice draft staleness, and _maybeParkDelivery's typing test) and
-    // stamping this into it would silently change what the other two mean.
+    // A level the renderer keeps refreshing, not an edge: a lost 'stopped' event would leave the seat
+    // marked speaking forever. Own field: stamping lastUserInputTs would change what its other readers mean.
     noteVoiceRecording(name) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceRecordingTs = Date.now();
-      // BOX-WIDE COPY, kept ALONGSIDE the per-seat field above rather than
-      // replacing it. The two answer different questions and must not be merged:
-      // an inject targets ONE seat, so its gate is correctly per-seat, while the
-      // microphone and the speaker are properties of the room. The renderer only
-      // ever reports the ACTIVE seat's recorder, so a per-seat read is
-      // permanently undefined for every background seat — gating audio on it
-      // means no gate at all for exactly the case that matters: dictating into
-      // the focused seat while another seat finishes a turn.
-      // RISING EDGE, computed BEFORE the stamp below overwrites the evidence.
-      // The renderer reports the recorder as a LEVEL every ~300ms while it is
-      // lit, so an unguarded call runs the interrupt hundreds of times per
-      // dictation; it is harmless (stop() is a no-op when nothing is playing)
-      // but it makes the call site claim an event it is not detecting.
+      // Box-wide copy alongside the per-seat field, not replacing it: the renderer reports only the active
+      // seat's recorder. Rising edge is read before the stamp below; the level arrives every ~300ms.
       const recorderJustLit = Date.now() - (this._lastVoiceRecordingTs || 0) >= INJECT_SPEAKING_STALE_MS;
       this._lastVoiceRecordingTs = Date.now();
-      // He tapped the microphone while a narration was still playing — the
-      // converse of the gate in _maybeSpeak, and the harder half. Stopping is
-      // what a person does when interrupted; see interruptForRecorder for the
-      // alternative that was rejected.
       if (recorderJustLit) { try { speaker.interruptForRecorder(); } catch {} }
     }
 
-    // The renderer saw a DICTATED draft still sitting unsent in this seat's
-    // composer. Same level shape and same expiry reason as the recorder stamp
-    // above, and its own field again for the same reason: this one is read by
-    // the park divert, and folding it into either of the others would change
-    // what those readers mean.
-    //
-    // What it buys over the recorder stamp is the window the operator is
-    // actually exposed in — he stops talking, the indicator goes dark, and he
-    // spends the next minute READING the transcription before he sends it.
+    // Level stamp with its own field: the park divert reads it, and folding it into the recorder or
+    // input stamps would change what those readers mean.
     noteVoiceDraft(name) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return;
       s.lastVoiceDraftTs = Date.now();
     }
 
-    // Which seat a renderer is showing. Kept even when the name is not a live
-    // session: the record is a REPORT, and validating it here against a map
-    // that a spawn may not have filled yet would silently drop the first
-    // report for a seat that is about to exist. The reader below resolves it.
-    // `win` is the window the report CAME FROM, resolved in main where the
-    // sender is known. Without it the two writes below cannot be told apart,
-    // and that is the whole of this method.
-    //
-    // The ROUTING record updates unconditionally: an external tap that names no
-    // seat must keep landing on the seat he is looking at even when the report
-    // arrived from a background window, which is the feature the tap exists for.
-    //
-    // The MICROPHONE does not. A window reports its own `activeSession`, and it
-    // does so with NO operator action at all — a seat exiting in a background
-    // window switches that window to its next seat and reports it. Retargeting
-    // on that took the microphone off the seat he was dictating into and gave
-    // it to one he could not see, which is this ticket's own bug through a
-    // third door: a box-wide resource written from per-window state.
-    //
-    // So the AUTHORITY to move the microphone is two box-wide facts, neither of
-    // which a window knows about itself — whether it is the focused window, and
-    // whether the app is frontmost. The window supplies only the name.
+    // The name is stored unvalidated (a spawn may not have filled the map yet) and always updates routing;
+    // the microphone moves only when the reporter is the focused window of a frontmost app.
     noteFocusedSession(name, win = null) {
       this._focusedSession = name || null;
       let reporterInFront = false;
@@ -3757,18 +3030,14 @@ function createSessionManager(deps) {
       this._setMicTarget(this._focusedSession);
     }
 
-    // THE ONLY WRITER of the target, so the invariant is enforceable by reading
-    // one function: every path that moves the microphone comes through here.
     _setMicTarget(name) {
       this._micTarget = name || null;
     }
 
     micTarget() { return this._micTarget; }
 
-    // The host telling us whether Clodex is the frontmost APPLICATION. Only a
-    // host can answer it: a window reporting its own focus answers a different
-    // question — a window can be the focused window of an app that is itself
-    // behind a browser, which is exactly the case that recorded video audio.
+    // App-level focus is the host's to report: a window can be the focused window of an app that is
+    // itself behind a browser, so a window's own focus cannot answer it.
     noteAppFocused(focused) {
       this._appFocusReported = true;
       this._appFocused = focused === true;
@@ -3776,11 +3045,6 @@ function createSessionManager(deps) {
 
     appFocused() { return this._appFocused; }
 
-    // Every decline a voice verb can reach, in one place so `select` cannot
-    // admit a seat `tap` would refuse. Falling back to the focused seat on an
-    // ABSENT target is the tap's rule and stays here; an UNMATCHED name is a
-    // decline for both — never a fallback, or a named select would arm a seat
-    // he did not name while he believes he switched.
     _voiceRoute(target = null) {
       const name = target || this._focusedSession;
       if (!name) return { ok: false, error: 'no target and no focused session' };
@@ -3792,20 +3056,8 @@ function createSessionManager(deps) {
       return { ok: true, name, session: s, win };
     }
 
-    // SELECT THEN ARM. The tab has to be the one he is looking at before the
-    // recorder lights, or he dictates into a seat he cannot see.
-    //
-    // The switch frame goes to the target's OWN window; the raise stays
-    // voiceTap's single site, asked for explicitly — one raise mechanism, and
-    // it already orders retarget → raise → frame correctly.
-    //
-    // A NAME IS MANDATORY HERE, checked before _voiceRoute rather than inside
-    // it: the route's absent-target fallback is the TAP's rule, and an empty
-    // string reaches it as falsy and resolves to the focused seat — selecting
-    // and ARMING a seat he did not name while he believes he switched. That is
-    // the outcome this verb calls worse than silence, and it arrives from an
-    // unset shell variable, not from exotic input. The check lives in the
-    // MANAGER because the socket is the trust boundary every front-end shares.
+    // Name checked here, not in _voiceRoute: an empty string would fall back to the focused seat and arm
+    // a seat nobody named. The manager owns the check because the socket is the trust boundary.
     voiceSelect(target = null) {
       if (typeof target !== 'string' || !target.trim()) {
         return { ok: false, error: 'select needs a seat name' };
@@ -3840,14 +3092,8 @@ function createSessionManager(deps) {
       return this.setVoice(name, mode);
     }
 
-    // BOX-WIDE. There is no per-seat speech flag, so this takes no seat name and
-    // never consults the microphone holder.
-    //
-    // EXPLICIT ON/OFF, NEVER A TOGGLE: he cannot see the current state from
-    // across the room, so a toggle fired on a mis-hear leaves him unsure which
-    // state he is in and saying it again to check flips it back. Explicit is
-    // idempotent and safe to repeat, the same reasoning that has `select`
-    // decline an unmatched name rather than guess.
+    // Explicit on/off, never a toggle: a mis-heard toggle leaves the state unknowable from across
+    // the room and repeating it flips it back.
     voiceSpeech(state) {
       if (state !== 'on' && state !== 'off') return { ok: false, error: `unknown speech state "${state}" (use on|off)` };
       const store = getUiSettings && getUiSettings();
@@ -3855,50 +3101,18 @@ function createSessionManager(deps) {
       const on = state === 'on';
       store.set({ speakReplies: on });
       log.info('voice', `speech ${state}`);
-      // No push to the windows, and none to add: nothing subscribes to this
-      // value. The speaking gate reads the store at every turn end, and the
-      // voice popover re-reads it on OPEN — so both already agree with the
-      // store the moment this returns. A broadcast invented here would be a
-      // second notification mechanism serving no reader.
+      // No broadcast: nothing subscribes to speakReplies; the speaking gate and the voice popover
+      // read the store directly.
       return { ok: true, state, speakReplies: on };
     }
 
-    // ENSURE-ON from outside the app: a Voice Control wake word arrived over
-    // this box's agent socket asking for the recorder.
-    //
-    // An explicit target overrides the focused seat, so a script can address a
-    // seat the operator is not looking at.
     voiceTap(target = null, { raise = false } = {}) {
       const r = this._voiceRoute(target);
       if (!r.ok) return r;
       const { name, win } = r;
-      // THE TAP RETARGETS, and the automatic re-arm never does. That asymmetry
-      // is the design: he NAMED this seat, so it takes the microphone from
-      // whoever held it; a re-arm names nobody, so it gets no say in who holds
-      // it and may only arm the seat that already does.
-      //
-      // BEFORE the frame, so the seat cannot receive its own tap while another
-      // seat is still recorded as the holder.
-      //
-      // Only past every decline above: a tap that routed nowhere must not move
-      // the microphone off the seat that has it.
+      // The tap retargets the microphone and the automatic re-arm never does; only past every decline
+      // above, and before the frame, so the seat cannot receive its own tap while another seat holds the mic.
       this._setMicTarget(name);
-      // FOCUS-THEN-ARM, not decline. No path arms the recorder while Clodex is
-      // in the background — a microphone behind a browser records whatever the
-      // room is playing. But the tap NAMES a seat, so unlike the automatic
-      // re-arm it knows which window to raise, and raising it is what keeps the
-      // daily workflow (a Voice Control phrase with another app in front)
-      // working rather than silently declining.
-      //
-      // `show()` then `focus()`, the pair the file-view path already uses and
-      // the window-bridge contract already documents — this adds no window
-      // capability. AFTER the retarget and BEFORE the frame: the seat must
-      // already hold the microphone when its window comes forward.
-      // `raise` is the CALLER'S INTENT and is why it ORs rather than extending
-      // the focus test: app-focus answers "is Clodex buried", which is the
-      // tap's question, and it is FALSE exactly when he is looking at another
-      // Clodex WINDOW. A select must cross that gap — its whole job is moving
-      // him between windows — so it says so instead of re-deriving it.
       if (raise || (this._appFocusReported && !this._appFocused)) {
         try { win.show(); win.focus(); } catch { /* a host that cannot raise still routes the tap */ }
       }
@@ -3912,19 +3126,14 @@ function createSessionManager(deps) {
       return selectionArm.release(s.name, this._armCtx(s));
     }
 
-    // Read-only: it registers nothing and takes nothing back, so opening the
-    // popover cannot change what rides the next request.
     inspectSelection(name) {
       const s = this.sessions.get(name);
       if (!s || s._dead) return Promise.resolve(null);
       return selectionArm.inspect(s.name, this._armCtx(s));
     }
 
-    // The read API for the contextual-hint injector: 'full' (body is in
-    // context — skip the hint), 'title' (an index line rode, so the model knows
-    // the unit exists and cannot read it — the BEST hint candidate), 'absent'.
-    // Never a boolean: collapsing the three states loses whichever answer the
-    // caller needed.
+    // 'full' (body in context), 'title' (index line rode; the best hint candidate) or 'absent'; never
+    // a boolean, which would collapse the states the caller needs.
     memoryLoadState(agent, id) { return memLoad.stateOf(agent, id); }
     memoryLiveSet(agent) { return memLoad.liveSet(agent); }
     memoryRecallLog(agent) { return memLoad.recallLog(agent); }
@@ -3966,9 +3175,8 @@ function createSessionManager(deps) {
       try { s.pty.kill(); } catch {}
     }
 
-    // Poll the map the kill path actually releases. engine.js has its own copy
-    // reaching in from outside for the restart paths; this one exists so the
-    // electron-free manager can wait without an injected seam.
+    // engine.js keeps its own copy of this poll for the restart paths; this one lets the
+    // electron-free manager wait without an injected seam, so do not merge them.
     async _waitForExit(name, timeoutMs = 8000) {
       const start = Date.now();
       while (this.sessions.has(name) && Date.now() - start < timeoutMs) {
@@ -3977,38 +3185,14 @@ function createSessionManager(deps) {
       return !this.sessions.has(name);
     }
 
-    // kill() PLUS the worktree the record names. Every route that ends a seat
-    // for good must come through here, never `kill()` directly: `kill()` drops
-    // the persistence record, and that record is the only pointer to the
-    // checkout — so a caller that kills without removing the tree first orphans
-    // it irrecoverably, along with whatever unmerged commits its branch carries.
-    //
-    // NOT folded into kill() itself: the restart paths (engine.js) kill and
-    // recreate the same seat, and destroying its checkout there would delete the
-    // tree out from under a session that is coming right back.
-    //
-    // Captured BEFORE the kill; removal runs only after the pty exit — _waitForExit's 8s running out keeps the tree.
-    //
-    // A seat that has ALREADY exited still gets its record dropped here, and
-    // that is this method's own drop, not kill()'s: kill() returns at `if (!s)`
-    // before its `remove()`, so on a dead seat the tree went and the record
-    // naming it stayed — a record pointing at nothing. Widened HERE rather than
-    // in kill() because the restart paths call kill() on purpose to recreate the
-    // same seat, while all three destroy() callers mean gone for good.
-    //
-    // That drop is placed PER RETURN, never once up front: destroy() must not
-    // return having dropped the record while the tree it named still stands.
-    // Dropping first is the same irrecoverable orphan the header forbids — a
-    // failed `removeWorktree` would leave a checkout on disk with nothing naming
-    // it. So the two safe returns call it.
+    // Reads the record before kill() drops it; worktree removal runs only after the pty exit,
+    // and _waitForExit's 8s timeout keeps the tree.
     async destroy(name) {
       const entry = getPersistence().get(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
       const wasLive = this.sessions.has(name);
-      // clearHintForRecord BEFORE remove, for the reason its own header gives:
-      // this is an exit with no live session to read `spawnerHintSet` off, the
-      // hint table has no TTL, and the record is the last place the route id
-      // exists. A live seat skips both: kill() already cleared its hint and dropped its record.
+      // clearHintForRecord before remove: the record is the last place the route id exists and the hint
+      // table has no TTL. A live seat skips both because kill() already did them.
       const dropRecord = () => {
         if (wasLive) return;
         this.clearHintForRecord(name);
@@ -4023,8 +3207,6 @@ function createSessionManager(deps) {
         }
       };
       await this.kill(name);
-      // No tree to lose, so nothing can strand: this is the r1 case the drop
-      // exists for, and it must keep dropping.
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
@@ -4049,10 +3231,8 @@ function createSessionManager(deps) {
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
       keepRecord();
-      // NO dropRecord() here, and that is the invariant, not an omission: the
-      // tree is still on disk and this record is the only thing naming it. The
-      // path rides the result so the caller's failure sentence can tell the
-      // operator what to remove by hand.
+      // NO dropRecord() here: the tree is still on disk and this record is the only thing naming it;
+      // the path rides the result so the failure reply can tell the operator what to remove by hand.
       return { ok: true, worktreeRemoved: false, error, path: worktree.path, live: wasLive };
     }
 
@@ -4543,12 +3723,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // The exits that DROP a record run without a live session, so they cannot read
-    // `spawnerHintSet` off it — hence the persisted mirror. Dropping the record is
-    // the last moment the route id is knowable, and the hint table has no TTL, so a
-    // row not cleared here is permanent. Gated on the seat having set the override
-    // itself: a blind clear would also wipe one an operator set out-of-band through
-    // /_hint, which is supported pre-launch arm config.
     clearHintForRecord(name) {
       const entry = getPersistence().get(name);
       if (!entry || entry.spawnerHintSet !== true || !entry.proxyAgent) return;
@@ -4562,24 +3736,12 @@ function createSessionManager(deps) {
       }
     }
 
-    // The team half of realIpc. Extracted from create() so refreshPrompt() can
-    // rebuild the SAME bytes: a second copy of this assembly would drift, and the
-    // drift would stage a phantom delta at every reset (refresh diffs against A,
-    // the next create() bakes B).
-    //
-    // Deliberately NOT cached across calls. The re-resolution BUYS something: an
-    // edit to team.json or to a role prompt lands at the seat's next context reset
-    // instead of waiting for a respawn. A later "optimization" that memoizes this
-    // per session is trading that property for a few ms of disk reads.
     _teamBlockFor(name, cwd, agentType, systemPromptFile) {
       let teamBlock = '';
       let teamName = null;
       let resolvedTeam = null;
-      // The one visibility rule's spawn-path half: a role prompt that resolves to
-      // nothing is REPORTED to the caller and the spawn proceeds. Returned rather
-      // than warned here, because each caller has a different party who can act on
-      // it (the spawning lead, the ticket dispatcher, the operator's toast) and a
-      // main-process log is where a real error goes to hide.
+      // Returned, not warned here: each caller has a different party who can act on it,
+      // and a main-process log is where a real error hides.
       let missingPrompt = null;
       if (agentType) {
         try {
@@ -4592,13 +3754,8 @@ function createSessionManager(deps) {
             const def = role ? team.roles[role] : null;
             const promptRidesAsSystem = def && def.prompt && systemPromptFile === def.prompt;
             if (def && def.prompt) {
-              // Resolved on BOTH arms. When the prompt rides as
-              // --system-prompt-file this method appends nothing and the stem is
-              // resolved instead at prompt-build time — where a miss returns null
-              // and the seat boots with NO system prompt, strictly worse than
-              // unbriefed and reported by nobody. Same rule both arms use (team
-              // copy, then library); an empty file is NOT a miss. Caught HERE, not
-              // by the outer catch, which would drop the whole team block.
+              // Resolved on both arms: a miss when the prompt rides as --system-prompt-file boots the seat
+              // with no system prompt at all, and an empty file is not a miss.
               let rolePrompt = null;
               try { rolePrompt = readSystemPromptBody(def.prompt, null, team); }
               catch { rolePrompt = null; }
@@ -4617,20 +3774,6 @@ function createSessionManager(deps) {
       return { teamBlock, teamName, resolvedTeam, missingPrompt };
     }
 
-    // The bytes that BECOME run/<name>/append-prompt.md, from ONE recipe.
-    //
-    // create() and refreshPrompt() must agree byte-for-byte: a second copy of
-    // this assembly drifts, and refreshPrompt stages a diff of the frozen prompt
-    // against ITS bytes at every reset, so a drift is a delta describing a change
-    // that never happened, handed to every seat that compacts.
-    //
-    // The recipe is CAPTURED at create() onto the live session rather than
-    // re-derived from the persistence entry: `extraArgs` and the resolved
-    // `CLODEX_DISABLE_IPC_PROMPT` decision are spawn-time inputs that the entry
-    // does not carry in the form used here, and re-deriving them is how the two
-    // halves diverged in the first place. `teamBlock` and its `team` are passed
-    // separately, being the part deliberately re-resolved per refresh: ONE resolution
-    // answers for the block, the append stems and the exec defs (see _teamBlockFor).
     _realIpcFor(recipe, teamBlock, team, name) {
       const extraGrammar = pluginGrammarLines(recipe.intents, recipe.plugins) || [];
       const ipcPrompt = recipe.ipcDisabled
@@ -4646,40 +3789,24 @@ function createSessionManager(deps) {
       return { cleaned, realIpc: teamBlock ? `${append}\n\n${teamBlock}\n` : append };
     }
 
-    // Re-stage the prompt delta of a LIVE session at a context reset (clear or
-    // compact), from current truth, WITHOUT advancing the frozen prompt. The CLI
-    // does not re-read append-prompt.md at either edge: it rebuilds the system
-    // block from its own transcript `prompt_snapshot` row (measured, 2.1.278 — see
-    // docs/notes/ipc-prompt-cache.md), so a rewrite here would move session.md
-    // past what the model runs and the gap would never be delivered again. The
-    // reset itself destroyed every delta delivered so far, so the whole
-    // snapshot→realIpc gap is staged, baselined on the snapshot row when the
-    // transcript has one.
+    // Never rewrite append-prompt.md: the CLI rebuilds its system block from the transcript
+    // prompt_snapshot at a reset (measured 2.1.278), so a rewrite moves session.md past the model.
     refreshPrompt(name, why, opts = {}) {
       const session = this.sessions.get(name);
       if (!session || session._dead || session.agentType !== 'claude') return false;
       const entry = getPersistence().get(name);
       if (!entry) return false;
-      // No captured recipe = this session predates the capture (spawned by an
-      // older build and still live across an app upgrade). Refusing is the only
-      // safe answer: rebuilding from the persistence entry is exactly the second
-      // recipe _realIpcFor exists to delete, and it would stage a phantom delta
-      // at every reset. The seat keeps its frozen prompt until its next respawn,
-      // which captures one.
       if (!session.promptRecipe) {
         this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-recipe' });
         return false;
       }
       try {
-        if (!fs.existsSync(pathFor(REGISTRY_DIR, name, 'appendPrompt'))) { // no baked prompt = nothing this seat reads
+        if (!fs.existsSync(pathFor(REGISTRY_DIR, name, 'appendPrompt'))) {
           this._shadowLog({ type: 'prompt-refresh-skipped', agent: name, reason: 'no-prompt-file' });
           return false;
         }
-        // This path takes the finding too. Refresh RE-RESOLVES on every
-        // clear/compact, so a prompt file deleted after the seat booted first
-        // bites here: the re-stage drops the role prompt and the seat comes out of
-        // its reset unbriefed. There is no reply channel at a clear, so it rides
-        // the ipc-message the refresh already broadcasts.
+        // There is no reply channel at a clear, so the missing-prompt finding rides the
+        // ipc-message this refresh already broadcasts.
         const { teamBlock, resolvedTeam, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
         const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam, name);
         const accountDir = session.accountDir || (entry.env && entry.env.CLAUDE_CONFIG_DIR);
@@ -4718,16 +3845,8 @@ function createSessionManager(deps) {
       try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
     }
 
-    // The ONE board key / live-seat scope derivation. Team-first: when a
-    // team owns the cwd its root is returned unchanged, byte for byte, so the
-    // team path never moves boards. Only a teamless cwd falls through to the
-    // repo root.
-    //
-    // Every ticket handler funnels through this rather than reaching for
-    // `team.root` or `findProjectRoot` directly. A second ad-hoc derivation is
-    // how a solo session and a team'd session in the same repo end up on
-    // different boards — each correct read alone, and neither visible to the
-    // other.
+    // Sole board-key / live-seat scope derivation: team root unchanged, else the repo root.
+    // Handlers must not reach for team.root or findProjectRoot; a solo and a team seat would split boards.
     _projectRootFor(cwd) {
       let team = null;
       try { team = resolveTeam(cwd); } catch { team = null; }
@@ -4735,32 +3854,22 @@ function createSessionManager(deps) {
       try { return findRepoRoot(cwd, { fs }); } catch { return null; }
     }
 
-    // A stand-in "team" for a session no team.json owns, in the shape the verbs
-    // already read — so the solo case is a different VALUE, not a second code
-    // path through seven handlers.
-    //
-    // `lead` is the sender: solo has exactly one actor, so every lead-only gate
-    // becomes a no-op rather than a refusal. `roles` is null, which makes the
-    // role machinery inert by construction — `matchSeatRole` and
-    // `_ticketDispatchMode` both bail on a falsy `roles`. `solo` marks the
-    // context for the three dispatch helpers that must NOT run here.
-    // Returns null outside a git repo — the caller turns that into the refusal.
+    // A stand-in team as a value, not a second code path: roles null makes matchSeatRole and
+    // _ticketDispatchMode bail, and lead is the sender so lead-only gates no-op.
     _soloContext(session) {
       const root = this._projectRootFor(session && session.cwd);
       if (!root) return null;
       return { name: path.basename(root), root, lead: session.name, roles: null, solo: true };
     }
 
-    // `{ name, label }` — the warmth label is computed here, not in
-    // team-manifest: that module is a pure leaf and warmth is a wire-layer
-    // property (proxy snapshot + activity state), so it crosses as data.
+    // Warmth label computed here: team-manifest is a pure leaf and warmth is a wire-layer
+    // property, so it crosses as data.
     _teamLiveSeats(teamRoot) {
       const seats = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
-        // `_projectRootFor`, not `findProjectRoot`: the latter is team-derived and
-        // answers null for a teamless session, which would leave a solo board with
-        // no live seats at all and make `[agent:task assign]` unable to name one.
+        // `_projectRootFor`, not `findProjectRoot`: that answers null for a teamless seat and
+        // leaves a solo board with no live seats.
         let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
         if (!root || root !== teamRoot) continue;
         let label = null;
@@ -4790,9 +3899,8 @@ function createSessionManager(deps) {
       } catch { return null; }
     }
 
-    // The roster body for `name`, or null when the seat is not on a team. Called
-    // by the boot-digest writer BEFORE the session exists in the map, so the cwd
-    // comes from persistence when there is no live session to read it from.
+    // Reads cwd from persistence when the seat is not live: the boot-digest writer
+    // calls this before the seat is in the map.
     composeRosterFor(name) {
       let cwd = null;
       const s = this.sessions.get(name);
@@ -4810,11 +3918,8 @@ function createSessionManager(deps) {
 
     _maybeInjectComposition(session, team, existingEntry) {
       if (existingEntry && existingEntry.rosterSentAt) {
-        // A resumed seat gets no roster MESSAGE (it may already hold one, and a
-        // duplicate costs a turn), but its digest must still be re-baked: the
-        // pre-spawn write ran before this seat was in the map, so the file on
-        // disk carries no roster at all. Skipping this is the shape of the
-        // original bug — one stamp suppressing delivery for a seat's whole life.
+        // A resumed seat gets no roster message (a duplicate costs a turn) but its digest must be
+        // re-baked: the pre-spawn write ran before the seat existed.
         if (session.agentType === 'claude') this._rebakeDigest(session.name);
         return;
       }
@@ -4827,45 +3932,6 @@ function createSessionManager(deps) {
       if (p && typeof p.setRosterSent === 'function') p.setRosterSent(session.name);
     }
 
-    // `entry` with `worktree` removed IFF a DIFFERENT LIVE seat now holds that
-    // checkout; `entry` untouched otherwise, and untouched on any throw. Every
-    // path that writes a PRE-KILL snapshot back after a restart must run its
-    // entry through this — the success path via _preserveAcrossRestart, and all
-    // three failure paths (engine.js restartSession / applySessionArgs, the
-    // [agent:context reload] intent), whose catch arms re-upsert the snapshot
-    // wholesale. The catch arms are not a lesser case: the window is held open by
-    // a CLI slow to die, and a CLI slow enough to hold it past waitForSessionExit's
-    // 8s is precisely the one whose restart then throws.
-    //
-    // THE WINDOW. kill() removes the record synchronously and the seat leaves
-    // this.sessions only at pty exit, so for the whole waitForSessionExit poll a
-    // restarting seat is live in its tree and named by no record — invisible to
-    // _ticketTreeHolder, which reads occupancy off the RECORD. A re-dispatch
-    // landing there reuses the tree, claimTree finds no record to clear, and
-    // writing the snapshot back then puts a SECOND record on it: session:kill
-    // removes the tree named by whichever row is deleted, so Delete Session… on
-    // the restarted seat force-removes the checkout the other seat is committing
-    // in.
-    //
-    // ONE READER. _ticketTreeHolder is the same question the dispatch asked when
-    // it decided the tree was free, so this guard cannot disagree with the
-    // hand-off it is reacting to. A second scan — here or in engine.js — would be
-    // a second source of truth about who holds a tree.
-    //
-    // The other seat must be LIVE. A stale pointer from an ARCHIVED seat is
-    // expected state on a real board (archive KEEPS the record), and stripping
-    // for one would drop the pointer on an ORDINARY restart — landing in the
-    // ABSENT state ALWAYS_PRESERVE calls the dangerous one.
-    //
-    // `holder !== name` and NOT `holder != null`, and the difference is reachable:
-    // on the catch arms create() can have SUCCEEDED and a later step thrown, which
-    // leaves the seat live with a rebuilt record already naming the tree, so the
-    // holder this resolves is the seat's OWN name. Stripping there would delete a
-    // pointer nothing else holds.
-    //
-    // Stripping is safe precisely BECAUSE a different live seat holds it: that
-    // seat's record still names the checkout, so nothing is orphaned. On any
-    // throw we keep it, because stale beats absent.
     _stripClaimedTree(entry) {
       if (!entry || !entry.name || !entry.worktree || !entry.worktree.path) return entry;
       if (typeof this._ticketTreeHolder !== 'function') return entry;
@@ -4873,10 +3939,8 @@ function createSessionManager(deps) {
       try { holder = this._ticketTreeHolder(entry.worktree.path); } catch { return entry; }
       if (!holder || holder === entry.name) return entry;
       if (log) log.info('session', `restart of ${entry.name}: dropping worktree ${entry.worktree.path} from the restored record — ${holder} holds it now`);
-      // Copy-and-delete rather than a `{ worktree, ...rest }` destructure: the
-      // free-identifier scanner does not model an object rest binding and reads
-      // `rest` as a dangling reference. Not worth whitelisting a name in a guard
-      // that catches real extraction bugs to buy one line of style.
+      // Copy-and-delete, not a `{ worktree, ...rest }` destructure: the free-identifier scanner
+      // reads the object rest binding as a dangling reference.
       const stripped = { ...entry };
       delete stripped.worktree;
       return stripped;
@@ -4896,25 +3960,6 @@ function createSessionManager(deps) {
       return main;
     }
 
-    // Re-seed post-create persistence fields across a kill()+create restart. The
-    // APP-RELAUNCH restore path keeps the persistence record, so create()'s
-    // existingEntry carries these fields. But the IN-PLACE restart paths
-    // (engine.restartSession / applySessionArgs) route through kill(), which
-    // REMOVES the record — so create() rebuilds it from spawn args ONLY, dropping
-    // any field seeded AFTER create on the prior spawn: `rosterSentAt` (re-injects
-    // the roster into a --resume'd context) and a reviewer seat's
-    // `ephemeral`/`reviewFor` (review-done can no longer route/retire).
-    // Re-seeding AFTER create() is too late for the fields create() itself reads,
-    // so the restart callers capture the pre-kill entry and call this AFTER kill,
-    // BEFORE create; create's own upsert then spread-merges the full record over
-    // this stub. A prior entry lacking a field seeds nothing for it.
-    //
-    // ALWAYS_PRESERVE is carried whether or not a caller names it: `sessionIds` is
-    // the seat's session_id HISTORY, which is what the cost panel sums a name's
-    // whole spend over. Only setSessionId appends to it, and only on a CHANGE, so
-    // an array dropped here never regrows — the seat's lifetime cost silently
-    // restarts from the current id. All three callers omitted it, so the invariant
-    // lives in the helper, not in its callers.
     _preserveAcrossRestart(name, priorEntry, fields) {
       if (!priorEntry || !Array.isArray(fields)) return;
       let seed = { name };
@@ -4922,36 +3967,21 @@ function createSessionManager(deps) {
         if (priorEntry[f] !== undefined) seed[f] = priorEntry[f];
       }
       seed = this._stripClaimedTree(seed);
-      // Counted AFTER the strip, not tracked while seeding: a seed reduced to a
-      // bare { name } must not manufacture a record for a seat that had nothing
-      // else to preserve — that would hand create() an existingEntry and suppress
-      // the roster inject, which is the failure the `any` guard has always been
-      // about.
       if (Object.keys(seed).length <= 1) return;
       const p = getPersistence();
       if (p && typeof p.upsert === 'function') p.upsert(seed);
     }
 
-      // Never actively write into a still-booting TUI: at spawn the trailing Enter is
-      // swallowed and the roster is left as an un-submitted draft. Claude parks the
-      // roster passively (drains on its first organic hook turn); codex has no passive
-      // store, so it stashes the TEAM REF — not a rendered body — and _settleBoot
-      // renders + delivers once boot output quiesces. Stashing the ref is what lets a
-      // teammate that spawned DURING this seat's boot appear in the roster it receives.
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
           this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm');
-          // Both paths are needed and neither is redundant. setupClaudeHook
-          // writes the digest BEFORE this seat exists in the map or in
-          // persistence, so a fresh seat's pre-spawn digest cannot contain a
-          // roster — the message above is what its FIRST conversation gets.
-          // Re-baking here is what every conversation AFTER a context reset
-          // gets, since the message will have been discarded with the history.
+          // The message is the first conversation's roster; the re-bake is what every conversation
+          // after a context reset gets, since the message is discarded with the history.
           this._rebakeDigest(session.name);
           this._markRosterSent(session);
         } else {
-          session._pendingRoster = team;   // team ref; body recomputed FRESH by _settleBoot at boot-settle
+          session._pendingRoster = team;
         }
       } catch (e) {
         log.error('inject', `roster inject failed for ${session.name}: ${e.message}`);
@@ -4972,30 +4002,18 @@ function createSessionManager(deps) {
 
     _settleBoot(session) {
       session._bootSettleTimer = null;
-      session._bootSettling = false;   // boot window closed → deltas deliver normally now
+      session._bootSettling = false;
       if (session._dead) return;
       const team = session._pendingRoster;
       if (team) {
         session._pendingRoster = null;
         try {
-          // Stamped from the WRITE, not the enqueue: `rosterSentAt` is read back by
-          // _maybeInjectComposition to suppress the roster for the seat's whole life,
-          // so a stamp taken here can suppress a roster that was never delivered.
-          // The gap is real even though this path has no ready gate (the roster is
-          // codex-only and `ready` is installed for claude): the delivery rides a
-          // promise chain, then the quiet gate, and an inject hold parks it for up to
-          // INJECT_HOLD_TIMEOUT — all inside the boot window this function runs in,
-          // where a seat that dies early hits the _dead early-returns instead.
           this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
         }
       }
-      // AFTER the roster, and outside its guard: a RESUMED seat has no pending
-      // roster (_maybeInjectComposition skips it on rosterSentAt) and is precisely
-      // the seat whose tickets need replaying, so an early return on `!team` would
-      // skip the replay in the only case it matters.
       this._replayTicketsOnce(session);
     }
 
@@ -5008,23 +4026,14 @@ function createSessionManager(deps) {
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
-        if (s._bootSettling) continue;   // still booting (codex) → drop the delta (harmless-miss contract)
+        if (s._bootSettling) continue;   // booting codex seat: drop the delta, a miss is harmless
         let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
         if (!root || root !== team.root) continue;
-        // The DM goes to the LEAD ALONE. Who else is up is the lead's dispatch
-        // problem; a hand, reviewer or designer cannot act on the news that a
-        // sibling restarted, so delivering it to them is a pure interruption —
-        // it wakes a working seat and costs a turn of its context to say nothing
-        // it can use. This is unconditional: it does NOT depend on whether the
-        // seat that changed was ephemeral. Relevance is a property of the
-        // RECIPIENT, not of the subject.
+        // Lead alone: a sibling restart is not actionable for other seats and only wakes a working
+        // one; independent of whether the changed seat was ephemeral.
         if (s.name === team.lead) this._deliverPassive(s.name, 'team', body, 'dm');
-        // The re-bake stays for EVERY seat, and that is why it sits outside the
-        // guard above. The delta rides conversation history and dies with the
-        // next context reset; re-baking is what makes this seat's NEXT boot
-        // carry the changed composition instead of the one it was minted with.
-        // Folding it into the lead-only branch would leave every other seat
-        // booting a stale roster — silently, since nothing reads it back.
+        // Re-bake stays outside the lead-only guard: the delta dies with the next reset, and only the
+        // digest makes the next boot of every seat carry the changed roster.
         if (s.agentType === 'claude') this._rebakeDigest(s.name);
       }
     }
@@ -5081,19 +4090,13 @@ function createSessionManager(deps) {
       };
       const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
       const ticketsByRoot = new Map();
-      // Memoized like the two above, and for a sharper reason: this runs per
-      // (session × ticket), and _teamLiveSeats rebuilds a peerStatusLabel and a
-      // proxy-poller snapshot for every live seat on each call.
       const liveByRoot = new Map();
       const liveSeatsFor = (t) => {
         if (!liveByRoot.has(t.root)) liveByRoot.set(t.root, this._teamLiveSeatNames(t.root));
         return liveByRoot.get(t.root);
       };
-      // Which manifest role a seat holds. Memoized per session, and the ONE place
-      // this row resolves it: the renderer cannot compute it (matchSeatRole strips
-      // an `-r<N>` review tail then a numeric one, guards its lookup with
-      // hasOwnProperty, and short-circuits on the lead pointer), and a second copy
-      // in a second process is the divergence this codebase keeps paying for.
+      // Sole place this row resolves a role: the renderer cannot recompute it, matchSeatRole strips
+      // a review tail, guards with hasOwnProperty and short-circuits on the lead pointer.
       const roleByName = new Map();
       const roleFor = (s) => {
         if (roleByName.has(s.name)) return roleByName.get(s.name);
@@ -5110,15 +4113,10 @@ function createSessionManager(deps) {
           const t = resolvedTeamFor(s.cwd);
           if (!t || !t.root) return null;
           if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.load(t.root));
-          // The shared helper, not a second matchSeatRole call: the ticket badge
-          // and the row's `role` must not be able to disagree about which role a
-          // seat holds.
           const role = roleFor(s);
           const live = liveSeatsFor(t);
-          // Same filter as _reconcileTickets: this is the badge on first paint
-          // and that is the badge on every change, so a term here that is
-          // missing there shows a ticket until the next reconcile and then
-          // drops it.
+          // Same filter as _reconcileTickets: a term missing there shows the ticket on first paint
+          // and drops it at the next reconcile.
           const open = ticketsByRoot.get(t.root).find((tk) => tk.state === 'open' && tk.assignee != null && !tk.parked
             && (tk.assignee === s.name || tk.assignee === role
               || this._ticketAssigneeSeat(t, tk, live) === s.name));
@@ -5140,9 +4138,6 @@ function createSessionManager(deps) {
         cwd: s.cwd,
         workspaceId: s.workspaceId,
         team: teamFor(s.cwd),
-        // Non-agent (bash) sessions are null by construction, not by omission: a
-        // bash session has no registry entry and no socket, so it cannot hold a
-        // role, and this must not become a second place that decides that.
         role: s.agentType ? roleFor(s) : null,
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
@@ -5161,29 +4156,10 @@ function createSessionManager(deps) {
       return this.list().filter(s => s.workspaceId === workspaceId);
     }
 
-    // Workspace teardown runs over PERSISTENCE, not over the live map.
-    // listForWorkspace above filters list(), which maps `this.sessions`. An
-    // archived session is never spawned by design, so it is never in that map:
-    // killing what listForWorkspace returns and then dropping the workspace record
-    // leaves persistence rows carrying a workspaceId no window will ever carry
-    // again. Those rows are then unreachable from every surface — every IPC
-    // listing is workspace-scoped, and discovery excludes any conversation whose
-    // sessionId is in trackedSessionIds(), which unions in the orphan itself.
-    // Hence the two methods below: one to SEE that population, one to reap it.
-
-    // The rows a workspace holds that listForWorkspace cannot see: archived, or
-    // saved-but-not-running. This is the count the confirm dialog needs — it is
-    // exactly the population whose total loss the dialog used to call "empty".
     savedForWorkspace(workspaceId) {
       return getPersistence().listForWorkspace(workspaceId).filter(e => e && e.name && !this.sessions.has(e.name));
     }
 
-    // Kill the live seats, then drop every persisted row still pointing at the
-    // workspace. Order matters only for economy: kill() removes its own record
-    // synchronously (nothing awaits before it), so the second pass sees only
-    // what the first could not reach. clearHintForRecord before remove, for the
-    // reason sweepReviewerGraveyard does it — dropping the record is the last
-    // moment the seat's proxy route id is knowable and the hint table has no TTL.
     purgeWorkspace(workspaceId) {
       const killed = [];
       for (const s of this.listForWorkspace(workspaceId)) { killed.push(s.name); this.kill(s.name); }
@@ -5229,13 +4205,8 @@ function createSessionManager(deps) {
       return s && s.agentType === 'claude' ? peekPending(PENDING_DIR, s.name) : [];
     }
 
-    // Poll the pending store for parked-DM counts and broadcast DELTAS ONLY on the
-    // 'pending-count' channel, driving the sidebar ✉ badge. Poll (not event) is
-    // deliberate: the UserPromptSubmit hook drains the store OUT OF PROCESS with an
-    // atomic dir-rename Node never observes, so Node-side park/drain call sites
-    // can't emit a complete signal. A count returning to 0 drops the map entry so
-    // the map tracks only non-zero sessions. Claude-only: the store is a
-    // Claude-hook artifact (codex never parks).
+    // Poll, not events: the UserPromptSubmit hook drains the store out of process with a
+    // dir-rename Node never observes.
     startPendingPoll(intervalMs = 1000) {
       if (this._pendingPollTimer) return;
       const tick = () => {
@@ -5458,42 +4429,20 @@ function createSessionManager(deps) {
       clearTimeout(s._rebootNoticeRetryTimer);
       clearTimeout(s._rebootNoticeFlushTimer);
       clearTimeout(s._specConfirmTimer);
-      // The displaced-spec drain owns its own timer rather than borrowing
-      // _specConfirmTimer: the two are live at the same time by construction (the
-      // drain waits for the latch to resolve), so one field could not hold both.
+      // _specOwedTimer stays separate from _specConfirmTimer: both are live at once,
+      // so one field cannot hold both.
       clearTimeout(s._specOwedTimer);
       clearTimeout(s._dmConfirmTimer);
       clearTimeout(s._reviewStartTimer);
-      // Drops the pending debounce timer with it — a hint armed after the PTY
-      // died would ride the next session under the same name. The offer
-      // cooldown goes too: a retired seat's name is reused by its replacement,
-      // and the replacement must not start life already suppressed.
+      // Also drops the pending debounce timer and the offer cooldown: a same-named
+      // replacement must not inherit a hint or start life already suppressed.
       try { arm.forget(name, name); } catch {}
-      // Same hazard, sharper, and it does not stop at the memo: _armCtx falls
-      // back to a NAME GLOB when the exact route is unknown, so a dead seat's
-      // ATTACHMENT still matches its same-named replacement for the rest of its
-      // 1800s TTL. Passing the dying session's ctx is what lets forget take the
-      // registration off the proxy rather than only forgetting it here.
       try { selectionArm.forget(name, this._armCtx(s)); } catch {}
-      s._compactPending = null; // no timer, but null for symmetry with the valve state
+      s._compactPending = null;
       s._postClearContinuation = null;
-      // Parked deliveries and the frozen system prompt (ipc-prompt-cache) are
-      // deliberately NOT dropped here, under any gate. _userKilled is not a "going
-      // away for good" signal — restart routes through kill() too — so gating an rm
-      // on it destroyed undelivered mail and busted the prompt cache on the button
-      // labelled "restart". Both stale-successor hazards are handled at the READ end
-      // instead: drainPending compares the `born` stamp, and a MINT regenerates the
-      // prompt unconditionally. Residue for a never-recreated name is a few small
-      // files and is harmless.
       if (this._wire) { try { this._wire.unregisterAgent(name, { keepSpillShown: s._shuttingDown === true }); } catch {} }
-      // AFTER the watcher stop, and the order is the whole of it: stop() calls
-      // _flushPending(), which re-enters _maybeSpeak and can START a narration.
-      // Stopping the speaker first therefore leaves a dead seat talking, which
-      // is the case this call exists to prevent.
-      //
-      // Unconditional — the speaker is box-wide and cannot attribute an
-      // utterance to a session, so the alternative is leaving a dead seat's
-      // voice playing.
+      // Watcher before speaker: stop() flushes pending text, which can start a narration
+      // for the dead seat. The speaker's stop is unconditional because the speaker is box-wide.
       if (s.watcher) s.watcher.stop();
       try { speaker.stop(); } catch {}
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
@@ -5518,12 +4467,6 @@ function createSessionManager(deps) {
       const lines = session.lineBuffer.split(/\r?\n/);
       session.lineBuffer = (lines.pop() || '').slice(-64 * 1024);
 
-      // Deliberately NOT fence-aware (unlike _extractIntents): this path is
-      // line-at-a-time over an unbounded terminal stream, so fence state
-      // would have to persist on the session — and one `cat`ed markdown file
-      // with an unclosed fence would then silently disable intent scanning
-      // for the rest of the pane's life. Turn text has a natural end; a PTY
-      // doesn't.
       for (const line of lines) {
         const intent = parseIntent(line);
         if (!intent || intent.type === 'escape' || intent.type === 'end') continue;
@@ -5531,22 +4474,8 @@ function createSessionManager(deps) {
       }
     }
 
-    // One subagent turn into the session's ring. Observer-grade: this runs from
-    // the wire tee's turn.completed, which the proxy emits only AFTER the client's
-    // final byte, so a throw here cannot reach the request.
-    //
-    // ACCEPTED MISATTRIBUTION WINDOW: RoleClassifier's per-session fingerprint map
-    // is empty on a fresh Clodex process, so until the first main-line turn
-    // establishes it, the documented cc_is_subagent leak (a parent turn carrying a
-    // recycled x-claude-code-agent-id) can file ONE parent turn as a subagent row
-    // here. It is self-clearing and deliberately not gated: do not "fix" a
-    // misattributed row by weakening genuineSubagent's fingerprint backstop — that
-    // trades a cosmetic, one-turn artefact for the leak the backstop exists to
-    // catch.
-    //
-    // The key must stay byte-identical to wirescope's instance key (agent-id
-    // verbatim, role as fallback): the feed is looked up by the chip's key, so a
-    // mismatch shows an empty feed for a live subagent rather than failing.
+    // Do not weaken genuineSubagent's fingerprint backstop to hide the one-turn parent-as-subagent row on a fresh process.
+    // The key must stay byte-identical to wirescope's instance key, or a live subagent's chip shows an empty feed.
     _noteSubagentTurn(session, t) {
       try {
         if (!session.subagentStore) return;
@@ -5555,9 +4484,7 @@ function createSessionManager(deps) {
           role: t.role,
           model: t.model,
           text: t.text,
-          // Separate field, deliberately: `text` is the only one that reaches
-          // the intent scanner, and merging the two here would make an agent
-          // reasoning about an intent fire it.
+          // thinking stays separate from text: only text reaches the intent scanner.
           thinking: t.thinking,
           tools: t.toolUses,
           truncated: t.truncated,
@@ -5584,17 +4511,8 @@ function createSessionManager(deps) {
     _emitActivity(name, state, notify) {
       const s = this.sessions.get(name);
       if (s && s.activityState !== state) {
-        // Not Date.now(): the gap-idle and post-sweep transitions are this
-        // process INFERRING quiet from a timer, and stamping them "now" reports
-        // the seat as fresher than its last real event by up to
-        // INFLIGHT_MAX_AGE_MS — a long-cold seat reads as minutes idle and its
-        // dm is delivered instead of held. Identity on wire-driven edges (the
-        // tracker just stamped the same ts); falls back to now for jsonl-source
-        // sessions, whose transitions arrive from JsonlWatcher and have no wire
-        // event at all — the two watcher families are disjoint by construction.
-        // The fallback does not threaten a wire session's restore seed only
-        // because a wire session cannot reach a transition without a counted
-        // event having set lastEventTs first: reachability, not Math.max.
+        // Stamp from the wire's last event, not Date.now(): an inferred idle edge stamped now makes a
+        // cold seat read as fresh and its dm is delivered instead of held.
         s.activityState = state;
         s.activityTs = Math.max(s.activityTs || 0, this._activity.lastEventTs(name) || Date.now());
         if (state !== 'idle') s._turnStartedAt = Date.now();
@@ -5603,60 +4521,29 @@ function createSessionManager(deps) {
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
-      // A turn started — but a turn confirms THIS write only if this write caused
-      // it, and on a fresh seat it frequently did not: a spec injected at spawn+1s
-      // and wiped by the boot re-render, an unrelated roster park draining 12s
-      // later, and the turn the seat took to READ THE ROSTER cleared the spec
-      // latch. The record said delivered and the seat held nothing.
-      //
-      // So the turn is ATTRIBUTED before it clears anything: the transcript records
-      // what the CLI actually consumed, and the dispatch names its ticket id on the
-      // pointer line. Absent ⇒ the seat turned for something else and is still
-      // owed its spec, so the latch stays armed and its deadline redelivers.
-      //
-      // This edge can RACE the transcript rather than following it. For a
-      // jsonl-routed seat the edge is derived from the transcript, so a consumed
-      // spec is already on disk; but a WIRE-routed seat gets its activity from wire
-      // `turn.started` alone, which can arrive before the CLI has appended the user
-      // message. The race is one-sided and lands on the safe side: it leaves the
-      // latch armed over a delivered spec, and _checkSpecConfirm re-probes at the
-      // deadline, so the worst case is a check, not a spurious redelivery.
-      //
-      // Bounded fs work despite sitting in the hot path: gated on a latch that is
-      // set only inside the 90s window after a dispatch.
+      // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
+      // otherwise the latch stays armed and its deadline redelivers.
       if (s && state !== 'idle' && s._specUnconfirmed) {
         const u = s._specUnconfirmed;
-        // Anchored at the byte the transcript had reached when this write went out:
-        // a respawned seat's transcript already holds this ticket's marker from the
-        // incarnation that died, and an unanchored match would attribute every turn
-        // to it. null (no transcript, unreadable link, nothing new) trusts the turn,
-        // as before: the probe must never manufacture a redelivery out of its own
-        // blind spot.
+        // Anchor at the byte reached when this write went out: a respawned seat's transcript already
+        // holds this ticket's marker. A null probe trusts the turn, never manufacturing a redelivery.
         const has = this._seatTranscriptHas(s.name, u.ticketId, u.since, undefined, u.sinceFile);
         if (has === false) {
           log.warn('inject', `${s.name} started a turn but ${u.ticketId} is absent from its transcript — not clearing the latch, the turn was something else`);
         } else {
-          // An ATTRIBUTED turn is receipt, which ends this ticket's displacement
-          // episode — the COMMON of the two receipt exits (the other is
-          // _checkSpecConfirm's deadline re-probe, reached only when no turn
-          // cleared the latch first).
+          // A receipt exit: the other is _checkSpecConfirm's deadline re-probe, reached only when no
+          // turn cleared the latch first, so the displacement episode must end here too.
           this._pruneOwedSpent(s, u);
           s._specUnconfirmed = null;
           clearTimeout(s._specConfirmTimer);
           s._specConfirmTimer = null;
         }
       }
-      // Same edge, same meaning, for the plain-dm latch — and it is a SEPARATE
-      // field, so it inherits nothing from the spec latch above by construction.
       if (s && state !== 'idle' && ((s._dmUnconfirmed && s._dmUnconfirmed.length) || s._dmUnconfirmedLast)) {
         this._clearDmConfirm(s);
       }
-      // Same edge, same meaning, for a reviewer's first turn. The check re-reads
-      // `activityState` itself and would decline anyway, so this is the cheap arm
-      // of a belt-and-braces pair: it stops a healthy review holding a timer for
-      // its whole run, and it makes the disarm survive a seat that starts and
-      // finishes inside the window (idle -> thinking -> idle), where the state read
-      // at the deadline is idle again and only the transcript would say otherwise.
+      // Cheap disarm on the first turn: after a start and finish inside the window the deadline sees
+      // idle again and only the transcript would say the review started.
       if (s && state !== 'idle' && s._reviewStartTimer) {
         clearTimeout(s._reviewStartTimer);
         s._reviewStartTimer = null;
@@ -5669,11 +4556,8 @@ function createSessionManager(deps) {
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
-      // `notify` is TURN-END, not merely idle, and the renderer needs that
-      // distinction: two emitters produce `idle` MID-TURN — the wire tracker's
-      // gap-idle timer when a tool runs long with nothing in flight, and the
-      // jsonl watcher's 1s text flush between tool calls. A consumer that acts
-      // on the state alone acts in the middle of turns.
+      // notify marks turn-end; idle also fires mid-turn (wire gap-idle, jsonl text flush), so a consumer
+      // acting on state alone acts in the middle of turns.
       this._sendToSession(name, 'session-activity', name, state, !!notify);
       if (getRemoteServer()) { try { getRemoteServer().notifyActivity(name, state, notify); } catch {} }
       if (!notify) return;
@@ -5780,24 +4664,15 @@ function createSessionManager(deps) {
       this._voidScratchMark(session,
         'a compact landed inside the episode — every mark is gone and nothing can be cut. Your summary '
         + 'is in your own turn above; carry on from it.');
-      // The live set resets to EMPTY — no attempt to model what the summarizer
-      // kept. "Possibly evicted" resolving to "not loaded" is the correct
-      // answer for a dedup consumer, and on the jsonl-intent path this fires for
-      // the CLI's own auto-compact too, because the watcher reads the transcript
-      // rather than only knowing about compactions Clodex triggered. A wire-routed
-      // seat reaches here only via _executeCompact's armCompact, so a CLI-initiated
-      // auto-compact there does NOT land here.
+      // Reset the live set to empty rather than model what the summarizer kept: possibly-evicted
+      // must read as not loaded.
       try { memLoad.noteCompact(session.name); } catch { /* observer-grade */ }
-      // Same transition, different ledger. "Already in context" and "already
-      // offered" are separate questions on purpose, so they reset side by side
-      // here rather than one reading the other.
+      // Separate ledger from memLoad: already in context and already offered reset side by side.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
       const sched = getRemindScheduler && getRemindScheduler();
       if (this._compactRegen(session, sched)) return;
-      // The compact has landed and the continuation has NOT been injected yet.
-      // The summary dropped every prompt delta delivered so far, so the whole
-      // gap is re-staged here for the next prompt; the frozen prompt file is NOT
-      // rewritten (the CLI would not read it — see refreshPrompt).
+      // The whole prompt-delta gap is re-staged for the next prompt; the frozen prompt file is not
+      // rewritten because the CLI would not read it.
       try { this.refreshPrompt(session.name, 'compact'); } catch { /* never block the continuation on a refresh */ }
       this._clearCompactValve(session);
       if (sched) { try { sched.fireCompactFor(session.name); } catch {} }
@@ -5890,14 +4765,8 @@ function createSessionManager(deps) {
       if (session._compactValveTimer) { clearTimeout(session._compactValveTimer); session._compactValveTimer = null; }
     }
 
-    // Turn-one briefing for a self-cleared agent, fired from the sessionId-CHANGE
-    // edge in create()'s onSessionId. That edge is the only reliable "the clear
-    // actually landed" signal — /clear mints a new conversation id and the
-    // transcript symlink repoints, /compact is in-place and keeps the id. A timer
-    // ("probably done by now") would inject into whatever conversation happened to
-    // be in front of the model. Named for the phase, not as a sibling of
-    // _clearCompactValve, which means "clear the compact valve" — the opposite of
-    // what a _clearValve here would mean.
+    // Fire only from the sessionId-change edge (create()'s onSessionId): /clear mints a new id and
+    // /compact keeps it, so a timer would inject into whatever conversation is current.
     _firePostClearContinuation(session) {
       const cont = session._postClearContinuation;
       if (!cont) return;
@@ -5909,10 +4778,6 @@ function createSessionManager(deps) {
       }, COMPACT_CONTINUATION_DELAY);
     }
 
-    // A continuation whose clear never landed must EXPIRE rather than wait: the
-    // next sessionId change could be an operator's manual /clear minutes later,
-    // and a stale briefing injected into an unrelated conversation is worse than
-    // a lost one. No retry — the clear it belonged to is gone.
     _armPostClearValve(session) {
       this._clearPostClearValve(session);
       session._postClearValveTimer = setTimeout(() => {
@@ -5970,10 +4835,6 @@ function createSessionManager(deps) {
 
     _flushInjectRun(session, queue) {
       if (!queue.length) return;
-      // Mixed queue: plain texts and unclaimed producers, in arrival order. If any
-      // entry is a producer the whole flush becomes one, so the claim still happens
-      // at write time — joining eagerly here would re-introduce the eager claim on
-      // the hold-release path specifically, which is the hardest one to notice.
       if (queue.some((e) => e && typeof e.produce === 'function')) {
         const produce = () => {
           const parts = [];
@@ -5992,20 +4853,9 @@ function createSessionManager(deps) {
       this._injectText(session, queue.join('\n'), { bypassHold: true });
     }
 
-    // Claims LATE, like the boot-ready drain below. The eager version claimed here
-    // and fire-and-forgot the inject, which is a silent loss whenever the write does
-    // not happen: _drain returns without writing on every isDead() check, and the
-    // parkable divert can re-park, so a seat dying between the claim and the write
-    // dropped the messages with the files already deleted.
     _drainPendingAtIdle(session) {
       if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
-      // Dictated as well as typed: with only the typed check here, a dictated
-      // draft passed the guard, drainPending CLAIMED the files destructively, and
-      // the divert then re-parked the joined text as ONE ACTIVE entry. No message
-      // was lost, but a `.passive.` entry came back active — and a passive park
-      // never earns a turn by design, so the promotion wakes a seat that should
-      // have stayed quiet.
-      if (this._anyDraftOpen(session)) return;   // don't splice an open draft
+      if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
         parkable: true,
@@ -6024,22 +4874,10 @@ function createSessionManager(deps) {
       });
     }
 
-    // Boot-ready-edge drain. Claims LATE, like every other drain: peek
-    // (non-destructive) to decide whether to bother, then enqueue a fire-time
-    // PRODUCER that does the destructive drainPending claim only once the InjectQueue
-    // is past its ready + quiet gates and about to write. If the seat died or a draft
-    // opened in the meantime the producer claims nothing and returns null — the
-    // delivery stays parked, recoverable. Exactly-once holds: the claim is the same
-    // atomic dir-rename the hook + idle drains use, so whoever fires first owns the
-    // messages.
     _drainPendingAtBootReady(session) {
       if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
-      if (this._anyDraftOpen(session)) return;                     // don't splice an open draft
-      if (!hasActivePending(PENDING_DIR, session.name)) return;    // nothing active — leave passives parked
-      // Every bail here is a park that stays on disk EXCEPT the last one, where the
-      // claim already succeeded and came back empty. Saying which is the difference
-      // between "deferred" and "someone else took it", and the silence over both is
-      // why a lost boot-window delivery left no evidence across seven reboots.
+      if (this._anyDraftOpen(session)) return;
+      if (!hasActivePending(PENDING_DIR, session.name)) return;
       const produce = () => {
         if (session._dead || session._recycling) return null;
         if (this._anyDraftOpen(session)) return null;
@@ -6184,24 +5022,13 @@ function createSessionManager(deps) {
     _scanJsonlText(text, senderName, touches, meta) {
       const s = this.sessions.get(senderName);
       if (s) s._flushTurnEnd = !!(meta && meta.turnEnd);
-      // Mirrors the publish gate directly below and for the same reason: a
-      // wire-routed session with a live tee already spoke from turn.completed,
-      // and speaking here too would say every reply twice. A tee-blind
-      // (Bedrock/Vertex) session is wireRouted but never fires turn.completed,
-      // so `!s.backend` is what keeps this its ONLY voice rather than none.
+      // Same gate as the publish below: a wire seat with a live tee already spoke from turn.completed, and
+      // !s.backend keeps a tee-blind (Bedrock/Vertex) seat's watcher its only voice.
       if (!(s && s.wireRouted && !s.backend)) {
         this._maybeSpeak(senderName, text, !!(meta && meta.turnEnd));
       }
-      // A wire-routed session running intentSource:'jsonl' (shadow mode) has
-      // BOTH junctions live. Publishing here too would double-deliver every
-      // turn deterministically, so the wire wins: it is already firing and
-      // carries reads + a real turn-end signal this path cannot know.
-      //
-      // `!s.backend` is the load-bearing half. A tee-blind (Bedrock/Vertex)
-      // session is ALSO wireRouted — the registration is kept and merely
-      // ignored — but its bytes never traverse the tee, so turn.completed
-      // never fires and this watcher is its ONLY junction. Discriminating on
-      // wireRouted alone blanks the feed for it permanently.
+      // Shadow mode has both junctions live, so the wire wins or every turn double-delivers; !s.backend
+      // keeps a tee-blind seat's watcher its only feed, and wireRouted alone blanks it.
       if (!(s && s.wireRouted && !s.backend)) {
         this._publishAgentText({
           session: senderName, text, source: 'jsonl', truncated: false,
@@ -6235,15 +5062,9 @@ function createSessionManager(deps) {
       }
     }
 
-// The single door for per-request main-line text: the plugin turn-text feed and
-// the phone's progress nudge. Consume-only, like every other plugin hook: a
-// throw here lands in the wire's event handler, which also dispatches intents,
-// so it must never escape. The engine owns the grant check and the deferral.
     _publishAgentText(ev) {
       try {
-        // Nothing to say to ANY grant set. Deliberately admits more than the
-        // engine's per-plugin rule, which re-judges emptiness against the fields
-        // each subscriber's own grants let it see.
+        // Empty for every grant set; deliberately looser than the engine's per-plugin emptiness rule.
         const hasFiles = Array.isArray(ev.files) && ev.files.length;
         const hasReads = Array.isArray(ev.reads) && ev.reads.length;
         const hasTools = Array.isArray(ev.toolUses) && ev.toolUses.length;
@@ -6256,14 +5077,6 @@ function createSessionManager(deps) {
     }
 
 
-    // Speak the agent's FINAL reply, when the operator asked to hear it.
-    //
-    // TURN-END IS THE WHOLE FEATURE. The caller supplies it from a source that
-    // knows: the wire's `stop.is_turn`, or the transcript entry's own
-    // `stop_reason` via isTurnEndEntry.
-    //
-    // Off by default and read fresh per turn: the setting is a live toggle, so a
-    // cached answer would keep talking after it was switched off.
     _maybeSpeak(name, text, turnEnd) {
       if (!turnEnd || !text) return;
       try {
@@ -6272,27 +5085,12 @@ function createSessionManager(deps) {
         const store = getUiSettings && getUiSettings();
         const cfg = store ? store.get() : null;
         if (!cfg || cfg.speakReplies !== true) return;
-        // ONLY THE SEAT HOLDING CONTROL SPEAKS. speak() kills the previous
-        // utterance rather than queueing it, so several seats narrating their
-        // own turn ends complete NO reply between them.
-        //
-        // Do not reduce this to _micTarget alone. It is null on a box he
-        // alt-tabbed away from before naming a seat, and the strict read
-        // silences the feature outright there. Both null is nobody holding
-        // control, and then nobody speaks.
+        // Only the seat holding control speaks: speak() kills the previous utterance. Do not reduce to
+        // _micTarget alone, which is null on an alt-tabbed box before a seat is named.
         const holder = this._micTarget || this._focusedSession;
         if (!holder || name !== holder) return;
-        // DO NOT TALK OVER A LIVE MICROPHONE. Read the BOX-WIDE stamp, never the
-        // per-seat one: the recorder is reported only for the active seat, so
-        // `s.lastVoiceRecordingTs` is undefined on every background seat and a
-        // gate reading it would pass exactly when he is dictating into another
-        // pane. The microphone and the speaker are both box-wide, and this reads
-        // box-wide with them.
-        //
-        // Absent evidence reads as NOT recording, matching the inject gate's
-        // polarity — the cost of a wrong "quiet" here is one narration he can
-        // stop, while a deferral nothing releases would silence the feature
-        // permanently.
+        // Read the box-wide recording stamp, never s.lastVoiceRecordingTs: the recorder is reported only for the
+        // active seat. Absent evidence reads as not recording.
         if (Date.now() - (this._lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
         const say = speakable(text);
         if (!say) return;
@@ -6309,10 +5107,8 @@ function createSessionManager(deps) {
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
-          // Seat-scoped: this list is written INTO the seat's context, so naming
-          // a verb from a plugin the seat does not have would advertise that
-          // plugin's existence to exactly the agents it is meant to be
-          // invisible to.
+          // Seat-scoped: this list goes into the seat's context, so naming a plugin verb the seat lacks
+          // would advertise a plugin invisible to it.
           const seatPlugins = getPersistence().get(senderName)?.plugins;
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
@@ -6380,9 +5176,7 @@ function createSessionManager(deps) {
           const localTarget = this.sessions.get(intent.target);
           let sup = null;
           if (localTarget && localTarget.agentType) {
-            // The ONE site where a live local sender exists to be told, which is
-            // why the latch is armed from here and not from inside
-            // _gatedDeliver — see _armDmConfirm.
+            // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
             const r = this._gatedDeliver(intent.target, senderName, intent.body, intent.urgent === true, '',
               (disposition) => this._armDmConfirm(intent.target, senderName, disposition));
             if (r.parked || r.held) {
@@ -6748,10 +5542,6 @@ function createSessionManager(deps) {
       const sinceMs = now - last;
       if (last && sinceMs < REBOOT_MIN_INTERVAL) {
         const waitS = Math.ceil((REBOOT_MIN_INTERVAL - sinceMs) / 1000);
-        // "requested", not "happened": the stamp is written at QUEUE time, and the
-        // restart may still be waiting for an all-idle window, or have been
-        // cancelled/dropped without ever running — _rebootAbandoned deliberately
-        // leaves the stamp behind so there is no rapid-retry window.
         reply(`rate-limited — a reboot was requested ${Math.round(sinceMs / 1000)}s ago; try again in ${waitS}s`);
         this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `REFUSED (rate-limited): ${reason || '(no reason)'}` });
         return;
@@ -6764,19 +5554,8 @@ function createSessionManager(deps) {
       reply('reboot queued — restarting once every session and the keyboard are idle; sessions resume on relaunch');
       let relaunched = false;
       try {
-        // The host decides WHEN. Under Electron the restart waits for a sustained
-        // all-idle window, so this seat's own turn finishes and flushes first —
-        // which means the wait can also be given up, and onAbandon is the only way
-        // the seat hears about that.
-        // `requester` is for the OPERATOR's give-up notification, not for this
-        // seat: without it the desktop notice reads as the operator's own restart
-        // failing, when in fact an agent they never asked armed it.
-        //
-        // `born` and `now` are captured HERE, not re-read in the callback: the
-        // wait runs up to 30 minutes and only carries the name across, so both
-        // ends of the abandon have to be able to tell this request from a later
-        // one wearing the same name. Rate-limiting is 5 minutes, well inside the
-        // wait, so a kill + same-name recreate is reachable, not theoretical.
+        // Capture born and now here, not in the callback: the wait runs up to 30 minutes, and both ends of
+        // the abandon must tell this request from a later same-name one.
         const born = this._bornFor(who);
         if (relaunchApp) relaunchApp({ requester: who, onAbandon: (why) => this._rebootAbandoned(who, why, born, now) });
         relaunched = true;
@@ -6793,19 +5572,8 @@ function createSessionManager(deps) {
       }
     }
 
-    // A deferred reboot ended without restarting. Two things are now wrong and
-    // both have to be undone: the seat is blocked on a relaunch that will never
-    // come, and pendingRebootNotice would announce that restart on some later
-    // launch.
-    //
-    // `why` is the host's reason and drives the ADVICE, which is opposite in the
-    // two cases. 'cancelled' is a human pressing Cancel Pending Restart: telling
-    // that seat to "ask again when work settles" turns the operator's no into an
-    // invitation to re-arm the moment REBOOT_MIN_INTERVAL lapses, leaving them
-    // cancelling the same restart on a loop. Anything else is the 30-minute cap.
-    //
-    // `born`/`at` identify THIS request across the wait; both guards below are
-    // against a later request that the name alone cannot distinguish.
+    // Advice differs by why: a cancelled restart must not tell the seat to ask again, or the operator's
+    // no becomes an invitation to re-arm.
     _rebootAbandoned(who, why, born, at) {
       const cancelled = why === 'cancelled';
       const store = getUiSettings && getUiSettings();
@@ -6813,11 +5581,7 @@ function createSessionManager(deps) {
         try {
           const cur = store.get();
           const notice = cur && cur.pendingRebootNotice;
-          // Only if it is still THIS REQUEST's notice. The name is not enough:
-          // the later requester may BE this name — a same-name recreated seat, or
-          // this same seat re-requesting once the 5-minute rate limit lapses —
-          // and clearing then discards a pending restart that is still armed.
-          // `at` is the request's own timestamp, already persisted in the record.
+          // Match name and at, not name alone: a same-name recreated seat or a re-request may own the armed notice.
           const mine = notice && notice.name === who && (at == null || notice.at === at);
           if (mine) store.set({ pendingRebootNotice: null });
           else if (notice) log.info('intent', `reboot abandon by ${who}: notice left alone — it is not this request's`);
@@ -6832,13 +5596,8 @@ function createSessionManager(deps) {
         to: who,
         body: cancelled ? 'reboot CANCELLED (operator)' : 'reboot DROPPED (sessions stayed busy)',
       });
-      // The wait may have run for up to 30 minutes; the requester may be gone.
-      // Re-resolve by name rather than holding the session object across it —
-      // but a name is not an identity across that long a gap. A seat killed and
-      // recreated under the same name resolves here, and the inject is parkable,
-      // so it would land in the NEW seat's next prompt as a report about a
-      // restart it never asked for. Same generation stamp the parked deliveries
-      // use; null born means no expectation, so deliver.
+      // Compare createdAt to born: the inject is parkable, so a same-name recreated seat would receive it
+      // as a report about a restart it never asked for. Null born delivers.
       const live = this.sessions.get(who);
       if (!live) return;
       if (born != null && live.createdAt !== born) {
@@ -6864,11 +5623,8 @@ function createSessionManager(deps) {
         catch (e) { log.error('intent', `reboot notice clear failed: ${e.message}`); }
       };
 
-      // Both bounds are checked BEFORE attempting, not only after a throw: once
-      // the retry below makes retention the normal outcome rather than the error
-      // path, an unchecked notice would be re-offered at every launch for as long
-      // as it existed. Age is the outer bound; attempts is the one that actually
-      // ends a doomed notice.
+      // Check both bounds before attempting: retention is the normal outcome, so an unchecked notice would be
+      // re-offered at every launch.
       const priorAttempts = Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0;
       const noticeAge = Number.isFinite(notice.at) && notice.at ? Date.now() - notice.at : Infinity;
       if (noticeAge > REBOOT_NOTICE_MAX_AGE) {
@@ -6905,16 +5661,8 @@ function createSessionManager(deps) {
       };
 
       const target = this.sessions.get(notice.name);
-      // An armed retry means an offer for THIS notice is already in flight, so a
-      // second restore is not a second delivery opportunity — it only re-stamps an
-      // attempt. restoreSessionsForWorkspace runs once per workspace, so a
-      // two-workspace launch made two offers ~0.4s apart and the ladder burned to
-      // its ceiling before its first rung elapsed. The budget is per notice, not
-      // per restore — suppress the duplicate rather than widen the budget.
-      //
-      // Keyed on the in-flight timer, not a launch-scoped flag: at the ceiling no
-      // timer is armed, and a later call must still reach the give-up-and-clear
-      // above. `retry` marks the ladder's own re-offer, which is not a duplicate.
+      // Suppress a duplicate offer while a retry timer is armed, keyed on the timer not a launch flag, so the
+      // ceiling's give-up-and-clear stays reachable; retry marks the ladder's own re-offer.
       if (!opts.retry && target && target._rebootNoticeRetryTimer) {
         log.debug('intent', `reboot notice for ${notice.name} already in flight (retry armed) — not re-stamping an attempt`);
         return;
@@ -6925,14 +5673,8 @@ function createSessionManager(deps) {
             parkNotice(this._buildDeliveryText(target, 'reboot', body, 'dm'));
             this._armParkCap(target);
             this._armRebootNoticeFlush(target);
-            // Park is a promise to deliver, not a receipt — so this branch does NOT
-            // clear(). The settings copy is the only durable one, and clearing it
-            // here destroyed it while the parked file was still undelivered: a
-            // drain claims destructively (the claim renames the dir away) and its
-            // pty.write can then evaporate into a booting CLI, leaving no copy
-            // anywhere and no trace that anything was lost. Retention is what makes
-            // a retry possible at all; the REBOOT_NOTICE_MAX_ATTEMPTS give-up above is what keeps at-least-once
-            // from becoming forever.
+            // A park is a promise, not a receipt: do not clear() here, the settings copy is the only durable one
+            // and a drained write can vanish into a booting CLI.
             this._armRebootNoticeRetry(target, notice);
             log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed; retry armed, attempt ${(Number.isFinite(notice.attempts) ? notice.attempts : 0) + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS})`);
             return;
@@ -6960,53 +5702,26 @@ function createSessionManager(deps) {
       }
     }
 
-    // The notice's dedicated deadline: give the polite drains their window, then
-    // force the park out rather than inheriting the generic 5-minute cap.
-    //
-    // Scope note, deliberate: drainPending claims the seat's WHOLE park dir, so
-    // anything else parked for this seat leaves early with the notice. Bounded by
-    // one deferral round, NOT by REBOOT_NOTICE_FLUSH_MS: the re-arm below is
-    // unbounded, so a chain that started at T+0 can still be alive minutes later
-    // and sweep a DM parked just before it fires.
     _armRebootNoticeFlush(target, parkedAt = Date.now()) {
       if (target._rebootNoticeFlushTimer) return;   // one deadline per launch, earliest governs
-      // Carried across a re-arm, NOT restamped: the turn check below asks "did the
-      // seat wake since the PARK", and refreshing this on every round would keep
-      // moving the line the turn has to beat, so a seat that woke during round 1
-      // would look unwoken forever.
+      // Carried across re-arms, not restamped: refreshing it each round keeps moving the line a turn must beat.
       const fire = () => {
         target._rebootNoticeFlushTimer = null;
         if (target._dead) return;
-        // A turn since the park means a drain already ran and the seat processed
-        // input — forcing here would splice for nothing. Same signal the retry
-        // ladder uses, and the seeded spawn stop is excluded for the same reason.
         if (this._turnSinceRebootPark(target, parkedAt)) {
           log.debug('inject', `reboot notice flush for ${target.name} skipped — seat took a turn since the park`);
           return;
         }
-        // A FRESH draft is the one thing this deadline must never interrupt. The
-        // forced flush enqueues non-parkable, so at write time the queue emits a
-        // bare Ctrl-U clear-line into whatever is typed — the splice
-        // INJECT_QUIET_MAXWAIT was raised to 5 min to avoid after it cut live
-        // composition mid-word twice.
-        //
-        // Re-arm rather than flush, and deliberately WITHOUT a round bound: the
-        // 300s _armParkCap is armed independently at T+0 and remains the ultimate
-        // backstop, so unbounded re-arming degrades at worst to the previous
-        // behaviour while giving 25s whenever the operator is away. A bound would
-        // only re-introduce the splice this check exists to prevent — do not add one.
-        //
-        // The field case is untouched: a restored seat has no lastUserInputTs, so
-        // Date.now() - 0 is stale and the notice flushes at the first deadline.
+        // Never interrupt a fresh draft: the forced flush sends a bare Ctrl-U into it. Re-arm with no round bound;
+        // _armParkCap is the backstop, and a bound reinstates the splice.
         if (Date.now() - (target.lastUserInputTs || 0) <= REBOOT_NOTICE_DRAFT_STALE_MS) {
           log.debug('inject', `reboot notice flush for ${target.name} deferred — draft touched within ${REBOOT_NOTICE_DRAFT_STALE_MS / 1000}s; re-arming`);
           this._armRebootNoticeFlush(target, parkedAt);
           return;
         }
         log.info('inject', `reboot notice flush cap (${REBOOT_NOTICE_FLUSH_MS / 1000}s) for ${target.name} — forcing the parked notice out`);
-        // Timer callback: _flushParkedNow calls countPending outside a try by
-        // design, so a throw here escapes as an uncaughtException and takes the
-        // app down rather than costing one undelivered notice.
+        // Timer callback: countPending inside _flushParkedNow can throw, and an escape is an uncaughtException
+        // that takes the app down.
         try {
           this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
         } catch (e) {
@@ -7015,28 +5730,14 @@ function createSessionManager(deps) {
       };
       target._rebootNoticeFlushFire = fire;
       target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
-      // Stamped for the same reason as the delay above: the staleness threshold is
-      // the operator's whole protection against a spliced draft, and a test that
-      // only exercises it at 1s and 60s stays green if it drifts down to
-      // INJECT_QUIET_MS, which is exactly the value that reinstates the splice.
+      // Stamped so a test can pin the staleness threshold: a test driving only 1s and 60s stays green if it
+      // drifts down to INJECT_QUIET_MS, which reinstates the splice.
       target._rebootNoticeDraftStaleMs = REBOOT_NOTICE_DRAFT_STALE_MS;
       target._rebootNoticeFlushTimer = setTimeout(fire, REBOOT_NOTICE_FLUSH_MS);
     }
 
-    // Re-offer the notice WITHIN this launch. The cross-launch retry (the notice
-    // surviving in settings) is only the backstop for a crash between park and
-    // delivery: a copy arriving at the next launch answers a question nobody is
-    // still asking.
-    //
-    // The liveness test is deliberately NOT _armParkedDrainFallback's
-    // fs.existsSync on the park file. That timer is the right shape against "the
-    // drain never fired" and blind to the failure here: the drain DID fire, the
-    // file is gone, and the write vanished — which existsSync reads as success.
-    //
-    // What is observable is that the seat took a turn after the park. It is
-    // inference, not confirmation: a turn the operator caused would satisfy it
-    // too. That costs at most one duplicate notice, whereas trusting the claim
-    // costs the message.
+    // Liveness is a turn since the park, not _armParkedDrainFallback's existsSync: the drain fired, the file is
+    // gone and the write vanished, which existsSync reads as success.
     _armRebootNoticeRetry(target, notice) {
       const attempt = (Number.isFinite(notice.attempts) && notice.attempts > 0 ? notice.attempts : 0) + 1;
       const store = getUiSettings && getUiSettings();
@@ -7051,7 +5752,6 @@ function createSessionManager(deps) {
       const fire = () => {
         target._rebootNoticeRetryTimer = null;
         if (target._dead) return;
-        // A turn since the park is the delivered-enough signal; clear and stop.
         if (this._turnSinceRebootPark(target, parkedAt)) {
           if (store) {
             try { store.set({ pendingRebootNotice: null }); }
@@ -7109,12 +5809,6 @@ function createSessionManager(deps) {
         return;
       }
 
-      // A `for <id>` binding names a ticket that must actually exist on this
-      // seat's team, and the check is here rather than in the parser because the
-      // parser is a pure leaf with no board to consult. Binding to a ticket that
-      // is not on the board can never be cancelled — which reproduces exactly the
-      // orphaned-reminder bug, minus the visible reminder that something was
-      // supposed to happen. So it bounces instead of arming.
       if (parsed.ticket) {
         let team = null;
         try { team = resolveTeam(session.cwd); } catch { team = null; }
@@ -7132,14 +5826,6 @@ function createSessionManager(deps) {
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
         }
-        // Existence is not enough: a binding to an ALREADY-TERMINAL ticket can
-        // never be collected, because no verb will name it again — _taskCancel
-        // refuses a non-open ticket, and an accept that closed out is not
-        // repeated. So it would arm and then fire stale.
-        //
-        // The SAME predicate decides here and at close time (ticketTerminal /
-        // ticketTerminalReason in tickets-store), so the set refused here and
-        // the set collected there cannot drift apart.
         const why = ticketTerminalReason(row);
         if (why) {
           const e = `ticket ${parsed.ticket} is ${why} — nothing left to bind to`;
@@ -7166,15 +5852,8 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `scheduled ${r.record.id} (${spec})` });
     }
 
-    // argv comes WHOLLY from the registry entry — the validated JSON payload is
-    // handed to the command over STDIN and NEVER contributes to argv, which is what
-    // makes argv-injection structurally impossible. The invoking seat's persisted
-    // execCommands allowlist is the capability; the registry is read fresh at
-    // invocation (no watcher, so a headless host cannot serve a stale cache).
-    // All three failure classes bounce loudly, because a lost exec is a lost datum.
-    // _resolveExecDefs degrades to the bare id STRING on any read/parse failure — a
-    // malformed def must never fail a spawn — and drops argv/cwd, which can carry
-    // absolute paths that must never reach a prompt.
+    // A malformed def degrades to the bare id string so it never fails a spawn; argv and cwd are
+    // dropped because they can carry absolute paths that must not reach a prompt.
     _resolveExecDefs(execCommands, team) {
       if (!Array.isArray(execCommands)) return [];
       return execCommands.map((c) => {
@@ -7243,14 +5922,8 @@ function createSessionManager(deps) {
       }
 
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
-      // ${TEAM_ROOT} is what makes an exec def PORTABLE ACROSS TEAMS. A def that
-      // hardcodes an absolute project path runs that project's script for every
-      // team that holds the grant — a second team asking for its own test digest
-      // silently got THIS repo's, which is worse than a missing command because
-      // the green result looks like its own. Resolved per CALLING SESSION, so one
-      // def serves every team. Empty when the seat's cwd is in no team's root:
-      // substituting a wrong root would reintroduce exactly the bug, so a def
-      // using the token fails loudly instead.
+      // Resolved per calling session so one def serves every team; empty outside any team root, where
+      // a wrong root would run another team's script, so a def using the token fails instead.
       const teamRoot = (team && team.root) || '';
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
@@ -7268,18 +5941,12 @@ function createSessionManager(deps) {
       setImmediate(() => {
         let child;
         try {
-          // NOT detached: a plain child dies on a normal SIGKILL. detached:true
-          // would make the child a process-group leader, but child.kill signals
-          // only the leader PID (not the group) — so it buys no group-kill while
-          // risking orphaned grandchildren on timeout. v1 commands are simple
-          // atomic writes with no grandchildren; keep it plain.
+          // Not detached: child.kill signals only the leader pid, so detached:true would add no group kill
+          // while risking orphaned grandchildren on timeout.
           child = childProcess.spawn(argv[0], argv.slice(1), {
             cwd: runCwd,
-            // CLODEX_HOME is set EXPLICITLY rather than inherited: the child is
-            // a registered exec script (clodex-team, clodex-monitor), whose only
-            // channel to the app's root is this variable — there is no --home
-            // flag. Inheriting would let a CLODEX_HOME set in the app's
-            // environment point the child at a different tree than the app uses.
+            // CLODEX_HOME is set explicitly, not inherited, so one in the app's environment cannot point the
+            // child at a different tree than the app uses.
             env: { ...process.env, CLODEX_HOME: REGISTRY_DIR },
             stdio: ['pipe', 'ignore', 'pipe'],
           });
@@ -7287,16 +5954,11 @@ function createSessionManager(deps) {
           fail(`spawn failed (${(e && e.message) || e})`);
           return;
         }
-        // The collector keeps the HEAD of stderr and drops the overflow, so its
-        // cap must clear the reply budget or the clamp's input would be smaller
-        // than its output. The 1024 is SLACK, not a data budget — nothing
-        // between the budget and the cap is ever delivered — and a cut sets
-        // stderrTruncated, so the loss is reported rather than silent.
+        // The collector keeps the head of stderr, so the cap must clear the reply budget; the 1024 is slack
+        // (nothing in it is delivered), and a cut sets stderrTruncated so the loss is reported.
         const replyMax = (typeof entry.replyMaxBytes === 'number' && entry.replyMaxBytes > 0)
           ? Math.floor(entry.replyMaxBytes) : 0;
         const stderrCap = Math.max(2000, replyMax + 1024);
-        // A host that never passes the dep still replies, narrowly, instead of
-        // throwing inside the exit handler where the failure is swallowed whole.
         const clamp = clampReplyBody
           || ((s, n) => String(s == null ? '' : s).trim().slice(0, n));
         let done = false;
@@ -7353,21 +6015,7 @@ function createSessionManager(deps) {
         };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
-          // A TIMEOUT IS NOT A FAILURE, and telling the two apart is the caller's
-          // whole decision. A command that exits nonzero has ANSWERED — the right
-          // response is to read the answer. A command killed at the ceiling has
-          // not: the work may have completed and lost only its report, or may
-          // still be running right now. `clodex-run-tests` is exactly that shape —
-          // its digest exists only on the wrapper's stderr, so a SIGKILL at the
-          // ceiling drops a green suite's number on the floor while the suite runs
-          // on and keeps the box-wide lock.
-          //
-          // The "may still be running" clause is the load-bearing half: without
-          // it the natural next move is to re-fire the command, which for a
-          // lock-taking one queues a second run behind the first.
-          // Seconds are omitted below 1s rather than rounded: Math.round would
-          // render a sub-second ceiling as `0s`, and a stated zero reads as a
-          // bug in the reporter rather than as the configured ceiling.
+          // Ceilings under 1s print in ms: Math.round would state them as 0s, which reads as a reporter bug.
           const ceiling = timeoutMs >= 1000
             ? `${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms)`
             : `${timeoutMs}ms`;
@@ -7380,14 +6028,13 @@ function createSessionManager(deps) {
           });
         }, timeoutMs);
         if (child.stderr) {
-          // setEncoding, not d.toString(): a chunk boundary inside a multi-byte
-          // sequence yields U+FFFD mid-row, and every ticket row carries an
-          // em-dash. Multi-chunk collection is the norm on the widened path.
+          // setEncoding, not d.toString(): a multi-byte sequence split across chunks yields U+FFFD mid-row,
+          // and every ticket row carries an em-dash.
           if (typeof child.stderr.setEncoding === 'function') child.stderr.setEncoding('utf8');
           child.stderr.on('data', (d) => {
             stderrRecent = (stderrRecent + d.toString()).slice(-1000);
             if (stderr.length < stderrCap) stderr += d.toString();
-            else stderrTruncated = true;   // makes the clamp's count honest
+            else stderrTruncated = true;
           });
         }
         child.on('error', (e) => finish(() => {
@@ -7397,11 +6044,8 @@ function createSessionManager(deps) {
         }));
         child.on('exit', (code, signal) => finish(() => {
           if (code === 0) {
-            // On exit 0 a widened def (replyMaxBytes) returns stderr from the TOP, not the
-            // last line: its output is a listing whose first rows are the answer
-            // (a ticket board, one error per bad file), and the last line of a
-            // listing is its footer. The narrow default keeps taking the last
-            // line — those commands end with their digest.
+            // A widened def (replyMaxBytes) replies from the top of stderr because its output is a listing
+            // whose last line is a footer; the narrow default keeps the last line, which is its digest.
             const body = entry.replyStderr !== true ? ''
               : replyMax ? clamp(stderr, replyMax, { truncated: stderrTruncated })
                 : (stderrRecent.trim().split('\n').pop() || '').slice(0, 200);
@@ -7429,36 +6073,16 @@ function createSessionManager(deps) {
       });
     }
 
-    // `[agent:term exec] <cmd>` — run one command on the agent's OWN terminal
-    // tab and report the result back to that agent alone.
-    //
-    // BOTH halves of the target are derived from the sender: the seat is the
-    // session's name and the window is its workspace. The agent supplies
-    // neither, so there is no seat string to validate and no way to reach
-    // another agent's terminal or the seatless workspace shell.
-    //
-    // The result does NOT come back from here. It arrives later, on the seat's
-    // selection queue, when the shell's D mark says the command ended.
+    // Seat and window both come from the sender, never from the agent, so it cannot reach another
+    // agent's terminal or the seatless workspace shell.
     _handleTermIntent(session, sub, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
       if (sub !== 'exec') {
         reply(`unknown form \`term ${sub}\` — the only one is [agent:term exec] followed by the command`);
         return;
       }
-      // The seat TYPE check: a bash session is already a shell and a peer
-      // session lives on another box, so neither has a terminal tab of its own.
-      // The same predicate the renderer uses to decide whether to DRAW the tab,
-      // read from the shared leaf so the two answers cannot drift.
-      //
-      // Today it cannot fire: the switch above requires `agentType`, which is
-      // non-null only for claude/codex, and a peer is not a local session at all.
-      // The refusal that ACTUALLY fires for a seat with no terminal is `no-shell`,
-      // from the exec itself. This stays because the structural reason is an
-      // accident of two other decisions: make bash sessions intent-capable, or
-      // give a peer a local session record, and this becomes the only thing
-      // standing between them and a shell they should not have.
-      // No truthiness guard on the dep. An unwired termAvailableFor must throw
-      // here rather than skip the check.
+      // Structural guard: bash and peer seats have no terminal tab of their own. The dep is called unguarded
+      // so an unwired termAvailableFor throws rather than skipping the check.
       if (!termAvailableFor(session.type)) {
         reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
         return;
@@ -7475,8 +6099,7 @@ function createSessionManager(deps) {
         return;
       }
       log.info('intent', `term exec by ${session.name}${where}: ${res.command}`);
-      // No "sent" acknowledgement. It would cost the agent a turn to read
-      // something it already knows, and the result is coming on its own.
+      // No sent acknowledgement: it costs the agent a turn and the result arrives on its own.
     }
 
     _handleFileIntent(session, sub, rawPath) {
@@ -7514,14 +6137,8 @@ function createSessionManager(deps) {
       if (s.digestNonEmpty) getPersistence().markDigested(s.name, sid);
     }
 
-    // May a wire-observed session id be trusted as THIS PTY's conversation
-    // identity? The transcript symlink is the authority: Claude Code names the
-    // transcript file <conversation-uuid>.jsonl, so a resolvable link that
-    // disagrees with the wire sid means the sid belongs to something else on
-    // the same proxy route (a `claude -p` one-shot / background child spawned
-    // from inside the session — the wire attributes by route, not by process).
-    // An unresolvable link can't testify; accept, preserving the backstop's
-    // original purpose (a wiped symlink must not orphan persistence).
+    // A transcript link that disagrees with the wire sid means a claude -p child on the same proxy route
+    // owns the sid; an unresolvable link accepts so a wiped symlink cannot orphan persistence.
     _wireSessionCorroborated(s, sid) {
       try {
         const real = fs.realpathSync(pathFor(REGISTRY_DIR, s.name, 'transcript'));
@@ -7537,10 +6154,8 @@ function createSessionManager(deps) {
         if (isDigested(getPersistence().get(s.name), sid)) return;
         const units = memoryStore.list(s.name);
         const tiers = tiersOf(units);
-        // DELIVERY MUST NOT DEPEND ON THE TRACKER. Taking the text from `tiers`
-        // alone made a deps object carrying composeDigest without its sibling
-        // stop delivering the digest at all — load tracking is an observer, and
-        // an observer that can suppress the thing it observes is a defect.
+        // Fall back to composeDigest when tiers is absent: load tracking is an observer and must not
+        // suppress delivery.
         const digest = tiers ? tiers.text : composeDigest(units);
         if (!digest) return; // empty store — stay unmarked, try again when units exist
         getPersistence().markDigested(s.name, sid);
@@ -7562,10 +6177,6 @@ function createSessionManager(deps) {
       this._injectText(session, line);
     }
 
-    // The one delete path for a memory unit — the [agent:memory forget] intent
-    // and host.library.remove both land here. Returns rather than throws: the
-    // plugin seam needs an envelope and the intent needs a message, so the
-    // conversion happens once, here.
     removeMemoryUnit(agent, id) {
       try {
         // forget() validates both arguments (MEMORY_AGENT_RE / MEMORY_ID_RE) and
@@ -7574,27 +6185,17 @@ function createSessionManager(deps) {
       } catch (e) {
         return { ok: false, error: e.message };
       }
-      // Only for a LIVE session: memories outlive sessions, so this can be a
-      // dead agent's unit, and writeClaudeDigestFile ensureDir's the agent's run
-      // directory — recreating it as a side effect of a delete. The spawn path
-      // rebakes the digest, so a dead agent loses nothing.
+      // Live sessions only: a dead agent's unit can be forgotten, and writeClaudeDigestFile would recreate its
+      // run directory as a side effect.
       const session = this.sessions.get(agent);
       if (session && !session._dead && session.agentType === 'claude') {
-        // Reassigned, not discarded: _noteConversationForDigest markDigests on
-        // this flag, so a store emptied to zero with a stale true marks a
-        // conversation as digested that never received a digest.
-        // Best-effort, and scoped to this statement on purpose: do not hoist it
-        // to wrap the method. The unlink already happened and is permanent, so
-        // a write failure returning { ok: false } invites a retry that fails
-        // with "no unit" and reads as a bug in the delete path.
+        // Assign the result: _noteConversationForDigest marks digested on this flag, so a stale true after the
+        // store empties would mark a conversation digested that never received a digest.
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
       }
       return { ok: true };
     }
 
-    // The one operator-pin path. Same shape and same obligation as
-    // removeMemoryUnit: changing which units ride the boot digest is only real
-    // once the digest is rewritten, and a plugin cannot know when to do that.
     setOperatorPin(agent, id, on) {
       try {
         memoryStore.setOperatorPinned(agent, id, !!on);
@@ -7603,9 +6204,6 @@ function createSessionManager(deps) {
       }
       const session = this.sessions.get(agent);
       if (session && !session._dead && session.agentType === 'claude') {
-        // Best-effort for the reasons the delete path documents: the pin is
-        // already written and permanent, so reporting failure here would invite
-        // a retry against a store that is already correct.
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
       }
       return { ok: true };
@@ -7629,11 +6227,6 @@ function createSessionManager(deps) {
         let tags = '';
         let pinned = false;
         let text = body.trim();
-        // The loop stops at the first unrecognised key, so an omitted key here
-        // strands EVERY directive behind it in the body too. `tags` was missing
-        // while the store, the digest and hint-retrieve all read it: four units
-        // saved `tags=... pinned=true` and lost the pin, because the parse
-        // halted on `tags` before it ever reached `pinned`.
         for (let m; (m = text.match(/^(scope|tags|pinned)=(\S+)\s+([\s\S]+)$/));) {
           if (m[1] === 'scope') scope = m[2];
           else if (m[1] === 'tags') tags = m[2];
@@ -7656,9 +6249,8 @@ function createSessionManager(deps) {
         return;
       }
       if (sub === 'recall') {
-        // A hint may offer a COMMON unit's id, whose body lives in a store this
-        // agent does not own. Without the fallback that offer names an action
-        // the agent cannot take, and the truncated body is unreachable.
+        // A hint may offer a common unit's id whose body lives in another store, so fall back to
+        // commonMemoryRecall or the offer names an action the agent cannot take.
         let unit = memoryStore.recall(agent, body);
         if (!unit && commonMemoryRecall) {
           try { unit = commonMemoryRecall(body); } catch { unit = null; }
@@ -7667,9 +6259,6 @@ function createSessionManager(deps) {
           this._injectText(session, `[agent:memory] no match for "${body.trim().slice(0, 60)}"`, { parkable: true });
           return;
         }
-        // The highest-signal event in the scheme: one body delivered into the
-        // transcript, where it survives until clear/compact. Also the evidence
-        // base for evidence-driven archival, which is why this one persists.
         try { memLoad.noteRecall(agent, unit.id, session.sessionId); } catch { /* observer-grade */ }
         this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}`, 'memory');
         return;
@@ -7694,20 +6283,8 @@ function createSessionManager(deps) {
     }
 
 
-    // A ticket verb's body is composed in the sender's turn and exists nowhere else,
-    // so a validation error that just returns destroys it. Every rejecting return a
-    // ticket command can reach — the entry-point team check, the verbs below, and
-    // done's undeliverable-report branch — routes its reply suffix through here, so
-    // the payload is on disk before the sender is told no. No exceptions: a site
-    // added without one is a silent regression, since the suite stays green.
-    // The two outcomes must be DISTINGUISHABLE in the reply: a sender that reads
-    // "saved to <path>" stops holding the only copy, so a failed spill reports the
-    // failure and never a path.
-    // The success line names the DEADLINE because the file is not durable:
-    // sweepSpilledMessages exempts only names a PARKED pointer references, and a
-    // promptly-delivered bounce is never parked — so the common case expires
-    // MSG_MAX_AGE after the spill. An unqualified "saved" would be the same false
-    // claim as naming a path for a spill that failed, one timer delayed.
+    // Every rejecting return of a ticket command must route its reply suffix through here, or the composed
+    // body is lost. A failed spill reports the failure and never a path.
     _spillRejectedPayload(session, verb, body) {
       if (!body) return '';
       try {
@@ -7721,27 +6298,6 @@ function createSessionManager(deps) {
       }
     }
 
-    // The disabled-intent gate's payload suffix. Separate from the ticket sites
-    // (_spillRejectedPayload above) for two reasons that are properties of THIS
-    // gate, not of spilling:
-    //
-    // A denial is not a mistake. The ticket sites reject an input the sender can
-    // correct — wrong id, not your ticket — so telling it to copy the body out and
-    // retry is actionable. Here retrying is guaranteed to bounce identically; only
-    // the operator can change the seat's allowlist, so this path says whose call
-    // it is instead.
-    //
-    // And a denial REPEATS without bound: a seat that has not internalised a
-    // denied verb emits one every turn, forever, and an unconditional spill would
-    // write a file each time. sweepSpilledMessages bounds spill AGE, not RATE, so
-    // the rate has to be capped at the source. Hence the per-(seat, verb) budget:
-    // keyed by verb because a seat can be denied several capabilities and one must
-    // not eat another's budget, and held on the live Session so a respawn starts
-    // over.
-    //
-    // Past the budget the sender is still told the body is gone. The
-    // saved/not-saved outcomes stay distinguishable in the reply: a sender that
-    // reads "saved" stops holding the only copy.
     _deniedIntentPayload(session, intent) {
       const { how, label } = deniedBodyDisposition(intent);
       if (how === 'none') return '';
@@ -7801,10 +6357,6 @@ function createSessionManager(deps) {
         return false;
       }
       session._reloadInFlight = true;
-      // Defer off the JsonlWatcher scan callback that triggered us: reload kills
-      // the very watcher mid-emit, and tearing it down from inside its own
-      // callback risks a closed-fd reentrancy crash (same defer discipline as
-      // _injectText's deferred Enter). setImmediate lets the scan unwind first.
       const waitExit = async (nm, timeoutMs = 8000) => {
         const start = Date.now();
         while (this.sessions.has(nm)) {
@@ -7822,12 +6374,8 @@ function createSessionManager(deps) {
           if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
           const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
           if (resumeId) this._freshBakeOnce.add(name);
-          // Same field set as engine.js's restartSession on a fresh restart — a
-          // reload is a kill()+create() like its, and `ephemeral` is what
-          // tells `task accept` whether the loop minted this seat. Dropped
-          // here, a reloaded ticket seat reads as the operator's standing seat
-          // at accept: no teardown, a leaked worktree, and a reply claiming it
-          // is not a one-shot ticket seat.
+          // Carry the ticket-seat fields across the restart: dropped, a reloaded ticket seat reads as a standing
+          // seat at accept, with no teardown and a leaked worktree.
           this._preserveAcrossRestart(name, entry, ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
           const cwd = this.resumeCwdOf(entry);
           await this.create(
@@ -7837,10 +6385,8 @@ function createSessionManager(deps) {
             entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
             Array.isArray(entry.execCommands) ? entry.execCommands : [],
             Array.isArray(entry.intents) ? entry.intents : null,
-            // Session env. Omitting
-            // it defaults sessionEnv to null and the reloaded seat spawns with
-            // NO session env at all — silently, since create() then re-persists
-            // the entry without it, so every later --resume is wrong too.
+            // Session env must be passed: create() defaults it to null and re-persists the entry without it,
+            // so every later --resume is wrong.
             (entry.env && typeof entry.env === 'object') ? entry.env : null,
             false,           // mint — a reload respawns an existing record
             entry.noWire === true,
@@ -7863,10 +6409,8 @@ function createSessionManager(deps) {
           session._reloadInFlight = false;
           this._freshBakeOnce.delete(name);
           console.error(`[agent:context ${why}] ${name} failed:`, err.message);
-          // Never let a failed respawn eat the entry — but not its `worktree` if
-          // another live seat took the checkout while this reload was in flight.
-          // Re-upserting the whole pre-kill snapshot is how a failure path puts
-          // a second record on one tree; see _stripClaimedTree.
+          // Re-upsert the entry without a worktree another live seat has since claimed, or the failure path
+          // puts a second record on one tree (_stripClaimedTree).
           getPersistence().upsert(this._stripClaimedTree(entry));
         }
       });
@@ -7878,11 +6422,6 @@ function createSessionManager(deps) {
         const name = session.name;
         const entry = getPersistence().get(name);
         if (!entry) return;
-        // Reload-handoff: a cold boot is AMNESIAC, so the handoff body is MANDATORY
-        // — it's the previous self's briefing, injected as turn-one in the fresh
-        // process. Without it the agent reloads and cold-parks forever. Reject
-        // BEFORE killing anything, so a body-less reload leaves the live session
-        // fully intact (mandatory means mandatory; refusing is the safe failure).
         const handoff = (body || '').trim();
         if (!handoff) {
           this._injectText(session,
@@ -7978,16 +6517,10 @@ function createSessionManager(deps) {
         unsupported();
         return;
       }
-      // Non-compact context command (clear): inject immediately — no guard, no
-      // latch. bypassHold: the intent often lands before the sender's own idle
-      // event, and a queued bare slash command must never '\n'-join into a flush
-      // batch (the command line would swallow the rest as garbage).
+      // Inject clear immediately with bypassHold: a queued bare slash command must never join a flush
+      // batch, or the command line swallows the rest.
       if (wireCtx) this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
       else this._injectText(session, cmd, { bypassHold: true });
-      // The body is optional and only stored here — a bare clear stays exactly
-      // what it was. Storing BEFORE the edge can fire is not a race worth
-      // guarding: _injectText is asynchronous and the watcher polls the symlink
-      // at 250ms, but the store is synchronous with the intent.
       const cont = sub === 'clear' && body ? body.trim() : '';
       if (cont) {
         session._postClearContinuation = cont;
@@ -8929,16 +7462,8 @@ function createSessionManager(deps) {
       });
     }
 
-    // Inject a respawned session's turn-one text (the reload handoff, the scratch
-    // summary) once the FRESH process is listening. Readiness gate: SessionStart
-    // repoints run/<name>/transcript.jsonl at CLI boot and the kill's cleanup
-    // unlinked the old link — so link-present = fresh CLI booted. Probe with
-    // readlinkSync, NOT session.sessionId: the watcher only sets sessionId once
-    // the transcript FILE exists, and Claude creates it lazily on the first user
-    // turn — gating turn-one injection on it deadlocks and the
-    // timeout eats the handoff. Then a settle delay so the input loop is up, then
-    // inject. If the session dies or the link never appears, bail rather than
-    // inject blind into a half-dead PTY — surfacing the drop in the IPC log.
+    // Gate on the transcript symlink via readlinkSync, not session.sessionId: Claude creates the transcript
+    // only on the first user turn, so gating turn-one injection on sessionId deadlocks until the timeout.
     async _injectAfterBoot(session, text, opts = {}) {
       const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 30000;
       const linkPath = pathFor(REGISTRY_DIR, session.name, 'transcript');
@@ -9028,9 +7553,6 @@ function createSessionManager(deps) {
     }
 
 
-    // `onWrite` (see _deliverMessage) fires once the text is DURABLE — parked, or
-    // released by the queue. A caller that persists "this seat has been told" must
-    // use it rather than the return, which is only a queue acceptance.
     _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null, opts = {}) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
@@ -9052,11 +7574,8 @@ function createSessionManager(deps) {
           ? this._parkHeldDelivery(target, this._buildDeliveryText(target, senderTag,
             typeof parkBody === 'string' && parkBody ? parkBody : body, 'dm', tag), key)
           : null;
-        // A park IS durable, so it fires onWrite; a bare `held` reached nobody and
-        // must not — that asymmetry is the same one the nudge/replay stamps encode.
-        // It reports `parked` explicitly: this text is a FILE, drained by the
-        // out-of-process hook mid-loop, so a caller confirming a write must not
-        // treat it as one. An argument-less call here reads as `injected`.
+        // onWrite fires for a park but never for a bare hold, and passes 'parked' explicitly:
+        // an argument-less call reads as 'injected' to a caller confirming a write.
         if (parkId && typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
         return parkId
           ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
@@ -9069,79 +7588,26 @@ function createSessionManager(deps) {
       }
       this._deliverMessage(targetName, senderTag, body, 'dm', tag, onWrite, key, null,
         opts && typeof opts.rebody === 'function' ? opts.rebody : null);
-      // `queued`, not `delivered`: _deliverMessage returns once the text is parked
-      // or handed to the inject queue, and the queue writes it later — within one
-      // poll of the seat's readiness latch. Every negative verdict above IS decided
-      // synchronously and is therefore exact; only success is a statement about the
-      // future. A caller needing certainty passes _deliverMessage an onWrite hook.
       return superseded && superseded.claimed > 0 ? { queued: true, superseded } : { queued: true };
     }
 
-    // The plain-dm delivery latch.
-    //
-    // A dm written into an idle seat that then never starts a turn was invisible
-    // in every direction: the sender is told "queued", the operator's log shows a
-    // delivery, and mode-2004 stays on in the swallowing state, so
-    // `_bootReadySeen` latches and the queue's ready-gate is a no-op true. Every
-    // signal this process has reads healthy while the message vanishes.
-    //
-    // It DETECTS AND REPORTS. It does not retry, dedupe, order, or confirm
-    // per-unit, and it must not grow any of those: the content of a dm is
-    // arbitrary, so a duplicate can be expensive to execute and no board record
-    // proves the copy identical; and dms arrive concurrently, so with two units
-    // outstanding the second's leading Ctrl-U destroys the first's eaten draft and
-    // one turn-edge cannot say which unit cleared.
-    //
-    // Armed ONLY from the `'dm'` arm of _handleIntent, and deliberately not from
-    // inside _gatedDeliver: there it would cover all 16 delivery sites including
-    // the notices this fires, and an unconfirmed report of an unconfirmed report
-    // has no fixed point.
     _armDmConfirm(targetName, senderName, disposition) {
       const s = this.sessions.get(targetName);
       if (!s || !s.agentType || s._dead) return;
-      // 'parked' is durable and drained out-of-process mid-loop, so it produces
-      // no activity edge to confirm and would latch forever. Unlike the spec
-      // latch this does NOT clear on a non-injected disposition: that latch keys
-      // on one ticket and a park supersedes its own earlier write, while these
-      // entries are independent units from independent senders — a parked unit
-      // says nothing about an injected one still sitting eaten.
+      // Only an injected unit is confirmable: a park is drained out-of-process, so no activity
+      // edge follows it and the latch would never clear.
       if (disposition !== 'injected') return;
-      // Read at WRITE time (this runs inside the queue's producer, which is the
-      // whole reason the hook exists). A seat that went busy while the unit
-      // waited in the gates got it into a live turn, and a seat already working
-      // is by definition not the wedged shape this catches.
       if (s.activityState !== 'idle') return;
       const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
-      // `since` is where the transcript ended at WRITE time — the baseline
-      // _checkDmConfirm compares against. Taken at the same instant as the state
-      // read above, which is what separates bytes the seat had already produced
-      // from bytes that can only have arrived after this write.
-      //
-      // Stored RAW: -1 (no transcript, unreadable link) is NOT normalised to 0.
-      // `didGrow` refuses -1 at either end, so an unreadable seat yields "no
-      // growth" and the check falls through to the behaviour it had before this
-      // baseline existed. _armSpecConfirm's opposite choice answers a different
-      // question — a byte offset to search FROM, where 0 means the whole file —
-      // and copying it here would let a seat's first written byte read as growth.
+      // Stored raw: -1 (unreadable transcript) must not become 0, or didGrow would read the
+      // seat's first written byte as growth.
       fifo.push({ sender: senderName, at: Date.now(), since: this._seatTranscriptSize(targetName) });
       while (fifo.length > DM_LATCH_CAP) this._overflowDmEntry(s, fifo.shift());
-      // Pegged to the OLDEST outstanding unit and never restarted by a later
-      // one. Restarting on each push starves the detector into silence in
-      // exactly its own case: a wedged seat is the seat people keep dm-ing, and
-      // `urgent` short-circuits shouldHoldDm ahead of the idle band, so urgent
-      // dms keep being INJECTED into a wedged seat forever. A stream faster than
-      // one per window would push the deadline out indefinitely while entries
-      // accumulate and nobody is ever told. Each unit still gets its full window:
-      // _checkDmConfirm reports only the units that are actually ripe.
       if (!s._dmConfirmTimer) this._armDmConfirmTimer(s);
     }
 
-    // The cap bounds per-seat MEMORY, and must not bound per-seat SENDERS: a
-    // dropped unit keeps its sender, coalesced into one record per sender (so
-    // the bound is the session count). Dropping the entry outright silenced
-    // precisely the sender whose message was starved out, while still counting
-    // it into the total the broadcast reports — a report that is mute toward the
-    // one party it exists to inform.
+    // A dropped unit is coalesced into one record per sender rather than discarded: discarding
+    // it would mute the very sender whose message was starved out.
     _overflowDmEntry(session, gone) {
       const ov = session._dmOverflow || (session._dmOverflow = new Map());
       const rec = ov.get(gone.sender);
@@ -9153,32 +7619,23 @@ function createSessionManager(deps) {
       clearTimeout(session._dmConfirmTimer);
       session._dmConfirmTimer = setTimeout(() => {
         session._dmConfirmTimer = null;
-        // Fires SPEC_CONFIRM_MS after every dm to an idle seat, in the app's main
-        // process, where a throw out of a setTimeout callback is an unhandled
-        // exception in the host rather than a failed report.
+        // A throw out of this timer callback is an unhandled exception in the host process, so
+        // the check stays guarded.
         try { this._checkDmConfirm(session); }
         catch (e) {
           log.error('intent', `dm confirmation check failed for ${session.name}: ${e.message}`);
-          // The timer was nulled above and the throw skipped every re-arm inside
-          // the check, so a surviving fifo would go unwatched until some later
-          // push armed a fresh full window — silence in the one case this exists
-          // to end, arrived at through the error path.
+          // The throw skipped every re-arm inside the check; without this a surviving fifo goes
+          // unwatched until some later push.
           if (session._dmUnconfirmed && session._dmUnconfirmed.length && !session._dmConfirmTimer) {
             this._armDmConfirmTimer(session);
           }
         }
       }, delayMs);
-      // Observer-grade in both senses, like the two ticket-side watchers: never
-      // the reason a process stays alive, never the reason one dies.
       if (session._dmConfirmTimer.unref) session._dmConfirmTimer.unref();
     }
 
-    // A turn started, so the seat's composer submitted. For a multi-entry FIFO
-    // the earlier entries were Ctrl-U-destroyed INTO the submitted line's
-    // history — either way nothing is still sitting eaten, and finer
-    // discrimination cannot be had.
-    // `_dmUnconfirmedLast` goes too: it exists to attribute a seat's SILENCE,
-    // and a seat that took a turn is not silent.
+    // Clears _dmUnconfirmedLast too: it attributes a seat's silence, and a seat that took a
+    // turn is not silent.
     _clearDmConfirm(session) {
       session._dmUnconfirmed = [];
       session._dmOverflow = null;
@@ -9190,68 +7647,31 @@ function createSessionManager(deps) {
     _checkDmConfirm(session) {
       const fifo = session._dmUnconfirmed;
       if (!fifo || !fifo.length || session._dead) return;
-      // A dialog is the one wait that is legitimately unbounded and produces no
-      // activity. Re-arm rather than clear — the dm may still be unread behind
-      // it — and uncapped, because the operator may answer at any time and a
-      // seat that never woke is still worth reporting an hour later. It cannot
-      // leak: the timer is unref'd and _cleanup clears it when the session dies.
+      // A dialog is an unbounded wait: re-arm without a cap rather than clear, since the dm may
+      // still be unread behind it.
       if (session.needsAttention && session.needsAttention.kind === 'permission') {
         this._armDmConfirmTimer(session);
         return;
       }
       const now = Date.now();
-      // PARTIAL drain: only the units that have had their full window. The rest
-      // stay and the timer re-arms for the remainder, which is what lets the
-      // deadline be pegged to the oldest without judging a unit written a second
-      // before it. A ripe set can also be EMPTY here — the cap shifts out the
-      // entry the pending timer was pegged to, so it fires early relative to the
-      // new oldest. That must re-arm, not return: returning is how an overflowing
-      // seat goes permanently silent. (Draining every window instead of
-      // accumulating also makes the cap far less reachable than it looks.)
+      // Drain only ripe units. An empty ripe set (the cap shifted out the pegged entry) must
+      // re-arm, not return, or an overflowing seat goes permanently silent.
       const ripe = [];
       while (fifo.length && now - fifo[0].at >= SPEC_CONFIRM_MS) ripe.push(fifo.shift());
       if (!ripe.length) {
         this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
         return;
       }
-      // Second look before spending a report, for the reason _checkSpecConfirm
-      // re-probes at its own deadline: the activity edge that would have cleared
-      // this latch RACES the CLI's transcript append on a wire-routed seat, so a dm
-      // that was read can still be sitting here armed. By the deadline the bytes
-      // are on disk, which makes this the reliable read and the edge the eager one.
-      //
-      // GROWTH, never a content match. A dm has no per-unit anchor —
-      // _buildDeliveryText gives every dm from a peer the same `[agent:from
-      // <sender>]` prefix — so a marker-style search would clear the latch over a
-      // transcript merely holding an EARLIER dm from that sender, suppressing a
-      // real swallow. That direction must not be traded for this one. Attribution
-      // would buy nothing here regardless: a non-idle edge already clears the whole
-      // fifo unattributed, and per-unit confirmation is what _armDmConfirm refuses.
-      //
-      // MAX, not min: growth must beat the NEWEST write's baseline, so a stream of
-      // dms cannot have an old low anchor vouch for the recent ones. `since`
-      // missing reads as -1, which `didGrow` refuses at either end — like an
-      // unreadable transcript, it suppresses nothing. This can only ever subtract a
-      // report, never manufacture one.
       const anchor = Math.max(...ripe.map((e) => (typeof e.since === 'number' ? e.since : -1)));
       if (didGrow(anchor, this._seatTranscriptSize(session.name))) {
         log.info('intent', `dm confirmation for ${session.name} withdrawn — its transcript grew past ${anchor} bytes since the write, so the seat consumed input and the activity edge was simply missed`);
-        // BOTH residues go, for one reason: growth refutes the seat's silence, and
-        // anything still describing that silence would be spent on refuted
-        // evidence. Overflow records are older than everything ripe by
-        // construction, so they would be reported one window later. And
-        // `_dmUnconfirmedLast` outlives its own report by design — it is what
-        // _dmLatchEvidence hands the stall sweep — so a report fired at an earlier
-        // window survives into this one and has the sweep attribute the seat's
-        // quiet to a swallowed dm that this branch just proved was read.
+        // Growth refutes the silence, so drop both residues: a stale _dmUnconfirmedLast would have
+        // the stall sweep blame a swallowed dm for a seat that was read.
         session._dmOverflow = null;
         session._dmUnconfirmedLast = null;
         if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
         return;
       }
-      // Overflow records are attributed to THIS report: they are older than
-      // everything surviving in the fifo by construction, so they are ripe
-      // whenever anything is.
       const overflow = session._dmOverflow
         ? [...session._dmOverflow].map(([sender, r]) => ({ sender, count: r.count, at: r.at }))
         : [];
@@ -9261,50 +7681,31 @@ function createSessionManager(deps) {
       const total = entries.length + dropped;
       const oldest = Math.min(entries[0].at, ...overflow.map((r) => r.at));
       const ageS = Math.round((now - oldest) / 1000);
-      // Re-armed for whatever is still young, so one wedge produces a report per
-      // window rather than one report ever. The repetition is the feature: it is
-      // how a sender whose message arrived after an earlier report gets told.
       if (fifo.length) this._armDmConfirmTimer(session, Math.max(0, SPEC_CONFIRM_MS - (now - fifo[0].at)));
-      // Kept, not discarded: this is what lets the stall sweep attribute a silent
-      // seat to a swallowed dm rather than to stalled work, which is the
-      // misattribution the sweep makes today. Cleared by a turn, and by the
-      // withdrawal above — both are proof the seat was not silent after all.
-      // ACCUMULATES across reports — a sustained wedge fires repeatedly, and
-      // replacing here would shrink the evidence to the last window during
-      // exactly the stall the attribution exists for.
+      // Accumulates across reports: replacing would shrink the stall sweep's evidence to the
+      // last window during a sustained wedge.
       const prev = session._dmUnconfirmedLast;
       session._dmUnconfirmedLast = {
         entries: prev ? [...prev.entries, ...entries] : entries,
-        // Dropped units are counted here too, so the sweep clause and the
-        // broadcast describe the same backlog with the same number.
         dropped: (prev ? prev.dropped || 0 : 0) + dropped,
         at: prev ? Math.min(prev.at, oldest) : oldest,
         firedAt: now,
       };
 
-      // Every sender with something outstanding in this report, dropped ones
-      // included — the whole point of keeping overflow records.
       const senders = [...new Set([...entries.map((e) => e.sender), ...overflow.map((r) => r.sender)])];
       log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent`);
-      // FIRST, and never inside the per-sender loop: the notice below travels by
-      // the very channel whose reliability is in question — a sender that is
-      // itself in a swallowing state loses the notice to the same failure. The
-      // broadcast is the out-of-band path that keeps this from being circular,
-      // so it must not be reachable only through the path it is covering for.
+      // Broadcast first and outside the per-sender loop: the notices travel by the channel whose
+      // reliability is in question, so the report must not depend on it.
       this._broadcast('ipc-message', {
         ts: Date.now(), from: 'clodex', to: session.name, kind: 'dm-unconfirmed',
         body: `${total} dm${total === 1 ? '' : 's'} to ${session.name} (from ${senders.join(', ')}) written but no turn started after ${ageS}s — nothing was re-sent`,
       });
 
       for (const who of senders) {
-        // A sender that died inside the window has nowhere to be told; the
-        // broadcast above already carries the event.
         const sender = this.sessions.get(who);
         if (!sender || !sender.agentType || sender._dead) continue;
-        // This sender's share includes its DROPPED units. A sender whose only
-        // message was shifted out by the cap would otherwise reach this loop
-        // with an empty share and be told nothing — the starved sender is
-        // exactly the one that needs the notice.
+        // Count this sender's dropped units too: a sender whose only message the cap shifted out
+        // would otherwise get an empty share and be told nothing.
         const ovMine = overflow.find((r) => r.sender === who);
         const mineCount = entries.filter((e) => e.sender === who).length + (ovMine ? ovMine.count : 0);
         const mineAt = Math.min(
@@ -9312,12 +7713,8 @@ function createSessionManager(deps) {
           ...(ovMine ? [ovMine.at] : []),
         );
         const mineAgeS = Math.round((Date.now() - mineAt) / 1000);
-        // The hedge is chosen by the TOTAL outstanding, not by this sender's
-        // share: another sender's concurrent write is what destroyed this one's
-        // draft, so a sender holding the only one of its own messages is still
-        // in the ambiguous case whenever the seat's window held more than one.
-        // "may not have been seen" and not "was lost" — a confidently wrong
-        // report is worse than a hedged one.
+        // Hedge on the total outstanding, not this sender's share: another sender's concurrent
+        // write may have overwritten this draft.
         const one = mineCount === 1;
         const noun = one ? 'your message' : `your ${mineCount} messages`;
         const verb = one ? 'was' : 'were';
@@ -9336,19 +7733,13 @@ function createSessionManager(deps) {
       }
     }
 
-    // Evidence for the stall sweep: has this seat a live or recently-expired
-    // unconfirmed-dm latch? Both sets are returned as one span because they are
-    // the same silence — `_dmUnconfirmedLast` holds what a fired report covered
-    // and is cleared by anything that refutes that silence (a turn, or the
-    // deadline check's growth withdrawal), so what remains is still unaccounted for.
     _dmLatchEvidence(seatName) {
       const s = this.sessions.get(seatName);
       if (!s) return null;
       const last = (s._dmUnconfirmedLast && s._dmUnconfirmedLast.entries) || [];
       const live = s._dmUnconfirmed || [];
-      // Cap-dropped units count HERE as well as in the broadcast's total. Two
-      // numbers describing one seat's silence that disagree cost an hour to
-      // reconcile, and the sweep clause is read next to the broadcast.
+      // Cap-dropped units count here as in the broadcast total, so the sweep clause and the
+      // broadcast report the same number.
       const dropped = ((s._dmUnconfirmedLast && s._dmUnconfirmedLast.dropped) || 0)
         + (s._dmOverflow ? [...s._dmOverflow.values()].reduce((n, r) => n + r.count, 0) : 0);
       const all = [...last, ...live];
@@ -9554,22 +7945,11 @@ function createSessionManager(deps) {
       return !!(s && s.agentType && !s._dead);
     }
 
-    // `tag` rides the POINTER line ONLY. A spilled message is announced as "Message
-    // (N bytes) attached", so any marker the body carries is invisible until the file
-    // is opened — and a codex seat must spend a turn on a Read to see it at all. On
-    // the inline branch the body is right there, so repeating the marker in the
-    // prefix would print it twice.
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
       const prefix = `[agent:from ${senderName}]`;
 
-      // The marker is parenthesized and never at column 1, so IntentScanner (which
-      // fires only on a cleaned line STARTING with [agent:) cannot mistake it for a
-      // real intent. Polarity is INVERTED against the reply address it replaced: the
-      // common path — receiver's `dm` intent enabled AND sender dm-reachable right
-      // now — costs zero bytes, and the marker appears only when a reply would
-      // silently drop. System senders are excluded before either check: nothing
-      // answers them, but a seat told `(no reply path)` on a roster notice would
-      // read a fault into a delivery that has none.
+      // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
+      // intent; system senders are excluded first because nothing answers them.
       const answerable = mtype === 'dm' && !SYSTEM_SENDERS.has(senderName);
       const trailer = (!answerable
           || (intentEnabled('dm', getPersistence().get(target.name)?.intents)
@@ -9582,13 +7962,8 @@ function createSessionManager(deps) {
         const filePath = spillToFile(senderName, body, target.name);
         this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
-        // @-mention makes Claude Code attach the file inline instead of
-        // spending a turn on a Read call; Codex has no equivalent. The
-        // trailing space after the path closes the @-autocomplete popup —
-        // without it the deferred Enter can land on the popup and select a
-        // DIFFERENT file (observed live: pointer said msg-2, body was msg-3).
-        // The marker rides the pointer line (not the spilled file, which may be
-        // read after the register has already drifted).
+        // The trailing space after the path closes the @-autocomplete popup, so the deferred Enter
+        // cannot select a different file.
         return target.agentType === 'claude'
           ? `${marked} Message (${bytes} bytes) attached: @${filePath} ${trailer}`
           : `${marked} Message (${bytes} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
@@ -9596,20 +7971,6 @@ function createSessionManager(deps) {
       return `${prefix} ${body}${trailer ? ' ' + trailer : ''}`;
     }
 
-    // `onWrite` fires when the text is DURABLE — parked to disk, or released by the
-    // queue — never on the enqueue. A caller that persists "this seat has been told"
-    // must use it: enqueue returns while the bytes are still in the ready loop, so a
-    // stamp taken from the return outlives a write that the boot re-render wiped, and
-    // the seat is then suppressed forever on the strength of it.
-    //
-    // It receives WHICH disposition made the text durable: 'injected' for a write
-    // released by the queue, 'parked' for a file the seat drains on its own. Both
-    // are durable, so a caller recording "told" treats them alike — but they differ
-    // in whether CONSUMPTION is observable from this process. An injected unit ends
-    // with an Enter, so consuming it starts a turn; a parked file is drained by the
-    // out-of-process hook mid-loop, and a seat already `thinking` produces no fresh
-    // activity edge for it. A caller that waits for such an edge must therefore arm
-    // on 'injected' only.
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null) {
       const target = this.sessions.get(targetName);
       if (!target) return;
@@ -9639,11 +8000,8 @@ function createSessionManager(deps) {
           parkable: true,
           parkKey,
           human: senderName === 'user',
-          // A park via the fire-time divert is durable too, so the stamp is taken
-          // once the producer runs and the write is imminent — the same instant the
-          // divert decides.
-          // Reports 'parked' when the divert claims it: the bytes become a file, not
-          // a write, and an observer keying on consumption must see that difference.
+          // A park via the fire-time divert is durable too; onDivert reports 'parked' so an observer
+          // keying on consumption sees a file, not a write.
           ...(fire ? {
             produce: () => {
               try { fire('injected'); } catch {}
@@ -9653,7 +8011,7 @@ function createSessionManager(deps) {
           } : {}),
         });
       } else if (fire) {
-        try { fire('parked'); } catch {}   // parked to disk = durable; the stamp is honest
+        try { fire('parked'); } catch {}
       }
       this._sendToSession(targetName, 'session-mention', targetName, mtype, senderName);
     }
@@ -9697,11 +8055,8 @@ function createSessionManager(deps) {
       return `${Date.now()}.${String(this._parkSeq = (this._parkSeq || 0) + 1).padStart(9, '0')}`;
     }
 
-    // The generation stamp for `name`: live session first, PERSISTENCE second — an
-    // offline-but-resumable park (the reboot notice, a reminder firing at a name with
-    // no process) has no session object, and the persisted createdAt is the same
-    // value create() will hand that seat on restore, which is what makes the stamps
-    // match on arrival. null means "no expectation" at both ends — deliver, never drop.
+    // The persisted createdAt is the value create() hands the seat on restore, so an offline park's
+    // stamp matches on arrival; null means no expectation, deliver rather than drop.
     _bornFor(name) {
       const s = this.sessions.get(name);
       if (s && typeof s.createdAt === 'number') return s.createdAt;
@@ -9717,15 +8072,9 @@ function createSessionManager(deps) {
         const id = randBase36(5);
         if (!parkIdInUse(PENDING_DIR, id)) return id;
       }
-      return randBase36(10); // vanishingly unlikely fallback
+      return randBase36(10);
     }
 
-    // Park a HELD dm (cost/dialog hold) so it drains on the target's next
-    // UserPromptSubmit. Unlike _maybeParkDelivery this does NOT arm the park cap:
-    // the cap drains through the inject queue after a timeout, which would defeat
-    // the hold by injecting into the cold/blocked target anyway. A held delivery
-    // waits for the target's next turn; `key` lets a re-send claim this file.
-    // Returns the resend id, or null if parking failed (caller falls back to a bounce).
     _parkHeldDelivery(target, finalText, key = null) {
       const id = this._mintParkId();
       try {
@@ -9754,10 +8103,6 @@ function createSessionManager(deps) {
     _maybeParkDelivery(target, finalText, key = null) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
-      // Parking a busy DM lets the out-of-process PostToolUse hook
-      // deliver it mid-loop (an external script can't see the in-memory queue).
-      // The idle-edge Node drain is the fallback for a turn that ends with no tool
-      // call (pure-text reply).
       const busy = target.activityState === 'thinking' || !!target._recycling;
       if (!typing && !busy) return false;
       try {
@@ -9772,7 +8117,7 @@ function createSessionManager(deps) {
     }
 
     _armParkCap(target, delay = INJECT_QUIET_MAXWAIT) {
-      if (target._parkCapTimer) return;         // earliest-parked deadline governs
+      if (target._parkCapTimer) return;
       target._parkCapTimer = setTimeout(() => {
         target._parkCapTimer = null;
         const oldest = typeof oldestActiveParkTs === 'function' ? oldestActiveParkTs(PENDING_DIR, target.name) : null;
@@ -9784,31 +8129,13 @@ function createSessionManager(deps) {
     }
 
     _flushParkedNow(target, tag, kind = 'park-flush') {
-      // A forced flush ends the notice's deferral chain, not just the operator's
-      // (flushPending). The chain otherwise dies only on a real turn or its own
-      // flush, so a pane kept warm past the 300s park cap left it alive after the
-      // cap had already delivered the notice — and the next unrelated park would
-      // then be forced out early by a timer that no longer had anything to deliver.
-      //
-      // Ahead of the count check below on purpose: an empty mailbox means another
-      // drainer already took the notice, so the chain has nothing left to deliver
-      // either. Moving this after that early return would leave it armed in exactly
-      // the case where it is most certainly stale.
+      // Clear the notice's flush timer ahead of the count check: an empty mailbox means another drainer
+      // took the notice, and a timer left armed would force a later unrelated park out early.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
       if (target._dead || target._recycling) return { ok: true, count: 0 };
-      // Claim LATE, like the boot-ready drain: drainPending DELETES the parked
-      // files, and enqueue returns before the queue has written anything, so
-      // claiming here meant a wiped or never-reached write destroyed the only
-      // copy. The producer runs inside the queue's critical section, past the ready
-      // and quiet gates, so the files are claimed only when the write is imminent.
-      // The count is a non-destructive PRE-count for the return value and the log
-      // line; the drain may legitimately yield fewer, which costs an over-count in
-      // a log, never a message.
+      // The count is a non-destructive pre-count; the files are claimed late, inside the producer,
+      // because drainPending deletes them.
       const count = countPending(PENDING_DIR, target.name);
-      // Logged BEFORE the early return, which is where it has to be: with the
-      // return first, a cap firing on an already-empty mailbox was silent and
-      // indistinguishable from a cap that never fired at all. That absence was
-      // read as evidence the timer was broken, and it could not have been.
       if (!count) {
         log.debug('inject', `${kind} for ${target.name} — nothing parked (already drained elsewhere)`);
         return { ok: true, count: 0 };
@@ -9819,18 +8146,12 @@ function createSessionManager(deps) {
         : `flushed ${count} parked deliver${plural} (operator)`;
       log.warn('inject', `${kind} for ${target.name} — draining ${count} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
-      // ONE injection for the whole drain, not N. N sequential _injectText calls
-      // raced: #1's Enter starts a CLI turn and #2 landed in the turn-start churn
-      // where its Enter got swallowed → stranded draft. A forced flush is non-
-      // parkable, so a stranded text just sits. Join into a single body with the
-      // SAME blank-line separator the out-of-process hook drain uses, so a seat
-      // sees the same combined shape whichever drainer won.
       this._injectText(target, '', {
         produce: () => {
           if (target._dead || target._recycling) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch { return null; }
-          return texts.length ? texts.join('\n\n') : null;   // another drainer won the claim
+          return texts.length ? texts.join('\n\n') : null;
         },
       });
       return { ok: true, count };
@@ -9854,10 +8175,6 @@ function createSessionManager(deps) {
       return r;
     }
 
-    // `produce` carries a payload that is still ON DISK and unclaimed; the queue
-    // evaluates it at write time. Every branch below must keep it a callback: the
-    // moment it is flattened into a string the claim has already happened, which
-    // is the loss this pattern exists to prevent.
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
@@ -9866,24 +8183,15 @@ function createSessionManager(deps) {
         return;
       }
       if (!opts.bypassHold && this._injectHoldReason(session)) {
-        // Held as an ENTRY, not as text — see above. Flattening here would claim
-        // now and hold the bytes in memory for the whole hold, so a process that
-        // dies during a compact window or a permission dialog loses them.
         const carry = opts.parkable || opts.human === true || typeof opts.onDivert === 'function';
         const entry = carry ? { ...(produce ? { produce } : { text }), opts } : (produce ? { produce } : text);
         (session._injectQueue = session._injectQueue || []).push(entry);
         this._armInjectValve(session);
         return;
       }
-      // parkable is OPT-IN, not opt-out: a missed tag falls back to inject-through (a
-      // possible splice, no worse than before), whereas parking a CLI-driving
-      // self-intent (compact/reload continuation, a slash command) would stall the
-      // agent. The divert re-checks for an open draft at write time, inside the
-      // queue's critical section.
       const baseDivert = opts.parkable ? this._parkDivertFor(session, opts.parkId || null, opts.parkKey || null) : null;
-      // The divert runs AFTER `produce`, so a caller told 'injected' by the producer
-      // can still have its text parked a moment later. Reporting the claim lets such
-      // a caller correct itself — last disposition wins.
+      // The divert runs after produce, so a caller told 'injected' can still be parked; onDivert
+      // lets it correct itself.
       const onDivert = typeof opts.onDivert === 'function' ? opts.onDivert : null;
       const divert = (baseDivert && onDivert)
         ? (t) => {
@@ -9899,20 +8207,14 @@ function createSessionManager(deps) {
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
 
-    // What every drain and the divert must agree "an open draft" means. The two
-    // predicates are separate because typed and dictated drafts reach Clodex by
-    // different routes (see _voiceDraftOpen); a reader consulting only the typed
-    // one treats a dictated draft as no draft at all.
+    // Typed and dictated drafts reach Clodex by different routes; consulting only isDraftOpen
+    // treats a dictated draft as no draft.
     _anyDraftOpen(session) {
       try { return isDraftOpen(session) || this._voiceDraftOpen(session); } catch { return false; }
     }
 
-    // An EXPIRING stamp, so it releases on its own: he submits (the composer
-    // empties, the renderer stops reporting, and the submit drains the park),
-    // he clears it, the seat loses focus, the window closes, the screen becomes
-    // unreadable — every one of those stops the level and the stamp goes stale.
-    // Past that the park cap bounds it again from a timer that reads no voice
-    // signal at all, so the protection cannot outlive its release.
+    // The stamp expires on its own so the protection cannot outlive its release; the park cap
+    // that bounds it afterwards reads no voice signal.
     _voiceDraftOpen(session) {
       return Date.now() - (session.lastVoiceDraftTs || 0) < INJECT_VOICE_DRAFT_STALE_MS;
     }
@@ -9944,14 +8246,8 @@ function createSessionManager(deps) {
 
     _injectQueueFor(session) {
       if (!session._injectPtyQueue) {
-        // Boot-readiness gate: the first inject into a freshly spawned
-        // claude seat races CLI boot — text+Enter written before the raw-mode
-        // input loop is up read as one paste-like chunk and the Enter lands as
-        // content, so the message never submits. Gate claude agent seats on the
-        // latched mode-2004 edge (_bootReadySeen) plus BOOT_DRAIN_SETTLE_MS past
-        // it — the edge precedes the readline loop — capped by INJECT_BOOT_MAXWAIT.
-        // Bash/codex pass through (default ready ⇒ true): codex has its own
-        // boot-settle machinery and must not be coupled to this.
+        // Claude seats wait for the mode-2004 edge plus BOOT_DRAIN_SETTLE_MS: text and Enter written before
+        // the raw-mode input loop is up submit as one paste-like chunk. Codex must not be coupled to this gate.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
@@ -9960,20 +8256,8 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           hintHeld: () => { try { return !!(arm.holding && arm.holding(session.name)); } catch { return false; } },
-          // Dictation gets the protection typing already has. Fed as its own
-          // input rather than by stamping lastUserInputTs, which has two other
-          // readers whose meaning that would quietly change.
-          //
-          // ABSENT EVIDENCE READS AS NOT SPEAKING, and that polarity is the
-          // OPPOSITE of `recorderBlocksRearm`'s in voice-submit.js, where an
-          // unreadable screen BLOCKS. Both are correct because the two mistakes
-          // are not the same mistake. There, missing a lit recorder writes a key
-          // that CUTS HIM OFF mid-sentence, so doubt must block. Here, a
-          // deferral that cannot be released stops delivery to the seat
-          // ENTIRELY, so doubt must deliver — a terminal nobody can read, or a
-          // renderer that went away, must not silently wedge every message. Do
-          // not "make these consistent": aligning them breaks whichever one is
-          // aligned to the other.
+          // Dictation is its own input, not a lastUserInputTs stamp, which has other readers. Absent evidence
+          // reads as not speaking, opposite to recorderBlocksRearm: a deferral that cannot release wedges the seat.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!(session._dead || session._recycling),
           onUndelivered: (t) => {
@@ -10016,12 +8300,8 @@ function createSessionManager(deps) {
         this._deliverPassive(targetName, sender, body, mtype);
         return;
       }
-      // Not a message to an agent at all — a box-wide request that happens to
-      // arrive on an agent's socket, since that is the only local-user-only
-      // pipe Clodex already listens on (~/.clodex is 0700, the socket 0600).
-      // `targetName` is therefore just whichever socket the sender could reach,
-      // NOT the seat this acts on: `msg.target` names that, or the focused seat
-      // does. Delivered to nobody's transcript, so it takes no `body`.
+      // voice-* are box-wide requests on whichever agent socket the sender could reach, so targetName is
+      // not the seat they act on (msg.target or the focused seat is).
       if (mtype === 'voice-tap') {
         const r = this.voiceTap(typeof msg.target === 'string' ? msg.target : null);
         if (!r.ok) log.info('voice', `external tap declined: ${r.error}`);
@@ -10043,13 +8323,9 @@ function createSessionManager(deps) {
         return;
       }
       if (mtype === 'team-retire') {
-        // Async since the discard branch probes the worktree for uncommitted
-        // work before choosing a disposition. Caught here, not left floating: a
-        // rejection would otherwise retire nothing and tell no one.
         this._handleTeamRetire(targetName, sender).catch((e) => {
-          // A DM, not just a log line: a throw in the sync prelude retires
-          // nothing, and a main-process warn the requester cannot see leaves the
-          // lead waiting on a confirmation that is never coming.
+          // Also DM the requester: a main-process warn is invisible to a lead waiting on a confirmation
+          // that never comes.
           log.warn('intent', `team-retire ${sender} → ${targetName} failed: ${e.message}`);
           this._deliverMessage(sender, 'clodex-team', `retire ${targetName} failed: ${e.message}`, 'dm');
         });
@@ -10098,14 +8374,8 @@ function createSessionManager(deps) {
       });
     }
 
-    // Active-class PARK: parked like passive (NO spawn-time PTY write, so the
-    // boot-race stays fixed — an early mode-2004 proxy can't strand the text as a
-    // Ctrl-U-wiped draft), but TURN-EARNING — a NON-.passive.json entry, so
-    // hasActivePending() sees it and the boot-ready rising edge (or any idle edge)
-    // drains it. Passive parks never earn a turn by design; a fresh reviewer seat
-    // has no other traffic, so passive stalled the scope until a human ✉-click.
-    // Used for the team-review scope and a briefed team create's first-turn opener,
-    // both aimed at a booting seat. Claude-only; park failure delivers normally.
+    // Parked as a non-.passive entry so hasActivePending sees it and the boot-ready edge drains it;
+    // a passive park never earns a turn, and there is no spawn-time PTY write.
     _deliverParkedActive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target) return;
@@ -10129,47 +8399,11 @@ function createSessionManager(deps) {
       });
     }
 
-    // The second edge for an active park. _deliverParkedActive is the ONLY park
-    // path that arms no timer of its own, and its target is the one seat that can
-    // never reach the other two drains: the boot-ready rising edge is one-shot, and
-    // both the idle drain and the out-of-process hook need a turn the seat will
-    // never take, because the thing it is missing IS its first turn. So a park whose
-    // boot-ready edge does not fire — measured twice, seat alive and the files still
-    // unclaimed 8s later — is silent and permanent.
-    //
-    // Recovery for a seat ALREADY in that state is a plain dm re-sending the scope,
-    // never a respawn: the seat is healthy and its name is reserved, so a respawn
-    // mints a SECOND seat while the first keeps its parked mail and its `born`
-    // stamp — and the stamp is what makes the old mail undeliverable to the new
-    // seat. A dm lands on the live seat and drains the park with it.
-    //
-    // Re-checks until `deadline` rather than delivering on schedule: a drain forced while the latch
-    // is still missing puts the write back inside the boot re-render window with
-    // the messages already claimed off disk. Deferring to an armed _bootDrainTimer
-    // is what preserves BOOT_DRAIN_SETTLE_MS as the margin — this timer never
-    // shortens it. A plain _armParkCap here would be that same forced delivery.
-    //
-    // EVERY path out of a pass either delivers or leaves a timer armed. A bare
-    // return anywhere here makes this second edge one-shot in exactly the way the
-    // first one is: yielding to a drain that then bails (an open draft, a producer
-    // that claims nothing) would end with the park unclaimed and nothing alive to
-    // notice.
-    // `file` scopes a pass to the park it was armed FOR: hasActivePending is
-    // name-scoped, so a later pass would otherwise find UNRELATED mail parked
-    // meanwhile by _maybeParkDelivery and force it through, bypassing _injectText's
-    // hold check and splicing into the very thinking seat that park protects.
-    // `drained` marks a pass that FOLLOWS a terminal drain, and it gates the warn,
-    // not the re-arm. Bounding the re-arm instead is wrong: a seat whose draft
-    // stays open across two periods would have its park abandoned with nothing
-    // scheduled to look again. So the timer lives as long as the park does, and
-    // only the first drain announces itself. It is bounded in the ways that
-    // actually end: the pass returns once the file is claimed, and _cleanup clears
-    // the handle when the seat dies.
     _armParkedDrainFallback(session, file, periodMs, deadline, drained = false) {
       if (!session || session.agentType !== 'claude') return;
       const armed = session._parkedDrainFallbackFiles || (session._parkedDrainFallbackFiles = new Map());
       if (!armed.has(file)) armed.set(file, { periodMs, deadline });
-      if (session._parkedDrainFallbackTimer) return;   // earliest arm governs, like the park cap
+      if (session._parkedDrainFallbackTimer) return;
       const onDisk = (f) => {
         try { return fs.existsSync(path.join(PENDING_DIR, session.name, f)); } catch { return false; }
       };
@@ -10184,9 +8418,7 @@ function createSessionManager(deps) {
           }
           return;
         }
-        // Re-arm rather than yield outright: the drain may bail (draft open, or its
-        // producer claims nothing) and would leave the park silent and permanent.
-        // Extending the deadline is what keeps this from expiring while deferring.
+        // Re-arm rather than yield: the drain may bail. Extend the deadline so deferring cannot expire it.
         if (session._bootDrainTimer) {
           this._armParkedDrainFallback(session, file, periodMs, deadline + periodMs, drained);
           return;
@@ -10195,32 +8427,17 @@ function createSessionManager(deps) {
           this._armParkedDrainFallback(session, file, periodMs, deadline, drained);
           return;
         }
-        // seen=… is the discriminator: a park landing AFTER the edge was already
-        // spent is the likeliest real case, and there the edge fired — early — so an
-        // unqualified "never fired" would misdiagnose it.
         if (!drained) {
           log.warn('inject', `parked-drain fallback for ${session.name} — boot-ready drain never fired (boot-ready seen=${!!session._bootReadySeen}); draining active park`);
         }
         this._drainPendingAtBootReady(session);
-        // The drain can return having drained nothing (open draft, or its producer
-        // claims nothing), so the warn above asserts something that may not have
-        // happened. Every following pass verifies and retries in silence until the
-        // file is gone — the log says it once, the timer keeps its promise.
         this._armParkedDrainFallback(session, file, periodMs, deadline, true);
       }, periodMs);
     }
   }
 
-  // Graft the teams/tickets half onto the prototype. defineProperty and
-  // not Object.assign: class methods are non-enumerable, and "no behaviour
-  // change" includes property descriptors — an enumerable graft would change
-  // what any for-in or spread over the prototype chain sees.
-  //
-  // The grafted methods run with `this` = the manager, so the ticket state they
-  // use stays where it is: `_ticketWatch` / `_stallProbing` are still
-  // initialised in the constructor above and NOT here. Moving that init into
-  // team-tickets.js would need a new `_initTicketState()` call, which is a
-  // behavioural edit — accepted residue, deliberately.
+  // defineProperty, not Object.assign: class methods are non-enumerable and an enumerable graft changes what for-in sees.
+  // Ticket state (_ticketWatch, _stallProbing) stays initialised in the constructor; moving it needs a new init call.
   const ticketMethods = createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS });
   for (const [k, v] of Object.entries(ticketMethods)) {
     Object.defineProperty(SessionManager.prototype, k,
