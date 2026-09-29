@@ -514,7 +514,7 @@ function initPeersUi({
         }
         rememberControlMirror(peerId, peerName);   // main persisted via peer:control
       } else {
-        setPeerControlError(entry.peer, (res && res.error) || 'could not take control');
+        if (!(res && res.error === 'released')) setPeerControlError(entry.peer, (res && res.error) || 'could not take control');
         // Reset unconditionally, not only when flushing: a keystroke can land during a
         // flush:false re-acquire, and leaving pendingInput.acquiring true makes every
         // later keystroke buffer with kick=false — type-to-take dies on the tab.

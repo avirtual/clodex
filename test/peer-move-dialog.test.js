@@ -362,3 +362,33 @@ for (const row of [
     assert.strictEqual(entry.peer.controlled, false);
   });
 }
+
+for (const row of [
+  { error: 'released', chip: null, outcome: 'shows no error chip for the release the user asked for' },
+  { error: 'busy', chip: 'busy', outcome: 'still shows its error chip' },
+]) {
+  test(`an acquire answered { ok:false, error:'${row.error}' } ${row.outcome}`, async () => {
+    const h = mkPeersUi({ api: { peerControl: () => Promise.resolve({ ok: false, error: row.error }) } });
+    h.peerStatuses.set('p1', { online: true, caps: ['args', 'create'], sessions: [] });
+    const entry = {
+      peer: { id: 'p1', name: 'a', controlled: false },
+      fitAddon: { fit() {} },
+      terminal: { cols: 80, rows: 24, focus() {} },
+    };
+    h.sessions.set('a@p1', entry);
+    const restore = h.install();
+    try {
+      h.ui.typeToTakeControl('a@p1', 'x');
+      await settle();
+    } finally {
+      clearTimeout(entry.peer.controlErrorTimer);
+      restore();
+    }
+    assert.deepStrictEqual(h.calls.filter((c) => c.fn === 'peerControl').map((c) => c.args),
+      [['p1', 'a', true]], 'ENTER: the acquire ran and answered');
+    assert.strictEqual(entry.peer.controlError, row.chip);
+    assert.strictEqual(entry.peer.controlled, false);
+    assert.strictEqual(entry.peer.pendingInput.acquiring, false,
+      'the buffer reset stays unconditional: a wedged acquiring flag kills type-to-take');
+  });
+}
