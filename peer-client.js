@@ -161,6 +161,7 @@ class PeerConnection {
     this._eventsOpening = false;
     this._dialectKnown = false;
     this._dialectProbing = false;
+    this._helloGen = 0;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
     // seat -> { req, wanted, backoff, timer, opening, owners } for peer TERMINAL
@@ -261,7 +262,7 @@ class PeerConnection {
         const lostShell = prev && peerHasShellCap(prev.caps) && !peerHasShellCap(next.caps);
         this.hello = next;
         if (lostShell) this._dropAllWterm('revoked');
-        if (identityChanged) this._dialectKnown = false;
+        if (identityChanged) { this._dialectKnown = false; this._helloGen++; }
         if (identityChanged || (!this._dialectKnown && !this._dialectProbing)) this._probeDialect(next);
         this._setOnline(true);
         if (wasOffline) {
@@ -302,7 +303,9 @@ class PeerConnection {
       return this._setNeedsUpgrade(true);
     }
     this._dialectProbing = true;
+    const gen = this._helloGen;
     this._request('GET', '/api/resources', null, (err, body) => {
+      if (gen !== this._helloGen) return;
       this._dialectProbing = false;
       if (this._stopped) return;
       if (err || !body || !body.ok) return;
@@ -482,6 +485,10 @@ class PeerConnection {
     if (on) {
       this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'acquire', client: this.clientLabel() }, (err, body) => {
         if (err || !body || !body.ok) return cb({ ok: false, error: err ? err.message : (body && body.error) || 'acquire failed' });
+        if (this._attachments.get(name) !== att) {
+          if (body.token) this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'release', token: body.token }, () => {});
+          return cb({ ok: false, error: 'detached' });
+        }
         att.token = body.token;
         cb({ ok: true });
       });
@@ -1053,9 +1060,11 @@ class PeerConnection {
     let closed = false;
     let watchdog = null;
     let stableTimer = null;
+    let connectTimer = null;
     const close = () => {
       if (closed) return;
       closed = true;
+      if (connectTimer != null) { this._timers.clearTimeout(connectTimer); connectTimer = null; }
       if (watchdog) { watchdog.stop(); watchdog = null; }
       // Cleared on the SAME door as the watchdog, and for the same reason: a
       // stability timer outliving its stream would either reset the backoff for a
@@ -1070,6 +1079,7 @@ class PeerConnection {
       agent: this._sseAgent,
       headers: { Accept: 'text/event-stream', ...this._authHeaders() },
     }, (res) => {
+      if (connectTimer != null) { this._timers.clearTimeout(connectTimer); connectTimer = null; }
       if (res.statusCode !== 200) {
         // Reported before the destroy so the refusal is recorded before the
         // close door can run — the door reconnects, which is the one thing a
@@ -1080,10 +1090,6 @@ class PeerConnection {
         return;
       }
       onOpen(req);
-      // Armed only once the stream is genuinely live (200 in hand). A request
-      // that never gets a response is a CONNECT-time problem, not a half-open
-      // one, and it has no onClose path here today — widening that is a
-      // different fix.
       watchdog = makeWatchdog(this._staleMs, () => {
         try { req.destroy(); } catch {}
         close();
@@ -1124,6 +1130,11 @@ class PeerConnection {
       res.on('end', close);
       res.on('error', close);
     });
+    connectTimer = this._timers.setTimeout(() => {
+      connectTimer = null;
+      try { req.destroy(); } catch {}
+      close();
+    }, this._staleMs);
     req.on('error', close);
     req.end();
   }

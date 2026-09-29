@@ -4,15 +4,16 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const { PeerConnection } = require('../peer-client');
-const { serveDialect } = require('./lib/peer-dialect');
+const { serveDialect, resourcesBody, OLD_SUBRESOURCES, CURRENT_SUBRESOURCES } = require('./lib/peer-dialect');
 
 function box(dialect) {
-  const state = { attaches: 0, resourceFetches: 0, failResources: 0, helloTicks: 0, streams: [], dialect, version: '1' };
+  const state = { attaches: 0, resourceFetches: 0, failResources: 0, helloTicks: 0, streams: [], dialect, version: '1', hold: false, held: [] };
   const server = http.createServer((req, res) => {
     const p = req.url.split('?')[0];
     if (p === '/api/peer/hello') state.helloTicks++;
     if (p === '/api/resources') state.resourceFetches++;
     if (p === '/api/resources' && state.resourceFetches <= state.failResources) return res.writeHead(500).end();
+    if (p === '/api/resources' && state.hold) return state.held.push({ res, dialect: state.dialect });
     if (serveDialect(p, res, state.dialect, state.version)) return;
     if (p === '/api/sessions') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -167,5 +168,42 @@ test('a failed resources fetch is retried on the next hello tick, not only on an
     await waitFor('several hello ticks to pass', () => state.helloTicks >= 3);
     await waitFor('needsUpgrade to go true', () => conn.needsUpgrade === true);
     assert.ok(state.resourceFetches >= 2, 'the document was fetched again after the failure');
+  } finally { teardown(conn, server, state); }
+});
+
+function releaseProbe({ res, dialect }) {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(resourcesBody(dialect === 'old' ? OLD_SUBRESOURCES : CURRENT_SUBRESOURCES)));
+}
+
+test('a dialect probe that resolves after an identity change is discarded; the new identity\'s probe decides', async () => {
+  const { server, state } = box('old');
+  state.hold = true;
+  const port = await listen(server);
+  const conn = connect(port, 30);
+  const probesDone = [];
+  const request = conn._request.bind(conn);
+  conn._request = (method, p, body, cb) => request(method, p, body, (...args) => {
+    cb(...args);
+    if (p === '/api/resources') probesDone.push(p);
+  });
+  conn.start();
+  try {
+    await waitFor('the first identity\'s probe to be held', () => state.held.length === 1);
+    state.version = '2';
+    state.dialect = 'current';
+    await waitFor('the second identity\'s probe to be held', () => state.held.length === 2);
+
+    releaseProbe(state.held[0]);
+    await waitFor('the stale probe response to be consumed', () => probesDone.length === 1);
+    assert.strictEqual(conn.hello.version, '2', 'ENTER: the client already holds the new identity');
+    assert.strictEqual(conn._dialectKnown, false, 'the old identity\'s document did not classify the new identity');
+    assert.strictEqual(conn.needsUpgrade, false, 'nor flag the new identity as needing an upgrade');
+
+    releaseProbe(state.held[1]);
+    await waitFor('the current probe response to be consumed', () => probesDone.length === 2);
+    assert.strictEqual(conn._dialectKnown, true, 'the new identity\'s own probe classified it');
+    assert.strictEqual(conn.needsUpgrade, false);
+    assert.strictEqual(state.held.length, 2, 'no extra probe was fired while the current one was pending');
   } finally { teardown(conn, server, state); }
 });

@@ -109,6 +109,25 @@ function silentServer() {
   return { server, state };
 }
 
+function mutedServer() {
+  const state = { connects: 0, dropped: 0, held: [] };
+  const server = http.createServer((req, res) => {
+    const p = req.url.split('?')[0];
+    if (serveDialect(p, res)) return;
+    if (p === '/api/sessions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, sessions: [] }));
+    } else if (p === '/api/events') {
+      state.connects++;
+      res.on('close', () => { state.dropped++; });
+      state.held.push(res);
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  return { server, state };
+}
+
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
@@ -261,5 +280,33 @@ test('a watchdog fire on an attach stream opens the close door exactly once', as
     conn.stop();
     server.close();
     for (const s of state.streams) { try { s.end(); } catch {} }
+  }
+});
+
+test('an events request the box never answers is closed once after the staleness bound, and a reconnect is scheduled', async () => {
+  const { server, state } = mutedServer();
+  const port = await listen(server);
+  const clock = fakeClock();
+  const conn = connect(port, clock);
+  conn.start();
+  try {
+    await waitFor('the unanswered events request to reach the box with its connect-time timer armed',
+      () => conn.online && state.connects === 1 && clock.pending() === 1);
+    const backoff = conn._eventsBackoff;
+
+    clock.advance(STALE_MS - 1);
+    assert.strictEqual(conn._eventsBackoff, backoff, 'nothing closed before the bound');
+
+    clock.advance(1);
+    await waitFor('the box to see the unanswered request dropped', () => state.dropped === 1);
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(conn._eventsBackoff, backoff * 2,
+      'the close door ran exactly once and scheduled one reconnect on the doubled backoff');
+    assert.strictEqual(conn._eventsOpening, false, 'the events feed is free to reopen');
+    assert.strictEqual(clock.pending(), 0, 'the closed request left nothing armed');
+  } finally {
+    conn.stop();
+    try { server.closeAllConnections(); } catch {}
+    server.close();
   }
 });
