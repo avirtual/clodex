@@ -7,7 +7,8 @@ const { nameConflict } = require('./session-manager');
 // The SAME predicate the inject queue gates deliveries on. Required directly
 // rather than injected so there is one draft notion: a focus decision computed
 // from a second one would drift from the delivery it is supposed to agree with.
-const { isDraftOpen, stampServedAge } = require('./proxy-util');
+const { isDraftOpen } = require('./proxy-util');
+const { stampServedAge } = require('./proxy-util');
 const { STOCK_ROLE_DEFS, RESERVED_ROLE_KEYS, defaultLeadSeat } = require('./team-manifest');
 const { REVIEWER_PROMPT_PREFIX } = require('./team-tickets');
 const { resolveAccountLabel } = require('./accounts');
