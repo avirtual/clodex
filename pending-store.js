@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
+const { isAlive } = require('./stream-seat');
 
 // TWO JOBS WEAR `renameSync` IN THIS FILE, and only one of them is a write.
 //   * PUBLISH (parkDelivery, restoreParked) — a temp file renamed into place so
@@ -85,6 +86,7 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
 // DESTRUCTIVE: the dir was renamed away before the first byte was read, so an
 // entry we decline to return and decline to restore is destroyed.
 function drainPending(root, name, claimTag, expectedBorn = null) {
+  rehomeOrphans(root, name);
   const dir = agentDir(root, name);
   const claim = `${dir}.draining.${claimTag}`;
   try {
@@ -117,7 +119,34 @@ function drainPending(root, name, claimTag, expectedBorn = null) {
 function restoreParked(dir, base, raw) {
   // atomicWriteFileSync creates the dir and removes its own temp if the rename
   // fails, so the swallow is all that is left of the old cleanup branch.
-  try { atomicWriteFileSync(path.join(dir, base), raw); } catch { /* best-effort */ }
+  try { atomicWriteFileSync(path.join(dir, base), raw); return true; } catch { return false; }
+}
+
+function rehomeOrphans(root, name) {
+  const dir = agentDir(root, name);
+  const prefix = `${name}.draining.`;
+  let siblings = [];
+  try { siblings = fs.readdirSync(root); } catch { return; }
+  for (const s of siblings) {
+    if (!s.startsWith(prefix)) continue;
+    const pid = Number(s.slice(s.lastIndexOf('.') + 1));
+    if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
+    const mine = `${dir}.draining.rehome.${process.pid}`;
+    try { fs.renameSync(path.join(root, s), mine); } catch { continue; }
+    const json = (f) => f.endsWith('.json') && !f.startsWith('.');
+    let files = [];
+    try { files = fs.readdirSync(mine).filter(json); } catch { continue; }
+    for (const f of files) {
+      try {
+        if (fs.existsSync(path.join(dir, f)) || restoreParked(dir, f, fs.readFileSync(path.join(mine, f), 'utf8'))) {
+          fs.unlinkSync(path.join(mine, f));
+        }
+      } catch {}
+    }
+    let left = null;
+    try { left = fs.readdirSync(mine).filter(json); } catch {}
+    if (left && !left.length) { try { fs.rmSync(mine, { recursive: true, force: true }); } catch {} }
+  }
 }
 
 function hasActivePending(root, name) {

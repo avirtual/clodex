@@ -476,3 +476,25 @@ test('generation: a restored entry keeps its original filename, so seq order and
   assert.deepStrictEqual(drainPending(root, 'a', 't', T3), ['second'],
     'and the remaining entry drains in its original seq position');
 });
+
+test('an orphan claim dir left by a dead drainer is re-homed and delivered by the next drain', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'one', '0001');
+  parkDelivery(root, 'a', 'two', '0002');
+  const orphan = `${agentDir(root, 'a')}.draining.idle.999999`;
+  fs.renameSync(agentDir(root, 'a'), orphan);
+  assert.throws(() => process.kill(999999, 0));
+  assert.deepStrictEqual(drainPending(root, 'a', `idle.${process.pid}`), ['one', 'two']);
+  assert.ok(!fs.existsSync(orphan));
+  assert.deepStrictEqual(fs.readdirSync(root), []);
+});
+
+test("a live drainer's claim dir is left alone by the next drain", () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'mid-drain', '0001');
+  const claim = `${agentDir(root, 'a')}.draining.idle.${process.pid}`;
+  fs.renameSync(agentDir(root, 'a'), claim);
+  assert.deepStrictEqual(drainPending(root, 'a', 'boot.1'), []);
+  assert.deepStrictEqual(fs.readdirSync(claim), ['0001.json']);
+  assert.ok(!fs.existsSync(agentDir(root, 'a')));
+});

@@ -216,7 +216,7 @@ function streamCodecCtx(type, extraArgs) {
       const f = flags.find((fl) => fl.startsWith('--') && tok.startsWith(`${fl}=`));
       const g = flags.find((fl) => /^-[^-]$/.test(fl) && tok.startsWith(fl) && tok.length > fl.length);
       if (f) model = tok.slice(f.length + 1);
-      else if (g) model = tok.slice(g.length);
+      else if (g) model = tok.slice(tok[g.length] === '=' ? g.length + 1 : g.length);
     }
   }
   return {

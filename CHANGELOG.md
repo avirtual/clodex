@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Hooks and engine: a Codex seat still receives its identity when the transcript relink fails; a parked-mail drain interrupted mid-claim is re-homed by the next drain instead of lost; a second Clodex instance sharing a cwd no longer discards the user's Codex hooks backup on cleanup; `-m=NAME` is read as a model like the other spellings; a session moved between workspaces keeps its web scrollback ring.
 
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 - Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
