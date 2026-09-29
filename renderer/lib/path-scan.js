@@ -30,8 +30,9 @@ const EXTENSIONS = [
 // rather than a miss.
 const PATH_RE = new RegExp(
   String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join('|')})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
-  'g',
+  'y',
 );
+const PATH_CHAR = /[\w.@+-]/;
 
 // A URL's own path segments look exactly like a relative path, so a bare scan
 // claims `example.com/app.js` out of `https://example.com/app.js` and opens a
@@ -61,6 +62,14 @@ function urlMatches(text) {
   return out;
 }
 
+function mayStartPath(text, i) {
+  const c = text[i];
+  if (c === '~' || i === 0) return true;
+  const prev = text[i - 1];
+  if (prev === '/') return c === '/';
+  return !PATH_CHAR.test(prev);
+}
+
 // Returns [{ start, end, text, path, line }] — half-open offsets into `text`,
 // `path` without the `:line` suffix, `line` a number or null. Ordered by start.
 function scanPaths(text) {
@@ -70,8 +79,14 @@ function scanPaths(text) {
   const inUrl = (i) => urls.some((u) => i >= u.start && i < u.end);
 
   const out = [];
-  PATH_RE.lastIndex = 0;
-  for (let m = PATH_RE.exec(text); m; m = PATH_RE.exec(text)) {
+  let from = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (i !== from && !mayStartPath(text, i)) continue;
+    PATH_RE.lastIndex = i;
+    const m = PATH_RE.exec(text);
+    if (!m) continue;
+    from = i + m[0].length;
+    i = from - 1;
     if (inUrl(m.index)) continue;
     const hit = m[0];
     const colon = hit.lastIndexOf(':');

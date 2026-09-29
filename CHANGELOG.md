@@ -22,6 +22,7 @@ blocks a release.
 - Seat prompts: the `[agent:team …]` grammar rows (~3 KB) now render only for the team lead — the only seat whose team verbs are accepted; every other seat's intents block is that much shorter.
 - Peering: the remote server can no longer double-bind or survive a stop issued mid-start (including an engine shutdown during a queued resync), a peer stream that never gets a response is closed after the staleness bound instead of hanging, a dialect probe that outlives an identity change is discarded, and a control token acquired for an attachment detached mid-request is released instead of leaked.
 - clodexctl: the contexts file is written atomically (temp + rename), undeploy refuses a contexts file that fails to parse instead of treating it as empty, node lookups no longer match Object.prototype keys, and the deploy token-delivery session cleanup retries once on a 404 that raced the engine's restore.
+- Renderer: bracketed-paste scrubbing, file-path scanning and markdown heading trimming are linear on crafted input (a 20,000-char run no longer stalls the composer), and bust/transcript token counts gain the M tier instead of printing "1000k".
 
 ## 5.92.0 — 2026-09-29
 

@@ -231,6 +231,18 @@ test('a prompt head carries its local clock time; a boundary reads its token dro
   assert.deepStrictEqual(notice.childNodes[1].childNodes.map((n) => n.data ?? n.textContent), ['API Error: 500']);
 });
 
+test('a compact boundary token count of a million or more reads in M, as fmtTokens does', () => {
+  const m = mount();
+  m.render([
+    { ...prompt },
+    { id: 'b1', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 1_250_000, postTokens: 999_499 },
+    { id: 'b2', kind: 'boundary', ts: null, turn: 1, what: 'compact', trigger: 'manual', preTokens: 1_000_000, postTokens: 16000 },
+  ]);
+  const [, fractional, whole] = m.pane.childNodes[0].childNodes;
+  assert.strictEqual(fractional.textContent, 'compacted · 1.3M → 999k tokens · manual');
+  assert.strictEqual(whole.textContent, 'compacted · 1M → 16k tokens · manual');
+});
+
 test('a compact boundary carrying elapsedMs ends its label with the elapsed time; without it the label is unchanged', () => {
   const m = mount();
   m.render([

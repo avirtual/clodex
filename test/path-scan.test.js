@@ -240,6 +240,37 @@ test('scanLinks on empty and non-string input returns no spans rather than throw
 
 const ID = '0123456789abcdef';
 
+function fastestMs(fn) {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+}
+
+test('a 20,000-dot run scans in linear time and still yields the path after it', () => {
+  const line = `${'.'.repeat(20000)} x.js`;
+  assert.deepStrictEqual(hits(line).map((h) => [h.start, h.text]), [[20001, 'x.js']]);
+  const ms = fastestMs(() => hits(line));
+  assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
+});
+
+test('long runs of path characters with no extension scan in linear time', () => {
+  for (const run of ['a'.repeat(20000), '_.'.repeat(10000), 'a/'.repeat(10000), '1'.repeat(20000)]) {
+    assert.deepStrictEqual(hits(run), []);
+    const ms = fastestMs(() => hits(run));
+    assert.ok(ms < 50, `${JSON.stringify(run.slice(0, 4))}…: ${ms.toFixed(1)} ms`);
+  }
+});
+
+test('the start guard keeps the hits an unguarded scan finds', () => {
+  assert.deepStrictEqual(hits('a...b.js').map((h) => h.text), ['a...b.js']);
+  assert.deepStrictEqual(hits('a.js:12abc.md').map((h) => h.text), ['a.js:12', 'abc.md']);
+  assert.deepStrictEqual(hits('a//b.js q.md:3/z.js').map((h) => h.text), ['/b.js', 'q.md:3', '/z.js']);
+});
+
 test('the spill stub\'s absolute path is a plain path hit, so the ordinary link provider covers it', () => {
   const p = `/Users/bogdan/.clodex/spill/clodex/${ID}.md`;
   const row = `[agent:task add hand] S-E intent-spill: shout joins — 5.2 KB filed at ${p}`;
