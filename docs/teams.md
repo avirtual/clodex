@@ -411,7 +411,7 @@ The merge gate refuses (`merge: on-master`, kept as the key for stability) when
 the root checkout is on anything other than that branch, and names it.
 
 **One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
-bullet at the head of `## Unreleased`, so the second of two in-flight tickets
+bullet at the end of `## Unreleased`, so the second of two in-flight tickets
 always conflicts there even when nothing else overlaps. When the ONLY conflicted
 path is the root `CHANGELOG.md` and both sides did nothing but insert lines
 (nothing deleted or rewritten, no `## ` heading added on either side), the loop
@@ -528,7 +528,10 @@ plugin reference and is unaffected. The library seeder never writes under
 ## How a role finds its prompt
 
 A seat's system prompt is the template's `systemPromptFile` when the template
-names one; otherwise it is the role's `prompt`. For ticket and reviewer seats there is one exception: if the template is the copy the team was created with (its stem is the role key) and the team has its own copy of the role's `prompt`, the role's prompt wins. A role `prompt` that did not
+names one; otherwise it is the role's `prompt`. For ticket and reviewer seats
+there is one exception: if the template is the copy the team seeded for the role
+(its stem is the role key) and the team has its own copy of the role's `prompt`,
+the role's prompt wins. A role `prompt` that did not
 become the system prompt is appended after the team block, so a role's briefing
 is never dropped: the template supplies the persona, the role supplies the
 delta. When both name the same stem it is applied once. This holds for ticket

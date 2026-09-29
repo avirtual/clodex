@@ -1316,8 +1316,7 @@ test('seed: a missing source tree is a no-op, not a throw', () => {
 });
 
 // --- seedLibraryDefaults: version-stamped reconciliation (v2 GAP) -------------
-// A per-file provenance manifest (library/.seed-state.json = { relPath: sha256 of
-// the shipped bytes we last wrote }) lets an upgrade overwrite an UNEDITED shipped
+// A per-file provenance manifest lets an upgrade overwrite an UNEDITED shipped
 // copy, while never clobbering an operator edit. These use a hermetic resourcesDir
 // like the seed harness above, plus a helper that stages a pre-existing manifest.
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');

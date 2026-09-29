@@ -915,7 +915,8 @@ everything else lives in the collapsed **Advanced** section. Mode is a preset
 over the Advanced fields, not a per-session stored key — `Clodex optimized`
 writes the default tool denylist, `Standard` writes none; both start wire
 stripping at `stripLevel: 2`, and any edit inside Advanced flips the selector
-to `Custom`, which applies nothing. Which of the two a create-mode open starts on is the
+to `Custom`, which applies nothing.
+Which of the two a create-mode open starts on is the
 `defaultSessionMode` preference (Settings ▸ Sessions, shipped `optimized`), read
 per open so a change applies to the next dialog. A template, an adopt prefill or the template editor opens as
 `Custom` with Advanced expanded, so `collectFormConfig` and template round-trips
