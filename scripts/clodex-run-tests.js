@@ -237,6 +237,7 @@ function subjectMatchers(sources) {
     rel,
     stem: rel.endsWith('.js') ? rel.slice(0, -3) : null,
     literal: rel.endsWith('.js') || rel.includes('/'),
+    base: rel.endsWith('.js') || !rel.includes('/') ? null : path.posix.basename(rel),
   }));
 }
 
@@ -289,7 +290,8 @@ function selectSet(measure) {
       const hit = matchers.some(
         (m) => (m.stem !== null && targets.has(m.stem))
           || targets.has(m.rel)
-          || (m.literal && text.includes(m.rel)),
+          || (m.literal && text.includes(m.rel))
+          || (m.base !== null && (text.includes(`'${m.base}'`) || text.includes(`"${m.base}"`))),
       );
       if (!hit) continue;
       bySubject.push(t);
