@@ -323,7 +323,7 @@
 | `seedLibraryDefaults` | seeds the library, skills and agents trees from resources, refusing under node --test when registryDir resolves (or realpaths) to the real ~/.clodex | registryDir/library, skills, agents | seedRoot | stores.test.js engine-registry-dir-seam.test.js |
 
 ### Invariants
-- `seedRoot` overwrites a present file only when it still matches its stamp and the shipped bytes moved; a file matching neither is stranded and reported, never repaired.
+- `seedRoot` overwrites a present file only when it still matches a plain stamp (never an `adopted:` one) and the shipped bytes moved; a file matching neither is stranded and reported, never repaired.
 - `seedRoot` rebuilds the report from the current stranded set and advances an announced hash only after reading the inbox note back.
 - `seedRoot` is best-effort: a failed read or copy is logged and skipped, never thrown out of `initStores`.
 - `seedLibraryDefaults` refuses the real home under node --test, so a suite never seeds the live library from a checked-out branch.
