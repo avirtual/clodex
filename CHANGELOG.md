@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Wirescope v0.6.76 vendored: side-calls downshift to claude-sonnet-5-5, which is billed at its own sonnet-5.5 price row, and the /_admin page caps subagent rows at the five most recent.
+
 ## 5.93.0 — 2026-09-29
 
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
