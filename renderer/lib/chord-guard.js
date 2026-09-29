@@ -38,17 +38,21 @@ function openOverlayIds({ byId, byClass }) {
   return open;
 }
 
+function dialogOverlayIds(probes) {
+  return openOverlayIds(probes).filter((id) => id !== 'dock-sheet');
+}
+
 function anyOverlayOpen(probes) {
   return openOverlayIds(probes).length > 0;
 }
 
 function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
-  const open = openOverlayIds({ byId, byClass });
-  if (open.length === 1 && open[0] === 'dialog-overlay') {
+  const dialogs = dialogOverlayIds({ byId, byClass });
+  if (dialogs.length === 1 && dialogs[0] === 'dialog-overlay') {
     closeNewSessionDialog();
     return 'closed-new-session-dialog';
   }
-  if (open.length > 0) return 'overlay-open-nothing-closed';
+  if (anyOverlayOpen({ byId, byClass })) return 'overlay-open-nothing-closed';
   if (!activeSession) return 'no-active-session';
   const peer = peerOf(activeSession);
   if (peer) {
@@ -59,4 +63,6 @@ function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewS
   return 'archived-active-session';
 }
 
-module.exports = { MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord };
+module.exports = {
+  MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, dialogOverlayIds, anyOverlayOpen, performCloseChord,
+};

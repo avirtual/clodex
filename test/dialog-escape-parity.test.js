@@ -50,7 +50,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { MODAL_OVERLAY_IDS, openOverlayIds } = require('../renderer/lib/chord-guard');
+const { MODAL_OVERLAY_IDS, dialogOverlayIds } = require('../renderer/lib/chord-guard');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
@@ -112,7 +112,7 @@ function extractEscape() {
   assert.ok(m, 'ENTER: no ESCAPE_CLOSES table + keydown listener found in renderer.js');
   assert.match(m[0], /e\.key !== 'Escape'/,
     'ENTER: the captured keydown block must be the Escape one');
-  assert.match(m[0], /openOverlayIds\(overlayProbes\)/,
+  assert.match(m[0], /dialogOverlayIds\(overlayProbes\)/,
     'ENTER: the Escape block must consult the shared open-overlay guard');
   assert.doesNotMatch(m[0], /metaKey|altChordAction/,
     'ENTER: the regex wandered into a chord handler');
@@ -153,7 +153,7 @@ function makeFixture(varName, closeNames, { open = [], which = 'escape' } = {}) 
   // already act on, and the two could then disagree silently.
   const stubs = {
     document,
-    openOverlayIds,
+    dialogOverlayIds,
     overlayProbes: fakeProbes(open),
   };
   if (varName) stubs[varName] = overlay;
@@ -220,6 +220,12 @@ for (const { label, overlay: varName, id: overlayId, close: closeName } of [...D
     }
   });
 
+  test(`${label}: Escape over the narrow-screen dock sheet still closes it`, () => {
+    const f = makeFixture(null, ALL_CLOSERS, { open: [overlayId, 'dock-sheet'] });
+    f.key('Escape');
+    assert.deepStrictEqual(f.closed, [closeName], `the dock sheet kept Escape from closing ${label}`);
+  });
+
   test(`${label}: Escape with ANOTHER dialog also open closes nothing`, () => {
     // The stacked subject above raises a class-keyed modal; this one raises a
     // sibling DIALOG, which is the case discovery actually hits (Discover over
@@ -252,6 +258,12 @@ for (const { label, overlay: varName, id: overlayId, close: closeName } of [...D
     assert.deepStrictEqual(f.closed, [], 'a press on the dialog body must not close it');
   });
 }
+
+test('Escape with only the dock sheet open closes nothing', () => {
+  const f = makeFixture(null, ALL_CLOSERS, { open: ['dock-sheet'] });
+  f.key('Escape');
+  assert.deepStrictEqual(f.closed, []);
+});
 
 test('the table names every dialog above, each paired with its OWN closer', () => {
   // The per-dialog subjects run one row at a time, so a table carrying an EXTRA

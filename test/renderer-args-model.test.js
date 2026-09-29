@@ -41,10 +41,9 @@ test('splitModelArg: non-array input → empty', () => {
   assert.deepStrictEqual(splitModelArg(null), { model: '', rest: [] });
 });
 
-test('splitModelArg: trailing --model with no value is left in rest', () => {
-  const { model, rest } = splitModelArg(['--foo', '--model']);
-  assert.strictEqual(model, '');
-  assert.deepStrictEqual(rest, ['--foo', '--model']);
+test('splitModelArg: a trailing model flag with no value is dropped, not passed to the CLI', () => {
+  assert.deepStrictEqual(splitModelArg(['--foo', '--model']), { model: '', rest: ['--foo'] });
+  assert.deepStrictEqual(splitModelArg(['-m']), { model: '', rest: [] });
 });
 
 test('withModelArg: non-empty field prepends and strips existing', () => {

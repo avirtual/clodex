@@ -131,7 +131,9 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
     return !filesPopover.classList.contains('hidden') && filesPopover.dataset.name === key;
   }
 
-  return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
+  function forget(name) { cwdByName.delete(name); }
+
+  return { openFilesPopover, openFilePeek, isFilesPopoverForKey, forget };
 }
 
 module.exports = { initFilesPopover };

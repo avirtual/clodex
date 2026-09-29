@@ -41,8 +41,8 @@ const { evalRendererModule } = require('./lib/plugin-module-eval');
 const { pluginOrigin } = require('./lib/plugin-origin');
 const { prefsGate } = require('./lib/prefs-gate');
 const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
-const { planNewSession } = require('./lib/focus-policy');
-const { anyOverlayOpen, openOverlayIds, performCloseChord } = require('./lib/chord-guard');
+const { planNewSession, respawnFocusWindow } = require('./lib/focus-policy');
+const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
@@ -2573,7 +2573,7 @@ function focusPtySeat(entry) {
   else entry.terminal.focus();
 }
 
-const respawnFocus = new Set();
+const respawnFocus = new Map();
 
 // The activation step for a session that has just been CREATED — never for a
 // switch the operator asked for, which is always honoured.
@@ -2581,8 +2581,7 @@ const respawnFocus = new Set();
 // Not focusing still leaves the sidebar row, so a background seat is visible
 // and one click away; the only thing withheld is the keyboard.
 async function switchToNewSession(name, { agentInitiated = false } = {}) {
-  const wasFocused = respawnFocus.has(name) ? name : null;
-  respawnFocus.clear();
+  const wasFocused = respawnFocusWindow(respawnFocus, name, Date.now());
   const { focus } = await planNewSession({
     name, focused: activeSession, wasFocused, agentInitiated,
     queryDraftOpen: window.api.draftOpen ? (n) => window.api.draftOpen(n) : null,
@@ -2660,6 +2659,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
   filesState.delete(name);
   filesUnseen.delete(name);
   peerFilesCount.delete(name);
+  forgetFilesCwd(name);
 
   if (activeSession === name) {
     const remaining = Array.from(sessions.keys());
@@ -4213,7 +4213,7 @@ window.api.onSessionExit((name, code, meta) => {
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
-  if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.add(name);
+  if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.set(name, Date.now());
   removeSession(name);
   if (archivedEntry) {
     archivingSessions.delete(name);
@@ -5179,7 +5179,7 @@ function routeSessionAction(act, anchor) {
 const {
   openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
 } = initChecklistPopovers({
-  sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta,
+  sessionList, rowSnapshot, rebuildLiveRow, switchSession, refreshSidebarMeta,
   seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
   getSessionType: sessionTypeOf,
 });
@@ -5380,7 +5380,7 @@ const filesToggle = bindFilesToggle({
   getActiveSession: () => activeSession,
 });
 
-const { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
+const { openFilesPopover, openFilePeek, isFilesPopoverForKey, forget: forgetFilesCwd } = initFilesPopover({
   popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, sidePane,
   getActiveSession: () => activeSession,
 });
@@ -5593,7 +5593,7 @@ const ESCAPE_CLOSES = [
 
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  const open = openOverlayIds(overlayProbes);
+  const open = dialogOverlayIds(overlayProbes);
   if (open.length !== 1) return;
   const row = ESCAPE_CLOSES.find(([id]) => id === open[0]);
   if (row) row[1]();

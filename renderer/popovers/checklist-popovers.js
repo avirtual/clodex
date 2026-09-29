@@ -6,7 +6,7 @@
 //
 // These read/write settings and restart via window.api directly — outside the
 // popoverApi read-only data seam by design. The restart re-attach dance needs
-// core sessionList/createTerminal/addSessionToSidebar/switchSession, injected by
+// core sessionList/rowSnapshot/rebuildLiveRow/switchSession, injected by
 // reference. Tools/Agents are LOCAL-only. SKILLS takes an optional peer `source`
 // ({fetch, save, restartFresh}) so the same popover edits a peer session's
 // skills over the wire; with `source` omitted the local path is unchanged.
@@ -54,7 +54,7 @@ const agentAutoSet = (agentLib, session) => new Set(autoEnabledFor(agentLib || [
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
   (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || '').meta })), session));
 
-function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
+function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
   function seatFor(name, source = null) {
     if (source || typeof seatPluginsOf !== 'function') return null;
     return { plugins: seatPluginsOf(name) };
@@ -107,16 +107,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!r || !r.ok) { alert(`Update tools failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Same re-attach dance as the context-menu restart path.
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = item ? item.dataset.type || null : null;
-    const snapCwd = item ? item.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name);
     if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snapType) {
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
-      switchSession(name);
-    }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   });
   // Dismiss on outside click / Escape.
   document.addEventListener('mousedown', (e) => {
@@ -227,16 +221,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     // Fresh (non-resume) restart — the only way a skill change takes effect.
     if (source) { source.restartFresh(); return; }
     // Local: same re-attach dance as the tools popover restart path.
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = item ? item.dataset.type || null : null;
-    const snapCwd = item ? item.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name, { fresh: true });
     if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snapType) {
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
-      switchSession(name);
-    }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   });
   document.addEventListener('mousedown', (e) => {
     if (skillsPopover.classList.contains('hidden')) return;
@@ -312,16 +300,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!r || !r.ok) { alert(`Update agents failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     if (!restart) return;
     // Fresh (non-resume) restart — same re-attach dance as the skills popover.
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = item ? item.dataset.type || null : null;
-    const snapCwd = item ? item.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name, { fresh: true });
     if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snapType) {
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
-      switchSession(name);
-    }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   });
   document.addEventListener('mousedown', (e) => {
     if (agentsPopover.classList.contains('hidden')) return;
@@ -547,16 +529,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     }
     if (!restart) return;
     // Same re-attach dance as the tools popover's restart path.
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = item ? item.dataset.type || null : null;
-    const snapCwd = item ? item.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name);
     if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snapType) {
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
-      switchSession(name);
-    }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   });
   document.addEventListener('mousedown', (e) => {
     if (intentsPopover.classList.contains('hidden')) return;
@@ -617,16 +593,10 @@ function initChecklistPopovers({ sessionList, createTerminal, addSessionToSideba
     if (!r || !r.ok) { alert(`Update plugins failed: ${r && r.error ? r.error : 'unknown error'}`); return; }
     refreshSidebarMeta({ includePr: false });
     if (!restart) return;
-    const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-    const snapType = item ? item.dataset.type || null : null;
-    const snapCwd = item ? item.dataset.cwd : null;
+    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
     const rr = await window.api.restartSession(name);
     if (!rr || !rr.ok) { alert(`Restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snapType) {
-      createTerminal(name);
-      addSessionToSidebar(name, snapType, snapCwd, null);
-      switchSession(name);
-    }
+    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
   });
   document.addEventListener('mousedown', (e) => {
     if (pluginsPopover.classList.contains('hidden')) return;

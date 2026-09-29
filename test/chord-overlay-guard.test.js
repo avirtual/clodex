@@ -36,7 +36,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord,
+  MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, dialogOverlayIds, anyOverlayOpen, performCloseChord,
 } = require('../renderer/lib/chord-guard');
 
 const ROOT = path.join(__dirname, '..');
@@ -146,6 +146,16 @@ test('with the web dock up as a full-viewport sheet, the close chord archives no
   const result = performCloseChord({ ...localSession, ...fakeDom(['dock-sheet']) }, actions);
   assert.deepStrictEqual(calls.archived, []);
   assert.strictEqual(result, 'overlay-open-nothing-closed');
+});
+
+test('the dock sheet does not count as the dialog the close chord closes', () => {
+  const [calls, actions] = spies();
+  const result = performCloseChord({ ...localSession, ...fakeDom(['dock-sheet', 'dialog-overlay']) }, actions);
+  assert.strictEqual(result, 'closed-new-session-dialog');
+  assert.deepStrictEqual(calls.closed, [true]);
+  assert.deepStrictEqual(calls.archived, []);
+  assert.deepStrictEqual(openOverlayIds(fakeDom(['dock-sheet'])), ['dock-sheet'], 'the sheet still counts for the any-open guards');
+  assert.deepStrictEqual(dialogOverlayIds(fakeDom(['dock-sheet', 'prefs-overlay'])), ['prefs-overlay']);
 });
 
 // ── modals that exist only at runtime (r1) ─────────────────────────────────

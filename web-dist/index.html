@@ -26664,8 +26664,8 @@ ${i3.join("\n")}
         const rest = [];
         let taken = false;
         for (let i = 0; i < a.length; i++) {
-          if (!taken && (a[i] === "--model" || a[i] === "-m") && a[i + 1] !== void 0) {
-            if (isModelFlag(a[i + 1])) {
+          if (!taken && (a[i] === "--model" || a[i] === "-m")) {
+            if (a[i + 1] === void 0 || isModelFlag(a[i + 1])) {
               taken = true;
               continue;
             }
@@ -27571,7 +27571,20 @@ ${i3.join("\n")}
         const target = await decideNewSessionFocus(opts);
         return { focus: target !== null, fit: true };
       }
-      module.exports = { shouldFocusNewSession, decideNewSessionFocus, planNewSession };
+      var RESPAWN_FOCUS_MS = 1e4;
+      function respawnFocusWindow(map, name, now) {
+        const at = map.get(name);
+        map.delete(name);
+        for (const [other, t] of map) if (now - t >= RESPAWN_FOCUS_MS) map.delete(other);
+        return at !== void 0 && now - at < RESPAWN_FOCUS_MS ? name : null;
+      }
+      module.exports = {
+        shouldFocusNewSession,
+        decideNewSessionFocus,
+        planNewSession,
+        RESPAWN_FOCUS_MS,
+        respawnFocusWindow
+      };
     }
   });
 
@@ -27614,16 +27627,19 @@ ${i3.join("\n")}
         }
         return open;
       }
+      function dialogOverlayIds(probes) {
+        return openOverlayIds(probes).filter((id) => id !== "dock-sheet");
+      }
       function anyOverlayOpen(probes) {
         return openOverlayIds(probes).length > 0;
       }
       function performCloseChord({ byId, byClass, activeSession, peerOf }, { closeNewSessionDialog, hidePeerRow, archiveSession }) {
-        const open = openOverlayIds({ byId, byClass });
-        if (open.length === 1 && open[0] === "dialog-overlay") {
+        const dialogs = dialogOverlayIds({ byId, byClass });
+        if (dialogs.length === 1 && dialogs[0] === "dialog-overlay") {
           closeNewSessionDialog();
           return "closed-new-session-dialog";
         }
-        if (open.length > 0) return "overlay-open-nothing-closed";
+        if (anyOverlayOpen({ byId, byClass })) return "overlay-open-nothing-closed";
         if (!activeSession) return "no-active-session";
         const peer = peerOf(activeSession);
         if (peer) {
@@ -27633,7 +27649,14 @@ ${i3.join("\n")}
         archiveSession(activeSession);
         return "archived-active-session";
       }
-      module.exports = { MODAL_OVERLAY_IDS, MODAL_OVERLAY_CLASSES, openOverlayIds, anyOverlayOpen, performCloseChord };
+      module.exports = {
+        MODAL_OVERLAY_IDS,
+        MODAL_OVERLAY_CLASSES,
+        openOverlayIds,
+        dialogOverlayIds,
+        anyOverlayOpen,
+        performCloseChord
+      };
     }
   });
 
@@ -41005,7 +41028,10 @@ void main() {
         function isFilesPopoverForKey(key) {
           return !filesPopover.classList.contains("hidden") && filesPopover.dataset.name === key;
         }
-        return { openFilesPopover, openFilePeek, isFilesPopoverForKey };
+        function forget(name) {
+          cwdByName.delete(name);
+        }
+        return { openFilesPopover, openFilePeek, isFilesPopoverForKey, forget };
       }
       module.exports = { initFilesPopover };
     }
@@ -42551,7 +42577,7 @@ void main() {
         (skillLib || []).map((s) => ({ name: s.name, meta: parseSkillFrontmatter(s.content || "").meta })),
         session
       ));
-      function initChecklistPopovers({ sessionList, createTerminal, addSessionToSidebar, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
+      function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switchSession, refreshSidebarMeta, seatPluginsOf, getSessionType }) {
         function seatFor(name, source = null) {
           if (source || typeof seatPluginsOf !== "function") return null;
           return { plugins: seatPluginsOf(name) };
@@ -42599,17 +42625,14 @@ void main() {
             return;
           }
           if (!restart) return;
-          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = item ? item.dataset.type || null : null;
-          const snapCwd = item ? item.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name);
           if (!rr || !rr.ok) {
             alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         });
@@ -42712,17 +42735,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             source.restartFresh();
             return;
           }
-          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = item ? item.dataset.type || null : null;
-          const snapCwd = item ? item.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name, { fresh: true });
           if (!rr || !rr.ok) {
             alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         });
@@ -42792,17 +42812,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             return;
           }
           if (!restart) return;
-          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = item ? item.dataset.type || null : null;
-          const snapCwd = item ? item.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name, { fresh: true });
           if (!rr || !rr.ok) {
             alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         });
@@ -42985,17 +43002,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             }
           }
           if (!restart) return;
-          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = item ? item.dataset.type || null : null;
-          const snapCwd = item ? item.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name);
           if (!rr || !rr.ok) {
             alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         });
@@ -43057,17 +43071,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           refreshSidebarMeta({ includePr: false });
           if (!restart) return;
-          const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-          const snapType = item ? item.dataset.type || null : null;
-          const snapCwd = item ? item.dataset.cwd : null;
+          const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
           const rr = await window.api.restartSession(name);
           if (!rr || !rr.ok) {
             alert(`Restart failed: ${rr && rr.error ? rr.error : "unknown error"}`);
             return;
           }
-          if (snapType) {
-            createTerminal(name);
-            addSessionToSidebar(name, snapType, snapCwd, null);
+          if (snap.type) {
+            rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend });
             switchSession(name);
           }
         });
@@ -48219,8 +48230,8 @@ ${detail}` });
       var { pluginOrigin } = require_plugin_origin();
       var { prefsGate } = require_prefs_gate();
       var { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
-      var { planNewSession } = require_focus_policy();
-      var { anyOverlayOpen, openOverlayIds, performCloseChord } = require_chord_guard();
+      var { planNewSession, respawnFocusWindow } = require_focus_policy();
+      var { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require_chord_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
@@ -50709,10 +50720,9 @@ ${detail}` });
         if (ptyComposerShown(entry)) entry.composerEl.focus();
         else entry.terminal.focus();
       }
-      var respawnFocus = /* @__PURE__ */ new Set();
+      var respawnFocus = /* @__PURE__ */ new Map();
       async function switchToNewSession(name, { agentInitiated = false } = {}) {
-        const wasFocused = respawnFocus.has(name) ? name : null;
-        respawnFocus.clear();
+        const wasFocused = respawnFocusWindow(respawnFocus, name, Date.now());
         const { focus } = await planNewSession({
           name,
           focused: activeSession,
@@ -50787,6 +50797,7 @@ ${detail}` });
         filesState.delete(name);
         filesUnseen.delete(name);
         peerFilesCount.delete(name);
+        forgetFilesCwd(name);
         if (activeSession === name) {
           const remaining = Array.from(sessions.keys());
           if (remaining.length > 0) {
@@ -52291,7 +52302,7 @@ ${detail}` });
         const archivedEntry = archivingSessions.get(name);
         const movedFailedEntry = movingFailed.get(name);
         const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
-        if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.add(name);
+        if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.set(name, Date.now());
         removeSession(name);
         if (archivedEntry) {
           archivingSessions.delete(name);
@@ -53151,8 +53162,8 @@ Click for live activity`;
         openPluginsPopover
       } = initChecklistPopovers({
         sessionList,
-        createTerminal,
-        addSessionToSidebar,
+        rowSnapshot,
+        rebuildLiveRow,
         switchSession,
         refreshSidebarMeta,
         seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
@@ -53321,7 +53332,7 @@ Click for live activity`;
         sidePane,
         getActiveSession: () => activeSession
       });
-      var { openFilesPopover, openFilePeek, isFilesPopoverForKey } = initFilesPopover({
+      var { openFilesPopover, openFilePeek, isFilesPopoverForKey, forget: forgetFilesCwd } = initFilesPopover({
         popoverApi,
         filesState,
         filesUnseen,
@@ -53523,7 +53534,7 @@ Click for live activity`;
       ];
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
-        const open = openOverlayIds(overlayProbes);
+        const open = dialogOverlayIds(overlayProbes);
         if (open.length !== 1) return;
         const row = ESCAPE_CLOSES.find(([id]) => id === open[0]);
         if (row) row[1]();

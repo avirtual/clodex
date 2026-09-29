@@ -68,3 +68,78 @@ test('every restart path snapshots the account and passes it to the rebuild', ()
     'the args-save path recomputes from the env it is saving, falling back to the row for a peer save');
   assert.match(rendererSrc, /rebuildLiveRow\(name, \{ \.\.\.snap, account: snapAccount,/, 'the args-save rebuild carries the recomputed account');
 });
+
+function fakeChecklistDom() {
+  const els = new Map();
+  const mk = () => {
+    const handlers = new Map();
+    const classes = new Set();
+    return {
+      dataset: {}, style: {}, children: [], checked: false,
+      classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c), contains: (c) => classes.has(c), toggle() {} },
+      addEventListener: (t, fn) => { if (!handlers.has(t)) handlers.set(t, []); handlers.get(t).push(fn); },
+      fire: async (t) => { for (const fn of handlers.get(t) || []) await fn({}); },
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      contains: () => false,
+    };
+  };
+  const get = (id) => { if (!els.has(id)) els.set(id, mk()); return els.get(id); };
+  return { els, get, doc: { getElementById: get, createElement: mk, addEventListener() {}, querySelector: () => null } };
+}
+
+test('a checklist-popover restart rebuilds the row with its label, effort and account', async () => {
+  const { initChecklistPopovers } = require('../renderer/popovers/checklist-popovers');
+  const src = fs.readFileSync(path.join(ROOT, 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
+  assert.doesNotMatch(src, /\baddSessionToSidebar\(/, 'a restart site still rebuilds the row from bare dataset fields');
+  assert.strictEqual([...src.matchAll(/\brebuildLiveRow\(/g)].length, 5, 'every checklist restart rebuilds through rebuildLiveRow');
+
+  const fn = (name) => {
+    const start = rendererSrc.indexOf(`function ${name}(`);
+    assert.ok(start >= 0, `ENTER: ${name} was not found in the shipped renderer`);
+    return rendererSrc.slice(start, rendererSrc.indexOf('\n}\n', start) + 2);
+  };
+  const added = [];
+  const efforts = [];
+  const env = {
+    streamSeatNames: new Set(), sidebarMeta: new Map(),
+    markSeatIo() {}, createTerminal() {}, markSeatPosture() {},
+    markSeatEffort: (n, e) => efforts.push(e),
+    addSessionToSidebar: (...a) => added.push(a),
+  };
+  const names = Object.keys(env);
+  const { rowSnapshot, rebuildLiveRow } = new Function(...names,
+    `${fn('rowSnapshot')}\n${fn('rebuildLiveRow')}\nreturn { rowSnapshot, rebuildLiveRow };`)(...names.map((n) => env[n]));
+
+  let row = {
+    dataset: { type: 'claude', cwd: '/w', account: 'sub-2', effort: 'high' },
+    querySelector: (sel) => (sel === '.session-name' ? { textContent: 'Renamed' } : null),
+  };
+  const switched = [];
+  const dom = fakeChecklistDom();
+  const prev = { document: global.document, window: global.window, CSS: global.CSS, alert: global.alert };
+  global.document = dom.doc;
+  global.CSS = { escape: (s) => s };
+  global.alert = (m) => { throw new Error(m); };
+  global.window = { innerWidth: 1200, innerHeight: 800, api: {
+    setSessionTools: async () => ({ ok: true }),
+    restartSession: async () => { row = null; return { ok: true, io: 'pty', backend: null }; },
+  } };
+  try {
+    initChecklistPopovers({
+      sessionList: { querySelector: () => row },
+      rowSnapshot, rebuildLiveRow,
+      switchSession: (n) => switched.push(n),
+      refreshSidebarMeta() {},
+    });
+    dom.get('tools-popover').dataset.name = 's';
+    dom.get('tools-popover-restart').checked = true;
+    await dom.get('tools-popover-apply').fire('click');
+  } finally { Object.assign(global, prev); }
+
+  assert.strictEqual(added.length, 1, 'ENTER: the restart rebuilt the row');
+  const [name, type, cwd, label, , , , account] = added[0];
+  assert.deepStrictEqual({ name, type, cwd, label, account }, { name: 's', type: 'claude', cwd: '/w', label: 'Renamed', account: 'sub-2' });
+  assert.deepStrictEqual(efforts, ['high']);
+  assert.deepStrictEqual(switched, ['s']);
+});
