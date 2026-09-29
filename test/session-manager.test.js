@@ -4542,7 +4542,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null, knownSkillNames = () => [] } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null, knownSkillNames = () => [], resolveTeam = () => null, buildIpcPrompt = () => 'IPC\n' } = {}) {
   const root = mkTmpRoot('clodex-hint-');
   const registered = [];
   const hints = [];
@@ -4568,12 +4568,12 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     bakePrompt: (_r, _n, realIpc) => realIpc,
     promptCacheDir: () => pathReal.join(root, 'cache'),
     readCache: () => null,
-    buildIpcPrompt: () => 'IPC\n',
+    buildIpcPrompt,
     mergeClaudeSystemPrompt: (extraArgs, ipcPrompt) => ({ cleaned: [...extraArgs], append: ipcPrompt }),
     readAppendBodies: () => [],
     resolveSystemPromptFile: () => null,
     pluginGrammarLines: () => [], intentEnabled,
-    resolveTeam: () => null,
+    resolveTeam,
     formatTeamBlock: () => '',
     matchSeatRole: () => null,
     getAgentLibrary: () => ({ list: () => [] }),
@@ -4653,6 +4653,19 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   };
   return { m, hints, order, warns, upserts, spawn, root, registered };
 }
+
+test('t1407: create() bakes the [agent:team …] rows into the team lead\'s prompt and not into a hand\'s', async () => {
+  const team = { name: 'acme', root: osReal.tmpdir(), lead: 'acme-lead',
+    roles: { lead: { instantiate: 'session', brief: 'the lead' }, hand: { instantiate: 'session', brief: 'the hand' } } };
+  const { spawn, root } = mkHintProbe({ resolveTeam: () => team, buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt });
+  await spawn('acme-lead');
+  await spawn('acme-hand');
+  const baked = (n) => fsReal.readFileSync(pathForReal(root, n, 'appendPrompt'), 'utf8');
+  assert.match(baked('acme-hand'), /Your role: hand\./, 'ENTER: the hand resolved its team');
+  assert.match(baked('acme-lead'), /Your role: lead\./, 'ENTER: and so did the lead');
+  assert.ok(baked('acme-lead').includes('[agent:team role-add'), 'the lead\'s baked prompt carries the team rows');
+  assert.ok(!baked('acme-hand').includes('[agent:team role-add'), 'a hand\'s does not: every team verb it emits is refused');
+});
 
 test('spawner-hint (t151): CLODEX_SPAWNER_HINT=off POSTs on:false on the seat route, BEFORE the PTY spawn', async () => {
   const { m, hints, order, spawn } = mkHintProbe();
