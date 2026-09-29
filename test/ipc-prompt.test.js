@@ -22,6 +22,7 @@ const path = require('node:path');
 const ALL_GATEABLE = GATEABLE_INTENTS
   .filter((i) => !PRIVILEGED_INTENTS.has(i.type))
   .map((i) => i.type);
+const leadPrompt = (list, extra) => buildIpcPrompt(list, undefined, extra, { teamLead: true });
 
 // ── Byte-pins ────────────────────────────────────────────────────────────────
 // IPC_PROMPT is the hand-maintained canonical literal (an all-enabled seat's
@@ -168,15 +169,14 @@ test('task grammar lives in BOTH the literal and GRAMMAR_LINES, byte-identical',
 });
 
 // t754 added dispatch:/cwd: to role-add and role-set. The byte-pins above hold
-// whether or not the row documents them — they compare the literal to
-// GRAMMAR_LINES, and a row deleted from both sides stays equal. So the grammar
-// for the kvs is pinned on its own, on both copies: a lead that cannot read
+// whether or not the row documents them. So the grammar
+// for the kvs is pinned on its own: a lead that cannot read
 // `dispatch:worktree` here has no other way to learn the verb exists.
-test('t754: the role-add row documents dispatch:/cwd:, in the literal AND in GRAMMAR_LINES', () => {
+test('t754: the role-add row documents dispatch:/cwd: in the lead\'s prompt, gated or not', () => {
   const ROW = /^ {2}\[agent:team role-add <role>.*\[dispatch:standing\|spawn\|worktree\].*\[cwd:<rel>\]/m;
-  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the role-add kvs row');
-  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
-  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+  assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries the role-add kvs row');
+  assert.ok(ROW.test(leadPrompt([])), 'and so does a fully-gated lead\'s');
+  for (const src of [leadPrompt(null), leadPrompt([])]) {
     assert.ok(/dispatch:worktree gives every ticket to that role its own branch, tree and seat/.test(src),
       'the row says what worktree DOES — the reason the ticket exists');
     assert.ok(/role-set <role> …\] takes the same kvs/.test(src), 'and that role-set takes them too');
@@ -186,13 +186,13 @@ test('t754: the role-add row documents dispatch:/cwd:, in the literal AND in GRA
 // Same argument as t754 above, for t808's sandbox row: the byte-pins compare the
 // literal to GRAMMAR_LINES, so a row missing from BOTH sides keeps them equal and
 // ships a verb no lead can discover. Measured — deleting the row from both copies
-// left every byte-pin green. Pinned on both copies, and on the two facts a lead
+// left every byte-pin green. Pinned on the two facts a lead
 // gets wrong without them: that the token is in the FILE and not in the reply.
-test('t808: the sandbox row is present in the literal AND in GRAMMAR_LINES', () => {
+test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () => {
   const ROW = /^ {2}\[agent:team sandbox \[up\|rebuild\|down\|status\] \[ref:<ref>\]\]/m;
-  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries the sandbox row');
-  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
-  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+  assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries the sandbox row');
+  assert.ok(ROW.test(leadPrompt([])), 'and so does a fully-gated lead\'s');
+  for (const src of [leadPrompt(null), leadPrompt([])]) {
     assert.ok(/docker box `team-<name>` from that git ref \(default action up; ref defaults to master only when the box tracks none yet, and status\/down never change it\)/.test(src),
       'the row names the box it mints, the default, and that status/down leave a tracked ref alone');
     assert.ok(/~\/\.clodex\/teams\/<name>\/sandbox\.json \(mode 0600\)/.test(src),
@@ -242,9 +242,9 @@ test('t1039: scratch is gateable — a seat without it sees none of the three ro
 // renders a grammar no parse accepts.
 test('t767/t830/t890: the role-add row documents model: and account:, closes the intent, and says the aliases are the 1M ids', () => {
   const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\] \[account:<label>\]\]/m;
-  assert.ok(ROW.test(IPC_PROMPT), 'the literal carries account: as the last kv in the row, closing the intent');
-  assert.ok(ROW.test(buildIpcPrompt([])), 'and so does the assembled prompt for a fully-gated seat');
-  for (const src of [IPC_PROMPT, buildIpcPrompt([])]) {
+  assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries account: as the last kv in the row, closing the intent');
+  assert.ok(ROW.test(leadPrompt([])), 'and so does a fully-gated lead\'s');
+  for (const src of [leadPrompt(null), leadPrompt([])]) {
     assert.ok(/model: derives templates\/<role>\.json from the role's template \(or clodex-team-hand\) with that --model and points the role at it/.test(src),
       'the row says what model: DOES');
     assert.ok(/the aliases resolve to the 1M-context variants, and a bracketed id still cannot be written in this kv \(the arg list ends at the first \]\), so use the alias/.test(src),
@@ -544,6 +544,43 @@ test('team-create line renders ONLY for a seat whose intents explicitly grant it
   // line rather than granted separately — a seat that reads the grant as covering
   // both would emit a verb it can already emit, never the reverse.
   assert.ok(granted.includes('[agent:team set-lead <seat>]'), 'the hand-off verb is named where the mint is');
+});
+
+test('t1407: the [agent:team …] rows render ONLY when the caller says the seat is its team\'s lead', () => {
+  const ROW = '[agent:team role-add';
+  assert.ok(leadPrompt(null).includes(ROW), 'the lead sees the team rows');
+  assert.ok(leadPrompt([]).includes(ROW), 'a fully-gated lead too: the row is a role fact, not an intent grant');
+  assert.ok(!buildIpcPrompt(null).includes(ROW), 'default seat: no team rows (null pin holds)');
+  assert.ok(!buildIpcPrompt(ALL_GATEABLE).includes(ROW), 'all-non-privileged seat: none either (fork-drift pin holds)');
+  assert.ok(!buildIpcPrompt(['team-create', ...ALL_GATEABLE]).includes(ROW), 'nor a seat granted team-create but not the lead');
+  assert.strictEqual(buildIpcPrompt(null, undefined, undefined, { teamLead: false }), IPC_PROMPT, 'an explicit false is the non-lead prompt');
+  assert.strictEqual(buildIpcPrompt(null, undefined, undefined, {}), IPC_PROMPT, 'and so is an opts without the flag');
+});
+
+test('t1407: the lead variant is IPC_PROMPT plus the seven team rows, first role-add and last trunk', () => {
+  const lead = leadPrompt(null);
+  const rows = lead.split('\n').filter((l) => l.startsWith('  [agent:team '));
+  assert.strictEqual(rows.length, 7, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, trunk');
+  assert.match(rows[0], /^ {2}\[agent:team role-add <role> \[prompt:<stem>\] \[template:<stem>\]/);
+  assert.match(rows[6], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
+  assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ')).join('\n'), IPC_PROMPT,
+    'removing the team rows gives back the non-lead prompt byte for byte');
+  assert.ok(!lead.includes('(team lead only; every team verb is)'), 'a row only the lead reads does not repeat that it is lead-only');
+});
+
+test('t1407: the team rows sit after team-create and before plugin rows, where the literal carried them', () => {
+  const plugin = '  [agent:gh pr]  a plugin row';
+  const lines = leadPrompt(['team-create', ...ALL_GATEABLE], [plugin]).split('\n');
+  const first = lines.findIndex((l) => l.startsWith('  [agent:team role-add '));
+  const last = lines.findIndex((l) => l.startsWith('  [agent:team trunk '));
+  assert.ok(lines[first - 1].startsWith('  [agent:team create <name> root:<abs-path>'), 'team-create is directly above');
+  assert.strictEqual(last - first, 6, 'the seven rows are contiguous');
+  assert.strictEqual(lines[last + 1], plugin, 'the plugin row is directly below');
+  const plain = leadPrompt(null).split('\n');
+  const at = plain.findIndex((l) => l.startsWith('  [agent:team role-add '));
+  assert.ok(plain[at - 1].startsWith('  [agent:file open PATH]'), 'with no privileged grant the file rows are directly above');
+  assert.strictEqual(plain[at + 7], '', 'and the grammar block ends at trunk');
+  assert.ok(plain[at + 8].startsWith('Replies arrive later'), 'before the replies line');
 });
 
 // t798. The line is the ONLY description of the create a granted seat reads, so
