@@ -116,3 +116,14 @@ test('a forgotten session\'s cwd is unknown again, so a later push dims nothing'
     assert.doesNotMatch(h.body(), /file-row-out|Dimmed rows/);
   } finally { h.restore(); }
 });
+
+test('renderer.js wires forget into removeSession, so a closed session\'s cwd does not leak', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  assert.match(src, /const \{[^}]*\bforget: forgetFilesCwd\b[^}]*\} = initFilesPopover\(/,
+    'the popover\'s forget is destructured under the name removeSession calls');
+  const start = src.indexOf('\nfunction removeSession(');
+  assert.ok(start >= 0, 'ENTER: removeSession is a top-level function in renderer.js');
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  assert.match(body, /\bforgetFilesCwd\(name\)/,
+    'removeSession must forget the session\'s cwd: the map is keyed by name and nothing else drops it');
+});

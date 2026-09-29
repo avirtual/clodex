@@ -122,7 +122,7 @@
 ### Invariants
 - `_save` refuses (returns false, logs once per unreadable stretch, re-armed when `_load` finds the file readable) while `_load` has flagged sessions.json unreadable, so persistence skips rather than throws and never replaces a file it could not read.
 - `_save` snapshots the pre-launch sessions.json to .bak once per process, and only when the current file parses.
-- `remove` is the single record drop, and docs/sessions.md's record-dropper list (kill, destroy, Delete Session, Delete Workspace, forget, team-retire discard, reviewer graveyard, spawn-failure rollbacks including the remote import-create rollback, and the gated natural-exit drop of a non-agent session) is the full set of its callers.
+- `remove` is the single record drop, and docs/sessions.md's record-dropper list (kill, destroy, Delete Session, Delete Workspace, forget, team-retire discard, reviewer graveyard, spawn-failure rollbacks including the remote import-create rollback), together with the gated natural-exit drop of a non-agent session that the paragraph before that list describes, is the full set of its callers.
 - `remove` passes no touched name to `_save`, so it leaves the seat.json mirror of the dropped record as it is.
 - `_writeSeatJson` writes only into an existing seat dir, so a mirror never creates a seat directory.
 

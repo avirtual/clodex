@@ -13,7 +13,7 @@
 // Escape is bound ONCE on `document`, as a table of overlay id → closer, rather
 // than as one copy of a block per dialog. The listener sees every keystroke in the
 // window and must decide for itself whether it is the one that should act: it
-// asks chord-guard's openOverlayIds and acts only when exactly ONE overlay is
+// asks chord-guard's dialogOverlayIds and acts only when exactly ONE overlay is
 // open — the same shape performCloseChord uses for Cmd+W. That gate is what buys
 // the stacked subject below, and these overlays are siblings with no stacking
 // manager, so without it Escape would dismiss the wrong one of two.
