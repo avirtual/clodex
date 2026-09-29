@@ -46510,7 +46510,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
               }
               rememberControlMirror(peerId, peerName);
             } else {
-              setPeerControlError(entry.peer, res && res.error || "could not take control");
+              if (!(res && res.error === "released")) setPeerControlError(entry.peer, res && res.error || "could not take control");
               if (entry.peer.pendingInput) entry.peer.pendingInput.reset();
               if (dropOnFail) dropPersistedControl(peerId, peerName);
             }

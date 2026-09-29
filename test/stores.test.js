@@ -2305,7 +2305,7 @@ test('seed: the hand prompt delegates lookups and keeps red-proofs on the monito
   assert.match(hand, /Never delegate an edit or a commit/,
     'and what must stay on the hand itself');
   assert.match(hand, /Never\s+run or delegate a suite glob/,
-    'and what must stay on the hand itself');
+    'and a suite run is never handed to a subagent either');
   assert.match(hand, /Red-proofs, and any single test-file run, go through the granted monitor/,
     'red-proofs have one route: the monitor');
   assert.match(hand, /never your own shell, never a subagent/,

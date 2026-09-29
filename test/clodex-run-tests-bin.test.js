@@ -933,6 +933,38 @@ test('scope own: a root-level policy file is no subject — every branch edits C
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('scope own: a non-.js subject pinned through path.join segments is selected by its quoted file name', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'resources/x/thing.md': '# one\n',
+        'test/pins-thing.test.js':
+          `${EMPTY_TEST}const P = require('path').join(__dirname, '..', 'resources', 'x', 'thing.md');\n`,
+        'test/bare-stem.test.js': `${EMPTY_TEST}const S = 'thing';\n`,
+        'test/unrelated.test.js': EMPTY_TEST,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('resources/x/thing.md', '# two\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(rec.argv.includes('test/pins-thing.test.js'),
+      'the test pins resources/x/thing.md through path.join segments, so the literal rel never '
+      + 'appears in it: without the quoted-basename match the merge gate is the first run to see it');
+    assert.ok(!rec.argv.includes('test/bare-stem.test.js'),
+      'a bare stem is not a file name: only the quoted basename with its extension may match');
+    assert.ok(!rec.argv.includes('test/unrelated.test.js'),
+      'ENTER: the by-subject row would be non-empty for the wrong reason');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+      + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('scope own: a subject reached only through a quoted relative path outside require()', () => {
   const root = mkRoot();
   try {
