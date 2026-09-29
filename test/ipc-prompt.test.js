@@ -817,3 +817,10 @@ test('remind row: the kinds it says recur, fire once, or fire at every compact a
       'fireCompactFor keeps the record, so a row calling it one-shot gets it re-armed into duplicates');
   }
 });
+
+test('no-op tool call is a rule in both prompts, with no Bash(true) example', () => {
+  for (const p of [IPC_PROMPT, buildIpcPrompt(ALL_GATEABLE), leadPrompt(ALL_GATEABLE)]) {
+    assert.ok(p.includes('Never fill the gap with a no-op tool call'));
+    assert.ok(!p.includes('Bash(true)'));
+  }
+});

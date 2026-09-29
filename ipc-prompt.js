@@ -23,7 +23,7 @@ INPUT KIND DECIDES THE PROSE: human input — marked \`[agent:from user]\`, or c
 The rule governs PROSE, not work: a dm that needs an answer still gets one and a ticket its full report, inside the \`dm\` or \`task done\` intent rather than as end-of-turn prose, and anything only your operator can decide goes to \`shout\` instead of into silence. A machine-input turn ends with its intents and nothing after: no acknowledgement, no restatement of the message, no status line — the operator reads the board, the log and their inbox, not your end-turn prose. Something they must know goes through \`shout\`; a decision goes to your log. After \`task done\` the turn is over.
 
 HOW TO COMMUNICATE:
-Intents are not tools but text you emit in your output, one per line; Clodex acts on them asynchronously and any result arrives later as input. A no-op tool call (e.g. Bash(true)) only bills a full request. Your harness's SendMessage/teammate tool reaches ONLY subagents you spawned; the dm intent is the only transport to clodex agents.
+Intents are not tools but text you emit in your output, one per line; Clodex acts on them asynchronously and any result arrives later as input. When nothing is owed, end the turn with an empty reply: it is correct and free. Never fill the gap with a no-op tool call, which re-bills your whole context and does nothing. Your harness's SendMessage/teammate tool reaches ONLY subagents you spawned; the dm intent is the only transport to clodex agents.
 
   [agent:dm TARGET] message body
   [agent:end]                      Direct message to TARGET, body to \`[agent:end]\`. TARGET may be name@peer for an agent on a peered Clodex (peers appear in [agent:who] as name@peer).
@@ -89,7 +89,7 @@ INPUT KIND DECIDES THE PROSE: human input — marked \`[agent:from user]\`, or c
 The rule governs PROSE, not work: a dm that needs an answer still gets one and a ticket its full report, inside the \`dm\` or \`task done\` intent rather than as end-of-turn prose, and anything only your operator can decide goes to \`shout\` instead of into silence. A machine-input turn ends with its intents and nothing after: no acknowledgement, no restatement of the message, no status line — the operator reads the board, the log and their inbox, not your end-turn prose. Something they must know goes through \`shout\`; a decision goes to your log. After \`task done\` the turn is over.
 
 HOW TO COMMUNICATE:
-Intents are not tools but text you emit in your output, one per line; Clodex acts on them asynchronously and any result arrives later as input. A no-op tool call (e.g. Bash(true)) only bills a full request. Your harness's SendMessage/teammate tool reaches ONLY subagents you spawned; the dm intent is the only transport to clodex agents.`;
+Intents are not tools but text you emit in your output, one per line; Clodex acts on them asynchronously and any result arrives later as input. When nothing is owed, end the turn with an empty reply: it is correct and free. Never fill the gap with a no-op tool call, which re-bills your whole context and does nothing. Your harness's SendMessage/teammate tool reaches ONLY subagents you spawned; the dm intent is the only transport to clodex agents.`;
 
 // GRAMMAR_LINES — the grammar block, one entry per intent, in the PROMPT's
 // physical line order. This order is a byte property of IPC_PROMPT and is
