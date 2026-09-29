@@ -14,6 +14,18 @@ const { denyAgentRules } = require('./agents-util');
 const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
 const { CONSOLE_MAX_RECORDS } = require('./bash-console');
 
+function holdsOurs(p, body) {
+  let raw;
+  try { raw = fs.readFileSync(p, 'utf8'); } catch { return false; }
+  if (raw === body) return true;
+  try {
+    const hooks = JSON.parse(raw).hooks;
+    const entries = hooks.SessionStart;
+    return Object.keys(hooks).length === 1 && entries.length === 1 && entries[0].hooks.length === 1
+      && path.basename(entries[0].hooks[0].command) === 'codex-session-hook.sh';
+  } catch { return false; }
+}
+
 // `composeRoster` is injected rather than imported: this module must stay
 // electron-free and free of session state, and resolving a team needs both a cwd
 // and the live seat list. Absent (or returning null) it simply contributes
@@ -818,13 +830,12 @@ NAME="\${WB_WRAP_NAME:-}"
 [ -z "$NAME" ] && exit 0
 INPUT="$(cat)"
 TPATH="$(echo "$INPUT" | ${INTERP} -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).transcript_path||""))}catch(e){process.stdout.write("")}})' 2>/dev/null || true)"
-[ -z "$TPATH" ] && exit 0
 RUNDIR="${REGISTRY_DIR}/run/\${NAME}"
-mkdir -p "$RUNDIR"
-LINK="\${RUNDIR}/transcript.jsonl"
-TMPLINK="\${LINK}.tmp.$$"
-ln -sf "$TPATH" "$TMPLINK"
-mv -f "$TMPLINK" "$LINK"
+if [ -n "$TPATH" ]; then
+  LINK="\${RUNDIR}/transcript.jsonl"
+  TMPLINK="\${LINK}.tmp.$$"
+  { mkdir -p "$RUNDIR" && ln -sf "$TPATH" "$TMPLINK" && mv -f "$TMPLINK" "$LINK"; } || rm -f "$TMPLINK" 2>/dev/null || true
+fi
 OUTPUT="\${RUNDIR}/hook-output.json"
 [ -f "$OUTPUT" ] && cat "$OUTPUT" || exit 0
 `;
@@ -836,30 +847,17 @@ OUTPUT="\${RUNDIR}/hook-output.json"
 
     fs.mkdirSync(codexDir, { recursive: true });
     const body = codexHooksBody(scriptPath);
-    const holdsOurs = (p) => {
-      let raw;
-      try { raw = fs.readFileSync(p, 'utf8'); } catch { return false; }
-      if (raw === body) return true;
-      try {
-        const hooks = JSON.parse(raw).hooks;
-        const entries = hooks.SessionStart;
-        return Object.keys(hooks).length === 1 && entries.length === 1 && entries[0].hooks.length === 1
-          && path.basename(entries[0].hooks[0].command) === 'codex-session-hook.sh';
-      } catch { return false; }
-    };
     // Our bytes in either slot are not a user config: backing them up hands the
     // next cleanup our hook to restore as theirs.
-    if (holdsOurs(backupPath)) {
+    if (holdsOurs(backupPath, body)) {
       try { fs.unlinkSync(backupPath); } catch {}
     }
-    if (fs.existsSync(hooksPath) && !holdsOurs(hooksPath)) {
+    if (fs.existsSync(hooksPath) && !holdsOurs(hooksPath, body)) {
       fs.copyFileSync(hooksPath, backupPath);
     }
     fs.writeFileSync(hooksPath, body);
   }
 
-  // Every codex seat in a cwd produces the SAME bytes (the hook script is shared
-  // and routed by $WB_WRAP_NAME), so the ours-comparisons are exact.
   function codexHooksBody(scriptPath) {
     return JSON.stringify({
       hooks: {
@@ -892,13 +890,9 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
-    let ours = false;
-    try {
-      ours = fs.readFileSync(hooksPath, 'utf8')
-        === codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
-    } catch {}
+    const body = codexHooksBody(path.join(REGISTRY_DIR, 'codex-session-hook.sh'));
     if (fs.existsSync(backupPath)) {
-      if (ours || !fs.existsSync(hooksPath)) {
+      if (holdsOurs(hooksPath, body) || !fs.existsSync(hooksPath)) {
         try { fs.renameSync(backupPath, hooksPath); } catch {}
       } else {
         try { fs.unlinkSync(backupPath); } catch {}
@@ -909,6 +903,8 @@ OUTPUT="\${RUNDIR}/hook-output.json"
       // by whichever exits first, restoring the user's file — so the second
       // exit arrives with no backup and the ORIGINAL on disk. Unlinking on
       // "no backup exists" deleted it. Never remove what we did not write.
+      let ours = false;
+      try { ours = fs.readFileSync(hooksPath, 'utf8') === body; } catch {}
       if (ours) {
         try { fs.unlinkSync(hooksPath); } catch {}
         try { fs.rmdirSync(codexDir); } catch {}
