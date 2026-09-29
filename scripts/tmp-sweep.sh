@@ -624,6 +624,7 @@ remind-gone-ud-
 remind-race-reg-
 remind-race-ud-
 remote-resources-
+remote-wiring-shutdown-
 remote-wt-
 remote-wt-nr-
 remotetok-

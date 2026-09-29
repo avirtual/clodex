@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Peering: the remote server can no longer double-bind or survive a stop issued mid-start (including an engine shutdown during a queued resync), a peer stream that never gets a response is closed after the staleness bound instead of hanging, a dialect probe that outlives an identity change is discarded, and a control token acquired for an attachment detached mid-request is released instead of leaked.
 - Team lead prompt: 14 KB, down from 35 KB — the `task accept` teardown tables and the reject/respec essays are one paragraph each (the teardown matrix now lives in `docs/teams.md`); every verb, ruling and carve-out a lead must follow is unchanged.
 - Prompts: a byte ratchet (`test/prompt-ratchet.test.js`) fails the suite when a shipped role prompt or the generated intents block grows against master without a `Prompt-bytes:` trailer in the commit message; the default kit's lead prompt is synced to the trimmed library one (14.3 KB, from 32.5 KB).
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.

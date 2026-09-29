@@ -348,9 +348,11 @@ function createRemoteWiring(deps) {
   let startPending = null;
   let resyncWanted = false;
   let tokenRefreshWanted = false;
+  let closed = false;
 
   function settleStart() {
     startPending = null;
+    if (closed) return;
     if (tokenRefreshWanted) {
       tokenRefreshWanted = false;
       resyncWanted = false;
@@ -362,6 +364,7 @@ function createRemoteWiring(deps) {
   }
 
   function syncRemoteServer() {
+    if (closed) return;
     if (startPending) { resyncWanted = true; return; }
     watchInbox();
     const s = getUiSettings().get();
@@ -849,12 +852,20 @@ function createRemoteWiring(deps) {
   // the token is not among the fields syncRemoteServer's own stop/start
   // compares.
   function refreshRemoteToken() {
+    if (closed) return;
     if (startPending) { tokenRefreshWanted = true; return; }
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
     syncRemoteServer();
   }
 
-  return { syncRemoteServer, refreshRemoteToken };
+  function shutdownRemoteServer() {
+    closed = true;
+    resyncWanted = false;
+    tokenRefreshWanted = false;
+    if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
+  }
+
+  return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer };
 }
 
 module.exports = { createRemoteWiring };

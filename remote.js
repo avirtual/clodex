@@ -244,6 +244,8 @@ class RemoteServer {
     // needs to see it go. Absence is an ordinary host with no UI to tell.
     this._onWtermStreams = onWtermStreams || null;
     this._server = null;
+    this._starting = null;
+    this._stopRequested = false;
     this._clients = new Set();       // live SSE responses (events feed)
     this._attach = new Map();        // name -> Set of SSE responses (attach feeds)
     this._control = new Map();       // name -> { token, client } single holder
@@ -288,15 +290,29 @@ class RemoteServer {
 
   start() {
     if (this._server) return Promise.resolve();
-    return new Promise((resolve, reject) => {
+    if (this._starting) {
+      this._stopRequested = false;
+      return this._starting;
+    }
+    this._stopRequested = false;
+    const starting = new Promise((resolve, reject) => {
       const server = http.createServer((req, res) => {
         try { this._route(req, res); }
         catch (e) { this._json(res, 500, { ok: false, error: e.message }); }
       });
       server.on('error', (err) => {
-        if (this._server !== server) reject(err);
+        if (this._server === server) return;
+        if (this._starting === starting) this._starting = null;
+        reject(err);
       });
       server.listen(this._port, this._host, () => {
+        if (this._starting === starting) this._starting = null;
+        if (this._stopRequested) {
+          this._stopRequested = false;
+          server.close();
+          resolve();
+          return;
+        }
         this._server = server;
         this._port = server.address().port;
         this._heartbeat = setInterval(() => {
@@ -336,10 +352,15 @@ class RemoteServer {
         resolve();
       });
     });
+    this._starting = starting;
+    return starting;
   }
 
   stop() {
-    if (!this._server) return;
+    if (!this._server) {
+      if (this._starting) this._stopRequested = true;
+      return;
+    }
     clearInterval(this._heartbeat);
     this._heartbeat = null;
     for (const res of this._clients) { try { res.end(); } catch {} }
