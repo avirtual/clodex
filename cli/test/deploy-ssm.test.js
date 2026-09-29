@@ -532,7 +532,7 @@ function bootIdServer(bootIds) {
 
 for (const row of [
   { name: 'a bootId change with no failed poll (the restart finished before the first poll) deletes the throwaway session', bootIds: ['b1', 'b2'], deletes: 1 },
-  { name: 'an unchanged bootId with no failed poll leaves the throwaway session alone (the script may still be running)', bootIds: ['b1', 'b1'], deletes: 0 },
+  { name: 'an unchanged bootId keeps polling until it changes, then deletes the throwaway session', bootIds: ['b1', 'b1', 'b1', 'b2'], deletes: 1, hellos: 4 },
 ]) {
   test(`deliverClaudeToken: ${row.name}`, async () => {
     const { server, seen } = bootIdServer(row.bootIds);
@@ -550,9 +550,27 @@ for (const row of [
         assert.strictEqual(dels[0].url, '/api/sessions/' + create.body.name);
         assert.ok(dels[0].i > urls.lastIndexOf('/api/peer/hello'), 'the DELETE follows the last hello');
       }
+      if (row.hellos) {
+        const helloIdx = seen.map((s, i) => (s.url === '/api/peer/hello' ? i : -1)).filter((i) => i >= 0);
+        assert.strictEqual(helloIdx.length, row.hellos, 'the loop stops at the first bootId change');
+        assert.ok(dels[0].i > helloIdx[row.hellos - 1], 'the DELETE follows the hello that carried the new bootId');
+      }
     } finally { server.close(); }
   });
 }
+
+test('deliverClaudeToken: a bootId that never changes times out naming the unchanged bootId and leaves the throwaway session in place', async () => {
+  const { server, seen } = bootIdServer(['b1']);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  try {
+    const entry = { url: `http://127.0.0.1:${server.address().port}` };
+    await assert.rejects(
+      D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { timeoutMs: 0, pollMs: 1, sleepFn: async () => {} }),
+      /never restarted within 0s \(bootId unchanged\)/,
+    );
+    assert.ok(!seen.some((s) => s.method === 'DELETE'), 'an unchanged bootId never deletes the session');
+  } finally { server.close(); }
+});
 
 test('deliverClaudeToken: a 404 on the token-session DELETE (it raced the engine\'s restore) is retried exactly once after one pollMs sleep', async () => {
   const http = require('node:http');

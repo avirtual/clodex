@@ -32,7 +32,7 @@ blocks a release.
 - Peering: releasing control while the acquire is still in flight now releases the token the box mints instead of leaving the peer in control of a session the user let go.
 - clodexctl: the contexts file is saved through a symlink instead of replacing it with a regular file, and undeploy's region lookup no longer matches Object.prototype keys.
 - Peering: releasing control while the acquire is in flight no longer shows a "released" error chip; the park-cap timer sees mail orphaned by a dead drainer; the own-scope test selector now picks up tests that pin a changed non-JS resource by file name.
-- Deploy: `/api/peer/hello` advertises a process-level `bootId`; `clodexctl deploy ssm` token delivery now deletes its throwaway session whenever the engine restarted, even when the restart finished before the first poll — the OAuth token no longer lingers in a leaked session's scrollback. Old engines without the field keep the previous behaviour.
+- Deploy: `/api/peer/hello` advertises a process-level `bootId`; `clodexctl deploy ssm` token delivery now waits for the engine's `bootId` to change before deleting its throwaway session, so a poll that lands before the restart or after it both end with the session gone — the OAuth token no longer lingers in a leaked session's scrollback. Old engines without the field keep the previous behaviour.
 
 ## 5.92.0 — 2026-09-29
 
