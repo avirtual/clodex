@@ -16,8 +16,8 @@ function splitModelArg(argv) {
   const rest = [];
   let taken = false;
   for (let i = 0; i < a.length; i++) {
-    if (!taken && (a[i] === '--model' || a[i] === '-m') && a[i + 1] !== undefined) {
-      if (isModelFlag(a[i + 1])) {
+    if (!taken && (a[i] === '--model' || a[i] === '-m')) {
+      if (a[i + 1] === undefined || isModelFlag(a[i + 1])) {
         taken = true;
         continue;
       }
