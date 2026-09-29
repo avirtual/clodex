@@ -23,6 +23,7 @@ blocks a release.
 - Peering: the remote server can no longer double-bind or survive a stop issued mid-start (including an engine shutdown during a queued resync), a peer stream that never gets a response is closed after the staleness bound instead of hanging, a dialect probe that outlives an identity change is discarded, and a control token acquired for an attachment detached mid-request is released instead of leaked.
 - clodexctl: the contexts file is written atomically (temp + rename), undeploy refuses a contexts file that fails to parse instead of treating it as empty, node lookups no longer match Object.prototype keys, and the deploy token-delivery session cleanup retries once on a 404 that raced the engine's restore.
 - Renderer: bracketed-paste scrubbing, file-path scanning and markdown heading trimming are linear on crafted input (a 20,000-char run no longer stalls the composer), and bust/transcript token counts gain the M tier instead of printing "1000k".
+- Renderer: restarting a seat from any checklist popover keeps its label, backend, team, effort, posture and account on the rebuilt row; a respawn focus hint expires after 10 s so a later reattach of the same name cannot steal focus; Escape and the close chord still close a dialog stacked over the narrow-screen dock sheet; a dangling `--model` with no value is dropped from a seat's args.
 
 ## 5.92.0 — 2026-09-29
 
