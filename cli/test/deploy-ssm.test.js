@@ -783,7 +783,7 @@ test('deploy ssm re-run without --force never leaves the saved ctx holding a tok
   }
 });
 
-test('deploy never overwrites a contexts file it could not parse', async () => {
+test('deploy refuses a contexts file that fails to parse', async () => {
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   const bytes = '{"current":"a","contexts":{"a":{"url":"http://x","token":"t"}';

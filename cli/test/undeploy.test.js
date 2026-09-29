@@ -488,6 +488,20 @@ test('undeploy fargate --force: stops strays (NOT service tasks), delete-stack, 
   assert.match(r.stdout, /recovery window/);
 });
 
+test('undeploy fargate: a node named "constructor" with no such context reads no region or profile off Object.prototype', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: null, contexts: {} });
+  Object.ssm = { region: 'eu-polluted-1', profile: 'polluted', ecs: 'polluted/polluted-node' };
+  try {
+    const r = await cli(['undeploy', 'node', 'constructor', '--fargate', '--dry-run'], { execFn: fakeAws(rec), contextsFile });
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.match(r.stdout, /region: \(aws default\) \[aws default\] · profile: \(aws default\) \[aws default\]/);
+    assert.ok(!rec.calls.some((c) => c.join(' ').includes('polluted')), 'no aws call carries the prototype-reached value');
+  } finally {
+    delete Object.ssm;
+  }
+});
+
 test('undeploy fargate --keep-ctx: ctx survives', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'clodex-node', contexts: { 'clodex-node': { ssm: { ecs: 'clodex-node/clodex-node-node' }, token: 'W' } } });

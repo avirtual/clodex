@@ -214,7 +214,7 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
 
   const ctxKey = ctxName || stackName;
   const ctxStore = contexts.loadOrEmpty(io.contextsFile);
-  const ctxEntry = ctxStore.contexts[ctxKey];
+  const ctxEntry = Object.hasOwn(ctxStore.contexts, ctxKey) ? ctxStore.contexts[ctxKey] : undefined;
   const ctxSsm = ctxEntry && ctxEntry.ssm && typeof ctxEntry.ssm === 'object' ? ctxEntry.ssm : null;
   let region = flags.region ? String(flags.region) : null;
   let regionSource = region ? '--region flag' : null;
