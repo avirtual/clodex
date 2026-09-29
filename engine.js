@@ -30,18 +30,12 @@ const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
 const { materializeExecScripts } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
-// Module-level, unlike the rest of pending-store's surface (required inside
-// createEngine): sweepSpilledMessages below is module-level so its exemption is
-// testable without building an engine, and a closure require would not be in
-// scope there.
+// Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
+// closure require would not be in scope there.
 const { allParkedTexts } = require('./pending-store');
 
 function diagWarning(d = {}) {
-  // process.arch uses 'x64'; Mach-O reports 'x86_64'. Normalize to compare.
   const expectedArch = process.arch === 'x64' ? 'x86_64' : process.arch;
-  // Fatal node-pty spawn-helper problems FIRST (darwin) — the helper is what
-  // posix_spawn actually launches, so any problem with it sinks EVERY session
-  // regardless of which CLIs are installed; these take priority.
   if (d.platform === 'darwin') {
     if (!d.helperExists) {
       return 'node-pty spawn-helper is missing — sessions can\'t start. Fix: npx electron-rebuild';
@@ -92,11 +86,6 @@ const SEAT_IMAGE_FILE_RE = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
 const IMG_MAX_AGE = 24 * 3600;
 const MSG_MAX_AGE = 1800;
 
-// Parking has no expiry; spill files do — and the spill file is the only copy of
-// an over-threshold dm body, so an unexempted sweep loses it silently.
-// Match on the FILENAME grammar, not the pointer prose: there are already two
-// pointer wordings (claude `@<path>`, codex `saved to <path>`). Over-matching
-// only keeps a file one extra sweep.
 function referencedSpillNames(pendingDir) {
   const refs = new Set();
   for (const text of allParkedTexts(pendingDir)) {
@@ -112,15 +101,9 @@ function linksToSeatDir(linkPath, seatPath) {
   } catch { return false; }
 }
 
-// Exempting parked pointers means a seat that never returns grows disk forever.
-// Deliberate: the alternative caps disk by destroying undelivered dms. If it
-// ever bites, add a `pending/` expiry — ONE policy for both lifetimes — rather
-// than a second policy here that disagrees with parking.
 function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now(), imgMaxAgeSec = maxAgeSec) {
   if (!fs.existsSync(msgDir)) return;
   const referenced = referencedSpillNames(pendingDir);
-  // Spilled messages live one level deep, in a per-recipient subfolder.
-  // Walk both the subfolders and (for back-compat) any stray files at the root.
   for (const entry of fs.readdirSync(msgDir, { withFileTypes: true })) {
     try {
       const epath = path.join(msgDir, entry.name);
@@ -147,17 +130,6 @@ function sweepSeatMessages(msgDir, pendingDir, now = Date.now()) {
   sweepSpilledMessages(msgDir, pendingDir, MSG_MAX_AGE, now, IMG_MAX_AGE);
 }
 
-// The registry root, resolved as a pure function so a test can pin the
-// production default WITHOUT constructing an engine — constructing one is
-// itself the write we are trying to prevent.
-//
-// The throw sits BEFORE the fallback, not after: a developer with CLODEX_HOME
-// exported in their shell must not let a seam-less test write into that real
-// root. It is the backstop for the seed guard's blind spot — seeding is the
-// LEAST destructive thing this root feeds. registry.cleanup() unlinks
-// run/*/agent.json and runLegacySweep rmSync's at the root, and neither
-// consults that guard, so a test that forgets the seam must fail loudly here
-// instead of quietly deleting the operator's.
 function resolveRegistryDir(seams) {
   if (seams && seams.registryDir) return seams.registryDir;
   if (process.env.NODE_TEST_CONTEXT) {
@@ -183,9 +155,6 @@ function resolveSelfLabel(env, hostname, log) {
 }
 
 function createEngine({ userDataPath, seams = {}, log }) {
-  // Individual consts (not a destructure-with-defaults) so each seam name is
-  // visible to the leak-scanner's ownDefinitions; the `|| default` keeps every
-  // seam optional so a host (headless) can omit the ones it lacks.
   const openPath = seams.openPath || (() => {});
   const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${String(url).split(/[?#]/)[0]}`); });
   const notifyOS = seams.notifyOS || (() => {});
@@ -197,44 +166,28 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const refreshTrayMenu = seams.refreshTrayMenu || (() => {});
   const scheduleTrayRefresh = seams.scheduleTrayRefresh || (() => {});
   const restartHost = seams.restartHost || (() => {});
-  // The agent path's restart, kept SEPARATE from restartHost: restartHost is a
-  // human pressing a control (menu, phone) and must stay immediate, while
-  // [agent:reboot] fires mid-turn and has to wait for the seats to settle.
+  // Separate from restartHost: a human pressing a control restarts immediately, while
+  // [agent:reboot] fires mid-turn and waits for the seats to settle.
   const restartHostWhenIdle = seams.restartHostWhenIdle || restartHost;
   const restartUnavailable = seams.restartUnavailable || (() => null);
   const pathMergeFailed = !!seams.pathMergeFailed;
-  // Granted on a headless host too (t903): by the argument below, that hands
-  // `sandbox:*` — docker and container lifecycle on this box — to a web client.
+  // Granted on a headless host too: that hands `sandbox:*` (docker and container
+  // lifecycle on this box) to a web client.
   const enableSandbox = seams.enableSandbox !== false;
-  // The drawer's service-backed tenants (the selection reads over `drawer:*`,
-  // a shell on a peer over `peer:wterm*`)
-  // are DESKTOP-ONLY, and the boundary that makes them so is this flag, not the
-  // renderer, whose `available()` only hides the tabs. web-host.js registers the
-  // same ipc-handlers map the desktop does and dispatches any registered channel
-  // BY NAME without consulting api-contract, so a handler that exists is one an
-  // authenticated web connection can invoke — a read
-  // of the operator's own screen, a shell on a third machine.
+  // Desktop-only, and this flag is the boundary, not the renderer's `available()`:
+  // web-host.js dispatches any registered channel by name without consulting api-contract.
   const enableDrawerServices = seams.enableDrawerServices !== false;
   const enableCtl = seams.enableCtl !== false;
-  // The LOCAL drawer terminal, split off that flag (t227) because its
-  // argument is different: `wterm:*` spawns `$SHELL` on THIS box, and any
-  // surface that can reach the ungated `session:create` can already spawn a
-  // `type: 'bash'` session — the same shell, same machine, same user. So this
-  // one defaults ON even where the drawer services are declined, and a host
-  // that means to refuse it says so explicitly. It still governs whether the
-  // pty service is constructed at all, so a host that opts out has no shells to
-  // reap.
+  // Split off enableDrawerServices and defaults ON: `wterm:*` spawns `$SHELL` on this box, which
+  // the ungated `session:create` (type 'bash') already reaches. Still gates the pty service.
   const enableLocalTerminal = seams.enableLocalTerminal !== false;
 
   const enableConsole = seams.enableConsole !== false;
 
   const enableAccounts = seams.enableAccounts !== false;
 
-  // The browser frontend's host, for peers that want to REACH it (t30). A
-  // GETTER, not a value: web-host.js is started by headless-main.js AFTER
-  // createEngine returns, so there is nothing to pass at construction time.
-  // Electron omits the seam entirely and reports null — the desktop app has no
-  // web host, and a consumer must learn that rather than guess wire-port+1.
+  // A getter: web-host.js starts after createEngine returns, so nothing exists to pass now.
+  // Electron omits the seam and reports null (no web host).
   const getWebInfo = seams.webInfo || (() => null);
 
   const logFile = seams.logFile || null;
@@ -242,16 +195,12 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const noSeed = !!seams.noSeed;
   if (noSeed && !process.env.NODE_TEST_CONTEXT) throw new Error('createEngine: seams.noSeed is a test seam');
 
-  // Every path below derives from this, and every createEngine caller in the suite
-  // passes a temp one: unseamed, they seeded the operator's live library
-  // from whatever branch happened to be checked out.
   const REGISTRY_DIR = resolveRegistryDir(seams);
 
 
 
-// node-pty's "posix_spawnp failed." is the spawn of its prebuilt spawn-helper,
-// not of claude/codex — so `which claude` succeeding proves nothing. The usual
-// cause is a spawn-helper arch mismatch (posix_spawn rejects with EBADARCH).
+// node-pty's "posix_spawnp failed." is its spawn-helper failing (usually an arch mismatch),
+// not claude/codex, so a successful `which claude` proves nothing.
 
 function whichBin(cmd) {
   if (!cmd) return null;
@@ -271,7 +220,7 @@ function machoArch(file) {
     fs.closeSync(fd);
     const be = buf.readUInt32BE(0), le = buf.readUInt32LE(0);
     if (be === 0xcafebabe || be === 0xcafebabf) return 'universal';
-    if (le === 0xfeedfacf) { // MH_MAGIC_64 (little-endian binary)
+    if (le === 0xfeedfacf) {
       const cpu = buf.readUInt32LE(4);
       if (cpu === 0x0100000c) return 'arm64';
       if (cpu === 0x01000007) return 'x86_64';
@@ -282,9 +231,6 @@ function machoArch(file) {
   } catch (e) { return `unreadable (${e.code || e.message})`; }
 }
 
-// Must check node-pty's OWN candidate set in its order (build/Release,
-// build/Debug, prebuilds/<platform>-<arch>, each asar.unpacked-rewritten): with
-// no electron-rebuild it loads the prebuild, so a narrower check names the wrong helper.
 function unpackAsar(p) {
   return p.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked');
 }
@@ -337,7 +283,7 @@ const OUTBOX_DIR = path.join(REGISTRY_DIR, 'peer-outbox');
 const SELF_LABEL = resolveSelfLabel(process.env, os.hostname(), log);
 const MAX_MSG = 65536;
 const MSG_SPILL_THRESHOLD = 500;
-const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000; // ms
+const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const DEPLOY_FIX_INJECT_DELAY_MS = 4000;
 
 
@@ -355,33 +301,18 @@ const COMPACT_CONTINUATION_DELAY = 1500;
 const RELOAD_CONTINUATION_DELAY = 2500;
 const INJECT_HOLD_TIMEOUT = 5 * 60 * 1000;
 const COMPACT_INFLIGHT_TIMEOUT = 5 * 60 * 1000;
-// The quiet gate defers an inject while a human touched the pane, because the
-// leading Ctrl-U eats an un-submitted draft. The window is short because it
-// applies to EVERY inject, not just post-hold batch flushes. MAXWAIT is the
-// walked-away-draft fallback only: at 30s it spliced live composition mid-word
-// (observed twice, operator confirmed actively typing).
+// Short because the quiet gate applies to every inject; MAXWAIT is only the
+// walked-away-draft fallback (at 30s it spliced live composition mid-word).
 const INJECT_QUIET_MS = 2 * 1000;
 const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
-// First inject into a fresh claude seat waits for the mode-2004 readiness edge
-// plus BOOT_DRAIN_SETTLE_MS (session-manager.js), like the boot drain: text+Enter
-// written before the readline loop is up reads as one paste and the Enter lands as content.
+// First inject into a fresh claude seat waits for the mode-2004 readiness edge plus
+// BOOT_DRAIN_SETTLE_MS: text+Enter written before readline is up reads as one paste.
 const INJECT_BOOT_MAXWAIT = 20 * 1000;
-// How long a renderer's "recorder is lit" sample keeps deferring injection. The
-// renderer resamples on its 300ms poll, so this is a STALENESS bound on that
-// poll and not a guess at how long anyone speaks: it must clear several missed
-// polls (a busy renderer, a slow repaint) without wedging, since the only thing
-// that ends the deferral when the renderer stops reporting is this expiry.
-// Deliberately well above INJECT_QUIET_MS — the typing window waits out a pause
-// between keystrokes, this waits out a pause between WORDS, and the whole bug is
-// that speaking is the slower of the two.
+// A staleness bound on the renderer's 300ms recorder-lit poll: it must clear several missed
+// polls and stay well above INJECT_QUIET_MS (a pause between words outlasts one between keys).
 const INJECT_SPEAKING_STALE_MS = 3 * 1000;
-// The same staleness bound for the renderer's "a dictated draft is still
-// sitting in the composer" sample. Larger than the speaking window because it
-// answers a different question: that one asks whether he is talking right now,
-// this one whether what he dictated is still on screen unsent — and re-reading
-// a long transcription takes minutes. It is still an EXPIRY, so a renderer that
-// stops reporting releases the seat; and the park it gates is bounded again by
-// INJECT_QUIET_MAXWAIT, which no voice signal can hold open.
+// Staleness expiry for the dictated-draft sample, above the speaking window because re-reading
+// a transcription takes minutes; INJECT_QUIET_MAXWAIT still bounds the park it gates.
 const INJECT_VOICE_DRAFT_STALE_MS = 10 * 1000;
 
 
@@ -573,14 +504,10 @@ function gatherTeam(name, { dry = false } = {}) {
 const MEMORY_DIR = path.join(REGISTRY_DIR, 'library', 'memory');
 const { createMemoryStore, composeDigest, digestTiers } = require('./memory-store');
 const memoryStore = createMemoryStore(MEMORY_DIR);
-// A SIBLING of library/memory, not a child: that directory's entries are the
-// set of agents, so a log dir inside it would enumerate as an agent.
 const { createMemoryLoad } = require('./memory-load');
+// Sibling of library/memory, not a child: entries under it enumerate as agents.
 const memoryLoad = createMemoryLoad({ logDir: path.join(REGISTRY_DIR, 'library', 'memory-loadlog') });
 
-// Automatic contextual hint arming — off by default, toggled by the Preferences
-// checkbox. `enabled` is a getter rather than a construction-time value so the
-// checkbox takes effect on the next keystroke instead of the next launch.
 const { createHintArm } = require('./hint-arm');
 const { createVoiceOriginArm } = require('./voice-origin-arm');
 const { createSelectionArm } = require('./selection-arm');
@@ -590,34 +517,21 @@ const {
   selectWithinBudget: selectHintsWithinBudget, withSharedTerm: withSharedHintTerm,
 } = require('./hint-retrieve');
 
-// Shared memory every agent can match against — imported sets, not anything an
-// agent wrote. A SIBLING of library/memory for the same reason memory-loadlog
-// is: entries under that directory enumerate as agents. Its subdirectories are
-// SETS (by provenance), so `list(set)` reads one of them.
 const commonMemoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'library', 'common-memory'));
 
-// Semantic re-ranking. Its own checkbox because it needs a local Ollama, which
-// users do not have — with the daemon absent every path returns "no opinion" and
-// arming is exactly the lexical behaviour it was before.
-//
-// The gate stays lexical. This only reorders what the lexical pass already
-// decided was worth arming; see hint-embed.js for the measurement that split
-// those two jobs.
 const {
   createEmbedder, createVectorCache, createSemanticRanker, keyOf: embedKeyOf,
 } = require('./hint-embed');
+// Semantic ranking only reorders what the lexical gate already armed; it must
+// not become the gate.
 const semanticRanker = createSemanticRanker({
-  // Both stores, ranked as ONE list — the opposite of the lexical retriever,
-  // which must keep them separate because its floor and coverage are
-  // corpus-relative. Cosine is not: a similarity is a property of the pair, so
-  // pooling here cannot let one store's size silence the other's hits.
+  // Both stores ranked as one list: cosine is per-pair, unlike the lexical
+  // retriever whose corpus-relative floor forces separate stores.
   listRecords: (agent) => [
     ...unitsAsRecords(memoryStore.list(agent)),
     ...unitsAsRecords(commonMemoryStore.list('chat-extract'), 'common'),
   ],
   embedder: createEmbedder({ log }),
-  // A SIBLING of library/memory for the same reason memory-loadlog is: entries
-  // under that directory enumerate as agents.
   cache: createVectorCache({ file: path.join(REGISTRY_DIR, 'library', 'memory-vectors.json') }),
   // One cache file serves every agent, so the GC needs every agent's keys.
   liveKeys: () => {
@@ -628,18 +542,17 @@ const semanticRanker = createSemanticRanker({
   log,
 });
 
-// The set name is bound here, not at the call site: `recall(agent, arg)` takes
-// an AGENT, and common units belong to none.
 const commonMemoryRecall = (arg) => commonMemoryStore.recall('chat-extract', arg);
 
 const hintArm = createHintArm({
+  // A getter, not a construction-time value: the Preferences checkbox applies on
+  // the next keystroke rather than the next launch.
   enabled: () => !!uiSettings.get().contextHints,
   retriever: createCompositeRetriever([
     createMemoryRetriever({ listUnits: (agent) => memoryStore.list(agent) }),
     createCommonRetriever({ listUnits: (set) => commonMemoryStore.list(set) }),
   ]),
-  // Read per call, never captured: the checkbox must take effect on the next
-  // submit rather than the next launch, same as `enabled`.
+  // Read per call, never captured, same as `enabled`.
   semantic: {
     rank: (draft, opts) => (uiSettings.get().semanticHints
       ? semanticRanker.rank(draft, opts)
@@ -657,21 +570,8 @@ const hintArm = createHintArm({
   log,
 });
 
-// The drawer selection's own armer. A SEPARATE consent decision from
-// contextHints and so a separate pref: that one offers the agent memories it
-// wrote itself, this one forwards whatever the operator happened to highlight —
-// a token in a log line, a path, a name. Folding them would let ticking the
-// memory feature start sending screen content.
-//
-// The scrubber is the ctl service's, resolved per call and null on a host that
-// did not build one: the selection can be text that console printed, and a
-// second token list here would drift from the one that redacted it on the way
-// in. `ctlService` is declared far below, so this reads it through the closure
-// rather than capturing it.
-// The voice-origin marker. Its own id on the shared register — verified against
-// a live proxy that two ids coexist on one route (armHints posts mode=merge and
-// the registry is keyed by id), so this cannot clear the contextual hint the
-// operator's typing arms.
+// Own id on the shared register: two ids coexist on one route (armHints merges),
+// so this cannot clear the contextual hint the operator's typing arms.
 const voiceOriginArm = createVoiceOriginArm({
   armHints: ({ base, route, id, text, ttl_s, turn_start_only, once }) =>
     ProxyClient.armHints(base, route, [{ id, text, ttl_s, turn_start_only, once }]),
@@ -679,27 +579,20 @@ const voiceOriginArm = createVoiceOriginArm({
   log,
 });
 
+// A separate pref from contextHints: folding them would let the memory checkbox
+// start sending highlighted screen content.
 const selectionArm = createSelectionArm({
   enabled: () => !!uiSettings.get().selectionHints,
+  // Resolved per call: `ctlService` is declared far below, so it is read through the closure.
   scrubber: () => (ctlService && ctlService.scrubber ? ctlService.scrubber() : null),
   armHints: ({ base, route, hint }) => ProxyClient.armHints(base, route, [hint]),
   clearHints: ({ base, route, id }) => ProxyClient.clearHints(base, route, id),
-  // The inspector's read. Deliberately the SAME endpoint the arm writes to, so
-  // the popover cannot report a different registry than the one being armed.
+  // Same endpoint the arm writes to, so the popover cannot show another registry.
   readHints: ({ base, route }) => ProxyClient.readHints(base, route),
-  // The Copy button's channel: a line appended to the seat's own queue file,
-  // which the CLI's UserPromptSubmit hook drains into the transcript. APPEND
-  // and not write — two clicks between one pair of submits are two
-  // attachments, and the hook claims the file by rename before reading it, so
-  // a click landing mid-drain queues into a fresh file rather than vanishing.
-  // The run dir is created at spawn; a seat whose dir is gone is one whose
-  // hook will never run either, so the throw is the honest answer.
+  // Append, never write: a second click between submits must not replace the first.
   queue: ({ name, text }) => {
     fs.appendFileSync(pathFor(REGISTRY_DIR, name, 'selection'), `${JSON.stringify({ text })}\n`);
   },
-  // Reads the same file the hook drains, so the popover shows what is STILL
-  // waiting rather than what this process once appended. An absent file is the
-  // ordinary drained state, not an error.
   readQueue: ({ name }) => {
     let raw;
     try { raw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'selection'), 'utf8'); }
@@ -718,9 +611,8 @@ const selectionArm = createSelectionArm({
 
 const SKILL_PLUGINS_DIR = path.join(REGISTRY_DIR, 'skill-plugins');
 const SKILL_PLUGIN_NAME = 'clodex-skills';
-// A sibling of skill-plugins/, not a subdir of it: each of these two roots is
-// rm -rf'd at <root>/<session> on every spawn, so sharing one would make either
-// rebuild delete the other's dir. Anything nested under a root dies with it.
+// Sibling of skill-plugins, not a subdir: each root is rm -rf'd per spawn, so
+// nesting one under the other deletes its dir.
 const AGENT_PLUGINS_DIR = path.join(REGISTRY_DIR, 'agent-plugins');
 
 
@@ -733,8 +625,8 @@ function effectiveInjectedSkills(name, injectSkills) {
   return effective.map((n) => byName.get(n)).filter(Boolean);
 }
 
-// Mirrors effectiveInjectedSkills. The spawn-time reference check depends on
-// this being the set actually SCAFFOLDED, not the set requested.
+// Must return the set actually scaffolded, not the set requested: the spawn-time
+// reference check reads it.
 function effectiveInjectedAgents(name, agents) {
   const lib = agentLibrary.list();
   const effective = unionEnabled(agents, lib, name);
@@ -742,16 +634,11 @@ function effectiveInjectedAgents(name, agents) {
   return effective.map((n) => byName.get(n)).filter(Boolean);
 }
 
-// Scaffold the per-session subagent plugin and return its directory (for a
-// second --plugin-dir), or null when nothing is enabled. Rebuilt from scratch
-// each spawn so a removed/edited library agent can't linger.
 function writeAgentPlugin(name, agents) {
   const records = effectiveInjectedAgents(name, agents);
   const plugin = buildAgentPlugin(records.map((a) => a.name), records, AGENT_PLUGIN_NAME);
-  // The rmSync below is RECURSIVE and fires on every claude spawn, before the
-  // no-agents bail, so `dir` must be a confined child of AGENT_PLUGINS_DIR or
-  // the delete lands on ~/.clodex (name `..`) or $HOME (`../..`). The
-  // session-name gates upstream are charset filters and never established this.
+  // The recursive rmSync below runs before the no-agents bail, so `dir` must be a
+  // confined child: a name of `..` or `../..` would delete ~/.clodex or $HOME.
   const dir = confine(AGENT_PLUGINS_DIR, name);
   if (dir === null) throw new Error(`invalid session name: ${name}`);
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -768,8 +655,8 @@ function writeAgentPlugin(name, agents) {
 }
 
 function cleanupAgentPlugin(name) {
-  // Same recursive delete on the teardown path — confined for the same reason,
-  // and silent on a refused name: teardown has no caller to tell.
+  // Same recursive delete as writeAgentPlugin, so the same confine; a refused
+  // name returns silently.
   const dir = confine(AGENT_PLUGINS_DIR, name);
   if (dir === null) return;
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -873,7 +760,7 @@ const {
   findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
   setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, teamsDir, deleteTeam,
   kitCatalog, resolveKit,
-  // PASSED, not left to defaultClodexHome(): that reads CLODEX_HOME, which
+  // clodexHome is passed, not defaulted: defaultClodexHome reads CLODEX_HOME and
   // would put teams on a different tree than every other subsystem.
 } = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
 const { enqueueOutbox, claimOutbox, outboxKnowsOrigin, markOutboxOrigin, listOutboxOrigins } = require('./peer-outbox');
@@ -892,8 +779,6 @@ const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-
 const { CLAUDE_TOOLS, CLAUDE_SKILLS, SKILL_REENABLE_CONFIRMED, DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS } = require('./catalogs');
 const { isSkillDenyDirective } = require('./skills-off');
 
-// Short lowercase base36 token (park/resend handles). Concatenates random
-// draws so trailing-zero truncation can't shorten the result below `len`.
 function randBase36(len) {
   let s = '';
   while (s.length < len) s += Math.random().toString(36).slice(2);
@@ -904,9 +789,8 @@ const { bakePrompt, promptCacheDir, readCache, ipcDelta } = require('./ipc-promp
 const { enqueueNotice, versionNoticeFor, clearNotices } = require('./notice-queue');
 const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
 const { classifySkillRoster, emptyRoster, listedRosterNames } = require('./skill-roster');
-// Below the skills-util require, not up by SKILL_PLUGINS_DIR: the deps object
-// reads buildSkillPlugin/skillMd at construction, and a const destructure is in
-// its temporal dead zone until this line runs.
+// Must stay below the skills-util require: the deps read buildSkillPlugin and
+// skillMd at construction, and the const destructure is in its TDZ until then.
 const skillDelivery = createSkillDelivery({
   fs, path, confine, ensureDir, SKILL_PLUGINS_DIR, SKILL_PLUGIN_NAME, buildSkillPlugin, skillMd, parseSkillFrontmatter,
 });
@@ -934,8 +818,8 @@ function parseSkillRoster(name) {
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
     const real = fs.realpathSync(linkPath);
     const lines = fs.readFileSync(real, 'utf8').split('\n');
-    // The seed is passed as alwaysInScope so a scoped directory that reuses a
-    // built-in's name can't get the built-in marked out-of-scope.
+    // The seed goes in as alwaysInScope so a scoped directory reusing a built-in's
+    // name cannot mark the built-in out-of-scope.
     return classifySkillRoster(lines, { alwaysInScope: CLAUDE_SKILLS });
   } catch { return emptyRoster(); }
 }
@@ -951,7 +835,7 @@ function readEffectiveSkillState(cwd) {
     { src: 'project', file: cwd ? path.join(cwd, '.claude', 'settings.json') : null },
     { src: 'local', file: cwd ? path.join(cwd, '.claude', 'settings.local.json') : null },
   ];
-  const overrides = {}; // name -> { value:'off'|'on', source } — later layer wins
+  const overrides = {};
   for (const { src, file } of layers) {
     if (!file) continue;
     const data = readJsonSafe(file);
@@ -972,10 +856,8 @@ function readEffectiveSkillState(cwd) {
   return { overrides, skillsLocked };
 }
 
-// Only a BARE tool name ("SendMessage") disables the tool; a SCOPED entry
-// ("Bash(rm:*)") denies a slice and is ignored here. permissions.deny is a
-// UNION with no allow override, so a lower-layer deny is unrevokable from our
-// layer-4 settings for that cwd.
+// Bare tool names only: a scoped entry such as "Bash(rm:*)" denies a slice and
+// does not disable the tool.
 function readEffectiveToolState(cwd) {
   const layers = [
     { src: 'global', file: path.join(os.homedir(), '.claude', 'settings.json') },
@@ -983,14 +865,14 @@ function readEffectiveToolState(cwd) {
     { src: 'local', file: cwd ? path.join(cwd, '.claude', 'settings.local.json') : null },
   ];
   if (MANAGED_SETTINGS) layers.push({ src: 'policy', file: MANAGED_SETTINGS });
-  const overrides = {}; // tool -> { value:'off', source, locked } — later layer wins
+  const overrides = {};
   for (const { src, file } of layers) {
     if (!file) continue;
     const data = readJsonSafe(file);
     const deny = data && data.permissions && data.permissions.deny;
     if (!Array.isArray(deny)) continue;
     for (const entry of deny) {
-      if (typeof entry !== 'string' || entry.includes('(')) continue; // bare names only
+      if (typeof entry !== 'string' || entry.includes('(')) continue;
       overrides[entry] = { value: 'off', source: src, locked: src === 'policy' };
     }
   }
@@ -1009,25 +891,16 @@ function lastTranscriptWrite(agentType, cwd, sessionId) {
   try { return fs.statSync(path.join(dir, `${sessionId}.jsonl`)).mtimeMs; } catch { return null; }
 }
 
-// Bake the on-disk transcript before --resume, by handing the path to the proxy
-// (bake_session rewrites it; nothing here opens the file).
-//
-// NOT warmth-neutral, despite bake ⊆ live-strip holding for everything else: a
-// turn that is ENTIRELY thinking survives live-strip (it cannot emit an empty
-// content array) but the bake DELETES it, so each such turn re-caches once. The
-// proxy counts them as `pure_thinking_turns` and reports warmth — but only AFTER
-// rewriting, so these are logged, not gated. A real warmth gate needs a dry-run
-// pass first; don't add one by reading the response, it arrives too late.
-// Fail-safe: opt-in, proxy-gated, and any error / !ok resumes the ORIGINAL file.
+// Not warmth-neutral: a pure-thinking turn survives live-strip but the bake deletes
+// it, and the proxy reports warmth only after rewriting, so a gate on it is too late.
 async function maybeCompactBeforeResume(entry) {
   try {
-    if (!uiSettings.get().compactOnResume) return;     // opt-in — off by default
+    if (!uiSettings.get().compactOnResume) return;
     if (!entry || entry.type !== 'claude' || !entry.sessionId) return;
-    const base = resolveProxyBase(entry.proxy, uiSettings);        // null when proxy disabled → skip
+    const base = resolveProxyBase(entry.proxy, uiSettings);
     if (!base) return;
-    // Fire only once the proxy actually answers /_identity — robust against the
-    // launch race (proxy not up yet at restore → skip → resume original), rather
-    // than relying on auto-start ordering. /_compact is wirescope-only.
+    // Fire only once the proxy answers /_identity as wirescope: /_compact is
+    // wirescope-only and the proxy may not be up yet at restore.
     const probe = await ProxyClient.probe(base);
     if (!probe || probe.product !== 'wirescope') return;
     const dir = claudeProjectDir(entry.cwd);
@@ -1077,17 +950,14 @@ function readSessionMeta(file) {
   return { title, first, last, turns };
 }
 
-// nodeInterp is the app's own binary run as Node, baked ABSOLUTE into every
-// generated hook so the scripts never depend on an ambient python3 or on PATH
-// (packaged .app). Injected here so cli-hooks.js stays free of the `process` global.
+// nodeInterp is the app binary run as Node, baked absolute into every hook so the
+// scripts never depend on PATH or an ambient python3 (packaged .app).
 const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
   cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
-// composeRoster reaches the manager lazily and through a try: createCliHooks
-// runs long before the SessionManager is constructed, and `manager` is a const
-// declared below, so a bare reference during boot is a TDZ throw rather than
-// undefined. A pre-manager digest write simply carries no roster.
+// composeRoster reaches `manager` lazily and inside a try: this runs before the
+// const is declared, so a bare reference at boot is a TDZ throw.
 } = createCliHooks({
   REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath,
   composeRoster: (name) => { try { return manager.composeRosterFor(name); } catch { return null; } },
@@ -1116,14 +986,8 @@ function cleanupOldMessages() {
 }
 
 function spillToFile(sender, body, recipient) {
-  // Each recipient gets its own subfolder so two agents never appear to share
-  // an inbox. Names are constrained to [a-zA-Z0-9._-] upstream — which is TRUE
-  // but does not make them safe as a path: `.` and `..` are spelled in that
-  // charset, so the charset alone never established containment here. What
-  // does: t115 made dot-only names unrepresentable at every gate, so no name
-  // reaching this join can traverse. If that guard is ever relaxed, this join
-  // needs confine() from path-confine.js — it writes, so the cost of being
-  // wrong is a stray file, not a delete.
+  // Unconfined join, safe only because every name gate rejects dot-only names
+  // (the charset alone admits `..`); if that relaxes, this needs confine().
   const dir = path.join(MSG_DIR, recipient);
   ensureDir(dir);
   msgCounter++;
@@ -1135,11 +999,8 @@ function spillToFile(sender, body, recipient) {
 }
 
 
-// Required HERE, not down beside createDrawerPtys where the rest of the
-// terminal wiring lives: the session-manager deps object below reads
-// `termAvailableFor` eagerly, and a `const` destructured later in the file is in
-// its temporal dead zone at that moment — a ReferenceError at startup, not a
-// lazy binding.
+// Required here, not beside createDrawerPtys: the deps object below reads
+// `termAvailableFor` eagerly, and a later const destructure is still in its TDZ.
 const { termAvailableFor, vetTermCommand, sanitizeName } = require('./drawer-avail');
 
 const { createSessionManager } = require('./session-manager');
@@ -1150,11 +1011,8 @@ const {
   splitPluginPromptRef, resolvePluginSystemPromptFile, resolvePluginPromptBody, pluginTemplateRows,
 } = require('./plugin-prompt-refs');
 const gitWorktree = require('./git-worktree');
-// Phase 2: discovery + the enabled set. Declared beside the host because
-// setEnabled reaches it through a getter — the loader is constructed AFTER the
-// host (it takes no host argument; loadAll receives one), so a captured value
-// would be null for the app's whole life. Same getter discipline as every other
-// bootstrap-assigned seam.
+// setEnabled reaches the loader through a getter: it is constructed after the
+// host, so a captured value would stay null for the app's life.
 const { createPluginLoader } = require('./plugin-loader');
 const { createPluginUpdateWatch } = require('./plugin-update-watch');
 let pluginHost = null;
@@ -1169,15 +1027,11 @@ function getHelpCorpus() {
 
 
 
-// One speaker for the whole app: `say` writes to the machine's single audio
-// output, so a per-session speaker would let two seats finishing together talk
-// over each other with nothing able to arbitrate.
+// One speaker for the whole app: a per-session speaker would let two seats
+// finishing together talk over each other.
 const speaker = createSpeaker();
-// NOT warmed here. Building the engine must spawn NOTHING: every test that
-// constructs it would otherwise fork a real 650ms `say -v '?'`, and those
-// children outlive a test process that exits first — orphaned to pid 1 with
-// nothing left to reap them. The catalog warms itself on its first read
-// instead, which is a settings:get from a surface the operator opened.
+// Not warmed here: building the engine must spawn nothing, or every test that
+// constructs it forks a real `say -v '?'` that can outlive the test process.
 const voiceCatalog = createVoiceCatalog();
 
 const knownSkillNames = () => [...new Set([
@@ -1270,7 +1124,7 @@ const SessionManager = createSessionManager({
     parkedTexts,
     enqueueOutbox,
     ensureDir,
-    execBodyCap: DEFAULT_MAX_BYTES, // exec JSON-terminator capture cap (session-manager)
+    execBodyCap: DEFAULT_MAX_BYTES,
     findProjectRoot,
     gitWorktree,
     resolveTeam,
@@ -1485,9 +1339,6 @@ function fetchFilePeek(filePath, opts = {}) {
   return peekFile(filePath, opts);
 }
 
-// Resolve a path as DISPLAYED (in the terminal, or inside a peeked file) to one
-// that exists. Main-side because only main can stat; the renderer decides what
-// looks like a path (lib/path-scan.js) and asks here whether it is one.
 function resolveFilePath(name, raw, baseDir) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
@@ -1500,9 +1351,8 @@ function resolveFilePath(name, raw, baseDir) {
   });
 }
 
-// The peek's write half. Takes a session NAME (fetchFilePeek does not) because
-// the cwd is the containment boundary — a write with no session to confine it
-// to is refused rather than resolved against the process cwd.
+// Takes a session name because the cwd is the containment boundary; a write with
+// no session to confine it is refused, not resolved against the process cwd.
 function writeFilePeek(name, filePath, content, expectMtime) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
@@ -1522,8 +1372,6 @@ function writeFilePeek(name, filePath, content, expectMtime) {
   if (!v.ok) return v;
   try {
     fs.writeFileSync(v.path, content);
-    // The fresh mtime is the caller's next `expectMtime`; without it every save
-    // after the first would trip the stale check against its own write.
     return { ok: true, mtime: Math.trunc(fs.statSync(v.path).mtimeMs), size: Buffer.byteLength(content) };
   } catch (e) { return { ok: false, error: e.message }; }
 }
@@ -1538,8 +1386,6 @@ async function fetchFileDiff(name, filePath) {
   const status = await git(['status', '--porcelain', '--', filePath]);
   if (status == null) return { ok: false, error: 'Not in a git repository (or git unavailable)' };
   if (status.startsWith('??')) return { ok: true, untracked: true, clean: false, diff: '' };
-  // HEAD-relative catches staged edits too; fresh repos without a HEAD
-  // degrade to worktree-vs-index.
   let diff = await git(['diff', 'HEAD', '--no-color', '--', filePath]);
   if (diff == null) diff = await git(['diff', '--no-color', '--', filePath]);
   if (diff == null) return { ok: false, error: 'git diff failed' };
@@ -1549,9 +1395,8 @@ async function fetchFileDiff(name, filePath) {
 let remoteServer = null;
 let remoteError = null;
 
-// Dropping capabilities and the owner's loopback base/sessionId is load-bearing: it is
-// viewer's owner-local controls degrade to plain text instead of firing requests
-// at endpoints that exist only on the owner's machine.
+// Capabilities and the owner's loopback base/sessionId are dropped so a viewer's
+// owner-local controls degrade to plain text instead of hitting owner-only endpoints.
 function peerProxyView(p) {
   if (!p) return null;
   const caps = p.capabilities || {};
@@ -1581,8 +1426,8 @@ function peerProxyView(p) {
   return view;
 }
 
-// kill() only signals; the slot frees in the PTY's onExit (SIGKILL fallback at
-// 5s). A fixed sleep here raced it into "session already exists" on respawn.
+// The slot frees in the PTY's onExit (kill's SIGKILL fallback fires at 5s), so
+// the default timeout stays above it; a fixed sleep raced "session already exists".
 async function waitForSessionExit(name, timeoutMs = 8000) {
   const start = Date.now();
   while (manager.sessions.has(name) && Date.now() - start < timeoutMs) {
@@ -1595,9 +1440,6 @@ async function waitForSessionExit(name, timeoutMs = 8000) {
 async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   let entry = persistence.get(name);
   if (!entry) return { ok: false, error: 'Session not found in persistence' };
-// A skill change needs `fresh`: the roster is evaluated when a CONVERSATION is
-// created, so --resume replays the roster frozen before the change.
-// opts.resumeId switches to a past conversation and becomes the active id.
   if (opts && opts.resumeId && opts.resumeId !== entry.sessionId) {
     persistence.setSessionId(name, opts.resumeId);
     entry = persistence.get(name);
@@ -1608,28 +1450,21 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
       await manager.kill(name);
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
-// Re-seed post-create fields BEFORE create() reads existingEntry (kill() dropped
-// the record). rosterSentAt is conversation-scoped, so a FRESH restart must NOT
-// carry it. createdAt is birth time and must carry across every restart —
-// create() falls back to Date.now(), re-minting it and reordering "created" sort.
+    // Re-seed before create() reads existingEntry (kill() dropped the record); a fresh
+    // restart must not carry rosterSentAt, and every restart must carry createdAt.
     const preserveFields = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
     const created = await manager.create(name, entry.type, manager.resumeCwdOf(entry), entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true, Array.isArray(entry.plugins) ? entry.plugins : null, Array.isArray(entry.shellDeny) ? entry.shellDeny : null, typeof entry.fixFor === 'string' ? entry.fixFor : null, entry.io || 'pty', typeof entry.effort === 'string' ? entry.effort : null);
-    // kill() removed the persistence entry (incl. stripLevel) and create()
-    // re-wrote it from spawn args only — re-assert the session's OWN level so
-    // a restart doesn't silently turn stripping off. (Birth-time agentDefaults
-    // seeding lives in session:create; this preserves the actual level.)
+    // create() re-writes the entry from spawn args only, so re-assert the seat's own
+    // strip level or a restart silently turns stripping off.
     const restartLvl = stripLevelOf(entry);
     if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
     if (entry.label) persistence.setLabel(name, entry.label);
     return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
   } catch (err) {
-    // The seat is kept, but not a pointer to a checkout another live seat has
-    // taken while this restart was in flight. Routed through the manager rather
-    // than re-derived here: _ticketTreeHolder is the single reader of tree
-    // occupancy, and a second implementation in this file is the second source of
-    // truth that design forbids (t491).
+    // Strip a checkout another seat took mid-restart through the manager; a second
+    // tree-occupancy reader here would be a second source of truth.
     persistence.upsert(manager._stripClaimedTree(entry));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
@@ -1672,14 +1507,14 @@ function readSessionArgs(name) {
     agents: entry.agents || [],
     denyBuiltins: entry.denyBuiltins || [],
     disabledTools: entry.disabledTools || [],
-    effectiveTools: readEffectiveToolState(entry.cwd).overrides, // lower-layer deny, per tool
+    effectiveTools: readEffectiveToolState(entry.cwd).overrides,
     disabledSkills: entry.disabledSkills || [],
     injectSkills: entry.injectSkills || [],
     intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
     plugins: Array.isArray(entry.plugins) ? entry.plugins : null,
-    execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [], // exec GRANT allowlist (local-only; stripped at the peer wire)
-    env: (entry.env && typeof entry.env === 'object') ? entry.env : {}, // per-session env (T46b; local-only, stripped at the peer wire)
-    agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)), // scope-filtered offer list
+    execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [],
+    env: (entry.env && typeof entry.env === 'object') ? entry.env : {},
+    agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)),
     team: (() => { try { const t = resolveTeam(entry.cwd); return t ? t.name : null; } catch { return null; } })(),
     stripLevel: stripLevelOf(entry),
     io: entry.io === 'stream' ? 'stream' : 'pty',
@@ -1741,9 +1576,8 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
     return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
   } catch (err) {
-    // Applied to the ASSEMBLED object, not to `beforeKill`: the spread is what
-    // actually reaches the store, so stripping the source would be undone by it.
-    // Same reason as restartSession's arm above (t491).
+    // Strip the assembled object, not `beforeKill`: the spread is what reaches the
+    // store, so stripping the source would be undone by it.
     persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
@@ -1847,17 +1681,17 @@ function readSkillCatalog({ name = null, cwd = null, type = null } = {}) {
   const base = {
     ok: true,
     names,
-    effective: eff.overrides,        // lower-layer state, per skill (value+source)
-    skillsLocked: eff.skillsLocked,  // managed-policy lock on the skills surface
+    effective: eff.overrides,
+    skillsLocked: eff.skillsLocked,
     canReenable: SKILL_REENABLE_CONFIRMED,
   };
   if (!name) return base;
   return {
     ...base,
-    outOfScope: scan.outOfScope,     // reachable only under their own dir; name+dir
-    disabledSkills: disabled,        // the session's own layer-4 off list
+    outOfScope: scan.outOfScope,
+    disabledSkills: disabled,
     allOff: disabled.includes('*'),
-    skillLib: skillLibrary.listFor(sessionScopeCtx(name)), // scope-filtered inject offer list
+    skillLib: skillLibrary.listFor(sessionScopeCtx(name)),
     injectSkills: entry && Array.isArray(entry.injectSkills) ? entry.injectSkills : [],
   };
 }
@@ -1898,9 +1732,8 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   getReminders: () => reminders,
   getAccounts: () => accounts,
   getRemoteServer: () => remoteServer,
-  // A getter because drawerPtys is built below this call, and because it is
-  // null outright on a host with drawer services off — the peer terminal must
-  // inherit that refusal rather than route around it.
+  // A getter because drawerPtys is built below this call and is null on a host with
+  // drawer services off; the peer terminal must inherit that refusal.
   getDrawerPtys: () => drawerPtys,
   setRemoteServer: (v) => { remoteServer = v; },
   setRemoteError: (v) => { remoteError = v; },
@@ -1949,19 +1782,11 @@ const sandboxManager = enableSandbox ? createSandboxManager({
   log,
 }) : null;
 
-// The drawer's clodexctl REPL. Constructed only when the host granted the
-// capability — same shape as sandboxManager above, and the reason is the same:
-// a null service is a handler that cannot be registered, rather than a
-// registered handler that decides at call time whether to serve.
+// Built only when the host granted the capability, so a null service means no
+// handler is registered rather than one that decides at call time.
 const { createCtlService } = require('./ctl-service');
 const ctlService = enableCtl ? createCtlService({}) : null;
 
-// The drawer's workbench terminal, same capability and same shape. `cwdFor`
-// resolves per workspace through the manager rather than being captured, so a
-// terminal spawned after the operator opens sessions lands in the directory
-// they are actually working in.
-// Marks a queued row as a PASSIVE terminal report — the one class of queued
-// text the operator can still withdraw by switching the firehose off.
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
 const { withUtf8Charset } = require('./env-scopes');
@@ -1973,27 +1798,17 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   spawn: pty.spawn.bind(pty),
   send: (workspaceId, channel, ...args) => {
     const win = manager.windowForWorkspace(workspaceId);
-    // No pendingOutput spill as sessions get: a workbench terminal belongs to
-    // its window, and a detached one is being killed, not buffered.
+    // No pendingOutput spill as sessions get: a detached workbench terminal is
+    // being killed, not buffered.
     if (win && !win.isDestroyed()) win.webContents.send(channel, ...args);
   },
   cwdFor: (workspaceId, seat) => drawerPtyCwd(workspaceId, seat),
   scrollbackMax: SCROLLBACK_MAX,
   withUtf8Charset,
-  // The OSC 133 shim, built per seat so its generated rc can be removed with the
-  // seat. Gated on the pref at SPAWN time, which is coarse on purpose: a shell
-  // already running keeps whatever startup it was born with, and toggling the
-  // pref governs the next shell rather than reaching into a live one.
-  //
-  // This gate is CAPABILITY — marks make a command's boundaries and exit code
-  // knowable, and knowable is not disclosed. It must stay distinct from the
-  // disclosure gate on onCommand below: a shimmed shell that reports nothing to
-  // anyone leaks nothing, and merging the two back into one condition is exactly
-  // the conflation t235 exists to undo.
-  // Injected rather than required inside drawer-pty: that module takes every
-  // dependency this way, and its own test pins the absence of any require as
-  // the thing keeping a workbench terminal out of the session machinery.
+  // Injected, not required inside drawer-pty, whose test pins that it requires nothing.
   makeMarkParser: createMarkParser,
+  // Spawn-time capability gate: it must stay distinct from onCommand's disclosure
+  // gate, since marks make a command knowable without disclosing it.
   shimEnv: (seat) => {
     if (!seat || uiSettings.get().terminalReports === 'off') return null;
     return buildTermShim({
@@ -2002,83 +1817,47 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
       env: process.env,
     });
   },
-  // A finished command, framed by the marks. Delivered onto the seat's EXISTING
-  // selection queue rather than a channel of its own: the queue is already a
-  // line-delimited file drained by the UserPromptSubmit hook, already claimed by
-  // rename, and already consume-once — every property this needs. A second
-  // mechanism would be a second set of the same bugs.
-  //
-  // This gate is DISCLOSURE, and it is read per command rather than at spawn —
-  // which is what makes switching the firehose off bite a LIVE shell instead of
-  // the next one. Only the capability gate above is spawn-bound, so the control
-  // that matters for privacy is the instant one.
+  // Disclosure gate, read per command so switching the firehose off bites a live
+  // shell; rows go onto the existing selection queue, not a channel of their own.
   onCommand: (seat, rec) => {
     if (uiSettings.get().terminalReports !== 'all') return;
     const text = formatCommand(rec, { stripAnsi });
     if (!text) return;
-    // Tagged so switching the firehose off can withdraw exactly these rows from
-    // the undrained queue. The same file carries the operator's own Copy
-    // attachments and the exec-answer fallback, and neither is the operator's to
-    // lose when they decline the firehose — an untagged sweep would take all
-    // three. Readers ignore the extra key: both cli-hooks' drain script and
-    // readQueue select `o.text`.
     queueForSeat(seat, text, PASSIVE_TERM_KIND);
   },
   vetCommand: vetTermCommand,
-  // The peer-terminal fan-out (t219). The SAME bytes the local tab receives,
-  // pushed to any peer watching this seat — one shell, two viewers, which is
-  // what makes a remote shell visible instead of hidden. Cheap no-ops when no
-  // peer is attached (the server drops them when its stream set is empty), and
-  // absent entirely on a host with the remote wire off.
   onOutput: (seat, data) => { if (remoteServer) remoteServer.pushWtermOutput(seat, data); },
   onShellEnd: (seat, exitCode) => { if (remoteServer) remoteServer.pushWtermExit(seat, exitCode); },
-  // The framing rules for a command the AGENT asked for, which is a different
-  // product from the passive report above and differs from it twice: it is not
-  // gated on the reporting pref (the pref governs the unasked-for firehose the
-  // operator rejected, not an answer to a question), and it passes
-  // `always: true` so output rides even on a clean exit — a successful `git
-  // status` whose output was dropped answers nothing.
-  //
-  // Every branch here delivers SOMETHING. An outcome that produced no message
-  // would leave the agent waiting for a turn that never comes, which is the
-  // failure this whole path was built to prevent.
+  // Not gated on the reporting pref (it governs the unasked firehose, not an answer
+  // to the agent) and always:true so output rides even on a clean exit.
   onExecResult: (seat, res) => {
-    // Worded to fit EVERY branch, not just `ok`: a timeout followed by a window
-    // close would otherwise render "closed before the command reported back …
-    // it has now finished".
+    // Worded to fit every branch: after a timeout then a window close, "it has now
+    // finished" would be false.
     const late = res.late ? '\n(this supersedes the still-running notice above)' : '';
     const inside = sanitizeName(res.inside);
     const insideLine = inside ? `\nran inside \`${inside}\`` : '';
     const meantLine = inside ? `\nit was meant for \`${inside}\`` : '';
     let text;
     if (res.mismatch) {
-      // The shell reported a DIFFERENT command finishing than the one we sent.
-      // Its output is deliberately NOT rendered: that output is the operator's
-      // own work, and the firehose is the thing they rejected.
+      // The other command's output is not rendered: it is the operator's own work
+      // and the firehose is what they rejected.
       const ran = (res.record && res.record.command) || 'something else';
       text = `[terminal] ${res.command}${insideLine}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
     } else if (res.status === 'ok') {
-      // `assumed` is what makes this branch total. A shell that did not name the
-      // command still reported its exit code and its output, and dropping all of
-      // that for a missing label answered nothing — vetTermCommand guarantees
-      // `res.command` is a non-empty single line, so formatCommand always has a
-      // name to use and cannot answer null here.
+      // `assumed` keeps this branch total: vetTermCommand guarantees a non-empty
+      // `res.command`, so formatCommand always has a name and cannot answer null.
       text = formatCommand(res.record, { stripAnsi, always: true, assumed: res.command, inside });
     } else if (res.status === 'abandoned') {
       text = `[terminal] ${res.command}${insideLine}\nabandoned — a new prompt appeared before it finished, so it was interrupted (Ctrl-C) or the shell reset. There is no exit code. Its output was not captured; look at the terminal, or ask your operator.`;
     } else if (res.status === 'timeout') {
       text = `[terminal] ${res.command}${insideLine}\nstill running after ${Math.round(res.afterMs / 1000)}s. NOT cancelled — it is still going, and you will get its output when it finishes. Do not run it again.`;
     } else if (res.status === 'lost') {
-      // A timed-out command whose ending never arrived, cleared out of the way
-      // so the seat's terminal is usable again.
       text = `[terminal] ${res.command}${insideLine}\nno ending was ever reported for it, and the terminal is idle again — whether it ran is unknown. The terminal is free for another command.`;
     } else if (res.status === 'shell-exit') {
       text = `[terminal] ${res.command}${insideLine}\nthe terminal's shell exited (${res.exitCode}) before the command reported back. Whether it ran is unknown.`;
     } else if (res.status === 'write-failed') {
-      // Distinct from the catch-all below, which says "before the command
-      // reported back" — that would be a lie here. The line was abandoned and
-      // the command was never typed, so NOTHING ran and a retry is safe. That
-      // certainty is the whole value of the message.
+      // Not the catch-all's "before the command reported back": it was never typed,
+      // so nothing ran and a retry is safe.
       text = `[terminal] ${res.command}${meantLine}\nthe terminal did not accept it (${res.reason}). It was never typed, so nothing ran — you can send it again.`;
     } else if (res.status === 'session-ended') {
       const outer = sanitizeName(programOf(res.inside)) || 'the session';
@@ -2101,26 +1880,8 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   log,
 }) : null;
 
-// An agent-requested command's result, delivered as an URGENT dm rather than
-// appended to the selection queue.
-//
-// The queue is drained by the UserPromptSubmit hook, which fires only when the
-// OPERATOR types — so a result sat there until a human happened to send the seat
-// a message, and the agent that asked could not act on what it asked for. The dm
-// path is what every other unsolicited input already uses: it shows in the IPC
-// log as a message in a queue, and urgent means the seat is woken rather than
-// waiting for a turn that may never come.
-//
-// Urgent is correct here specifically because the agent ASKED: it is blocked on
-// this answer, so there is no turn to protect from interruption — the opposite
-// of the idle-peer case the hold exists for. The one hold urgent does NOT
-// override is the permission dialog, and that is right: injection ends with
-// Enter, which would answer the dialog.
-//
-// The queue write REMAINS as a fallback for exactly the cases the dm cannot
-// reach — a held delivery, a dead seat, a throw. Dropping it would trade a late
-// result for a lost one; the passive onCommand firehose above still uses the
-// queue alone, because nobody is waiting on it.
+// Urgent dm so an agent blocked on its own command is woken; the queue write stays
+// as fallback for held, dead or throwing deliveries, since dropping it loses the result.
 function deliverExecResult(seat, text) {
   try {
     const r = manager._gatedDeliver(seat, 'terminal', text, true);
@@ -2131,13 +1892,8 @@ function deliverExecResult(seat, text) {
   queueForSeat(seat, text);
 }
 
-// The seat's existing selection queue: a line-delimited file the CLI's
-// UserPromptSubmit hook drains and claims by rename. Both terminal paths append
-// through this one helper so a second delivery mechanism (with a second set of
-// the same bugs) never appears.
-// `kind` is written only for the passive firehose (PASSIVE_TERM_KIND). An
-// untagged row is anything the operator or the agent asked for, and
-// dropPassiveTermReports leaves those alone.
+// The one append path for both terminal deliveries; only the passive firehose passes
+// `kind`, so dropPassiveTermReports never touches a row the operator or agent asked for.
 function queueForSeat(seat, text, kind) {
   try {
     const row = kind ? { text, kind } : { text };
@@ -2145,17 +1901,8 @@ function queueForSeat(seat, text, kind) {
   } catch {}
 }
 
-// The only revocation the firehose has. A report sits in the seat's queue file
-// until the operator's NEXT message drains it, so switching the stream off has
-// to take the undrained rows with it — otherwise the operator flips the control
-// and the very next thing they type ships the last five commands anyway, which
-// is the control failing in the exact moment they reached for it. Past the drain
-// the text is transcript-resident and unrecoverable; the UI says so.
-//
-// Rewrite-in-place rather than rename-and-replace: the CLI's drain hook claims
-// this file by rename, so a claim landing mid-write reads the pre-drop bytes at
-// worst — the same at-least-once outcome the queue already has. Losing an
-// operator's Copy attachment to a clever swap would be the worse trade.
+// Rewrites in place, not rename-and-replace: the CLI's drain hook claims this file by
+// rename, so a mid-write claim reads at worst the pre-drop bytes.
 function dropPassiveTermReports(seats) {
   for (const seat of seats) {
     const file = pathFor(REGISTRY_DIR, seat, 'selection');
@@ -2165,8 +1912,7 @@ function dropPassiveTermReports(seats) {
       let dropped = 0;
       for (const line of raw.split('\n')) {
         if (!line.trim()) continue;
-        // An UNPARSEABLE row is kept. It is not ours to judge, and dropping what
-        // we cannot read would make a corrupt line an amplifier for this sweep.
+        // An unparseable row is kept; dropping what cannot be read would amplify corruption.
         let o = null;
         try { o = JSON.parse(line); } catch { kept.push(line); continue; }
         if (o && o.kind === PASSIVE_TERM_KIND) { dropped += 1; continue; }
@@ -2180,14 +1926,6 @@ function dropPassiveTermReports(seats) {
   }
 }
 
-// Called after a settings write, with the value from BEFORE it. Only the
-// `all` → anything transition revokes: switching the firehose ON has nothing to
-// withdraw, and a write that left the state alone must not sweep a queue the
-// operator never asked to change.
-//
-// The seat set is the live sessions. A seat's run dir — and with it the queue
-// file — is removed when its session exits, so a name absent from that map has
-// no undrained row to drop.
 function syncTerminalReports(prev) {
   if (prev !== 'all') return;
   if (uiSettings.get().terminalReports === 'all') return;
@@ -2196,15 +1934,8 @@ function syncTerminalReports(prev) {
   dropPassiveTermReports(seats);
 }
 
-// Why an agent's terminal command cannot be reported on, stated so the OPERATOR
-// can fix it — "no marks" alone tells them nothing. The causes are genuinely
-// different actions, and the shell's own birth state is what distinguishes the
-// last from the pref: the shim is applied at spawn, so a shell older than the
-// pref emits nothing however the checkbox reads now.
-//
-// The SHELL half is term-shim's to answer: which shells are supported and what
-// the bash floor is are its facts, and a copy here would drift from the
-// builder that enforces them. The two causes below are this module's own.
+// Shell support and the bash floor stay in unsupportedShellReason; a copy here would drift.
+// A shell older than the pref emits nothing however the checkbox reads, since the shim is applied at spawn.
 function termShimDiagnosis() {
   const shellReason = unsupportedShellReason({ shell: process.env.SHELL });
   if (shellReason) return shellReason;
@@ -2212,11 +1943,8 @@ function termShimDiagnosis() {
   if (reports === 'off') {
     return 'terminal reporting is switched off in Settings, so the shell emits no completion marks';
   }
-  // Unreachable while 'asked' is live — that state builds the shim, so a shell
-  // born under it HAS marks. It is here for the shell born under 'off' and
-  // asked about after the operator switched to 'asked': the reopen advice below
-  // is right, but a message naming the checkbox they just ticked would send
-  // them back to Settings to tick it again.
+  // Reached only by a shell born under 'off' after the operator switched to 'asked'; the
+  // last message would name the checkbox they just ticked.
   if (reports === 'asked') {
     return 'this shell was opened while terminal reporting was off — close the terminal tab and reopen it';
   }
@@ -2230,10 +1958,6 @@ function termRefusalName(running) {
   return sanitizeName(programOf(s) || '');
 }
 
-// Run one command on a seat's own terminal. The seam session-manager gets: it
-// passes a seat and a workspace it derived from the sender and receives a
-// refusal it can hand straight to the agent, without learning drawer-pty's
-// shape or the reporting pref's existence.
 function termExec(workspaceId, seat, command) {
   if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };
   const r = drawerPtys.exec(workspaceId, seat, command);
@@ -2265,15 +1989,8 @@ function termExec(workspaceId, seat, command) {
   }
 }
 
-// "Workspace root" as the design names it. There is no root field on a
-// workspace record (workspaces.json holds id/name/bounds/lastFocusedAt/open/
-// view), so the operator's own sessions are the best available statement of
-// where this workspace lives — the same signal session:cwdSuggestions already
-// mines for the new-session dialog.
+// Workspace records carry no root field, so the operator's most common session cwd stands in for it.
 function drawerPtyCwd(workspaceId, seat) {
-  // A seat's own cwd, when the shell belongs to one. This is the point of the
-  // per-seat keying: the workspace-wide guess below is a decent default for a
-  // shell that belongs to no seat, and the wrong directory for one that does.
   if (seat) {
     try {
       const s = manager.sessions.get(seat);
@@ -2345,19 +2062,19 @@ const toolCache = createToolCache({ whichBin });
     }
   } catch { /* registry read failed — skip autostart */ }
 
-  let wsFails = 0;          // consecutive respawn attempts since last healthy
-  let wsNextAttempt = 0;    // epoch ms gate for the next attempt
-  const WS_WATCHDOG_INTERVAL = 10000;   // ms between health checks
-  const WS_WATCHDOG_BASE = 15000;       // ms first backoff step
-  const WS_WATCHDOG_MAX = 300000;       // ms backoff cap
+  let wsFails = 0;
+  let wsNextAttempt = 0;
+  const WS_WATCHDOG_INTERVAL = 10000;
+  const WS_WATCHDOG_BASE = 15000;
+  const WS_WATCHDOG_MAX = 300000;
   const wsWatchdogTimer = setInterval(async () => {
     if (!wirescope.autoStartWanted()) { wsFails = 0; wsNextAttempt = 0; return; }
     let st;
     try { st = await wirescope.status(); } catch { return; }
     if (st.state === 'managed' || st.state === 'external') {
-      wsFails = 0; wsNextAttempt = 0; return;   // healthy — nothing to do
+      wsFails = 0; wsNextAttempt = 0; return;
     }
-    if (st.state === 'installing' || st.state === 'starting') return; // mid-launch
+    if (st.state === 'installing' || st.state === 'starting') return;
     const now = Date.now();
     if (now < wsNextAttempt) return;
     wsFails++;
@@ -2389,9 +2106,7 @@ const toolCache = createToolCache({ whichBin });
     log.info('migrate', `legacy sweep skipped (${e && e.message})`);
   }
 
-  // Same posture as the sweep above, and for the same reason: a board that fails
-  // to migrate is a board still readable at its old path, not a reason to refuse
-  // to start. Per-team markered and duplicate-proof, so a failed run retries.
+  // A board that fails to migrate stays readable at its old path; it must not refuse startup.
   try {
     runTicketsMigration({ root: REGISTRY_DIR, fs, log });
   } catch (e) {
@@ -2400,10 +2115,8 @@ const toolCache = createToolCache({ whichBin });
 
   try { manager.sweepReviewerGraveyard(); } catch (e) { log.info('migrate', `reviewer-graveyard sweep skipped (${e && e.message})`); }
 
-// Constructed at the bootstrap TAIL: stores/manager/wiring exist, no window does,
-// and the handle has not returned — so a plugin's activate() runs strictly before
-// the renderer-driven restore can create any session.
-// CLODEX_PLUGINS=0 skips construction; every hook call site is `?`-guarded.
+  // Constructed last, before the handle returns, so a plugin's activate() runs before
+  // the renderer-driven restore can create a session.
   if (pluginsEnabled(process.env)) {
     try {
       pluginHost = createPluginHostEngine({
@@ -2471,11 +2184,7 @@ const toolCache = createToolCache({ whichBin });
     if (tunnelManager) { try { tunnelManager.stopAll(); } catch {} tunnelManager = null; }
     if (webTunnelManager) { try { webTunnelManager.stopAll(); } catch {} webTunnelManager = null; }
     try { stopPeerWirescopeTunnels(); } catch {}
-    // The REPL's warm transport may be an ssh/tunnel CHILD process; without this
-    // a quit leaves it orphaned holding a local port.
     if (ctlService) { try { ctlService.dispose(); } catch {} }
-    // Workbench shells are children of this process with no persistence record
-    // to resume from, so a quit that skipped this would orphan them outright.
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
     try { bashLive.stopAll(); } catch {}
     manager.killAll();
