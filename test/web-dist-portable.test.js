@@ -189,13 +189,13 @@ function lookbehinds(src) {
 }
 
 test('web-dist bundle carries no regex lookbehind, which its safari16 target lacks', () => {
-  const src = fs.readFileSync(BUNDLE, 'utf8');
-  assert.strictEqual(lookbehinds(`${src}/(?<=a)b/ /(?<!c)d/`).length, 2,
-    'the detector must flag both lookbehind forms inside the bundle it scans');
+  assert.strictEqual(lookbehinds('const a = /(?<=a)b/, b = new RegExp("(?<!c)d");').length, 2,
+    'the detector must flag both lookbehind forms, as a literal and as a RegExp source');
   assert.deepStrictEqual(lookbehinds('/(?<year>\\d{4})/'), [],
     'the detector must leave a named group alone');
+  const src = fs.readFileSync(BUNDLE, 'utf8');
   assert.deepStrictEqual(lookbehinds(src), [],
     'web-dist/index.html contains a regex lookbehind. build/build-web.js targets safari16 and '
-    + 'Safari supports lookbehind only from 16.4; a lookbehind regex literal is a SyntaxError '
-    + 'there that stops the whole script.');
+    + 'Safari supports lookbehind only from 16.4; esbuild cannot lower it and emits a '
+    + '`new RegExp`, which throws SyntaxError there when it runs.');
 });

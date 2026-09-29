@@ -603,17 +603,16 @@ worktree and a fresh seat per ticket. `dispatch: "spawn"` is the same one-shot
 seat WITHOUT the branch and tree — it works in the shared checkout, so it is
 the mode a team whose root is not a git repo can use; `_ticketDispatchMode` is
 the single resolver both read, and it fails closed to `standing` on anything
-else. BOTH dispatch paths mint — `_taskAdd`
-and `_taskAssign` (releasing a parked ticket), each via `_spawnTicketSeat`;
-minting in only one silently opts the role out on the other. The
-ticket is re-pinned from the ROLE to that seat name, which is what keeps the
-seat one-shot — `_ticketAssigneeSeat` resolves a role to the first live seat
-holding it, so a role-pinned ticket would route the next one into the previous
-ticket's checkout. Everything below is the worktree mode's; a spawn ticket has
-no `worktree` key at all, and a dispatch to a spawn role CLEARS one it inherited
-(a worktree ticket reassigned to a spawn role) so the tree-reading paths —
-`WORK IN:`, the verify/review loop gate, the accept teardown — cannot disagree
-with the mode.
+else. BOTH dispatch paths mint — `_taskAdd` and `_taskAssign` (releasing a
+parked ticket), each via `_spawnTicketSeat`; minting in only one silently opts
+the role out on the other. The ticket is re-pinned from the ROLE to that seat
+name, which is what keeps the seat one-shot — `_ticketAssigneeSeat` resolves a
+role to the first live seat holding it, so a role-pinned ticket would route the
+next one into the previous ticket's checkout. Everything below is the worktree
+mode's; a spawn ticket has no `worktree` key at all, and a dispatch to a spawn
+role CLEARS one it inherited (a worktree ticket reassigned to a spawn role) so
+the tree-reading paths — `WORK IN:`, the verify/review loop gate, the accept
+teardown — cannot disagree with the mode.
 A ticket that already HAS a tree never mints a second one: the seat name derives
 from the ticket id, so `_mintTicketSeat` returns `taken` with that name.
 `_taskAssign` splits three readings of taken, on LIVENESS not on the record —
@@ -640,12 +639,11 @@ ticket moved, cleared `parked`, and pushed `lastActivityAt` past the watchdog's
 one nudge, while replying that nothing changed. A spawn also MOVES the record's
 worktree pointer off any other record naming that path (canonically — a record
 written elsewhere can reach the same tree through a symlinked prefix):
-`session:kill` reads the tree off whatever
-record it deletes, so two records naming one path means deleting either force-
-removes a live seat's checkout. That scan is NOT gated on reuse — deleting a
-tree's directory by hand makes `createWorktree` prune and recompute the identical
-default path, so a FRESH tree lands where an archived seat's record still points.
-A reused tree is never
+`session:kill` reads the tree off whatever record it deletes, so two records
+naming one path means deleting either force-removes a live seat's checkout. That
+scan is NOT gated on reuse — deleting a tree's directory by hand makes
+`createWorktree` prune and recompute the identical default path, so a FRESH tree
+lands where an archived seat's record still points. A reused tree is never
 rolled back on a failed spawn (it holds the previous seat's commits) and the
 ticket is not un-pinned there either — a role-assigned ticket carrying a live
 `WORK IN:` pointer replays into every seat filling that role. The same holds when
@@ -656,14 +654,14 @@ tree `_existingTicketTree` rejected — and that exit tests the ticket's tree
 itself rather than `!reused && !live`, which coincides with it only on the paths
 a CAUGHT throw takes today, and only while `clearTicketTree()` runs on exactly
 that path. Both failure replies branch on the predicate rather than asserting the
-un-pin: it is skipped in more states than the un-pin used to be. A live seat's record must NAME its
-tree or `_ticketTreeHolder` cannot see the occupancy and `session:kill` orphans
-the checkout, so the claim runs straight after `create()` and again in the catch
-— `create()` can seat the session and then throw. Both go through one
-`claimTree()`: the write and the move-off-other-records scan are ONE operation,
-and splitting them is worse than either half — writing this seat's pointer alone
-on the reuse path leaves two records naming one tree, which is the collision the
-scan exists to close.
+un-pin: it is skipped in more states than the un-pin used to be. A live seat's
+record must NAME its tree or `_ticketTreeHolder` cannot see the occupancy and
+`session:kill` orphans the checkout, so the claim runs straight after `create()`
+and again in the catch — `create()` can seat the session and then throw. Both go
+through one `claimTree()`: the write and the move-off-other-records scan are ONE
+operation, and splitting them is worse than either half — writing this seat's
+pointer alone on the reuse path leaves two records naming one tree, which is the
+collision the scan exists to close.
 `resolveSeatShape` takes the template's `systemPromptFile` when the template
 names one and the role's `prompt` otherwise — except that, on both arms
 (`_teamRolePromptStem`), a team-owned role prompt outranks a seeded or implied
@@ -1523,7 +1521,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   short label). Pure; no live roster is consulted, seats are recognised by shape.
 - **transcript-surface.js** — `surfaceOf(rec)` / `segmentSurface(seg)`: a
   transcript record or assistant segment as `conversation` or `internals`, by
-  kind, sender class, ticket marker tag and intent verb. Pure.
+  kind, sender class, ticket marker tag and intent verb. `turnEndProse`: the
+  closing prose segments of a folded machine-driven turn, which render below
+  the fold. Pure.
 - **outbox-rows.js** — `outboxRowOf`: a queued stream-seat outbox item as a
   dimmed row above the composer (first line, origin, and for a runtime reply the
   intent reply glyph). Pure.

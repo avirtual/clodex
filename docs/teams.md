@@ -531,14 +531,14 @@ A seat's system prompt is the template's `systemPromptFile` when the template
 names one; otherwise it is the role's `prompt`. For ticket and reviewer seats
 there is one exception: if the template is the copy the team seeded for the role
 (its stem is the role key) and the team has its own copy of the role's `prompt`,
-the role's prompt wins. A role `prompt` that did not
-become the system prompt is appended after the team block, so a role's briefing
-is never dropped: the template supplies the persona, the role supplies the
-delta. When both name the same stem it is applied once. This holds for ticket
-seats, reviewer seats and `[agent:spawn … template:]` seats alike. Team
-preflight notes a role whose two sources disagree, since only one of them is the
-system prompt. It also warns when the template's system prompt resolves nowhere,
-because that seat boots with no system prompt at all.
+the role's prompt wins. A role `prompt` that did not become the system prompt is
+appended after the team block, so a role's briefing is never dropped: the
+template supplies the persona, the role supplies the delta. When both name the
+same stem it is applied once. This holds for ticket seats, reviewer seats and
+`[agent:spawn … template:]` seats alike. Team preflight notes a role whose two
+sources disagree, since only one of them is the system prompt. It also warns
+when the template's system prompt resolves nowhere, because that seat boots with
+no system prompt at all.
 
 Every prompt stem preflight resolves out of a template — the `systemPromptFile`
 and each append stem — is left alone when it is a plugin-namespaced ref, by the
