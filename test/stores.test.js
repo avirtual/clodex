@@ -1425,7 +1425,7 @@ test('seed reconcile: legacy present-but-unstamped file is adopted, never overwr
 
     const dest = path.join(registryDir, 'library', rel);
     assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'LEGACY', 'legacy file not overwritten (unprovable pristine)');
-    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('LEGACY')), 'adopted current bytes into manifest');
+    assert.strictEqual(readSeedState(registryDir)[rel], 'adopted:6e779d3634705ea2ed91ee059566ec7290b305ef850ef3664f6ad2e63a27d5e9', 'adopted current bytes into manifest');
   });
 });
 
@@ -1443,29 +1443,52 @@ test('seed reconcile: a corrupt .seed-state.json degrades to {} (no throw, legac
     assert.doesNotThrow(() => initStores(userData, { registryDir, resourcesDir }));
 
     assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'LEGACY', 'corrupt manifest -> file treated as legacy, not overwritten');
-    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('LEGACY')), 'adopted current bytes despite corrupt prior manifest');
+    assert.strictEqual(readSeedState(registryDir)[rel], 'adopted:6e779d3634705ea2ed91ee059566ec7290b305ef850ef3664f6ad2e63a27d5e9', 'adopted current bytes despite corrupt prior manifest');
   });
 });
 
-test('seed reconcile: two launches self-heal a legacy stale-unedited file', () => {
+test('seed reconcile: an unstamped file the operator owns is never overwritten, however many launches follow', () => {
   withSeedDirs(({ userData, registryDir, resourcesDir }) => {
     const rel = path.join('prompts', 'system', 'lead.md');
     fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
-    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
-    // Legacy install: stale-unedited V1 on disk, NO manifest entry.
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED');
+    stageDest(registryDir, rel, 'OPERATOR');
     const dest = path.join(registryDir, 'library', rel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.writeFileSync(dest, 'V1');
+    const log = captureLog();
 
-    // First launch: adopt-only, no overwrite (can't prove pristine).
-    initStores(userData, { registryDir, resourcesDir });
-    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V1', 'first launch adopts, does not overwrite');
-    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V1')), 'first launch stamps current bytes');
+    initStores(userData, { log, registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR', 'launch 1 keeps the operator file');
 
-    // Second launch: same shipped-newer bytes, dest still untouched -> now upgrades.
+    initStores(userData, { log, registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR', 'launch 2 still keeps the operator file');
+
+    const warns = log.seedWarnings();
+    assert.strictEqual(warns.length, 2, 'one seed warning per launch for the withheld update');
+    assert.match(warns[1].msg, /lead\.md/, 'the report names the adopted file');
+    assert.match(warns[1].msg, /never receive shipped updates/, 'the report says the shipped update is withheld');
+  });
+});
+
+test('seed reconcile: an adopted file equal to the ship is re-stamped as shipped and takes the next update', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('prompts', 'system', 'lead.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'MINE');
+    stageDest(registryDir, rel, 'MINE');
+    fs.writeFileSync(seedStatePath(registryDir),
+      JSON.stringify({ [rel]: 'adopted:e5558063d447a246aed96606caeec03a22fea2829f46c7d6d9a14679e22bc5de' }));
+    const dest = path.join(registryDir, 'library', rel);
+
     initStores(userData, { registryDir, resourcesDir });
-    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V2', 'second launch self-heals to newer ship');
-    assert.strictEqual(readSeedState(registryDir)[rel], sha256(Buffer.from('V2')), 'second launch re-stamps to shipped hash');
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'MINE', 'launch 1 writes no content');
+    assert.strictEqual(readSeedState(registryDir)[rel],
+      'e5558063d447a246aed96606caeec03a22fea2829f46c7d6d9a14679e22bc5de', 'launch 1 re-stamps as the plain shipped hash');
+
+    fs.writeFileSync(path.join(resourcesDir, rel), 'V2');
+    initStores(userData, { registryDir, resourcesDir });
+    assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'V2', 'launch 2 takes the newer ship');
+    assert.strictEqual(readSeedState(registryDir)[rel],
+      '47cfe5eb8ada0e7492d86a6b47dc93e354c32af4a3cf489e0c65067cb48277d9', 'launch 2 stamps the new shipped hash');
   });
 });
 
