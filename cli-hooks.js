@@ -330,13 +330,13 @@ exit 0
     const pollStatePath = pathFor(REGISTRY_DIR, name, 'pollState');
     const pollGuardScriptPath = pathFor(REGISTRY_DIR, name, 'pollGuardScript');
     fs.writeFileSync(pollGuardScriptPath, `#!/bin/bash
-[ -n "$CLODEX_TICKET" ] || exit 0
 IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const fs = require("fs");
   const ticket = process.argv[2];
   const statePath = process.argv[3];
-  if (!ticket || !statePath) process.exit(0);
+  const seat = process.argv[4];
+  if (!statePath) process.exit(0);
   let d = null;
   try { d = JSON.parse(fs.readFileSync(0, "utf8")); } catch (e) { process.exit(0); }
   if (!d || d.agent_id) process.exit(0);
@@ -370,10 +370,10 @@ try {
   if (n < 3) process.exit(0);
   process.stdout.write(JSON.stringify({ hookSpecificOutput: {
     hookEventName: "PreToolUse", permissionDecision: "deny",
-    permissionDecisionReason: "ticket " + ticket + ": third identical Bash call in a row (" + norm.slice(0, 60) + "). Polling cannot make a result arrive sooner and each poll re-bills your whole context. END YOUR TURN — the exec, monitor, subagent or reminder result wakes you. If you genuinely must re-run it, do other work first." } }));
+    permissionDecisionReason: (ticket ? "ticket " + ticket : "seat " + seat) + ": third identical Bash call in a row (" + norm.slice(0, 60) + "). Polling cannot make a result arrive sooner and each poll re-bills your whole context. END YOUR TURN — the exec, monitor, subagent or reminder result wakes you. If you genuinely must re-run it, do other work first." } }));
 } catch (e) {}
 JSEOF
-${INTERP} -e "$JS" - "$CLODEX_TICKET" "${pollStatePath}" 2>/dev/null
+${INTERP} -e "$JS" - "$CLODEX_TICKET" "${pollStatePath}" "${name}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 

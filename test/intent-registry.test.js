@@ -734,6 +734,13 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task list]')), 'none');
 });
 
+test('bodyMode for remind: list and cancel take no body, a schedule captures one', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind list]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind cancel abc]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind in 20m] x')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind every 2h] x')), 'greedy');
+});
+
 test('bodyMode per sub-verb for team / memory / context', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team set-lead bob]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team create shop root:/proj/shop]')), 'greedy');
@@ -869,10 +876,11 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create'
     || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'));
-  const deliberatelyNarrowed = (i) => i.type === 'team'
+  const deliberatelyNarrowed = (i) => (i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
     && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)
-    && !(i.body || '').trim();
+    && !(i.body || '').trim())
+    || (i.type === 'remind' && ['list', 'cancel'].includes(String(i.spec || '').split(/\s+/)[0]));
   let sawTerm = 0;
   for (const line of CORPUS) {
     const i = parseIntent(line);

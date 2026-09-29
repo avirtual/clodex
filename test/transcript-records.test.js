@@ -491,6 +491,13 @@ test('segmentsOf: an unclosed greedy body is open', () => {
   assert.deepStrictEqual(segs.map((s) => [s.kind, s.body, s.open]), [['intent', 'still writing\nmore', true]]);
 });
 
+test('segmentsOf: a bare remind list as the reply\'s last line is not open', () => {
+  const segs = segmentsOf('Checking my schedules.\n[agent:remind list]');
+  const card = segs.find((s) => s.kind === 'intent');
+  assert.strictEqual(card.verb, 'remind');
+  assert.strictEqual(card.open, false);
+});
+
 test('segmentsOf: a filed stand-in becomes a filed card whose head is parsed from the stand-in line', () => {
   const segs = segmentsOf(`[agent:dm clodex] Design saved — 6.2 KB filed at ${FILED}\n[agent:end]`);
   assert.deepStrictEqual(segs, [{ kind: 'intent', verb: 'dm', sub: null, fields: { target: 'clodex', urgent: false }, body: null, state: 'filed',

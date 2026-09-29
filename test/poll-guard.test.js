@@ -152,14 +152,17 @@ test("a subagent's calls neither deny nor advance the count", () => {
   assert.ok(denied(next[0]), 'ENTER: the main run really was still at two — this is its third call');
 });
 
-test('no CLODEX_TICKET, no deny — every other seat is untouched', () => {
+test('no CLODEX_TICKET still denies, naming the seat instead of a ticket', () => {
   // Spawned with CLODEX_TICKET actively removed rather than emptied: an
   // inherited one from the seat running this suite would pass for the wrong reason.
   const { script } = seat();
   const steps = Array.from({ length: 6 }, () => bash('git status'));
   const out = sequence(script, steps, { CLODEX_TICKET: undefined });
-  assert.deepStrictEqual(out, [null, null, null, null, null, null],
-    'six identical calls, silent every time');
+  assert.deepStrictEqual(out.map(denied), [false, false, true, true, true, true],
+    'the third identical call and every one after it is denied');
+  for (const o of out.slice(2)) {
+    assert.match(o.permissionDecisionReason, /^seat agent1: third identical Bash call in a row \(git status\)/);
+  }
 });
 
 test('a corrupt state file reads as empty: the next call counts as the first', () => {
@@ -224,11 +227,9 @@ test('a malformed payload passes the call through rather than denying it', () =>
   }
 });
 
-test('the guard is generated, gated on CLODEX_TICKET before stdin, and exits 0', () => {
+test('the guard is generated and exits 0', () => {
   const { script } = seat();
   const body = fs.readFileSync(script, 'utf-8');
-  assert.match(body.split('\n')[1], /^\[ -n "\$CLODEX_TICKET" \] \|\| exit 0$/,
-    'the ticket gate must be the first statement, ahead of the stdin read');
   assert.match(body, /exit 0\n$/);
   assert.ok(!/require\('\.\//.test(body), 'no relative require inside a generated body');
   assert.strictEqual(fs.statSync(script).mode & 0o777, 0o700);
