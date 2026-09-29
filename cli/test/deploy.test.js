@@ -214,6 +214,24 @@ function tmpCtxFile() {
   return path.join(dir, 'contexts.json');
 }
 
+test('deploy ssh saves into the contexts file as it is at save time, not the copy read before the deploy', async () => {
+  const contextsFile = tmpCtxFile();
+  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'x', contexts: { x: { url: 'http://x' } } }));
+  const { code, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], {
+    spawnFn: fakeSsh({}, { lines: HAPPY }),
+    probeHello: async () => {
+      fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b', token: 'tb' } } }));
+      return { app: 'clodex' };
+    },
+    contextsFile,
+  });
+  assert.strictEqual(code, 0, stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'box', 'x']);
+  assert.strictEqual(saved.contexts.b.token, 'tb');
+  assert.strictEqual(saved.current, 'b');
+});
+
 test('deploy happy path: env delivered, script on stdin, hello verified, ctx saved', async () => {
   const rec = {};
   const probeCalls = [];
