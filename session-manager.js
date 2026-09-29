@@ -3231,7 +3231,8 @@ function createSessionManager(deps) {
       const error = (r && r.error) || 'unknown error';
       log.info('worktree', `remove failed for ${worktree.path} after destroying ${name}: ${error}`);
       keepRecord();
-      // No dropRecord() here: the tree is still on disk and this record is the only thing naming it.
+      // NO dropRecord() here: the tree is still on disk and this record is the only thing naming it;
+      // the path rides the result so the failure reply can tell the operator what to remove by hand.
       return { ok: true, worktreeRemoved: false, error, path: worktree.path, live: wasLive };
     }
 
@@ -4441,7 +4442,7 @@ function createSessionManager(deps) {
       s._postClearContinuation = null;
       if (this._wire) { try { this._wire.unregisterAgent(name, { keepSpillShown: s._shuttingDown === true }); } catch {} }
       // Watcher before speaker: stop() flushes pending text, which can start a narration
-      // for the dead seat. speaker.stop() is unconditional because the speaker is box-wide.
+      // for the dead seat. The speaker's stop is unconditional because the speaker is box-wide.
       if (s.watcher) s.watcher.stop();
       try { speaker.stop(); } catch {}
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
