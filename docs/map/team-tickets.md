@@ -190,7 +190,7 @@
 |---|---|---|---|---|
 | `_handleTask` | Entry point for task intents: resolves team or solo context, adds the stale-host suffix, dispatches the sub-verb with a parkable reply | none directly (verbs mutate the board) | _soloContext, _staleHostSuffix, _taskAccept, _taskAdd | task-start.test.js solo-tickets.test.js session-manager.test.js |
 | `_resolveAssignee` | Returns who if it is a team role key or a live seat name on the team root, else null | none | _teamLiveSeatNames | task-start.test.js task-respec.test.js accept-standing-seat.test.js |
-| `_ticketAssigneeSeat` | The one ticket-to-seat resolver: role to first live seat, live pin to itself, else mint-pending or role degradation off-worktree | reads live seats and persistence | _seatMintPending, matchSeatRole | stores.test.js team-cost-wiring.test.js task-start.test.js |
+| `_ticketAssigneeSeat` | The one ticket-to-seat resolver: role to first live seat, live pin to itself, else mint-pending or role degradation off-worktree | reads live seats and persistence | _seatMintPending, matchSeatRole | team-cost-wiring.test.js task-start.test.js |
 | `_repinTicketToSeat` | Re-pins a role-assigned or dead-pinned ticket in memory to the seat delivery will reach; never pins the lead; caller saves | ticket role and assignee (in memory) | _ticketAssigneeSeat | ticket-replay.test.js task-start.test.js tickets-viewer-plugin.test.js |
 
 ### Invariants
@@ -391,7 +391,7 @@
 | `_stampTicketRevival` | write the write-once revival link (seat, session id, branch, worktree, baseSha) onto a ticket before teardown | tickets.json revival, lastActivityAt | getPersistence, ticketsStore.save | accept-standing-seat.test.js review-cost-durable.test.js |
 | `_acceptSeatFacts` | the one source of seat name, record, branch and ephemeralSeat that both accept paths read | none (reads persistence record) | getPersistence | unpinned |
 | `_finishAccept` | shared tail of every accept arm: stamp acceptance, end the loop hold, clear answered merge marks, retire reviewers, reap reminders | tickets.json acceptedAt, closedOut, loopClosedOut, mergeError, mergeWaiting | _retireReviewSeatsFor, _cancelTicketReminders, recordEvent | ticket-auto-merge.test.js |
-| `_taskAccept` | lead accept verb: validate, no-op on a loop close-out, own the no-branch arm, else hand off to the shared close-out | archives a one-shot seat, board via callees | _acceptSeatFacts, _stampTicketRevival, _finishAccept, _closeOutMergedTicket | accept-standing-seat.test.js ticket-auto-merge.test.js stores.test.js |
+| `_taskAccept` | lead accept verb: validate, no-op on a loop close-out, own the no-branch arm, else hand off to the shared close-out | archives a one-shot seat, board via callees | _acceptSeatFacts, _stampTicketRevival, _finishAccept, _closeOutMergedTicket | accept-standing-seat.test.js ticket-auto-merge.test.js |
 
 ### Invariants
 - `_taskReject` bumps reworkRound and never clears it, since that counter is the only mark separating a rejection-reopened ticket from one that never closed.
