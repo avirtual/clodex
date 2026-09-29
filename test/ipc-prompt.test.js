@@ -183,10 +183,7 @@ test('t754: the role-add row documents dispatch:/cwd: in the lead\'s prompt, gat
   }
 });
 
-// Same argument as t754 above, for t808's sandbox row: the byte-pins compare the
-// literal to GRAMMAR_LINES, so a row missing from BOTH sides keeps them equal and
-// ships a verb no lead can discover. Measured — deleting the row from both copies
-// left every byte-pin green. Pinned on the two facts a lead
+// Pinned on the two facts a lead
 // gets wrong without them: that the token is in the FILE and not in the reply.
 test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () => {
   const ROW = /^ {2}\[agent:team sandbox \[up\|rebuild\|down\|status\] \[ref:<ref>\]\]/m;
@@ -482,7 +479,7 @@ test('t1016: the superseded "terse line" hatch is gone from BOTH copies of the p
 // `<command>` is itself a legal body, so leaving them in would let the very bug
 // this pins slip through.
 test('every rendered grammar line parses, with its placeholders filled in', () => {
-  const p = buildIpcPrompt(['term', 'reboot', 'team-create', ...ALL_GATEABLE]);
+  const p = buildIpcPrompt(['term', 'reboot', 'team-create', ...ALL_GATEABLE], undefined, undefined, { teamLead: true });
   const fill = (l) => l
     .replace('<name> root:<abs-path> [lead:<seat>]', 'shop root:/tmp lead:boss')
     .replace('<command>', 'pwd')
@@ -508,6 +505,7 @@ test('every rendered grammar line parses, with its placeholders filled in', () =
   assert.ok(forms.length >= 15, `ENTER: the grammar block was found (got ${forms.length} lines)`);
   assert.ok(forms.includes('[agent:term exec] <command>'),
     'ENTER: the term form survived the split — this test exists for that row');
+  assert.ok(forms.some((f) => f.startsWith('[agent:team role-add ')), 'ENTER: the lead-only team forms are in the set');
   // The team-create form is the one whose placeholders sit INSIDE the brackets
   // beside real keyed args, so a fill that missed it would leave a line that
   // parses for the wrong reason (`root:<abs-path>` is a legal token shape).
