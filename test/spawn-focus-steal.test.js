@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  shouldFocusNewSession, decideNewSessionFocus, planNewSession,
+  shouldFocusNewSession, decideNewSessionFocus, planNewSession, RESPAWN_FOCUS_MS, respawnFocusWindow,
 } = require('../renderer/lib/focus-policy');
 const { isDraftOpen } = require('../proxy-util');
 
@@ -285,15 +285,62 @@ test('an expected exit of the focused seat is remembered and handed to the polic
   const src = read('renderer/renderer.js');
   const exit = src.match(/window\.api\.onSessionExit\([\s\S]*?\n\}\);/);
   assert.ok(exit, 'ENTER: the session-exit handler is still there to check');
-  const remember = exit[0].indexOf('respawnFocus.add(name)');
+  const remember = exit[0].indexOf('respawnFocus.set(name, Date.now())');
   assert.ok(remember > 0, 'the exit handler must remember the focused seat');
   assert.ok(remember < exit[0].indexOf('removeSession(name)'),
     'and must read activeSession BEFORE removeSession moves it off the exiting seat');
-  assert.match(exit[0], /if \(activeSession === name && meta && meta\.expected[^\n]*\) respawnFocus\.add\(name\);/);
+  assert.match(exit[0], /if \(activeSession === name && meta && meta\.expected[^\n]*\) respawnFocus\.set\(name, Date\.now\(\)\);/);
+  assert.match(src, /^const respawnFocus = new Map\(\);$/m);
   const fn = src.match(/async function switchToNewSession[\s\S]*?\n\}/);
   assert.ok(fn, 'ENTER: switchToNewSession is still the create-time activation step');
-  assert.match(fn[0], /const wasFocused = respawnFocus\.has\(name\) \? name : null;/);
+  assert.match(fn[0], /const wasFocused = respawnFocusWindow\(respawnFocus, name, Date\.now\(\)\);/);
   assert.match(fn[0], /planNewSession\(\{[^}]*\bwasFocused\b/);
+});
+
+function loadSwitchToNewSession({ respawnFocus, now, switched }) {
+  const fn = read('renderer/renderer.js').match(/async function switchToNewSession[\s\S]*?\n\}/);
+  assert.ok(fn, 'ENTER: switchToNewSession is still the create-time activation step');
+  const env = {
+    respawnFocus, respawnFocusWindow, planNewSession,
+    activeSession: 'clodex',
+    window: { api: {} },
+    sessions: new Map([['seat', {}]]),
+    switchSession: (n) => switched.push(n),
+    fitSessionInBackground() {},
+    Date: { now: () => now },
+  };
+  const names = Object.keys(env);
+  return new Function(...names, `${fn[0]}\nreturn switchToNewSession;`)(...names.map((n) => env[n]));
+}
+
+test('a background respawn inside the window takes focus back', async () => {
+  const switched = [];
+  const respawnFocus = new Map([['seat', 1_000]]);
+  const go = loadSwitchToNewSession({ respawnFocus, now: 1_000 + RESPAWN_FOCUS_MS - 1, switched });
+  assert.strictEqual(await go('seat', { agentInitiated: true }), true);
+  assert.deepStrictEqual(switched, ['seat']);
+  assert.strictEqual(respawnFocus.has('seat'), false, 'the hint is spent on the respawn it was for');
+});
+
+test('a background reattach of the same name after the window does not steal focus', async () => {
+  const switched = [];
+  const respawnFocus = new Map([['seat', 1_000]]);
+  const go = loadSwitchToNewSession({ respawnFocus, now: 1_000 + 11_000, switched });
+  assert.strictEqual(await go('seat', { agentInitiated: true }), false);
+  assert.deepStrictEqual(switched, []);
+});
+
+test('respawnFocusWindow honours a fresh entry, refuses a stale one, and leaves a fresh unrelated entry alone', () => {
+  assert.strictEqual(RESPAWN_FOCUS_MS, 10_000);
+  const fresh = new Map([['seat', 0], ['other', 5_000]]);
+  assert.strictEqual(respawnFocusWindow(fresh, 'seat', 9_999), 'seat');
+  assert.deepStrictEqual([...fresh], [['other', 5_000]]);
+  const stale = new Map([['seat', 0], ['other', 5_000]]);
+  assert.strictEqual(respawnFocusWindow(stale, 'seat', 11_000), null);
+  assert.deepStrictEqual([...stale], [['other', 5_000]]);
+  const old = new Map([['gone', 0], ['other', 5_000]]);
+  assert.strictEqual(respawnFocusWindow(old, 'seat', 12_000), null);
+  assert.deepStrictEqual([...old], [['other', 5_000]], 'an entry past the window is pruned');
 });
 
 test('session:draftOpen is contracted, so the renderer can actually ask', () => {

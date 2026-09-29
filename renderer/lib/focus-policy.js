@@ -67,4 +67,15 @@ async function planNewSession(opts = {}) {
   return { focus: target !== null, fit: true };
 }
 
-module.exports = { shouldFocusNewSession, decideNewSessionFocus, planNewSession };
+const RESPAWN_FOCUS_MS = 10_000;
+
+function respawnFocusWindow(map, name, now) {
+  const at = map.get(name);
+  map.delete(name);
+  for (const [other, t] of map) if (now - t >= RESPAWN_FOCUS_MS) map.delete(other);
+  return at !== undefined && now - at < RESPAWN_FOCUS_MS ? name : null;
+}
+
+module.exports = {
+  shouldFocusNewSession, decideNewSessionFocus, planNewSession, RESPAWN_FOCUS_MS, respawnFocusWindow,
+};
