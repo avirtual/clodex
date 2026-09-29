@@ -166,28 +166,28 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const refreshTrayMenu = seams.refreshTrayMenu || (() => {});
   const scheduleTrayRefresh = seams.scheduleTrayRefresh || (() => {});
   const restartHost = seams.restartHost || (() => {});
-// Separate from restartHost: a human pressing a control restarts immediately, while
-// [agent:reboot] fires mid-turn and waits for the seats to settle.
+  // Separate from restartHost: a human pressing a control restarts immediately, while
+  // [agent:reboot] fires mid-turn and waits for the seats to settle.
   const restartHostWhenIdle = seams.restartHostWhenIdle || restartHost;
   const restartUnavailable = seams.restartUnavailable || (() => null);
   const pathMergeFailed = !!seams.pathMergeFailed;
-// Granted on a headless host too: that hands `sandbox:*` (docker and container
-// lifecycle on this box) to a web client.
+  // Granted on a headless host too: that hands `sandbox:*` (docker and container
+  // lifecycle on this box) to a web client.
   const enableSandbox = seams.enableSandbox !== false;
-// Desktop-only, and this flag is the boundary, not the renderer's `available()`:
-// web-host.js dispatches any registered channel by name without consulting api-contract.
+  // Desktop-only, and this flag is the boundary, not the renderer's `available()`:
+  // web-host.js dispatches any registered channel by name without consulting api-contract.
   const enableDrawerServices = seams.enableDrawerServices !== false;
   const enableCtl = seams.enableCtl !== false;
-// Split off enableDrawerServices and defaults ON: `wterm:*` spawns `$SHELL` on this box, which
-// the ungated `session:create` (type 'bash') already reaches. Still gates the pty service.
+  // Split off enableDrawerServices and defaults ON: `wterm:*` spawns `$SHELL` on this box, which
+  // the ungated `session:create` (type 'bash') already reaches. Still gates the pty service.
   const enableLocalTerminal = seams.enableLocalTerminal !== false;
 
   const enableConsole = seams.enableConsole !== false;
 
   const enableAccounts = seams.enableAccounts !== false;
 
-// A getter: web-host.js starts after createEngine returns, so nothing exists to pass now.
-// Electron omits the seam and reports null (no web host).
+  // A getter: web-host.js starts after createEngine returns, so nothing exists to pass now.
+  // Electron omits the seam and reports null (no web host).
   const getWebInfo = seams.webInfo || (() => null);
 
   const logFile = seams.logFile || null;
@@ -1749,6 +1749,8 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   getUserDataPath: () => userDataPath,
 });
 
+
+
 let peerManager = null;
 let tunnelManager = null;
 let webTunnelManager = null;
@@ -2027,6 +2029,7 @@ const toolCache = createToolCache({ whichBin });
   manager.startPendingPoll();
   manager.startTicketWatchdog();
 
+
   remindScheduler = createRemindScheduler({
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -2041,6 +2044,8 @@ const toolCache = createToolCache({ whichBin });
   remindScheduler.start();
 
   log.info('app', `startup — Clodex ${appVersion} engine up (pid ${process.pid})`);
+
+
 
   logStartupDiagnostics();
 
@@ -2080,6 +2085,7 @@ const toolCache = createToolCache({ whichBin });
   cleanupOldMessages();
   const msgCleanupTimer = setInterval(cleanupOldMessages, MSG_CLEANUP_INTERVAL);
   registry.cleanup();
+
 
   try {
     const candidateNames = new Set([

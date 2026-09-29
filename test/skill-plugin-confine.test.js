@@ -168,9 +168,9 @@ test('the spill join documents why it does NOT need confine()', () => {
   // say which, or the next reader inherits the same wrong model.
   const spill = bodyOf('spillToFile');
   assert.ok(spill.includes('path.join(MSG_DIR, recipient)'), 'the join is still here');
-  // Asserting on the CLAIM, not on a substring: the corrected comment quotes
-  // the old phrase in order to negate it ("...does not make them safe as a
-  // path"), so a bare `doesNotMatch(/safe as a path/)` fails on the fix itself.
+  // Asserting on the CLAIM, not on a substring: a corrected comment may quote
+  // the old phrase to negate it ("...does not make them safe as a path"), and a
+  // bare `doesNotMatch(/safe as a path/)` would red that correct wording.
   assert.doesNotMatch(spill, /(?<!does not make them )safe as a path/,
     'the false inference must not survive as an assertion');
   assert.match(spill, /dot-only|t115/,
