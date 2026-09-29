@@ -437,6 +437,51 @@ no-op, not an error, on a ticket the loop already closed out: it says so and
 changes nothing. A merged ticket still owing that step ten minutes later gets one
 reminder, and only one: leaving it open is a legitimate way to keep the tree.
 
+**What `task accept` tears down.** The reply opens with one of five arms, and
+only the merged arm removes anything:
+
+| reply says | arm | closes the ticket out? |
+|---|---|---|
+| `accepted — no ticket branch recorded` | worked in the shared checkout, so there is no tree or ref to remove; a one-shot seat is archived, any other seat left as it is | yes |
+| `accepted, but the merge check could NOT run` | git could not answer; treated as not merged | no — accept again once it can |
+| `accepted, but branch X is NOT merged into` | the branch is not in the trunk | no — merge it, then accept again |
+| `stamped this ticket MERGE FAILED at` | the branch is an ancestor, but the loop gave up at a merge step, so that proves nothing | yes, and the mark is cleared — except on `revert-blocked`, where accepting again is the one thing not to do |
+| `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with no `MERGE FAILED` clause | merged: the matrix below | yes |
+
+On the merged arm, what goes depends on the seat and the tree:
+
+| on a merged branch | seat | worktree | branch |
+|---|---|---|---|
+| loop-minted seat, tree clean (or no tree recorded) | retired, record dropped (kept only if the seat had already exited and the removal then failed) | removed | deleted — refused if that removal failed |
+| loop-minted seat, tree dirty | archived, only if still running | kept | kept |
+| loop-minted seat, tree unreadable | archived, only if still running | kept | delete attempted — usually refused |
+| standing assignee, or no record — tree never inspected | untouched | kept | delete attempted — usually refused |
+
+- A branch delete ordinarily fails wherever the tree survived: `git branch -d`
+  refuses a branch any worktree still has checked out, and a tree removed by
+  hand leaves a stale registration that only `git worktree prune` releases.
+  Treat `could NOT be deleted` as a live ref.
+- Row 2 keeps the branch on purpose, so a second accept after you commit or
+  clear that tree can finish the job. On row 4 the teardown gate never opens,
+  however often you accept: clean that tree up yourself.
+- A failed removal on row 1 can leave the tree with nothing naming it but the
+  reply, because a live seat's record is dropped before the tree is touched.
+  Copy the path out of the reply; `tickets.json` keeps it as
+  `revival.worktree`, written once per ticket.
+- `!! MERGE FAILED` tears down no tree and no branch unless the branch is
+  demonstrably empty (0 commits against its recorded fork point). The loop
+  undoes a red merge with `git revert -m 1`, which leaves the merge commit an
+  ancestor, so the ancestor test answers merged over work no longer in the
+  trunk's tree. The reply names the failing step: on `suite` the loop merged
+  and reverted — confirm the trunk still has the merge; on `revert-blocked` it
+  merged and deliberately did not revert, so the trunk has it and a revert is
+  owed — revert and re-review, never accept again; on `unexpected` the
+  escalation says whether a merge was made; on any other step no merge commit
+  was made.
+- A commit count is evidence only against the ticket's recorded fork point.
+  Against a fallback base the reply says UNKNOWN, which is not "empty": a
+  fast-forwarded branch and one that never committed both count 0 there.
+
 ### 4. Project knowledge — the one file you are expected to write
 
 The role prompts tell a hand how to *be* a hand. They cannot tell it that your

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Team lead prompt: 14 KB, down from 35 KB — the `task accept` teardown tables and the reject/respec essays are one paragraph each (the teardown matrix now lives in `docs/teams.md`); every verb, ruling and carve-out a lead must follow is unchanged.
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 
 ## 5.92.0 — 2026-09-29
