@@ -68,6 +68,18 @@ test('every hand prompt names the agents in the QUALIFIED form that dispatches',
   }
 });
 
+test('every hand prompt appends its CHANGELOG bullet at the end of ## Unreleased, not under the heading', () => {
+  assert.ok(HAND_PROMPTS.length >= 3, 'ENTER: the shipped hand prompts are listed, or this loop asserts nothing');
+  for (const file of HAND_PROMPTS) {
+    const text = fs.readFileSync(file, 'utf-8');
+    const label = path.relative(path.join(__dirname, '..'), file);
+    assert.ok(text.includes('appended as the last line of the'),
+      `${label}: a bullet appended at the end of the section merges cleanly through the loop's union`);
+    assert.ok(!text.includes('immediately after the literal'),
+      `${label}: a bullet directly under the heading is the placement that escalates the CHANGELOG merge`);
+  }
+});
+
 test('every hand template grants both agents — shipped and every kit', () => {
   const want = ['clodex-redproof', 'clodex-locate'];
   const shipped = JSON.parse(fs.readFileSync(LIB_HAND, 'utf-8'));

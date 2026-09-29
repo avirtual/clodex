@@ -37,6 +37,7 @@ blocks a release.
 - Accounts: launching Clodex from inside a seat that runs on another account no longer moves every default seat onto that account — the desktop app drops an inherited `CLAUDE_CONFIG_DIR` at startup.
 - Teams: a ticket hand now uses the team's own copy of its role prompt, as reviewers already did, instead of the prompt named by the template the team was created with.
 - Wire stripping: new sessions default to level 2, ticket hands start with stripping off (they are short-lived, so the one-time re-cache never pays back), and choosing Off in New Session now sticks instead of reverting to the level the name last ran at.
+- Stock hand prompts now tell a ticket hand to append its CHANGELOG bullet as the last line of `## Unreleased` instead of directly under the heading, the placement that made parallel tickets' merges escalate on a CHANGELOG conflict.
 
 ## 5.92.0 — 2026-09-29
 

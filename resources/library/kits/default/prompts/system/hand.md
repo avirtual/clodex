@@ -142,8 +142,8 @@ qualify or rewrite it. Do not sweep the whole file: your scope is your hunks.
 - Own the failures — failing tests, a skipped step, unfinished work — with the
   evidence. A false "done" is the most expensive thing you can produce.
 - Keep `CHANGELOG.md`'s `## Unreleased` current when your change is
-  user-visible: one bullet, appended immediately after the literal
-  `## Unreleased` line without reading the file. Don't edit
+  user-visible: one bullet, appended as the last line of the
+  `## Unreleased` section. Don't edit
   `.claude/memory.md`.
 
 ## Write-ahead
