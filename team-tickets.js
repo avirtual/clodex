@@ -9452,9 +9452,9 @@ function createTicketMethods(deps, shared) {
         // arm is TERMINAL and therefore clears the mark it just acted on, so
         // without a stamp nothing durable would say a check is still owed — a
         // lead interrupted before the second accept would find a closed-out
-        // ticket, a live branch, and no trace of why. The revival stamp is
-        // already the hand-read fallback the lead prompt points at for the
-        // worktree path, so the trace belongs on it rather than in a new field.
+        // ticket, a live branch, and no trace of why. The revival stamp is the
+        // record `docs/teams.md`'s teardown matrix names for the worktree path,
+        // so the trace belongs on it rather than in a new field.
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true, mergeVetoed: mergeStamp }, ticket.id);
         // …but `_stampTicketRevival` is write-once (`!t.revival`), so on a ticket
         // ALREADY stamped by an earlier retire the call above writes nothing, and

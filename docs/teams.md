@@ -437,7 +437,7 @@ no-op, not an error, on a ticket the loop already closed out: it says so and
 changes nothing. A merged ticket still owing that step ten minutes later gets one
 reminder, and only one: leaving it open is a legitimate way to keep the tree.
 
-**What `task accept` tears down.** The reply opens with one of five arms, and
+**What `task accept` tears down.** The reply carries one of five arms, and
 only the merged arm removes anything:
 
 | reply says | arm | closes the ticket out? |
@@ -445,7 +445,7 @@ only the merged arm removes anything:
 | `accepted — no ticket branch recorded` | worked in the shared checkout, so there is no tree or ref to remove; a one-shot seat is archived, any other seat left as it is | yes |
 | `accepted, but the merge check could NOT run` | git could not answer; treated as not merged | no — accept again once it can |
 | `accepted, but branch X is NOT merged into` | the branch is not in the trunk | no — merge it, then accept again |
-| `stamped this ticket MERGE FAILED at` | the branch is an ancestor, but the loop gave up at a merge step, so that proves nothing | yes, and the mark is cleared — except on `revert-blocked`, where accepting again is the one thing not to do |
+| `stamped this ticket MERGE FAILED at` | the branch is an ancestor, but the loop gave up at a merge step, so that proves nothing | yes; the mark is cleared on every step. On `revert-blocked` the branch is already in the trunk, so a second accept is the one thing not to do |
 | `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with no `MERGE FAILED` clause | merged: the matrix below | yes |
 
 On the merged arm, what goes depends on the seat and the tree:
@@ -461,12 +461,13 @@ On the merged arm, what goes depends on the seat and the tree:
   refuses a branch any worktree still has checked out, and a tree removed by
   hand leaves a stale registration that only `git worktree prune` releases.
   Treat `could NOT be deleted` as a live ref.
-- Row 2 keeps the branch on purpose, so a second accept after you commit or
-  clear that tree can finish the job. On row 4 the teardown gate never opens,
-  however often you accept: clean that tree up yourself.
-- A failed removal on row 1 can leave the tree with nothing naming it but the
-  reply, because a live seat's record is dropped before the tree is touched.
-  Copy the path out of the reply; `tickets.json` keeps it as
+- The `tree dirty` row keeps the branch on purpose, so a second accept after
+  you commit or clear that tree can finish the job. On the `standing assignee`
+  row the teardown gate never opens, however often you accept: clean that tree
+  up yourself.
+- A failed removal on the `tree clean` row can leave the tree with nothing
+  naming it but the reply, because a live seat's record is dropped before the
+  tree is touched. Copy the path out of the reply; `tickets.json` keeps it as
   `revival.worktree`, written once per ticket.
 - `!! MERGE FAILED` tears down no tree and no branch unless the branch is
   demonstrably empty (0 commits against its recorded fork point). The loop
