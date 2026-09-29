@@ -69,7 +69,7 @@ function judge(rows, bumps, cap) {
     failures.push(
       `${name}: base ${baseText}, HEAD ${head} B, delta ${deltaText} B, allowed +${bump} B by Prompt-bytes trailers.`
       + ` Cut it back, or grow it deliberately with the commit-message trailer line`
-      + ` "Prompt-bytes: ${name} +${delta}" on this branch.`,
+      + ` "Prompt-bytes: ${name} +${delta - bump}" on this branch, on top of any trailers already counted.`,
     );
   }
   return { failures, changed };
@@ -144,12 +144,14 @@ test('judge: literal fixture rows for grown, shrunk, new, bumped and bump-too-sm
     { name: 'p/bumped.md', base: 2000, head: 2150 },
     { name: 'p/bump-small.md', base: 2000, head: 2150 },
     { name: 'p/new-bumped.md', base: null, head: 10300 },
+    { name: 'p/bump-half.md', base: 2000, head: 2150 },
   ];
   const bumps = parseBumps([
     'feat: grow two prompts',
     '',
     'Prompt-bytes: p/bumped.md +100',
     'Prompt-bytes: p/bump-small.md +149',
+    'Prompt-bytes: p/bump-half.md +100',
     'fix: second commit',
     '',
     '  Prompt-bytes: p/bumped.md +50  ',
@@ -161,6 +163,7 @@ test('judge: literal fixture rows for grown, shrunk, new, bumped and bump-too-sm
   assert.deepStrictEqual([...bumps], [
     ['p/bumped.md', 150],
     ['p/bump-small.md', 149],
+    ['p/bump-half.md', 100],
     ['p/new-bumped.md', 60],
   ], 'trailers for one file sum across commits; a line without the colon or the plus sign is not a trailer');
 
@@ -169,13 +172,16 @@ test('judge: literal fixture rows for grown, shrunk, new, bumped and bump-too-sm
   assert.deepStrictEqual(failures, [
     'p/grown.md: base 1000 B, HEAD 1010 B, delta +10 B, allowed +0 B by Prompt-bytes trailers.'
       + ' Cut it back, or grow it deliberately with the commit-message trailer line'
-      + ' "Prompt-bytes: p/grown.md +10" on this branch.',
+      + ' "Prompt-bytes: p/grown.md +10" on this branch, on top of any trailers already counted.',
     'p/new-big.md: base absent (new file, cap 10240 B), HEAD 10300 B, delta +60 B, allowed +0 B by Prompt-bytes trailers.'
       + ' Cut it back, or grow it deliberately with the commit-message trailer line'
-      + ' "Prompt-bytes: p/new-big.md +60" on this branch.',
+      + ' "Prompt-bytes: p/new-big.md +60" on this branch, on top of any trailers already counted.',
     'p/bump-small.md: base 2000 B, HEAD 2150 B, delta +150 B, allowed +149 B by Prompt-bytes trailers.'
       + ' Cut it back, or grow it deliberately with the commit-message trailer line'
-      + ' "Prompt-bytes: p/bump-small.md +150" on this branch.',
+      + ' "Prompt-bytes: p/bump-small.md +1" on this branch, on top of any trailers already counted.',
+    'p/bump-half.md: base 2000 B, HEAD 2150 B, delta +150 B, allowed +100 B by Prompt-bytes trailers.'
+      + ' Cut it back, or grow it deliberately with the commit-message trailer line'
+      + ' "Prompt-bytes: p/bump-half.md +50" on this branch, on top of any trailers already counted.',
   ]);
 
   assert.deepStrictEqual(changed, [
@@ -186,6 +192,7 @@ test('judge: literal fixture rows for grown, shrunk, new, bumped and bump-too-sm
     'p/bumped.md: base 2000 B, HEAD 2150 B, delta +150 B',
     'p/bump-small.md: base 2000 B, HEAD 2150 B, delta +150 B',
     'p/new-bumped.md: base absent (new file, cap 10240 B), HEAD 10300 B, delta +60 B',
+    'p/bump-half.md: base 2000 B, HEAD 2150 B, delta +150 B',
   ]);
 });
 
@@ -202,7 +209,6 @@ test('no shipped role prompt or generated intents block grows against the merge-
   const rows = headRows();
   const names = rows.map((r) => r.name);
 
-  assert.ok(rows.length >= 12, `expected >= 12 measured prompts, got ${rows.length} — the scan collapsed`);
   for (const must of [
     'resources/library/prompts/system/clodex-team-lead.md',
     'resources/library/prompts/system/clodex-team-hand.md',

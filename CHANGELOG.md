@@ -20,6 +20,8 @@ blocks a release.
 
 - Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
 
+- Lead prompt: `[agent:task …]` is named as a team intent again, the MERGE FAILED / no-commits exception and the docs/teams.md pointer are stated precisely, and the default kit's lead prompt is byte-pinned to the library one.
+
 ## 5.92.0 — 2026-09-29
 
 - Renderer: the 💥 chip and its panel count "genuine" busts by one rule; bust/help/selection popovers recover from a failed fetch instead of sticking on Loading or clearing a badge they could not read; strip, history and hold menus act on the session they were opened for even if the active session changed; the session-info popover closes when its session's row goes; the selection badge follows a session switch; files rows keep their working directory across a failed open; the voice picker shows a stored voice the system no longer lists.

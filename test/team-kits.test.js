@@ -68,6 +68,14 @@ test('kits/default/prompts/system/hand.md is byte-identical to the library hand 
     + 'would boot on a different brief from a clodex-kit team\'s hand, with nothing reporting it');
 });
 
+test('kits/default/prompts/system/lead.md is byte-identical to the library lead prompt', () => {
+  assert.strictEqual(
+    fs.readFileSync(path.join(KITS, 'default', 'prompts', 'system', 'lead.md'), 'utf-8'),
+    fs.readFileSync(path.join(LIB, 'prompts', 'system', 'clodex-team-lead.md'), 'utf-8'),
+    'the default kit\'s lead prompt drifted from the library one — a default-kit team\'s lead '
+    + 'would boot on a different brief from a clodex-kit team\'s lead, with nothing reporting it');
+});
+
 test('the clodex kit\'s roles are STOCK_ROLE_DEFS verbatim', () => {
   assert.deepStrictEqual(readKitJson('clodex').roles, STOCK_ROLE_DEFS);
 });
