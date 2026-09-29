@@ -379,7 +379,7 @@ async function nodeTest(store, args, flags, printer, io) {
 
 // Shared wire-verb wrapper: resolve → open transport → client → run → close.
 async function withWire(flags, io, fn) {
-  const store = safeLoad(io);
+  const store = contexts.loadOrEmpty(io.contextsFile, { readOnly: true });
   const ctx = contexts.resolve(store, { ctxName: flags.ctx || null, env: io.env || process.env, flags });
   const t = await openTransport(ctx, { spawnFn: io.spawnFn });
   try {
@@ -389,12 +389,6 @@ async function withWire(flags, io, fn) {
   } finally {
     try { t.close(); } catch {}
   }
-}
-
-// A load that tolerates an absent file (flags/env may fully supply the context).
-function safeLoad(io) {
-  try { return contexts.load(io.contextsFile, { warn: () => {} }); }
-  catch { return { current: null, contexts: {} }; }
 }
 
 // PARSE_OPTS is exported for the in-process REPL (ctl-service.js), which parses

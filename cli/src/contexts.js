@@ -43,10 +43,23 @@ function save(store, file = contextsPath()) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const body = JSON.stringify({ current: store.current || null, contexts: store.contexts || {} }, null, 2) + '\n';
-  // Write then chmod: mkdirSync mode is umask-masked and an existing file keeps
-  // its old mode, so assert 0600 explicitly rather than trust the open mode.
-  fs.writeFileSync(file, body, { mode: 0o600 });
+  const tmp = `${file}.tmp-${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, body, { mode: 0o600 });
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch {}
+    throw e;
+  }
   try { fs.chmodSync(file, 0o600); } catch {}
+}
+
+function loadOrEmpty(file = contextsPath(), { warn = () => {}, readOnly = false } = {}) {
+  try { return load(file, { warn }); }
+  catch (e) {
+    if (readOnly) return { current: null, contexts: {} };
+    throw e;
+  }
 }
 
 // Validate + normalize one context entry (as stored). Exactly one transport.
@@ -241,5 +254,5 @@ function defaultWarn(msg) { process.stderr.write(`clodexctl: warning: ${msg}\n`)
 // test/stores.test.js, which explains why widening this surface is how a leaf
 // stops being a leaf).
 module.exports = {
-  cliDir, contextsPath, load, save, validateEntry, resolve,
+  cliDir, contextsPath, load, loadOrEmpty, save, validateEntry, resolve,
 };
