@@ -25221,6 +25221,13 @@ ${i3.join("\n")}
           subagents: Array.isArray(r.sub_agents) ? r.sub_agents.map((s) => shapeSubagent(s, now)).filter(Boolean) : []
         };
       }
+      function stampServedAge(p, now = Date.now()) {
+        if (!p || typeof p.ts !== "number") return p;
+        return { ...p, ageMs: Math.max(0, now - p.ts) };
+      }
+      function proxyReceivedAt(p, now = Date.now()) {
+        return p && typeof p.ageMs === "number" ? now - p.ageMs : now;
+      }
       module.exports = {
         PROXY_AGENT_PREFIX,
         mintProxyAgent,
@@ -25228,6 +25235,8 @@ ${i3.join("\n")}
         pickProxyRecord,
         shapeProxyRecord,
         shapeSubagent,
+        stampServedAge,
+        proxyReceivedAt,
         shapeQuota,
         quotaChip,
         quotaChips,
@@ -48219,7 +48228,7 @@ ${detail}` });
       var { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
-      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput } = require_proxy_util();
+      var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput, proxyReceivedAt } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
       var { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
       var { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require_render_html();
@@ -50708,7 +50717,7 @@ ${detail}` });
         if (window.api.getProxySnapshot) {
           window.api.getProxySnapshot(name).then((p) => {
             if (!p) return;
-            proxyState.set(name, { payload: p, at: typeof p.ts === "number" ? p.ts : Date.now() });
+            proxyState.set(name, { payload: p, at: proxyReceivedAt(p) });
             applyWarmBadge(name);
             if (activeSession === name) renderProxyBar();
           }).catch(() => {
@@ -52876,7 +52885,7 @@ ${detail}` });
         return next.length > 0 || latest != null;
       }
       window.api.onSessionProxy((name, payload) => {
-        proxyState.set(name, { payload, at: payload && typeof payload.ts === "number" ? payload.ts : Date.now() });
+        proxyState.set(name, { payload, at: proxyReceivedAt(payload) });
         applyWarmBadge(name);
         applySubagents(name);
         refreshQuotaChip();
@@ -56937,7 +56946,7 @@ ${res.stderr}` : "");
           ctxTokens.set(entry.name, { used: entry.ctxTok, size: entry.ctxSize, cost: typeof entry.ctxCost === "number" ? entry.ctxCost : null, model: entry.ctxModel || null });
         }
         if (entry.proxy) {
-          proxyState.set(entry.name, { payload: entry.proxy, at: typeof entry.proxy.ts === "number" ? entry.proxy.ts : Date.now() });
+          proxyState.set(entry.name, { payload: entry.proxy, at: proxyReceivedAt(entry.proxy) });
           applyWarmBadge(entry.name);
         }
         if (typeof entry.pendingCount === "number") applyPendingBadge(entry.name, entry.pendingCount);
