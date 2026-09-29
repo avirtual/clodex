@@ -181,6 +181,7 @@ const OWN_SCANNERS = [
   'test/packaging-allowlist.test.js',
   'test/plugin-web-parity.test.js',
   'test/preserve-across-restart.test.js',
+  'test/prompt-ratchet.test.js',
   'test/release-script.test.js',
   'test/sigkill-pid-census.test.js',
   'test/source-control-bytes.test.js',
