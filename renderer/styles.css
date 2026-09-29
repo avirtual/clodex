@@ -6261,13 +6261,14 @@ body.web-frontend #sidebar-header {
 .tr-run-toggle:hover { color: var(--text-secondary); }
 .tr-run-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .tr-turn-fold { display: flex; align-items: baseline; gap: var(--sp-2); width: 100%; min-width: 0; padding: 0; border: none; background: none; font: inherit; text-align: left; color: var(--text-tertiary); cursor: pointer; user-select: none; white-space: nowrap; }
-.tr-turn > .tr-row.tr-turn-fold { margin-left: 0; }
+.tr-turn > .tr-row.tr-turn-fold,
+.tr-turn > .tr-row.tr-turn-end-prose { margin-left: 0; }
 .tr-turn-fold:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .tr-turn-fold:hover { color: var(--text-secondary); }
 .tr-turn-fold .tr-turn-fold-line { display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--sp-2); flex: 1; min-width: 0; overflow: hidden; border-left: none; }
 .tr-turn-fold-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tr-turn-fold-stats { flex: none; }
-.tr-turn-folded > :not(.tr-turn-fold) { display: none; }
+.tr-turn-folded > :not(.tr-turn-fold):not(.tr-turn-end-prose) { display: none; }
 
 .tr-boundary {
   display: flex;

@@ -7,7 +7,7 @@ const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
-const { surfaceOf, segmentSurface, turnDriver, turnFolds } = require('./lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('./lib/transcript-surface');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
@@ -1094,7 +1094,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
   }
 
-  function rowItems(records, attached, open, tail, live, m, hideTools) {
+  function rowItems(records, attached, open, tail, live, m, hideTools, end) {
     const items = [];
     for (const run of toolRuns(records)) {
       if (run.tools) {
@@ -1123,10 +1123,13 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         });
         continue;
       }
+      const rest = end && end.rec === r ? (r.segments || []).filter((s) => !end.segs.includes(s)) : null;
+      if (rest && !rest.length) continue;
+      const base = rest ? { ...r, segments: rest } : r;
       const full = m === 'internals' || open;
-      const omit = !full && hasInternalSeg(r);
-      const view = omit ? { ...r, segments: r.segments.filter((s) => segmentSurface(s) === 'conversation') } : r;
-      const sig = recSig(r) + extra + (hasInternalSeg(r) ? (full ? '|full' : '|conv') : '');
+      const omit = !full && hasInternalSeg(base);
+      const view = omit ? { ...base, segments: base.segments.filter((s) => segmentSurface(s) === 'conversation') } : base;
+      const sig = recSig(r) + extra + (hasInternalSeg(base) ? (full ? '|full' : '|conv') : '') + (rest ? '|rest' : '');
       items.push({ key: r.id, sig, build: () => buildRow(doc, view, deps, att) || el(doc, 'div', 'tr-row'), after });
     }
     if (m === 'internals') {
@@ -1134,6 +1137,18 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       if (footer) items.push({ key: 'footer', sig: JSON.stringify(footer), build: () => buildFooter(doc, footer, deps) });
     } else if (tail) items.push(tail);
     return items;
+  }
+
+  function endProseItem(end) {
+    return {
+      key: 'turn-end-prose',
+      sig: `${end.rec.id}|${JSON.stringify(end.segs)}`,
+      build: () => {
+        const row = el(doc, 'div', 'tr-row tr-prose tr-segs tr-turn-end-prose');
+        appendSegments(doc, row, end.segs, deps);
+        return row;
+      },
+    };
   }
 
   function foldItem(t, unfolded) {
@@ -1201,8 +1216,9 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const unfolded = folds && openTurns.has(t.key);
           const m = unfolded ? 'internals' : mode;
           const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
-          const rows = rowItems(t.records, attached, open, tail, live, m, unfolded);
-          reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : [])] : rows);
+          const end = folds ? turnEndProse(t.records) : null;
+          const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end);
+          reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : []), ...(end ? [endProseItem(end)] : [])] : rows);
           toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
           toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
           toggleClass(c.el, 'tr-turn-cont', mode === 'conversation' && i > 0);

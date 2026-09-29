@@ -72,4 +72,14 @@ function turnFolds(records, mode) {
   return !records.some((r) => fromOperator(r) || talksBack(r) || apiErrored(r));
 }
 
-module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds };
+function turnEndProse(records) {
+  if (!Array.isArray(records)) return null;
+  const rec = records.filter((r) => r && r.kind === 'assistant').pop();
+  if (!rec || rec.apiError) return null;
+  const segs = Array.isArray(rec.segments) ? rec.segments : [{ kind: 'prose', text: rec.text }];
+  const from = segs.reduce((at, s, i) => (s && s.kind !== 'prose' ? i + 1 : at), 0);
+  const tail = segs.slice(from).filter((s) => segmentSurface(s) === CONVERSATION);
+  return tail.length ? { rec, segs: tail } : null;
+}
+
+module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse };
