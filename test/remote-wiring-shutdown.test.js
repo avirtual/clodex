@@ -6,9 +6,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createRemoteWiring } = require('../remote-wiring');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function fixture() {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'remote-wiring-shutdown-'));
+  const tmp = mkTmpRoot('remote-wiring-shutdown-');
   let srv = null;
   const deps = {
     path, fs, os,
@@ -65,7 +66,6 @@ function fixture() {
     server: () => srv,
     restore() {
       remoteMod.RemoteServer = orig;
-      fs.rmSync(tmp, { recursive: true, force: true });
     },
   };
 }
