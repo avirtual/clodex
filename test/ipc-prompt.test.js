@@ -581,8 +581,7 @@ test('exec section states that a granted command BEATS the equivalent shell line
 test('exec section says to match a command by what it DOES, not by its name', () => {
   const p = buildIpcPrompt(null, ['clodex-monitor']);
   assert.match(p, /matching a command by what it does, not by its name/);
-  assert.match(p, /Never poll or re-emit a live run: end your turn, and the result wakes you/,
-    'the blocking-wait default is the specific behaviour a monitor grant exists to replace');
+  assert.match(p, /Never poll or re-emit a live run: end your turn, and the result wakes you/);
   assert.match(p, /Check this list before you plan a job/, 'consulted at plan time, not as a fallback after a bad result');
 });
 
