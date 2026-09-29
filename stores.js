@@ -1971,7 +1971,7 @@ function initStores(userDataPath, {
       const fixIt = advice(rels.length);
       // warn, not info: a withheld upgrade was invisible for 8 days and 20
       // shipped revisions once, and the silence WAS the bug.
-      if (log) log.warn?.('seed', `${stranded.length} ${rootLabel} file(s) differ from the shipped copy and are not an unedited copy Clodex wrote there, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
+      if (log) log.warn?.('seed', `${stranded.length} ${rootLabel} file(s) differ from the shipped copy, and Clodex has no record of writing their current contents, so they will never receive shipped updates: ${rels.join(', ')}. ${fixIt}`);
       const fresh = stranded.filter((s) => reported[s.rel] !== s.shippedHash);
       if (fresh.length && notifications) {
         // Recording a hash as announced is a promise that the operator was
@@ -1983,7 +1983,7 @@ function initStores(userDataPath, {
           const rec = notifications.add({
             from: SEED_REPORT_FROM,
             workspaceId: null,
-            body: `A shipped update is being withheld from ${fresh.length} ${rootLabel} file(s) under ${destRoot}, because each differs from the shipped copy and is not an unedited copy Clodex wrote there:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${advice(fresh.length)}`,
+            body: `A shipped update is being withheld from ${fresh.length} ${rootLabel} file(s) under ${destRoot}, because each differs from the shipped copy, and Clodex has no record of writing its current contents:\n\n${fresh.map((s) => s.rel).join('\n')}\n\n${advice(fresh.length)}`,
           });
           delivered = !!(rec && notifications.list().some((n) => n.id === rec.id));
         } catch (e) { if (log) log.info?.('seed', `inbox note skipped (${e && e.message})`); }
