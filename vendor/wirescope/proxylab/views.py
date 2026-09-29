@@ -21,6 +21,24 @@ from proxylab import writer as writer_mod
 # is for eyeballs. Server-rendered, zero JS, escapes everything (titles are
 # model output). Lab-grade like the other endpoints: localhost, unauthenticated.
 
+# /_admin lists a session's subagents under its row; a long-lived seat piles
+# up days of finished surveys there. Show the recent ones, fold the rest into
+# one count+cost line (cost stays visible so the sub rows still add up).
+ADMIN_SUB_MAX_AGE_S = 86400
+ADMIN_SUB_MAX_SHOWN = 5
+
+
+def _admin_subs(subs, now=None):
+    """Split subagents into (shown, hidden) for the admin row: most recent
+    first, at most ADMIN_SUB_MAX_SHOWN, none idle past ADMIN_SUB_MAX_AGE_S."""
+    now = now or time.time()
+    ordered = sorted(subs, key=lambda sa: sa.get("last_seen") or 0, reverse=True)
+    shown = [sa for sa in ordered
+             if now - (sa.get("last_seen") or 0) <= ADMIN_SUB_MAX_AGE_S][:ADMIN_SUB_MAX_SHOWN]
+    ids = {id(sa) for sa in shown}
+    return shown, [sa for sa in ordered if id(sa) not in ids]
+
+
 def _fmt_ago(ts, now=None):
     if not ts:
         return "—"
@@ -378,6 +396,7 @@ def _render_admin_html(snap, host="", show=60, by="state"):
         # Link per-instance (sub=<agent-id|role>); prefer the author-declared
         # [agent: <name>] label, fall back to role; a short agent-id chip
         # disambiguates concurrent same-role subagents at a glance.
+        shown, hidden = _admin_subs(subs, now)
         subline = "".join(
             f'<br><span class="subagent">&#8627; '
             f'<a href="/_session?session={e(sid)}&amp;sub={e(sa.get("key") or sa.get("role"))}">'
@@ -389,7 +408,12 @@ def _render_admin_html(snap, host="", show=60, by="state"):
             + f' <span class="dim">{e(writer_mod._short_model(sa.get("model")))}'
             f' · {sa.get("requests", 0)} req · {e(_fmt_ago(sa.get("last_seen"), now))}'
             + (f' · ${sa["est_usd"]:.4f}' if sa.get("est_usd") is not None else "")
-            + f'</span></span>' for sa in subs)
+            + f'</span></span>' for sa in shown)
+        if hidden:
+            hcost = sum(sa.get("est_usd") or 0 for sa in hidden)
+            subline += (f'<br><span class="subagent dim">&#8627; +{len(hidden)} older '
+                        f'subagent{"s" if len(hidden) != 1 else ""} · ${hcost:.4f}'
+                        f' (<a href="/_status?session={e(sid)}">all</a>)</span>')
         return (
             f'<tr><td class="nowrap">{timeleft}</td>'
             f'<td class="nowrap">{ttlc}</td>'
@@ -2007,7 +2031,7 @@ def _render_timeline_html(session, report):
     crumb = '<p class="crumb"><a href="/_admin">&larr; sessions</a></p>'
     if not reqs:
         return ('<!doctype html><html><head><meta charset="utf-8">'
-                f'<title>wirescope · timeline</title><style>{_TL_CSS}</style></head>'
+                f'<title>wirescope · cost over time · {e(session[:12])}</title><style>{_TL_CSS}</style></head>'
                 f'<body>{crumb}<h1>Cost over time · {e(session)}</h1>'
                 '<p class="dim">No priced main-line requests captured for this '
                 'session yet.</p>' + foot + '</body></html>')
@@ -2057,9 +2081,9 @@ def _render_timeline_html(session, report):
     line = "".join(parts)
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>wirescope · cost over time</title><style>{_TL_CSS}</style></head><body>
+<title>wirescope · cost over time · {e(session[:12])}</title><style>{_TL_CSS}</style></head><body>
 {crumb}
-<h1>Where the money went · {e(session)}</h1>
+<h1>Cost over time · {e(session)}</h1>
 <div class="sub">{n} main-line requests · total {m(total)} · main line only (subagents in /_report)</div>
 <div class="card"><svg viewBox="0 0 940 320">{pie_spine}{pie_content}</svg>
 <div class="cap"><b>Left (exact):</b> every billed dollar is <b>read</b> (consuming the window — {m(cached)} cached + {m(uncached)} uncached, both reading input), <b>write</b> (the toll to cache so later reads are ~10&times; cheaper), or <b>generation</b> (output tokens). <b>Right (estimate):</b> the read dollars apportioned to the content re-read, by token share.</div></div>
