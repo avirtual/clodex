@@ -21,6 +21,7 @@ blocks a release.
 - Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
 
 - Lead prompt: `[agent:task …]` is named as a team intent again, the MERGE FAILED / no-commits exception and the docs/teams.md pointer are stated precisely, and the default kit's lead prompt is byte-pinned to the library one.
+- Seat prompts: the `[agent:team …]` grammar rows (~3 KB) now render only for the team lead — the only seat whose team verbs are accepted; every other seat's intents block is that much shorter.
 
 ## 5.92.0 — 2026-09-29
 

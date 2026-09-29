@@ -336,7 +336,7 @@ test('t699: session-manager threads the seat\'s resolved team into every prompt 
   assert.ok(/readAppendBodies\(recipe\.appendPromptFiles, recipe\.plugins, team\)/.test(src),
     'the REBAKE reads it off the refresh\'s own resolution — a refresh that dropped it '
     + 'would rewrite a live seat\'s prompt file without the team bodies it booted with');
-  assert.ok(/_realIpcFor\(session\.promptRecipe, teamBlock, resolvedTeam\)/.test(src),
+  assert.ok(/_realIpcFor\(session\.promptRecipe, teamBlock, resolvedTeam, name\)/.test(src),
     'and refreshPrompt threads the team the refresh resolved rather than resolving a second time');
   assert.ok(/readSystemPromptBody\(def\.prompt, null, team\)/.test(src),
     'the team-block builder goes through the resolver too — a hand-rolled library join here '

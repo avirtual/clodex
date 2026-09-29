@@ -13,6 +13,7 @@ const NEW_FILE_CAP = 10 * 1024;
 const PROMPT_DIRS = ['resources/library/prompts/system', 'resources/library/kits'];
 const PROMPT_FILE = /^resources\/library\/(prompts\/system|kits\/[^/]+\/prompts\/system)\/[^/]+\.md$/;
 const IPC_ROW = 'ipc-prompt.js:buildIpcPrompt';
+const IPC_LEAD_ROW = 'ipc-prompt.js:buildIpcPrompt:lead';
 const SPILL_ROW = 'ipc-prompt.js:spillGrammarLine';
 
 function git(args, opts = {}) {
@@ -88,6 +89,7 @@ function headRows() {
   rows.sort((a, b) => a.name.localeCompare(b.name));
   const ipc = require('../ipc-prompt.js');
   rows.push({ name: IPC_ROW, head: Buffer.byteLength(ipc.buildIpcPrompt(null), 'utf8') });
+  rows.push({ name: IPC_LEAD_ROW, head: Buffer.byteLength(ipc.buildIpcPrompt(null, undefined, undefined, { teamLead: true }), 'utf8') });
   rows.push({ name: SPILL_ROW, head: Buffer.byteLength(ipc.spillGrammarLine('/r'), 'utf8') });
   return rows;
 }
@@ -130,6 +132,7 @@ function baseGeneratedSizes(base) {
   }
   const ipc = require(path.join(root, 'ipc-prompt.js'));
   if (typeof ipc.buildIpcPrompt === 'function') sizes.set(IPC_ROW, Buffer.byteLength(ipc.buildIpcPrompt(null), 'utf8'));
+  if (typeof ipc.buildIpcPrompt === 'function') sizes.set(IPC_LEAD_ROW, Buffer.byteLength(ipc.buildIpcPrompt(null, undefined, undefined, { teamLead: true }), 'utf8'));
   if (typeof ipc.spillGrammarLine === 'function') sizes.set(SPILL_ROW, Buffer.byteLength(ipc.spillGrammarLine('/r'), 'utf8'));
   return sizes;
 }
@@ -215,6 +218,7 @@ test('no shipped role prompt or generated intents block grows against the merge-
     'resources/library/kits/clodex/prompts/system/clodex-team-lead.md',
     'resources/library/kits/default/prompts/system/lead.md',
     IPC_ROW,
+    IPC_LEAD_ROW,
     SPILL_ROW,
   ]) {
     assert.ok(names.includes(must), `${must} should be measured by the prompt ratchet`);

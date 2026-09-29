@@ -1970,7 +1970,7 @@ function createSessionManager(deps) {
           // ONE call, both outputs. Not two calls at their respective use sites:
           // readAppendBodies hits the disk, so a second call could legitimately
           // read different bytes and put `args` and the baked prompt out of sync.
-          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam);
+          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam, name);
           args = cleaned;
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
@@ -2187,7 +2187,8 @@ function createSessionManager(deps) {
           const codexAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
           const codexIpc = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1'
             ? null
-            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null));
+            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, Array.isArray(plugins) ? plugins : null),
+              { teamLead: !!resolvedTeam && resolvedTeam.lead === name });
           const { cleaned, merged } = mergeCodexInstructions(extraArgs, codexIpc, {
             systemBody: codexSystemBody, appendBodies: codexAppendBodies, inlineBody: systemPromptBody || null,
           });
@@ -2245,7 +2246,8 @@ function createSessionManager(deps) {
           const museAppendBodies = readAppendBodies(appendPromptFiles, seatPlugins, resolvedTeam);
           const museIpc = mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1'
             ? null
-            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, seatPlugins));
+            : buildIpcPrompt(intents, this._resolveExecDefs(execCommands, resolvedTeam), pluginGrammarLines(intents, seatPlugins),
+              { teamLead: !!resolvedTeam && resolvedTeam.lead === name });
           const museMerged = mergeInstructionBodies(museIpc, {
             systemBody: museSystemBody, appendBodies: museAppendBodies, inlineBody: systemPromptBody || null,
           });
@@ -4628,12 +4630,13 @@ function createSessionManager(deps) {
     // halves diverged in the first place. `teamBlock` and its `team` are passed
     // separately, being the part deliberately re-resolved per refresh: ONE resolution
     // answers for the block, the append stems and the exec defs (see _teamBlockFor).
-    _realIpcFor(recipe, teamBlock, team) {
+    _realIpcFor(recipe, teamBlock, team, name) {
       const extraGrammar = pluginGrammarLines(recipe.intents, recipe.plugins) || [];
       const ipcPrompt = recipe.ipcDisabled
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
-          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR, recipe.spillExamples)] : extraGrammar);
+          recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR, recipe.spillExamples)] : extraGrammar,
+          { teamLead: !!team && team.lead === name });
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,
@@ -4677,7 +4680,7 @@ function createSessionManager(deps) {
         // its reset unbriefed. There is no reply channel at a clear, so it rides
         // the ipc-message the refresh already broadcasts.
         const { teamBlock, resolvedTeam, missingPrompt } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
-        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
+        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam, name);
         const accountDir = session.accountDir || (entry.env && entry.env.CLAUDE_CONFIG_DIR);
         const snapshot = this._snapshotBlockFor(name, entry.cwd, accountDir, opts.sid || entry.sessionId);
         const delta = restageAtReset(REGISTRY_DIR, name, realIpc, snapshot);
@@ -7774,7 +7777,7 @@ function createSessionManager(deps) {
       if (!entry) return false;
       try {
         const { teamBlock, resolvedTeam } = this._teamBlockFor(name, entry.cwd, session.agentType, entry.systemPromptFile || null);
-        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam);
+        const { realIpc } = this._realIpcFor(session.promptRecipe, teamBlock, resolvedTeam, name);
         out.bytes = Buffer.byteLength(realIpc, 'utf8');
         const baked = readCache(REGISTRY_DIR, name, 'session');
         if (baked == null) return false;
