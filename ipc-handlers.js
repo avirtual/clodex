@@ -480,6 +480,9 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
 
+  // The scm:/worktree:/fs: rows live in plugins/workbench/engine.js, scoped by the host's
+  // sessions.fsScope(name); a handler re-added here would widen locality past that gate.
+
   // No unscoped cross-workspace lister: web-host dispatches any registered channel by name, so a
   // `manager.list()` handler mixes every workspace into one view. session:reservedNames is global on purpose.
   handle('session:list', (e) => manager.listForWorkspace(workspaceOfSender(e)));
