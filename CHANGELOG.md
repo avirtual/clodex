@@ -15,6 +15,7 @@ blocks a release.
 
 - Transcript pane, Conversation mode: when a turn driven by a ticket notice, report or reminder folds to one line, the agent's closing words (or their filed-prose link) now show below the fold at turn level instead of hidden inside it under the ticket.
 - Wire billing now prices claude-mythos-5 and claude-mythos-5-1 traffic, and a test fails when a vendored wirescope price row has no matching row in Clodex.
+- Proxy status in a peer window or the web UI no longer reads a live session as dead (or a dead one as fresh) when the two machines' clocks disagree.
 
 ## 5.93.1 — 2026-09-29
 

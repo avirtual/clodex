@@ -20,6 +20,7 @@
 
 const { voiceModeOf } = require('./voice-settings');
 const { adapterFor, postureOf } = require('./cli-adapters');
+const { stampServedAge } = require('./proxy-util');
 
 function archivedSnapshotFor({ manager, entry }) {
   return {
@@ -75,7 +76,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     pendingCount: manager.pendingCountFor(entry.name),
     createdAt: entry.createdAt || null,
     ...readCtxFor(entry.name),
-    proxy: proxyPoller.snapshot(entry.name),
+    proxy: stampServedAge(proxyPoller.snapshot(entry.name)),
   };
 }
 
@@ -160,7 +161,7 @@ async function restoreSessionsForWorkspace({
         team: manager.teamNameFor(cwd),
         createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
-        proxy: proxyPoller.snapshot(entry.name),
+        proxy: stampServedAge(proxyPoller.snapshot(entry.name)),
       });
     } catch (err) {
       // DO NOT remove from persistence — surface the failure to the UI

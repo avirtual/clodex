@@ -206,8 +206,9 @@ test('put-back is skipped when the operator typed meanwhile', async () => {
   assert.strictEqual(toasts.length, 1, 'ENTER: the refusal path ran');
 });
 
-test('a proxy payload is stamped with its own mint time, on seat switch, on emit and on a restored mount', () => {
+test('a proxy payload is aged by the host-relative ageMs, on seat switch, on emit and on a restored mount', () => {
   const { classifySubagent } = require('../renderer/lib/subagent-policy');
+  const { proxyReceivedAt } = require('../proxy-util');
   const snapAt = SRC.indexOf('window.api.getProxySnapshot(name).then(');
   assert.ok(snapAt > 0, 'ENTER: the seat-switch snapshot handler is found by this anchor');
   const snapSrc = SRC.slice(SRC.indexOf('(p) => {', snapAt), SRC.indexOf('\n    }).catch(', snapAt) + 6);
@@ -220,19 +221,27 @@ test('a proxy payload is stamped with its own mint time, on seat switch, on emit
   const noop = () => {};
   const env = {
     applyWarmBadge: noop, applySubagents: noop, refreshQuotaChip: noop, refreshActivityChips: noop,
-    renderProxyBar: noop, activeSession: 'other', name: 's',
+    renderProxyBar: noop, activeSession: 'other', name: 's', proxyReceivedAt,
   };
-  for (const [label, fnSrc] of [['seat switch', snapSrc], ['emit', emitSrc], ['restored mount', mountSrc]]) {
+  const receive = (label, fnSrc, p) => {
     const proxyState = new Map();
     const names = ['proxyState', ...Object.keys(env)];
     const handler = new Function(...names, `return ${fnSrc};`)(proxyState, ...Object.values(env));
-    const p = { linked: true, ts: Date.now() - 15000, subagents: [{ key: 'k', lastActiveS: 25 }] };
     if (label === 'emit') handler('s', p);
     else if (label === 'restored mount') handler({ name: 's', proxy: p });
     else handler(p);
     const st = proxyState.get('s');
     assert.ok(st, `ENTER: the ${label} handler stored the payload`);
-    const ageS = (Date.now() - st.at) / 1000;
+    return (Date.now() - st.at) / 1000;
+  };
+  const hostAheadMs = 60000;
+  for (const [label, fnSrc] of [['seat switch', snapSrc], ['emit', emitSrc], ['restored mount', mountSrc]]) {
+    const skewed = receive(label, fnSrc, { linked: true, ts: Date.now() + hostAheadMs - 2000, ageMs: 2000 });
+    assert.ok(skewed >= 1.9 && skewed < 3, `${label}: a host 60s ahead serving a 2s-old payload reads ${skewed}s`);
+    const older = receive(label, fnSrc, { linked: true, ts: Date.now() - 15000 });
+    assert.ok(older >= 0 && older < 1, `${label}: an older host's payload with no ageMs is fresh at receipt, read ${older}s`);
+    const p = { linked: true, ts: Date.now() + hostAheadMs, ageMs: 15000, subagents: [{ key: 'k', lastActiveS: 25 }] };
+    const ageS = receive(label, fnSrc, p);
     assert.strictEqual(classifySubagent(p.subagents[0], ageS), 'done', `${label}: age ${ageS}s`);
   }
 });
