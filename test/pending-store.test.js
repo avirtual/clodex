@@ -489,6 +489,20 @@ test('an orphan claim dir left by a dead drainer is re-homed and delivered by th
   assert.deepStrictEqual(fs.readdirSync(root), []);
 });
 
+test('an orphan claim dir is re-homed by the pending gates, so the engine sees the mail before any drain', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'only', '0001');
+  const orphan = `${agentDir(root, 'a')}.draining.idle.999999`;
+  fs.renameSync(agentDir(root, 'a'), orphan);
+  assert.throws(() => process.kill(999999, 0));
+  assert.strictEqual(hasActivePending(root, 'a'), true);
+  assert.ok(!fs.existsSync(orphan));
+  fs.renameSync(agentDir(root, 'a'), orphan);
+  assert.strictEqual(countPending(root, 'a'), 1);
+  assert.ok(!fs.existsSync(orphan));
+  assert.deepStrictEqual(drainPending(root, 'a', `idle.${process.pid}`), ['only']);
+});
+
 test("a live drainer's claim dir is left alone by the next drain", () => {
   const root = tmpRoot();
   parkDelivery(root, 'a', 'mid-drain', '0001');

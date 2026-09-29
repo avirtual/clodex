@@ -737,7 +737,7 @@ function createRemoteWiring(deps) {
     setRemoteError(null);
     const started = getRemoteServer();
     const run = started.start().then(() => {
-      if (!constructed) return;
+      if (!constructed || !started.running) return;
       try {
         log.info('remote', `serving on ${bindHost}:${started.port}${started.basePath ? ` under ${started.basePath}` : ' with no prefix'}`);
       } catch {}

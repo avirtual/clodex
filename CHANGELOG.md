@@ -26,6 +26,7 @@ blocks a release.
 - Renderer: restarting a seat from any checklist popover keeps its label, backend, team, effort, posture and account on the rebuilt row; a respawn focus hint expires after 10 s so a later reattach of the same name cannot steal focus; Escape and the close chord still close a dialog stacked over the narrow-screen dock sheet; a dangling `--model` with no value is dropped from a seat's args.
 - Hooks and engine: a Codex seat still receives its identity when the transcript relink fails; a parked-mail drain interrupted mid-claim is re-homed by the next drain instead of lost; a second Clodex instance sharing a cwd no longer discards the user's Codex hooks backup on cleanup; `-m=NAME` is read as a model like the other spellings; a session moved between workspaces keeps its web scrollback ring.
 - Seat prompts: the generated intents block every Claude seat carries drops the duplicated peer-message and example paragraphs (~12.8 KB, down from 13.6 KB); every rule a seat must follow is unchanged.
+- Engine: a parked-mail claim orphaned by a dead drainer is re-homed the moment any pending check runs, not only when new mail arrives; the "serving on host:port" log no longer fires for a remote server stopped before its start finished.
 
 ## 5.92.0 — 2026-09-29
 
