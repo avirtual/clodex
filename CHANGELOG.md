@@ -12,18 +12,16 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Peering: the remote server can no longer double-bind or survive a stop issued mid-start (including an engine shutdown during a queued resync), a peer stream that never gets a response is closed after the staleness bound instead of hanging, a dialect probe that outlives an identity change is discarded, and a control token acquired for an attachment detached mid-request is released instead of leaked.
-- clodexctl: the contexts file is written atomically (temp + rename), a file that fails to parse is never overwritten by undeploy, node lookups no longer match Object.prototype keys, and the deploy token-delivery session cleanup retries once on a 404 that raced the engine's restore.
+
+- Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
+- Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
+- Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
 - Team lead prompt: 14 KB, down from 35 KB — the `task accept` teardown tables and the reject/respec essays are one paragraph each (the teardown matrix now lives in `docs/teams.md`); every verb, ruling and carve-out a lead must follow is unchanged.
 - Prompts: a byte ratchet (`test/prompt-ratchet.test.js`) fails the suite when a shipped role prompt or the generated intents block grows against master without a `Prompt-bytes:` trailer in the commit message; the default kit's lead prompt is synced to the trimmed library one (14.3 KB, from 32.5 KB).
-- Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
-
-- Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
-
-- Seat prompts: the generated `[agent:…]` intents block every Claude seat carries is 16.5 KB, down from 22.1 KB — one greedy-body rule instead of seven, a shorter exec section, and no sentences about the prompt itself; the grammar and every rule a seat must follow are unchanged.
-
 - Lead prompt: `[agent:task …]` is named as a team intent again, the MERGE FAILED / no-commits exception and the docs/teams.md pointer are stated precisely, and the default kit's lead prompt is byte-pinned to the library one.
 - Seat prompts: the `[agent:team …]` grammar rows (~3 KB) now render only for the team lead — the only seat whose team verbs are accepted; every other seat's intents block is that much shorter.
+- Peering: the remote server can no longer double-bind or survive a stop issued mid-start (including an engine shutdown during a queued resync), a peer stream that never gets a response is closed after the staleness bound instead of hanging, a dialect probe that outlives an identity change is discarded, and a control token acquired for an attachment detached mid-request is released instead of leaked.
+- clodexctl: the contexts file is written atomically (temp + rename), undeploy refuses a contexts file that fails to parse instead of treating it as empty, node lookups no longer match Object.prototype keys, and the deploy token-delivery session cleanup retries once on a 404 that raced the engine's restore.
 
 ## 5.92.0 — 2026-09-29
 
