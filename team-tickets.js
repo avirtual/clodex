@@ -168,7 +168,7 @@ const HOLD_RECOVERY = {
   hand: (id) => `Fix what the check named, then close the ticket again — ${ticketCloseVerb(id)} <your report>. `
     + 'That re-runs the checks from where they stopped; the ticket stays done and no rework round is counted.',
   // The spec arm must not tell the reader to reject and re-file: that counts a rework round for a defect the hand did not write,
-  // and the refused-task-dir subject in ticket-loop-verify.test.js asserts it does not.
+  // and the refused-task-dir subject in `ticket-loop-verify.test.js` asserts it does not.
   spec: (id) => `Re-closing alone will NOT help: the check re-reads the same spec and fails identically. `
     + `Correct the spec's \`tasks/…\` line first — the spec is editable on the board in any state, and the ticket stays held while you do it — `
     + `then ${ticketCloseVerb(id)} <your report> to re-run the checks from here.`,
@@ -4414,8 +4414,8 @@ function createTicketMethods(deps, shared) {
       log.info('intent', `task done ${ticket.id} by ${session.name} → ${lead}${reentry ? ' (re-entry after a verify hold)' : ''}`);
       const skipped = loopEligible ? '' : ' — closed WITHOUT review: the ticket records no branch, so the loop had nothing to verify';
       if (reentry) {
-        // A receipt, not advice: it names the check that held the ticket to the seat that just cleared it, so no recovery routes through
-        // `holdRecoveryText`; the step name must stay, a test pins it.
+        // prescribes-nothing: a receipt naming the check that held the ticket, to the seat that just cleared it, so no recovery
+        // routes through `holdRecoveryText`; the step name must stay, a test pins it.
         reply(`ticket ${ticket.id} re-verifying (was held at "${heldAt}")` + skipped + nextSuffix);
       } else if (!loopEligible) {
         reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped + nextSuffix);

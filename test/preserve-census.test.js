@@ -47,6 +47,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { codeOnly } = require('../comment-census.js');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -60,33 +61,7 @@ const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 // A census whose members include words picked out of a comment reports failures
 // nobody can act on, which is how a guard gets deleted.
 function stripNonCode(src) {
-  let out = '';
-  let i = 0;
-  while (i < src.length) {
-    const two = src.slice(i, i + 2);
-    if (two === '//') {
-      const end = src.indexOf('\n', i);
-      const stop = end < 0 ? src.length : end;
-      out += ' '.repeat(stop - i);
-      i = stop;
-    } else if (two === '/*') {
-      const end = src.indexOf('*/', i + 2);
-      const stop = end < 0 ? src.length : end + 2;
-      out += ' '.repeat(stop - i);
-      i = stop;
-    } else if (src[i] === "'" || src[i] === '"' || src[i] === '`') {
-      const q = src[i];
-      let j = i + 1;
-      while (j < src.length && src[j] !== q) j += src[j] === '\\' ? 2 : 1;
-      const stop = Math.min(j + 1, src.length);
-      out += ' '.repeat(stop - i);
-      i = stop;
-    } else {
-      out += src[i];
-      i += 1;
-    }
-  }
-  return out;
+  return codeOnly(src);
 }
 
 // The `{...}` starting at `from`, matched by brace counting rather than by a
