@@ -25980,10 +25980,10 @@ ${i3.join("\n")}
       var SAFE_SCHEME = /^https?:\/\//i;
       var MAX_QUOTE_DEPTH = 8;
       var FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
-      var HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
+      var HEADING = /^ {0,3}(#{1,6})\s+([^\n]*)$/;
       var QUOTE = /^ {0,3}> ?(.*)$/;
-      var BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
-      var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
+      var BULLET = /^ {0,3}[-*+][ \t]+([^\n]*)$/;
+      var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+([^\n]*)$/;
       var LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
       var WORD_CHAR = /\w/;
       var BLANK = /\s/;
@@ -26531,7 +26531,7 @@ ${i3.join("\n")}
         "y"
       );
       var PATH_CHAR = /[\w.@+-]/;
-      var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+      var URL_RE = new RegExp("(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\\/\\/\\S+", "gi");
       function trimUrl(url) {
         const opens = url.split("(").length;
         let closes = url.split(")").length;

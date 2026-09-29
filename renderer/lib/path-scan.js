@@ -37,7 +37,7 @@ const PATH_CHAR = /[\w.@+-]/;
 // A URL's own path segments look exactly like a relative path, so a bare scan
 // claims `example.com/app.js` out of `https://example.com/app.js` and opens a
 // peek on a file that was never local. Matched separately and excluded.
-const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+const URL_RE = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/\S+/gi;
 
 function trimUrl(url) {
   const opens = url.split('(').length;

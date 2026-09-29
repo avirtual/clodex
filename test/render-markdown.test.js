@@ -205,6 +205,15 @@ test('a heading with a 20,000-blank run before a non-# character renders in line
   assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
 });
 
+for (const [marker, expected] of [['#', 'h1{x y}'], ['-', 'ul{li{x y}}'], ['1.', 'ol{li{x y}}']]) {
+  test(`a ${marker} line with a 20,000-blank run before a U+2028 renders in linear time, separator kept`, () => {
+    const src = `${marker}${' '.repeat(20000)}x y`;
+    assert.strictEqual(shapeOf(render(src).frag), expected);
+    const ms = fastestMs(() => render(src));
+    assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
+  });
+}
+
 test('pipe table renders a head and a body', () => {
   const { frag } = render('| a | b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |');
   assert.strictEqual(
