@@ -317,8 +317,8 @@ test('CONSEQUENCE: a STALE pointer to a hand-deleted tree drops the record — n
 // ------------------------------- the other two fields, same helper, one seam
 
 test('autoCompact and digested ride the same preserve, and the opt-OUT is what matters', async () => {
-  // Both went to ALWAYS_PRESERVE on their own arguments (see the header in
-  // session-manager.js), but they share this seam, so they share a fixture.
+  // Both went to ALWAYS_PRESERVE on their own arguments, but they share this
+  // seam, so they share a fixture.
   //
   // `autoCompact` is stored ONLY as the opt-OUT: `false` is written, and
   // enabling DELETES the key (stores.js setAutoCompact). So losing it does not
