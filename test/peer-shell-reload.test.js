@@ -370,15 +370,13 @@ test('repeated reloads of the same seat leave exactly one stream and one shell',
 });
 
 // A drop landing while the SSE is MID-OPEN — the GET has gone out, the 200 has
-// not come back. Every other test in this file awaits `watched(server).length
-// === 1` before dropping, so all of them measure a stream that is fully open
-// and the entire opening interval is unmeasured by construction. That is where
-// the r2 defect lived: teardown can only destroy `w.req`, `onOpen` had not
-// assigned it yet, so the drop deleted the map entry and destroyed nothing
-// while the far side had already spawned the shell, added its response and
-// written `replay`. A stream nothing local can ever close — this ticket's own
-// orphan, one interval over — and it is permanent at the window-close edge,
-// where no later navigation can fire a second drop.
+// not come back. Teardown can only destroy `w.req` and `onOpen` has not
+// assigned it yet, so the drop deletes the map entry and destroys nothing while
+// the far side has already spawned the shell, added its response and written
+// `replay`. Unless `onOpen` reaps it, nothing local can close that stream, and
+// at the window-close edge no later navigation can fire a second drop. The
+// other tests await `watched(server).length === 1`, which proves only the
+// server-side registration, and that lands before the consumer parses `replay`.
 //
 // So: open and drop back-to-back, without awaiting the stream. What must be
 // true afterwards is that the far side ends up watching NOTHING.
