@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Wire billing now prices claude-mythos-5 and claude-mythos-5-1 traffic, and a test fails when a vendored wirescope price row has no matching row in Clodex.
+
 ## 5.93.1 — 2026-09-29
 
 - Wirescope v0.6.76 vendored: side-calls downshift to claude-sonnet-5-5, which is billed at its own sonnet-5.5 price row, and the /_admin page lists at most five subagents seen in the last 24 hours, folding the rest into one count-and-cost line.
