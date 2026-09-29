@@ -40,6 +40,8 @@ carried context.
 
 Tickets are the durable registry you dispatch, track and close work through: a
 dispatch survives your compact, and a stalled hand stays visible.
+`[agent:task …]` is a team intent; your harness task/todo tool reaches no
+teammate.
 
 - `[agent:task add <role|name>]` + the spec as the body — files a ticket and
   dispatches nothing; `[agent:task start <id>]` mints its tree and seat and
@@ -50,15 +52,15 @@ dispatch survives your compact, and a stalled hand stays visible.
   carries is refused unless you add the `dup` modifier. A ticket with no
   assignee sits as backlog.
 - `[agent:task assign <id> <role|name>]` — reassigns an open ticket: notifies
-  the old assignee, delivers the spec to the new one. It is your stall lever;
-  the loop's stall nudge is your cue to check the seat or reassign.
+  the old assignee, delivers the spec to the new one; the loop's stall nudge is
+  your cue to check the seat or reassign.
 - `[agent:task done <id>]` — the assignee closes with its report as the body.
   You may close one its assignee no longer can (backlog, a retired seat).
 - `[agent:task reject <id>]` + the must-fixes as the body — the only rework
   channel: it reopens a done ticket and delivers the must-fixes in one step;
   must-fixes sent by dm never reach the ticket. On a seat past the compact
-  threshold it replaces the seat (same branch and tree, fresh context) and the
-  reply names both. An ACCEPT whose nits are comment or CHANGELOG prose is
+  threshold it replaces the seat (same branch and tree, fresh context).
+  An ACCEPT whose nits are comment or CHANGELOG prose is
   merged: carry the nits to the next ticket on that file. Reject an ACCEPT only
   for a false coverage claim ("pinned by X", "covered by test Y") or a false
   user-facing CHANGELOG line; any other reject of an ACCEPT is a process defect
@@ -66,8 +68,7 @@ dispatch survives your compact, and a stalled hand stays visible.
 - `[agent:task respec <id>]` + the corrected spec — fixes an open ticket in
   place (reject bounces on open ones; cancel-and-refile burns the id). It is
   delivered if the ticket is dispatched; otherwise it is recorded and the reply
-  names the verb that sends it (`task start` or `task assign`). `task list`
-  marks the ticket `(respec'd ×N)`.
+  names the verb that sends it (`task start` or `task assign`).
 - `[agent:task cancel <id>]` + the reason — terminal.
 - `[agent:task accept <id>]` — teardown after the merge: retire the seat,
   remove the worktree, delete the branch. On a green merge the loop runs it for
@@ -79,19 +80,20 @@ dispatch survives your compact, and a stalled hand stays visible.
   a standing assignee's tree — clean it yourself. `could NOT be deleted` means
   the ref is still live (git refuses while any worktree has it checked out).
   Copy any worktree path a reply names; it may be the only record.
-  `!! MERGE FAILED` keeps tree and branch (unless the branch has no commits)
-  and clears the mark, so a second accept would tear down normally — act on
-  the failing step first: `suite` — confirm the trunk still has the merge;
-  `revert-blocked` — it is in the trunk and a revert is owed: revert and
-  re-review, never accept again; `unexpected` — the escalation says whether a
-  merge was made; any other step made no merge, so an ancestor branch means
-  someone merged by hand. The teardown matrix is in `docs/teams.md`.
-- `[agent:task list]` — the open board, the few most recently closed, and a
+  `!! MERGE FAILED` keeps tree and branch (unless it is measured at 0 commits
+  past the fork point) and clears the mark, so a second accept would tear down
+  normally — act on the failing step first: `suite` — confirm the trunk still
+  has the merge; `revert-blocked` — it is in the trunk and a revert is owed:
+  revert and re-review, never accept again; `unexpected` — the escalation says
+  whether a merge was made; any other step made no merge, so an ancestor branch
+  means someone merged by hand. The teardown matrix is in Clodex's
+  `docs/teams.md`.
+- `[agent:task list]` — the open board, the last few closed, and a
   count of the rest; `[agent:task list done]`, `list cancelled` or `list all`
   show more. There is no `rejected` filter; an unknown one bounces with the
   valid set.
-- Each intent in a reply is acked separately and asynchronously, possibly out
-  of order; a missing ack is not a dropped verb. Before re-emitting, end the
+- Each intent in a reply is acked separately, possibly out of order; a missing
+  ack is not a dropped verb. Before re-emitting, end the
   turn and read `[agent:task list]` — a re-sent start bounces "already started"
   and names the holder.
 
@@ -208,8 +210,8 @@ before they answer is noise.
   ticket can pass. The gate reads the last stdout line matching exactly
   `TOTALS: <n> pass, <n> fail, <n> tests` (e.g. `TOTALS: 22 pass, 0 fail, 22 tests`);
   any other shape, or the line on stderr, is "no summary" and the ticket
-  escalates without a reviewer. A runner that finds no tests prints
-  `TOTALS: 0 pass, 0 fail, 0 tests` and exits 0.
+  escalates without a reviewer. A runner that finds no tests must print
+  `TOTALS: 0 pass, 0 fail, 0 tests` and exit 0.
 - Your note confirms the plan in two or three sentences, then lists the
   questions that block the first ticket (at most three) or reports the ticket
   you filed.
