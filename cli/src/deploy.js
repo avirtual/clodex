@@ -844,13 +844,18 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       t2 = await openTransport(entry, { spawnFn, execFn });
       const client = new WireClient(t2.baseUrl, wireToken);
       const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
-      const restarted = engineDropped || (bootBefore !== null && typeof hello.bootId === 'string' && hello.bootId !== bootBefore);
-      if (restarted) await deleteTokenSession(client, sessName, { pollMs, sleepFn });
-      return { ok: true, hello };
+      const bootNow = bootBefore !== null && typeof hello.bootId === 'string' ? hello.bootId : null;
+      if (bootNow === null || bootNow !== bootBefore) {
+        if (engineDropped || bootNow !== null) await deleteTokenSession(client, sessName, { pollMs, sleepFn });
+        return { ok: true, hello };
+      }
+      lastErr = null;
     } catch (e) { lastErr = e; engineDropped = true; }
     finally { if (t2) { try { t2.close(); } catch {} } }
     if (Date.now() >= deadline) {
-      throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
+      const secs = Math.round(timeoutMs / 1000);
+      if (lastErr || bootBefore === null) throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${secs}s${lastErr ? `: ${lastErr.message}` : ''}`);
+      throw new CliError(EXIT.SERVER, `token delivered but the engine never restarted within ${secs}s (bootId unchanged) — the typed script may have failed; the throwaway session ${sessName} was left in place`);
     }
     await sleepFn(pollMs);
   }
