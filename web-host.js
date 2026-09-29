@@ -75,6 +75,9 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
       const cur = (scrollback.get(name) || '') + (data || '');
       scrollback.set(name, cur.length > MAX_SCROLLBACK ? cur.slice(-MAX_SCROLLBACK) : cur);
       ringWorkspace.set(name, workspaceId);
+    } else if (channel === 'session:moved-in') {
+      const name = args[0] && args[0].name;
+      if (name && ringWorkspace.has(name)) ringWorkspace.set(name, workspaceId);
     } else if (channel === 'session-exit') {
       scrollback.delete(args[0]);
       ringWorkspace.delete(args[0]);

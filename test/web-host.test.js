@@ -656,6 +656,36 @@ test('a session that leaves the workspace listing while attached does not leak i
   } finally { host.close(); }
 });
 
+test('a session moved to another workspace keeps its ring when the source workspace\'s last tab leaves', async () => {
+  const sessions = { ws1: [{ name: 'x' }], ws2: [] };
+  const { host, port, registered, unregistered } = await startHost({ sessions });
+  try {
+    const a = connect(port);
+    await helloWelcome(a, { workspaceId: 'ws1' });
+    const b = connect(port);
+    await helloWelcome(b, { workspaceId: 'ws2' });
+    const h1 = registered.find((r) => r.workspaceId === 'ws1').handle;
+    const h2 = registered.find((r) => r.workspaceId === 'ws2').handle;
+    h1.webContents.send('pty-data', 'x', 'RING');
+    await a.until((m) => m.t === 'event' && m.channel === 'pty-data');
+
+    sessions.ws1 = [];
+    sessions.ws2 = [{ name: 'x' }];
+    h1.webContents.send('session:moved-out', { name: 'x' });
+    h2.webContents.send('session:moved-in', { name: 'x' });
+    await b.until((m) => m.t === 'event' && m.channel === 'session:moved-in');
+    a.close();
+    assert.ok(await poll(() => unregistered.includes('ws1')), 'unregistered after last tab');
+
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'ws2' });
+    h2.webContents.send('pty-data', 'x', 'LIVE');
+    const first = await c.until((m) => m.t === 'event' && m.channel === 'pty-data');
+    assert.deepStrictEqual(first.args, ['x', 'RING']);
+    b.close(); c.close();
+  } finally { host.close(); }
+});
+
 test('a session-exit clears that name\'s ring so a late joiner does not replay the finished run', async () => {
   const { host, port, registered } = await startHost({ sessions: { ws1: [{ name: 'x' }] } });
   try {
