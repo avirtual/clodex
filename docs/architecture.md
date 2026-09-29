@@ -98,7 +98,8 @@ bundle), whose packaged form is the Docker image under
   session helpers (`fetchProxyContext/Report/Bust`,
   `fetchSessionFiles/FilePeek/FileDiff`, `restartSession` — defined in
   engine.js and injected; deliberately NOT a module).
-  `before-quit` / `window-all-closed` route to `engine.shutdown()`.
+  `window-all-closed` quits only off macOS (the tray keeps the app alive there);
+  `before-quit` → `engine.shutdown()` is the real quit.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
   `CLODEX_DATA_DIR` (or the platform default; the Electron host honours the same

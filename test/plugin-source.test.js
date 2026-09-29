@@ -19,8 +19,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ════════════════════════════════════════════════════════════════════════════
 // parseSourceSpec — a literal table. Each row carries its OWN expected repo/
-// ref/subpath or refusal, never re-derived from the parser's own regex — see
-// CLAUDE.md ▸ Tests on why a computed table cannot express an exception.
+// ref/subpath or refusal, never re-derived from the parser's own regex.
 // ════════════════════════════════════════════════════════════════════════════
 
 const SPEC_ROWS = [

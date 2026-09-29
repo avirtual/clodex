@@ -1,7 +1,7 @@
 # Test doctrine
 
-The rules `.claude/CLAUDE.md` states in one line each, with the cases that
-produced them. Read this before arguing with one of them.
+The test rules this repo follows, with the cases that produced them. Read this
+before arguing with one of them.
 
 A test can fail to reach the state it names and still pass every assertion.
 Seven instances so far; what made most of them silent was the assertion shape,

@@ -613,7 +613,7 @@ process; the two ✕ routes act on a record whose session is already gone.
 delete gets `--resume`d the next time its workspace opens. A bash session's
 natural exit removes its record (nothing to resume) — but only a genuinely
 natural one: `dropRecord` is `!agentType && !expected`, so an app quit, an
-archive, a move or a kill keeps it. `_userKilled` is in `expected` for a
+archive or a move keeps it. `_userKilled` is in `expected` for a
 different reason from the others: `kill()` already called
 `getPersistence().remove()` unconditionally (agent or not) before the pty died,
 so the flag only suppresses a redundant second remove — it preserves nothing. A
@@ -622,7 +622,7 @@ killed agent's record is gone.
 **Every record-dropper**, sidebar or not: `kill()` itself, `destroy()`, Delete
 Session…, Delete Workspace…, the archived and failed rows' ✕ (`forgetSession`),
 team-retire with discard, `sweepReviewerGraveyard`, the team-review
-spawn-failure rollback, and both ticket-seat spawn-failure rollbacks in
+spawn-failure rollback, the seat-import spawn-failure rollback (remote-wiring.js), and both ticket-seat spawn-failure rollbacks in
 `_spawnTicketSeat` (team-tickets.js: the createWorktree-failed arm, and the
 create()-threw catch, which drops only when the seat is not live). `destroy()`
 is on the list separately from `kill()`, not as its caller: `kill()` returns at
@@ -643,7 +643,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s) | live tab → dimmed archived row |
 | Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` left | tab removed |
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, ✕ = forget) |
-| Natural exit (bash) | removed (unless `_archived`) | dead | tab removed |
+| Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |

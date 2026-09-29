@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Repo instructions: `.claude/CLAUDE.md` is ~8 KB (from 22 KB) — the session-lifecycle table, workspace rules and test-doctrine case studies moved to `docs/sessions.md` and the new `docs/tests.md`; every seat in this repo carries the rules and a pointer instead of the archive.
+- Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
 
 ## 5.92.0 — 2026-09-29
 
