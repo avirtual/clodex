@@ -43,15 +43,17 @@ function save(store, file = contextsPath()) {
   const dir = path.dirname(file);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const body = JSON.stringify({ current: store.current || null, contexts: store.contexts || {} }, null, 2) + '\n';
-  const tmp = `${file}.tmp-${process.pid}`;
+  let target = file;
+  try { target = fs.realpathSync(file); } catch {}
+  const tmp = `${target}.tmp-${process.pid}`;
   try {
     fs.writeFileSync(tmp, body, { mode: 0o600 });
-    fs.renameSync(tmp, file);
+    fs.renameSync(tmp, target);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch {}
     throw e;
   }
-  try { fs.chmodSync(file, 0o600); } catch {}
+  try { fs.chmodSync(target, 0o600); } catch {}
 }
 
 function loadOrEmpty(file = contextsPath(), { warn = () => {}, readOnly = false } = {}) {

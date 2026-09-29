@@ -30,6 +30,7 @@ blocks a release.
 - Tests: the peer-shell reload case no longer races the first replay frame under a loaded suite (5 false failures at the merge gate).
 - Renderer: URL detection in file-path scanning and the heading/bullet/ordered-list line matchers are linear on crafted input (a 20,000-char run of `a.` or of blanks before a Unicode line separator no longer stalls the pane).
 - Peering: releasing control while the acquire is still in flight now releases the token the box mints instead of leaving the peer in control of a session the user let go.
+- clodexctl: the contexts file is saved through a symlink instead of replacing it with a regular file, and undeploy's region lookup no longer matches Object.prototype keys.
 
 ## 5.92.0 — 2026-09-29
 

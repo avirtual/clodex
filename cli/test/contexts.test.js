@@ -53,6 +53,18 @@ test('save leaves no *.tmp-* behind', () => {
   assert.strictEqual(C.load(f, { warn: () => {} }).current, 'a');
 });
 
+test('save through a symlink writes the link target and keeps the link', () => {
+  const d = mkTmpRoot('ctx-');
+  const real = path.join(d, 'real.json');
+  const link = path.join(d, 'contexts.json');
+  fs.writeFileSync(real, JSON.stringify({ current: null, contexts: {} }), { mode: 0o600 });
+  fs.symlinkSync(real, link);
+  C.save({ current: 'a', contexts: { a: { url: 'http://a' } } }, link);
+  assert.ok(fs.lstatSync(link).isSymbolicLink(), 'the link survives the save');
+  assert.strictEqual(C.load(real, { warn: () => {} }).current, 'a');
+  assert.deepStrictEqual(fs.readdirSync(d).sort(), ['contexts.json', 'real.json']);
+});
+
 test('a save whose rename fails leaves the original bytes intact', (t) => {
   const f = tmpFile();
   C.save({ current: 'old', contexts: { old: { url: 'http://old' } } }, f);
