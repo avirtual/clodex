@@ -3078,8 +3078,8 @@ const inputMode = document.getElementById('input-mode');
 const modeHint = document.getElementById('mode-hint');
 
 const MODE_HINTS = {
-  optimized: 'Starts from your default tools, skills and agents (Preferences) — by default the core harness: read, edit, search, shell, web, subagents, skills — and strips prior-turn thinking from the wire. Open Advanced to enable more for this session.',
-  standard: 'Runs the CLI with its own defaults — every tool, skill and agent, nothing stripped.',
+  optimized: 'Starts from your default tools, skills and agents (Preferences) — by default the core harness: read, edit, search, shell, web, subagents, skills. Open Advanced to enable more for this session.',
+  standard: 'Runs the CLI with its own defaults — every tool, skill and agent.',
   custom: 'These fields were set by hand. Open Advanced to see them.',
 };
 
@@ -3120,7 +3120,7 @@ function applyModeFields(mode, { catalogsFresh = false } = {}) {
     if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   }
   if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
-  if (caps.strip && inputStripLevel) inputStripLevel.value = optimized ? '2' : '0';
+  if (caps.strip && inputStripLevel) inputStripLevel.value = '2';
   if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
   if (caps.noWire && inputNoWire) inputNoWire.checked = false;
   if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
@@ -3438,7 +3438,7 @@ async function openDialog(prefill = null) {
   dialogTeamName = null;
   lastTeamAutoName = null;
   refreshCwdSuggestions();
-  if (inputStripLevel) inputStripLevel.value = '0';
+  if (inputStripLevel) inputStripLevel.value = '2';
   if (inputAutoCompact) inputAutoCompact.checked = true; // default ON (opt-out unchecked)
   if (inputNoWire) inputNoWire.checked = false; // default wired each open
   if (inputStreamIo) inputStreamIo.checked = false;

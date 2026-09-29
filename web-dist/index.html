@@ -10607,7 +10607,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       </label>
       <label class="prefs-check">
         <input type="radio" name="setup-mode" id="setup-mode-standard" value="standard">
-        <span><strong>Standard</strong><br>New sessions run the CLI as installed — every tool, skill and agent, nothing tweaked.</span>
+        <span><strong>Standard</strong><br>New sessions run the CLI as installed — every tool, skill and agent.</span>
       </label>
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
@@ -10891,7 +10891,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
         <h5>Default session mode</h5>
-        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) — by default the core harness: read, edit, search, shell, web, subagents, skills — and turns on wire stripping; <strong>Standard</strong> runs the CLI untouched, with every tool, skill and agent. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
+        <p class="hint-text">The Mode the New Session dialog opens on. <strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) — by default the core harness: read, edit, search, shell, web, subagents, skills; <strong>Standard</strong> runs the CLI with every tool, skill and agent. You can still change Mode per session in the dialog — this only picks what it starts on. A template, an adopt prefill or a reopened seat still opens as <code>Custom</code>.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Mode</span>
           <select id="prefs-default-mode" style="flex: none;">
@@ -51214,8 +51214,8 @@ ${detail}` });
       var inputMode = document.getElementById("input-mode");
       var modeHint = document.getElementById("mode-hint");
       var MODE_HINTS = {
-        optimized: "Starts from your default tools, skills and agents (Preferences) \u2014 by default the core harness: read, edit, search, shell, web, subagents, skills \u2014 and strips prior-turn thinking from the wire. Open Advanced to enable more for this session.",
-        standard: "Runs the CLI with its own defaults \u2014 every tool, skill and agent, nothing stripped.",
+        optimized: "Starts from your default tools, skills and agents (Preferences) \u2014 by default the core harness: read, edit, search, shell, web, subagents, skills. Open Advanced to enable more for this session.",
+        standard: "Runs the CLI with its own defaults \u2014 every tool, skill and agent.",
         custom: "These fields were set by hand. Open Advanced to see them."
       };
       function defaultSessionMode(settings) {
@@ -51250,7 +51250,7 @@ ${detail}` });
           if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
         if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set());
-        if (caps.strip && inputStripLevel) inputStripLevel.value = optimized ? "2" : "0";
+        if (caps.strip && inputStripLevel) inputStripLevel.value = "2";
         if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
         if (caps.noWire && inputNoWire) inputNoWire.checked = false;
         if (newSessionIsAgent()) setProxyControls(inputProxyMode, inputProxyUrl, null, inputProxyUrl.value);
@@ -51572,7 +51572,7 @@ ${detail}` });
         dialogTeamName = null;
         lastTeamAutoName = null;
         refreshCwdSuggestions();
-        if (inputStripLevel) inputStripLevel.value = "0";
+        if (inputStripLevel) inputStripLevel.value = "2";
         if (inputAutoCompact) inputAutoCompact.checked = true;
         if (inputNoWire) inputNoWire.checked = false;
         if (inputStreamIo) inputStreamIo.checked = false;

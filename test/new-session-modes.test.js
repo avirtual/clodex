@@ -85,7 +85,7 @@ test('#mode-row is a first-contact field: after Working directory, before #workt
 test('all three "Clodex optimized" surfaces promise the three default sets, and name the shape', () => {
   const SHAPE = 'by default the core harness: read, edit, search, shell, web, subagents, skills';
 
-  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) — by default the core harness: read, edit, search, shell, web, subagents, skills — and strips prior-turn thinking from the wire\. Open Advanced to enable more for this session\.'/;
+  const MODE_HINT = /optimized: 'Starts from your default tools, skills and agents \(Preferences\) — by default the core harness: read, edit, search, shell, web, subagents, skills\. Open Advanced to enable more for this session\.'/;
   assert.match(rendererSrc, MODE_HINT, "renderer.js MODE_HINTS.optimized");
 
   const SETUP = 'New sessions start from your default tools, skills and agents (Preferences) — '
@@ -93,18 +93,16 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
   assert.ok(htmlSrc.includes(SETUP), 'the first-run setup dialog');
 
   const PREFS = '<strong>Clodex optimized</strong> starts from your default tools, skills and agents (above) — '
-    + `${SHAPE} — and turns on wire stripping;`;
+    + `${SHAPE}; <strong>Standard</strong> runs the CLI with every tool, skill and agent.`;
   assert.ok(htmlSrc.includes(PREFS), 'the Preferences default-mode hint');
 
   // Standard's half of the same claim: "nothing trimmed" never said what the
   // user GETS, which is the whole catalog. A mode selector whose two arms are
   // not described in the same terms cannot be compared by the person choosing.
-  assert.match(rendererSrc, /standard: 'Runs the CLI with its own defaults — every tool, skill and agent, nothing stripped\.'/,
+  assert.match(rendererSrc, /standard: 'Runs the CLI with its own defaults — every tool, skill and agent\.'/,
     'renderer.js MODE_HINTS.standard names what standard includes');
-  assert.ok(htmlSrc.includes('New sessions run the CLI as installed — every tool, skill and agent, nothing tweaked.'),
+  assert.ok(htmlSrc.includes('New sessions run the CLI as installed — every tool, skill and agent.</span>'),
     'the first-run setup dialog says the same of Standard');
-  assert.ok(htmlSrc.includes('<strong>Standard</strong> runs the CLI untouched, with every tool, skill and agent.'),
-    'and so does the Preferences hint');
 
   // The anti-degenerate half: the superseded wording must be GONE, not merely
   // outnumbered. A surface left behind reads as the current promise.
@@ -114,6 +112,10 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
     'the old mode hint is replaced, not duplicated');
   assert.ok(!rendererSrc.includes("Runs the CLI with its own defaults — nothing trimmed, nothing stripped."),
     'the old standard hint is replaced, not duplicated');
+  for (const stale of ['nothing stripped', 'strips prior-turn thinking from the wire', 'turns on wire stripping', 'runs the CLI untouched', 'nothing tweaked']) {
+    assert.ok(!rendererSrc.includes(stale) && !htmlSrc.includes(stale),
+      `"${stale}" ties stripping to a mode, and both modes now start at level 2`);
+  }
 });
 
 // --- the preset -----------------------------------------------------------
@@ -164,7 +166,7 @@ function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
   return { calls, inputStripLevel, inputAutoCompact, inputNoWire, inputProxyMode, inputProxyUrl };
 }
 
-test('standard writes the CLI-as-is fields: nothing denied, stripping off', () => {
+test('standard writes the CLI-as-is fields: nothing denied, stripping still level 2', () => {
   const r = runApply('standard');
   assert.strictEqual(r.calls.tools.length, 1, 'ENTER: the tool checklist was redrawn exactly once');
   assert.deepStrictEqual([...r.calls.tools[0]], [],
@@ -172,7 +174,7 @@ test('standard writes the CLI-as-is fields: nothing denied, stripping off', () =
   assert.strictEqual(r.calls.skills.length, 1, 'ENTER: the skill checklist was redrawn exactly once');
   assert.deepStrictEqual([...r.calls.skills[0]], [],
     'no skill is denied — the skill deny cache must NOT reach the checklist in standard');
-  assert.strictEqual(r.inputStripLevel.value, '0', 'wire stripping off');
+  assert.strictEqual(r.inputStripLevel.value, '2', 'a new seat strips unless the operator picks Off — the mode does not decide it');
   assert.strictEqual(r.inputAutoCompact.checked, true);
   assert.strictEqual(r.inputNoWire.checked, false);
   assert.strictEqual(r.inputProxyMode.value, '', 'proxy back to the app default');
@@ -412,6 +414,13 @@ test('the settings the mode reads are fetched per open, and fetched once', () =>
   assert.strictEqual((body.match(/window\.api\.getSettings\(\)/g) || []).length, 1,
     'and the later Promise.all awaits that same promise rather than asking a second time');
   assert.match(body, /^\s*settingsFetch,$/m, 'ENTER: the Promise.all reuses it');
+});
+
+test('every open resets wire stripping to level 2, so a Custom open strips unless the operator picks Off', () => {
+  const body = slice('async function openDialog(', '\nfunction populateHostCatalogs(', 'openDialog');
+  const resets = body.match(/^\s*if \(inputStripLevel\) inputStripLevel\.value = [^\n]*$/mg) || [];
+  assert.strictEqual(resets.length, 1, 'ENTER: openDialog resets the strip select exactly once');
+  assert.strictEqual(resets[0].trim(), "if (inputStripLevel) inputStripLevel.value = '2';");
 });
 
 // --- the two order-bound call sites --------------------------------------

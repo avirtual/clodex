@@ -135,6 +135,22 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
   assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, []);
 });
 
+test('ticket hands ship with wire stripping off, leads keep level 2', () => {
+  const rows = [
+    ['templates/clodex-team-hand.json', false, undefined],
+    ['kits/clodex/templates/clodex-team-hand.json', false, undefined],
+    ['kits/default/templates/hand.json', false, undefined],
+    ['templates/clodex-team-lead.json', true, 2],
+    ['kits/clodex/templates/clodex-team-lead.json', true, 2],
+    ['kits/default/templates/lead.json', true, 2],
+  ];
+  for (const [rel, hasKey, level] of rows) {
+    const tpl = JSON.parse(fs.readFileSync(path.join(LIB, rel), 'utf-8'));
+    assert.strictEqual('stripLevel' in tpl, hasKey, rel);
+    assert.strictEqual(tpl.stripLevel, level, rel);
+  }
+});
+
 test('the resolvers themselves agree with the literals pinned above', () => {
   // The assertions above are about JSON. These are about the CODE that reads
   // it — without them the literals are a convention two files happen to share.
@@ -214,7 +230,6 @@ test('createTeam with kit:default writes the default hand template, whole', () =
     disabledSkills: ['*'],
     extraArgs: ['--model', 'claude-opus-5-5[1m]'],
     injectSkills: [],
-    stripLevel: 2,
     systemPromptFile: null,
     appendPromptFiles: ['team-project'],
     env: { CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS: '60000' },
