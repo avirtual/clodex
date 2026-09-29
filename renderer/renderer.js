@@ -3079,7 +3079,7 @@ const modeHint = document.getElementById('mode-hint');
 
 const MODE_HINTS = {
   optimized: 'Starts from your default tools, skills and agents (Preferences) — by default the core harness: read, edit, search, shell, web, subagents, skills. Open Advanced to enable more for this session.',
-  standard: 'Runs the CLI with its own defaults — every tool, skill and agent.',
+  standard: 'Keeps every tool, skill and agent the CLI ships with.',
   custom: 'These fields were set by hand. Open Advanced to see them.',
 };
 

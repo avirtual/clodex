@@ -99,7 +99,7 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
   // Standard's half of the same claim: "nothing trimmed" never said what the
   // user GETS, which is the whole catalog. A mode selector whose two arms are
   // not described in the same terms cannot be compared by the person choosing.
-  assert.match(rendererSrc, /standard: 'Runs the CLI with its own defaults — every tool, skill and agent\.'/,
+  assert.match(rendererSrc, /standard: 'Keeps every tool, skill and agent the CLI ships with\.'/,
     'renderer.js MODE_HINTS.standard names what standard includes');
   assert.ok(htmlSrc.includes('New sessions keep every tool, skill and agent the CLI ships with.</span>'),
     'the first-run setup dialog says the same of Standard');
@@ -112,6 +112,8 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
     'the old mode hint is replaced, not duplicated');
   assert.ok(!rendererSrc.includes("Runs the CLI with its own defaults — nothing trimmed, nothing stripped."),
     'the old standard hint is replaced, not duplicated');
+  assert.ok(!rendererSrc.includes("Runs the CLI with its own defaults — every tool, skill and agent."),
+    'the defaults-claiming standard hint is replaced, not duplicated');
   for (const stale of ['nothing stripped', 'strips prior-turn thinking from the wire', 'turns on wire stripping', 'runs the CLI untouched', 'nothing tweaked']) {
     assert.ok(!rendererSrc.includes(stale) && !htmlSrc.includes(stale),
       `"${stale}" ties stripping to a mode, and both modes now start at level 2`);
