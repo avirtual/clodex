@@ -841,9 +841,7 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       t2 = await openTransport(entry, { spawnFn, execFn });
       const client = new WireClient(t2.baseUrl, wireToken);
       const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
-      if (engineDropped) {
-        try { await client.del(`/api/sessions/${encodeURIComponent(sessName)}`, 'deploy ssm (token session cleanup)'); } catch {}
-      }
+      if (engineDropped) await deleteTokenSession(client, sessName, { pollMs, sleepFn });
       return { ok: true, hello };
     } catch (e) { lastErr = e; engineDropped = true; }
     finally { if (t2) { try { t2.close(); } catch {} } }
@@ -851,6 +849,16 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       throw new CliError(EXIT.SERVER, `token delivered but the engine did not come back within ${Math.round(timeoutMs / 1000)}s${lastErr ? `: ${lastErr.message}` : ''}`);
     }
     await sleepFn(pollMs);
+  }
+}
+
+async function deleteTokenSession(client, sessName, { pollMs, sleepFn }) {
+  const at = `/api/sessions/${encodeURIComponent(sessName)}`;
+  try { await client.del(at, 'deploy ssm (token session cleanup)'); }
+  catch (e) {
+    if (!(e instanceof CliError && e.exitCode === EXIT.NOTFOUND)) return;
+    await sleepFn(pollMs);
+    try { await client.del(at, 'deploy ssm (token session cleanup)'); } catch {}
   }
 }
 
