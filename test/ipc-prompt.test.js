@@ -547,7 +547,7 @@ test('team-create line renders ONLY for a seat whose intents explicitly grant it
 });
 
 test('t1407: the [agent:team …] rows render ONLY when the caller says the seat is its team\'s lead', () => {
-  const ROW = '[agent:team role-add';
+  const ROW = '[agent:team role-add <role>';
   assert.ok(leadPrompt(null).includes(ROW), 'the lead sees the team rows');
   assert.ok(leadPrompt([]).includes(ROW), 'a fully-gated lead too: the row is a role fact, not an intent grant');
   assert.ok(!buildIpcPrompt(null).includes(ROW), 'default seat: no team rows (null pin holds)');
