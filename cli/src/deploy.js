@@ -814,9 +814,12 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
   const sessName = TOKEN_SESSION_PREFIX + crypto.randomBytes(4).toString('hex');
   const t = await openTransport(entry, { spawnFn, execFn });
   let engineDropped = false;
+  let bootBefore = null;
   try {
     const client = new WireClient(t.baseUrl, wireToken);
     await R.requireResource(client, 'sessions', 'post', ctxName, 'control');
+    const before = await client.get('/api/peer/hello', 'deploy ssm (token boot id)');
+    bootBefore = before && typeof before.bootId === 'string' ? before.bootId : null;
     // 1. throwaway bash session (as the clodex user the engine runs as). The
     //    engine REJECTS a create without cwd; /tmp exists on any box we deploy.
     await client.post('/api/sessions', 'deploy ssm (token session)', { name: sessName, type: 'bash', cwd: '/tmp' });
@@ -841,7 +844,8 @@ async function deliverClaudeToken(entry, wireToken, oauthToken, { spawnFn, execF
       t2 = await openTransport(entry, { spawnFn, execFn });
       const client = new WireClient(t2.baseUrl, wireToken);
       const hello = await client.get('/api/peer/hello', 'deploy ssm (token verify)');
-      if (engineDropped) await deleteTokenSession(client, sessName, { pollMs, sleepFn });
+      const restarted = engineDropped || (bootBefore !== null && typeof hello.bootId === 'string' && hello.bootId !== bootBefore);
+      if (restarted) await deleteTokenSession(client, sessName, { pollMs, sleepFn });
       return { ok: true, hello };
     } catch (e) { lastErr = e; engineDropped = true; }
     finally { if (t2) { try { t2.close(); } catch {} } }

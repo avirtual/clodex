@@ -260,6 +260,22 @@ test("hello advertises 'inbox' with the store injected and omits it without", as
   });
 });
 
+test('hello advertises a process-level bootId: stable across hellos and across a server rebuild', async () => {
+  let first = null;
+  await withServer(null, async (server) => {
+    const a = await req(server, 'GET', '/api/peer/hello');
+    const b = await req(server, 'GET', '/api/peer/hello');
+    assert.strictEqual(typeof a.json.bootId, 'string');
+    assert.ok(a.json.bootId.length > 0, 'bootId is non-empty');
+    assert.strictEqual(b.json.bootId, a.json.bootId, 'two hellos on one server carry the same bootId');
+    first = a.json.bootId;
+  });
+  await withServer(null, async (server) => {
+    const { json } = await req(server, 'GET', '/api/peer/hello');
+    assert.strictEqual(json.bootId, first, 'a rebuilt server in the same process is not a restart');
+  });
+});
+
 test('with no store injected every /api/inbox route answers 501', async () => {
   await withServer(null, async (server) => {
     for (const [method, p] of [
