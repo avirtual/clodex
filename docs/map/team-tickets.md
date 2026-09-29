@@ -16,6 +16,8 @@
 - `ticketCloseVerb` output is inert only because prose precedes it on its line, and `ticketCloseLine` keeps that prefix.
 - `holdRecoveryText` is the single renderer every reader of a held ticket uses, so the escalation body, stall alarm, done bounce and respec route agree.
 - `taskDirRuleClause` carries facts only, because the reviewer scope embeds it and that seat is read-only; the imperative lives in `ticketTaskDirLine`.
+- `filterTemplateEnv` passes only reviewer-allowlist keys because a template is agent-writable and env is an authority surface, and the read-token cap value stays plain digits since the CLI's parseInt reads '6e4' as 6.
+- `ticketCloseLine` carries the close verb on every dispatch rather than only in the role prompt, because the prompt is a seeded file that stops re-syncing once its live copy diverges.
 
 ### Hazards
 - Reflowing text so the verb from `ticketCloseVerb` starts a line makes the anchored intent scanner fire task done and a seat closes its own ticket on receipt.
@@ -72,6 +74,9 @@
 - `_handleTeamReview` makes every refusal before the synchronous persistence upsert, because that upsert is the name reservation.
 - `_landVerdictOnTicket` counts the round on the ticket, not the reviewer name index, and deletes loopStep in the same save that makes the verdict durable.
 - `_landVerdictOnTicket` excludes quoted lines from the verdict match, because the previous round's verdict arrives quoted in the new body.
+- `_handleTeamReview` fails open when the board cannot be read while checking for a busy verify ticket, because team-review is the escape hatch for when the loop cannot spawn a reviewer.
+- `_handleTeamReview` names a ticket's reviewer from the ticket and its round, falls back to the counter name rather than refusing when that name is taken, and never bumps the round at spawn because the rework ladder reads verdicts, not spawns.
+- `_handleTeamReview` writes `wireLabel` and `reviewTicket` in the same synchronous upsert as the name reservation, because create() and review-done read them back off the record and a field written after the deferred create() routes nothing.
 
 ### Hazards
 - Letting the onReply diversion in `_handleTeamReview` suppress a reply loses the template and tool-cap refusals the loop turns into escalations.
@@ -89,6 +94,7 @@
 - `_seatLedger` applies the live overlay only when the wire's session id matches the record and the cost is a finite number.
 - `_stampSeatCost` must run before the seat's persistence record is removed, because no record means no stamp.
 - `_readSeatCursors` returns null on an unreadable cursor file, and `_stampSeatCost` then drops the stamp rather than re-billing every seat.
+- `_seatLedger` needs both readers, because the persisted wire-totals file lags about a second and misses the reviewer's last turn, the biggest one.
 
 ### Hazards
 - Dropping the session-id gate in `_seatLedger` bills a dead round's ledger to a live seat that reuses the counter name.
@@ -132,12 +138,14 @@
 - `_autoMergeTicket`'s `fail` re-reads the ticket before any merge ran and logs ABANDONED instead of stamping when it is gone, reopened, rejected or closed out.
 - `_autoMergeTicket` retries only the suite-in-flight arm, scheduling the retry through `_scheduleMergeRetry` and re-entering via `_queueAutoMerge`.
 - `_suiteLockHolder` keeps the liveness probe outside the read's catch, so a probe fault reaches the catch-all rather than reading as no suite running.
+- `_mergeTouchedChangelog` keeps the header pattern's path prefix optional (diff.noprefix emits none) and `^`-anchored, and every misread fails toward asking the lead to look, never toward saying nothing is owed.
 
 ### Hazards
 - Adding an await in `_autoMergeTicket` between the last state re-read and the merge reopens the window where a task reject lands and the merge still goes on the trunk.
 - Letting the evidence dump in `_autoMergeTicket` throw before the revert reaches the catch-all, which escalates without reverting a red trunk.
 - A reflow or multi-line interpolation in `_notifyMergeLanded` that puts the task accept verb at column 1 makes the lead auto-accept and destroy the worktree.
 - Turning a known-false path of `_mergeTouchedChangelog` into a claim either ships a release without notes or trains the lead to skip the line.
+- Stamping mergeWaiting on the defer arm of `_autoMergeTicket` without its synchronous `abandonedWhy` re-read writes the field back after a task accept cleared it, and `deferred` then makes the finally keep it.
 
 ## review-done intent — _handleReviewDone … _handleReviewDone
 
@@ -202,6 +210,7 @@
 - Dropping the catch on the accept arm of `_handleTask` leaves `_taskAccept` rejections floating and the lead waiting on a confirmation that never comes; its reply names the error only, since a throw after the teardown has already removed things.
 - Letting `_repinTicketToSeat` pin to the lead reads downstream as an exact seat pin and bills one ticket for the lead's whole ledger via `_costSeatFor`.
 - A second copy of the role-or-name match outside `_ticketAssigneeSeat` lets pin, delivery and queue disagree invisibly.
+- `_ticketAssigneeSeat` degrades a spawn ticket like a standing one, so a second one-shot seat can pick it up after the first dies, and accepting the first can archive a seat mid-work on the second.
 
 ## Spec delivery, displacement and owed specs — _deliverTicketSpec … _drainOwedSpec
 
@@ -220,12 +229,16 @@
 - `_armSpecConfirm` replaces rather than stacks latches, so at most one latch is ever live, and keeps the retry budget only for the same ticket and kind.
 - `_pruneOwedSpent` is called only at the three release sites (attributed turn, deadline re-probe, park), never on escalation exits and never wholesale.
 - `_drainOwedSpec` delivers exactly one redelivery per pass and never while a latch or in-flight redelivery owns the composer.
+- `_deliverTicketSpec` renders the superseded-spec notice on every dispatch except the respec arm itself, gated on the respec count rather than on `replay`, and only in the body, never the pointer line.
+- `_deliverTicketSpec` takes the backlog start note from the caller's `fromBacklog` flag, never from spec prose, and the note speaks only to whether to begin, so the body's scope fences stay in force.
+- `_armSpecConfirm` arms only for an injected write: the quiet gate can hold bytes for minutes, and a parked file is durable but unconfirmable, so arming on it redelivers into a working seat.
 
 ### Hazards
 - Giving `_armSpecConfirm` a default disposition arms a latch over text never written, since the unsafe value is injected.
 - Shifting the owed entry in `_drainOwedSpec` before the team resolves drops the ticket on a transient failure and hands it back to the stall watchdog.
 - Clearing the in-flight flag in `_drainOwedSpec` only on an injected write latches the drain shut for the life of the seat.
 - Dropping the try in `_armSpecConfirmTimer` or `_armSpecOwedTimer` turns a spill failure into an unhandled exception in the host process.
+- Dropping the owed-spent add in `_drainOwedSpec` lets repeated dispatch displace and redeliver the same ticket forever, because a fresh latch starts with `retried` false.
 
 ## Spec confirm, review-start check and replay — _armReviewStartCheck … _replayTicketsOnce
 
@@ -247,12 +260,16 @@
 - `_seatTranscriptHas` matches the dispatch marker, never the bare id, and returns null only when the transcript cannot be read.
 - `_stampSpecDelivered` rides the write, never the return, and loads the board itself rather than taking a caller snapshot.
 - `_replayOpenTickets` redelivers one ticket per respawn and keys on the in-memory incarnation, not a persisted timestamp.
+- `_checkReviewStarted` re-sends a scope-free start nudge once, because a seat in a single modal swallows one delivery whole (measured 3/3) and a duplicate nudge costs at most a second Begin.
+- `_openTicketsFor` is the only resolver of a seat's tickets, defers liveness to `_ticketAssigneeSeat` and alone excludes unstarted tickets, while the two badge filters omit that term and must move together.
 
 ### Hazards
 - Loosening the strict true test on `_seatTranscriptHas` in `_checkSpecConfirm` or `_drainOwedSpec` lets an unreadable transcript swallow a real redelivery.
 - In `_checkSpecConfirm` a team-resolve failure returns with the latch still set and no timer re-armed, which also stalls `_drainOwedSpec` behind that latch.
 - `_advanceSeat` delivers the next spec with no missing-spec guard and ignores the delivery result, unlike `_replayOpenTickets` which skips spec-less records.
-- `_replayTicketsOnce` spends the one-shot on a throw despite its comment saying only an outcome that reached the seat spends it.
+- `_replayTicketsOnce` spends the one-shot on a throw, although a throw reached no seat.
+- Calling `_seatTranscriptHas` without the write-time anchor lets a resumed seat's transcript, which already holds the ticket marker, attribute every later turn to the stale copy.
+- `_advanceSeat` must refuse an unstarted closed ticket, since a role-pinned backlog ticket resolves to whichever seat holds the role and closing it would redeliver an unrelated in-flight spec.
 
 ## Dispatch: seat shape, worktree minting, _spawnTicketSeat — _ticketDispatchMode … _spawnTicketSeat
 
@@ -282,6 +299,8 @@
 - Dropping the realpath compare, the prunable filter or the holder check in `_existingTicketTree` silently mints duplicate trees or hands a seat a dead path.
 - Letting an unknown purpose fall to the ticket arm of `resolveSeatShape` spawns a reviewer with no read-only cap.
 - Moving the task-dir gate from `_ticketTaskDirRefusal` into the spec delivery funnel strands spec replay to respawned seats.
+- Dropping the nested-team ownership check in `_resolveRoleCwd` boots a seat under a child team.json, so its ticket verbs address the wrong team's board, roster and lead.
+- Un-pinning a ticket in the `_spawnTicketSeat` failure path while it still names a tree, or deciding that from `!reused && !live` instead of the ticket's own worktree pointer, replays its WORK IN line into another branch's checkout.
 
 ## Verbs: add, start, assign, done — _reviewerTemplateNames … _resumeOrphanedVerify
 
@@ -322,6 +341,7 @@
 - `_runTicketLoop` re-loads after each await and bails when the step left verify or the rework round moved, reaping its runner via `_reapRunner`.
 - `_runTicketLoop` stamps the verify phase before each suite run and before the review step, and `fail`, a spawned or refused reviewer, a landed verdict and `_rejectTicketFromLoop` clear it.
 - `_runTicketSuite` pins the lock to the root checkout while tests run in the tree, and reports could-not-run as ran false, which the loop escalates rather than rejects.
+- `_runTicketLoop` keeps `loopStep` at verify and stamps the hold before the escalation message, and only for a verify step, so a review-step throw never leaves a hold the re-entry gate refuses or re-runs verify over a spawned reviewer.
 
 ### Hazards
 - Spawning the reviewer before the suite or rejecting on a suite that could not run in `_runTicketLoop` is the expensive mistake the order exists to prevent.
@@ -359,6 +379,7 @@
 - Merging `_stampVerifyHold` into the loop step or saving a caller's snapshot across the loop's awaits loses the hold or overwrites fresher writes.
 - `_reworkSeatFor` discards the `_spawnTicketSeat` result after detaching and archiving the old seat, so a failed replacement spawn is still reported as queued.
 - Sending `_notifyHandOfHold` to the lead or arming the spec-confirm latch invites the wrong action on a done ticket.
+- `_writeTicketSuiteFailure` compares pre-run and post-run HEAD by sha, gates the moved line on the carried `suite.head` rather than the fallback re-read, and labels neither sha as the measured one, because the suite lock wait sits between both reads.
 
 ## Escalation and ticket cost — _escalateTicket … _writeTicketCost
 
@@ -405,6 +426,8 @@
 - `_taskReject` retires the ended round's reviewer after the save, and moving `_retireReviewSeatsFor` above it leaves the board wrong if teardown throws.
 - `_stampTicketRevival` is write-once, so a field that must change on an already-stamped ticket needs its own targeted write, as `_closeOutMergedTicket` does.
 - `_cancelTicketReminders` must get the lead, because `_finishAccept` also runs on loop-driven accepts whose by is not the reminder owner.
+- `_taskRespec` keeps each superseded body whole in respecs rather than appending it to the spec or capping the array: title, taskDir and branch slug derive from the spec and replay sends only `ticket.spec`.
+- `_stampTicketRevival` must run before teardown on both dispositions because a discard drops the persistence record, and takes ticketId as its own parameter, since recycled seat names make a seat-name lookup pick the oldest unstamped ticket.
 
 ## Accept teardown, park and list — _closeOutMergedTicket … _taskListText
 
@@ -421,12 +444,15 @@
 - `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean, and downgrades to archive on a dirty or unreadable tree.
 - `_closeOutMergedTicket.seatClause` splits on seat kind before liveness, never on whether an archive ran, so a gone one-shot seat is not called standing.
 - `_taskListText` must stay behaviourally identical to the second implementation in scripts/clodex-team.js, so the two change together.
+- `_closeOutMergedTicket` returns closedOut for the ticket and ok for the cleanup, so only ok licenses "Closed out", and the mergeError veto and dirty downgrade return closedOut without ok.
+- `_closeOutMergedTicket` closes out on every outcome including the seat-keeping ones and sets complete only for a fully torn-down loop seat, so the dirty downgrade knowingly drops bound reminders while a later accept still finishes the teardown.
 
 ### Hazards
 - `_closeOutMergedTicket` counts commits before destroy and the branch delete, and moving the count below them turns every reply into the unknown case.
 - Letting the board save after `_closeOutMergedTicket`'s teardown throw uncaught makes the loop's MERGED notice say nothing was torn down after the tree and branch are gone.
 - `_closeOutMergedTicket` re-reads the board for the mergeError veto after its awaits, and reading the entry snapshot lets a stamp landed mid-accept be torn down.
 - The dirty-tree arm of `_closeOutMergedTicket` skips the branch delete on purpose, since the second accept it invites reads the branch back through isMerged.
+- `_closeOutMergedTicket` vetoes teardown on the loop's own mergeError stamp rather than a content comparison, because `git revert -m 1` leaves the merge an ancestor so `isMerged` reads landed over work that is off master.
 
 ## Watchdog: stall, nudge, sweeps and team retire — _reconcileTickets … _handleTeamRetire
 
@@ -459,6 +485,11 @@
 - `_retireReviewSeatsFor` must price each round before kill drops the record, and is called only where a lead transition drops the hold, never from `_escalateTicket` keepHold arms.
 - `_liveReviewSeatsFor` is project-scoped because ticket ids repeat across projects, and an unscoped walk lets another project's reviewer suppress `_probeReviewSeat` alarms.
 - `_sweepUndeliveredMergeErrors` skips any ticket with closedOut set, although `_sweepMergedUnaccepted` notes that loop tree-keeping arms set it without closing out.
+- `_sweepTickets` sweeps once per board root, so when two teams share a root whichever is reached first sets `watchdogMs` for that pass.
+- An operator `session:kill` or `session:archive` followed by `sweepReviewerGraveyard` reaps a reviewer with no ticket context, so unlike `_retireReviewSeatsFor` that round's spend is deliberately not booked.
+- `_retireReviewSeatsFor` books the round as `reviewRound` plus one, so a stranded round-1 seat reaped after round 2's verdict is attributed to round 2 and only the seat name tells the rows apart.
+- `_sweepTeamTickets` exempts unstarted tickets through `ticketStarted` rather than an unassigned test, because `add` writes the role name into assignee, and keeps a done ticket with a live `loopStep` in scope so a dead loop step still nudges the lead.
+- `_sweepTeamTickets` treats a ticket whose role is not in the sweeping team's roles as never orphaned, because the per-board dedup lets team A meet team B's tickets, whose live seat would read as orphaned and burn the one-shot orphan alarm.
 
 ## EXEMPT
 
