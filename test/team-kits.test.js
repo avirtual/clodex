@@ -146,8 +146,7 @@ test('ticket hands ship with wire stripping off, leads keep level 2', () => {
   ];
   for (const [rel, hasKey, level] of rows) {
     const tpl = JSON.parse(fs.readFileSync(path.join(LIB, rel), 'utf-8'));
-    assert.strictEqual('stripLevel' in tpl, hasKey,
-      `${rel}: a hand lives one ticket, so the re-cache a strip level costs never pays back — absent means Off`);
+    assert.strictEqual('stripLevel' in tpl, hasKey, rel);
     assert.strictEqual(tpl.stripLevel, level, rel);
   }
 });
