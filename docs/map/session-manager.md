@@ -58,7 +58,6 @@
 - `isStaleRegistration` returns true for any own-pid record although its comment scopes that clause to a session this process is not running, so a new caller passing a live seat's agent.json would force-clean a running registration.
 - `findPeerByOrigin` looks up label, id, host while `peerOriginSuffix` emits label, host, id, so a peer whose suffix is a shared host (tunnelled peers on 127.0.0.1) resolves to the first peer with that host.
 - `seatRelFiles` skips unreadable dirs and symlinks without a word, so a move-to-peer shipment silently omits them.
-- `deniedBodyDisposition`'s header says memory and context both split on sub, but context returns none for every sub and only memory reads it.
 
 ## createSessionManager factory, constructor and the wire runtime — createSessionManager … _onHoldLifecycle
 
@@ -288,7 +287,7 @@
 
 - `clearHintForRecord` must run before the record is removed and keep its spawnerHintSet gate, or a blind clear wipes an operator's out-of-band /_hint override.
 - `_notifyComposition` scopes teammates with findProjectRoot while `_teamLiveSeats` and `_projectRootFor` call themselves the one live-seat scope, so a teamless-repo divergence is possible.
-- `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds despite the helper claiming to absorb that omission.
+- `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds although ALWAYS_PRESERVE exists to carry them.
 - `_injectRoster` writing actively into a booting non-claude TUI leaves the roster as an unsubmitted draft; only the stashed team ref rendered by `_settleBoot` is safe.
 - `_stripClaimedTree` guards the kill-to-exit window in which a restarting seat is live but named by no record; a wholesale snapshot write-back there puts a second record on a tree another seat is committing in.
 

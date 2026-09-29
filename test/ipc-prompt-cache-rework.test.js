@@ -201,7 +201,7 @@ test('MF3: a RESTART keeps the frozen prompt — restart routes through kill(), 
   const root = tmp();
   // _userKilled true is exactly the restart state: engine.restartSession and
   // applySessionArgs({restart:true}) both call manager.kill(), which sets it
-  // (session-manager's own onExit comment has said so since long before t61).
+  // (the map's kill/destroy invariants for session-manager.js state it).
   const survived = cleanupWith(root, 'restarted', { _userKilled: true });
   assert.strictEqual(survived, true,
     'the frozen prompt must survive _cleanup even with _userKilled set: restart routes through kill() too, so gating the rm on that flag deleted the cache on an ordinary restart and the create() that followed rewrote the whole prompt under a --resume\'d conversation — the exact 111k-139k bust this module exists to prevent');

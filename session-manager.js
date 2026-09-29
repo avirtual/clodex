@@ -420,10 +420,10 @@ function deniedBodyDisposition(intent) {
     case 'memory':
       if (intent.sub === 'remember') return { how: 'spill', label: 'memory remember' };
       return { how: 'note', label: `memory ${intent.sub || ''}`.trim() };
-// Denial makes the body moot rather than lost: the compact/clear/reload did not happen, so a body-not-saved line would be a false alarm.
+    // Denial makes the body moot rather than lost: the compact/clear/reload did not happen, so a body-not-saved line would be a false alarm.
     case 'context':
       return { how: 'none', label: null };
-// exec's body is derived from the refused command, so it is reported as lost but never spilled to disk.
+    // exec's body is derived from the refused command, so it is reported as lost but never spilled to disk.
     default:
       return { how: 'note', label: intent.type };
   }
@@ -5730,8 +5730,8 @@ function createSessionManager(deps) {
       };
       target._rebootNoticeFlushFire = fire;
       target._rebootNoticeFlushDelay = REBOOT_NOTICE_FLUSH_MS;
-      // Stamped so a test can pin the staleness threshold: it stays green at 1s and 60s if it drifts down to
-      // INJECT_QUIET_MS, which reinstates the splice.
+      // Stamped so a test can pin the staleness threshold: a test driving only 1s and 60s stays green if it
+      // drifts down to INJECT_QUIET_MS, which reinstates the splice.
       target._rebootNoticeDraftStaleMs = REBOOT_NOTICE_DRAFT_STALE_MS;
       target._rebootNoticeFlushTimer = setTimeout(fire, REBOOT_NOTICE_FLUSH_MS);
     }
@@ -8300,8 +8300,8 @@ function createSessionManager(deps) {
         this._deliverPassive(targetName, sender, body, mtype);
         return;
       }
-      // voice-* and team-retire are box-wide requests on whichever agent socket the sender could reach:
-      // targetName is not the acted-on seat, msg.target is.
+      // voice-* are box-wide requests on whichever agent socket the sender could reach, so targetName is
+      // not the seat they act on (msg.target or the focused seat is).
       if (mtype === 'voice-tap') {
         const r = this.voiceTap(typeof msg.target === 'string' ? msg.target : null);
         if (!r.ok) log.info('voice', `external tap declined: ${r.error}`);

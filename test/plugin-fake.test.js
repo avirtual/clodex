@@ -1083,7 +1083,7 @@ test('fake plugin (intents): the verb is live on BOTH feeds — with a body on j
     assert.strictEqual(extracted[0].body, 'line one\nline two', 'body captured across lines');
 
     // FEED 2 — the bash PTY pane, which calls parseIntent DIRECTLY (deliberately:
-    // no body capture, not fence-aware — see its comment at the call site).
+    // no body capture, not fence-aware — see the map's `_scanPtyOutput` invariant).
     assert.deepStrictEqual(parseIntent('[agent:fake-note] line one'), { type: 'fake-note', body: 'line one' });
     assert.strictEqual(parseIntent('line two'), null,
       'THE DIFFERENCE: on this feed the continuation line is its own (non-)intent');

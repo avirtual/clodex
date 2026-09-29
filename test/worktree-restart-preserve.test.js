@@ -13,7 +13,7 @@
 // WHY THIS IS THE COSTLY ONE, and why the answer is not the intuitive one. The
 // worry about preserving a pointer is that it goes STALE. It does not go stale
 // here: a restart re-enters the same cwd and deliberately does not touch the
-// tree (destroy()'s own header says why — the restart paths kill and recreate
+// tree (the map's `destroy` invariant says why — the restart paths kill and recreate
 // the same seat, and destroying its checkout there would delete the tree out
 // from under a session that is coming right back), so the value copied back is
 // the one that was on the record microseconds earlier.

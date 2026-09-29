@@ -636,7 +636,7 @@ of killing for bash shells and sandbox rows too.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
-— see that method's own comment for what it does and in what order. A
+— see the Invariants of docs/map/session-manager.md's kill/destroy section for what it does and in what order. A
 worktree-removal failure is toasted by the renderer while the row goes.
 
 | Event | sessions.json | Process | UI |
@@ -894,8 +894,8 @@ Nothing else reads the pointer in a way a missing tree breaks:
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
 the other two `setWorktree` call sites (`session:markWorktree`, the spawn-intent
 mint) do NOT scan, so that self-healing covers the ticket path only; and
-`destroy()` has a failure return that KEEPS the record — see its own comment
-for when.
+`destroy()` has a failure return that KEEPS the record — see the map's
+per-return `destroy` invariant for when.
 
 The Delete Session… confirm sentence and the `Worktree removal failed: …` toast
 both concern a tree that is already gone.
