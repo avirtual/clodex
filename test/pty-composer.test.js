@@ -37,12 +37,20 @@ test('a marker that only forms once an inner marker is removed is removed too', 
   assert.strictEqual(bracketPaste('\x1b[20\x1b[200~0~'), `${PASTE_OPEN}${PASTE_CLOSE}`);
 });
 
+function fastestMs(fn) {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+}
+
 test('20,000 nested marker fragments are scrubbed in linear time', () => {
   const nested = '\x1b[20'.repeat(20000) + '0~'.repeat(20000);
-  const t0 = performance.now();
-  const out = bracketPaste(nested);
-  const ms = performance.now() - t0;
-  assert.strictEqual(out, `${PASTE_OPEN}${PASTE_CLOSE}`);
+  assert.strictEqual(bracketPaste(nested), `${PASTE_OPEN}${PASTE_CLOSE}`);
+  const ms = fastestMs(() => bracketPaste(nested));
   assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
 });
 

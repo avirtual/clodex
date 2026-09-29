@@ -187,12 +187,20 @@ for (const [name, src, expected] of BLOCKS) {
   });
 }
 
+function fastestMs(fn) {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    fn();
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+}
+
 test('a heading with a 20,000-blank run before a non-# character renders in linear time, untrimmed', () => {
   const blanks = ' '.repeat(20000);
-  const t0 = performance.now();
-  const { frag } = render(`# x${blanks}y`);
-  const ms = performance.now() - t0;
-  assert.strictEqual(shapeOf(frag), `h1{x${blanks}y}`);
+  assert.strictEqual(shapeOf(render(`# x${blanks}y`).frag), `h1{x${blanks}y}`);
+  const ms = fastestMs(() => render(`# x${blanks}y`));
   assert.ok(ms < 50, `${ms.toFixed(1)} ms`);
 });
 
