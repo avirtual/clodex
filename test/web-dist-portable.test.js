@@ -181,3 +181,21 @@ test('build-web pins the two esbuild options that keep the bundle portable', () 
       + 'paths back into the original checkout');
   }
 });
+
+const LOOKBEHIND = /\(\?<[=!]/g;
+
+function lookbehinds(src) {
+  return [...src.matchAll(LOOKBEHIND)].map((m) => src.slice(Math.max(0, m.index - 30), m.index + 30));
+}
+
+test('web-dist bundle carries no regex lookbehind, which its safari16 target lacks', () => {
+  const src = fs.readFileSync(BUNDLE, 'utf8');
+  assert.strictEqual(lookbehinds(`${src}/(?<=a)b/ /(?<!c)d/`).length, 2,
+    'the detector must flag both lookbehind forms inside the bundle it scans');
+  assert.deepStrictEqual(lookbehinds('/(?<year>\\d{4})/'), [],
+    'the detector must leave a named group alone');
+  assert.deepStrictEqual(lookbehinds(src), [],
+    'web-dist/index.html contains a regex lookbehind. build/build-web.js targets safari16 and '
+    + 'Safari supports lookbehind only from 16.4; a lookbehind regex literal is a SyntaxError '
+    + 'there that stops the whole script.');
+});

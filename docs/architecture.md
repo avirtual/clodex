@@ -666,8 +666,8 @@ on the reuse path leaves two records naming one tree, which is the collision the
 scan exists to close.
 `resolveSeatShape` takes the template's `systemPromptFile` when the template
 names one and the role's `prompt` otherwise — except that, on both arms
-(`_teamRolePromptStem`), a team-owned role
-prompt outranks a seeded or implied template — and a role prompt that did not ride as the system prompt is appended
+(`_teamRolePromptStem`), a team-owned role prompt outranks a seeded or implied
+template — and a role prompt that did not ride as the system prompt is appended
 after the team block by `_teamBlockFor` (session-manager.js), so nothing is
 dropped.
 A worktree-dispatch seat's cwd IS its tree (`seatCwdInTree` re-roots a role area

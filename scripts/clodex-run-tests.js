@@ -237,7 +237,8 @@ function subjectMatchers(sources) {
     rel,
     stem: rel.endsWith('.js') ? rel.slice(0, -3) : null,
     literal: rel.endsWith('.js') || rel.includes('/'),
-    base: rel.endsWith('.js') || !rel.includes('/') ? null : path.posix.basename(rel),
+    base: rel.endsWith('.js') || !rel.includes('/') || rel.startsWith('web-dist/')
+      ? null : path.posix.basename(rel),
   }));
 }
 

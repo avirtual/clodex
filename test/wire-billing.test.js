@@ -131,19 +131,6 @@ test('PRICES: sonnet-5-5 has its own row rather than riding the sonnet-5 prefix'
   assert.equal(p.out, 10.0);
 });
 
-// The vendor's PRICES carries claude-mythos-5-1 and claude-mythos-5; ours ports
-// NEITHER, by decision — we never route mythos, and an unpriced model is loud
-// (est_usd null, unpriced_requests ticks, warnUnpriced fires) where a guessed
-// rate is silent. This pins the decision so a later half-port is red: adding a
-// bare 'claude-mythos-5' alone would swallow 'claude-mythos-5-1' exactly as
-// fable-5 swallowed fable-5-1 above.
-test('priceFor: mythos is unpriced by decision, not by oversight', () => {
-  assert.equal(priceFor('claude-mythos-5'), null);
-  assert.equal(priceFor('claude-mythos-5-1'), null);
-  assert.equal(PRICES['claude-mythos-5'], undefined);
-  assert.equal(PRICES['claude-mythos-5-1'], undefined);
-});
-
 // WITHDRAWN REPRICING — the scheduled sonnet-5 rise to $3/$15 was announced,
 // dated 2026-09-01, and then withdrawn; the $2/$10 rate became standard. The
 // entry had ALREADY FIRED, so this is the direction that actually over-bills:
@@ -476,10 +463,6 @@ test('Ledger: global and per-session totals accumulate independently', () => {
 //       both overlays are keyed on the EXACT winning prefix, so a longer PRICES
 //       row silently orphans the overlay. Adding an `X-1` row is what fixing (a)
 //       DOES, which is why (b) has to be asserted alongside it.
-//
-// Rates are deliberately NOT compared against the vendor: that would make this
-// file a third copy of the table (test/diff-argv-single-source.test.js's header
-// for why a third copy is worse than two). Keys alone carry the shadow property.
 
 const VENDOR_BILLING_PY = path.join(__dirname, '..', 'vendor', 'wirescope', 'proxylab', 'billing.py');
 
@@ -498,11 +481,13 @@ function vendorTableKeys(src, name) {
     .filter(Boolean).map((m) => m[1]);
 }
 
-// Pairs [ours, theirs] where a vendor key strictly extends one of ours and we
-// do not carry it — the shadow. A vendor key unrelated to every key of ours is
-// NOT reported: that model is unpriced-and-loud here, which is a decision, not a
-// defect. This is why mythos needs no exception entry — we hold neither mythos
-// row, so nothing of ours can swallow them.
+function vendorTableRow(src, name, key) {
+  const start = src.indexOf(`\n${name} = {\n`);
+  const line = src.slice(start, src.indexOf('\n}\n', start)).split('\n')
+    .find((l) => (l.match(/^\s*"([^"]+)"\s*:/) || [])[1] === key);
+  return JSON.parse(line.slice(line.indexOf(':') + 1).trim().replace(/,$/, ''));
+}
+
 function shadowedRows(ourKeys, theirKeys) {
   const ours = new Set(ourKeys);
   const out = [];
@@ -534,8 +519,6 @@ function orphanedOverlayRows(priceKeys, overlayKeys) {
 // including when the detector is broken and finds nothing anywhere. So each one
 // is driven RED against a synthetic table before any real table is handed to it.
 test('prefix-shadow audit: the detectors are red on a table that has the defect', () => {
-  // (a) the half-port the mythos comment in wire/billing.js warns about: take
-  // the bare row and not the -1, and 5.1 traffic prices at the 5.0 read rate.
   assert.deepEqual(
     shadowedRows(['claude-mythos-5', 'claude-haiku-4'],
       ['claude-mythos-5', 'claude-mythos-5-1', 'claude-haiku-4']),
@@ -623,4 +606,21 @@ test('prefix-shadow audit: the dated overlay is checked on the same rule, and th
   // is why the bite above is asserted inside the block rather than trusted here.
   assert.deepEqual(
     orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_DATED)), []);
+});
+
+test('vendor parity: every vendored PRICES row is an own row of ours at the same five rates', () => {
+  const src = fs.readFileSync(VENDOR_BILLING_PY, 'utf8');
+  const theirs = vendorTableKeys(src, 'PRICES');
+  assert.ok(theirs.length > 0, 'vendor PRICES parse found no keys');
+  assert.ok(theirs.includes('claude-mythos-5-1'),
+    `vendor PRICES parse missed claude-mythos-5-1: ${JSON.stringify(theirs)}`);
+  for (const key of theirs) {
+    assert.ok(Object.prototype.hasOwnProperty.call(PRICES, key),
+      `vendor PRICES row ${key} has no own row in wire/billing.js PRICES`);
+    const row = vendorTableRow(src, 'PRICES', key);
+    for (const field of ['in', 'out', 'cache_write_5m', 'cache_write_1h', 'cache_read']) {
+      assert.equal(typeof row[field], 'number', `vendor ${key}.${field} is not a number`);
+      assert.equal(PRICES[key][field], row[field], `${key}.${field}: ours ${PRICES[key][field]}, vendor ${row[field]}`);
+    }
+  }
 });
