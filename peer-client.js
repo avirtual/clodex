@@ -397,7 +397,7 @@ class PeerConnection {
   attach(name) {
     let att = this._attachments.get(name);
     if (att && att.wanted) return { ok: true };
-    if (!att) { att = { req: null, token: null, wanted: true, backoff: RECONNECT_MIN_MS, timer: null }; this._attachments.set(name, att); }
+    if (!att) { att = { req: null, token: null, acquireGen: 0, wanted: true, backoff: RECONNECT_MIN_MS, timer: null }; this._attachments.set(name, att); }
     att.wanted = true;
     if (this.online) this._openAttach(name, att);
     return { ok: true };
@@ -483,16 +483,22 @@ class PeerConnection {
     const att = this._attachments.get(name);
     if (!att) return cb({ ok: false, error: 'not attached' });
     if (on) {
+      const gen = ++att.acquireGen;
       this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'acquire', client: this.clientLabel() }, (err, body) => {
         if (err || !body || !body.ok) return cb({ ok: false, error: err ? err.message : (body && body.error) || 'acquire failed' });
         if (this._attachments.get(name) !== att) {
           if (body.token) this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'release', token: body.token }, () => {});
           return cb({ ok: false, error: 'detached' });
         }
+        if (att.acquireGen !== gen) {
+          if (body.token) this._request('POST', `/api/sessions/${encodeURIComponent(name)}/control`, { action: 'release', token: body.token }, () => {});
+          return cb({ ok: false, error: 'released' });
+        }
         att.token = body.token;
         cb({ ok: true });
       });
     } else {
+      att.acquireGen++;
       const token = att.token;
       att.token = null;
       if (!token) return cb({ ok: true });
