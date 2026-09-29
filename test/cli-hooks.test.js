@@ -1287,3 +1287,55 @@ test('SessionStart hook: the digest is emitted even when the transcript relink f
   }
   assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'rl'/);
 });
+
+function runCodexHook(REGISTRY_DIR, name, input) {
+  return cp.execFileSync('bash', [path.join(REGISTRY_DIR, 'codex-session-hook.sh')], {
+    input, encoding: 'utf-8', env: { ...process.env, WB_WRAP_NAME: name },
+  });
+}
+
+test('Codex SessionStart hook: the output is emitted even when the input carries no transcript_path', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupCodexHook('cnt', cwd);
+  const out = runCodexHook(REGISTRY_DIR, 'cnt', JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }));
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'cnt'/);
+});
+
+test('Codex SessionStart hook: the output is emitted even when the transcript relink fails', () => {
+  const REGISTRY_DIR = tmp();
+  const cwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupCodexHook('crl', cwd);
+  const runDir = path.dirname(pathFor(REGISTRY_DIR, 'crl', 'transcript'));
+  fs.chmodSync(runDir, 0o500);
+  let out;
+  try {
+    assert.throws(() => fs.writeFileSync(path.join(runDir, 'probe'), ''));
+    out = runCodexHook(REGISTRY_DIR, 'crl',
+      JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', transcript_path: path.join(REGISTRY_DIR, 't.jsonl') }));
+  } finally {
+    fs.chmodSync(runDir, 0o700);
+  }
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'crl'/);
+});
+
+test('cleanupCodexHook: a Clodex body from another registry dir is ours, so the user backup is restored over it', () => {
+  const cwd = tmp();
+  const h1 = mk(tmp());
+  const h2 = mk(tmp());
+  const hooksPath = path.join(cwd, '.codex', 'hooks.json');
+  const backup = hooksPath + '.wb-wrap-backup';
+  fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
+  fs.writeFileSync(hooksPath, '{"v":1}');
+  h1.setupCodexHook('cx', cwd);
+  h2.setupCodexHook('cy', cwd);
+  assert.match(fs.readFileSync(hooksPath, 'utf8'), /codex-session-hook\.sh/);
+  assert.strictEqual(fs.readFileSync(backup, 'utf8'), '{"v":1}');
+  h1.cleanupCodexHook('cx', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":1}');
+  assert.ok(!fs.existsSync(backup));
+  h2.cleanupCodexHook('cy', cwd);
+  assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":1}');
+});
