@@ -12,6 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
+const { isAlive } = require('./stream-seat');
 
 // TWO JOBS WEAR `renameSync` IN THIS FILE, and only one of them is a write.
 //   * PUBLISH (parkDelivery, restoreParked) — a temp file renamed into place so
@@ -121,10 +122,6 @@ function restoreParked(dir, base, raw) {
   try { atomicWriteFileSync(path.join(dir, base), raw); return true; } catch { return false; }
 }
 
-function pidAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch (e) { return !!e && e.code === 'EPERM'; }
-}
-
 function rehomeOrphans(root, name) {
   const dir = agentDir(root, name);
   const prefix = `${name}.draining.`;
@@ -133,7 +130,7 @@ function rehomeOrphans(root, name) {
   for (const s of siblings) {
     if (!s.startsWith(prefix)) continue;
     const pid = Number(s.slice(s.lastIndexOf('.') + 1));
-    if (!Number.isInteger(pid) || pid <= 0 || pidAlive(pid)) continue;
+    if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
     const mine = `${dir}.draining.rehome.${process.pid}`;
     try { fs.renameSync(path.join(root, s), mine); } catch { continue; }
     const json = (f) => f.endsWith('.json') && !f.startsWith('.');
