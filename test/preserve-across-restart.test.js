@@ -149,8 +149,8 @@ test('DISCOVERY: no restart path re-seeds persistence by hand instead of using t
       // 12 lines of CODE, not 12 raw lines: comments inside the window consume
       // the budget and push the real `_preserveAcrossRestart` out of it, which
       // fails on the REAL kill rather than on the comment — a false red the skip
-      // guard above cannot reach. engine.js:1262's window is already 4 comment
-      // lines deep, so this is latent, not hypothetical. Widening (12 code lines
+      // guard above cannot reach. restartSession's window in engine.js carries
+      // comment lines, so this is latent, not hypothetical. Widening (12 code lines
       // >= 12 raw lines) strengthens the guard; it never narrows it.
       const window = lines.slice(i).filter((l) => !isComment(l)).slice(0, 12);
       const createAt = window.findIndex((l) => /(?:manager|this)\.create\(/.test(l));
