@@ -3206,7 +3206,7 @@ test('the CLI keeps its per-kind validators PRIVATE — validateEntry is the onl
   // a call site tidier, they argue with this test first.
   const contexts = require('../cli/src/contexts');
   assert.deepStrictEqual(Object.keys(contexts).sort(),
-    ['cliDir', 'contextsPath', 'load', 'resolve', 'save', 'validateEntry']);
+    ['cliDir', 'contextsPath', 'load', 'loadOrEmpty', 'resolve', 'save', 'validateEntry']);
   // And the door actually enforces the rule stores.js relies on.
   assert.throws(() => contexts.validateEntry({ ssm: { target: 'i-0a', ecs: 'c/f' } }),
     /exactly one of/, 'validateEntry rejects target+ecs together');
