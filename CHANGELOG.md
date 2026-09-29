@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Prompts: a byte ratchet (`test/prompt-ratchet.test.js`) fails the suite when a shipped role prompt or the generated intents block grows against master without a `Prompt-bytes:` trailer in the commit message; the default kit's lead prompt is synced to the trimmed library one (14.0 KB, from 32.5 KB).
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 
 - Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
