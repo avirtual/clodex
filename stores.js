@@ -1843,8 +1843,6 @@ function initStores(userDataPath, {
   //   dest absent           -> copy, stamp shippedHash.
   //   present + stamped     -> overwrite only if sha256(dest) === stamp AND
   //                            shippedHash !== stamp; else leave it.
-  //   present, NO stamp     -> legacy: adopt sha256(dest), no write this launch;
-  //                            the next launch overwrites it like any pristine copy.
   // A dest that matches NEITHER its stamp nor the shipped bytes is STRANDED:
   // permanently off the upgrade path. That is correct for an operator edit and
   // wrong for a stale shipped copy, and a hash mismatch cannot tell the two
@@ -1854,6 +1852,7 @@ function initStores(userDataPath, {
   const SKILLS_SEED_SRC = skillsResourcesDir || path.join(__dirname, 'resources', 'skills');
   const AGENTS_SEED_SRC = path.join(SEED_SRC, 'agents');
   const SEED_STATE_NAME = '.seed-state.json';
+  const SEED_ADOPTED_PREFIX = 'adopted:';
   // Sibling of .seed-state.json, deliberately NOT a reserved key inside it:
   // .seed-state.json is documented as a flat relPath -> hash map, and a reserved
   // key would have to be skipped by every present and future consumer of it. The
@@ -1899,11 +1898,16 @@ function initStores(userDataPath, {
             continue;
           }
           const stamped = state[childRel];
-          if (stamped === undefined) {
-            state[childRel] = sha256(fs.readFileSync(dest)); changed = true;
+          const destHash = sha256(fs.readFileSync(dest));
+          if (stamped === undefined || (typeof stamped === 'string' && stamped.startsWith(SEED_ADOPTED_PREFIX))) {
+            if (destHash === shippedHash) {
+              state[childRel] = shippedHash; changed = true;
+            } else {
+              if (stamped === undefined) { state[childRel] = SEED_ADOPTED_PREFIX + destHash; changed = true; }
+              stranded.push({ rel: childRel, shippedHash });
+            }
             continue;
           }
-          const destHash = sha256(fs.readFileSync(dest));
           if (destHash === stamped) {
             if (shippedHash !== stamped) {
               atomicWriteFileSync(dest, srcBytes);
