@@ -1837,9 +1837,8 @@ function initStores(userDataPath, {
     return count;
   }
 
-  // Version-stamped reconciliation against .seed-state.json ({ relPath: sha256
-  // of the shipped bytes we last wrote }), so an upgrade replaces an UNEDITED
-  // shipped copy and leaves an edited one stranded:
+  // Version-stamped reconciliation against .seed-state.json, so an upgrade
+  // replaces an UNEDITED shipped copy and leaves an edited one stranded:
   //   dest absent           -> copy, stamp shippedHash.
   //   present + stamped     -> overwrite only if sha256(dest) === stamp AND
   //                            shippedHash !== stamp; else leave it.
