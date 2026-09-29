@@ -25514,6 +25514,7 @@ ${i3.join("\n")}
       function fmtBustTokens(n) {
         if (!n) return "0";
         if (typeof n !== "number" || !Number.isFinite(n)) return "0";
+        if (Math.round(n / 1e3) >= 1e3) return `${+(n / 1e6).toFixed(1)}M`;
         if (n >= 1e3) {
           const k = n / 1e3;
           return `${k.toFixed(+k.toFixed(1) >= 10 ? 0 : 1)}k`;
@@ -25985,6 +25986,7 @@ ${i3.join("\n")}
       var ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
       var LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
       var WORD_CHAR = /\w/;
+      var BLANK = /\s/;
       var INLINE = /`([^`\n]+)`|(!\[[^\]\n]*\]\([^)\s]*\))|\[([^\]\n]*)\]\(((?:[^()\s]|\([^()\s]*\))*)\)|\*\*([^*\n]+)\*\*|__([^_\n]+)__|\*([^*\n]+)\*|_([^_\n]+)_/g;
       function safeHref(raw) {
         const href = String(raw == null ? "" : raw).trim().replace(/^<+/, "").replace(/>+$/, "");
@@ -26056,6 +26058,15 @@ ${i3.join("\n")}
         }
         if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
         return parent;
+      }
+      function trimClosingHashes(text) {
+        let end = text.length;
+        while (end > 0 && BLANK.test(text[end - 1])) end--;
+        let hashes = end;
+        while (hashes > 0 && text[hashes - 1] === "#") hashes--;
+        let start = hashes;
+        while (start > 0 && BLANK.test(text[start - 1])) start--;
+        return hashes < end && start < hashes ? text.slice(0, start) : text;
       }
       function renderFence(lines, i, parent, doc) {
         const open = fenceOf(lines[i]);
@@ -26183,7 +26194,7 @@ ${i3.join("\n")}
           const h = HEADING.exec(line);
           if (h) {
             const heading = doc.createElement(`h${h[1].length}`);
-            appendInline(heading, h[2].replace(/\s+#+\s*$/, ""), doc);
+            appendInline(heading, trimClosingHashes(h[2]), doc);
             parent.appendChild(heading);
             i++;
             continue;
@@ -26516,7 +26527,7 @@ ${i3.join("\n")}
         "hcl"
       ];
       var PATH_RE = new RegExp(
-        String.raw`(?:~\/|\.{0,2}\/)?[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
+        String.raw`(?:~\/|(?:(?<![\w.@+\/-])|(?<=\/)(?![\w.@+-])|(?!\d)(?<=:\d+))(?:\.{0,2}\/)?)[\w.@+-]+(?:\/[\w.@+-]+)*\.(?:${EXTENSIONS.join("|")})(?![\w@+-]|\.[\w@+-])(?::\d+)?`,
         "g"
       );
       var URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
@@ -31315,14 +31326,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var VOICE_STOP_TRIES = 2;
       var PASTE_OPEN = "\x1B[200~";
       var PASTE_CLOSE = "\x1B[201~";
-      var PASTE_MARK = /\x1b\[20[01]~/gu;
+      var PASTE_MARK = /^\x1b\[20[01]~$/u;
       function bracketPaste(text) {
-        let body = String(text);
-        for (let prev; prev !== body; ) {
-          prev = body;
-          body = body.replace(PASTE_MARK, "");
+        const out = [];
+        for (const ch of String(text)) {
+          out.push(ch);
+          if (ch === "~" && PASTE_MARK.test(out.slice(-6).join(""))) out.length -= 6;
         }
-        return `${PASTE_OPEN}${body}${PASTE_CLOSE}`;
+        return `${PASTE_OPEN}${out.join("")}${PASTE_CLOSE}`;
       }
       function applyDraft(value, span, text) {
         const v = typeof value === "string" ? value : "";
@@ -32730,6 +32741,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return `${n} ${n === 1 ? one : many}`;
       }
       function tokensText(n) {
+        if (Math.round(n / 1e3) >= 1e3) return `${+(n / 1e6).toFixed(1)}M`;
         return n >= 1e3 ? `${Math.round(n / 1e3)}k` : String(n);
       }
       function durationText(ms) {
