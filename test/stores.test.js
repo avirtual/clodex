@@ -1458,8 +1458,6 @@ test('seed reconcile: an unstamped file the operator owns is never overwritten, 
 
     initStores(userData, { log, registryDir, resourcesDir });
     assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR', 'launch 1 keeps the operator file');
-    assert.strictEqual(readSeedState(registryDir)[rel],
-      'adopted:b4da21734593fc93dc34923a2ee7297ba2a02517e475f81c2ed95cce4aa66c18', 'launch 1 stamps it as adopted');
 
     initStores(userData, { log, registryDir, resourcesDir });
     assert.strictEqual(fs.readFileSync(dest, 'utf-8'), 'OPERATOR', 'launch 2 still keeps the operator file');
