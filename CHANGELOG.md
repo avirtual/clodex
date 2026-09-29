@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Wirescope v0.6.76 vendored: side-calls downshift to claude-sonnet-5-5, which is billed at its own sonnet-5.5 price row, and the /_admin page caps subagent rows at the five most recent.
+- Wirescope v0.6.76 vendored: side-calls downshift to claude-sonnet-5-5, which is billed at its own sonnet-5.5 price row, and the /_admin page lists at most five subagents seen in the last 24 hours, folding the rest into one count-and-cost line.
 
 ## 5.93.0 — 2026-09-29
 
