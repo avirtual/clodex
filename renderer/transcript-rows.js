@@ -352,6 +352,7 @@ function countText(n, one, many) {
 }
 
 function tokensText(n) {
+  if (Math.round(n / 1000) >= 1000) return `${+(n / 1e6).toFixed(1)}M`;
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }
 

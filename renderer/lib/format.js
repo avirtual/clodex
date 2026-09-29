@@ -81,6 +81,7 @@ function shortTs(iso) {
 function fmtBustTokens(n) {
   if (!n) return '0';
   if (typeof n !== 'number' || !Number.isFinite(n)) return '0';
+  if (Math.round(n / 1000) >= 1000) return `${+(n / 1e6).toFixed(1)}M`;
   if (n >= 1000) { const k = n / 1000; return `${k.toFixed(+k.toFixed(1) >= 10 ? 0 : 1)}k`; }
   return String(n);
 }
