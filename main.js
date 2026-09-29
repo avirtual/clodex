@@ -43,6 +43,7 @@ const pathMergeFailed = fixPathFromLoginShell();
 // Inherited CLAUDE_* markers make PTY-spawned CLIs behave as nested child
 // sessions. app.relaunch() then carries the clean env forward.
 require('./claude-env').scrubInheritedClaudeMarkers(process.env);
+const droppedConfigDir = require('./claude-env').dropInheritedConfigDir(process.env);
 
 // Set this BEFORE engine.shutdown() on every quit path. Shutdown closes the
 // windows, and `win.on('closed')` reads this flag to decide whether the close
@@ -597,6 +598,7 @@ app.whenReady().then(() => {
   reportAppFocus();
 
   log.info('app', `startup — Clodex ${app.getVersion()} (electron ${process.versions.electron}, pid ${process.pid})`);
+  if (droppedConfigDir) log.info('app', `dropped inherited CLAUDE_CONFIG_DIR=${droppedConfigDir}`);
 
   writeHostStamp(path.join(REGISTRY_DIR, 'run'), __dirname);
 
