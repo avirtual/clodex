@@ -155,6 +155,18 @@ test('the moved-in row carries the persisted config flags the restore loop stamp
   assert.strictEqual(row.effort, 'low', 'the level the seat was spawned with rides the moved-in row');
 });
 
+test('the moved-in row carries a host-relative proxy age on a copy of the cached record', () => {
+  const { m, windows } = mkFixture({ entries: [LIVE_ENTRY] });
+  const cached = { linked: true, ts: Date.now() - 2000 };
+  m._proxyPoller = { snapshot: () => cached };
+  seedLive(m, 'seat');
+  m.moveToWorkspace('seat', 'ws2');
+  const [, row] = windows.ws2.received[0];
+  assert.notStrictEqual(row.proxy, cached, 'the served payload is a copy');
+  assert.ok(!('ageMs' in cached), 'the cached record is not mutated');
+  assert.ok(row.proxy.ageMs >= 2000 && row.proxy.ageMs < 3000, `a 2s-old payload reads ${row.proxy.ageMs}ms`);
+});
+
 test('after the move _sendToSession reaches the NEW window', () => {
   const { m, windows } = mkFixture({ entries: [LIVE_ENTRY] });
   seedLive(m, 'seat');

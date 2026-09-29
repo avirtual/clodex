@@ -76,7 +76,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     pendingCount: manager.pendingCountFor(entry.name),
     createdAt: entry.createdAt || null,
     ...readCtxFor(entry.name),
-    proxy: stampServedAge(proxyPoller.snapshot(entry.name)),
+    proxy: proxyPoller.snapshot(entry.name),
   };
 }
 
@@ -161,7 +161,7 @@ async function restoreSessionsForWorkspace({
         team: manager.teamNameFor(cwd),
         createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
-        proxy: stampServedAge(proxyPoller.snapshot(entry.name)),
+        proxy: proxyPoller.snapshot(entry.name),
       });
     } catch (err) {
       // DO NOT remove from persistence — surface the failure to the UI
@@ -186,6 +186,7 @@ async function restoreSessionsForWorkspace({
   for (const r of restored) {
     const entry = byName.get(r.name);
     if (entry) stampConfigFlags(r, entry);
+    if (r.proxy) r.proxy = stampServedAge(r.proxy);
   }
   return restored;
 }
