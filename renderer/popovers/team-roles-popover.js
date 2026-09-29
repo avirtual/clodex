@@ -1052,7 +1052,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // The current team name the popover is bound to (from the group header).
   const teamName = () => popover.dataset.name || null;
 
-  // Re-fetch + re-render after a mutation, keeping any error visible.
   async function afterMutation(res, okMsg, name) {
     if (teamName() !== name) return;
     if (!res || !res.ok) {
