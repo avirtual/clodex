@@ -374,9 +374,7 @@ test('repeated reloads of the same seat leave exactly one stream and one shell',
 // assigned it yet, so the drop deletes the map entry and destroys nothing while
 // the far side has already spawned the shell, added its response and written
 // `replay`. Unless `onOpen` reaps it, nothing local can close that stream, and
-// at the window-close edge no later navigation can fire a second drop. The
-// other tests await `watched(server).length === 1`, which proves only the
-// server-side registration, and that lands before the consumer parses `replay`.
+// at the window-close edge no later navigation can fire a second drop.
 //
 // So: open and drop back-to-back, without awaiting the stream. What must be
 // true afterwards is that the far side ends up watching NOTHING.
