@@ -2207,7 +2207,7 @@ test('seed: shipped team prompts agree on who commits, who merges, who pushes', 
   // "never merge" is as false as "always merge".
   assert.match(lead, /no\s+ticket carries the verdict/,
     'lead prompt keeps the team-review exception where it merges itself');
-  assert.match(lead, /escalated at the\s+merge step/,
+  assert.match(lead, /escalated at\s+the merge step/,
     'lead prompt keeps the escalated-at-merge exception where it merges itself');
   // t524, defect 2: this bullet told the lead to remove the worktree by hand
   // while the file's own `task accept` paragraph said accept does it.
