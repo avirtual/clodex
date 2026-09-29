@@ -27,6 +27,7 @@ blocks a release.
 - Hooks and engine: a Codex seat still receives its identity when the transcript relink fails; a parked-mail drain interrupted mid-claim is re-homed by the next drain instead of lost; a second Clodex instance sharing a cwd no longer discards the user's Codex hooks backup on cleanup; `-m=NAME` is read as a model like the other spellings; a session moved between workspaces keeps its web scrollback ring.
 - Seat prompts: the generated intents block every Claude seat carries drops the duplicated peer-message and example paragraphs (~12.8 KB, down from 13.6 KB); every rule a seat must follow is unchanged.
 - Engine: a parked-mail claim orphaned by a dead drainer is re-homed the moment any pending check runs, not only when new mail arrives; the "serving on host:port" log no longer fires for a remote server stopped before its start finished.
+- Tests: the peer-shell reload case no longer races the first replay frame under a loaded suite (5 false failures at the merge gate).
 
 ## 5.92.0 — 2026-09-29
 
