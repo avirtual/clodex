@@ -1301,9 +1301,11 @@ def _strip_tools_global(obj, agent_id=None):
 # Both are single-shot and carry ZERO cache_control -> rewriting `model` is
 # cache-safe (no prefix lineage) and history-safe (the CLI consumes only the
 # response text; nothing re-enters the transcript under the wrong model).
-# DEFAULT ON -> claude-sonnet-5 (operator decision 2026-07-07: sonnet keeps
-# digest quality for research-critical searches at 1/3 fable input price;
+# DEFAULT ON -> claude-sonnet-5-5 (operator decision 2026-07-07: sonnet keeps
+# digest quality for research-critical searches at 1/5 fable input price;
 # a fable-capability digester is never warranted for page summarization).
+# Bumped sonnet-5 -> sonnet-5-5 on 2026-09-28 (operator: "the cli should call
+# the updated model"); same $2/$10 rates, so the move is quality, not price.
 # Only fires when the incoming model is MORE expensive than everything cheap —
 # i.e. it never UPSHIFTS: a session already on haiku/sonnet is left alone
 # (model == target short-circuits; _MODEL_RANK guards the haiku case).
@@ -1313,7 +1315,7 @@ def _strip_tools_global(obj, agent_id=None):
 # (SIDECALL_BETA_STRIP) since the target model may not support the 1M beta.
 # Decline-on-doubt: any thinking key, >1 message, any cache_control, or an
 # unrecognized shape -> untouched.
-SIDECALL_MODEL = os.environ.get("SIDECALL_MODEL", "claude-sonnet-5").strip()
+SIDECALL_MODEL = os.environ.get("SIDECALL_MODEL", "claude-sonnet-5-5").strip()
 if SIDECALL_MODEL.lower() in ("0", "no", "off", "false"):
     SIDECALL_MODEL = ""
 # Cheaper-than ordering so the downshift never upshifts a cheap session's

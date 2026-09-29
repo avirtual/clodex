@@ -220,6 +220,13 @@ PRICES = {
     # via PRICES_DATED (priced at receipt time = time of traffic).
     # Distinct model id (newer tokenizer, ~30% more tokens; wire counts already
     # reflect it, so no per-token adjustment — only the $/token rate differs).
+    # sonnet-5.5 (2026-09-28, id `claude-sonnet-5-5`): SAME rates as sonnet-5
+    # ($2/$10, writes 2.50/4, standard 0.1x read $0.20), so the prefix match
+    # already priced it right. It gets its own row anyway because
+    # "claude-sonnet-5" IS a prefix of it (the fable-5/5.1, opus-5/5.5 shape):
+    # a later repricing of either would otherwise silently carry over. Read off
+    # platform.claude.com/docs/en/about-claude/pricing + models/overview (id).
+    "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
     "claude-sonnet-5": {"in": 2.0,  "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
     "claude-haiku-4":  {"in": 1.0,  "out": 5.0,  "cache_write_5m": 1.25,  "cache_write_1h": 2.0,  "cache_read": 0.10},
 }
