@@ -123,6 +123,14 @@ test('priceFor: opus-5-5 keeps its own rates and is not swallowed by opus-5', ()
   assert.equal(fast.cache_read, 0.40);
 });
 
+test('PRICES: sonnet-5-5 has its own row rather than riding the sonnet-5 prefix', () => {
+  assert.ok(Object.prototype.hasOwnProperty.call(PRICES, 'claude-sonnet-5-5'),
+    'claude-sonnet-5-5 must be an own PRICES key, not reached by prefix');
+  const p = priceFor('claude-sonnet-5-5');
+  assert.equal(p.in, 2.0);
+  assert.equal(p.out, 10.0);
+});
+
 // The vendor's PRICES carries claude-mythos-5-1 and claude-mythos-5; ours ports
 // NEITHER, by decision — we never route mythos, and an unpriced model is loud
 // (est_usd null, unpriced_requests ticks, warnUnpriced fires) where a guessed
