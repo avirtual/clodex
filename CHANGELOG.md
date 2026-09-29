@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 - Team prompts: the hand prompt is one file again (`clodex-team-hand.md`, ~10 KB, down from two files totalling ~25 KB) — duplicates, anecdotes and five contradictory instructions (red-proof route, comment check, who merges, working directory, which suite counts) are resolved; the `clodex-commit` paragraph that named an ungranted command is gone.
 
+- Docs: the session-lifecycle table, the full record-droppers list and the workspace rules are merged into `docs/sessions.md`; the test doctrine's case studies are in the new `docs/tests.md`.
+
 ## 5.92.0 — 2026-09-29
 
 - Renderer: the 💥 chip and its panel count "genuine" busts by one rule; bust/help/selection popovers recover from a failed fetch instead of sticking on Loading or clearing a badge they could not read; strip, history and hold menus act on the session they were opened for even if the active session changed; the session-info popover closes when its session's row goes; the selection badge follows a session switch; files rows keep their working directory across a failed open; the voice picker shows a stored voice the system no longer lists.

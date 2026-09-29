@@ -609,6 +609,30 @@ row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.
 renderer.js), and right-click Delete Session…. Only the last kills a session
 process; the two ✕ routes act on a record whose session is already gone.
 
+**Natural exit keeps the entry** for an agent: anything short of an explicit
+delete gets `--resume`d the next time its workspace opens. A bash session's
+natural exit removes its record (nothing to resume) — but only a genuinely
+natural one: `dropRecord` is `!agentType && !expected`, so an app quit, an
+archive or a move keeps it. `_userKilled` is in `expected` for a
+different reason from the others: `kill()` already called
+`getPersistence().remove()` unconditionally (agent or not) before the pty died,
+so the flag only suppresses a redundant second remove — it preserves nothing. A
+killed agent's record is gone.
+
+**Every record-dropper**, sidebar or not: `kill()` itself, `destroy()`, Delete
+Session…, Delete Workspace…, the archived and failed rows' ✕ (`forgetSession`),
+team-retire with discard, `sweepReviewerGraveyard`, the team-review
+spawn-failure rollback, the seat-import spawn-failure rollback (remote-wiring.js), and both ticket-seat spawn-failure rollbacks in
+`_spawnTicketSeat` (team-tickets.js: the createWorktree-failed arm, and the
+create()-threw catch, which drops only when the seat is not live). `destroy()`
+is on the list separately from `kill()`, not as its caller: `kill()` returns at
+`if (!s) return;` before its remove, so on an already-dead seat only
+`destroy()`'s own drop runs — without it the tree went and the record naming it
+stayed (a record pointing at nothing rather than nothing pointing at a record).
+The list is the point: a new `getPersistence().remove()` call site that is not
+on it is a record dropped where nobody expects one. ✕ / Cmd+W archives instead
+of killing for bash shells and sandbox rows too.
+
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
 — see that method's own comment for what it does and in what order. A
@@ -617,15 +641,15 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Event | sessions.json | Process | UI |
 |---|---|---|---|
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s) | live tab → dimmed archived row |
-| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s), seat dir removed | tab removed |
+| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` left | tab removed |
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, ✕ = forget) |
-| Natural exit (bash) | removed (unless `_archived`) | dead | tab removed |
+| Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
-| Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
+| Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed (`_moving`) + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
 | Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io` | tab rebuilt as a terminal or a stream pane to match `io` |
-| Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set | killed; shipped; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
+| Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set (the local backup; a click resumes a fork) — untouched on failure | killed (`_moving`); transcript + seat dirs shipped via `importSeat`, far box restores it with `mint=false`; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 
 Which CLIs support the stream transport is declared per adapter (`stream` block
@@ -942,18 +966,33 @@ on relink; autoCompact read from persistence), mirroring the ipc-handlers
 
 ## 6. Workspaces
 
-One BrowserWindow per workspace (`SessionManager.windows` map); sessions
-carry `workspaceId`; `session:list` is sender-scoped. The tray lists across
-workspaces by calling `getManager().list()` in-process (app-menus.js) — no
-IPC channel exposes an unscoped listing.
-Closing a window detaches its sessions: `pty-data` buffers
-into `session.pendingOutput` (2MB cap, oldest dropped) and replays on
+One BrowserWindow per workspace (`SessionManager.windows` map), keyed by a
+stable UUID; `'default'` is the original. Sessions carry `workspaceId`;
+`session:list` is sender-scoped. The tray lists across workspaces by calling
+`getManager().list()` in-process (app-menus.js) — no IPC channel exposes an
+unscoped listing, and adding one would hand every workspace's sessions to a
+web-host connection bound to a single workspace. Bounds, `lastFocusedAt` and
+`open` are persisted per workspace.
+
+Startup restores the window set that was open at quit: `open` is set by
+createWindow and cleared on close, and the clear is skipped while `appQuitting`
+so quit teardown does not wipe the set. With no flags, only the
+most-recently-focused window opens.
+
+Closing a window detaches its sessions rather than killing them: `pty-data`
+buffers into `session.pendingOutput` (2MB cap, oldest dropped) and replays on
 reopen; exit/activity events while detached are dropped and recomputed.
-**Delete Workspace…** (Window menu) removes a whole workspace record: confirm →
+**Delete Workspace…** (Window menu) is the only true workspace delete: confirm →
 kill its sessions → remove the record → close the window. (For a single LIVE
 session, right-click **Delete Session…** is the record-dropper; ✕ / Cmd+W on a
 live row archives instead. An archived or failed row's ✕ drops its record —
-see §4.)
+see §4.) Rename: double-click the sidebar header, or File ▸ Rename Workspace….
+The `ipc-message` channel broadcasts to every window, so every IPC log shows all
+traffic.
+
+Single-instance lock (`app.requestSingleInstanceLock`): a second launch focuses
+the existing windows instead of fighting over `~/.clodex/*.sock` and
+persistence.
 
 ## Invariants (do not break)
 

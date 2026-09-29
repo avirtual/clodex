@@ -16,6 +16,7 @@ const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 const EXCLUDE = new Set([
   'docs/skills/grok.md',
+  'docs/tests.md',
 ]);
 
 const REPO_LINKS = new Set([

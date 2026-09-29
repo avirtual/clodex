@@ -22,8 +22,7 @@
 // BOTH DIRECTIONS ARE PINNED HERE, deliberately. The ephemeral subjects are not
 // context: a fix that simply disabled teardown would satisfy every
 // standing-seat assertion below and ship green, and the whole value of the
-// change is the DISTINCTION. `.claude/CLAUDE.md` documents that vacuity shape
-// under Tests, with seven recorded instances in this repo.
+// change is the DISTINCTION.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');
