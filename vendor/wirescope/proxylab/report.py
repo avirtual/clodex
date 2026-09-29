@@ -172,7 +172,8 @@ def _iter_pairs(session):
             "ts": ts,
             "billing": billing,
             "tokens": billing.get("tokens") or {},
-            "ok": resp.get("status_code") == 200,
+            "ok": (resp.get("status_code") == 200 and "nudge_swallowed" not in resp
+                   and "shortcircuit" not in resp),
         })
     out.sort(key=lambda p: (_epoch(p["ts"]) if _epoch(p["ts"]) is not None else 0.0,
                             _seq_of(p["stem"])))
@@ -1584,7 +1585,8 @@ def _bust_scan(session):
             "line": _line_key(summ),
             "summary": summ if summ else None,
             "tokens": billing.get("tokens") or {},
-            "ok": resp.get("status_code") == 200,
+            "ok": (resp.get("status_code") == 200 and "nudge_swallowed" not in resp
+                   and "shortcircuit" not in resp),
             "n_messages": summ.get("n_messages") or 0,
             "has_body": bool(summ) if body is None else bool(body),
             "body": body,

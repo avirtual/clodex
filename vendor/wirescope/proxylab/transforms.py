@@ -3645,6 +3645,121 @@ def _synth_end_turn_sse(model, ack, msg_id):
     ]).encode("utf-8")
 
 
+_swallow_nudge_env = os.environ.get("SWALLOW_EMPTY_NUDGE", "routed").strip().lower()
+SWALLOW_EMPTY_NUDGE = ("routed" if _swallow_nudge_env in ("1", "yes", "on", "true")
+                       else _swallow_nudge_env if _swallow_nudge_env in ("routed", "all")
+                       else "off")
+# Claude Code 2.1.284 `query_thinking_only_response` nudge text (CLI constant yUt).
+NUDGE_TEXT = ("[Your previous response had no visible output. Please continue "
+              "and produce a user-visible response.]")
+_NUDGE_SWALLOWED = collections.Counter()
+_NUDGE_PRIOR = collections.OrderedDict()
+_NUDGE_SPENT = collections.OrderedDict()
+_NUDGE_PRIOR_MAX = 2000
+
+
+def _nudge_digest(msgs, drop_trailing_system=False):
+    msgs = list(msgs)
+    while (drop_trailing_system and msgs and isinstance(msgs[-1], dict)
+           and msgs[-1].get("role") == "system"):
+        msgs.pop()
+    h = hashlib.blake2b(digest_size=20)
+    for m in msgs:
+        if isinstance(m, dict) and isinstance(m.get("content"), str):
+            m = {**m, "content": [{"type": "text", "text": m["content"]}]}
+        h.update(b"\x1e")
+        h.update(warmth_mod._canon_message(m))
+    return h.hexdigest()
+
+
+def _nudge_candidate(msgs):
+    last = msgs[-1] if msgs else None
+    if not isinstance(last, dict) or last.get("role") != "user":
+        return None
+    c = last.get("content")
+    if isinstance(c, str):
+        return ("bare", msgs[:-1]) if c.strip() == NUDGE_TEXT else None
+    if not (isinstance(c, list) and c and isinstance(c[-1], dict)
+            and c[-1].get("type") == "text" and isinstance(c[-1].get("text"), str)
+            and c[-1]["text"].strip() == NUDGE_TEXT):
+        return None
+    rest = c[:-1]
+    if not rest:
+        return "bare", msgs[:-1]
+    lb = rest[-1]
+    if isinstance(lb, dict) and lb.get("type") == "text":
+        if not (isinstance(lb.get("text"), str) and lb["text"].endswith("\n")):
+            return None
+        rest = rest[:-1] + [{**lb, "text": lb["text"][:-1]}]
+    tail = ("tool_result" if all(isinstance(b, dict) and b.get("type") == "tool_result"
+                                 for b in rest) else "bundled")
+    return tail, msgs[:-1] + [{**last, "content": rest}]
+
+
+def _nudge_pre(obj, path, routed):
+    mode = SWALLOW_EMPTY_NUDGE
+    if PASSTHROUGH or mode not in ("routed", "all") or (mode == "routed" and not routed):
+        return None
+    if not isinstance(obj, dict) or not (path or "").split("?")[0].endswith("/v1/messages"):
+        return None
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list) or not msgs:
+        return None
+    pre = {"digest": _nudge_digest(msgs, drop_trailing_system=True)}
+    cand = _nudge_candidate(msgs) if obj.get("stream") is True else None
+    if cand:
+        pre["tail"] = cand[0]
+        pre["candidate"] = _nudge_digest(cand[1])
+    return pre
+
+
+def _nudge_swallow_decision(pre, session_id):
+    if not (pre and session_id and pre.get("candidate")):
+        return None
+    prior = _NUDGE_PRIOR.get(session_id)
+    if prior is None or prior != pre["candidate"]:
+        return None
+    if _NUDGE_SPENT.get(session_id) == pre["candidate"]:
+        return None
+    _NUDGE_SPENT[session_id] = pre["candidate"]
+    _NUDGE_SPENT.move_to_end(session_id)
+    while len(_NUDGE_SPENT) > _NUDGE_PRIOR_MAX:
+        _NUDGE_SPENT.popitem(last=False)
+    return {"tail": pre["tail"]}
+
+
+def _nudge_note_forwarded(pre, session_id):
+    if not (pre and session_id):
+        return
+    _NUDGE_SPENT.pop(session_id, None)
+    _NUDGE_PRIOR[session_id] = pre["digest"]
+    _NUDGE_PRIOR.move_to_end(session_id)
+    while len(_NUDGE_PRIOR) > _NUDGE_PRIOR_MAX:
+        _NUDGE_PRIOR.popitem(last=False)
+
+
+def _synth_empty_end_turn_message(model, msg_id):
+    return {"id": msg_id, "type": "message", "role": "assistant",
+            "model": model or "claude", "content": [], "stop_reason": "end_turn",
+            "stop_sequence": None,
+            "usage": {"input_tokens": 0, "output_tokens": 0,
+                      "cache_read_input_tokens": 0,
+                      "cache_creation_input_tokens": 0}}
+
+
+def _synth_empty_end_turn_sse(model, msg_id):
+    def ev(name, data):
+        return f"event: {name}\ndata: {json.dumps(data)}\n\n"
+    start = {**_synth_empty_end_turn_message(model, msg_id), "stop_reason": None}
+    return "".join([
+        ev("message_start", {"type": "message_start", "message": start}),
+        ev("message_delta", {"type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"output_tokens": 0}}),
+        ev("message_stop", {"type": "message_stop"}),
+    ]).encode("utf-8")
+
+
 def _relay_capture_and_strip(blob: bytes) -> bytes:
     """RELAY edit-turn handler. If this response carries exactly one terminal
     tool_use plus a text block containing the sentinel, STASH the cleaned prose

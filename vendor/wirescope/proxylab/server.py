@@ -1411,6 +1411,11 @@ async def handler(request: Request) -> Response:
     ws_display_name = None
     agent_id = request.headers.get("x-claude-code-agent-id")
     try:
+        nudge_pre = transforms_mod._nudge_pre(obj, upstream_path, m is not None)
+    except Exception as e:
+        nudge_pre = None
+        record["nudge_pre_error"] = repr(e)
+    try:
         # VERSION-DRIFT CANARY (read-only): fingerprint the ORIGINAL CLI request
         # shape BEFORE any of our transforms, so we detect CLI/wire changes (incl.
         # a new 4th cache_control marker), not our own mutations.
@@ -1979,6 +1984,26 @@ async def handler(request: Request) -> Response:
         return StreamingResponse(iter([blob]), status_code=200,
                                  media_type="text/event-stream")
 
+    nudge = ("deliver_inject" not in record
+             and transforms_mod._nudge_swallow_decision(nudge_pre, session_id))
+    if nudge:
+        msg_id = f"msg_nudgeswallow_{n:06d}"
+        blob = transforms_mod._synth_empty_end_turn_sse(model, msg_id)
+        transforms_mod._NUDGE_SWALLOWED[agent] += 1
+        writer_mod._enqueue_bytes(out_dir / f"{stem}.response.sse", blob)
+        writer_mod._enqueue_json(out_dir / f"{stem}.response.json",
+            {"seq": n, "agent": agent, "role": role, "model": model,
+             "session_id": session_id, "endpoint": "messages",
+             "status_code": 200, "billing": None, "usage": {}, "meta": {},
+             "nudge_swallowed": {"upstream_called": False,
+                                 "synthetic_message_id": msg_id,
+                                 "tail": nudge["tail"]}})
+        print(f"[nudge-swallow] #{n} {agent}/{role} answered the CLI's "
+              f"no-visible-output nudge with an empty end_turn "
+              f"(tail={nudge['tail']}); upstream skipped, 0 tokens", flush=True)
+        return StreamingResponse(iter([blob]), status_code=200,
+                                 media_type="text/event-stream")
+
     # ---- forward upstream; tee the response stream to a .sse file ----
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in core_mod._HOP}
     fwd_headers["accept-encoding"] = "identity"  # force uncompressed so we can read the SSE
@@ -2007,6 +2032,7 @@ async def handler(request: Request) -> Response:
         if not side_call and not keepwarm and not writer_mod._is_subagent_role(role):
             pinger_mod._cache_last_request(session_id, obj, fwd_headers, upstream_path,
                                 account_uuid)
+            transforms_mod._nudge_note_forwarded(nudge_pre, session_id)
             if "hold_echo" not in record:      # the arming turn itself isn't
                 hold_mod._hold_note_real_turn(session_id)   # organic; real turns restart
                                                    # the ping budget + window

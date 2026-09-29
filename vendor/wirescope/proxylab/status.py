@@ -205,6 +205,7 @@ def _identity():
             # feature is off on this port (kill switch or unconfigured).
             "strip_mcp": {"available": True,
                           "servers": sorted(transforms_mod.STRIP_MCP_SERVERS)},
+            "swallow_empty_nudge": transforms_mod.SWALLOW_EMPTY_NUDGE,
         },
         "endpoints": {
             "identity": "/_identity",
@@ -501,6 +502,7 @@ def _status_snapshot(session=None, all_sessions=False, limit=None,
                      "subscribers": subs_mod._stats(),
                      "codex": dict(codex_mod._CODEX_STATS),
                      "muse": dict(muse_mod._MUSE_STATS),
+                     "nudge_swallowed": dict(transforms_mod._NUDGE_SWALLOWED),
                      "hold_config": {"margin_s": hold_mod.WARMTH_HOLD_MARGIN,
                                      "interval_s": hold_mod.WARMTH_HOLD_INTERVAL,
                                      "max_hours": hold_mod.WARMTH_HOLD_MAX_HOURS,
