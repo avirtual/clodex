@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane, Conversation mode: when a turn driven by a ticket notice, report or reminder folds to one line, the agent's closing words (or their filed-prose link) now show below the fold at turn level instead of hidden inside it under the ticket.
+
 ## 5.93.1 — 2026-09-29
 
 - Wirescope v0.6.76 vendored: side-calls downshift to claude-sonnet-5-5, which is billed at its own sonnet-5.5 price row, and the /_admin page lists at most five subagents seen in the last 24 hours, folding the rest into one count-and-cost line.
