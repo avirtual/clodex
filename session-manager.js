@@ -175,7 +175,7 @@ const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
-const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -4326,6 +4326,7 @@ function createSessionManager(deps) {
           : (record.exitedAt && !record.archivedAt
             ? exitedSnapshotFor({ manager: this, entry: record })
             : archivedSnapshotFor({ manager: this, entry: record }));
+        if (row.proxy) row.proxy = stampServedAge(row.proxy);
         destWin.webContents.send('session:moved-in', stampConfigFlags(row, record));
       }
       log.info('session', `move-to-workspace ${name} ${oldId} → ${workspaceId}`);

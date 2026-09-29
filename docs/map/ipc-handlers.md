@@ -171,7 +171,7 @@
 | `handle:prompts:inject` | types a prompt body into a live seat | seat PTY via manager | manager._injectText | unpinned |
 | `handle:session:draftOpen` | whether the seat has an unsent draft, false for an unknown or dead seat | none | proxy-util.isDraftOpen | spawn-focus-steal.test.js |
 | `handle:transcript:pull` | the agent seat's transcript records since a rev, merged with compact notices, outbox and permission items | transcript spike reader | transcriptSpike.pull, compact-notices.mergeCompactNotices, manager.seatOutbox | transcript-pull-outbox.test.js web-host.test.js |
-| `handle:proxy:snapshot` | the proxy poller's snapshot for a session | proxy poller (read) | proxyPoller.snapshot | unpinned |
+| `handle:proxy:snapshot` | the proxy poller's snapshot for a session, as a copy stamped with a host-relative ageMs | proxy poller (read) | proxyPoller.snapshot, proxy-util.stampServedAge | proxy-served-age.test.js |
 | `handle:wire:quota` | the persisted account plan quota before any turn is forwarded | quota store via manager | manager.quotaStore, manager._quotaPayload | wire-quota-seam.test.js |
 | `handle:proxy:context` | the proxy's context breakdown for a session | none | fetchProxyContext | unpinned |
 | `handle:proxy:report` | the proxy's report for a session | none | fetchProxyReport | unpinned |
