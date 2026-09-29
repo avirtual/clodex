@@ -31,4 +31,6 @@ node -e 'const {codeOnly}=require("./comment-census.js");const s=require("fs").r
 
 Run it on `git show <base>:FILE` and on the working file; the hashes must match. Because `codeOnly()` hides string contents, also compare the `acorn` token streams (type and value per token) of both versions; they must be identical.
 
+Some tests read comment text from the source (exemption markers, backticked literals in a table's comments) or strip comments with a quote-counting scanner; run the branch's tests and restore any comment a test reads.
+
 `node scripts/comment-delta.js` then shows a negative delta for the paid-down file and zero for every other file.
