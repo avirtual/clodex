@@ -485,7 +485,7 @@ test('deliverClaudeToken deletes its throwaway session once the engine answers a
       if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
       if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
       if (req.url === '/api/peer/hello') {
-        if (helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
+        if (seen.some((s) => /\/input$/.test(s.url)) && helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
         return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
       }
       res.end(JSON.stringify({ ok: true }));
@@ -509,6 +509,51 @@ test('deliverClaudeToken deletes its throwaway session once the engine answers a
   } finally { server.close(); }
 });
 
+function bootIdServer(bootIds) {
+  const http = require('node:http');
+  const seen = [];
+  let hellos = 0;
+  const server = http.createServer((req, res) => {
+    let body = ''; req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
+      res.statusCode = 200; res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
+      if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
+      if (req.url === '/api/peer/hello') {
+        const bootId = bootIds[Math.min(hellos++, bootIds.length - 1)];
+        return res.end(JSON.stringify({ ok: true, app: 'clodex', bootId }));
+      }
+      res.end(JSON.stringify({ ok: true }));
+    });
+  });
+  return { server, seen };
+}
+
+for (const row of [
+  { name: 'a bootId change with no failed poll (the restart finished before the first poll) deletes the throwaway session', bootIds: ['b1', 'b2'], deletes: 1 },
+  { name: 'an unchanged bootId with no failed poll leaves the throwaway session alone (the script may still be running)', bootIds: ['b1', 'b1'], deletes: 0 },
+]) {
+  test(`deliverClaudeToken: ${row.name}`, async () => {
+    const { server, seen } = bootIdServer(row.bootIds);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const entry = { url: `http://127.0.0.1:${server.address().port}` };
+      await D.deliverClaudeToken(entry, 'wire-tok', 'sk-oauth-9', { pollMs: 1, sleepFn: async () => {} });
+      const urls = seen.map((s) => s.url);
+      const createAt = seen.findIndex((s) => s.method === 'POST' && s.url === '/api/sessions');
+      assert.ok(urls.indexOf('/api/peer/hello') >= 0 && urls.indexOf('/api/peer/hello') < createAt, 'the bootId hello goes out BEFORE the session create');
+      const create = seen[createAt];
+      const dels = seen.map((s, i) => ({ ...s, i })).filter((s) => s.method === 'DELETE');
+      assert.strictEqual(dels.length, row.deletes);
+      if (row.deletes) {
+        assert.strictEqual(dels[0].url, '/api/sessions/' + create.body.name);
+        assert.ok(dels[0].i > urls.lastIndexOf('/api/peer/hello'), 'the DELETE follows the last hello');
+      }
+    } finally { server.close(); }
+  });
+}
+
 test('deliverClaudeToken: a 404 on the token-session DELETE (it raced the engine\'s restore) is retried exactly once after one pollMs sleep', async () => {
   const http = require('node:http');
   const seen = [];
@@ -521,7 +566,7 @@ test('deliverClaudeToken: a 404 on the token-session DELETE (it raced the engine
       if (req.url === '/api/resources') return res.end(JSON.stringify(RESOURCES_DOC));
       if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/control$/.test(req.url)) return res.end(JSON.stringify({ ok: true, token: 'ctrl-1' }));
       if (req.url === '/api/peer/hello') {
-        if (helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
+        if (seen.some((s) => /\/input$/.test(s.url)) && helloDown-- > 0) { res.statusCode = 503; return res.end(JSON.stringify({ ok: false, error: 'restarting' })); }
         return res.end(JSON.stringify({ ok: true, app: 'clodex' }));
       }
       if (req.method === 'DELETE') { res.statusCode = 404; return res.end(JSON.stringify({ ok: false, error: 'no such session' })); }

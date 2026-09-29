@@ -12,6 +12,9 @@ const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
+const { kernelStartTime } = require('./stream-seat');
+
+const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
 function parseJsonObject(body) {
   let msg;
@@ -1057,7 +1060,7 @@ class RemoteServer {
       caps.push('images');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
-        version: this._version, caps,
+        version: this._version, bootId: BOOT_ID, caps,
         platform: process.platform,
         srcDir: this._srcDir,
         dmOrigins: this._listDmOrigins ? this._listDmOrigins() : [],

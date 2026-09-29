@@ -87,3 +87,9 @@ message is worse than no row.
 The dm-origin mark is not a new exposure: `deliverDm` sets the same mark the
 first time the hub dms the spoke, which is the only way these agents were
 reachable at all before this change.
+
+## bootId
+
+Process-level on purpose: a settings write rebuilds the `RemoteServer` without
+restarting the process, and that must not read as a restart to `bootId` consumers.
+Computed once at module load so a hello does not fork `ps` per request.
