@@ -18,6 +18,7 @@ blocks a release.
 - Proxy status in a peer window or the web UI no longer reads a live session as dead (or a dead one as fresh) when the two machines' clocks disagree.
 - The repeated-command guard now runs on every Claude seat, not only ticket hands: a third identical Bash call in a row is denied with the seat's name, so a lead waiting on a merge cannot burn its context polling.
 - `[agent:remind list]` and `[agent:remind cancel <id>]` no longer show a false "unclosed" chip in the transcript; the list card reads "list reminders".
+- Wirescope v0.6.77 vendored: the proxy now answers Claude Code's "no visible output" retry itself with an empty turn instead of forwarding it (`SWALLOW_EMPTY_NUDGE`, default `routed` = routed seats only), so a seat that ends a turn silently no longer pays a second request; swallowed retries are counted per agent on `/_status`.
 
 ## 5.93.1 — 2026-09-29
 
