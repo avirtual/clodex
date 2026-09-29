@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRoot() {
@@ -499,6 +499,10 @@ test('an orphan claim dir is re-homed by the pending gates, so the engine sees t
   assert.ok(!fs.existsSync(orphan));
   fs.renameSync(agentDir(root, 'a'), orphan);
   assert.strictEqual(countPending(root, 'a'), 1);
+  assert.ok(!fs.existsSync(orphan));
+  fs.renameSync(agentDir(root, 'a'), orphan);
+  assert.notStrictEqual(oldestActiveParkTs(root, 'a'), null,
+    'the park-cap timer reads the oldest park before any count: an orphan holding the only mail must not skip the tick');
   assert.ok(!fs.existsSync(orphan));
   assert.deepStrictEqual(drainPending(root, 'a', `idle.${process.pid}`), ['only']);
 });

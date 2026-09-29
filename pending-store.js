@@ -213,7 +213,10 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
 
 function oldestActiveParkTs(root, name) {
   let files;
-  try { files = fs.readdirSync(agentDir(root, name)); } catch { return null; }
+  try {
+    rehomeOrphans(root, name);
+    files = fs.readdirSync(agentDir(root, name));
+  } catch { return null; }
   let oldest = null;
   for (const f of files) {
     if (!f.endsWith('.json') || f.startsWith('.') || f.endsWith('.passive.json')) continue;
