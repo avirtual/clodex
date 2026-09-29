@@ -265,6 +265,18 @@ test('long runs of path characters with no extension scan in linear time', () =>
   }
 });
 
+test('a 20,000-char run of `a.` scans for URLs in linear time and still finds the URL after it', () => {
+  const run = 'a.'.repeat(10000);
+  const tail = `${run} https://x.y/z.js`;
+  assert.deepStrictEqual(hits(run), []);
+  assert.deepStrictEqual(hits(tail), []);
+  assert.deepStrictEqual(scanLinks(tail), [{ kind: 'text', text: `${run} ` }, { kind: 'url', text: 'https://x.y/z.js' }]);
+  for (const s of [run, tail]) {
+    const ms = fastestMs(() => hits(s));
+    assert.ok(ms < 50, `${JSON.stringify(s.slice(-14))}: ${ms.toFixed(1)} ms`);
+  }
+});
+
 test('the start guard keeps the hits an unguarded scan finds', () => {
   assert.deepStrictEqual(hits('a...b.js').map((h) => h.text), ['a...b.js']);
   assert.deepStrictEqual(hits('a.js:12abc.md').map((h) => h.text), ['a.js:12', 'abc.md']);

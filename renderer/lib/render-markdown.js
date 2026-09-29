@@ -3,10 +3,10 @@
 const SAFE_SCHEME = /^https?:\/\//i;
 const MAX_QUOTE_DEPTH = 8;
 const FENCE = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/;
-const HEADING = /^ {0,3}(#{1,6})\s+(.*)$/;
+const HEADING = /^ {0,3}(#{1,6})\s+([^\n]*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
-const BULLET = /^ {0,3}[-*+][ \t]+(.*)$/;
-const ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+(.*)$/;
+const BULLET = /^ {0,3}[-*+][ \t]+([^\n]*)$/;
+const ORDERED = /^ {0,3}(\d{1,9})[.)][ \t]+([^\n]*)$/;
 const LANG = /^[A-Za-z0-9_+#.-]{1,20}$/;
 const WORD_CHAR = /\w/;
 const BLANK = /\s/;

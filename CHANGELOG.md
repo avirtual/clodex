@@ -28,6 +28,7 @@ blocks a release.
 - Seat prompts: the generated intents block every Claude seat carries drops the duplicated peer-message and example paragraphs (~12.8 KB, down from 13.6 KB); every rule a seat must follow is unchanged.
 - Engine: a parked-mail claim orphaned by a dead drainer is re-homed the moment any pending check runs, not only when new mail arrives; the "serving on host:port" log no longer fires for a remote server stopped before its start finished.
 - Tests: the peer-shell reload case no longer races the first replay frame under a loaded suite (5 false failures at the merge gate).
+- Renderer: URL detection in file-path scanning and the heading/bullet/ordered-list line matchers are linear on crafted input (a 20,000-char run of `a.` or of blanks before a Unicode line separator no longer stalls the pane).
 
 ## 5.92.0 — 2026-09-29
 
