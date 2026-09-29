@@ -24,8 +24,9 @@ const BUILTIN_DEFAULT = ['Plan', 'statusline-setup'];
 // manager.create's positional argument list, by the names ipc-handlers passes.
 const ARG = { agents: 9, denyBuiltins: 10, disabledTools: 11, disabledSkills: 12 };
 
-function harness() {
+function harness({ remembered = 0 } = {}) {
   const calls = [];
+  const stripSeeds = [];
   const handlers = new Map();
   const stub = () => () => {};
   const base = {
@@ -35,9 +36,9 @@ function harness() {
       sessions: new Map(),
       create: async (...args) => { calls.push(args); return { name: args[0] }; },
     },
-    persistence: { get: () => null, setStripLevel: () => {} },
+    persistence: { get: () => null, setStripLevel: (...a) => stripSeeds.push(a) },
     agentDefaults: {
-      getStrip: () => 0,
+      getStrip: () => remembered,
       getDefaultDeny: () => TOOL_DEFAULT.slice(),
       getDefaultSkillDeny: () => SKILL_DEFAULT.slice(),
       getDefaultBuiltinDeny: () => BUILTIN_DEFAULT.slice(),
@@ -45,7 +46,7 @@ function harness() {
     workspaceOfSender: () => 'ws-1',
   };
   registerIpcHandlers(new Proxy(base, { get(t, k) { return k in t ? t[k] : stub(); } }));
-  return { calls, create: handlers.get('session:create') };
+  return { calls, stripSeeds, create: handlers.get('session:create') };
 }
 
 // (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy,
@@ -88,6 +89,22 @@ test('an explicit set wins, and an explicit EMPTY set is not the default', async
   // The half a `|| []` fallback would get wrong: an empty array is falsy-adjacent
   // in every idiom this file uses, so "deny nothing" must survive the seam.
   assert.deepStrictEqual(args[ARG.disabledSkills], [], 'an explicit [] means deny nothing');
+});
+
+test('an explicit Off beats the level the name last ran at; only an absent choice falls back', async () => {
+  const rows = [
+    [0, 2, []],
+    [undefined, 2, [['seat', 2]]],
+    [null, 2, [['seat', 2]]],
+    [1, 2, [['seat', 1]]],
+    [2, 0, [['seat', 2]]],
+  ];
+  for (const [sent, remembered, seeds] of rows) {
+    const h = harness({ remembered });
+    await h.create({}, ...spawnArgs({ denyBuiltins: [], disabledTools: [], disabledSkills: [] }), sent);
+    assert.strictEqual(h.calls.length, 1, `ENTER: manager.create ran for stripLevel ${sent}`);
+    assert.deepStrictEqual(h.stripSeeds, seeds, `stripLevel ${sent} with ${remembered} remembered`);
+  }
 });
 
 test('settings:get serves all three sets, so the renderer caches can be filled', () => {
