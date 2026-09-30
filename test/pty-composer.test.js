@@ -262,8 +262,25 @@ test('on the web a clipboard with no readable image toasts and appends nothing',
   assert.deepStrictEqual(log.uploads, []);
 });
 
+test('the clipboard items are read inside the paste dispatch, before its first await', async () => {
+  let reads = 0;
+  const { paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/img-1.png'] }, readImages: (items) => { reads += 1; return clipboardImages(items, FakeReader); } });
+  const done = paste();
+  assert.strictEqual(reads, 1);
+  await done;
+});
+
+test('on the web a clipboard read that throws synchronously toasts and appends nothing', async () => {
+  const { log, paste } = pasteRig({ web: true, readImages: () => { throw new Error('reader broke'); } });
+  await paste();
+  assert.deepStrictEqual(log.toasts, ['No readable image on the clipboard.']);
+  assert.deepStrictEqual(log.order, []);
+  assert.deepStrictEqual(log.uploads, []);
+});
+
 for (const [label, readImages] of [
   ['rejects', async () => { throw new Error('reader broke'); }],
+  ['throws synchronously', () => { throw new Error('reader broke'); }],
   ['finds nothing', async () => []],
 ]) {
   test(`on the desktop a clipboard read that ${label} still appends the chip with no image and writes Ctrl-V`, async () => {
@@ -420,4 +437,6 @@ test('ENTER: a pending chip typed over still binds its path when the upload land
   assert.strictEqual(h.strip.children.length, 0);
   h.uploads[1].resolve({ ok: true, paths: ['/h/img-2.png'] });
   await again;
+  assert.ok(!Object.hasOwn(h.paths(), 1));
+  assert.strictEqual(h.strip.children.length, 0);
 });

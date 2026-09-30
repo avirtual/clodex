@@ -21984,7 +21984,7 @@ test('phone dm images: _deliverMessage with images to a pty seat writes one file
   assert.strictEqual(injected.length, 1);
   const lines = injected[0].split('\n');
   assert.strictEqual(lines[0], '[agent:from user] see these');
-  assert.deepStrictEqual(lines.slice(1), files.map((f, i) => `Image #${i + 1}: ${path.join(dir, f)}`));
+  assert.deepStrictEqual(lines.slice(1), files.map((f) => `Image: ${path.join(dir, f)}`));
   assert.deepStrictEqual(h.m.sessions.get('pi1').filedRing.list().map((e) => [e.path, e.kind, e.head]).reverse(), [
     [path.join(dir, files[0]), 'message', 'Image #1 (image/png)'],
     [path.join(dir, files[1]), 'message', 'Image #2 (image/jpeg)'],

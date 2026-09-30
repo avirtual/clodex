@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- An image sent to a terminal seat is announced as "Image: <path>" without a per-message number that never matched the CLI's own [Image #n] mark.
+
 ## 5.101.0 — 2026-09-30
 
 - Docs: eleven stale sentences corrected across messaging, how-to, peering, file-view, telemetry, teams, renderer-events, the spill notes and the default kit's description.
