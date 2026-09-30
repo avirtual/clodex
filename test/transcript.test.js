@@ -122,7 +122,7 @@ test('jsonlToMessages: a folded user message keeps the images of every prompt fo
   const p = writeJsonl([
     imagePrompt('[Image #1] first', [['image/png', 'AAAA']]),
     { type: 'user', message: { content: 'follow-up' } },
-    imagePrompt('[Image #2] second', [['image/gif', 'BBBB']]),
+    imagePrompt('[Image #1] second', [['image/gif', 'BBBB']]),
     { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } },
   ]);
   try {
