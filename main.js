@@ -629,6 +629,7 @@ app.whenReady().then(() => {
     openExternal: (url) => shell.openExternal(url),
     openPath: (filePath) => shell.openPath(filePath),
     showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
+    openInTerminal: (cwd) => require('child_process').execFile('open', ['-a', 'Terminal', cwd]),
     getAppVersion: () => app.getVersion(),
     getDesktopPath: () => app.getPath('desktop'),
     fs, https, os, path, log,

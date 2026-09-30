@@ -460,13 +460,12 @@
 | `on:peer:header-menu` | pops a peer header's menu (new session, restart, rebuild, update, pause) answering on peer:context-action | none | popupMenu, deployTargetFor, updateApplies | peer-header-menu.test.js |
 
 ### Invariants
-- `on:session:context-menu` opens a Terminal with execFile and an argv, never a shell, because cwd is agent-supplied.
+- `on:session:context-menu` opens a Terminal only through the injected `openInTerminal`; web-host forwards it to the browser as an open-in-terminal event, so nothing opens on the host.
 - `on:session:context-menu`, `on:peer:context-menu` and `on:peer:header-menu` are fire-and-forget, and every item answers by sending a context-action event back to the sender rather than a reply.
 - `on:peer:header-menu` offers Pause offline as well as online, since the info popover only renders its pause for an online peer with a version.
 
 ### Hazards
-- `on:session:context-menu` items run their click on the host on every transport, so Open in Terminal launches a host Terminal even from a web client.
-- Switching the Open in Terminal item of `on:session:context-menu` to exec routes an agent-supplied cwd through /bin/sh, where $(...) runs.
+- Switching main.js's `openInTerminal` from execFile with an argv to exec routes an agent-supplied cwd through /bin/sh, where $(...) runs.
 - `handle:session:exportMarkdown` writes wherever the save dialog answers; on the web host that is the exports dir, not the operator's desktop.
 
 ## Confirm dialogs — handle:dialog:confirmPeerRestart … handle:dialog:confirmKill

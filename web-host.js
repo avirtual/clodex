@@ -219,6 +219,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   };
   const openPath = (p) => { toConn('open-path', p); return Promise.resolve(''); };
   const showItemInFolder = (p) => toConn('show-item-in-folder', p);
+  const openInTerminal = (cwd) => toConn('open-in-terminal', cwd);
   const getAppVersion = () => APP_VERSION;
   const getDesktopPath = () => exportsDir;
 
@@ -228,7 +229,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     handle: (channel, fn) => handlers.set(channel, fn),
     on: (channel, fn) => handlers.set(channel, fn),
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
-    openExternal, openPath, showItemInFolder, getAppVersion, getDesktopPath,
+    openExternal, openPath, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
     fs, https, os, path, log,
     UPDATE_REPO,
     checkForUpdate: () => {},                 // update-available is designated desktop-only

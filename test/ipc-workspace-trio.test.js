@@ -79,3 +79,42 @@ test('session:forget falls back to the sender\'s workspace for a record with no 
     assert.deepStrictEqual(kills, [['B', 'seat']]);
   }
 });
+
+function mkContextMenu(entry, openInTerminal) {
+  let template = null;
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    log: { info() {}, warn() {}, error() {} },
+    persistence: { get: () => entry },
+    promptLibrary: { list: () => [] },
+    popupMenu: (tpl) => { template = tpl; },
+    fs: require('fs'),
+    openInTerminal,
+    workspaces: { list: () => [] },
+    workspaceOfSender: () => 'ws1',
+  });
+  handlers.get('session:context-menu')({ sender: { send() {} } }, { name: entry.name, cwd: entry.cwd });
+  return template;
+}
+
+function findItem(template, label) {
+  let found = null;
+  const walk = (items) => { for (const i of items || []) { if (i.label === label) found = i; if (i.submenu) walk(i.submenu); } };
+  walk(template);
+  return found;
+}
+
+test('Open in Terminal hands the cwd to the injected openInTerminal seam', () => {
+  const opened = [];
+  const item = findItem(mkContextMenu({ name: 'a', type: 'claude', cwd: '/x' }, (cwd) => opened.push(cwd)), 'Open in Terminal');
+  assert.ok(item, 'ENTER: the item is in the template');
+  item.click();
+  assert.deepStrictEqual(opened, ['/x']);
+});
+
+test('ipc-handlers.js requires no child_process: every native touch rides a seam', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.doesNotMatch(src, /require\(\s*['"](?:node:)?child_process['"]\s*\)/);
+});

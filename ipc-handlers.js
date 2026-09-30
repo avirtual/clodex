@@ -1,5 +1,4 @@
 // Must not require electron: every native touch rides an injected seam, so web-host registers the same channels.
-// Open in Terminal is the one execFile made here.
 
 const { pathFor, fixDirFor, seatDirFor } = require('./clodex-paths');
 const { nameConflict } = require('./session-manager');
@@ -65,7 +64,7 @@ function registerIpcHandlers(deps) {
   const {
     handle, on,
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
-    openExternal, openPath, showItemInFolder, getAppVersion, getDesktopPath,
+    openExternal, openPath, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
     CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
@@ -1937,13 +1936,7 @@ function registerIpcHandlers(deps) {
       {
         label: 'Open in Terminal',
         enabled: !!cwd,
-        click: () => {
-          if (!cwd) return;
-          // execFile with argv, never exec: cwd is agent-supplied and exec
-          // routes it through /bin/sh, where $(...) runs.
-          const { execFile } = require('child_process');
-          execFile('open', ['-a', 'Terminal', cwd]);
-        },
+        click: () => { if (cwd) openInTerminal(cwd); },
       },
       { type: 'separator' },
       {
