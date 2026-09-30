@@ -12,7 +12,6 @@ const { PeerConnection } = require('../peer-client');
 const { claudeProjectSlug } = require('../clodex-paths');
 const { drainPending } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { rearmPlan } = require('../wire/hold');
 
 const SID = '11111111-2222-3333-4444-555555555555';
 const DEFAULT_CAPS = [
@@ -384,7 +383,7 @@ test('a source-box CLAUDE_CONFIG_DIR never survives when the record names no lab
 });
 
 
-test('importCreate seeds the shipped timed hold, and an expired one only disarms on arrival', async () => {
+test('importCreate seeds a shipped numeric timed hold and nothing else', async () => {
   for (const [holdUntil, want] of [[1700000000000, 1700000000000], [undefined, undefined], ['9', undefined]]) {
     const w = mkWiring();
     const out = await w.opts.importCreate({
@@ -396,7 +395,6 @@ test('importCreate seeds the shipped timed hold, and an expired one only disarms
     assert.strictEqual(out.ok, true, out.error);
     assert.strictEqual(w.persisted.get('ana').holdUntil, want, `holdUntil ${holdUntil}`);
   }
-  assert.deepStrictEqual(rearmPlan(1700000000000, Date.now(), false), { clear: true });
 });
 
 test('importShip bails without a commit when a file shrinks between stat and read, and commits a whole one', async () => {

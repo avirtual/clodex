@@ -731,8 +731,7 @@ file is complete only once the CLI exits) and hands
 kind except `run`, `pending/<name>/`, the memory load log and the seat's reminder
 rows. `farCwd` defaults to the seat's own cwd and is `path.resolve`d, since the far
 `begin` refuses a cwd resolution would change. What does NOT travel: `execCommands`
-and privileged intents (a peer must not mint privilege there), `run/`, wire warmth
-(a timed `holdUntil`; the perpetual `keepWarmAlways` seat flag does travel), and
+and privileged intents (a peer must not mint privilege there), `run/`, and
 the fields the far `create()` re-seeds itself (`ephemeral`, the review keys,
 `pluginGrants`, `wireLabel`, `ticketId`, `rosterSentAt`), `movedTo`
 (a seat moved on from a box it was already moved to must not carry the old
