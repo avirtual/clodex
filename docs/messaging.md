@@ -32,8 +32,8 @@ Per-session `intentSource`, decided in `SessionManager.create`:
   only dm / who / resend / name work; every other intent is agent-only and
   short-circuits.
 
-All paths converge on `_extractIntents` → `parseIntent` (per line) →
-`_handleIntent`.
+Agent paths converge on `_extractIntents` → `parseIntent` (per line) → `_handleIntent`;
+bash's `_scanPtyOutput` calls `parseIntent` → `_handleIntent` per line (no bodies).
 
 **Source-aware dedupe** (`IntentDeduper.claim(agent, key, source)`, returns
 `{ok, reason}`). The deduper exists for ONE overlap: tee-failure recovery replays
@@ -205,8 +205,8 @@ on a dm whose reply would DROP, the marker `(no reply path)`. Polarity is
 inverted against the old reply trailer: an answerable dm costs zero bytes, and
 the marker is emitted only when the reply path is missing on one end — the
 RECEIVER's `dm` intent is off (fresh persistence read), or the SENDER is not
-dm-reachable NOW (`_isDmReachable`: a live local agent session, or an online
-federated peer `name@origin`), as with a `nc -U` wake script's `from:"t1-wake"`
+dm-reachable NOW (`_isDmReachable`: a live local agent session, or a federated
+`name@origin` that is online or known via `_knownDmOrigins`, the outbox or a relay), as with a `nc -U` wake script's `from:"t1-wake"`
 that no session answers. It is parenthesized and non-column-1 so it can never
 self-fire. Non-dm mtypes and `SYSTEM_SENDERS` (`team`, `reminder`, `user`, …)
 get nothing at all: nobody answers them, so a fault marker would be noise —
@@ -328,8 +328,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   An `urgent` re-send of the same body from the same sender claims any parked
   copy for that target first (content key = sha256 of sender + body), so the
   target never reads it twice.
-- Drains: `run/<name>/pending.sh` (UserPromptSubmit hook) delivers parked mail
-  with the target's own next turn; the busy/draft park arms a non-destructive
+- Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
+  parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
   explicit resend. A unit whose text is already claimed when the seat dies or
@@ -349,8 +349,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   atomic claim as the cap (tag `flush.<pid>`), injected NON-parkable (so a
   flushed message can't re-park — the recursion a `parkable` resend could hit).
   It's the operator's true "deliver now" override, sidestepping the sender-
-  notice cost entirely (the operator has no turn cost). Guards: refuses a
-  dialog-blocked target WITHOUT draining (draining would move zero-loss durable
+  notice cost entirely (the operator has no turn cost). Guards: refuses any
+  `_injectHoldReason` target (dialog-blocked, busy, compact-window) WITHOUT draining (draining would move zero-loss durable
   files into the volatile in-memory queue behind the dialog). **Operator-only**
   via the `session:flushPending` ipcMain.handle — there is deliberately no
   agent-facing flush verb (agents keep `[agent:resend]` for id'd cost-holds).
@@ -487,8 +487,10 @@ then substring) / pin / unpin / forget. Mutation acks ride the silent
 `run/<name>/acks` drain for Claude (Codex: immediate inject); recall delivers
 through the normal message path (spills if large).
 
-Fresh sessions get a **boot digest** (`composeDigest`, 8KB budget): pinned
-units in full (oldest first) + the rest as an index (newest first), via the
+Fresh sessions get a **boot digest** (`composeDigest`, 8KB budget, half of it for
+bodies), newest first throughout: up to `OPERATOR_PIN_CAP` operator-pinned units in
+full, then recent units in full (bodies up to `RECENT_BODY_CAP`; agent `pinned` only
+breaks recency ties), then the rest as an index, via the
 SessionStart hook's `additionalContext` for born conversations; resumed
 pre-feature sessions get a one-time append rescue (`_maybeDeliverDigest`,
 ledger-gated).
@@ -521,15 +523,18 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 
 | Hook | Script | Behavior |
 |---|---|---|
-| SessionStart | `run/<name>/hook.sh` | repoints transcript symlink (atomic); emits memory digest on startup/clear |
-| Notification | `run/<name>/attn.sh` | appends raw hook JSON to `run/<name>/attn.jsonl` (attention state) |
+| SessionStart | `run/<name>/hook.sh` | repoints transcript symlink (atomic); emits memory digest on startup/clear/compact |
+| Notification, PreCompact | `run/<name>/attn.sh` | appends raw hook JSON to `run/<name>/attn.jsonl` (attention state) |
+| UserPromptSubmit | `run/<name>/ipcdelta.sh` | emits the IPC-prompt delta from `promptcache/<name>/delta.md`, then advances the baseline |
 | UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory + task acks (lossy-tolerant): a ticket verb's success confirmation written here is lost if the seat dies before its next turn, which is acceptable because the ticket record and `[agent:task list]` stay the truth |
 | UserPromptSubmit | `run/<name>/pending.sh` | atomic rename-claim drain of parked DMs from `pending/<name>/` (zero-loss) |
+| UserPromptSubmit | `run/<name>/selection.sh`, `run/<name>/notices.sh` | claim-by-rename drains of copied selections and of `notices/<name>/queue.jsonl` (deferred notices) |
 | UserPromptSubmit | `run/<name>/ctxwarn.sh` | read-only context warning; recurs every submit while over threshold |
 | UserPromptSubmit | `run/<name>/poll-guard.sh` | clears `run/<name>/poll-state` — a new turn resets the repeat counter, so an operator's own reply can never be what trips the PreToolUse deny |
 | PreToolUse (`matcher: Bash`) | `run/<name>/bash-live.sh` | an OBSERVER for the live console: records the call under `run/<name>/bash-live/`, then exits 0 having printed NOTHING. A PreToolUse that emits `updatedInput` or exits 2 alters or blocks the Bash call, so silence is the safety property, not a style choice. Bails on `[ -e .watching ]` BEFORE reading stdin: unlike `bash-console.sh` it spawns an interpreter, so it earns that cost only while a pane is reading — `bash-live.js` writes the sentinel as it reads and removes it when the SEAT is reaped, which is per-seat rather than per-watch precisely because a tab sits watchless between calls |
 | PreToolUse (`matcher: Bash`, after the observer) | `run/<name>/bash-guard.sh` | the one PreToolUse hook allowed to SPEAK: on a seat whose env carries `CLODEX_TICKET` (set only by `_spawnTicketSeat`, never by the reviewer path or by a template), a `git add` with `-A`/`--all`/`--no-ignore-removal`/`-u`/`--update`/`.`/`:/`/`*` or a `git commit` with `-a` returns `permissionDecision: deny` naming the ticket, and every other command passes. The command is tokenized with real quote handling and split on `;`, `&&`, `|` AND newlines, so `git status\ngit add -A` — the default shape a hand writes — is examined per command rather than collapsing into one whose subcommand is `status`; a backslash-newline stays a continuation. Registered AFTER `bash-live.sh` so a denied call is still in the live console that explains the deny. Gated on `[ -n "$CLODEX_TICKET" ]` before reading stdin, so a lead or a bash tab pays nothing and can never be denied; fail-OPEN on an unparseable payload, since a hook in front of every Bash call that denied on garbage would wedge the seat |
 | PreToolUse (`matcher: ''`, all tools, registered after the Bash block) | `run/<name>/poll-guard.sh` | counts CONSECUTIVE identical Bash commands in `poll-state` and returns `permissionDecision: deny` on the third, naming the ticket (or, on a seat without `CLODEX_TICKET`, the seat) and the first 60 chars of the command; any non-Bash tool resets the count, so it fires only on a genuine poll loop. Runs on every Claude seat, not only ticket hands, and exits silently on a payload carrying `agent_id` — a subagent's own calls are exempt |
+| PostToolUse (`matcher: ''`) | `run/<name>/pending.sh` | the same parked-DM drain at every tool boundary |
 | PostToolUse (`matcher: Bash`) | `run/<name>/bash-console.sh` | spools the raw hook JSON as ONE FILE PER RECORD under `run/<name>/bash-console/`, claimed by atomic rename (Bash hooks fire concurrently; a shared append loses records). The `<epoch-ns>-<pid>.json` name falls back to whole seconds where `date` has no `%N`, and its `.tmp` sweep is `kill -0`-guarded — an unguarded one deletes a live writer's spool |
 | PostToolUse (`matcher: Bash`) | `run/<name>/poll-guard.sh` | on a call with `run_in_background: true`, injects "Result arrives as a notification: do not poll for it. End your turn now unless you have unrelated work.". A foreground Bash call gets nothing — the guard speaks only where there is something to wait FOR |
 | PostToolUse (`matcher: Agent\|Task`) | `run/<name>/poll-guard.sh` | the same injection after a subagent spawn, which is the other shape whose result arrives as input rather than a return value |
