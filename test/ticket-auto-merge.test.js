@@ -3643,7 +3643,7 @@ test('t1452: a RED post-merge dump carries the ACCEPTED review round, the one it
   const kept = keptFiles(f.home);
   assert.strictEqual(kept.length, 1, 'ENTER: exactly one preserved file');
   assert.match(pathReal.basename(kept[0]), /^suite-failure-t1-r1-\d{4}-/,
-    'named by landedOn.reviewRound, not reviewRound + 1 and not reworkRound + 1');
+    'named by the accepted review round, not reviewRound + 1 and not reworkRound + 1');
 });
 
 test('t697: a RED post-merge suite reverts on the FIRST run — master is not re-measured', async () => {

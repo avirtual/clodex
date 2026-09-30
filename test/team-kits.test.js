@@ -379,10 +379,12 @@ test('kitCatalog lists each kit with its description, one line each', () => {
   for (const l of lines) assert.ok(!l.includes('\n'), 'one line each — a body with a newline would break the reply');
 });
 
-test('the default kit description counts the hand template\'s disabled tools', () => {
-  const off = Number(/ (\d+) tools off /u.exec(readKitJson('default').description)[1]);
-  assert.strictEqual(off, 35);
-  assert.strictEqual(off, readTpl('default', 'hand').disabledTools.length);
+test('the clodex and default kit descriptions count their hand template\'s disabled tools', () => {
+  for (const [kit, stem] of [['clodex', 'clodex-team-hand'], ['default', 'hand']]) {
+    const off = Number(/ (\d+) tools off\b/u.exec(readKitJson(kit).description)[1]);
+    assert.strictEqual(off, 35, kit);
+    assert.strictEqual(off, readTpl(kit, stem).disabledTools.length, kit);
+  }
 });
 
 test('a home with no kits seeded falls back to the flat library and records no kit', () => {

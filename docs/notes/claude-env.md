@@ -10,4 +10,4 @@ Desktop only: `main.js` calls it after the scrub because a Clodex launched or re
 
 ## scrubInheritedClaudeMarkers
 
-A kept non-agent `ANTHROPIC_BASE_URL` does not bypass the tee: measured on claude 2.1.286, a `--settings` `env.ANTHROPIC_BASE_URL` beats the same key exported in the launch env (plain and `CLAUDE_CODE_ENTRYPOINT=sdk-cli`), with no "ignored" debug line. The CLI's launch-env-wins rule applies only to desktop/runner-hosted sessions (tasks/base-url-precedence/MEASURE.md).
+A kept non-agent `ANTHROPIC_BASE_URL` does not bypass the tee: measured on claude 2.1.286, a `--settings` `env.ANTHROPIC_BASE_URL` beats the same key exported in the launch env, with no "ignored" debug line. The CLI's launch-env-wins rule applies only to desktop/runner-hosted sessions (tasks/base-url-precedence/MEASURE.md).
