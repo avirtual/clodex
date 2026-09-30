@@ -46,7 +46,6 @@
     "TaskList",
     "TaskUpdate",
     "TaskStop",
-    "TaskOutput",
     "TodoWrite",
     "CronCreate",
     "CronDelete",

@@ -86,6 +86,8 @@ function mergeInstructionBodies(ipcPrompt, opts = {}) {
 const MODEL_WINDOWS = [
   [/\[1m\]$/, 1_000_000],        // CLI marks 1M-mode ids with a [1m] suffix
   [/^claude-fable-5/, 1_000_000], // 1M natively
+  [/^claude-opus-5-5/, 1_000_000],
+  [/^claude-sonnet-5-5/, 1_000_000],
 ];
 
 function effectiveWindowSize(modelId, reported) {

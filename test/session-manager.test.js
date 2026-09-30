@@ -11108,7 +11108,7 @@ test('t767: role-set hand model:opus derives templates/hand.json from the librar
   assert.ok(/derived from clodex-team-hand with --model claude-opus-5-5\[1m\]/.test(f.last()), f.last());
 
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'],
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5-5[1m]'],
     're-deriving from the own copy leaves exactly one --model pair, not two');
   assert.ok(/derived from hand with --model claude-sonnet-5\[1m\]/.test(f.last()), f.last());
 });
@@ -11170,13 +11170,13 @@ test('t767: a bad alias, a missing base, and every refusal the mutator would rai
 test('t767: a mutator throw on a role that already owns its derived template restores the prior bytes', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'], 'setup: hand owns its own derived template');
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5-5[1m]'], 'setup: hand owns its own derived template');
   const before = fsReal.readFileSync(f.tplFile('hand'));
   const teamBefore = f.teamJsonBytes();
 
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'opus', dispatch: 'wortree', body: '' });
   assert.match(f.last(), /error: role "hand" dispatch must be one of/);
-  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5[1m]'],
+  assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5-5[1m]'],
     'the live template still runs sonnet — an error: reply must not leave the role on a different model');
   assert.deepStrictEqual(fsReal.readFileSync(f.tplFile('hand')), before, 'byte-identical, not merely equivalent');
   assert.deepStrictEqual(f.teamJsonBytes(), teamBefore);
@@ -11185,7 +11185,7 @@ test('t767: a mutator throw on a role that already owns its derived template res
 test('role-add with model: refuses to overwrite a template another role names', () => {
   const f = mkTeamModel();
   fsReal.mkdirSync(pathReal.dirname(f.tplFile('foo')), { recursive: true });
-  fsReal.writeFileSync(f.tplFile('foo'), JSON.stringify({ ...f.shippedHand, name: 'foo', extraArgs: ['--model', 'claude-sonnet-5[1m]'] }));
+  fsReal.writeFileSync(f.tplFile('foo'), JSON.stringify({ ...f.shippedHand, name: 'foo', extraArgs: ['--model', 'claude-sonnet-5-5[1m]'] }));
   f.tm.addRole('team', 'bar', { brief: 'bar', template: 'foo' });
   assert.strictEqual(f.tm.loadManifest('team').roles.bar.template, 'foo', 'ENTER: role bar names template foo');
   const before = fsReal.readFileSync(f.tplFile('foo'));

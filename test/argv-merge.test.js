@@ -99,6 +99,8 @@ test('mergeCodexInstructions: -c model_instructions_file is inlined and stripped
 test('effectiveWindowSize: 1M-suffix and fable get bumped, never shrunk', () => {
   assert.strictEqual(effectiveWindowSize('claude-opus-4-8[1m]', 200_000), 1_000_000);
   assert.strictEqual(effectiveWindowSize('claude-fable-5', 200_000), 1_000_000);
+  assert.strictEqual(effectiveWindowSize('claude-opus-5-5', 200_000), 1_000_000);
+  assert.strictEqual(effectiveWindowSize('claude-sonnet-5-5', 200_000), 1_000_000);
   // never shrinks: a correctly-reported larger size passes through
   assert.strictEqual(effectiveWindowSize('claude-opus-4-8[1m]', 2_000_000), 2_000_000);
   // unknown model → reported value untouched
