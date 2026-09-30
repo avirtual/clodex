@@ -696,7 +696,7 @@ not exist yet; on one that already does it refuses.
 lead may do it.
 
 Step 2 is reachable from the lead too, so the whole path runs on intents — create,
-spawn the lead, `role-set` the hand, then the file verbs below and
+spawn the lead, then the file verbs below and
 `[agent:team role-add …]` for any role the stock three do not already cover:
 
 - `[agent:team template-save <stem>]` + a JSON body writes
