@@ -13101,7 +13101,7 @@ test('exec terminator: a col-1 intent after the value ends capture and still fir
 test('exec terminator: 64KB region cap — multi-line growth past the cap is not terminated early', () => {
   // The cap bounds the growth loop (runaway re-parse guard): a value split across
   // lines whose accumulation crosses 64KB before closing is left to the greedy
-  // capture (prose included), so prose-stripping is bounded to <=64KB payloads.
+  // capture, so prose-stripping is bounded to <=64KB payloads.
   const m = mkExtract();
   const parts = ['[agent:exec bridge-reply] {', `"pad":"${'a'.repeat(70 * 1024)}",`, '"id":"r1.json"', '}', 'trailing prose'];
   const body = execBodyOf(m, parts.join('\n'));
@@ -13218,8 +13218,7 @@ test('[agent:end]: without it a task report applies only the head line; the trai
 });
 
 // --- bodyOpen: did the body CLOSE, or did the text just run out? ---
-// Invisible in the captured body — both shapes yield the same string — and the
-// distinction is the whole input to the interrupt guard downstream. An intent
+// The distinction is the whole input to the interrupt guard downstream. An intent
 // whose body ran off the end of a turn the human stopped was never finished
 // being written; one closed by [agent:end] or a following intent was.
 test('bodyOpen: a greedy body that runs off the end of the text is marked open', () => {
