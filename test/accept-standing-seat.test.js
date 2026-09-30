@@ -244,11 +244,11 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
   };
   // A real linked worktree on `branch`, recorded the way _spawnTicketSeat records
   // one. `ephemeral` is THE fact under test, so it is always passed explicitly.
-  const worktreeSeat = (name, branch, { ephemeral }) => {
+  const worktreeSeat = (name, branch, { ephemeral, baseSha }) => {
     const wtPath = pathReal.join(osReal.tmpdir(), `clodex-t482-wt-${name}-${Date.now()}`);
     execFileSync('git', ['-C', repoDir, 'worktree', 'add', '-q', wtPath, branch], { encoding: 'utf8' });
     tmpDirs.push(wtPath);
-    persistence.upsert({ name, cwd: wtPath, ephemeral, worktree: { path: wtPath, branch } });
+    persistence.upsert({ name, cwd: wtPath, ephemeral, worktree: { path: wtPath, branch, ...(baseSha ? { baseSha } : {}) } });
     seat(name, repoDir);
     return wtPath;
   };
@@ -1566,20 +1566,11 @@ const acceptSplit = async (f, id) => {
   return { replies, acks };
 };
 
-const seatAt = (f, t, branch, baseSha) => {
-  const wt = pathReal.join(osReal.tmpdir(), `clodex-t1473-wt-${Date.now()}`);
-  execFileSync('git', ['-C', f.repoDir, 'worktree', 'add', '-q', wt, branch], { encoding: 'utf8' });
-  t.after(() => { try { fsReal.rmSync(wt, { recursive: true, force: true }); } catch {} });
-  f.persistence.upsert({ name: 'team-hand-t1', cwd: wt, ephemeral: true, worktree: { path: wt, branch, ...(baseSha ? { baseSha } : {}) } });
-  f.seat('team-hand-t1', f.repoDir);
-  return wt;
-};
-
 test('t1473: an accept whose branch carried nothing replies at once and acks nothing', async (t) => {
   const f = mkFixture(t);
   f.seat('lead');
   const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
-  seatAt(f, t, 'landed', baseSha);
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true, baseSha });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
   const { replies, acks } = await acceptSplit(f, 't1');
   assert.deepStrictEqual(acks, []);
@@ -1590,12 +1581,12 @@ test('t1473: an accept whose branch carried nothing replies at once and acks not
 test('t1473: an accept whose count is UNKNOWN replies at once and acks nothing', async (t) => {
   const f = mkFixture(t);
   f.seat('lead');
-  seatAt(f, t, 'landed', null);
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true, baseSha: null });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
   const { replies, acks } = await acceptSplit(f, 't1');
   assert.deepStrictEqual(acks, []);
   assert.strictEqual(replies.length, 1, replies.join('\n'));
-  assert.match(replies[0], /whether it carried any work is UNKNOWN/);
+  assert.match(replies[0], /both count 0 — so whether it carried any work is UNKNOWN/);
 });
 
 test('t1473: an accept that merged commits rides as an ack and replies nothing', async (t) => {
@@ -1603,7 +1594,7 @@ test('t1473: an accept that merged commits rides as an ack and replies nothing',
   f.seat('lead');
   const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
   execFileSync('git', ['-C', f.repoDir, 'merge', '-q', '--ff-only', 'pending'], { encoding: 'utf8' });
-  const wt = seatAt(f, t, 'pending', baseSha);
+  const wt = f.worktreeSeat('team-hand-t1', 'pending', { ephemeral: true, baseSha });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'pending' });
   const { replies, acks } = await acceptSplit(f, 't1');
   assert.deepStrictEqual(replies, []);

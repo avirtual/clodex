@@ -331,6 +331,8 @@ function composerHarness() {
     const i = src.indexOf(from);
     const j = src.indexOf(to, i);
     assert.ok(i >= 0 && j > i, `renderer.js carries ${from}`);
+    assert.strictEqual(src.indexOf(from, i + 1), -1, `renderer.js carries ${from} once`);
+    assert.strictEqual(src.indexOf(to, j + 1), -1, `renderer.js carries ${to} once`);
     return src.slice(i, j);
   };
   const start = src.indexOf('ptyImagePasteHandler({', src.indexOf("composerEl.addEventListener('paste', "));
@@ -363,7 +365,7 @@ function composerHarness() {
   const body = [
     slice('let pastedImages = 0;', '  const onMenuKey'),
     `const handler = ${handlerSrc};`,
-    'return { handler, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths };',
+    'return { handler, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths, strip: imageStripEl };',
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
   const event = {
@@ -399,10 +401,23 @@ test('ENTER: a pending chip typed over still binds its path when the upload land
   await new Promise(setImmediate);
   h.el.value = 'hi ';
   h.prune();
+  assert.strictEqual(h.strip.children.length, 0);
   h.uploads[0].resolve({ ok: true, paths: ['/h/img-1.png'] });
   await done;
   assert.strictEqual(h.paths()[1], '/h/img-1.png');
   h.el.value = 'hi [Image #1] ';
+  h.prune();
+  assert.strictEqual(h.strip.children.length, 1);
   h.send();
   assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image #1: /h/img-1.png '));
+  const again = h.paste();
+  await new Promise(setImmediate);
+  assert.strictEqual(h.strip.children.length, 1);
+  h.strip.children[0].children[1].listeners.click();
+  assert.strictEqual(h.el.value, '');
+  h.el.value = '[Image #1] ';
+  h.prune();
+  assert.strictEqual(h.strip.children.length, 0);
+  h.uploads[1].resolve({ ok: true, paths: ['/h/img-2.png'] });
+  await again;
 });

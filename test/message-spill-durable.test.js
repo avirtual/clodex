@@ -101,8 +101,8 @@ test('a denied dm body names its transcript-literal messages/ path, its sweep de
   const suffix = engine.manager._deniedIntentPayload(session, { type: 'dm', body });
   const [entry] = session.filedRing.list();
   assert.strictEqual(path.dirname(entry.path), path.join(registryDir, 'messages', SEAT));
-  assert.ok(fs.existsSync(path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path))), 'ENTER: a durable copy exists');
   const durable = path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path));
+  assert.ok(fs.existsSync(durable), 'ENTER: a durable copy exists');
   assert.ok(suffix.endsWith(`. Your dm body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path} (swept after 30 minutes; a permanent copy stays at ${durable})`), suffix);
 });
 
