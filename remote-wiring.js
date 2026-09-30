@@ -23,7 +23,57 @@ const { createSeatImport } = require('./seat-import');
 const { shellCapGranted } = require('./peer-shell');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 
+const crypto = require('crypto');
+
 const WIRE_PROMPT_MAX_BYTES = 4096;
+const THUMB_CACHE_MAX = 200;
+
+function createThumbnailer(thumbnail, log) {
+  const cache = new Map();
+  let queue = Promise.resolve();
+  function remember(key, value) {
+    cache.delete(key);
+    cache.set(key, value);
+    if (cache.size > THUMB_CACHE_MAX) cache.delete(cache.keys().next().value);
+  }
+  function encode(key, img) {
+    const pending = queue
+      .then(() => new Promise(setImmediate))
+      .then(() => thumbnail(Buffer.from(img.data, 'base64'), img.mediaType))
+      .then((out) => (out && typeof out.data === 'string' ? { mediaType: out.mediaType, data: out.data } : null));
+    queue = pending.catch(() => {});
+    remember(key, pending);
+    pending.catch(() => { if (cache.get(key) === pending) cache.delete(key); });
+    return pending;
+  }
+  async function thumbOne(img, onFail) {
+    if (typeof img.data !== 'string') return img;
+    const key = crypto.createHash('sha1').update(img.data).digest('hex');
+    let pending = cache.get(key);
+    if (pending) remember(key, pending);
+    else pending = encode(key, img);
+    try {
+      const hit = await pending;
+      return hit ? { n: img.n, ...hit } : img;
+    } catch (e) {
+      onFail(e);
+      return { n: img.n, mediaType: img.mediaType, bytes: Buffer.byteLength(img.data, 'base64') };
+    }
+  }
+  return async function thumbPage(messages) {
+    if (typeof thumbnail !== 'function') return messages;
+    let warned = false;
+    const onFail = (e) => {
+      if (warned) return;
+      warned = true;
+      log.warn('remote', `transcript thumbnail failed: ${e && e.message}`);
+    };
+    return Promise.all(messages.map(async (m) => {
+      if (!Array.isArray(m.images)) return m;
+      return { ...m, images: await Promise.all(m.images.map((img) => thumbOne(img, onFail))) };
+    }));
+  };
+}
 
 function wirePromptBody(value) {
   if (typeof value !== 'string') return null;
@@ -87,7 +137,9 @@ function createRemoteWiring(deps) {
     getWirescopeInfo,
     getNodeLogFile,
     getUserDataPath,
+    thumbnail,
   } = deps;
+  const thumbPage = createThumbnailer(thumbnail, log);
 
   let inboxWatched = false;
   function watchInbox() {
@@ -417,15 +469,17 @@ function createRemoteWiring(deps) {
         },
         listWorkspaces: () => getWorkspaces().list(),
         ...resourceCallbacks(),
-        getTranscript: (name, limit, since, after = null) => {
+        getTranscript: async (name, limit, since, after = null) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
           const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
           let jsonlPath;
           try { jsonlPath = fs.realpathSync(linkPath); }
           catch { return { ok: true, messages: [] }; } // no transcript yet
-          try { return { ok: true, ...sliceSince(cachedMessages(jsonlPath), since, limit, after) }; }
+          let page;
+          try { page = sliceSince(cachedMessages(jsonlPath), since, limit, after); }
           catch (e) { return { ok: false, error: e.message }; }
+          return { ok: true, ...page, messages: await thumbPage(page.messages) };
         },
         send: (name, text, images) => {
           const sess = manager.sessions.get(name);

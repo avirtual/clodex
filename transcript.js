@@ -1,7 +1,7 @@
 // Transcript rendering off the CLI's on-disk JSONL. Two renderers: a full
 // markdown export (jsonlToMarkdown, tool traffic included) and the chat-message
 // list served to both the phone page and the `clodex` CLI
-// (jsonlToMessages, user/assistant text only). Both read the JSONL the CLI
+// (jsonlToMessages, user/assistant only). Both read the JSONL the CLI
 // writes regardless of which observation path is live, so the remote view
 // never depends on the intent machinery. Role and text per entry come from the
 // platform reader in transcript-readers.js, sniffed per record.
@@ -10,8 +10,9 @@
 
 const fs = require('fs');
 const {
-  sniffReader, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
+  sniffReader, promptContent, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
 } = require('./transcript-readers');
+const { imagesOf } = require('./transcript-records');
 
 // Panel/phone sends carry the operator delivery label; every consumer of
 // jsonlToMessages renders the operator's own chat, so drop it (peer labels like
@@ -80,7 +81,7 @@ function extractClaudeBlocks(content) {
 }
 
 // Transcript → chat messages for every transcript reader: user/assistant
-// text only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
+// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
 // regardless of which observation path (wire vs JsonlWatcher) is live — so the
 // remote view never depends on the intent machinery.
 function jsonlToMessages(jsonlPath, limit = 100) {
@@ -95,10 +96,11 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     if (obj.isSidechain || obj.isMeta) continue;
     for (const rec of sniffReader(obj).expand(obj)) {
       const c = sniffReader(rec).classify(rec);
-      let role = null, text = '';
+      let role = null, text = '', images = [];
       if (c.isReply) { role = 'assistant'; text = c.text; }
       else if (c.prompt) {
         role = 'user';
+        images = imagesOf(promptContent(rec), c.prompt);
         // local slash-command echoes and injected context aren't conversation
         text = c.prompt.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
           .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
@@ -109,7 +111,9 @@ function jsonlToMessages(jsonlPath, limit = 100) {
         if (c.turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
         continue;
       }
-      records.push({ role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd });
+      const row = { role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd };
+      if (images.length) row.images = images;
+      records.push(row);
     }
   }
 
@@ -135,8 +139,18 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       if (!r.role) continue;
       const interim = r.role === 'assistant' && !(i === lastAssistant && tailFinal);
       const prev = messages[messages.length - 1];
-      if (prev && prev.role === r.role && prev.interim === interim) prev.text += '\n\n' + r.text;
-      else messages.push({ role: r.role, text: r.text, ts: r.ts, interim });
+      if (prev && prev.role === r.role && prev.interim === interim) {
+        if (r.role === 'user') {
+          const marks = [...prev.text.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1]));
+          const offset = Math.max(0, ...marks, ...(prev.images || []).map((img) => img.n));
+          prev.text += '\n\n' + r.text.replace(/\[Image #(\d+)\]/g, (m, n) => `[Image #${Number(n) + offset}]`);
+          if (r.images) prev.images = (prev.images || []).concat(r.images.map((img) => ({ ...img, n: img.n + offset })));
+        } else prev.text += '\n\n' + r.text;
+      } else {
+        const m = { role: r.role, text: r.text, ts: r.ts, interim };
+        if (r.images) m.images = r.images;
+        messages.push(m);
+      }
     }
   }
 

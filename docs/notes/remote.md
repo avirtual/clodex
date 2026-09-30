@@ -101,3 +101,7 @@ reachable at all before this change.
 Process-level on purpose: a settings write rebuilds the `RemoteServer` without
 restarting the process, and that must not read as a restart to `bootId` consumers.
 Computed once at module load so a hello does not fork `ps` per request.
+
+## _handleTranscript
+
+A role `user` message carries `images: [{ n, mediaType, data }]` (base64) or `{ n, mediaType, bytes }` (original over 1 MiB, or a thumbnail that failed), present only when the prompt had at least one image. `n` keys the message's `[Image #n]` mark and is unique within a message: folded prompts are renumbered. The `transcript-images` hello cap is pushed unconditionally: it announces the field, not the host-side 256px downscale, since originals are a valid value.

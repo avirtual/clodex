@@ -536,6 +536,7 @@ clx-t962-staged-
 clx-t962-verify-
 clx-teamroot-
 clx-term-busy-
+clx-thumbs-
 clx-totals-
 clx-tpl-deny-
 clx-tr-home-

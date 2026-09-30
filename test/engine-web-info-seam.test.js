@@ -173,6 +173,21 @@ test('headless-main declares webInfo as a closure over a `let` assigned LATER', 
   assert.ok(declIdx > seam.index, 'declared after the seam that closes over it');
 });
 
+test('seams.thumbnail reaches the remote wiring as its thumbnail dep, null when omitted', () => {
+  const remoteWiring = require('../remote-wiring');
+  const orig = remoteWiring.createRemoteWiring;
+  const seen = [];
+  remoteWiring.createRemoteWiring = (deps) => { seen.push(deps.thumbnail); return orig(deps); };
+  const thumbnail = async () => null;
+  try {
+    mkEngine({ thumbnail });
+    mkEngine({});
+  } finally {
+    remoteWiring.createRemoteWiring = orig;
+  }
+  assert.deepStrictEqual(seen, [thumbnail, null]);
+});
+
 // createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
 

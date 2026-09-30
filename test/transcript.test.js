@@ -82,6 +82,90 @@ test('jsonlToMessages: text-only, drops tool traffic and sidechains', () => {
   } finally { fs.unlinkSync(p); }
 });
 
+function imagePrompt(text, blocks) {
+  return {
+    type: 'user',
+    message: {
+      content: [
+        ...blocks.map(([mediaType, data]) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data } })),
+        { type: 'text', text },
+      ],
+    },
+  };
+}
+
+test('jsonlToMessages: a user prompt carries its image blocks paired with the [Image #n] marks', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] [Image #2] compare these', [['image/png', 'iVBORw0KGgo='], ['image/jpeg', '/9j/4AAQ']]),
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'they differ' }] } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.deepStrictEqual(msgs[0].images, [
+      { n: 1, mediaType: 'image/png', data: 'iVBORw0KGgo=' },
+      { n: 2, mediaType: 'image/jpeg', data: '/9j/4AAQ' },
+    ]);
+    assert.strictEqual(msgs[0].text, '[Image #1] [Image #2] compare these');
+    assert.strictEqual(msgs[1].role, 'assistant');
+    assert.strictEqual('images' in msgs[1], false);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a user message with no image carries no images key', () => {
+  const p = writeJsonl([{ type: 'user', message: { content: [{ type: 'text', text: 'plain' }] } }]);
+  try {
+    assert.strictEqual('images' in jsonlToMessages(p)[0], false);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a folded user message keeps the images of every prompt folded into it', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] first', [['image/png', 'AAAA']]),
+    { type: 'user', message: { content: 'follow-up' } },
+    imagePrompt('[Image #1] second', [['image/gif', 'BBBB']]),
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.deepStrictEqual(msgs.map((m) => m.role), ['user', 'assistant']);
+    assert.strictEqual(msgs[0].text, '[Image #1] first\n\nfollow-up\n\n[Image #2] second');
+    assert.deepStrictEqual(msgs[0].images, [
+      { n: 1, mediaType: 'image/png', data: 'AAAA' },
+      { n: 2, mediaType: 'image/gif', data: 'BBBB' },
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: folded prompts that each number from #1 get distinct n and matching marks', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] [Image #2] b', [['image/jpeg', 'BBBB'], ['image/gif', 'CCCC']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs.length, 1);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] [Image #3] b');
+    assert.deepStrictEqual(msgs[0].images, [
+      { n: 1, mediaType: 'image/png', data: 'AAAA' },
+      { n: 2, mediaType: 'image/jpeg', data: 'BBBB' },
+      { n: 3, mediaType: 'image/gif', data: 'CCCC' },
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
+test('jsonlToMessages: a fold shifts past marks that have no image block too', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] [Image #2] b', [['image/jpeg', 'BBBB']]),
+    imagePrompt('[Image #1] c', [['image/gif', 'CCCC']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] [Image #3] b\n\n[Image #4] c');
+    assert.deepStrictEqual(msgs[0].images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB'], [4, 'CCCC']]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: scrubs control chars, delivery label, and slash-command echoes', () => {
   const p = writeJsonl([
     { type: 'user', message: { content: '\x15[agent:from user] hi' } },

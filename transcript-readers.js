@@ -79,6 +79,12 @@ function extractText(obj) {
   return msg && msg.role === 'assistant' ? msg.text : '';
 }
 
+function promptContent(obj) {
+  if ((obj.type || '') !== 'user') return null;
+  const content = (obj.message || {}).content;
+  return Array.isArray(content) ? content : null;
+}
+
 function userPrompt(obj) {
   const type = obj.type || '';
   const payload = obj.payload || {};
@@ -202,6 +208,6 @@ function readerFor(id) {
 }
 
 module.exports = {
-  readerFor, sniffReader,
+  readerFor, sniffReader, promptContent,
   extractText, isTurnEndEntry, isInterruptEntry, isCodexReply, isTelemetryOnly, NON_FLUSHING_TYPES,
 };
