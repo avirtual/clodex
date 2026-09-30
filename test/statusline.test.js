@@ -67,3 +67,23 @@ test('resolveProxyBase: null with the global pref disabled resolves to null', ()
   const ui = fakeUi({}, { proxyEnabled: false, proxyUrl: 'http://pref:9' });
   assert.strictEqual(resolveProxyBase(null, ui), null);
 });
+
+test('setupClaudeHook: a wire-routed seat with no proxyBase gets the headless statusline', () => {
+  const fs = require('fs');
+  const { createCliHooks } = require('../cli-hooks');
+  const { pathFor } = require('../clodex-paths');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const REGISTRY_DIR = mkTmpRoot('clodex-statusline-');
+  const h = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => fakeUi({ claude: ['model'], claudeCommand: '' }),
+    nodeInterp: process.execPath,
+  });
+  h.setupClaudeHook('wired', null, null, [], [], [], 'http://127.0.0.1:7801/w/wired');
+  h.setupClaudeHook('plain');
+  const wired = fs.readFileSync(pathFor(REGISTRY_DIR, 'wired', 'statusline'), 'utf-8');
+  const plain = fs.readFileSync(pathFor(REGISTRY_DIR, 'plain', 'statusline'), 'utf-8');
+  assert.ok(wired.includes('headless: side-channel only'), 'wire-only seat renders headless');
+  assert.ok(!plain.includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
+});

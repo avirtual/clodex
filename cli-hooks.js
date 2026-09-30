@@ -147,7 +147,7 @@ fi
 `;
     fs.writeFileSync(scriptPath, script, { mode: 0o700 });
 
-    fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!proxyBase, getUiSettings(), REGISTRY_DIR), { mode: 0o700 });
+    fs.writeFileSync(statusPath, renderClaudeStatusScript(name, !!(wireBase || proxyBase), getUiSettings(), REGISTRY_DIR), { mode: 0o700 });
 
     const attnScriptPath = pathFor(REGISTRY_DIR, name, 'attnScript');
     fs.writeFileSync(attnPath, '');
