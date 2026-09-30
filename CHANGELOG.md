@@ -16,6 +16,7 @@ blocks a release.
 - Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.
 - A preserved suite-failure file is numbered by the same review round as the diff and verdict beside it.
 - Phone: user messages in the transcript now carry thumbnails of attached images (`transcript-images` cap), downscaled to 256px on the host.
+- Phone: every image attached to a message reaches the transcript, even when the CLI wrote fewer `[Image #n]` marks than images.
 
 ## 5.96.0 — 2026-09-30
 

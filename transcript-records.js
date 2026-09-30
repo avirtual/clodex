@@ -95,8 +95,10 @@ function imagesOf(content, text) {
   if (!Array.isArray(content)) return [];
   const marks = [...new Set([...text.matchAll(IMAGE_MARK_RE)].map((m) => Number(m[1])))];
   const blocks = content.filter((b) => b && b.type === 'image' && b.source && typeof b.source.data === 'string');
-  return blocks.slice(0, marks.length).map((b, k) => {
-    const n = marks[k];
+  let top = 0;
+  return blocks.map((b, k) => {
+    const n = k < marks.length ? marks[k] : top + 1;
+    top = Math.max(top, n);
     const mediaType = b.source.media_type;
     const data = b.source.data;
     const bytes = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
