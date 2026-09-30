@@ -1463,7 +1463,7 @@ function registerIpcHandlers(deps) {
         docsDir: path.join(__dirname, 'peering'),
       });
       setTimeout(() => {
-        try { manager._deliverMessage(name, 'user', briefing, 'dm'); } catch {}
+        try { manager._deliverMessage(name, 'deploy-fix', briefing, 'dm'); } catch {}
       }, DEPLOY_FIX_INJECT_DELAY_MS);
       log.info('session', `deploy-fix session ${name} for ${host}`);
       return { ok: true, name: out.name, type: 'claude', cwd: dir, backend: out.backend || null, fixFor: host || null };

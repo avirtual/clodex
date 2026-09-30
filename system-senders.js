@@ -12,6 +12,7 @@ const SYSTEM_SENDER_GLYPHS = {
   team: '⊞',
   'clodex-team': '⊞',
   wirescope: '∿',
+  'deploy-fix': '⚙',
 };
 
 const SYSTEM_SENDERS = new Set([...Object.keys(SYSTEM_SENDER_GLYPHS), 'clodex', 'user']);

@@ -26301,7 +26301,8 @@ ${i3.join("\n")}
         terminal: "\u25A4",
         team: "\u229E",
         "clodex-team": "\u229E",
-        wirescope: "\u223F"
+        wirescope: "\u223F",
+        "deploy-fix": "\u2699"
       };
       var SYSTEM_SENDERS = /* @__PURE__ */ new Set([...Object.keys(SYSTEM_SENDER_GLYPHS), "clodex", "user"]);
       module.exports = { SYSTEM_SENDER_GLYPHS, SYSTEM_SENDERS };
@@ -26324,11 +26325,16 @@ ${i3.join("\n")}
         const first = Array.from(String(text || ""))[0];
         return first ? first.toUpperCase() : "?";
       }
-      function classifySender(from) {
+      var OPERATOR_GLYPH = "\u25CF";
+      var PHONE_GLYPH = "\u25AF";
+      function classifySender(from, client = null) {
         const name = String(from == null ? "" : from);
         const system = systemGlyph(name);
         if (system) return { cls: "system", label: name, glyph: system };
-        if (name === "user") return { cls: "operator", label: "remote", glyph: "\u25CF" };
+        if (name === "user") {
+          if (client === "ios") return { cls: "operator", label: "phone", glyph: PHONE_GLYPH };
+          return { cls: "operator", label: client || "remote", glyph: OPERATOR_GLYPH };
+        }
         if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
         const shape = SEAT_SHAPE.exec(name);
         if (shape) {
@@ -26336,7 +26342,7 @@ ${i3.join("\n")}
         }
         return { cls: "seat", label: name, glyph: initial(name) };
       }
-      module.exports = { classifySender, initial, SYSTEM_GLYPHS };
+      module.exports = { classifySender, initial, SYSTEM_GLYPHS, OPERATOR_GLYPH };
     }
   });
 
@@ -32463,7 +32469,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var { ansiRuns } = require_ansi_html();
       var { classifyRows } = require_intent_marks();
-      var { classifySender, initial } = require_sender_class();
+      var { classifySender, initial, OPERATOR_GLYPH } = require_sender_class();
       var { scanLinks } = require_path_scan();
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
@@ -32931,20 +32937,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function operatorBadge(doc, label, title) {
         const badge = el(doc, "span", "tr-sender tr-sender-operator");
         badge.title = title;
-        badge.appendChild(el(doc, "span", "tr-sender-glyph", "\u25CF"));
+        badge.appendChild(el(doc, "span", "tr-sender-glyph", OPERATOR_GLYPH));
         badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
-      function senderBadge(doc, from) {
-        const { cls, label, glyph } = classifySender(from);
+      function senderTitle(from, client) {
+        if (from !== "user") return String(from);
+        return client === "ios" ? "Sent from the phone app" : "Sent through the remote API";
+      }
+      function senderBadge(doc, from, client) {
+        const { cls, label, glyph } = classifySender(from, client);
         const badge = el(doc, "span", `tr-sender tr-sender-${cls}`);
-        badge.title = String(from);
+        badge.title = senderTitle(from, client);
         badge.appendChild(el(doc, "span", "tr-sender-glyph", glyph));
         badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
       function inboundBadge(doc, rec) {
-        if (rec.via !== "subagent") return senderBadge(doc, rec.from);
+        if (rec.via !== "subagent") return senderBadge(doc, rec.from, rec.client);
         const name = String(rec.from);
         const badge = el(doc, "span", `tr-sender tr-sender-${classifySender(name).cls}`);
         badge.title = "Report from a subagent of this seat \u2014 attached by the CLI, not typed";

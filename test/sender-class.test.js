@@ -16,6 +16,7 @@ const TABLE = [
   ['team', { cls: 'system', label: 'team', glyph: '⊞' }],
   ['clodex-team', { cls: 'system', label: 'clodex-team', glyph: '⊞' }],
   ['wirescope', { cls: 'system', label: 'wirescope', glyph: '∿' }],
+  ['deploy-fix', { cls: 'system', label: 'deploy-fix', glyph: '⚙' }],
   ['clodex', { cls: 'seat', label: 'clodex', glyph: 'C' }],
   ['review-loop', { cls: 'system', label: 'review-loop', glyph: '⇄' }],
   ['merge-watchdog', { cls: 'system', label: 'merge-watchdog', glyph: '◉' }],
@@ -33,8 +34,21 @@ for (const [from, want] of TABLE) {
   });
 }
 
+const CLIENT_TABLE = [
+  ['user', 'ios', { cls: 'operator', label: 'phone', glyph: '▯' }],
+  ['user', 'cli', { cls: 'operator', label: 'cli', glyph: '●' }],
+  ['user', null, { cls: 'operator', label: 'remote', glyph: '●' }],
+  ['reminder', 'ios', { cls: 'system', label: 'reminder', glyph: '◷' }],
+];
+
+for (const [from, client, want] of CLIENT_TABLE) {
+  test(`classifySender(${JSON.stringify(from)}, ${JSON.stringify(client)})`, () => {
+    assert.deepStrictEqual(classifySender(from, client), want);
+  });
+}
+
 test('SYSTEM_GLYPHS names exactly the known system senders', () => {
-  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope']);
+  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'deploy-fix']);
 });
 
 test('initial is the first character upper-cased, or ? for an empty name', () => {

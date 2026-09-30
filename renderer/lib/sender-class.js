@@ -16,11 +16,17 @@ function initial(text) {
   return first ? first.toUpperCase() : '?';
 }
 
-function classifySender(from) {
+const OPERATOR_GLYPH = '●';
+const PHONE_GLYPH = '▯';
+
+function classifySender(from, client = null) {
   const name = String(from == null ? '' : from);
   const system = systemGlyph(name);
   if (system) return { cls: 'system', label: name, glyph: system };
-  if (name === 'user') return { cls: 'operator', label: 'remote', glyph: '●' };
+  if (name === 'user') {
+    if (client === 'ios') return { cls: 'operator', label: 'phone', glyph: PHONE_GLYPH };
+    return { cls: 'operator', label: client || 'remote', glyph: OPERATOR_GLYPH };
+  }
   if (name.includes('@')) return { cls: 'peer', label: name, glyph: '⇢' };
   const shape = SEAT_SHAPE.exec(name);
   if (shape) {
@@ -29,4 +35,4 @@ function classifySender(from) {
   return { cls: 'seat', label: name, glyph: initial(name) };
 }
 
-module.exports = { classifySender, initial, SYSTEM_GLYPHS };
+module.exports = { classifySender, initial, SYSTEM_GLYPHS, OPERATOR_GLYPH };

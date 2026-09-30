@@ -629,6 +629,16 @@ test('an inbound from user carries the operator badge labelled remote', () => {
   const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
   assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['●', 'remote']);
+  assert.strictEqual(badge.title, 'Sent through the remote API');
+});
+
+test('an inbound from user sent by the phone app draws the phone glyph labelled phone', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'user', client: 'ios', text: 'from the phone' }]);
+  const badge = unbox(m.pane.childNodes[0].childNodes[0]).childNodes[0].childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
+  assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['▯', 'phone']);
+  assert.strictEqual(badge.title, 'Sent from the phone app');
 });
 
 function mountWorking() {

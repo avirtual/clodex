@@ -21,6 +21,7 @@ const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', '
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
 const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message ([^\n]*)>\n?([\s\S]*?)<\/teammate-message>/;
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
+const CLIENT_TAG_RE = /^\(via ([a-z][a-z0-9-]{0,15})\)[ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
 const EXIT_RE = /^Exit code (\d+)/;
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
@@ -105,6 +106,11 @@ function imagesOf(content, text) {
     if (bytes <= IMAGE_CAP) return { n, mediaType, data };
     return { n, mediaType, bytes };
   });
+}
+
+function clientTagOf(text) {
+  const m = CLIENT_TAG_RE.exec(text);
+  return m ? { client: m[1], text: text.slice(m[0].length) } : { client: null, text };
 }
 
 function tagBody(text, tag) {
@@ -276,10 +282,11 @@ function userRecords(rec, base, tools) {
   if (unwrapped != null) text = unwrapped;
   const from = INBOUND_RE.exec(text);
   if (from) {
-    const rest = text.slice(from[0].length);
+    const after = text.slice(from[0].length);
+    const { client, text: rest } = from[1] === 'user' ? clientTagOf(after) : { client: null, text: after };
     const att = ATTACHED_RE.exec(rest);
     const ticket = ticketOf(rest);
-    const card = capped({ ...base, kind: 'inbound', from: from[1], ...(ticket ? { ticket } : {}) }, 'text', rest, PROMPT_CAP);
+    const card = capped({ ...base, kind: 'inbound', from: from[1], ...(client ? { client } : {}), ...(ticket ? { ticket } : {}) }, 'text', rest, PROMPT_CAP);
     return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
   }
   const runtime = RUNTIME_RE.exec(text);
@@ -565,4 +572,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, imagesOf, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, imagesOf, clientTagOf, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };

@@ -12,7 +12,7 @@ const fs = require('fs');
 const {
   sniffReader, promptContent, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
 } = require('./transcript-readers');
-const { imagesOf } = require('./transcript-records');
+const { imagesOf, clientTagOf } = require('./transcript-records');
 
 // Panel/phone sends carry the operator delivery label; every consumer of
 // jsonlToMessages renders the operator's own chat, so drop it (peer labels like
@@ -20,7 +20,9 @@ const { imagesOf } = require('./transcript-records');
 // leading Ctrl-U (\x15) that _injectText uses to clear the line — control chars
 // go first. Applied to every user text whatever entry shape produced it.
 function cleanUserText(text) {
-  return text.replace(/^[\x00-\x1f]+/, '').replace(/^\[agent:from user\]\s*/, '');
+  const bare = text.replace(/^[\x00-\x1f]+/, '');
+  const label = /^\[agent:from user\]\s*/.exec(bare);
+  return label ? clientTagOf(bare.slice(label[0].length)) : { client: null, text: bare };
 }
 
 function jsonlToMarkdown(jsonlPath, agentType, sessionName) {
@@ -96,7 +98,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     if (obj.isSidechain || obj.isMeta) continue;
     for (const rec of sniffReader(obj).expand(obj)) {
       const c = sniffReader(rec).classify(rec);
-      let role = null, text = '', images = [];
+      let role = null, text = '', images = [], client = null;
       if (c.isReply) { role = 'assistant'; text = c.text; }
       else if (c.prompt) {
         role = 'user';
@@ -105,7 +107,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
         text = c.prompt.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
           .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
         if (text.startsWith('<command-name>') || text.startsWith('<local-command-stdout>')) text = '';
-        text = cleanUserText(text);
+        ({ text, client } = cleanUserText(text));
       }
       if (!role || !text.trim()) {
         if (c.turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
@@ -113,6 +115,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       }
       const row = { role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd };
       if (images.length) row.images = images;
+      if (client) row.client = client;
       records.push(row);
     }
   }
@@ -149,6 +152,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       } else {
         const m = { role: r.role, text: r.text, ts: r.ts, interim };
         if (r.images) m.images = r.images;
+        if (r.client) m.client = r.client;
         messages.push(m);
       }
     }
