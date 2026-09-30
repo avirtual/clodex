@@ -519,8 +519,13 @@ test('Enter in the search input opens the first hit at its anchor', async () => 
   await withDocument(ctx, () => input.fire('keydown', { key: 'Enter' }));
   assert.strictEqual(ctx.byId.get('help-title').textContent, 'Clodex Help — how-to title',
     'Enter must open the page the first hit names');
-  assert.strictEqual(ctx.byId.get('help-body').querySelector('[id="how-to-use-clodex"]').scrolled, 1,
-    'and scroll it to the hit\'s heading');
+  const opened = ctx.byId.get('help-body').querySelector('[id="how-to-use-clodex"]');
+  assert.strictEqual(opened.scrolled, 1, 'and scroll it to the hit\'s heading');
+  assert.deepStrictEqual(ctx.byId.get('help-nav').querySelectorAll('.help-hit').map((h) => h.attrs['data-page']),
+    ['how-to', 'how-to'], 'with the query still in the box, opening a hit keeps the hit list');
+  await withDocument(ctx, () => input.fire('keydown', { key: 'Enter' }));
+  const reopened = ctx.byId.get('help-body').querySelector('[id="how-to-use-clodex"]');
+  assert.ok(reopened !== opened && reopened.scrolled === 1, 'so a second Enter opens the first hit again');
 });
 
 test('closing keeps the caches: a second open refetches nothing', async () => {

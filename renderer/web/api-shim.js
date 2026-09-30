@@ -320,6 +320,10 @@ function connect() {
   ws.onmessage = (ev) => onMessage(ev.data);
   ws.onclose = () => {
     socketOpen = false;
+    const dropped = [...pending.values()];
+    pending.clear();
+    outbox = outbox.filter((f) => f.t !== 'invoke');
+    for (const p of dropped) p.reject(new Error('socket closed'));
     showBanner(everWelcomed ? 'Disconnected — reconnecting…' : 'Connecting…');
     scheduleReconnect();
   };

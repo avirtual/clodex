@@ -198,7 +198,7 @@ function initHelpPanel({ api }) {
       bodyEl.appendChild(renderDoc(parsed, { resolveHref }));
       titleEl.textContent = res.title ? `Clodex Help — ${res.title}` : 'Clodex Help';
     }
-    renderNav();
+    await runSearch();
     if (slug) scrollToSlug(slug);
     else bodyEl.scrollTop = 0;
     updateHistoryButtons();
