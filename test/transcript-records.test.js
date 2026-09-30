@@ -183,6 +183,16 @@ test('a typed /compact whose echo lands after the compact_boundary is no prompt 
   assert.doesNotMatch(JSON.stringify(records), /\/compact/);
 });
 
+test('an operator inbound carrying a (via client) tag lands the client on the record and strips the tag from its text', () => {
+  const { records } = recordsOf([
+    rec({ type: 'user', uuid: 'i1', message: { role: 'user', content: '[agent:from user] (via ios) ship it' } }),
+    rec({ type: 'user', uuid: 'i2', message: { role: 'user', content: '[agent:from user] ship it' } }),
+    rec({ type: 'user', uuid: 'i3', message: { role: 'user', content: '[agent:from bob] (via ios) hi' } }),
+  ].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.from, r.client, r.text]), [['user', 'ios', 'ship it'], ['user', undefined, 'ship it'], ['bob', undefined, '(via ios) hi']]);
+  assert.strictEqual('client' in records[1], false);
+});
+
 test('a compact boundary opens its own turn: the turn before it ends at the compact and the next prompt opens the one after', () => {
   const { records } = recordsOf([
     rec({ type: 'user', uuid: 'i1', message: { role: 'user', content: '[agent:from bob] hi' } }),

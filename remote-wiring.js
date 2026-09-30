@@ -481,12 +481,13 @@ function createRemoteWiring(deps) {
           catch (e) { return { ok: false, error: e.message }; }
           return { ok: true, ...page, messages: await thumbPage(page.messages) };
         },
-        send: (name, text, images) => {
+        send: (name, text, images, client = null) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
+          const tag = client ? `(via ${client})` : '';
           try {
-            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', '', null, null, images);
-            else manager._deliverMessage(name, 'user', text, 'dm');
+            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, null, null, images);
+            else manager._deliverMessage(name, 'user', text, 'dm', tag);
           } catch (e) {
             log.error('remote', `dm to ${name} failed: ${e.message}`);
             return { ok: false, code: 500, error: `delivery failed: ${e.message}` };

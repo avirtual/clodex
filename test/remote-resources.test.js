@@ -285,8 +285,9 @@ function subresourceFixture() {
         calls.push({ route: 'query', name, kind, args });
         return name === 'ghost' ? { ok: false, error: 'no such session' } : QUERY_OUT;
       },
-      send: (name, text, images) => {
-        calls.push(images && images.length ? { route: 'dm', name, text, images } : { route: 'dm', name, text });
+      send: (name, text, images, client) => {
+        const call = images && images.length ? { route: 'dm', name, text, images } : { route: 'dm', name, text };
+        calls.push(client ? { ...call, client } : call);
         return name === 'ghost' ? { ok: false, error: 'no such session' } : { ok: true };
       },
       killSession: (name) => {
@@ -662,6 +663,23 @@ test('POST /api/sessions/:name/dm: the path names the session — a body `name` 
     assert.strictEqual((await post(port, '/api/sessions/alice/dm', 'not json')).status, 400, 'bad JSON is a 400');
     const miss = await post(port, '/api/sessions/ghost/dm', JSON.stringify({ text: 'hi' }));
     assert.strictEqual(miss.status, 404, 'a not-ok callback result is still a 404');
+  });
+});
+
+test('POST /api/sessions/:name/dm: a valid client rides to the send callback, an invalid one is dropped rather than refused', async () => {
+  const fixture = subresourceFixture();
+  const post = (port, p, body) => req(port, p, { method: 'POST', body, headers: { 'content-type': 'application/json' } });
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  await withNode(fixture.opts, async (port) => {
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'hi', client: 'ios' }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'hi', client: 'ios' });
+    assert.strictEqual((await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'look', images: [png], client: 'ios' }))).status, 200);
+    assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'look', images: [png], client: 'ios' });
+    for (const bad of ['iOS', '(via x)', 'a'.repeat(17), 7, '']) {
+      const r = await post(port, '/api/sessions/alice/dm', JSON.stringify({ text: 'hi', client: bad }));
+      assert.strictEqual(r.status, 200, `client ${JSON.stringify(bad)} is not a 400`);
+      assert.deepStrictEqual(fixture.calls.at(-1), { route: 'dm', name: 'alice', text: 'hi' }, `client ${JSON.stringify(bad)} is dropped`);
+    }
   });
 });
 

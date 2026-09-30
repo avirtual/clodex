@@ -122,6 +122,7 @@ const VERB_CALLBACK = {
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
+const DM_CLIENT_RE = /^[a-z][a-z0-9-]{0,15}$/;
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + MAX_BODY;
@@ -826,7 +827,8 @@ class RemoteServer {
       if (!checked.ok) return this._json(res, 400, checked);
       const text = String((msg && msg.text) || '').trim();
       if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
-      const out = this._send(name, text, checked.images);
+      const client = msg && typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
+      const out = this._send(name, text, checked.images, client);
       return this._json(res, out.ok ? 200 : (out.code || 404), out);
     }, DM_MAX_BODY);
   }

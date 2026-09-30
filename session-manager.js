@@ -7983,7 +7983,8 @@ function createSessionManager(deps) {
           ? `${marked} Message (${bytes} bytes) attached: @${filePath} ${trailer}`
           : `${marked} Message (${bytes} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
       }
-      return `${prefix} ${body}${trailer ? ' ' + trailer : ''}`;
+      const inline = senderName === 'user' && tag ? ` ${tag}` : '';
+      return `${prefix}${inline} ${body}${trailer ? ' ' + trailer : ''}`;
     }
 
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null) {

@@ -2,7 +2,7 @@
 
 const { ansiRuns } = require('./lib/ansi-html');
 const { classifyRows } = require('./lib/intent-marks');
-const { classifySender, initial } = require('./lib/sender-class');
+const { classifySender, initial, OPERATOR_GLYPH } = require('./lib/sender-class');
 const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
@@ -496,22 +496,27 @@ function promptRow(doc, rec, ctx) {
 function operatorBadge(doc, label, title) {
   const badge = el(doc, 'span', 'tr-sender tr-sender-operator');
   badge.title = title;
-  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', '●'));
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', OPERATOR_GLYPH));
   badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
   return badge;
 }
 
-function senderBadge(doc, from) {
-  const { cls, label, glyph } = classifySender(from);
+function senderTitle(from, client) {
+  if (from !== 'user') return String(from);
+  return client === 'ios' ? 'Sent from the phone app' : 'Sent through the remote API';
+}
+
+function senderBadge(doc, from, client) {
+  const { cls, label, glyph } = classifySender(from, client);
   const badge = el(doc, 'span', `tr-sender tr-sender-${cls}`);
-  badge.title = String(from);
+  badge.title = senderTitle(from, client);
   badge.appendChild(el(doc, 'span', 'tr-sender-glyph', glyph));
   badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
   return badge;
 }
 
 function inboundBadge(doc, rec) {
-  if (rec.via !== 'subagent') return senderBadge(doc, rec.from);
+  if (rec.via !== 'subagent') return senderBadge(doc, rec.from, rec.client);
   const name = String(rec.from);
   const badge = el(doc, 'span', `tr-sender tr-sender-${classifySender(name).cls}`);
   badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';

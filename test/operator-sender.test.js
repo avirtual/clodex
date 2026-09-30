@@ -138,3 +138,13 @@ test('t886: an operator delivery over the spill threshold keeps the shape and th
   assert.strictEqual(text.includes('[agent:dm'), false,
     'the trailer rides the POINTER line, so a spilled operator message is where a suppression bug would surface');
 });
+
+test('t1457: a client tag rides right after the operator marker, inline and on the spill pointer line', () => {
+  const { injected, send } = wireDoors();
+  send('seat', 'ship it', [], 'ios');
+  assert.strictEqual(injected.at(-1), '[agent:from user] (via ios) ship it');
+  send('seat', 'x'.repeat(4000), [], 'ios');
+  assert.ok(injected.at(-1).startsWith('[agent:from user] (via ios) Message ('), injected.at(-1));
+  send('seat', 'ship it');
+  assert.strictEqual(injected.at(-1), '[agent:from user] ship it');
+});

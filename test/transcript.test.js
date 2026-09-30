@@ -247,6 +247,22 @@ test('jsonlToMessages: an assistant entry quoting the delivery label keeps it', 
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: a phone-sent message carries its client and a clean text; the fold keeps the first prompt\'s client', () => {
+  const p = writeJsonl([
+    { type: 'user', message: { content: '\x15[agent:from user] (via ios) from the phone' } },
+    { type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } },
+    { type: 'user', message: { content: '[agent:from user] typed' } },
+    { type: 'user', message: { content: '[agent:from user] (via ios) folded' } },
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.deepStrictEqual(msgs.map((m) => [m.role, m.text, m.client]), [
+      ['user', 'from the phone', 'ios'], ['assistant', 'ok', undefined], ['user', 'typed\n\nfolded', undefined],
+    ]);
+    assert.strictEqual('client' in msgs[2], false);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: the user-text cleaning applies after the branch chain, not inside one branch', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'transcript.js'), 'utf-8');
   const body = src.slice(src.indexOf('function jsonlToMessages'), src.indexOf('function cachedMessages'));
