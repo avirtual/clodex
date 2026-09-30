@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.101.0 — 2026-09-30
+
 - Docs: eleven stale sentences corrected across messaging, how-to, peering, file-view, telemetry, teams, renderer-events, the spill notes and the default kit's description.
 - A task verb's outcome still diverts around an open draft when the seat's acks file cannot be written.
 
