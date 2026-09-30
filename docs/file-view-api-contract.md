@@ -18,7 +18,7 @@ the app side in ClodexKit. Both sides build against this file.
     first 512 KB (`file-edit.js` `PEEK_MAX_BYTES`) as UTF-8, `content: null` when
     binary. Reads ANY absolute path.
   - `fileDiff` args `{path}` → git diff of that path in the seat's repo.
-- Three writers put pointers into a seat's transcript, into two directories:
+- Four writers put pointers into a seat's transcript, into two directories:
   - `~/.clodex/spill/<seat>/<16hex>.md` — long intent bodies filed by the wire
     tee (`intent-spill.js` `writeSpill`; terminal shows
     `<head> [<title> — ]<size> filed at <abs path>`), and context handoffs
@@ -29,8 +29,8 @@ the app side in ClodexKit. Both sides build against this file.
     `[agent:from X] Message (N bytes) attached: @<abs path>`; also rejected and
     denied intent bodies (`spillToFile('<verb> (rejected)', …)`). Each also
     gets a durable copy under `~/.clodex/spill/<seat>/messages/`
-    (`durableMessageCopyOf`). Images sent to a seat land in the same
-    `messages/<seat>/` directory (`_writeImageFiles`).
+    (`durableMessageCopyOf`). Images sent to a non-stream seat land in the
+    same `messages/<seat>/` directory (`_writeImageFiles`).
 - The global SSE `/api/events` already carries `dm-mail {origin}` as a payload-free
   refetch signal (`remote.js` `notifyDmMail`). The iOS app holds exactly one
   stream — this one — and polls the transcript; it never holds a per-session

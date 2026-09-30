@@ -199,7 +199,7 @@ popovers the owner will answer.
 ## 6. Side-channels
 
 - **Statusline** (statusline.js): the generated per-session script always
-  writes `{name}-ctx` (pct/used/size/model) even in `headless` mode
+  writes `run/<name>/ctx` (pct/used/size/model) even in `headless` mode
   (proxy-routed sessions suppress the visible line but the CLI is the sole
   source of the context-window SIZE). `rebuildAllStatusScripts` (engine.js)
   re-renders on preference changes. The template is a bash heredoc —
@@ -216,7 +216,7 @@ popovers the owner will answer.
   silently. The family KEEPS the minor version (`fable-5-1` is not `fable-5`)
   because that is the axis this vendor's prices move on; a release date and a
   routing version are dropped, so one model does not fragment across builds.
-  The ctx tick writes/removes `{name}-ctxwarn`; the read-only drain hook
+  The ctx tick writes/removes `run/<name>/ctxwarn`; the read-only drain hook
   re-delivers every submit while over (recurrence counters habituation).
   The tick SKIPS the write for a seat whose persistence record is
   `ephemeral` — the decision function stays pure and still calls the context

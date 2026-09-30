@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Docs: eleven stale sentences corrected across messaging, how-to, peering, file-view, telemetry, teams, renderer-events, the spill notes and the default kit's description.
+
 ## 5.100.0 — 2026-09-30
 
 - A large message's row in the phone's Files list matches the path the transcript shows again, stays listed after the 30-minute sweep and opens from its durable copy; the Intel build recipe in release notes and the `clodexctl get … | xargs logs` example in `clodexctl help` are corrected.

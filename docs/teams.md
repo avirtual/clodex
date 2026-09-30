@@ -48,12 +48,12 @@ the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead on
-the lead role's template, stock `clodex-team-lead` — `claude-opus-5-5[1m]`,
-every skill off, `clodex-team` + `clodex-monitor` + `clodex-run-tests` granted,
-`spawn` on and the privileged intents off. A team created before that stem was
-recorded on the role has no `lead.template` line and reaches the same file by
-default. Want another shape: set `lead.template` in the app's team editor, or
-pass an explicit `template:` on the spawn, which always wins.
+the lead role's template, which the kit picks (`clodex-team-lead` in the clodex
+kit, `lead` in the default kit) — `claude-opus-5-5[1m]`, every skill off,
+`clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and the privileged
+intents off. A team created before that stem was recorded on the role has no
+`lead.template` line and reaches `clodex-team-lead` by default. Want another shape:
+set `lead.template` in the app's team editor, or pass an explicit `template:` on the spawn, which always wins.
 
 A seat binds to a role by its NAME — `<team>-<role>`, or the team's `lead` — and
 the template is a shape, not a binding: spawning `helm-hand` on the `hand`

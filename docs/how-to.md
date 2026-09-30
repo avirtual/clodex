@@ -61,7 +61,7 @@ patched build, or a bisect:
 
 ```sh
 npm run dist:mac                      # electron-builder --mac --arm64 → dist/
-npx electron-builder --mac --x64      # an Intel build → dist/
+npx electron-builder --mac dmg --x64  # an Intel build → dist/
 ```
 
 Releases on the repo are cut by the maintainer's `scripts/release.sh` (the

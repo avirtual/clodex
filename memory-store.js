@@ -220,8 +220,8 @@ function createMemoryStore(rootDir) {
 
 // --- Boot digest ---------------------------------------------------------------
 // What a NEW conversation learns about its memory store, delivered via the
-// SessionStart hook's additionalContext (source startup/clear only — resumes
-// already carry it in history; see setupClaudeHook in main.js).
+// SessionStart hook's additionalContext (source startup/clear/compact — resumes
+// already carry it in history; see setupClaudeHook in cli-hooks.js).
 //
 // Three tiers, in fill order: OPERATOR pins in full, then the most RECENT units
 // in full, then index lines. A fresh session can't recall what it doesn't know
