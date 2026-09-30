@@ -270,7 +270,7 @@ function mkDeleteDoor({
   const { createTicketMethods } = require('../team-tickets');
   const methods = createTicketMethods(
     { fs, os, path, log: { info() {}, error() {}, warn() {} },
-      getPersistence: () => ({ list: () => persisted }) },
+      getPersistence: () => ({ list: () => persisted }), resolveTeam: tm.resolveTeam },
     { ticketsStore: tstore, nameConflict: () => null, SPEC_CONFIRM_MS: 1000 },
   );
   const manager = {
@@ -391,6 +391,24 @@ test('team:delete forgets the deleted team\'s ticket watches', async () => {
     assert.deepStrictEqual([...d.manager._ticketWatch.keys()], ['other-1'],
       "the deleted team's watch is dropped and another team's is not");
   } finally { d.cleanup(); }
+});
+
+test('team:delete of an UNLOADABLE team forgets the watches on roots no team resolves any more', async () => {
+  const d = mkDeleteDoor({ manifest: 'not json at all' });
+  const liveRoot = mkTmpRoot('ipc-del-root-');
+  const liveDir = path.join(path.dirname(d.dir), 'live');
+  try {
+    fs.mkdirSync(path.join(liveDir, 'prompts'), { recursive: true });
+    fs.writeFileSync(path.join(liveDir, 'prompts', 'lead.md'), '# lead');
+    fs.writeFileSync(path.join(liveDir, 'team.json'),
+      JSON.stringify({ root: liveRoot, lead: 'l', roles: { lead: {}, hand: {} } }, null, 2));
+    d.manager._ticketWatch.set('t-hand-1', { root: d.root, role: 'hand' });
+    d.manager._ticketWatch.set('live-hand-1', { root: liveRoot, role: 'hand' });
+    assert.strictEqual((await d.check()).loaded, false, 'ENTER: the manifest does not load, so the check carries no root');
+    assert.strictEqual((await d.del()).ok, true);
+    assert.deepStrictEqual([...d.manager._ticketWatch.keys()], ['live-hand-1'],
+      "the dead team's watch is dropped and the live team's is not");
+  } finally { d.cleanup(); fs.rmSync(liveRoot, { recursive: true, force: true }); }
 });
 
 test('t863: deleting a SANDBOXED team removes its box once, then the pointer dir', async () => {

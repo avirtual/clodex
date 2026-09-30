@@ -72,7 +72,7 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
     } catch (err) {
       return { ok: false, error: err.message };
     }
-    if (check.root) getManager()._forgetTeam(name, check.root);
+    getManager()._forgetTeam(name, check.root || null);
     return box ? { ok: true, box } : { ok: true };
   }
 

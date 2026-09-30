@@ -816,7 +816,13 @@ function createTicketMethods(deps, shared) {
     _forgetTeam(teamName, root) {
       let dropped = 0;
       for (const [name, w] of this._ticketWatch) {
-        if (w && w.root === root) { this._ticketWatch.delete(name); dropped += 1; }
+        if (!w) continue;
+        let gone = w.root === root;
+        if (root == null) {
+          let team = null; try { team = resolveTeam(w.root || ''); } catch { team = null; }
+          gone = !team;
+        }
+        if (gone) { this._ticketWatch.delete(name); dropped += 1; }
       }
       if (dropped) log.info('team', `forgot ${dropped} ticket watch(es) for deleted team "${teamName}"`);
       return dropped;
@@ -1700,7 +1706,8 @@ function createTicketMethods(deps, shared) {
 
           let kept;
           try {
-            kept = await this._writeTicketSuiteFailure(team, ticket, suite);
+            kept = await this._writeTicketSuiteFailure(team, ticket, suite,
+              Number(landedOn && landedOn.reviewRound) || Number(ticket.reviewRound) || 1);
           } catch (e) {
             kept = { ok: false, path: null, error: `the preservation threw: ${e && e.message ? e.message : String(e)}` };
             log.error('ticket', `ticket ${ticketId}: post-merge suite output could not be preserved — ${kept.error}`);
@@ -4604,7 +4611,6 @@ function createTicketMethods(deps, shared) {
         }
         const slowPass = suite.slowOnly && !slowOwned.length;
         if (!suite.green && !slowPass) {
-          // Written before the reject bumps `reworkRound`, so the file name carries the round that failed.
           // Wrapped in try/catch because `.catch()` misses a synchronous throw, which would escalate a red suite instead of rejecting it.
           let kept;
           try {
@@ -5346,14 +5352,12 @@ function createTicketMethods(deps, shared) {
 
     // One file per ticket and round, not the digest's shared last.txt: an unattended second writer would overwrite another
     // ticket's failure and a hand would read it as its own.
-    async _writeTicketSuiteFailure(team, ticket, suite) {
+    async _writeTicketSuiteFailure(team, ticket, suite, round = (Number(ticket.reviewRound) || 0) + 1) {
       const dest = this._ticketDiffDest(team, ticket);
       if (!dest.ok) return { ok: false, path: null, error: dest.error };
       const body = String((suite && suite.output) || '').trim();
       // An empty capture is reported, never written: an empty file reads as the runner having said nothing.
       if (!body) return { ok: false, path: null, error: 'the run produced no captured output to preserve' };
-      const round = (Number(ticket.reworkRound) || 0) + 1;
-      // The stamp, not the round, makes the name unique: `reworkRound` does not move on a review round, so a re-merge would overwrite the first dump.
       // Millisecond resolution only discriminates; the existsSync loop below closes the name.
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const stem = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}-${stamp}`);
