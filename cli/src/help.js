@@ -69,7 +69,7 @@ const VERB_REGISTRY = [
       'clodexctl get sessions -n main -o wide',
       'clodexctl get session bob -o json',
       'clodexctl get tickets --team clodex --state open',
-      'clodexctl get sessions -o name | xargs -n1 clodexctl logs',
+      'clodexctl get sessions -o name | cut -d/ -f2 | xargs -n1 clodexctl logs',
       'clodexctl get session bob --subresource skills',
       'clodexctl get session bob --subresource args',
       'clodexctl get nodes',

@@ -172,7 +172,7 @@ sync_pin cli/deploy/clodex-fargate.yaml \
 step "Preparing release notes"
 NOTES="$(mktemp)"
 trap 'rm -f "$NOTES"' EXIT
-FOOTER=$'\n\n---\n\n**Apple Silicon (arm64) build.** Intel (x64) users can build from source (`npm install && npx electron-rebuild && npm run dist:mac`).\n\nUnsigned (ad-hoc) build: first launch needs right-click → Open, or `xattr -cr /Applications/Clodex.app`.'
+FOOTER=$'\n\n---\n\n**Apple Silicon (arm64) build.** Intel (x64) users can build from source (`npm install && npx electron-rebuild && npx electron-builder --mac dmg --x64`).\n\nUnsigned (ad-hoc) build: first launch needs right-click → Open, or `xattr -cr /Applications/Clodex.app`.'
 
 # release title: tag, plus the notes-file's first heading as a subtitle when given
 TITLE="$TAG"

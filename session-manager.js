@@ -8003,7 +8003,7 @@ function createSessionManager(deps) {
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
-        this._noteFiled(target.name, filedEntry(this._keptMessagePath(filePath), 'message', `From: ${senderName}`));
+        this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
         // The trailing space after the path closes the @-autocomplete popup, so the deferred Enter
         // cannot select a different file.
