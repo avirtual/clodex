@@ -665,6 +665,7 @@ test('a chunked file reports its partial bytes without double-counting the ones 
 test('no progress is emitted when the move is refused', async () => {
   const { m, events } = mkMove({ caps: ['dm'] });
   seedLive(m, 'seat');
-  await m.moveToPeer('seat', 'p1', {});
+  const out = await m.moveToPeer('seat', 'p1', {});
+  assert.strictEqual(out.error, 'peer murmurfi does not accept moved sessions');
   assert.deepStrictEqual(events.filter((e) => e.channel === 'session:move-progress'), []);
 });

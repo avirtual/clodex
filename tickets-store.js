@@ -330,6 +330,4 @@ function ticketTerminalReason(ticket) {
   return null;
 }
 
-const ticketTerminal = (ticket) => ticketTerminalReason(ticket) !== null;
-
-module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminal, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };

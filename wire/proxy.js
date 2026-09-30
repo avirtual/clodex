@@ -117,14 +117,6 @@ function sessionIdFrom(obj) {
   }
 }
 
-function extractSessionId(bodyBuf) {
-  try {
-    return sessionIdFrom(JSON.parse(bodyBuf.toString('utf8')));
-  } catch {
-    return null;
-  }
-}
-
 
 class WireProxy extends EventEmitter {
   constructor(opts = {}) {
@@ -825,7 +817,7 @@ class WireProxy extends EventEmitter {
   }
 }
 
-module.exports = { WireProxy, extractSessionId, detectSse };
+module.exports = { WireProxy, detectSse };
 
 
 if (require.main === module) {

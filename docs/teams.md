@@ -101,8 +101,8 @@ review split. The tickets board shows the same figures per row.
 
 The loop's own data is *not* here: `tickets.json` and the per-ticket `tasks/`
 directories are keyed to the PROJECT, not the team, and live under
-`~/.clodex/projects/<leaf>-<hash>/` (`clodex-paths.js`, `projectDirFor` /
-`taskDirFor`). One project can be worked by several teams, and a board that
+`~/.clodex/projects/<leaf>-<hash>/` (`clodex-paths.js` `projectDirFor`, joined
+with the spec's `tasks/…` pointer by `team-cost.js` `resolveTaskDir`). One project can be worked by several teams, and a board that
 moved with the team would split its own history.
 
 One rule covers all four kinds: a name written without a colon — a role's

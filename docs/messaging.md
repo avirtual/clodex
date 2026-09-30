@@ -263,7 +263,7 @@ reach Clodex by different routes and neither predicate can see the other's:
   submit Clodex can observe. Every way the report can stop — submitted, cleared,
   seat switched, window closed, screen unreadable — releases it, and the park
   cap bounds it again from a timer that reads no voice signal. The renderer's
-  composer read is positive (`composerHasDraftRows`) and never
+  composer read is positive (`draftFromRows` in `renderer/voice-mirror.js`) and never
   `!composerIsEmpty`: an unreadable row, a scan that falls off the top, and a
   head that is never found all decline, because an unreadable screen must not
   park deliveries nothing can then release.

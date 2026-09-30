@@ -30,10 +30,6 @@
 
 const { directWebUrl } = require('../../peer-web-url');
 
-// Kept for callers that need the narrower question (ssh specifically — e.g. the
-// deploy/setup flow, which copies files and runs a shell and genuinely is ssh-only).
-function isSshPeer(tunnel) { return !!(tunnel && tunnel.sshHost); }
-
 // Which typed cloud transport dials this peer, phrased for a sentence, or null
 // for an ssh/url peer. The tunnel row carries the block under its kind key, so
 // naming the real transport costs nothing — the tips below say which forward is
@@ -151,6 +147,6 @@ function webViewAffordance({ status, tunnel, webTunnel } = {}) {
 }
 
 module.exports = {
-  webViewAffordance, tunnelPhase, isSshPeer,
+  webViewAffordance, tunnelPhase,
   cloudTransportName, transportPhrase,
 };

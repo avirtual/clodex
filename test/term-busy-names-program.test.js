@@ -180,7 +180,8 @@ test('engine wires the four remote deps into drawer-pty, not just the callbacks'
   }
   assert.strictEqual(typeof deps.shellHost, 'function');
   assert.strictEqual(typeof deps.remoteUnsupportedReason, 'function');
-  assert.ok(String(deps.remoteInstallLine).length > 0);
+  assert.strictEqual(typeof deps.remoteAllowed, 'function');
+  assert.strictEqual(deps.remoteInstallLine, require('../term-shim').REMOTE_INSTALL_LINE);
 });
 
 test('a program word carrying control bytes is sanitised on the `asked` path too', () => {

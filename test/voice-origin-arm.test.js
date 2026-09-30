@@ -24,7 +24,7 @@ const {
 } = require('../voice-origin-arm');
 const { HINT_ID } = require('../hint-arm');
 const { PEEK_ID } = require('../selection-hint');
-const { isVoiceOriginated, recordingObserved } = require('../renderer/lib/voice-submit');
+const { recordingObserved } = require('../renderer/lib/voice-submit');
 
 function recorder({ throws = false, rejects = false } = {}) {
   const calls = [];
@@ -136,33 +136,6 @@ test('no base is a proxy that is off, not an error: nothing is posted', () => {
 });
 
 // --------------------------------------------------------- the discriminator
-
-test('voice origin requires POSITIVE evidence, and its default is NO', () => {
-  // Each row carries its own expectation as a literal. The `now`/`evidenceAt`
-  // pairs are chosen so no row can be satisfied by re-applying the code's own
-  // subtraction rule — the absent and future rows are true for reasons the
-  // window arithmetic alone does not produce.
-  const W = 20_000;
-  const rows = [
-    { what: 'never seen', evidenceAt: null, now: 1_000_000, expect: false },
-    { what: 'undefined', evidenceAt: undefined, now: 1_000_000, expect: false },
-    { what: 'NaN', evidenceAt: NaN, now: 1_000_000, expect: false },
-    { what: 'just now', evidenceAt: 1_000_000, now: 1_000_000, expect: true },
-    { what: 'inside the window', evidenceAt: 990_000, now: 1_000_000, expect: true },
-    { what: 'exactly at the edge', evidenceAt: 980_000, now: 1_000_000, expect: true },
-    { what: 'one ms past the edge', evidenceAt: 979_999, now: 1_000_000, expect: false },
-    { what: 'long stale', evidenceAt: 1, now: 1_000_000, expect: false },
-    // A clock that went backwards is not evidence of a microphone.
-    { what: 'in the future', evidenceAt: 1_000_001, now: 1_000_000, expect: false },
-  ];
-  for (const r of rows) {
-    assert.strictEqual(
-      isVoiceOriginated({ evidenceAt: r.evidenceAt, now: r.now, windowMs: W }),
-      r.expect, r.what);
-  }
-  // Typing produces no evidence at all, which is the whole discrimination.
-  assert.strictEqual(isVoiceOriginated({}), false);
-});
 
 test('the recording read reports what is there, and an unreadable screen is NOT evidence', () => {
   // The polarity is the OPPOSITE of recorderBlocksRearm's, deliberately: that
