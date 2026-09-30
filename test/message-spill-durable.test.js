@@ -77,15 +77,16 @@ test('a click on the swept messages/ path resolves to the durable copy through t
   });
 });
 
-test('a rejected ticket body names its transcript-literal messages/ path, with no sweep deadline, the ring holds that path, and it opens through the durable copy after the sweep', () => {
+test('a rejected ticket body names its transcript-literal messages/ path with its sweep deadline and the permanent copy, the ring holds the literal, and it opens through the durable copy after the sweep', () => {
   const { engine, registryDir, session, sweep } = mkEngine();
   const body = 'rejected-spec '.repeat(10);
   const suffix = engine.manager._spillRejectedPayload(session, 'task add', body);
   const [entry] = session.filedRing.list();
   assert.match(entry.path, new RegExp(`^${path.join(registryDir, 'messages', SEAT)}/msg-\\d+-\\d+\\.txt$`));
-  assert.strictEqual(suffix, ` — your task add body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path}`);
   const durable = path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path));
+  assert.strictEqual(suffix, ` — your task add body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path} (swept after 30 minutes; a permanent copy stays at ${durable})`);
   sweep();
+  assert.match(fs.readFileSync(suffix.match(/a permanent copy stays at (\S+)\)$/)[1], 'utf8'), /rejected-spec/, 'the path the seat was told survives the sweep');
   assert.strictEqual(fs.existsSync(entry.path), false, 'ENTER: the sweep removed the messages/ original');
   assert.deepStrictEqual(session.filedRing.list().map((e) => e.path), [entry.path]);
   assert.deepStrictEqual(engine.resolveFilePath(SEAT, `@${entry.path}`, null), {
@@ -94,15 +95,15 @@ test('a rejected ticket body names its transcript-literal messages/ path, with n
   assert.match(fs.readFileSync(durable, 'utf8'), /rejected-spec/);
 });
 
-test('a denied dm body names its transcript-literal messages/ path, with no sweep deadline', () => {
+test('a denied dm body names its transcript-literal messages/ path, its sweep deadline and the permanent copy', () => {
   const { engine, registryDir, session } = mkEngine();
   const body = 'denied-dm-body';
   const suffix = engine.manager._deniedIntentPayload(session, { type: 'dm', body });
   const [entry] = session.filedRing.list();
   assert.strictEqual(path.dirname(entry.path), path.join(registryDir, 'messages', SEAT));
   assert.ok(fs.existsSync(path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path))), 'ENTER: a durable copy exists');
-  assert.ok(suffix.endsWith(`. Your dm body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path}`), suffix);
-  assert.doesNotMatch(suffix, /swept|minutes/);
+  const durable = path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path));
+  assert.ok(suffix.endsWith(`. Your dm body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path} (swept after 30 minutes; a permanent copy stays at ${durable})`), suffix);
 });
 
 test('a durable copy left by an earlier launch with the same pid is never overwritten: the spill takes the next free name', () => {

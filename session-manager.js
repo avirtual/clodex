@@ -6321,8 +6321,9 @@ function createSessionManager(deps) {
         const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
         this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
-        return this._hasDurableCopy(path_)
-          ? ` — your ${verb} body (${bytes} bytes) is saved at ${path_}`
+        const durable = this._durableCopyOf(path_);
+        return durable
+          ? ` — your ${verb} body (${bytes} bytes) is saved at ${path_} (swept after ${Math.round(MSG_MAX_AGE / 60)} minutes; a permanent copy stays at ${durable})`
           : ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
@@ -6343,8 +6344,9 @@ function createSessionManager(deps) {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
             this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
-            return this._hasDurableCopy(path_)
-              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${path_}`
+            const durable = this._durableCopyOf(path_);
+            return durable
+              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${path_} (swept after ${Math.round(MSG_MAX_AGE / 60)} minutes; a permanent copy stays at ${durable})`
               : `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
             log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
@@ -7573,7 +7575,7 @@ function createSessionManager(deps) {
       try {
         seedFiledRing(ring, [
           { dir: spillDir, kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message', },
+          { dir: path.join(MSG_DIR, name), kind: 'message' },
           { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => literalMessagePathOf(p, nodePath) || p },
         ]);
       } catch (e) {
@@ -7582,9 +7584,9 @@ function createSessionManager(deps) {
       return ring;
     }
 
-    _hasDurableCopy(filePath) {
+    _durableCopyOf(filePath) {
       const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, nodePath) : null;
-      return !!durable && fs.existsSync(durable);
+      return durable && fs.existsSync(durable) ? durable : null;
     }
 
     _noteFiled(name, entry) {
