@@ -383,9 +383,9 @@ class RemoteServer {
     this._server = null;
   }
 
-  notifyActivity(name, state, turnEnd) {
+  notifyActivity(name, state, turnEnd, ts) {
     this._activity.set(name, state);
-    this._broadcast('activity', { name, state, turnEnd: !!turnEnd });
+    this._broadcast('activity', { name, state, turnEnd: !!turnEnd, ts: typeof ts === 'number' ? ts : null });
   }
 
   notifyProgress(name) {

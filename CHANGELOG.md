@@ -15,6 +15,7 @@ blocks a release.
 
 - Transcript pane, Conversation mode: unfolding a turn driven by a reminder, ticket notice or report now shows that message open; it no longer sits behind a second identical fold.
 - Long DMs and ticket reports spilled to a file now keep a durable copy under the seat's spill dir: clicking the attached path in the transcript or the Files pane still opens it after the 30-minute messages sweep.
+- Phone API: session rows carry `activityTs` (epoch ms of the seat's last wire event, null if never stamped) and the `activity` SSE event carries `ts`, so a client can show a true idle age after a reconnect.
 
 ## 5.94.0 — 2026-09-29
 

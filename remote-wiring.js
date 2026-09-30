@@ -118,6 +118,7 @@ function createRemoteWiring(deps) {
       cwd: sess.cwd,
       workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
       workspaceId: sess.workspaceId || null,
+      activityTs: typeof sess.activityTs === 'number' ? sess.activityTs : null,
       stats: {
         model: (p && p.model) || null,
         cost: p && p.cost && p.cost.usd != null ? p.cost.usd : null,
