@@ -823,3 +823,42 @@ test('mergeBase: returns the fork point of two branches', { skip: !gitAvailable(
   const bad = await wt.mergeBase(repo, trunk, 'no-such-branch');
   assert.strictEqual(bad.ok, false);
 });
+
+test('checkoutDetached: the fallback fetch runs with a timeout and no terminal prompt; local git keeps neither', async () => {
+  const cp = require('child_process');
+  const real = cp.execFile;
+  const calls = [];
+  cp.execFile = (file, argv, opts, cb) => {
+    const args = argv.slice(2);
+    calls.push({ args, opts });
+    if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return process.nextTick(() => cb(null, '/fake/repo\n', ''));
+    if (args[0] === 'fetch') {
+      const err = Object.assign(new Error('Command failed: git fetch --quiet'), { killed: true, signal: 'SIGTERM', code: null });
+      return process.nextTick(() => cb(err, '', ''));
+    }
+    const err = Object.assign(new Error('Command failed'), { code: 1 });
+    return process.nextTick(() => cb(err, '', ''));
+  };
+  const key = require.resolve('../git-worktree');
+  const cached = require.cache[key];
+  delete require.cache[key];
+  let fresh;
+  try { fresh = require('../git-worktree'); } finally { require.cache[key] = cached; }
+  let r;
+  try {
+    r = await fresh.checkoutDetached({ repoTop: '/fake/repo', dir: '/fake/wt', ref: 't9-x' });
+  } finally {
+    cp.execFile = real;
+  }
+  assert.deepStrictEqual(r, { ok: false, error: 'ref t9-x does not resolve in /fake/repo' });
+  const fetch = calls.find((c) => c.args[0] === 'fetch');
+  assert.deepStrictEqual(fetch.opts, {
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 60_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  });
+  for (const c of calls.filter((x) => x.args[0] !== 'fetch')) {
+    assert.deepStrictEqual(c.opts, { maxBuffer: 4 * 1024 * 1024 }, c.args.join(' '));
+  }
+  assert.deepStrictEqual(calls.map((c) => c.args[0]), ['rev-parse', 'rev-parse', 'fetch', 'rev-parse']);
+});
