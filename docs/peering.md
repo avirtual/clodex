@@ -101,7 +101,7 @@ reset once the body is cut off, so encode without escaping `/` — Swift's
 route stays at 64 KB; a stream seat gets the images inline, a pty seat gets each one
 written to `<REGISTRY_DIR>/messages/<seat>/img-<ms>-<n>.<ext>` (the messages
 spelling is a link into `sessions/<seat>/messages/`, so a client that resolves
-the path sees the latter) and one `Image #n: <path>` line per file appended to
+the path sees the latter) and one `Image: <path>` line per file appended to
 the delivered text — the claude CLI folds that line into an `[Image #n]`
 attachment marker in front of the text in the transcript it writes, so a
 client confirming delivery by transcript must match the text, not the path

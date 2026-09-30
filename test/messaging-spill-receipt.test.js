@@ -157,10 +157,10 @@ test('t86: allParkedTexts skips a corrupt entry rather than aborting the scan', 
   assert.deepStrictEqual(allParkedTexts(pendingDir), ['good']);
 });
 
-test('phone dm images: an image file named by a parked Image #n line survives the sweep; unreferenced it is collected', () => {
+test('phone dm images: an image file named by a parked Image: line survives the sweep; unreferenced it is collected', () => {
   const { msgDir, pendingDir } = tmpDirs();
   const fpath = spill(msgDir, 'alice', 'img-1800000000000-1.png', OLD);
-  parkDelivery(pendingDir, 'alice', `[agent:from user] x\nImage #1: ${fpath}`, '0001');
+  parkDelivery(pendingDir, 'alice', `[agent:from user] x\nImage: ${fpath}`, '0001');
   const { msgDir: ctlMsg, pendingDir: ctlPending } = tmpDirs();
   const ctl = spill(ctlMsg, 'alice', 'img-1800000000000-1.png', OLD);
   sweepSpilledMessages(ctlMsg, ctlPending, MAX_AGE, NOW);

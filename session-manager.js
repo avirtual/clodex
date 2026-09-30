@@ -8022,7 +8022,7 @@ function createSessionManager(deps) {
       const pics = Array.isArray(images) ? images : [];
       const fire = typeof onWrite === 'function' ? onWrite : null;
       const imageTail = target.io !== 'stream' && pics.length
-        ? this._writeImageFiles(target.name, pics).map((p, i) => `\nImage #${i + 1}: ${p}`).join('')
+        ? this._writeImageFiles(target.name, pics).map((p) => `\nImage: ${p}`).join('')
         : '';
       let finalText = null;
       const plainText = () => {

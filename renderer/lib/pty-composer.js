@@ -33,7 +33,8 @@ function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, app
     if (pasteKind(items) !== 'image') return;
     e.preventDefault();
     const web = isWeb();
-    const images = await Promise.resolve().then(() => readImages(items)).catch(() => []);
+    let images;
+    try { images = await readImages(items); } catch { images = []; }
     if (!web) {
       const n = nextImage();
       append([{ n, chip: imageChip(n), path: null, image: images[0] || null }]);
