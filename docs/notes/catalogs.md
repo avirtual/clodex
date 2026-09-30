@@ -24,13 +24,12 @@ Reclaim notes worth keeping from the old hand-picked floor: `Workflow` is ~5.2k
 tokens, the single biggest one. `TaskOutput` is no longer in the catalog: the
 CLI removed the deprecated tool in 2.1.277, so no template denies it and a deny
 rule naming it would only draw a "matches no known tool" warning on every seat's
-startup. `SendFeedback` is ~4.7k
-chars of prose plus a 27-value enum schema every request, to draft a report that
-is queued locally and needs the operator's approval to go anywhere. `Artifact`
-uploads local content to claude.ai hosting, so it is egress as well as tokens.
-`EndConversation` carries one of the largest always-shipped descriptions in the
-roster and is pointless in a managed console where the operator kills sessions
-from the UI.
+startup. `SendFeedback` is ~4.7k chars of prose plus a 27-value enum schema
+every request, to draft a report that is queued locally and needs the operator's
+approval to go anywhere. `Artifact` uploads local content to claude.ai hosting,
+so it is egress as well as tokens. `EndConversation` carries one of the largest
+always-shipped descriptions in the roster and is pointless in a managed console
+where the operator kills sessions from the UI.
 
 The floor stays an editable floor, not a ceiling: Preferences sets the stored
 default and the per-session Advanced checklists widen it for one seat.

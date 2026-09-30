@@ -14724,7 +14724,6 @@ test('t1478 wiring: a claude seat strips review-gated characters; codex and bash
     const m = mkBoot();
     const { s, writes } = bootSession({ agentType, _bootReadySeen: true });
     await m._injectQueueFor(s).enqueue('a\u200Bb');
-    clearTimeout(s._bootNudgeTimer);
     assert.deepStrictEqual(writes, ['\x15', written, '\r'], String(agentType));
   }
 });

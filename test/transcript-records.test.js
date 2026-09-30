@@ -427,6 +427,11 @@ test('image blocks beyond the markers number on from the highest marker', () => 
   assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[3, 'AAAA'], [4, 'BBBB'], [5, 'CCCC']]);
 });
 
+test('markers out of order still number the unmarked block past the highest one: [Image #2] … [Image #1] gives n 2, 1, 3', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #2] a [Image #1] b' }, image('AAAA'), image('BBBB'), image('CCCC')]);
+  assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[2, 'AAAA'], [1, 'BBBB'], [3, 'CCCC']]);
+});
+
 test('an inbound delivery with an image block carries no images', () => {
   const [r] = promptOf([{ type: 'text', text: '[agent:from bob] see [Image #1]' }, image('AAAA')]);
   assert.strictEqual(r.kind, 'inbound');
