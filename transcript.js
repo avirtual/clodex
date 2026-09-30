@@ -1,7 +1,7 @@
 // Transcript rendering off the CLI's on-disk JSONL. Two renderers: a full
 // markdown export (jsonlToMarkdown, tool traffic included) and the chat-message
 // list served to both the phone page and the `clodex` CLI
-// (jsonlToMessages, user/assistant text only). Both read the JSONL the CLI
+// (jsonlToMessages, user/assistant only). Both read the JSONL the CLI
 // writes regardless of which observation path is live, so the remote view
 // never depends on the intent machinery. Role and text per entry come from the
 // platform reader in transcript-readers.js, sniffed per record.
@@ -81,7 +81,7 @@ function extractClaudeBlocks(content) {
 }
 
 // Transcript → chat messages for every transcript reader: user/assistant
-// text only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
+// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
 // regardless of which observation path (wire vs JsonlWatcher) is live — so the
 // remote view never depends on the intent machinery.
 function jsonlToMessages(jsonlPath, limit = 100) {
@@ -140,8 +140,12 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       const interim = r.role === 'assistant' && !(i === lastAssistant && tailFinal);
       const prev = messages[messages.length - 1];
       if (prev && prev.role === r.role && prev.interim === interim) {
-        prev.text += '\n\n' + r.text;
-        if (r.images) prev.images = (prev.images || []).concat(r.images);
+        if (r.images) {
+          const offset = Math.max(0, ...(prev.images || []).map((img) => img.n));
+          const renumber = (n) => (r.images.some((img) => img.n === n) ? n + offset : n);
+          prev.text += '\n\n' + r.text.replace(/\[Image #(\d+)\]/g, (m, n) => `[Image #${renumber(Number(n))}]`);
+          prev.images = (prev.images || []).concat(r.images.map((img) => ({ ...img, n: img.n + offset })));
+        } else prev.text += '\n\n' + r.text;
       } else {
         const m = { role: r.role, text: r.text, ts: r.ts, interim };
         if (r.images) m.images = r.images;

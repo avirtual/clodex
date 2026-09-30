@@ -136,6 +136,23 @@ test('jsonlToMessages: a folded user message keeps the images of every prompt fo
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: folded prompts that each number from #1 get distinct n and matching marks', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] [Image #2] b', [['image/jpeg', 'BBBB'], ['image/gif', 'CCCC']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs.length, 1);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] [Image #3] b');
+    assert.deepStrictEqual(msgs[0].images, [
+      { n: 1, mediaType: 'image/png', data: 'AAAA' },
+      { n: 2, mediaType: 'image/jpeg', data: 'BBBB' },
+      { n: 3, mediaType: 'image/gif', data: 'CCCC' },
+    ]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: scrubs control chars, delivery label, and slash-command echoes', () => {
   const p = writeJsonl([
     { type: 'user', message: { content: '\x15[agent:from user] hi' } },

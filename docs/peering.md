@@ -39,7 +39,7 @@ injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
 session row carries `io: 'stream'|'pty'`),
-`GET /api/sessions/:name/transcript?limit&since` (the message list),
+`GET /api/sessions/:name/transcript?limit&since` (the message list; a user message with attached images carries `images: [{n, mediaType, data}|{n, mediaType, bytes}]`, thumbnailed to 256px on a desktop host, advertised as the unconditional `transcript-images` cap),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
 workspace; an unknown value is an empty list), `GET /api/workspaces` (this
 node's workspaces — `{id, name, open, lastFocusedAt}`, no window geometry),
