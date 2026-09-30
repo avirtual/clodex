@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- Clodex now reads `CLAUDE_CODE_USE_BEDROCK`/`VERTEX` the way the CLI does (on only for 1/true/yes/on); `=off` no longer switches a seat to the jsonl-only path.
+- `CLAUDE_CODE_USE_FOUNDRY` and `CLAUDE_CODE_USE_ANTHROPIC_AWS` are recognised as tee-blind backends and survive the inherited-env scrub.
+- A wire-routed seat no longer prints a second status line under the wirescope bar.
+
 ## 5.95.0 — 2026-09-30
 
 - Transcript pane, Conversation mode: unfolding a turn driven by a reminder, ticket notice or report now shows that message open; it no longer sits behind a second identical fold.
