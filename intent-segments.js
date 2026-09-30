@@ -78,8 +78,13 @@ function scanIntentLines(lines, opts = {}) {
         body.push(lines[i]);
         i++;
       }
-      if (!closed) intent.bodyOpen = true;
       while (body.length && !body[body.length - 1].trim()) body.pop();
+      if (!closed) {
+        intent.bodyOpen = true;
+        i = headAt + 1;
+        segs.push({ kind: 'intent', from: headAt, to: i, intent, closed, tail: body.length });
+        continue;
+      }
       if (body.length) {
         const firstBody = intent.body || '';
         intent.body = firstBody + '\n' + body.join('\n');

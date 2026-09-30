@@ -992,7 +992,7 @@ function createTicketMethods(deps, shared) {
         '',
         scope,
         '',
-        `Report your verdict with [agent:review-done] <verdict>, which returns it to ${session.name} and retires you.`,
+        `Report your verdict with [agent:review-done] <verdict>, closed by a bare [agent:end] line, which returns it to ${session.name} and retires you.`,
       ].join('\n');
 
       setImmediate(async () => {

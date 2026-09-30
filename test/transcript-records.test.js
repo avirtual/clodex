@@ -506,9 +506,13 @@ test('segmentsOf: prose, a stack of intents with their heads, an inert line, and
   ]);
 });
 
-test('segmentsOf: an unclosed greedy body is open', () => {
+test('segmentsOf: an unclosed greedy body is open and keeps its head line; the rest is prose', () => {
   const segs = segmentsOf('[agent:shout] still writing\nmore');
-  assert.deepStrictEqual(segs.map((s) => [s.kind, s.body, s.open]), [['intent', 'still writing\nmore', true]]);
+  assert.deepStrictEqual(segs.map((s) => [s.kind, s.body || s.text, s.open]),
+    [['intent', 'still writing', true], ['prose', 'more', undefined]]);
+  const remind = segmentsOf('[agent:remind for t1458 in 60m] check it\nPara one.\n\nPara two.');
+  assert.deepStrictEqual(remind.map((s) => [s.kind, s.kind === 'intent' ? s.body : s.text, s.open]),
+    [['intent', 'check it', true], ['prose', 'Para one.\n\nPara two.', undefined]]);
 });
 
 test('segmentsOf: a bare remind list as the reply\'s last line is not open', () => {

@@ -135,6 +135,10 @@ const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_
 const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
 
 const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
+const openBodyTails = new WeakMap();
+const endsContextVerb = (intent) => intent.type === 'review-done'
+  || (intent.type === 'scratch' && (intent.sub === 'end' || intent.sub === 'rewind'))
+  || (intent.type === 'context' && (intent.sub === 'clear' || intent.sub === 'compact' || intent.sub === 'reload'));
 
 const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
 
@@ -5016,6 +5020,7 @@ function createSessionManager(deps) {
         }
         if (seg.kind !== 'intent') continue;
         if (spillAt && spillAt.has(seg.from)) seg.intent.spill = spillAt.get(seg.from);
+        if (seg.tail) openBodyTails.set(seg.intent, seg.tail);
         intents.push(seg.intent);
       }
       return intents;
@@ -5165,6 +5170,25 @@ function createSessionManager(deps) {
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
+      }
+
+      const openTail = intent.bodyOpen ? openBodyTails.get(intent) || 0 : 0;
+      if (openTail) {
+        const head = `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}]`;
+        const tail = `${openTail} following line${openTail === 1 ? '' : 's'}`;
+        if (endsContextVerb(intent)) {
+          if (session && session.agentType) {
+            this._injectText(session, `[agent:intent] the body of ${head} was not closed — it was NOT applied, `
+              + `because this verb ends or cuts your context and the ${tail} after its head would be lost. `
+              + 'Re-emit the whole intent and close it with [agent:end].', { parkable: true });
+          }
+          return;
+        }
+        if (session && session.agentType) {
+          this._injectText(session, `[agent:intent] the body of ${head} was not closed — only its first line was `
+            + `applied; the ${tail} ${openTail === 1 ? 'was' : 'were'} treated as prose. Close bodies with [agent:end].`,
+          { parkable: true });
+        }
       }
 
       const scratchWatched = !!(session && this._scratchOpenMarks(session).length && SCRATCH_DISPATCH_TYPES.has(intent.type));

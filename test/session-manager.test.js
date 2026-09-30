@@ -13101,11 +13101,11 @@ test('exec terminator: a col-1 intent after the value ends capture and still fir
 test('exec terminator: 64KB region cap — multi-line growth past the cap is not terminated early', () => {
   // The cap bounds the growth loop (runaway re-parse guard): a value split across
   // lines whose accumulation crosses 64KB before closing is left to the greedy
-  // capture (prose included), so prose-stripping is bounded to <=64KB payloads.
+  // capture, so prose-stripping is bounded to <=64KB payloads.
   const m = mkExtract();
   const parts = ['[agent:exec bridge-reply] {', `"pad":"${'a'.repeat(70 * 1024)}",`, '"id":"r1.json"', '}', 'trailing prose'];
   const body = execBodyOf(m, parts.join('\n'));
-  assert.ok(body.includes('trailing prose'), 'over-cap multiline falls to greedy (not terminated)');
+  assert.strictEqual(body, '{', 'over-cap multiline falls to greedy, which never closes: head line only');
   assert.throws(() => JSON.parse(body));
   // A clean value already complete ON the intent line is accepted regardless of
   // size — the cap only guards multi-line growth, and the precise per-command cap
@@ -13116,16 +13116,15 @@ test('exec terminator: 64KB region cap — multi-line growth past the cap is not
 
 test('exec terminator: dm / memory multi-line capture is left untouched (greedy)', () => {
   const m = mkExtract();
-  const dm = m._extractIntents('[agent:dm clodex] line one\nline two\nline three')[0];
+  const dm = m._extractIntents('[agent:dm clodex] line one\nline two\nline three\n[agent:end]')[0];
   assert.strictEqual(dm.body, 'line one\nline two\nline three');
-  const mem = m._extractIntents('[agent:memory remember] fact one\nfact two')[0];
+  const mem = m._extractIntents('[agent:memory remember] fact one\nfact two\n[agent:end]')[0];
   assert.strictEqual(mem.body, 'fact one\nfact two');
 });
 
 // --- [agent:end] body terminator ---
 // The footgun this closes fired live: a memory-remember followed by
-// operator-facing prose saved the prose INTO the unit (bodies run to the next
-// intent or end of turn). `end` is the explicit close: it terminates the open
+// operator-facing prose saved the prose INTO the unit. `end` is the explicit close: it terminates the open
 // body via the generic boundary check and is itself discarded — never emitted
 // as an intent, so it can't be dispatched, deduped, or gated.
 
@@ -13209,24 +13208,27 @@ test('[agent:end]: closes a scratch end summary; begin and cancel capture no bod
 });
 
 // The contrast that makes the terminator worth documenting on the line at all.
-test('[agent:end]: without it a task report swallows the trailing prose (greedy)', () => {
+test('[agent:end]: without it a task report applies only the head line; the trailing prose is not the body', () => {
   const m = mkExtract();
   const out = m._extractIntents('[agent:task done t42] the report\nNow I talk to my operator.');
-  assert.strictEqual(out[0].body, 'the report\nNow I talk to my operator.');
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].body, 'the report');
+  assert.strictEqual(out[0].bodyOpen, true);
 });
 
 // --- bodyOpen: did the body CLOSE, or did the text just run out? ---
-// Invisible in the captured body — both shapes yield the same string — and the
-// distinction is the whole input to the interrupt guard downstream. An intent
+// The distinction is the whole input to the interrupt guard downstream. An intent
 // whose body ran off the end of a turn the human stopped was never finished
 // being written; one closed by [agent:end] or a following intent was.
 test('bodyOpen: a greedy body that runs off the end of the text is marked open', () => {
   const m = mkExtract();
   const [dm] = m._extractIntents('[agent:dm bob] a\nb');
-  assert.strictEqual(dm.body, 'a\nb', 'ENTER: the same body a finished turn would produce');
+  assert.strictEqual(dm.body, 'a', 'only the head line is the body');
   assert.strictEqual(dm.bodyOpen, true);
   // The commonest fragment shape: cut before even the first newline.
-  assert.strictEqual(m._extractIntents('[agent:dm bob] hell')[0].bodyOpen, true);
+  const [cut] = m._extractIntents('[agent:dm bob] hell');
+  assert.strictEqual(cut.bodyOpen, true);
+  assert.strictEqual(cut.body, 'hell');
 });
 
 test('bodyOpen: a body closed by [agent:end] or a following intent carries no key', () => {
@@ -13254,6 +13256,9 @@ test('bodyOpen: a json body is open only when it never terminated', () => {
 
   const cut = m._extractIntents('[agent:exec bridge-reply] {"id":')[0];
   assert.strictEqual(cut.bodyOpen, true, 'unterminated JSON at the end of the text is a fragment');
+  const grown = m._extractIntents('[agent:exec bridge-reply] {"id":\n"r1.json"\nprose')[0];
+  assert.strictEqual(grown.bodyOpen, true);
+  assert.strictEqual(grown.body, '{"id":', 'a json body that never completes keeps its head line only');
 });
 
 // --- the interrupt guard at the jsonl junction ---
@@ -13318,6 +13323,62 @@ test('interrupt guard: a flush with no meta at all is untouched', () => {
     'every caller that passes no meta keeps behaving exactly as before');
 });
 
+function mkOpenBody() {
+  const m = mkExtract();
+  m.sessions.set('seat', { name: 'seat', agentType: 'claude' });
+  const injected = [];
+  const reminded = [];
+  m._injectText = (s, text) => injected.push(text);
+  m._handleRemindIntent = (s, spec, body) => reminded.push({ spec, body });
+  const notes = () => injected.filter((t) => /was not closed/.test(t));
+  return { m, injected, reminded, notes };
+}
+
+test('open body: a turn that ends inside a body applies the head line and tells the seat once', () => {
+  const { m, reminded, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind for t1458 in 60m] check the merge\nPara one.\n\nPara two.\n', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(reminded, [{ spec: 'for t1458 in 60m', body: 'check the merge' }]);
+  assert.deepStrictEqual(notes(), ['[agent:intent] the body of [agent:remind] was not closed — only its first line was '
+    + 'applied; the 3 following lines were treated as prose. Close bodies with [agent:end].']);
+});
+
+test('open body: a closed body, or an open one with nothing after its head, is never bounced', () => {
+  const { m, reminded, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb\n[agent:end]\nprose after', 'seat', [], { interrupted: false });
+  m._scanJsonlText('[agent:remind in 1m] continue: t1 phase\n\n', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(reminded.map((r) => r.body), ['a\nb', 'continue: t1 phase']);
+  assert.deepStrictEqual(notes(), []);
+});
+
+test('open body: a one-line tail is counted in the singular', () => {
+  const { m, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: false });
+  assert.match(notes()[0], /the 1 following line was treated as prose/);
+});
+
+test('open body: a verb that ends or cuts the context is refused, not applied on its head line', () => {
+  const { m, notes } = mkOpenBody();
+  const ran = [];
+  m._handleContextIntent = (s, sub, body) => ran.push({ sub, body });
+  m._handleScratchIntent = (s, intent) => ran.push({ sub: intent.sub, body: intent.body });
+  m._scanJsonlText('[agent:context compact] pick up t1\nstep two', 'seat', [], { interrupted: false });
+  m._scanJsonlText('[agent:scratch end] summary\nmore summary', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, []);
+  assert.strictEqual(notes().length, 2);
+  assert.match(notes()[0], /\[agent:context compact\] was not closed — it was NOT applied/);
+  assert.match(notes()[1], /\[agent:scratch end\] was not closed — it was NOT applied/);
+  m._scanJsonlText('[agent:context compact] pick up t1\nstep two\n[agent:end]', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, [{ sub: 'compact', body: 'pick up t1\nstep two' }]);
+});
+
+test('open body: an interrupted flush gets the interrupt note, not the open-body note', () => {
+  const { m, reminded, injected, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(reminded, []);
+  assert.strictEqual(injected.length, 1);
+  assert.deepStrictEqual(notes(), []);
+});
+
 // --- term exec is LINE-SCOPED (t233) ---
 // The live incident: a seat emitted the correct `[agent:term exec] <cmd>` form
 // and kept writing prose underneath. Greedy capture pulled the prose into the
@@ -13374,7 +13435,7 @@ test('term exec: a command written on the line BELOW is refused, not silently ru
 
 test('[agent:end]: escaped \\[agent:end] stays literal body text, not a boundary', () => {
   const m = mkExtract();
-  const out = m._extractIntents('[agent:dm clodex] quoting the terminator:\n\\[agent:end]\nstill the body');
+  const out = m._extractIntents('[agent:dm clodex] quoting the terminator:\n\\[agent:end]\nstill the body\n[agent:end]');
   assert.strictEqual(out[0].body, 'quoting the terminator:\n\\[agent:end]\nstill the body');
 });
 
@@ -13412,6 +13473,7 @@ test('fence: inside a dm body, a fenced example is body text, not a boundary', (
     '[agent:who]',
     '```',
     'end of message',
+    '[agent:end]',
   ].join('\n'));
   assert.deepStrictEqual(out.map((x) => x.type), ['dm']);
   assert.strictEqual(out[0].body,
@@ -13428,7 +13490,7 @@ test('fence: unclosed fence quotes the rest of the turn (markdown semantics)', (
 test('remind: multi-line reminder text is captured greedily (allow-set), stops at next intent', () => {
   const m = mkExtract();
   // Free-text body spans lines (greedy like dm — NOT the exec JSON terminator).
-  const r = m._extractIntents('[agent:remind every 30m] check the build\nand the deploy')[0];
+  const r = m._extractIntents('[agent:remind every 30m] check the build\nand the deploy\n[agent:end]')[0];
   assert.strictEqual(r.type, 'remind');
   assert.strictEqual(r.spec, 'every 30m');
   assert.strictEqual(r.body, 'check the build\nand the deploy');
@@ -13441,7 +13503,7 @@ test('remind: multi-line reminder text is captured greedily (allow-set), stops a
 test('shout: multi-line note is captured greedily (allow-set), stops at next intent', () => {
   const m = mkExtract();
   // Free-text body spans lines (greedy like dm).
-  const r = m._extractIntents('[agent:shout] blocked on the schema\nneed a decision')[0];
+  const r = m._extractIntents('[agent:shout] blocked on the schema\nneed a decision\n[agent:end]')[0];
   assert.strictEqual(r.type, 'shout');
   assert.strictEqual(r.body, 'blocked on the schema\nneed a decision');
   // A following col-1 intent ends the note and fires as its own intent.
@@ -14393,7 +14455,7 @@ test('extract: a top-level near-miss line synthesizes ONE unknown intent, counti
 
 test('extract: near-misses inside a dm body stay body text — quoting is safe', () => {
   const { m } = mkBounce();
-  const found = m._extractIntents('[agent:dm b] look at this example:\n[agent:frobnicate now]\ntrailing prose');
+  const found = m._extractIntents('[agent:dm b] look at this example:\n[agent:frobnicate now]\ntrailing prose\n[agent:end]');
   assert.strictEqual(found.length, 1, 'only the dm fires');
   assert.strictEqual(found[0].type, 'dm');
   assert.match(found[0].body, /\[agent:frobnicate now\]/, 'the near-miss was captured as body');
@@ -15673,7 +15735,7 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
     assert.deepStrictEqual(pi('[agent:branch] first'), { type: 'branch', body: 'first' });
     assert.strictEqual(pi('second line'), null, 'the continuation line is its own (non-)intent on this feed');
     // What the jsonl feed sees for the same two lines:
-    const out = mkExtract()._extractIntents('[agent:branch] first\nsecond line');
+    const out = mkExtract()._extractIntents('[agent:branch] first\nsecond line\n[agent:end]');
     assert.strictEqual(out[0].body, 'first\nsecond line');
   });
 });

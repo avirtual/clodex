@@ -57,7 +57,7 @@ const T0 = Date.UTC(2026, 7, 14, 9, 0, 0);
 
 // The body shape under test, as an agent would actually write it: the intent
 // line carries NO trailing text and the body starts on the next line.
-const TURN = '[agent:remind in 1m]\nfirst real line\nsecond line';
+const TURN = '[agent:remind in 1m]\nfirst real line\nsecond line\n[agent:end]';
 const ASSEMBLED = '\nfirst real line\nsecond line';
 
 function fakeClock(startMs) {
@@ -227,12 +227,8 @@ test('the greedy assembly stores a following-lines body with a LEADING newline',
     // deepStrictEqual on the whole parsed intent, not a body probe: the leading
     // newline must be the ONLY oddity, and a property match would read around a
     // spec the assembly had eaten.
-    // bodyOpen rides along because TURN ends with the body still open — the
-    // scanner marks that so an interrupted turn's fragment can be told from a
-    // finished one, and it is asserted here rather than filtered out so this
-    // stays a whole-object match.
     const intents = f.m._extractIntents(TURN);
-    assert.deepStrictEqual(intents, [{ type: 'remind', spec: 'in 1m', body: ASSEMBLED, bodyOpen: true }]);
+    assert.deepStrictEqual(intents, [{ type: 'remind', spec: 'in 1m', body: ASSEMBLED }]);
 
     // The body is INTACT — 28 bytes, both lines present. Nothing was dropped;
     // this is the fact the blank preview was misread as contradicting.
@@ -245,6 +241,18 @@ test('the greedy assembly stores a following-lines body with a LEADING newline',
     // universal, and the reason a test covering only this form proves nothing.
     assert.strictEqual(f.assemble('[agent:remind in 1m] BODY on the intent line'),
       'BODY on the intent line');
+  } finally { f.cleanup(); }
+});
+
+test('an unclosed following-lines body keeps the head line only; the lines after it are not the body', () => {
+  const f = mkFixture();
+  try {
+    const open = f.m._extractIntents('[agent:remind in 1m] head text\nfirst real line\nsecond line');
+    assert.deepStrictEqual(open, [{ type: 'remind', spec: 'in 1m', body: 'head text', bodyOpen: true }]);
+    const bare = f.m._extractIntents('[agent:remind in 1m]\nfirst real line\nsecond line');
+    assert.strictEqual(bare.length, 1);
+    assert.strictEqual(bare[0].bodyOpen, true);
+    assert.ok(!String(bare[0].body || '').includes('first real line'));
   } finally { f.cleanup(); }
 });
 
@@ -311,7 +319,7 @@ test('remind list still renders an intent-line body and omits the dash when ther
 test('a memory saved with a following-lines body is trimmed before storage, so both memory readouts are immune', () => {
   const f = mkFixture();
   try {
-    const body = f.assemble('[agent:memory remember]\nfirst real line\nsecond line');
+    const body = f.assemble('[agent:memory remember]\nfirst real line\nsecond line\n[agent:end]');
     assert.strictEqual(body, ASSEMBLED, 'ENTER: memory remember is greedy and produced the defect shape');
 
     f.m._handleMemoryIntent(f.session, 'remember', body);
@@ -385,7 +393,7 @@ test('the digest INDEX LINE previews the first real line of an untrimmed body', 
 test('shout trims before the store, so its OS preview is immune', () => {
   const f = mkFixture();
   try {
-    const body = f.assemble('[agent:shout]\nfirst real line\nsecond line');
+    const body = f.assemble('[agent:shout]\nfirst real line\nsecond line\n[agent:end]');
     assert.strictEqual(body, ASSEMBLED, 'ENTER: shout is greedy and produced the defect shape');
 
     f.m._handleShoutIntent(f.session, body);

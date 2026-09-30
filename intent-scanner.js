@@ -64,7 +64,7 @@ function parseIntent(rawLine) {
   // closes an open multi-line body capture (dm/memory/remind/shout/…)
   // and is then discarded — _extractIntents never emits it and _handleIntent
   // never sees it. Exists because free-text bodies otherwise run to the next
-  // intent or end of turn, so an agent could not write operator prose AFTER
+  // intent, so an agent could not write operator prose AFTER
   // a body (the prose was swallowed into the message — observed live on a
   // memory-remember). Bare-only like who/name: trailing text would be
   // ambiguous (body? prose?), so it doesn't parse. Also shell-owned: it is

@@ -391,7 +391,7 @@ test('an unclosed body renders open and unclamped, with an unclosed warning chip
   const chip = head.childNodes[head.childNodes.length - 1];
   assert.strictEqual(chip.className, 'intent-chip intent-chip-warn');
   assert.strictEqual(chip.textContent, 'unclosed');
-  assert.strictEqual(chip.title, 'no [agent:end]: the rest of the reply was delivered as this body');
+  assert.strictEqual(chip.title, 'no [agent:end]: only the first line was applied; the rest of the reply is prose');
 });
 
 test('the same body closed with [agent:end] is clamped and carries no unclosed chip', () => {
