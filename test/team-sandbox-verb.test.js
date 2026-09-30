@@ -493,6 +493,19 @@ test('a failed up surfaces the docker message and writes no token file', async (
   assert.ok(!exists(b.file), 'a box that never came up leaves no URLs claiming it did');
 });
 
+test('an up whose wire peer was not registered says so and still writes the token file', async () => {
+  const b = mkBox({ upResult: { ok: true, ports: { web: 7810, wire: 7820 }, peerRegistered: false, peerError: 'ui-settings unreadable' } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.ok(b.replies.includes('[agent:team] peer NOT registered: ui-settings unreadable'), JSON.stringify(b.replies));
+  assert.ok(exists(b.file));
+});
+
+test('an up that registered its wire peer says nothing about the peer', async () => {
+  const b = mkBox({ upResult: { ok: true, ports: { web: 7810, wire: 7820 }, peerRegistered: true } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.ok(!b.replies.some((l) => l.includes('peer NOT registered')), JSON.stringify(b.replies));
+});
+
 // Two halves, because the rejection and the reaction live in different files.
 // First: the REAL setConfig is what refuses `..` (via normalizeRef) and it must
 // refuse without writing a half-applied config.
