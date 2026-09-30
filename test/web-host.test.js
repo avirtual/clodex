@@ -470,8 +470,9 @@ test('openInTerminal from a picked menu item reaches the browser as an open-in-t
     c.send({ t: 'send', channel: 'ctx', args: [] });
     const show = await c.until((m) => m.t === 'menu-show');
     c.send({ t: 'menu-pick', menuId: show.menuId, itemId: show.items[0].id });
-    const ev = await c.until((m) => m.t === 'event' && m.channel === 'open-in-terminal');
-    assert.deepEqual(ev.args, ['/srv/x']);
+    c.send({ t: 'send', channel: 'ctx', args: [] });
+    const ev = await c.until((m) => m.t === 'event' || m.t === 'menu-show');
+    assert.deepEqual([ev.t, ev.channel, ev.args], ['event', 'open-in-terminal', ['/srv/x']]);
     c.close();
   } finally { host.close(); }
 });
