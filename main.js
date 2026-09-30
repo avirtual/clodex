@@ -4,7 +4,7 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const os = require('os');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
 const { maskSecrets } = require('./log-mask');
@@ -629,7 +629,7 @@ app.whenReady().then(() => {
     openExternal: (url) => shell.openExternal(url),
     openPath: (filePath) => shell.openPath(filePath),
     showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
-    openInTerminal: (cwd) => require('child_process').execFile('open', ['-a', 'Terminal', cwd]),
+    openInTerminal: (cwd) => execFile('open', ['-a', 'Terminal', cwd]),
     getAppVersion: () => app.getVersion(),
     getDesktopPath: () => app.getPath('desktop'),
     fs, https, os, path, log,

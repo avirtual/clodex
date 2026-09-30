@@ -453,7 +453,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `handle:session:exportMarkdown` | writes an agent seat's transcript as markdown to a path chosen in a save dialog | file on disk | showSaveDialog, jsonlToMarkdown | unpinned |
-| `on:session:context-menu` | pops the session row menu; items answer on session:context-action or edit prompt refs in place | sessions.json prompt refs | popupMenu, persistence.setPromptRefs, movePeerItem, moveWorkspaceItem | session-move.test.js api-shim.test.js ipc-scratch-mark.test.js |
+| `on:session:context-menu` | pops the session row menu; items answer on session:context-action or edit prompt refs in place | sessions.json prompt refs | popupMenu, persistence.setPromptRefs, movePeerItem, moveWorkspaceItem | session-move.test.js api-shim.test.js ipc-scratch-mark.test.js ipc-workspace-trio.test.js |
 | `on:peer:context-menu` | pops a far seat's menu; each item answers on peer:context-action | none | popupMenu | session-move.test.js |
 | `deployTargetFor` | the ssh host, port and deploy folder for a peer, or null without an ssh host | ui-settings peers (read) | resolveDeployFolder, getPeerManager | unpinned |
 | `handle:peer:deployConfig` | a peer's deploy target for the update flow | none | deployTargetFor | unpinned |
@@ -521,8 +521,8 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `handle:app:restore-sessions` | restores the persisted sessions of the sender's workspace | sessions via manager | restoreSessionsForWorkspace | session-restore.test.js |
-| `handle:session:retrySpawn` | re-spawns a persisted record (not a mint) in the sender's workspace, returning its io | sessions via manager | manager.create, manager.resumeCwdOf | resume-cwd-tree-fallback.test.js exited-seat-row.test.js renderer-source-pins.test.js |
-| `handle:session:forget` | drops a session record and kills its workbench shell | sessions.json, drawer ptys | persistence.remove, manager.clearHintForRecord | session-forget-ipc.test.js peer-shell-attached.test.js session-manager.test.js |
+| `handle:session:retrySpawn` | re-spawns a persisted record (not a mint) in the record's own workspace, the sender's only for a record without one, returning its io | sessions via manager | manager.create, manager.resumeCwdOf | resume-cwd-tree-fallback.test.js exited-seat-row.test.js renderer-source-pins.test.js ipc-workspace-trio.test.js |
+| `handle:session:forget` | drops a session record and kills its workbench shell | sessions.json, drawer ptys | persistence.get, persistence.remove, manager.clearHintForRecord | session-forget-ipc.test.js peer-shell-attached.test.js session-manager.test.js ipc-workspace-trio.test.js |
 | `handle:workspace:list` | every workspace | workspaces.json (read) | workspaces.list | unpinned |
 | `handle:workspace:current` | the sender's workspace id | none | workspaceOfSender | unpinned |
 | `handle:workspace:getView` | the sender workspace's saved view | workspaces.json (read) | workspaces.get | unpinned |
@@ -537,8 +537,6 @@
 ### Hazards
 - Routing `handle:session:retrySpawn` through `spawnFromParams` refuses the retry as a clash with its own persisted record.
 - `handle:workspace:setView` and `handle:workspace:setName` act on the sender's workspace, so taking an id argument instead would let a web connection edit another workspace.
-- `handle:session:retrySpawn` finds the record by name alone and spawns it into the sender's workspace, so a retry naming another workspace's record rehomes it (create's upsert rewrites `workspaceId`).
-- `handle:session:forget` reaps the drawer shell only in the sender's workspace, so a forget naming another workspace's seat drops the record and orphans that seat's shell.
 
 ## Gated services: ctl, drawer, console, local terminal, new workspace — handle:ctl:run … handle:workspace:new
 
