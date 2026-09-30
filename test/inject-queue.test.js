@@ -796,3 +796,109 @@ test('InjectQueue: a plain unit dying at the gates is re-parked only when it car
     assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'bare text dropped');
   }
 });
+
+const REVIEW_GATE_ROWS = [
+  ['U+200B', 'a\u200Bb', 'ab'],
+  ['U+200C', 'a\u200Cb', 'ab'],
+  ['U+200D', 'a\u200Db', 'ab'],
+  ['U+FEFF', 'a\uFEFFb', 'ab'],
+  ['U+2060', 'a\u2060b', 'ab'],
+  ['U+2064', 'a\u2064b', 'ab'],
+  ['U+202E', 'a\u202Eb', 'ab'],
+  ['U+200E', 'a\u200Eb', 'ab'],
+  ['U+2066', 'a\u2066b', 'ab'],
+  ['U+061C', 'a\u061Cb', 'ab'],
+  ['U+180E', 'a\u180Eb', 'ab'],
+  ['U+034F', 'a\u034Fb', 'ab'],
+  ['U+00AD', 'a\u00ADb', 'ab'],
+  ['U+E0041', 'a\u{E0041}b', 'ab'],
+  ['U+E0001', 'a\u{E0001}b', 'ab'],
+  ['U+FE0F after a letter', 'a\uFE0Fb', 'ab'],
+  ['U+FE00 after a letter', 'a\uFE00b', 'ab'],
+  ['U+E0100 after a Han ideograph', 'a\u845B\u{E0100}b', 'a\u845Bb'],
+  ['U+200D letter then emoji', 'a\u200D\u{1F4BB}b', 'a\u{1F4BB}b'],
+  ['U+200D emoji then letter', 'a\u{1F469}\u200Db', 'a\u{1F469}b'],
+  ['U+200D inside the ZWJ emoji U+1F469 U+200D U+1F4BB', 'a\u{1F469}\u200D\u{1F4BB}b', 'a\u{1F469}\u200D\u{1F4BB}b'],
+  ['U+200D inside the non-RGI ZWJ pair U+1F469 U+200D U+1F996', 'a\u{1F469}\u200D\u{1F996}b', 'a\u{1F469}\u200D\u{1F996}b'],
+  ['U+FE0F U+200D inside U+1F3F3 U+FE0F U+200D U+1F308', '\u{1F3F3}\uFE0F\u200D\u{1F308}', '\u{1F3F3}\uFE0F\u200D\u{1F308}'],
+  ['U+FE0F after U+2764', 'a\u2764\uFE0Fb', 'a\u2764\uFE0Fb'],
+  ['U+FE0E after U+2764', 'a\u2764\uFE0Eb', 'a\u2764\uFE0Eb'],
+  ['U+FE0F in the keycap 1 U+FE0F U+20E3', 'a1\uFE0F\u20E3b', 'a1\uFE0F\u20E3b'],
+  ['tags U+E0067..U+E007F after U+1F3F4', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b'],
+  ['U+200C in Persian', 'a \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 b', 'a \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 b'],
+  ['U+200D after a Devanagari virama', 'a \u0915\u094D\u200D\u0937 b', 'a \u0915\u094D\u200D\u0937 b'],
+  ['U+200C after a Devanagari virama', 'a \u0915\u094D\u200C\u0937 b', 'a \u0915\u094D\u200C\u0937 b'],
+  ['U+200B in Thai', 'a \u0E20\u0E32\u0E29\u0E32\u200B\u0E44\u0E17\u0E22 b', 'a \u0E20\u0E32\u0E29\u0E32\u200B\u0E44\u0E17\u0E22 b'],
+  ['U+200E after Hebrew', 'a \u05E9\u05DC\u05D5\u05DD\u200E b', 'a \u05E9\u05DC\u05D5\u05DD\u200E b'],
+  ['U+061C after Arabic', 'a \u0639\u0631\u0628\u064A\u061C123 b', 'a \u0639\u0631\u0628\u064A\u061C123 b'],
+  ['U+200D after Arabic', 'a \u0628\u200D b', 'a \u0628\u200D b'],
+  ['U+180B after Mongolian', 'a \u1820\u180B b', 'a \u1820\u180B b'],
+  ['U+034F between combining marks', 'a\u0301\u034F\u0323b', 'a\u0301\u034F\u0323b'],
+  ['U+0600 is not gated', 'a\u0600b', 'a\u0600b'],
+  ['U+00E9 is not gated', 'a\u00E9b', 'a\u00E9b'],
+  ['U+200E after the punctuation of a Hebrew line', '\u05E9\u05DC\u05D5\u05DD world\u200E!', '\u05E9\u05DC\u05D5\u05DD world\u200E!'],
+  ['U+034F before a combining mark', 'a\u034F\u0301b', 'a\u034F\u0301b'],
+  ['U+FE00 after the math symbol U+2268', 'a\u2268\uFE00b', 'a\u2268\uFE00b'],
+  ['U+200D after an Arabic letter with a harakat', 'a \u0628\u064B\u200D b', 'a \u0628\u064B\u200D b'],
+  ['U+200D judged against the kept text after a stripped U+200B', 'a\u{1F469}\u200B\u200D\u{1F4BB}b', 'a\u{1F469}\u200D\u{1F4BB}b'],
+  ['U+FEFF next to Arabic', 'a \u0628\uFEFF b', 'a \u0628 b'],
+  ['U+202E next to Hebrew', 'a \u05E9\u202E b', 'a \u05E9 b'],
+  ['U+00AD next to Devanagari', 'a \u0915\u00AD b', 'a \u0915 b'],
+  ['U+E0041 after U+1F3F4', 'a\u{1F3F4}\u{E0041}b', 'a\u{1F3F4}b'],
+  ['U+FE0F after a digit with no U+20E3', 'a1\uFE0Fb', 'a1b'],
+  ['U+200D between digits', 'a1\u200D2b', 'a12b'],
+  ['U+200B between Latin and Thai', 'a\u200B\u0E44b', 'a\u0E44b'],
+  ['U+2028 becomes a newline', 'a\u2028b', 'a\rb'],
+  ['U+000B becomes a newline', 'a\u000Bb', 'a\rb'],
+];
+
+for (const [label, input, written] of REVIEW_GATE_ROWS) {
+  test(`InjectQueue: review gate (CLI 2.1.286): ${label}`, async () => {
+    const writes = [];
+    const q = new InjectQueue({
+      write: (bytes) => writes.push(bytes),
+      settleMsFor: () => 0,
+      quietMs: 0, maxWaitMs: 0,
+      ctrlUSettleMs: 0,
+      sleep: async () => {},
+      lastHumanInputAt: () => 0,
+      isDead: () => false,
+      reviewGate: true,
+    });
+    await q.enqueue(input);
+    assert.deepStrictEqual(writes, ['\x15', written, '\r']);
+  });
+}
+
+test('InjectQueue: a stripped review-gated character is gone before settle math and \\n to \\r', async () => {
+  const writes = [];
+  const settled = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: (text) => { settled.push(text); return 0; },
+    quietMs: 0, maxWaitMs: 0,
+    ctrlUSettleMs: 0,
+    sleep: async () => {},
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    reviewGate: true,
+  });
+  await q.enqueue('one\u200B\ntwo\uFEFF');
+  assert.deepStrictEqual(writes, ['\x15', 'one\rtwo', '\r']);
+  assert.deepStrictEqual(settled, ['one\ntwo']);
+});
+
+test('InjectQueue: without reviewGate (a Codex seat) review-gated characters are written as-is', async () => {
+  const writes = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 0,
+    quietMs: 0, maxWaitMs: 0,
+    ctrlUSettleMs: 0,
+    sleep: async () => {},
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('a\u200Bb');
+  assert.deepStrictEqual(writes, ['\x15', 'a\u200Bb', '\r']);
+});

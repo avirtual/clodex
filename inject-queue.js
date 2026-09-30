@@ -18,6 +18,7 @@ const CTRLU_SETTLE_MS = 30;
 // proxy-util (a pure leaf, so this require keeps the module electron-free and
 // unit-testable under plain node).
 const { PASTE_START, PASTE_END } = require('./proxy-util');
+const { stripReviewGated } = require('./review-gate');
 
 // `hintHeld` covers the gap the typing window does not: a hint pre-armed against
 // the operator's draft is one-shot and pops at the next TURN START, so injecting
@@ -63,8 +64,9 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered, reviewGate }) {
     this._write = write;
+    this._reviewGate = !!reviewGate;
     this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
     this._onUndelivered = typeof onUndelivered === 'function' ? onUndelivered : null;
     this._settleMsFor = settleMsFor;
@@ -170,6 +172,7 @@ class InjectQueue {
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+    if (this._reviewGate) text = stripReviewGated(text);
     // \n→\r makes every interior newline an ENTER if node-pty splits this write
     // across reads — the body submits early and the remainder lands as a second
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the

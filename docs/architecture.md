@@ -245,6 +245,8 @@ bundle), whose packaged form is the Docker image under
   context-window math.
 - **inject-queue.js** — serialized PTY injection with typing quiet-gate and
   park-at-fire divert.
+- **review-gate.js** — `stripReviewGated`, a port of the Claude CLI's
+  invisible-character review gate; InjectQueue applies it to Claude seats.
 - **ipc-prompt.js** — `IPC_PROMPT`, the canonical all-enabled literal that is
   the sole source of truth for the agent-facing IPC protocol text, plus
   `buildIpcPrompt(intentsList)` which assembles the per-seat variant (gating

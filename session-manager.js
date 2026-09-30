@@ -8294,6 +8294,7 @@ function createSessionManager(deps) {
         // the raw-mode input loop is up submit as one paste-like chunk. Codex must not be coupled to this gate.
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
+          reviewGate: isClaude,
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
