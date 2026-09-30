@@ -6608,6 +6608,22 @@ button.seat-status-chip {
   display: none;
 }
 
+.seat-attachments.seat-attachments-pty {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.seat-composer-pty[hidden] ~ .seat-attachments-pty {
+  display: none;
+}
+
+.seat-attachments-pty .seat-attachment {
+  pointer-events: auto;
+}
+
 .seat-attachment {
   position: relative;
   width: 48px;
