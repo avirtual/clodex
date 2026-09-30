@@ -77,22 +77,30 @@ test('a click on the swept messages/ path resolves to the durable copy through t
   });
 });
 
-test('a rejected ticket body names its durable copy, with no sweep deadline, and the ring holds that path', () => {
-  const { engine, registryDir, session } = mkEngine();
+test('a rejected ticket body names its transcript-literal messages/ path, with no sweep deadline, the ring holds that path, and it opens through the durable copy after the sweep', () => {
+  const { engine, registryDir, session, sweep } = mkEngine();
   const body = 'rejected-spec '.repeat(10);
   const suffix = engine.manager._spillRejectedPayload(session, 'task add', body);
   const [entry] = session.filedRing.list();
-  assert.match(entry.path, new RegExp(`^${path.join(registryDir, 'spill', SEAT, 'messages')}/msg-\\d+-\\d+\\.txt$`));
+  assert.match(entry.path, new RegExp(`^${path.join(registryDir, 'messages', SEAT)}/msg-\\d+-\\d+\\.txt$`));
   assert.strictEqual(suffix, ` — your task add body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path}`);
-  assert.match(fs.readFileSync(entry.path, 'utf8'), /rejected-spec/);
+  const durable = path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path));
+  sweep();
+  assert.strictEqual(fs.existsSync(entry.path), false, 'ENTER: the sweep removed the messages/ original');
+  assert.deepStrictEqual(session.filedRing.list().map((e) => e.path), [entry.path]);
+  assert.deepStrictEqual(engine.resolveFilePath(SEAT, `@${entry.path}`, null), {
+    ok: true, path: durable, via: 'durable copy of a swept message spill',
+  });
+  assert.match(fs.readFileSync(durable, 'utf8'), /rejected-spec/);
 });
 
-test('a denied dm body names its durable copy, with no sweep deadline', () => {
+test('a denied dm body names its transcript-literal messages/ path, with no sweep deadline', () => {
   const { engine, registryDir, session } = mkEngine();
   const body = 'denied-dm-body';
   const suffix = engine.manager._deniedIntentPayload(session, { type: 'dm', body });
   const [entry] = session.filedRing.list();
-  assert.strictEqual(path.dirname(entry.path), path.join(registryDir, 'spill', SEAT, 'messages'));
+  assert.strictEqual(path.dirname(entry.path), path.join(registryDir, 'messages', SEAT));
+  assert.ok(fs.existsSync(path.join(registryDir, 'spill', SEAT, 'messages', path.basename(entry.path))), 'ENTER: a durable copy exists');
   assert.ok(suffix.endsWith(`. Your dm body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path}`), suffix);
   assert.doesNotMatch(suffix, /swept|minutes/);
 });
@@ -111,7 +119,7 @@ test('a durable copy left by an earlier launch with the same pid is never overwr
   assert.match(fs.readFileSync(path.join(durDir, name), 'utf8'), /fresh-body/);
 });
 
-test('a ring seeded at startup lists each message spill once at the path its transcript names (messages/ literal, durable for rejected/denied bodies), durable-only ones included, and they survive the sweep', () => {
+test('a ring seeded at startup lists each message spill once at its transcript-literal messages/ path, rejected bodies and durable-only ones included, and they survive the sweep', () => {
   const { engine, registryDir } = mkEngine();
   const msgDir = path.join(registryDir, 'messages', SEAT);
   const durDir = path.join(registryDir, 'spill', SEAT, 'messages');
@@ -125,11 +133,11 @@ test('a ring seeded at startup lists each message spill once at the path its tra
   write(path.join(durDir, 'msg-7-3.txt'), 'From: task add (rejected)\n\nspec', 1700000200);
   const ring = engine.manager._seedFiledRing(SEAT);
   const expected = [
-    { path: path.join(durDir, 'msg-7-3.txt'), kind: 'message', head: 'From: task add (rejected)', bytes: 31, ts: 1700000200000 },
+    { path: path.join(msgDir, 'msg-7-3.txt'), kind: 'message', head: 'From: task add (rejected)', bytes: 31, ts: 1700000200000 },
     { path: path.join(msgDir, 'msg-7-2.txt'), kind: 'message', head: 'From: newer', bytes: 16, ts: 1700000100000 },
     { path: path.join(msgDir, 'msg-7-1.txt'), kind: 'message', head: 'From: older', bytes: 16, ts: 1700000000000 },
   ];
-  assert.deepStrictEqual(ring.list(), expected, 'a file in both dirs is listed once, a durable-only one under its literal, and a rejected body at the durable path its transcript names');
+  assert.deepStrictEqual(ring.list(), expected, 'a file in both dirs is listed once and a durable-only one under its literal, rejected bodies included');
   fs.unlinkSync(path.join(msgDir, 'msg-7-2.txt'));
   fs.unlinkSync(path.join(msgDir, 'msg-7-3.txt'));
   assert.deepStrictEqual(ring.list(), expected);

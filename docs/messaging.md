@@ -217,10 +217,9 @@ seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
 Codex gets a read-with-Read pointer. That hand-off copy is swept after
 `MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
-basename, to `~/.clodex/spill/<seat>/messages/`, which is never swept. The
-filed ring keeps the `messages/` path the transcript shows; it, `filePeek` and
-`resolveDisplayedPath` fall back to the durable copy once the hand-off copy is
-swept.
+basename, to `~/.clodex/spill/<seat>/messages/`, which is never swept. The ring
+records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
+`resolveDisplayedPath` fall back to the durable copy (`durableMessageCopyOf`).
 
 **Inject** — `_injectText` has two layers:
 1. *Turn batching*: `_injectHoldReason` (compact window / permission dialog /

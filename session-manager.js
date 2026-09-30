@@ -233,7 +233,7 @@ const {
   receiptOf, resolveReceipt,
   capResumeSnapshot, spillMimicBounce,
 } = require('./intent-spill');
-const { createFiledRing, seedFiledRing, filedEntry, spillHead, firstLineOf } = require('./filed-ring');
+const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const nodePath = require('path');
 const { durableMessageCopyOf, literalMessagePathOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
@@ -6320,10 +6320,9 @@ function createSessionManager(deps) {
       try {
         const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
-        const kept = this._keptMessagePath(path_);
-        this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${verb} (rejected)`));
-        return kept !== path_
-          ? ` — your ${verb} body (${bytes} bytes) is saved at ${kept}`
+        this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
+        return this._hasDurableCopy(path_)
+          ? ` — your ${verb} body (${bytes} bytes) is saved at ${path_}`
           : ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
@@ -6342,11 +6341,10 @@ function createSessionManager(deps) {
         if (used < DENIED_SPILL_CAP) {
           try {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
-            const kept = this._keptMessagePath(path_);
-            this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${label} (denied)`));
+            this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
-            return kept !== path_
-              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${kept}`
+            return this._hasDurableCopy(path_)
+              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${path_}`
               : `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
             log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
@@ -7572,12 +7570,11 @@ function createSessionManager(deps) {
     _seedFiledRing(name) {
       const ring = createFiledRing();
       const spillDir = spillDirFor(REGISTRY_DIR, name);
-      const keepsDurable = (p) => /^From: .+ \((?:rejected|denied)\)$/.test(firstLineOf(p));
       try {
         seedFiledRing(ring, [
           { dir: spillDir, kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message', mapPath: (p) => (keepsDurable(p) ? this._keptMessagePath(p) : p) },
-          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => (keepsDurable(p) ? p : (literalMessagePathOf(p, nodePath) || p)) },
+          { dir: path.join(MSG_DIR, name), kind: 'message', },
+          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => literalMessagePathOf(p, nodePath) || p },
         ]);
       } catch (e) {
         log.warn('files', `filed seed for ${name} failed: ${e.message}`);
@@ -7585,9 +7582,9 @@ function createSessionManager(deps) {
       return ring;
     }
 
-    _keptMessagePath(filePath) {
+    _hasDurableCopy(filePath) {
       const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, nodePath) : null;
-      return durable && fs.existsSync(durable) ? durable : filePath;
+      return !!durable && fs.existsSync(durable);
     }
 
     _noteFiled(name, entry) {
