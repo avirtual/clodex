@@ -2266,9 +2266,9 @@ function registerIpcHandlers(deps) {
   handle('app:restore-sessions', (e) => restoreSessionsForWorkspace(workspaceOfSender(e)));
 
   handle('session:retrySpawn', async (e, name) => {
-    const workspaceId = workspaceOfSender(e);
     const entry = persistence.list().find(s => s.name === name);
     if (!entry) return { ok: false, error: 'No saved entry found' };
+    const workspaceId = entry.workspaceId || workspaceOfSender(e);
     try {
       await manager.create(
         entry.name,
