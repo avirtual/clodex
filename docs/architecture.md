@@ -83,10 +83,11 @@ bundle), whose packaged form is the Docker image under
   (`test/electron-boundary.test.js`).
 - **The seam contract** — the host→engine boundary. Every electron touch the
   engine needs is an optional seam fn on `createEngine`'s `seams`, each
-  defaulted to a no-op / sane fallback: `openPath`, `notifyOS`,
+  defaulted to a no-op / sane fallback: `openPath`, `openExternal`, `notifyOS`,
   `setAppQuitting`, `appVersion`, `isPackaged`, `refreshAppMenu`,
   `scheduleAppMenuRefresh`, `refreshTrayMenu`, `scheduleTrayRefresh`,
-  `restartHost`. A seam nothing reads is a lying contract — an inert
+  `restartHost`, `restartHostWhenIdle`, `restartUnavailable`, `thumbnail`,
+  `webInfo`. A seam nothing reads is a lying contract — an inert
   `getUserDataPath` seam was dropped (the engine derives `userDataPath` from
   its own param). `userDataPath` is a plain constructor arg, not a seam.
 - **main.js** — the **desktop adapter**. Its `whenReady`
@@ -200,15 +201,17 @@ bundle), whose packaged form is the Docker image under
 - **stream-codec-codex.js** — `create(ctx)` returns a stateful codec for
   `codex app-server` JSON-RPC: the `open()` handshake (initialize, thread/start
   or thread/resume with the seat's posture), `decode` into the claude record
-  kinds, approval requests declined through `send`, `encodeUser` (turn/start,
-  text only), `encodeContext` (thread/compact/start, a fresh thread/start) and
+  kinds, approval requests declined through `send` under bypass and otherwise
+  surfaced as `permission-request` cards answered by `encodePermission`,
+  `encodeUser` (turn/start, text only), `encodeContext` (thread/compact/start, a fresh thread/start) and
   `encodeInterrupt` (turn/interrupt).
 - **stream-codec-muse.js** — `create(ctx)` returns a stateful codec for
   `muse serve` JSON-RPC 2.0: UUIDv7 `commandId`s on every command, the `open()`
   handshake (initialize, session/start with the posture's approval mode, or
   session/resume), `decode` into the claude record kinds, approval
-  notifications aborted through `send`, `encodeUser` (turn/start, text and
-  image parts), `encodeContext` (session/compact, a fresh session/start) and
+  notifications aborted through `send` under bypass and otherwise surfaced as
+  `permission-request` cards answered by `encodePermission`, `encodeUser`
+  (turn/start, text and image parts), `encodeContext` (session/compact, a fresh session/start) and
   `encodeInterrupt` (turn/interrupt).
 - **stream-reap.js** — the reap-before-resume decision (`kill` / `recycled` /
   `dead` from liveness + a start-time match) and `reapBeforeResume`, which
@@ -297,7 +300,7 @@ bundle), whose packaged form is the Docker image under
   must be on `PATH`, and `linux` additionally needs an entry under `/dev/snd`, so
   a headless node says why the controls are dead instead of offering a mode
   nothing can listen through. Pure `fs` lookups with no spawn, memoized per
-  process because the renderer polls it every five seconds.
+  process because the renderer polls it every fifteen seconds.
 - **accounts.js** — the registered-subscription registry (`~/.clodex/accounts.json`,
   0600) plus the mint recipe for `~/.clodex/accounts/<label>/`, the isolated
   `CLAUDE_CONFIG_DIR` a seat on that account spawns with. The `default` account is
@@ -421,8 +424,8 @@ not by size:
   `ticketInFlight`, `branchSlug`. Tickets FORMALIZE lead→member work as tracked
   envelopes; they do not replace lifecycle-by-dm.
 - **tickets-migrate.js** — the one-time migration of each TEAM's board into the
-  PROJECT board it is rooted at. Modelled on `legacy-sweep.js`: pure leaf, one
-  exported function, called from `engine.js` inside a catch-and-log so a failure
+  PROJECT board it is rooted at. Modelled on `legacy-sweep.js`: pure leaf whose
+  entry point `runTicketsMigration` is called from `engine.js` inside a catch-and-log so a failure
   degrades to a log line. COPY then mark — the source file is left in place. It
   reruns on every launch (the marker dates the initial copy, it does not gate),
   so a pass that changes nothing writes nothing: the board is saved only when
@@ -554,7 +557,7 @@ not by size:
   ref the resolver would not read cannot be a ref this writes. Three entry
   points, one plan: `[agent:team gather [dry]]`, `team:gather`, the roles
   popover's Gather button.
-- **team-template-derive.js** — `resolveModelId(v)` / `deriveModelTemplate(base,
+- **team-template-derive.js** — `resolveModelId(type, v)` / `deriveModelTemplate(base,
   roleName, modelId)`, behind `[agent:team role-add|role-set <role> model:<id>]`:
   the copy of a role's seat template carrying that `--model`, so a lead changes a
   hand's model without hand-writing template JSON. Pure leaf — no `fs`, no
@@ -696,7 +699,7 @@ accept teardown removes.
 - **auth-token.js** — the single operator-token predicate shared by BOTH HTTP
   hosts (`web-host.js` and `remote.js`), so the two wires cannot drift on "does
   this request carry the configured secret". Pure leaf: a token string in, a
-  `{ check, fromReq }` pair out.
+  `{ check, fromReq, configured }` triple out.
 - **peer-client.js** — consuming side of the peering protocol (hello loop,
   SSE attach, reconnect).
 - **peer-wiring.js** — PeerManager + TunnelManager reconciliation and
@@ -927,8 +930,9 @@ accept teardown removes.
   regex (`FILED_SRC`, `FILED_POINTER_RE`), a pure leaf with no `fs` so the
   renderer's intent marks and the tee's stub parser match ONE source;
   `intent-spill.js` re-exports it.
-- **intent-spill.js** — the FORMAT of intent-body spill (`proxy-lab/SPILL.md`;
-  `proxy-lab/test_spill.py` is the conformance suite): constants, verb set,
+- **intent-spill.js** — the FORMAT of intent-body spill (`SPILL.md` and its
+  conformance suite `test_spill.py` live in the upstream wirescope repo and are
+  not vendored under `vendor/wirescope/`): constants, verb set,
   id/agent charsets, the content-addressed writer, the confined resolver, the
   receipt grammar (`RECEIPT_RE`, `receiptOf`, `resolveReceipt`) and the stub
   parser (`pointerOf`: the `… filed at <path>` line, plus the legacy
@@ -1007,7 +1011,7 @@ accept teardown removes.
   source with every comment, string, template and regex body blanked to spaces,
   line numbers preserved — what a source-shape scanner needs to grep for a call
   without matching prose that names it. Naive `//` counting is wrong for this repo —
-  `cli-hooks.js` reads 175 naively and 104 tokenized, the gap being shell text
+  `cli-hooks.js` reads 170 naively and 102 tokenized, the gap being shell text
   inside the template literals that generate the hook scripts. Drives
   `test/comment-ratchet.test.js`, which fails a tracked non-test `.js` that gains
   comment lines against `git merge-base master HEAD` (a file absent at the base
@@ -1050,7 +1054,7 @@ accept teardown removes.
   subset the shipped docs were measured to use and treats everything else as
   literal text, which is what lets Help ship with no markdown dependency.
 - **help-corpus.js** — the Help window's corpus reader: `loadHelpCorpus(root)` →
-  `{ list, get, section, search, index }` over the 18 pages named in
+  `{ list, get, section, search, index }` over the pages named in
   `docs/help.json`, titles taken from each page's single H1 through `doc-parse`.
   fs + path + `doc-parse.js` only, no Electron; pages are read and parsed once
   per `root` and cached in the returned object, so two roots are two corpora. A
@@ -1243,14 +1247,13 @@ Own state + DOM, `init*(deps)`:
   sends the mtime of the read the buffer came from). Tested by
   `test/side-pane-tabs.test.js`.
 - **voice-control.js** — the voice-mode state machine (off · tap),
-  reading `voice-settings.js` over `getVoiceMode` and writing the settings file
-  over `setVoiceMode`, which routes through the manager's `voiceMode` so the
-  write stamps the voice-mode settle memo — no session in the path, so both
-  surfaces work with none open. `createVoiceCore` owns all of it — state, the pending
+  reading the seat's mode over `getVoiceMode` and writing it over
+  `setVoiceMode`, which routes through the manager's `voiceMode` into the
+  seat's persistence record, so a target or focused session is required.
+  `createVoiceCore` owns all of it — state, the pending
   affordance and the poll — and publishes snapshots; `popovers/voice-popover.js` (the session bar's 🎤 button)
   is the surface over it and owns only its own painting. Keeping the core
-  DOM-free is what lets `test/voice-core.test.js` pin it with no jsdom. The bar
-  button is absent outright for a non-Claude seat, since Codex has no `/voice`.
+  DOM-free is what lets `test/voice-core.test.js` pin it with no jsdom.
 - **live-split-view.js** + **lib/live-split.js** — the transcript
   pane (t1122 spike, `transcriptPane` setting). The pure half
   finds the composer anchor on the visible screen and applies the hysteresis; the
@@ -1362,7 +1365,8 @@ Own state + DOM, `init*(deps)`:
 isn't active, and off `window.api.sessionInfo` rather than the data seam
 since it reads local persistence; peer rows build their own markup and
 deliberately have no ⓘ), plus the ones that are NOT on the data seam by
-design — grep the directory for `popoverApi` and the misses are the list:
+design — `grep -L 'popoverApi(' renderer/popovers/*.js` lists these four plus
+`session-info-popover.js` above and the two below:
 `checklist-popovers.js` (tools/skills/agents/**intents**
 — local config editors, direct `window.api`; tools/agents suppressed for
 peers, but **skills takes an optional peer `source`** so the same popover
@@ -1378,10 +1382,10 @@ it goes direct rather than through the local-vs-peer seam), and
 `selection-popover.js` also lives here but is the drawer's 📋 inspector on
 `window.api.drawerInspectSelection`, a different subsystem, not a seam bypass.
 `voice-popover.js` is likewise off the seam by design: it is the session bar's
-🎤 button and its three-mode picker, and it holds no state of its own — every
-value comes from voice-control.js's shared core, which reads a box-wide file
-rather than session state, so there is nothing for the local-vs-peer seam to
-answer differently.
+🎤 button and its two-mode picker, and it holds no state of its own — every
+value comes from voice-control.js's shared core, which reads the local seat's
+persistence record over `window.api`, and the bar offers no 🎤 on a peer seat,
+so there is nothing for the local-vs-peer seam to answer differently.
 
 ### Peer runtime
 
@@ -1391,8 +1395,9 @@ answer differently.
   visibility/control maps, `PEER_UI_KINDS`, and the peer-select/peer-info
   popovers. Back-exports to core — the `initPeersUi` return, which is the list:
   `typeToTakeControl`, `renderPeerBar`, `forgetControlMirror`,
-  `openPeerSession`, `peerDisplayHost`, `peerHideFromList`,
-  `ensurePeerSessionVisible`, `openPeerArgs`.
+  `openPeerSession`, `openPeerSessionDialog`, `closePeerSessionDialog`,
+  `peerDisplayHost`, `peerHideFromList`, `ensurePeerSessionVisible`,
+  `openPeerArgs`.
 
 ### renderer/lib — pure leaves
 
@@ -1434,7 +1439,7 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **turn-stat.js** — which turn number is shown, shared by the statusbar and the
   sidebar hovercard so the two can never disagree.
 - **cost-by-line.js** — the cost popover's per-line attribution model. Owns the
-  scope pick (`costRun || cost`) that keeps the section rendering identically
+  scope pick (`costRun` when `telemetrySource` is `'wire'`, else `cost`) that keeps the section rendering identically
   with the W2 overlay on and off; distinct from turn-stat.js's `costScopes`,
   which deliberately returns BOTH scopes for the bar to label.
 - **cost-report-view.js** — the cost popover's reduction of a wirescope
