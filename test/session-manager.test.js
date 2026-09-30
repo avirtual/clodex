@@ -17594,7 +17594,7 @@ test('t1458: task park and cancel successes ride as acks', () => {
 });
 
 test('t1458: _taskAck appends to the acks file for a claude seat and injects for a codex seat', () => {
-  const home = mkTmpRoot('clodex-ta-');
+  const home = mkTmpRoot('clodex-tk-');
   const m = mk({ REGISTRY_DIR: home, pathFor: pathForReal });
   const injected = [];
   m._injectText = (_s, line) => injected.push(line);
