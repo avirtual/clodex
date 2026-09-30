@@ -523,7 +523,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 |---|---|---|
 | SessionStart | `run/<name>/hook.sh` | repoints transcript symlink (atomic); emits memory digest on startup/clear |
 | Notification | `run/<name>/attn.sh` | appends raw hook JSON to `run/<name>/attn.jsonl` (attention state) |
-| UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory acks (lossy-tolerant) |
+| UserPromptSubmit | `run/<name>/acks.sh` | read+truncate memory + task acks (lossy-tolerant): a ticket verb's success confirmation written here is lost if the seat dies before its next turn, which is acceptable because the ticket record and `[agent:task list]` stay the truth |
 | UserPromptSubmit | `run/<name>/pending.sh` | atomic rename-claim drain of parked DMs from `pending/<name>/` (zero-loss) |
 | UserPromptSubmit | `run/<name>/ctxwarn.sh` | read-only context warning; recurs every submit while over threshold |
 | UserPromptSubmit | `run/<name>/poll-guard.sh` | clears `run/<name>/poll-state` — a new turn resets the repeat counter, so an operator's own reply can never be what trips the PreToolUse deny |

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket verb's success confirmation (`created`, `→ spawning …`, `respec'd`, `cancelled`, …) now rides the lead's next turn instead of waking it for an "aha"; errors and refusals still arrive at once.
+
 ## 5.97.0 — 2026-09-30
 
 - Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.
