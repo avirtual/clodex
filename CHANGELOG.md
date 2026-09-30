@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.
+- A preserved suite-failure file is numbered by the same review round as the diff and verdict beside it.
+
 ## 5.96.0 — 2026-09-30
 
 - Sandbox launch can no longer hang on a git fetch waiting for credentials or a dead remote; the fetch times out after a minute and the launch reports the unresolved ref.

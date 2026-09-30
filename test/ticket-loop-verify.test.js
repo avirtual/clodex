@@ -3287,7 +3287,7 @@ test('t370: a red loop run PRESERVES its full output, and the rejection names th
   const f = mkLoop({ repo, suite: 'redWithDiff' });
   assert.deepStrictEqual(keptFiles(f, f.home), [],
     'ENTER: nothing is preserved before the run — the assertions below must be about THIS run');
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reviewRound: 1, reportedBy: 'team-hand' }]);
 
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
@@ -3297,7 +3297,7 @@ test('t370: a red loop run PRESERVES its full output, and the rejection names th
   // The round is in the name for the reason the diff's is: round 1's evidence is
   // what a round 2 failure gets compared against, and it is unrecoverable once
   // the branch moves on.
-  assert.match(pathReal.basename(kept[0]), /^suite-failure-t1-r1-\d{4}-\d\d-\d\d.*\.txt$/,
+  assert.match(pathReal.basename(kept[0]), /^suite-failure-t1-r2-\d{4}-\d\d-\d\d.*\.txt$/,
     'the ticket, the round and the stamp are all in the name');
 
   const body = fsReal.readFileSync(kept[0], 'utf8');
@@ -3325,18 +3325,18 @@ test('t370: a SECOND red round writes its own file, so round 1 evidence survives
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'redWithDiff' });
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reviewRound: 1, reportedBy: 'team-hand' }]);
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one().reworkRound, 1, 'ENTER: round 1 rejected and counted');
 
   // The hand closes again and the loop rejects again.
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reportedBy: 'team-hand' }]);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reviewRound: 2, reportedBy: 'team-hand' }]);
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(f.one().reworkRound, 2, 'ENTER: round 2 rejected too');
 
-  assert.deepStrictEqual(keptStems(f, f.home), ['suite-failure-t1-r1', 'suite-failure-t1-r2'],
+  assert.deepStrictEqual(keptStems(f, f.home), ['suite-failure-t1-r2', 'suite-failure-t1-r3'],
     'each round keeps its own file — round 2 must not overwrite round 1');
 });
 
