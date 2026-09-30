@@ -15,6 +15,7 @@ blocks a release.
 
 - An image sent to a terminal seat is announced as "Image: <path>" without a per-message number that never matched the CLI's own [Image #n] mark.
 - Stock templates no longer deny the TaskOutput tool the CLI removed in 2.1.277, the sonnet alias resolves to Sonnet 5.5, and the context bar reads the 1M window for bare Opus 5.5 and Sonnet 5.5 ids.
+- A message injected into a terminal seat no longer stalls at the CLI's "Removed N invisible characters — review" prompt: the characters that trip it are stripped before the write.
 
 ## 5.101.0 — 2026-09-30
 
