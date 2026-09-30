@@ -108,6 +108,27 @@ test('with a seam: a re-rendered page reuses the thumbnail instead of re-encodin
   assert.deepStrictEqual(again.messages[0].images, [{ n: 1, mediaType: 'image/jpeg', data: 'T' }]);
 });
 
+test('with a seam: a cache hit is refreshed, so eviction drops the least recently used image', async () => {
+  let calls = 0;
+  const thumbnail = async (buf) => { calls++; return { mediaType: 'image/jpeg', data: buf.toString('base64') }; };
+  const img = (i) => ({ n: 1, mediaType: 'image/png', data: Buffer.from(`image-${i}`).toString('base64') });
+  const messages = page([]);
+  const { getTranscript } = wiredTranscript({ thumbnail, messages });
+  messages[0].images = Array.from({ length: 200 }, (_, i) => img(i));
+  await getTranscript(100, null);
+  messages[0].images = [img(0)];
+  await getTranscript(100, null);
+  messages[0].images = [img('new')];
+  await getTranscript(100, null);
+  assert.strictEqual(calls, 201);
+  messages[0].images = [img(0)];
+  await getTranscript(100, null);
+  assert.strictEqual(calls, 201);
+  messages[0].images = [img(1)];
+  await getTranscript(100, null);
+  assert.strictEqual(calls, 202);
+});
+
 test('with a seam: concurrent page builds encode a shared image once', async () => {
   let calls = 0;
   const thumbnail = async () => { calls++; return { mediaType: 'image/jpeg', data: 'T' }; };

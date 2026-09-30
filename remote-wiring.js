@@ -32,6 +32,7 @@ function createThumbnailer(thumbnail, log) {
   const cache = new Map();
   let queue = Promise.resolve();
   function remember(key, value) {
+    cache.delete(key);
     cache.set(key, value);
     if (cache.size > THUMB_CACHE_MAX) cache.delete(cache.keys().next().value);
   }

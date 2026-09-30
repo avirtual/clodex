@@ -153,6 +153,19 @@ test('jsonlToMessages: folded prompts that each number from #1 get distinct n an
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: a fold shifts past marks that have no image block too', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] [Image #2] b', [['image/jpeg', 'BBBB']]),
+    imagePrompt('[Image #1] c', [['image/gif', 'CCCC']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] [Image #3] b\n\n[Image #4] c');
+    assert.deepStrictEqual(msgs[0].images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB'], [4, 'CCCC']]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: scrubs control chars, delivery label, and slash-command echoes', () => {
   const p = writeJsonl([
     { type: 'user', message: { content: '\x15[agent:from user] hi' } },

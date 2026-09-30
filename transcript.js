@@ -140,11 +140,11 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       const interim = r.role === 'assistant' && !(i === lastAssistant && tailFinal);
       const prev = messages[messages.length - 1];
       if (prev && prev.role === r.role && prev.interim === interim) {
-        if (r.images) {
-          const offset = Math.max(0, ...(prev.images || []).map((img) => img.n));
-          const renumber = (n) => (r.images.some((img) => img.n === n) ? n + offset : n);
-          prev.text += '\n\n' + r.text.replace(/\[Image #(\d+)\]/g, (m, n) => `[Image #${renumber(Number(n))}]`);
-          prev.images = (prev.images || []).concat(r.images.map((img) => ({ ...img, n: img.n + offset })));
+        if (r.role === 'user') {
+          const marks = [...prev.text.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1]));
+          const offset = Math.max(0, ...marks, ...(prev.images || []).map((img) => img.n));
+          prev.text += '\n\n' + r.text.replace(/\[Image #(\d+)\]/g, (m, n) => `[Image #${Number(n) + offset}]`);
+          if (r.images) prev.images = (prev.images || []).concat(r.images.map((img) => ({ ...img, n: img.n + offset })));
         } else prev.text += '\n\n' + r.text;
       } else {
         const m = { role: r.role, text: r.text, ts: r.ts, interim };

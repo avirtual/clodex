@@ -173,7 +173,6 @@ test('headless-main declares webInfo as a closure over a `let` assigned LATER', 
   assert.ok(declIdx > seam.index, 'declared after the seam that closes over it');
 });
 
-// createEngine's background timers keep the loop alive; exit once results flush.
 test('seams.thumbnail reaches the remote wiring as its thumbnail dep, null when omitted', () => {
   const remoteWiring = require('../remote-wiring');
   const orig = remoteWiring.createRemoteWiring;
@@ -189,6 +188,7 @@ test('seams.thumbnail reaches the remote wiring as its thumbnail dep, null when 
   assert.deepStrictEqual(seen, [thumbnail, null]);
 });
 
+// createEngine's background timers keep the loop alive; exit once results flush.
 after(() => { setImmediate(() => process.exit(0)); });
 
 // ── t443: the wirescope seam takes the SAME path, one field over ─────────────
