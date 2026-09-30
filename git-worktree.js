@@ -12,16 +12,23 @@ const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
 
+const FETCH_TIMEOUT_MS = 60_000;
+
 // `code` is the process exit status, and it is not redundant with `ok`: git's
 // query commands answer NO by exiting nonzero, so a plain boolean cannot
 // separate "git ran and said no" (1) from "git could not answer" (128, ENOENT).
 // `isMerged` turns on exactly that distinction. Null when the process never ran
 // (spawn failure carries a string errno, not a status).
-function git(cwd, args, { maxBuffer = 4 * 1024 * 1024 } = {}) {
+function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env } = {}) {
+  const opts = { maxBuffer };
+  if (timeout) opts.timeout = timeout;
+  if (env) opts.env = env;
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], { maxBuffer }, (err, stdout, stderr) => {
+    execFile('git', ['-C', cwd, ...args], opts, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
-      resolve({ ok: !err, code, stdout: stdout || '', stderr: stderr || (err && err.message) || '' });
+      const timedOut = !!(err && timeout && err.killed);
+      const why = timedOut ? `git ${args[0]} timed out after ${timeout}ms` : '';
+      resolve({ ok: !err, code, stdout: stdout || '', stderr: why || stderr || (err && err.message) || '' });
     });
   });
 }
@@ -401,7 +408,7 @@ async function checkoutDetached({ repoTop, dir, ref } = {}) {
   };
   let sha = await resolve();
   if (!sha) {
-    await git(repo, ['fetch', '--quiet']);
+    await git(repo, ['fetch', '--quiet'], { timeout: FETCH_TIMEOUT_MS, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
     sha = await resolve();
   }
   if (!sha) return { ok: false, error: `ref ${want} does not resolve in ${where}` };

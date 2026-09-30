@@ -886,6 +886,40 @@ test('up: writes compose, brings it up, registers the peer', async () => {
   assert.ok(fs.existsSync(sb.composePath()));
 });
 
+test('up: a registerPeer that throws leaves the box up, reports peerRegistered false and warns', async () => {
+  const warns = [];
+  const sb = createSandbox({
+    registryDir: TMP_REGISTRY,
+    spawn: okComposeSpawn(),
+    getUiSettings: () => ({ get() { throw new Error('ui-settings.json is unreadable'); }, set() {} }),
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+    log: { info() {}, warn: (...a) => warns.push(a.join(' ')), error() {} },
+  });
+  const r = await sb.up();
+  assert.deepStrictEqual({ ok: r.ok, ports: r.ports, peerRegistered: r.peerRegistered, peerError: r.peerError },
+    { ok: true, ports: { web: 7810, wirescope: 7811, wire: 7820 }, peerRegistered: false, peerError: 'ui-settings.json is unreadable' });
+  assert.deepStrictEqual(warns, ['sandbox sandbox up — wire peer on port 7820 NOT registered: ui-settings.json is unreadable']);
+});
+
+test('up: a registerPeer that succeeds reports peerRegistered true', async () => {
+  const settings = fakeSettings();
+  const sb = createSandbox({
+    registryDir: TMP_REGISTRY,
+    spawn: okComposeSpawn(),
+    getUiSettings: () => settings,
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+  });
+  const r = await sb.up();
+  assert.strictEqual(r.peerRegistered, true);
+  assert.strictEqual(r.peerError, undefined);
+});
+
 test('up: a non-docker compose failure surfaces raw stderr and does NOT register the peer', async () => {
   const settings = fakeSettings();
   const sb = createSandbox({ registryDir: TMP_REGISTRY,

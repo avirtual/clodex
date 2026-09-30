@@ -26867,6 +26867,9 @@ ${i3.join("\n")}
         if (!d.present) {
           return { kind: "error", text: "Docker isn\u2019t installed \u2014 sandboxes need Docker Desktop." };
         }
+        if (d.timedOut) {
+          return { kind: "warn", text: "Docker didn\u2019t answer in time \u2014 the daemon may be wedged; restart Docker Desktop." };
+        }
         if (!d.running) {
           return { kind: "warn", text: "Docker daemon isn\u2019t running \u2014 start Docker Desktop." };
         }

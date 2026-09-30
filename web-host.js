@@ -11,6 +11,7 @@ const https = require('https');
 const { AsyncLocalStorage } = require('async_hooks');
 const { WebSocketServer } = require('ws');
 const { makeTokenGate } = require('./auth-token');
+const { escapeSafeTail } = require('./session-manager');
 
 const APP_VERSION = require('./package.json').version;
 
@@ -73,7 +74,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     if (channel === 'pty-data') {
       const [name, data] = args;
       const cur = (scrollback.get(name) || '') + (data || '');
-      scrollback.set(name, cur.length > MAX_SCROLLBACK ? cur.slice(-MAX_SCROLLBACK) : cur);
+      scrollback.set(name, escapeSafeTail(cur, MAX_SCROLLBACK));
       ringWorkspace.set(name, workspaceId);
     } else if (channel === 'session:moved-in') {
       const name = args[0] && args[0].name;

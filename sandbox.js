@@ -491,7 +491,7 @@ function createSandbox(deps = {}) {
   const isPackaged = deps.isPackaged || (() => false);
   const repoRoot = deps.repoRoot || __dirname;
   const isPortInUse = deps.isPortInUse || defaultIsPortInUse;
-  const log = deps.log || { info() {}, error() {} };
+  const log = deps.log || { info() {}, warn() {}, error() {} };
   const detect = deps.detect || (() => probeDocker(spawn));
   const invalidateDetect = deps.invalidateDetect || (() => {});
   const registryDir = deps.registryDir || defaultClodexHome();
@@ -789,9 +789,15 @@ function createSandbox(deps = {}) {
         if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
         return { ok: false, error: r.stderr.trim() || `docker compose ${label} exited ${r.code}` };
       }
-      registerPeer(gen.ports.wire);
+      try {
+        registerPeer(gen.ports.wire);
+      } catch (e) {
+        const peerError = (e && e.message) || String(e);
+        log.warn('sandbox', `${id} ${label} — wire peer on port ${gen.ports.wire} NOT registered: ${peerError}`);
+        return { ok: true, ports: gen.ports, image: describeImage(gen.image), peerRegistered: false, peerError };
+      }
       log.info('sandbox', `${id} ${label} — wire peer http://127.0.0.1:${gen.ports.wire}`);
-      return { ok: true, ports: gen.ports, image: describeImage(gen.image) };
+      return { ok: true, ports: gen.ports, image: describeImage(gen.image), peerRegistered: true };
     });
   }
 

@@ -13,6 +13,11 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox launch can no longer hang on a git fetch waiting for credentials or a dead remote; the fetch times out after a minute and the launch reports the unresolved ref.
+- A sandbox whose wire peer could not be registered now comes up and says so, instead of failing after its containers started.
+- Sandbox status distinguishes a Docker daemon that did not answer from one that is not running.
+- Web UI: a viewer joining a running seat no longer sees a garbled first line when the scrollback was trimmed mid-escape.
+
 ## 5.95.0 — 2026-09-30
 
 - Transcript pane, Conversation mode: unfolding a turn driven by a reminder, ticket notice or report now shows that message open; it no longer sits behind a second identical fold.

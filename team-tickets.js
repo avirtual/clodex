@@ -2492,6 +2492,7 @@ function createTicketMethods(deps, shared) {
 
       const r = action === 'rebuild' ? await box.rebuild() : await box.up();
       if (r && r.ok === false) { reply(`error: ${r.error}`); return { ok: false }; }
+      if (r && r.peerRegistered === false) reply(`peer NOT registered: ${r.peerError}`);
       const st = await box.status();
       const ports = (st && st.ports) || (r && r.ports) || {};
       const token = box.remoteToken();
