@@ -13,6 +13,7 @@ const { createCliHooks } = require('../cli-hooks');
 const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
+const HOOK_SPAWN = { timeout: 30000, killSignal: 'SIGKILL' };
 function tmp() { return mkTmpRoot('clodex-hooks-'); }
 function mk(REGISTRY_DIR) {
   return createCliHooks({
@@ -238,7 +239,7 @@ function drainPending(REGISTRY_DIR, name, texts) {
   fs.rmSync(pendDir, { recursive: true, force: true });
   fs.mkdirSync(pendDir, { recursive: true });
   texts.forEach((t, i) => fs.writeFileSync(path.join(pendDir, `m${i}.json`), JSON.stringify({ text: t })));
-  const out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'pendingScript')], { input: '' }).toString();
+  const out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'pendingScript')], { ...HOOK_SPAWN, input: '' }).toString();
   return out.trim() ? JSON.parse(out).hookSpecificOutput.additionalContext : '';
 }
 
@@ -305,7 +306,7 @@ test('pending drain @-inline: text without a spill pointer is untouched', () => 
 // rather than consume the pending dir. Run the GENERATED script directly so the
 // bash+python agent_id check is what's exercised.
 function runPending(REGISTRY_DIR, name, input) {
-  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'pendingScript')], { input }).toString();
+  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'pendingScript')], { ...HOOK_SPAWN, input }).toString();
 }
 test('pending drain: a subagent PostToolUse (agent_id present) defers — pending dir survives', () => {
   const REGISTRY_DIR = tmp();
@@ -420,7 +421,7 @@ test('pending drain (hook): unstamped entries deliver, and an unstamped SETUP de
 // is invisible from inside the seat — an absent roster reads as a team of one.
 function runSessionStart(REGISTRY_DIR, name, source) {
   const input = JSON.stringify({ transcript_path: path.join(REGISTRY_DIR, 't.jsonl'), source });
-  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'hook')], { input, encoding: 'utf-8' });
+  return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'hook')], { ...HOOK_SPAWN, input, encoding: 'utf-8' });
 }
 
 test('SessionStart: only a compact appends the compact-end line to the attention file', () => {
@@ -525,7 +526,7 @@ test('the selection drain claims by rename, consumes, and emits UserPromptSubmit
   // Two clicks between submits, as the queue is written.
   fs.writeFileSync(queuePath,
     `${JSON.stringify({ text: 'FIRST BLOCK' })}\n${JSON.stringify({ text: 'SECOND BLOCK' })}\n`);
-  const out = cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' });
+  const out = cp.execFileSync('bash', [scriptPath], { ...HOOK_SPAWN, encoding: 'utf-8' });
   const parsed = JSON.parse(out);
   assert.strictEqual(parsed.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
   const ctx = parsed.hookSpecificOutput.additionalContext;
@@ -536,7 +537,7 @@ test('the selection drain claims by rename, consumes, and emits UserPromptSubmit
   // Consumed: a second submit with nothing new must deliver nothing, or the
   // same block accretes in the transcript every turn.
   assert.ok(!fs.existsSync(queuePath), 'the queue file is gone after the drain');
-  assert.strictEqual(cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' }), '',
+  assert.strictEqual(cp.execFileSync('bash', [scriptPath], { ...HOOK_SPAWN, encoding: 'utf-8' }), '',
     'an empty queue produces no output at all');
 });
 
@@ -548,7 +549,7 @@ test('the selection drain skips an unparseable line and delivers the rest', () =
   const scriptPath = pathFor(REGISTRY_DIR, 'agent1', 'selectionScript');
   fs.writeFileSync(pathFor(REGISTRY_DIR, 'agent1', 'selection'),
     `${JSON.stringify({ text: 'GOOD ONE' })}\n{ not json\n${JSON.stringify({ text: 'GOOD TWO' })}\n`);
-  const ctx = JSON.parse(cp.execFileSync('bash', [scriptPath], { encoding: 'utf-8' }))
+  const ctx = JSON.parse(cp.execFileSync('bash', [scriptPath], { ...HOOK_SPAWN, encoding: 'utf-8' }))
     .hookSpecificOutput.additionalContext;
   assert.match(ctx, /GOOD ONE/, 'ENTER: the drain ran and delivered');
   assert.match(ctx, /GOOD TWO/, 'the line after the corrupt one still arrived');
@@ -682,7 +683,8 @@ test('the console hook spools raw hook JSON per record and spawns no interpreter
     error: 'Exit code 1\n', is_interrupt: false, duration_ms: 3,
   });
   for (const payload of [ok, bad]) {
-    const r = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
+    const r = cp.spawnSync('bash', [scriptPath], { ...HOOK_SPAWN, input: payload, encoding: 'utf-8' });
+    assert.ifError(r.error);
     assert.strictEqual(r.status, 0, `the hook must exit 0, got ${r.status}: ${r.stderr}`);
     assert.strictEqual(r.stdout, '', 'it returns nothing to the CLI — it is a writer, not a drain');
   }
@@ -789,6 +791,7 @@ test('the console hook survives a `date` with no %N extension', () => {
   ].join('\n'), { mode: 0o755 });
 
   const r = cp.spawnSync('bash', [scriptPath], {
+    ...HOOK_SPAWN,
     input: JSON.stringify({
       hook_event_name: 'PostToolUse', tool_name: 'Bash',
       tool_input: { command: 'echo no-nanoseconds' },
@@ -797,6 +800,7 @@ test('the console hook survives a `date` with no %N extension', () => {
     encoding: 'utf-8',
     env: { ...process.env, PATH: `${stubDir}:${process.env.PATH}` },
   });
+  assert.ifError(r.error);
   assert.strictEqual(r.status, 0);
 
   const names = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
@@ -852,6 +856,7 @@ test('the console hook reaps an ORPHANED spool but spares a live writer\'s', () 
   fs.writeFileSync(live, '{"still":');
 
   const r = cp.spawnSync('bash', [scriptPath], {
+    ...HOOK_SPAWN,
     input: JSON.stringify({
       hook_event_name: 'PostToolUse', tool_name: 'Bash',
       tool_input: { command: 'echo sweep' },
@@ -859,6 +864,7 @@ test('the console hook reaps an ORPHANED spool but spares a live writer\'s', () 
     }),
     encoding: 'utf-8',
   });
+  assert.ifError(r.error);
   assert.strictEqual(r.status, 0);
 
   assert.ok(!fs.existsSync(orphan), 'the spool of a dead writer is reaped');
@@ -892,6 +898,7 @@ test('the console hook prunes the OLDEST records past its cap', () => {
   assert.ok(fs.existsSync(path.join(dir, oldest)), 'ENTER: the oldest record is present before the prune');
 
   const r = cp.spawnSync('bash', [scriptPath], {
+    ...HOOK_SPAWN,
     input: JSON.stringify({
       hook_event_name: 'PostToolUse', tool_name: 'Bash',
       tool_input: { command: 'the newest' },
@@ -899,6 +906,7 @@ test('the console hook prunes the OLDEST records past its cap', () => {
     }),
     encoding: 'utf-8',
   });
+  assert.ifError(r.error);
   assert.strictEqual(r.status, 0);
 
   const left = fs.readdirSync(dir).filter((n) => n.endsWith('.json'));
@@ -976,9 +984,11 @@ test('the guard is generated, runs on every seat, gates git-add on CLODEX_TICKET
     tool_input: { command: 'git add -A' },
   });
   const unticketed = cp.spawnSync('bash', [guardPath], {
+    ...HOOK_SPAWN,
     input: payload, encoding: 'utf-8',
     env: { ...process.env, CLODEX_TICKET: '' },
   });
+  assert.ifError(unticketed.error);
   assert.strictEqual(unticketed.status, 0);
   assert.strictEqual(unticketed.stdout, '',
     'a seat with no ticket marker gets NO deny, on the very command a ticket seat is refused');
@@ -1011,14 +1021,16 @@ test('the live observer emits nothing, exits 0, and records the call it is about
   // path of every Bash call; this hook does spawn one, so it only earns that
   // cost while a pane is actually reading. Unwatched is the common case.
   fs.mkdirSync(livePath, { recursive: true });
-  const cold = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
+  const cold = cp.spawnSync('bash', [scriptPath], { ...HOOK_SPAWN, input: payload, encoding: 'utf-8' });
+  assert.ifError(cold.error);
   assert.strictEqual(cold.status, 0, 'still exits 0 when nothing is watching');
   assert.deepStrictEqual(fs.readdirSync(livePath), [],
     'no observer is written when no pane is reading — the spawn is skipped entirely');
 
   // WATCHING: the main side touches the sentinel while a pane reads.
   fs.writeFileSync(path.join(livePath, '.watching'), '');
-  const r = cp.spawnSync('bash', [scriptPath], { input: payload, encoding: 'utf-8' });
+  const r = cp.spawnSync('bash', [scriptPath], { ...HOOK_SPAWN, input: payload, encoding: 'utf-8' });
+  assert.ifError(r.error);
   assert.strictEqual(r.status, 0, `the observer must exit 0, got ${r.status}: ${r.stderr}`);
   assert.strictEqual(r.stdout, '',
     'it returns NOTHING to the CLI — any output here is a chance to alter the command');
@@ -1049,7 +1061,8 @@ test('a malformed hook payload leaves the observer silent and successful', () =>
   fs.writeFileSync(path.join(livePath, '.watching'), '');
 
   for (const input of ['', 'not json at all', '{"tool_name":"Bash"}', '{]']) {
-    const r = cp.spawnSync('bash', [scriptPath], { input, encoding: 'utf-8' });
+    const r = cp.spawnSync('bash', [scriptPath], { ...HOOK_SPAWN, input, encoding: 'utf-8' });
+    assert.ifError(r.error);
     assert.strictEqual(r.status, 0, `exit 0 on ${JSON.stringify(input)}, got ${r.status}`);
     assert.strictEqual(r.stdout, '', `silent on ${JSON.stringify(input)}`);
   }
@@ -1122,7 +1135,7 @@ test('stream seat: the tool-boundary PreToolUse script is byte-pinned, appends o
 printf '{"hook_event_name":"PreToolUse","ts":%s000}\\n' "$(date +%s)" >> "${attn}" 2>/dev/null || true
 exit 0
 `);
-  const out = cp.execFileSync('bash', [scriptPath], { input: JSON.stringify({ tool_name: 'Bash' }), encoding: 'utf-8' });
+  const out = cp.execFileSync('bash', [scriptPath], { ...HOOK_SPAWN, input: JSON.stringify({ tool_name: 'Bash' }), encoding: 'utf-8' });
   assert.strictEqual(out, '', 'no stdout: the hook never returns a permission decision');
   const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.strictEqual(lines.length, 1);
@@ -1254,7 +1267,8 @@ test('pending drain: a hook input larger than ARG_MAX still drains the parked me
   parkFor(REGISTRY_DIR, 'big', { 'm0.json': { text: 'hello parked' } });
   const input = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { content: 'x'.repeat(2 * 1024 * 1024) } });
   assert.ok(input.length > 1048576);
-  const r = cp.spawnSync('bash', [pathFor(REGISTRY_DIR, 'big', 'pendingScript')], { input, encoding: 'utf-8' });
+  const r = cp.spawnSync('bash', [pathFor(REGISTRY_DIR, 'big', 'pendingScript')], { ...HOOK_SPAWN, input, encoding: 'utf-8' });
+  assert.ifError(r.error);
   assert.strictEqual(r.status, 0);
   assert.match(JSON.parse(r.stdout).hookSpecificOutput.additionalContext, /hello parked/);
 });
@@ -1265,7 +1279,7 @@ test('SessionStart hook: the digest is emitted even when the input carries no tr
   h.setupClaudeHook('nt');
   assert.match(fs.readFileSync(pathFor(REGISTRY_DIR, 'nt', 'hookDigest'), 'utf-8'), /named 'nt'/);
   const out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, 'nt', 'hook')],
-    { input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }), encoding: 'utf-8' });
+    { ...HOOK_SPAWN, input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }), encoding: 'utf-8' });
   assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /named 'nt'/);
 });
 
@@ -1279,6 +1293,7 @@ test('SessionStart hook: the digest is emitted even when the transcript relink f
   try {
     assert.throws(() => fs.writeFileSync(path.join(runDir, 'probe'), ''));
     out = cp.execFileSync('bash', [pathFor(REGISTRY_DIR, 'rl', 'hook')], {
+      ...HOOK_SPAWN,
       input: JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', transcript_path: path.join(REGISTRY_DIR, 't.jsonl') }),
       encoding: 'utf-8',
     });
@@ -1290,6 +1305,7 @@ test('SessionStart hook: the digest is emitted even when the transcript relink f
 
 function runCodexHook(REGISTRY_DIR, name, input) {
   return cp.execFileSync('bash', [path.join(REGISTRY_DIR, 'codex-session-hook.sh')], {
+    ...HOOK_SPAWN,
     input, encoding: 'utf-8', env: { ...process.env, WB_WRAP_NAME: name },
   });
 }
@@ -1338,4 +1354,13 @@ test('cleanupCodexHook: a Clodex body from another registry dir is ours, so the 
   assert.ok(!fs.existsSync(backup));
   h2.cleanupCodexHook('cy', cwd);
   assert.strictEqual(fs.readFileSync(hooksPath, 'utf8'), '{"v":1}');
+});
+
+test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child fails its test instead of wedging the suite', () => {
+  const src = fs.readFileSync(__filename, 'utf8');
+  const calls = src.match(/(?:spawnSync|execFileSync)\('bash'/g) || [];
+  const guarded = src.match(/(?:spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
+  assert.strictEqual(calls.length, 19);
+  assert.strictEqual(guarded.length, calls.length);
+  assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
