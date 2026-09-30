@@ -14,9 +14,10 @@ built in remote-wiring.js · **consumer protocol** → peer-client.js ·
 
 ## 1. Trust model (SETTLED)
 
-- The server binds **127.0.0.1 only**; the tunnel/tailnet IS the auth
-  boundary. v1 has no auth surface — tightening later means a shared secret
-  on the whole peer surface, not per-endpoint gates.
+- The server binds **127.0.0.1** unless `CLODEX_REMOTE_HOST` says otherwise;
+  on loopback the tunnel/tailnet IS the auth boundary. `_authGate` fronts the
+  whole peer surface with the shared secret `CLODEX_REMOTE_TOKEN` (401 without
+  it) and refuses a non-loopback bind that has no token (503).
 - **Only input and resize are token-gated** (single-holder control token) —
   that stops a read-only viewer typing by accident, not an attacker.
   Control *acquisition* is un-gated, last-wins ("both laptops are the same
@@ -54,8 +55,8 @@ other state is a 400 — a ticket id is unique per team, so a bare id that exist
 on two boards answers 400 `{error:'ambiguous ticket id', candidates}` and
 `?team=` picks one), `GET /api/sandboxes` + `/api/sandboxes/:id` (this node's
 containers — the list is `{id, label}`, the single get adds `state`, `ref`,
-`sha` and `ports`; a headless node has no sandbox manager, so both 501 and the
-resource is absent from `/api/resources`), `GET /api/agents` +
+`sha` and `ports`; a node running inside a sandbox box has no sandbox manager,
+so both 501 and the resource is absent from `/api/resources`), `GET /api/agents` +
 `/api/agents/:name` (the subagent library — the list is the per-agent metadata,
 the single get is `{name, content}`), `GET /api/worktrees?repo=` (the git
 worktrees of the repo containing an ABSOLUTE `repo` path — 200
@@ -69,7 +70,7 @@ anchor its worktree paths share),
 `GET /api/peer/hello` (identity + caps + `dmOrigins` +
 `srcDir` + `webHost` + `wirescope`), `GET /api/sessions/:name/attach` (per-session SSE: b64 scrollback replay
 + telemetry seed), `POST /api/sessions/:name/control|input|resize` (input+resize
-token-gated; resize clamped), `POST /api/sessions/:name/query` (pull-on-demand
+token-gated; out-of-range resize is a 400), `POST /api/sessions/:name/query` (pull-on-demand
 popover data; kind whitelist lives in the injected callback — `files` answers
 `{ok, cwd, files, filed}` where `filed[]` is the seat's spilled intent bodies,
 handoffs and inbound message spills, newest first, capped at 50 independently of
@@ -421,7 +422,8 @@ Self-contained island; peer terminals live in the core sessions Map keyed
   slamming a modal over your work.
 - Back-exports to core — the `initPeersUi` return, which is the list:
   `typeToTakeControl`, `renderPeerBar`, `forgetControlMirror`,
-  `openPeerSession`, `peerDisplayHost`, `peerHideFromList`,
+  `openPeerSession`, `openPeerSessionDialog`, `closePeerSessionDialog`,
+  `peerDisplayHost`, `peerHideFromList`,
   `ensurePeerSessionVisible`, `openPeerArgs`.
 
 ## 7. Deploy wizard (peer-deploy.js + ssh-run.js)
@@ -439,7 +441,7 @@ spin up an ad-hoc local fix agent briefed with the log.
 
 ## 8. Headless nodes (peering/)
 
-Stock Clodex under Xvfb as a systemd `--user` unit (`Restart=always`,
+The headless engine (`node headless-main.js`, no Electron or Xvfb) as a systemd `--user` unit (`Restart=always`,
 `TimeoutStopSec=15` to release the single-instance lock). The seed script
 handles bulk session add/remove via service restart; day-to-day
 create/kill/restart now ride the `create` cap over the wire.
@@ -457,7 +459,8 @@ anything else leaves it running.
 
 ## Invariants (do not break)
 
-- 127.0.0.1 bind + tunnel-is-auth; only input/resize token-gated.
+- 127.0.0.1 default bind + tunnel-is-auth, `_authGate` on the whole surface;
+  only input/resize control-token-gated.
 - Replay = best-effort scrollback; reset before apply; re-replay on
   reconnect.
 - Split request/SSE socket pools (regression test pins this).

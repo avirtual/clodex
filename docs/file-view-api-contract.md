@@ -27,7 +27,10 @@ the app side in ClodexKit. Both sides build against this file.
   - `~/.clodex/messages/<seat>/msg-<pid>-<n>.txt` — inbound message bodies over
     500 bytes (`engine.js` `spillToFile`, `MSG_SPILL_THRESHOLD`), shown as
     `[agent:from X] Message (N bytes) attached: @<abs path>`; also rejected and
-    denied intent bodies (`spillToFile('<verb> (rejected)', …)`).
+    denied intent bodies (`spillToFile('<verb> (rejected)', …)`). Each also
+    gets a durable copy under `~/.clodex/spill/<seat>/messages/`
+    (`durableMessageCopyOf`). Images sent to a seat land in the same
+    `messages/<seat>/` directory (`_writeImageFiles`).
 - The global SSE `/api/events` already carries `dm-mail {origin}` as a payload-free
   refetch signal (`remote.js` `notifyDmMail`). The iOS app holds exactly one
   stream — this one — and polls the transcript; it never holds a per-session
@@ -51,11 +54,12 @@ POST /api/sessions/:name/query   {kind: "files"}
   against transcript text to make rows tappable; a mismatch is a silently dead
   row, so this is the invariant the whole feature rests on.
 - `kind` — `"intent"` (wire-tee spill), `"handoff"` (context handoff),
-  `"message"` (inbound message spill, incl. rejected/denied bodies).
+  `"message"` (inbound message spill, incl. rejected/denied bodies, and images
+  sent to the seat).
 - `head` — one line, ≤ 120 UTF-8 BYTES, cut back to a character boundary
   (never a replacement character): the intent head + title for `intent`
   (`[agent:task add hand] Regenerate the append prompt…`), `handoff` for
-  handoffs, `From: <sender>` for messages.
+  handoffs, `From: <sender>` for messages, `Image #<n> (<type>)` for images.
 - `bytes` — body size on disk. `ts` — ms epoch of the filing.
 
 `filed` is newest first, capped at 50 entries INDEPENDENTLY of `files` (one list
@@ -64,8 +68,11 @@ dropped BEST-EFFORT: the drop is a stat at list time, so a file removed between
 the list and the tap answers `gone`, and that is the ordinary path to `gone`,
 not a race the client may ignore. Source: a per-seat in-memory ring appended at each writer (`writeSpill`
 callers via the `wire.on('spill')` listener and `_handoffText`; `spillToFile`
-call sites), seeded on `create()`/resume by listing both directories by mtime so
-a restarted host still lists earlier filings.
+call sites), seeded on `create()`/resume by listing the spill dir, the messages
+dir (each message mapped to its durable copy when that exists) and
+`spill/<seat>/messages/` by mtime so a restarted host still lists earlier
+filings. Seeded spill-dir entries all come back as `kind: "intent"`, handoffs
+included, with the file's first line as `head` (no `[agent:<verb>]` prefix).
 
 ### 2. `filePeek` gains a range and hard error codes
 

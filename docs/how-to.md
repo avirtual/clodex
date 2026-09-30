@@ -60,7 +60,8 @@ When you want an installable artifact from your own tree — an Intel build, a
 patched build, or a bisect:
 
 ```sh
-npm run dist:mac       # electron-builder --mac --arm64 → dist/
+npm run dist:mac                      # electron-builder --mac --arm64 → dist/
+npx electron-builder --mac --x64      # an Intel build → dist/
 ```
 
 Releases on the repo are cut by the maintainer's `scripts/release.sh` (the
@@ -119,8 +120,8 @@ docker run -d --name clodexctl-edge --hostname edge \
 
 The wire port binds loopback only; reach it over a tunnel. Secrets
 (`CLODEX_REMOTE_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`) go in the env-file, never on
-the command line. The one-command form does all of the above, mints the wire
-token and saves a context:
+the command line. The one-command form does all of the above and saves a
+context; it mints no token — the wire token is whatever your env-file sets:
 
 ```sh
 clodexctl deploy node edge --docker [--tag TAG] [--env-file ./auth.env] [--volume V]
@@ -236,7 +237,7 @@ payload as YAML, `-o wide` extra columns, `-o name` one `<singular>/<id>` per
 line:
 
 ```sh
-clodexctl get sessions -o name | xargs -n1 clodexctl logs
+clodexctl get sessions -o name | cut -d/ -f2 | xargs -n1 clodexctl logs
 ```
 
 Per-verb detail, flags and gotchas: `clodexctl help <verb>`.
