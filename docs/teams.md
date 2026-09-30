@@ -23,17 +23,19 @@ From the Teams menu, `Create Team…` writes
 
 ```json
 {
+  "version": 3,
   "lead": "<name>-lead",
   "root": "/absolute/path/to/your/project",
+  "kit": "default",
   "roles": {
-    "lead":     { "prompt": "clodex-team-lead", "template": "clodex-team-lead" },
-    "hand":     { "prompt": "clodex-team-hand", "template": "clodex-team-hand" },
-    "reviewer": { "prompt": "clodex-team-reviewer" }
+    "lead":     { "prompt": "lead", "template": "lead" },
+    "hand":     { "prompt": "hand", "template": "hand", "dispatch": "worktree" },
+    "reviewer": { "prompt": "reviewer", "template": "reviewer" }
   }
 }
 ```
 
-That is the whole team. `root` must be absolute — a relative root would resolve
+That is the whole team (each role's `brief` elided). `root` must be absolute — a relative root would resolve
 against whatever directory the app happens to be in. A role carries at most
 `prompt` (which system prompt briefs the seat — or, when the template names one
 of its own, which prompt is appended after the team block; see *How a role finds
@@ -46,7 +48,7 @@ the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead on
-the lead role's template, stock `clodex-team-lead` — the box's default model,
+the lead role's template, stock `clodex-team-lead` — `claude-opus-5-5[1m]`,
 every skill off, `clodex-team` + `clodex-monitor` + `clodex-run-tests` granted,
 `spawn` on and the privileged intents off. A team created before that stem was
 recorded on the role has no `lead.template` line and reaches the same file by
@@ -141,8 +143,8 @@ and the role keeps naming the stem. What fills the rest of the directory is
 A kit is a team directory in miniature, under `~/.clodex/library/kits/<kit>/`:
 `kit.json` (a description and a `roles` map shaped exactly like `team.json`'s),
 plus `templates/`, `prompts/system/`, optionally `prompts/append/` and `exec/`.
-Two ship. `default` builds the team on your own Claude Code — plan mode, skills,
-agents and tools left as you have them. `clodex` is the aggressive ticket-loop
+Two ship. `default` builds the team on your own Claude Code — plugins and
+builtin agents left as you have them, but every skill off and the hand's 36 tools (plan mode among them) off. `clodex` is the aggressive ticket-loop
 profile the stock templates used to impose on every team: 36 tools off, every
 skill off, no plan mode. `[agent:team create <name> root:<abs> kit:<name>]`
 picks one, `kit:?` (or an unknown name) lists what is installed, and an unknown
@@ -270,7 +272,7 @@ The shipped hand template grants all three, because all three work on a fresh
 team: a default that fails on first use teaches an operator to distrust the
 whole grants list.
 
-**What a stock hand is.** `clodex-team-hand` boots the box's default model with
+**What a stock hand is.** `clodex-team-hand` boots `claude-opus-5-5[1m]` with
 **every skill off**, the trimmed tools list, and those three exec grants. It is
 lean on purpose: the first team stood up from the bootstrap skill came up with
 Fable-class hands carrying every installed skill, and was stopped on cost.
@@ -552,8 +554,8 @@ A role's `prompt` names a stem, and a stem resolves in two places: the team's ow
 `~/.clodex/teams/<name>/prompts/system/<stem>.md` first, then the shared library
 at `~/.clodex/library/prompts/system/<stem>.md`. The three stock stems —
 `clodex-team-lead`, `clodex-team-hand`, `clodex-team-reviewer` — ship as library
-files, shared by every team, which is what keeps them receiving fixes rather
-than being forked per project. Which of the two answered is the **team** /
+files, but create and role-add copy a role's prompt into the team, so a new team
+reads its own fork rather than receiving upstream fixes. Which of the two answered is the **team** /
 **library** badge on that role's row in the roles popover. Their names say "clodex" for historical reasons
 only; nothing in their text does.
 
@@ -561,11 +563,9 @@ If you want a divergent prompt for one role on one team, point the role at a new
 stem, or run **Gather** (above) and edit the copy it puts under that team's
 `prompts/system/` — a copy is a fork, and stops receiving upstream fixes until
 you delete it. The recommended change is smaller than either, though: leave the
-stock role prompts in the library, where they keep receiving fixes, and put
+role prompts as shipped and put
 project specifics in the team's own `prompts/append/`. The role
-prompts describe *behaviour*; the append describes *your code*. Keeping that
-seam is what lets a Clodex upgrade improve your team's judgement without
-touching anything you wrote.
+prompts describe *behaviour*; the append describes *your code*.
 
 ## Team sandbox
 
@@ -657,7 +657,7 @@ so you do not have to teach it the vocabulary.
    using `${TEAM_ROOT}` so they travel.
 5. Start the lead seat and open a ticket. `[agent:spawn name:<name>-lead
    cwd:<root>]` with no `template:` boots it on the lead role's template, stock
-   `clodex-team-lead` (the box's default model, every skill off, the team,
+   `clodex-team-lead` (`claude-opus-5-5[1m]`, every skill off, the team,
    monitor and run-tests execs granted, `spawn` on, privileged intents off); set
    `lead.template` in the team editor or pass `template:` for another shape.
 
@@ -670,10 +670,10 @@ An agent can do step 1 instead of you, if you granted it the privileged
 manifest `Create Team…` does. The root must already exist and belong to no other
 team; the lead defaults to `<name>-lead` and names a seat that does not exist yet.
 The manifest it writes is not an empty one: `lead`, `hand` and `reviewer` are
-already in it, all three standing. Give the intent a body — the kickstart brief,
-closed by `[agent:end]` — and the hand is instead born per-ticket, with the brief
+already in it, the hand per-ticket (`dispatch: worktree`). Give the intent a body — the kickstart brief,
+closed by `[agent:end]` — and the brief is
 saved as `prompts/append/team-project.md`, the stem the stock lead and hand
-templates compose at boot: step 2 and the `role-set` below are then already done,
+templates compose at boot: step 2 is then already done,
 and a brief that cannot be saved leaves no team behind. With a brief the create
 also spawns the lead itself, in the root, on `clodex-team-lead`, needing no
 `spawn` grant of its own, and tells it on its first turn whether the root is new
@@ -687,11 +687,10 @@ same team and the same brief file, but the opener tells the lead the brief is a
 starting point, and its first turn interviews the operator and rewrites
 `team-project.md` with the answers before it files anything. `mode:kickstart` is
 the default and is what an omitted `mode:` means; any other value is refused
-before anything is written. After a BODYLESS create two steps are still yours:
+before anything is written. After a BODYLESS create one step is still yours:
 spawn the lead with its cwd at the root — after the create, never
 before, because a seat resolves its team from its cwd at boot, and one spawned
-first boots teamless and misses the roster message a team seat gets at boot — and
-make the hand per-ticket with `[agent:team role-set hand dispatch:worktree]`. `role-add` is for roles that do
+first boots teamless and misses the roster message a team seat gets at boot. `role-add` is for roles that do
 not exist yet; on one that already does it refuses.
 `[agent:team set-lead <seat>]` re-points the lead afterwards, and only the current
 lead may do it.
@@ -726,7 +725,7 @@ role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
 `--model` and points the role at it — and since create and role-add already gave
 the role the team's own copy, that base is normally the team's own file rather
 than the library one, so a model change keeps whatever else was edited into it.
-The aliases resolve to the 1M-context variants, and a bracketed id still cannot
+The aliases other than `haiku` resolve to the 1M-context variants, and a bracketed id still cannot
 be written in this kv (the arg list ends at the first `]`), so use the alias —
 `opus`, `sonnet`, `haiku`, `fable`.
 
