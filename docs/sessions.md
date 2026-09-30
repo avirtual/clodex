@@ -26,12 +26,12 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   channel in order: the per-seat IPC prompt (`buildIpcPrompt(intents)`) →
   library append bodies → legacy inline →
   any user-passed append flags; the blob is written to
-  `{name}-append-prompt.md` and rides `--append-system-prompt-file`
+  `run/<name>/append-prompt.md` and rides `--append-system-prompt-file`
   (SETTLED: the IPC protocol always travels this channel). A library system
   prompt is pointed at directly via `--system-prompt-file`, never merged.
   Wire registration happens BEFORE the pty spawn (`_ensureWire`); failure
   falls back silently to the jsonl path. `setupClaudeHook` →
-  `--settings {name}-hook.json`; `--add-dir` for the messages dir;
+  `--settings run/<name>/hook.json`; `--add-dir` for the messages dir;
   TWO `--plugin-dir`s, each a session-only scaffold under its own root — the
   agent library (`agent-plugins/`, manifest `clodex-agents`) and the injected
   skills (`skill-plugins/`, manifest `clodex-skills`). The manifest names must
@@ -55,7 +55,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   spawn intent — the same trust the prompt asks for.
 - **codex** — `mergeCodexInstructions` merges system + the per-seat IPC prompt
   (`buildIpcPrompt(intents)`) + appends
-  into `{name}-instructions.md` (`model_instructions_file`); shared
+  into `run/<name>/instructions.md` (`model_instructions_file`); shared
   `codex-session-hook.sh` routed by `WB_WRAP_NAME`; resume/fork is a
   *subcommand* placed after top-level flags (clap). Proxy rides
   `openai_base_url`. Selected skills arrive as a `# Clodex skills` catalog
@@ -259,7 +259,7 @@ to respawn the session later (bash included — restored as a fresh shell).
 `clodex-paths.js` (`pathFor` / `runDirFor`) is the single source of that
 grammar; every mint site routes through it, and cleanup drops the whole
 `run/<name>/` dir. SHARED state stays at the `~/.clodex` root and never moves:
-`messages/`, `pending/<name>/` (parked DMs — only the drain SCRIPT relocates,
+`pending/<name>/` (parked DMs — only the drain SCRIPT relocates,
 its body still targets the shared dir), `agents/`, `skills/`, `library/`,
 `skill-plugins/<name>/`, `clodex.log`, `wire-shadow.jsonl`, and the one shared
 `codex-session-hook.sh`. Two generated scripts resolve the name at runtime and
@@ -357,7 +357,7 @@ Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
   identity → `onSessionId`, compact rendezvous, recovery replay). No
   steady-state jsonl parsing.
 - **jsonl** (Codex, wire-failed Claude): `JsonlWatcher` polls the
-  `{name}.jsonl` symlink every `POLL_INTERVAL` (250ms). On target change it
+  `run/<name>/transcript.jsonl` symlink every `POLL_INTERVAL` (250ms). On target change it
   reopens and **starts at EOF** — replaying history would re-fire past
   intents. It buffers assistant text by requestId and flushes on a new
   requestId / non-assistant entry / `TURN_COMPLETE_TIMEOUT` (1s) silence.
@@ -373,9 +373,9 @@ Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
 Callbacks: `onText` → intent scan · `onSessionId` →
 `persistence.setSessionId` (+ sessionIds history) · `onActivity` → UI dot ·
 `onCompactSummary` → `_fireCompactContinuation` · `onFileTouches` → 📄
-telemetry. Claude side-channels ride `fs.watch` on the registry dir:
-`{name}-ctx` (statusline-written context numbers → `session-ctx` + ctxwarn
-reminder file) and `{name}-attn.jsonl` (Notification hook → attention state).
+telemetry. Claude side-channels ride `fs.watch` on the `run/<name>/` dir:
+`ctx` (statusline-written context numbers → `session-ctx` + ctxwarn
+reminder file) and `attn.jsonl` (Notification hook → attention state).
 
 A `[agent:context clear]` on a claude seat whose prompt delta is pending
 (`_promptDeltaPending`: the freshly assembled realIpc differs from the running
@@ -826,9 +826,10 @@ refresh env would defeat the point of a move that costs no context.
 restart endpoint. `opts.fresh` drops the resumeId (required for skill roster
 changes, which are frozen on resume).
 
-Restore (`app:restore-sessions`) has three branches: an entry with `archivedAt`
+Restore (`app:restore-sessions`) has four branches: an entry with `archivedAt`
 comes back `{archived:true}` and is **never spawned** (rendered as a dimmed
-archived row); already-running sessions flush their `pendingOutput` as replay
+archived row); a non-live entry with `exitedAt` comes back `{exited:true}`, also
+never spawned; already-running sessions flush their `pendingOutput` as replay
 (no respawn); cold entries spawn with `--resume`. Failures do **not** remove
 persistence — the entry comes back `{failed:true}` for the renderer's ghost-tab
 retry/forget UI (silently wiping it caused the pre-v0.5.3 "upgrade kills my
@@ -939,12 +940,14 @@ startup discovery, and the launch that shows it skips discovery, so a first run
 raises one modal rather than two. **Run setup again…** (Settings ▸ Sessions)
 reopens it over Preferences at any time, rewriting the marker.
 
-**templates.json** stores reusable session configs. Base fields
+**Templates** (`library/templates/<name>.json`, one file each; templates.json
+is migrated into them) store reusable session configs. Base fields
 (`id/name/type/cwd/extraArgs`) plus the config subset snapshotted by the
 session context menu's **Export as Template…** (agent sessions only):
 `proxy/agents/denyBuiltins/disabledTools/disabledSkills/injectSkills` and the
 opt-out fields `stripLevel/autoCompact` (present only when non-default). The
-store is schemaless (whole object saved verbatim), so the fields are additive
+store is schemaless (`save` keeps the prior file's non-`EDITOR_OWNED` keys and
+writes the rest minus `id`), so the fields are additive
 — an old `{id,name,type,cwd,extraArgs}` template loads fine (missing config =
 clodex defaults at spawn). A template carries NO per-session identity
 (`proxyAgent`, minted fresh per spawn) and NO prompt refs (clodex defaults).
