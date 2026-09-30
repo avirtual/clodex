@@ -87,3 +87,24 @@ test('setupClaudeHook: a wire-routed seat with no proxyBase gets the headless st
   assert.ok(wired.includes('headless: side-channel only'), 'wire-only seat renders headless');
   assert.ok(!plain.includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
 });
+
+test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headless after a settings save', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { createEngine } = require('../engine');
+  const { pathFor, runDirFor } = require('../clodex-paths');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const tmp = mkTmpRoot('clodex-hooks-');
+  const home = path.join(tmp, 'clodex-home');
+  const userData = path.join(tmp, 'userdata');
+  fs.mkdirSync(userData, { recursive: true });
+  const eng = createEngine({ userDataPath: userData, seams: { registryDir: home }, log: { info() {}, warn() {}, error() {} } });
+  fs.mkdirSync(runDirFor(home, 'w'), { recursive: true });
+  fs.mkdirSync(runDirFor(home, 'p'), { recursive: true });
+  eng.rebuildAllStatusScripts({ sessions: new Map([
+    ['w', { agentType: 'claude', wireRouted: true, proxyBase: null }],
+    ['p', { agentType: 'claude', wireRouted: false, proxyBase: null }],
+  ]) });
+  assert.ok(fs.readFileSync(pathFor(home, 'w', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'wire-only seat stays headless');
+  assert.ok(!fs.readFileSync(pathFor(home, 'p', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
+});

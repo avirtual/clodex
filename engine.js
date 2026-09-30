@@ -742,7 +742,7 @@ function rebuildAllStatusScripts(manager) {
   for (const [name, s] of manager.sessions) {
     if (s.agentType !== 'claude') continue;
     const p = pathFor(REGISTRY_DIR, name, 'statusline');
-    try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!s.proxyBase, uiSettings, REGISTRY_DIR), { mode: 0o700 }); } catch {}
+    try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!(s.wireRouted || s.proxyBase), uiSettings, REGISTRY_DIR), { mode: 0o700 }); } catch {}
   }
 }
 
