@@ -446,6 +446,7 @@ function imageNode(doc, image) {
 function appendPrompt(doc, text, rec, ctx) {
   const byN = new Map((rec.pastes || []).map((p) => [p.n, p]));
   const imageByN = new Map((rec.images || []).map((i) => [i.n, i]));
+  const drawn = new Set();
   let at = 0;
   for (const m of rec.text.matchAll(PROMPT_MARK_RE)) {
     const end = m.index + m[0].length;
@@ -454,6 +455,7 @@ function appendPrompt(doc, text, rec, ctx) {
       if (!image) continue;
       if (m.index > at) appendProse(doc, text, rec.text.slice(at, m.index), ctx);
       text.appendChild(imageNode(doc, image));
+      drawn.add(image.n);
       at = end;
       continue;
     }
@@ -467,6 +469,9 @@ function appendPrompt(doc, text, rec, ctx) {
     at = end;
   }
   if (at < rec.text.length || !at) appendProse(doc, text, rec.text.slice(at), ctx);
+  for (const image of rec.images || []) {
+    if (!drawn.has(image.n)) text.appendChild(imageNode(doc, image));
+  }
 }
 
 function cutMark(doc, text, rec) {

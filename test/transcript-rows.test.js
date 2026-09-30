@@ -584,6 +584,27 @@ test('an image marker with no matching image stays literal text', () => {
   assert.strictEqual(findCls(head, 'tr-image-thumb').length, 1);
 });
 
+test('images with no marker draw after the prose, in record order', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: 'look', images: [{ n: 1, mediaType: 'image/png', data: 'AAAA' }, { n: 2, mediaType: 'image/png', data: 'BBBB' }] }]);
+  const head = findCls(m.pane.childNodes[0].childNodes[0], 'tr-head-text')[0];
+  const thumbs = findCls(head, 'tr-image-thumb');
+  assert.deepStrictEqual(thumbs.map((t) => t.alt), ['Image #1', 'Image #2']);
+  assert.deepStrictEqual(head.childNodes.slice(-2), thumbs);
+  assert.strictEqual(head.textContent, 'look');
+});
+
+test('a marked image draws at its marker and an unmarked one draws last', () => {
+  const m = mount();
+  m.render([{ ...prompt, text: '[Image #2] see this', images: [{ n: 1, mediaType: 'image/png', data: 'AAAA' }, { n: 2, mediaType: 'image/png', data: 'BBBB' }] }]);
+  const head = findCls(m.pane.childNodes[0].childNodes[0], 'tr-head-text')[0];
+  const thumbs = findCls(head, 'tr-image-thumb');
+  assert.deepStrictEqual(thumbs.map((t) => t.alt), ['Image #2', 'Image #1']);
+  assert.strictEqual(head.childNodes[0], thumbs[0]);
+  assert.strictEqual(head.childNodes[head.childNodes.length - 1], thumbs[1]);
+  assert.strictEqual(head.textContent, ' see this');
+});
+
 test('the prompt row signature carries no image data, and a change in image size rebuilds the row', () => {
   const m = mount();
   const data = 'Q'.repeat(64);

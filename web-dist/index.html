@@ -9484,6 +9484,9 @@ button.seat-status-chip {
   border-radius: 4px;
   overflow: hidden;
 }
+.seat-attachment-pending {
+  opacity: 0.5;
+}
 .seat-attachment img {
   width: 100%;
   height: 100%;
@@ -31831,27 +31834,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return map[n] ? `Image #${n}: ${map[n]} ` : "";
         });
       }
-      function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, writePty }) {
+      function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
         return async (e) => {
           const items = e.clipboardData && e.clipboardData.items;
           if (pasteKind(items) !== "image") return;
           e.preventDefault();
           const web = isWeb();
           const images = await Promise.resolve().then(() => readImages(items)).catch(() => []);
-          let paths = [null];
-          if (web) {
-            const r = images.length ? await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) })) : { ok: false, error: "No readable image on the clipboard." };
-            if (!r || !r.ok) {
-              toast(String(r && r.error || "Image upload failed."));
-              return;
-            }
-            paths = r.paths;
-          }
-          append(paths.map((p, i) => {
+          if (!web) {
             const n = nextImage();
-            return { n, chip: imageChip(n), path: p, image: images[i] || null };
-          }));
-          if (!web) writePty("");
+            append([{ n, chip: imageChip(n), path: null, image: images[0] || null }]);
+            writePty("");
+            return;
+          }
+          if (!images.length) {
+            toast("No readable image on the clipboard.");
+            return;
+          }
+          const added = images.map((image) => {
+            const n = nextImage();
+            return { n, chip: imageChip(n), path: null, image, pending: true };
+          });
+          append(added);
+          const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
+          if (!r || !r.ok) {
+            drop(added.map((a) => a.n));
+            toast(String(r && r.error || "Image upload failed."));
+            return;
+          }
+          attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
         };
       }
       function removeImageChip(text, n) {
@@ -31867,8 +31878,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         el.hidden = items.length === 0;
         for (const it of items) {
           const thumb = doc.createElement("div");
-          thumb.className = "seat-attachment";
-          thumb.title = it.path ? "Remove image" : "Removes the mark; the CLI keeps the pasted image";
+          thumb.className = it.pending ? "seat-attachment seat-attachment-pending" : "seat-attachment";
+          thumb.title = it.pending ? "Uploading\u2026" : it.path ? "Remove image" : "Removes the mark; the CLI keeps the pasted image";
           const pic = doc.createElement("img");
           pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
           pic.alt = imageChip(it.n).trim();
@@ -32930,6 +32941,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function appendPrompt(doc, text, rec, ctx) {
         const byN = new Map((rec.pastes || []).map((p) => [p.n, p]));
         const imageByN = new Map((rec.images || []).map((i) => [i.n, i]));
+        const drawn = /* @__PURE__ */ new Set();
         let at = 0;
         for (const m of rec.text.matchAll(PROMPT_MARK_RE)) {
           const end = m.index + m[0].length;
@@ -32938,6 +32950,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (!image) continue;
             if (m.index > at) appendProse(doc, text, rec.text.slice(at, m.index), ctx);
             text.appendChild(imageNode(doc, image));
+            drawn.add(image.n);
             at = end;
             continue;
           }
@@ -32951,6 +32964,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           at = end;
         }
         if (at < rec.text.length || !at) appendProse(doc, text, rec.text.slice(at), ctx);
+        for (const image of rec.images || []) {
+          if (!drawn.has(image.n)) text.appendChild(imageNode(doc, image));
+        }
       }
       function cutMark(doc, text, rec) {
         if (rec.truncated) text.appendChild(el(doc, "span", "tr-cut", " \u2026 cut at 4 KB"));
@@ -50662,14 +50678,33 @@ ${detail}` });
               return pastedImages;
             },
             append: (added) => {
-              for (const { n, chip, path, image } of added) {
+              for (const { n, chip, path, image, pending } of added) {
                 composerEl.value += chip;
                 pastedImagePaths[n] = path || null;
-                if (image) pastedThumbs.push({ n, image, path });
+                if (image) pastedThumbs.push({ n, image, path, pending });
               }
               if (menuMirror.on()) syncMenuMirror();
               const end = composerEl.value.length;
               composerEl.setSelectionRange(end, end);
+              composerKit.fit();
+              syncImageStrip();
+            },
+            attached: (done) => {
+              for (const { n, path, image } of done) {
+                const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+                if (!thumb) continue;
+                thumb.path = path;
+                thumb.pending = false;
+                pastedImagePaths[n] = path;
+              }
+              syncImageStrip();
+            },
+            drop: (ns) => {
+              for (const n of ns) {
+                composerEl.value = removeImageChip(composerEl.value, n);
+                delete pastedImagePaths[n];
+              }
+              if (menuMirror.on()) syncMenuMirror();
               composerKit.fit();
               syncImageStrip();
             },

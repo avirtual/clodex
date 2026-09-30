@@ -27,27 +27,35 @@ function expandImageChips(text, paths) {
   });
 }
 
-function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, writePty }) {
+function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
   return async (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     if (pasteKind(items) !== 'image') return;
     e.preventDefault();
     const web = isWeb();
     const images = await Promise.resolve().then(() => readImages(items)).catch(() => []);
-    let paths = [null];
-    if (web) {
-      const r = images.length ? await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) })) : { ok: false, error: 'No readable image on the clipboard.' };
-      if (!r || !r.ok) {
-        toast(String((r && r.error) || 'Image upload failed.'));
-        return;
-      }
-      paths = r.paths;
-    }
-    append(paths.map((p, i) => {
+    if (!web) {
       const n = nextImage();
-      return { n, chip: imageChip(n), path: p, image: images[i] || null };
-    }));
-    if (!web) writePty('\x16');
+      append([{ n, chip: imageChip(n), path: null, image: images[0] || null }]);
+      writePty('\x16');
+      return;
+    }
+    if (!images.length) {
+      toast('No readable image on the clipboard.');
+      return;
+    }
+    const added = images.map((image) => {
+      const n = nextImage();
+      return { n, chip: imageChip(n), path: null, image, pending: true };
+    });
+    append(added);
+    const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+    if (!r || !r.ok) {
+      drop(added.map((a) => a.n));
+      toast(String((r && r.error) || 'Image upload failed.'));
+      return;
+    }
+    attached(added.map((a, i) => ({ ...a, path: (r.paths && r.paths[i]) || null, pending: false })));
   };
 }
 
@@ -66,8 +74,8 @@ function renderImageStrip(el, items, onRemove) {
   el.hidden = items.length === 0;
   for (const it of items) {
     const thumb = doc.createElement('div');
-    thumb.className = 'seat-attachment';
-    thumb.title = it.path ? 'Remove image' : 'Removes the mark; the CLI keeps the pasted image';
+    thumb.className = it.pending ? 'seat-attachment seat-attachment-pending' : 'seat-attachment';
+    thumb.title = it.pending ? 'Uploading…' : it.path ? 'Remove image' : 'Removes the mark; the CLI keeps the pasted image';
     const pic = doc.createElement('img');
     pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
     pic.alt = imageChip(it.n).trim();

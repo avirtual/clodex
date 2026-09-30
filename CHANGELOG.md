@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A pasted image shows as a thumbnail above the seat's composer, with a × to drop it, so it is clear one is already attached before you send.
+- In the browser a pasted image shows its thumbnail immediately, dimmed until the upload lands; the desktop Transcript pane draws images that arrived without an [Image #n] mark.
 
 ## 5.98.0 — 2026-09-30
 

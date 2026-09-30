@@ -2421,14 +2421,33 @@ function createTerminal(name, peer = null) {
       toast: (message) => showToast(message, { kind: 'error', name }),
       nextImage: () => { pastedImages += 1; return pastedImages; },
       append: (added) => {
-        for (const { n, chip, path, image } of added) {
+        for (const { n, chip, path, image, pending } of added) {
           composerEl.value += chip;
           pastedImagePaths[n] = path || null;
-          if (image) pastedThumbs.push({ n, image, path });
+          if (image) pastedThumbs.push({ n, image, path, pending });
         }
         if (menuMirror.on()) syncMenuMirror();
         const end = composerEl.value.length;
         composerEl.setSelectionRange(end, end);
+        composerKit.fit();
+        syncImageStrip();
+      },
+      attached: (done) => {
+        for (const { n, path, image } of done) {
+          const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+          if (!thumb) continue;
+          thumb.path = path;
+          thumb.pending = false;
+          pastedImagePaths[n] = path;
+        }
+        syncImageStrip();
+      },
+      drop: (ns) => {
+        for (const n of ns) {
+          composerEl.value = removeImageChip(composerEl.value, n);
+          delete pastedImagePaths[n];
+        }
+        if (menuMirror.on()) syncMenuMirror();
         composerKit.fit();
         syncImageStrip();
       },
