@@ -1575,9 +1575,13 @@ test('remote-wiring send threads dm images onto _deliverMessage, and a text-only
   const png = { mediaType: 'image/png', data: 'UE5H' };
   assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: true });
   assert.deepStrictEqual(opts.send('carol', 'plain', []), { ok: true });
+  assert.deepStrictEqual(opts.send('carol', 'look', [png], 'ios'), { ok: true });
+  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'ios'), { ok: true });
   assert.deepStrictEqual(delivered, [
     ['carol', 'user', 'look', 'dm', '', null, null, [png]],
     ['carol', 'user', 'plain', 'dm'],
+    ['carol', 'user', 'look', 'dm', '(via ios)', null, null, [png]],
+    ['carol', 'user', 'plain', 'dm', '(via ios)'],
   ]);
   deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
   assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });

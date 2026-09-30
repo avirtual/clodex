@@ -487,7 +487,7 @@ function createRemoteWiring(deps) {
           const tag = client ? `(via ${client})` : '';
           try {
             if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, null, null, images);
-            else manager._deliverMessage(name, 'user', text, 'dm', tag);
+            else manager._deliverMessage(name, 'user', text, 'dm', ...(tag ? [tag] : []));
           } catch (e) {
             log.error('remote', `dm to ${name} failed: ${e.message}`);
             return { ok: false, code: 500, error: `delivery failed: ${e.message}` };
