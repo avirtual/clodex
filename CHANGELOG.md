@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript pane, Conversation mode: unfolding a turn driven by a reminder, ticket notice or report now shows that message open; it no longer sits behind a second identical fold.
+
 ## 5.94.0 — 2026-09-29
 
 - Transcript pane, Conversation mode: when a turn driven by a ticket notice, report or reminder folds to one line, the agent's closing words (or their filed-prose link) now show below the fold at turn level instead of hidden inside it under the ticket.

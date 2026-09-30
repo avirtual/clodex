@@ -1282,7 +1282,7 @@ test('folds: a machine-driven turn in Conversation mode shows one fold head with
   head.listeners.click();
   const open = turnOf(m, 'i1');
   assert.ok(!/\btr-turn-folded\b/.test(open.className));
-  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-footer', END]);
+  assert.deepStrictEqual(shown(open), ['tr-row tr-turn-fold', 'tr-box tr-ticket', 'tr-row tr-footer', END]);
   assert.strictEqual(open.childNodes[0].childNodes[0].textContent, '▾');
 });
 
@@ -1350,8 +1350,38 @@ test('folds: Internals mode has no fold head, and switching back re-folds a turn
   turnOf(m, 'i1').childNodes[0].listeners.click();
   m.rows.setMode('internals');
   m.rows.setMode('conversation');
-  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-box-folded tr-ticket', 'tr-row tr-footer', END]);
+  assert.deepStrictEqual(shown(turnOf(m, 'i1')), ['tr-row tr-turn-fold', 'tr-box tr-ticket', 'tr-row tr-footer', END]);
   assert.strictEqual(turnOf(m, 'i1').childNodes[0].getAttribute('aria-expanded'), 'true');
+});
+
+const unfoldDriver = (driver, driverId) => {
+  const m = mount({ mode: 'conversation' });
+  m.render([driver, call('t1', 'Bash', 'git log'), inb('x1', 1, 'reminder', 'side note line one\nside note line two\nside note line three'), talk('a1', 1, 'noted'), ended('e1', 1, 15000)]);
+  const turn = turnOf(m, driverId);
+  assert.ok(/\btr-turn-folded\b/.test(turn.className), 'ENTER: the machine-driven turn folds');
+  turn.childNodes[0].listeners.click();
+  const box = (id) => turnOf(m, driverId).childNodes.find((n) => n.dataset && n.dataset.id === id);
+  return { m, box };
+};
+const folded = (n) => /\btr-box-folded\b/.test(n.className);
+
+test('folds: unfolding a reminder-driven turn shows the reminder box open, a later inbound box stays folded, and a click on the reminder head folds it again', () => {
+  const { box } = unfoldDriver(inb('r1', 1, 'reminder', 'continue: t9 reminder driver\nstep two of the reminder\nstep three of the reminder'), 'r1');
+  assert.strictEqual(folded(box('r1')), false);
+  assert.strictEqual(findCls(box('r1'), 'tr-box-chevron')[0].textContent, '▾');
+  assert.strictEqual(folded(box('x1')), true);
+  findCls(box('r1'), 'tr-box-head')[0].listeners.click();
+  assert.strictEqual(folded(box('r1')), true);
+  assert.strictEqual(findCls(box('r1'), 'tr-box-chevron')[0].textContent, '▸');
+});
+
+test('folds: unfolding a ticket-notice-driven turn shows the ticket box open, a later inbound box stays folded, and a click on the ticket head folds it again', () => {
+  const { box } = unfoldDriver(inb('n1', 1, 'ticket-loop', '[ticket t1443 ACCEPT] ticket notice driver\nmerged as abc'), 'n1');
+  assert.ok(/\btr-ticket\b/.test(box('n1').className), 'ENTER: the driver renders as a ticket box');
+  assert.strictEqual(folded(box('n1')), false);
+  assert.strictEqual(folded(box('x1')), true);
+  findCls(box('n1'), 'tr-box-head')[0].listeners.click();
+  assert.strictEqual(folded(box('n1')), true);
 });
 
 test('folds: an opened fold in Conversation hides its tool block; Internals and the run expander show it', () => {

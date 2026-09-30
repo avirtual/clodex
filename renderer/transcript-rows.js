@@ -603,9 +603,9 @@ function selectedText(doc) {
   return sel && !sel.isCollapsed ? String(sel) : '';
 }
 
-function wireHead(doc, head, box, chevron, opened, id) {
+function wireHead(doc, head, box, chevron, opened, id, lead = false) {
   const paint = () => {
-    const open = opened.has(id);
+    const open = opened.has(id) !== lead;
     toggleClass(box, 'tr-box-folded', !open);
     chevron.textContent = open ? '▾' : '▸';
   };
@@ -621,13 +621,13 @@ function wireHead(doc, head, box, chevron, opened, id) {
   paint();
 }
 
-function internalBox(doc, rec, row, opened, att, opens) {
+function internalBox(doc, rec, row, opened, att, opens, lead) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
   if (opens) {
     const head = boxHead(doc, rec, att);
     const chevron = head.childNodes[head.childNodes.length - 1];
-    wireHead(doc, head, box, chevron, opened, rec.id);
+    wireHead(doc, head, box, chevron, opened, rec.id, lead);
     box.appendChild(head);
   }
   const body = el(doc, 'div', 'tr-box-body');
@@ -659,7 +659,7 @@ function boxedView(rec) {
   return isLong(rec.text) && restText(rec.text) ? { ...rec, text: restText(rec.text) } : null;
 }
 
-function ticketBox(doc, rec, row, opened, att, ctx) {
+function ticketBox(doc, rec, row, opened, att, ctx, lead) {
   const box = el(doc, 'div', 'tr-box');
   box.dataset.id = rec.id;
   const { chip, message } = ticketParts(rec);
@@ -675,7 +675,7 @@ function ticketBox(doc, rec, row, opened, att, ctx) {
   if (opens) {
     const chevron = el(doc, 'span', 'tr-box-chevron');
     head.appendChild(chevron);
-    wireHead(doc, head, box, chevron, opened, rec.id);
+    wireHead(doc, head, box, chevron, opened, rec.id, lead);
     const body = el(doc, 'div', 'tr-box-body');
     body.appendChild(row);
     box.appendChild(body);
@@ -947,6 +947,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
+  const shut = new Set();
   deps.opened = opened;
   const openRuns = new Set();
   const openTurns = new Set();
@@ -1094,7 +1095,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     return { key: 'footer', sig: JSON.stringify(stats), build: () => buildFooter(doc, stats, deps) };
   }
 
-  function rowItems(records, attached, open, tail, live, m, hideTools, end) {
+  function rowItems(records, attached, open, tail, live, m, hideTools, end, driver) {
     const items = [];
     for (const run of toolRuns(records)) {
       if (run.tools) {
@@ -1110,14 +1111,16 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       const after = (c) => toggleClass(c.el, 'tr-hidden', hidden);
       if (isInternalRow(r)) {
         live.add(r.id);
+        const lead = r === driver;
+        const set = lead ? shut : opened;
         items.push({
           key: r.id,
-          sig: recSig(r) + extra,
+          sig: recSig(r) + extra + (lead ? '|lead' : ''),
           build: () => {
             const view = r.kind === 'inbound' || r.kind === 'reply' ? boxedView(r) : null;
             const row = buildRow(doc, view || r, deps, att, Boolean(view)) || el(doc, 'div', 'tr-row');
-            if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, opened, att, deps);
-            return internalBox(doc, r, row, opened, att, r.kind === 'inbound' || r.kind === 'reply' ? Boolean(view) : isLong(r.text));
+            if (r.ticket && (r.kind === 'inbound' || r.kind === 'reply')) return ticketBox(doc, r, row, set, att, deps, lead);
+            return internalBox(doc, r, row, set, att, r.kind === 'inbound' || r.kind === 'reply' ? Boolean(view) : isLong(r.text), lead);
           },
           after,
         });
@@ -1186,6 +1189,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         openRuns.clear();
         openTurns.clear();
         opened.clear();
+        shut.clear();
       }
       lastSource = source;
     }
@@ -1217,7 +1221,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const m = unfolded ? 'internals' : mode;
           const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
           const end = folds ? turnEndProse(t.records) : null;
-          const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end);
+          const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end, unfolded ? turnDriver(t.records) : null);
           reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : []), ...(end ? [endProseItem(end)] : [])] : rows);
           toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
           toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
@@ -1228,6 +1232,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     reconcile(paneEl, turnCache, items, deps.lead);
     for (const r of list) for (const seg of r.segments || []) if (seg.spill && seg.spill.path) live.add(`spill:${seg.spill.path}`);
     for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
+    for (const k of [...shut]) if (!live.has(k)) shut.delete(k);
     if (working) paintWorking();
   }
 
