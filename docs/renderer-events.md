@@ -38,12 +38,15 @@ the renderer through one of four paths:
 | **D. desktop-shell-only** | native-menu / app-lifecycle `win.webContents.send(ch, …)` **outside** A–C | **not served** — the browser's menu is in-page DOM; designated, not routed |
 
 `_sendToSession` and `_broadcast` are the two primary interception points; a web
-host subscribes there. Two in-engine session-scoped emits resolve a handle from
-the same map directly rather than via `_sendToSession` — still the same map,
-still no new seam. `session-file-view` does it because it needs `.show()` +
-`.focus()` + `.send()` on one handle; the workspace-move pair does it because
+host subscribes there. Some in-engine emits resolve a handle from the same map
+directly rather than via `_sendToSession` — still the same map, still no new
+seam. `session-file-view` does it because it needs `.show()` + `.focus()` +
+`.send()` on one handle; the workspace-move pair does it because
 `_sendToSession` resolves from the session's workspace id, which a move has
 already rewritten, so the OLD window is exactly the one it can no longer reach.
+The voice engine's `pty-data` and `voice-engine-stopped`, workspace-scoped
+`plugin-event` and the workbench terminal's `wterm:data` also go straight to
+`windowForWorkspace(...)`.
 
 ## A. Session-scoped channels (via `_sendToSession`)
 
@@ -54,8 +57,8 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 
 | Channel | Payload (positional args) | Emitter |
 |---|---|---|
-| `pty-data` | `name, data` (data = raw PTY chunk; base64 over WS) | session-manager (PTY onData) |
-| `session-exit` | `name, exitCode` | session-manager (ptyProc.onExit) |
+| `pty-data` | `name, data` (data = raw PTY chunk; base64 over WS) | session-manager (PTY onData); the voice engine's pty (`VOICE_ENGINE_NAME`) sends it by **direct handle** instead, unbuffered |
+| `session-exit` | `name, exitCode, {expected, signal, agentType, missingTool}` | session-manager (ptyProc.onExit) |
 | `session-activity` | `name, state, turnEnd` (`working`/`idle`; `turnEnd` false for the gap timer's mid-turn idle; on the transcript-watched path it is true only for a flush whose entry is a terminal end-of-turn — Claude `stop_reason: end_turn`, Codex `task_complete` — not for every idle, so an inter-tool flush reports false) | session-manager `_emitActivity` |
 | `session-ctx` | `name, pct, tok, size, cost, modelName` | session-manager (ctx poll) |
 | `transcript-changed` | `name` — the seat's transcript file changed on disk (debounced to at most one per 100 ms per seat); the transcript pane pulls on it instead of waiting for the next terminal write | ipc-handlers `createTranscriptSpikeReader({ onChange })` → `manager._sendToSession` |
@@ -67,10 +70,11 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-attention` | `name, attn` (needs-attention fact object, or null to clear) | session-manager `_setAttention` |
 | `session-compacting` | `name, c, end` — `c` is `{since, trigger}` while the seat compacts, null when it stops; on stop `end` is `{outcome: 'done'\|'valve'\|'exit', ms}` | session-manager `_onCompactStart` / `_onCompactEnd` |
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
-| `session:context-action` | `msg` object `{action, name, …}` (`reattach`/`spawn` path) | session-manager |
+| `session:context-action` | `msg` object `{action, name, …}` (`reattach` on the reattach/spawn path; `retired` with `disposition`) | session-manager, team-tickets |
+| `selection-sent` | `name` — the pending selection list retired on submit | session-manager |
+| `wterm:data` | `data, seat, seq` (workbench terminal output; `seq` absent on the shell-exited line) — **direct handle** on the workspace's window (`windowForWorkspace`) | drawer-pty via engine.js `createDrawerPtys` `send` |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
 | `voice-tap` | `name` (ensure-on request from an outside script for a seat whose voice mode is `tap`; the renderer asks main to start the voice engine's recorder for that seat over `voice:record`) | session-manager `voiceTap` |
-| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`) changed in its record; broadcast to every window | session-manager `setVoice` |
 | `voice-engine-stopped` | `name` — the voice engine's recorder stopped itself on a recording this seat armed, so its recording light goes out — **direct handle** on the arming workspace's window (`windowForWorkspace`) | session-manager `_voiceEngineSelfStopped` |
 
 ## B. Broadcast channels (via `_broadcast`)
@@ -79,8 +83,12 @@ Every live window; a web host fans to every connection.
 
 | Channel | Payload | Emitter(s) |
 |---|---|---|
-| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | ~40 sites: session-manager (intent routing, DM fan-out, remind/exec/notify), remote-wiring (wire relay), wirescope-proxy |
+| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | session-manager (intent routing, DM fan-out, remind/exec/notify), team-tickets, remote-wiring (wire relay), wirescope-proxy (`grep -rc "_broadcast('ipc-message'" --include=*.js .`) |
 | `pending-count` | `msg` object `{name, count}` (parked-DM badge) | session-manager |
+| `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`) changed in its record; broadcast to every window | session-manager `setVoice` |
+| `session-ticket` | `{name, ticket}` (the seat's open ticket id, or null) | team-tickets |
+| `served-terminals` | `seats` (the terminals this box serves to peers) | remote-wiring (`onWtermStreams`) |
+| `plugin-event` | `pluginId, t, payload` — scope `all` broadcasts; a `{session}` scope goes via `_sendToSession`, a `{workspace}` scope by **direct handle** | plugin-host-engine |
 | `notifications:changed` | `payload` `{kind, id?, unread, note?}` — an operator-inbox mutation, from ANY surface including a phone over `/api/inbox`. Distinct from the `ipc-message` `{type:'notify'}` row above, which fires on ARRIVAL only: a note marked read off-box produces no `notify`, and without this the desktop badge keeps counting it | remote-wiring `watchInbox` (the notifications store's `onChange`) |
 | `wire-quota` | `{accounts, latest}` (plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown). `accounts` is one labelled snapshot per account the wire has seen, `default` first; `latest` is the last-seen account's alone | session-manager `_broadcastQuota` / the wire `response` consumer, both via `_quotaPayload` |
 | `session:move-progress` | `{name, phase, bytes, total, files, fileIndex}` — phases `begin` → `transcript` → `seat` → `commit`; `bytes`/`total` are BYTES across the whole shipment (monotonic, so a bar can read `bytes/total` directly), `files`/`fileIndex` the file count and the one in flight | session-manager `moveToPeer` |
@@ -88,6 +96,8 @@ Every live window; a web host fans to every connection.
 | `peer-state` | `id, status` (`{online, label, …}`) | peer-client `_emit` → peer-wiring `emit` |
 | `peer-removed` | `id` | peer-client / peer-wiring |
 | `peer-tunnel` | `id, status` | peer-wiring (TunnelManager onState) |
+| `peer-web-tunnel` | `id, status` | peer-wiring (WebTunnelManager onState) |
+| `peer-shell-allowed` | none | ipc-handlers (`peer:setShellAllowed`) |
 | `peer-activity` | `id, name, state` | peer-client |
 | `peer-replay` | `id, name, info` | peer-client |
 | `peer-data` | `id, name, data` (remote PTY bytes) | peer-client |
@@ -96,8 +106,12 @@ Every live window; a web host fans to every connection.
 | `peer-telemetry` | `id, name, tele` | peer-client |
 | `peer-control` | `id, name, holder` | peer-client |
 | `peer-exit` | `id, name, exitCode` | peer-client |
+| `peer-wterm-replay` | `id, seat, {data, cols, rows}` | peer-client |
+| `peer-wterm-data` | `id, seat, data` | peer-client |
+| `peer-wterm-exit` | `id, seat, exitCode` | peer-client |
+| `peer-wterm-closed` | `id, seat, reason` | peer-client |
 
-All `peer-*` (except `peer-disabled`/`peer-tunnel`) originate in
+All `peer-*` (except `peer-disabled`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
 `peer-client.js` `this._emit(...)`; the PeerManager `emit` closure in
 **peer-wiring.js** is the single funnel that routes them to `manager._broadcast`
 (and fires the menu/ops-log side effects). That closure is the natural single
@@ -136,7 +150,7 @@ a handler reading it works on the web host and reads `undefined` on the desktop.
 | `peer:context-action` | `msg` `{action, id, name}` | ipc-handlers `peer:context-menu` / `peer:header-menu` |
 
 `session:context-action` has two producers — this menu-click path (sender token)
-and the session-manager reattach/spawn path (§A). Both are legitimate; a web
+and the engine path (§A: session-manager and team-tickets). Both are legitimate; a web
 host serves the menu path only if it renders these context menus server-side
 (Phase 3 degrades native menus to in-page menus, so the menu-click path likely
 becomes pure in-renderer and this channel is served only for the §A path).
@@ -161,9 +175,11 @@ them.
   `request-open-team-roles` (`name`), `request-open-team-create`,
   `request-open-help` (`name?`, `slug?` — bare from the Help menu's own item,
   named from its per-page items), `request-toggle-raw-terminal` (View ▸ Raw
-  terminal; the active seat's transcript pane toggles off and on).
-  - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, `:new`, or `null` (Manage).
-  - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, `:new`, or `null`.
+  terminal; the active seat's transcript pane toggles off and on),
+  `request-open-discovery`, `request-open-plugins-dialog`,
+  `request-open-sandbox-dialog`.
+  - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, team `{ team, kind, name }`, `:new`, or `null` (Manage).
+  - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, team `{ team, name }`, `:new`, or `null`.
   - `request-open-agents-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.
   - `request-open-skills-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.
 - **`set-theme`** (`name`) — app-menus theme submenu (the browser sets its own
