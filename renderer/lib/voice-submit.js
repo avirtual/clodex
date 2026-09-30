@@ -121,36 +121,6 @@ function shouldFire({ enabled, attention } = {}) {
   return true;
 }
 
-// The re-arm half. Separate from `shouldFire` because it answers a different
-// question: not "may I submit this draft" but "may I write one character into
-// an empty composer to arm the CLI's recorder".
-//
-// The CLI's tap handler arms only from a keypress — its own
-// "Re-arming focus recording after silence timeout" branch is the first branch
-// INSIDE handleKeyEvent, and the flag it tests is set only by the FOCUS-mode
-// silence timer, never by tap's. So nothing re-arms tap without a byte.
-//
-// EDGE, not level: `from`/`to` are the previous and current activity states,
-// and only thinking -> idle passes. A level test would re-arm on every repeat
-// event for as long as the seat sits idle, writing into a composer the operator
-// may be typing in by hand.
-//
-// `voiceMode === 'tap'` is required here although `shouldFire` deliberately
-// ignores the mode. The asymmetry is real: submit acts on words the operator
-// already committed, whatever typed them, while this arms the CLI's own tap
-// recorder and is meaningless anywhere else. In hold mode a single character
-// cannot reach the auto-repeat threshold, so it would land in the draft as a
-// literal instead.
-function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
-  if (enabled !== true) return false;
-  if (rearm !== true) return false;
-  if (voiceMode !== 'tap') return false;
-  // The same interlock as shouldFire, and it matters MORE here: an agent that
-  // stopped to ask permission is idle, so the dialog opens exactly on this
-  // edge, and any byte written then answers it.
-  if (attention === 'permission') return false;
-  return from === 'thinking' && to === 'idle';
-}
 // The composer with nothing typed in it, matched against the CURSOR ROW
 // truncated at the cursor.
 //
@@ -230,40 +200,6 @@ const COMPOSER_CONTINUATION = /^\u0020\u0020\S/u;
 function composerContinues(row) {
   if (typeof row !== 'string') return false;
   return COMPOSER_CONTINUATION.test(row);
-}
-
-// Does the composer hold a draft, given the buffer rows ENDING at the cursor's
-// row (top→bottom, each read WHOLE)? A long dictated draft — the exact case the
-// protection exists for — puts the cursor on a continuation row that carries no
-// marker, so a single-row read reports nothing and the protection never engages.
-//
-// Reads WHOLE rows rather than truncating at the cursor, and that differs from
-// the submit path deliberately: the submit path looks for the trigger phrase,
-// which ends the utterance and so is never to the right of the caret, and it
-// must not act on stale text ahead of it. This asks only whether a draft
-// EXISTS, and text the operator left to the right of the caret is still his
-// draft.
-//
-// This does NOT re-litigate the walk deleted from the submit path. That walk was
-// rightly deleted: the phrase lands on the LAST visual row, which is the cursor's
-// row, so walking up bought it nothing. The evidence THIS question needs is the
-// marker at the composer's HEAD. Same buffer, opposite end — do not delete this
-// one on the strength of that deletion.
-//
-// Polarity, and it is the whole reason this is a positive rule: fell off the top,
-// no marker found, a non-composer row in the way, or anything unreadable ⇒ FALSE.
-// Main PARKS deliveries on this answer, and a park nothing can release is a seat
-// nobody can reach.
-function composerHasDraftRows(rows) {
-  if (!Array.isArray(rows) || !rows.length) return false;
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const row = rows[i];
-    if (typeof row !== 'string') return false;
-    if (composerHasDraft(row)) return true;   // the head, holding text
-    if (composerIsEmpty(row)) return false;   // the head, holding nothing
-    if (!composerContinues(row)) return false;
-  }
-  return false;
 }
 
 // The CLI's own recording indicator, as it lands in the BUFFER:
@@ -346,30 +282,6 @@ function recorderBlocksRearm(rows) {
   if (!Array.isArray(rows)) return true;
   return rows.some((row) => typeof row === 'string'
     && (RECORDING.test(row) || PROCESSING.test(row)));
-}
-
-// Was this submit VOICE-originated, and so worth marking as transcribed?
-//
-// The trigger phrase submits a TYPED draft ending in those words too, and that
-// message is not dictated. Marking it would teach the reader to distrust the
-// marker, which is worse than no marker: a reader told to treat literals as
-// suspect on text the operator typed exactly will start second-guessing exact
-// words. So this reads POSITIVE EVIDENCE ONLY and its default is NO.
-//
-// Two things stamp evidence — a composition commit, and the CLI's recording
-// indicator on screen — and NEITHER PROVES THIS DRAFT WAS SPOKEN. The indicator
-// says only that the recorder was running, and t571's re-arm lights it by
-// machine at every turn end, so a draft typed into a lit composer would be
-// marked. Typing therefore clears the stamp AND mutes the indicator path until
-// the recorder next rises (the watcher's noteInput); this function only judges
-// what survived that.
-//
-// `windowMs` bounds staleness so evidence cannot outlive the utterance that
-// produced it. Null (never seen) is not stale, it is absent, and both answer no.
-function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
-  if (typeof evidenceAt !== 'number' || !Number.isFinite(evidenceAt)) return false;
-  if (typeof now !== 'number' || typeof windowMs !== 'number') return false;
-  return now - evidenceAt <= windowMs && now >= evidenceAt;
 }
 
 // Whether the screen shows the CLI recording RIGHT NOW. Deliberately NOT widened
@@ -456,13 +368,10 @@ module.exports = {
   findSubmit,
   matchTrigger,
   shouldFire,
-  shouldRearm,
   composerIsEmpty,
   composerHasDraft,
   composerContinues,
-  composerHasDraftRows,
   recorderBlocksRearm,
-  isVoiceOriginated,
   recordingObserved,
   processingObserved,
   resolveTriggerKey,

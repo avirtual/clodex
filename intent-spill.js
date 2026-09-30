@@ -75,7 +75,7 @@ function writeSpill(root, agent, body) {
   try {
     const buf = Buffer.from(body, 'utf8');
     if (buf.length > SPILL_MAX_BYTES) return null;
-    const id = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 16);
+    const id = spillIdOf(body);
     const final = path.join(dir, `${id}.md`);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (fs.existsSync(final)) return id;

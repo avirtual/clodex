@@ -24,7 +24,7 @@ click with. The tunnel ROW cannot answer it: `peers-ui.js`'s `onPeerState` paint
 before `peerList()` seeds the rows, so a row's absence means "not yet" as often
 as "no transport" — and reading a miss as "url peer" gave an ssh peer an enabled
 button pointing at our own loopback. `isForwardablePeer` was that miss-read and
-is gone; `isSshPeer` remains for the deploy flow, which is genuinely ssh-only.
+is gone.
 
 ## transportPhrase
 

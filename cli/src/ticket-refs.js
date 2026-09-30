@@ -356,19 +356,10 @@ function checkTicket(id, text, readFile, opts = {}) {
 // to ignore it.
 const flagged = (findings) => findings.filter((f) => f.status === 'MOVED' || f.status === 'NOT-FOUND');
 
-function formatFinding(f) {
-  // The resolved path is part of the finding, not decoration: a basename match
-  // is a guess, and a reader who cannot see WHICH file was read cannot tell a
-  // real drift from a lookup that picked the wrong one of five `renderer.js`.
-  const via = f.resolvedPath ? ` [${f.resolvedPath}${f.alternatives ? ` +${f.alternatives} other` : ''}]` : '';
-  return `${f.status}: ${f.ticket} ${f.ref}${via} — ${f.detail}`;
-}
-
 module.exports = {
   WINDOW_LINES,
   checkTicket,
   flagged,
-  formatFinding,
   extractRefs,
   extractCandidates,
   resolvePath,

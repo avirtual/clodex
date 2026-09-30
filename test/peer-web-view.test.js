@@ -15,7 +15,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { webViewAffordance, tunnelPhase, isSshPeer } = require('../renderer/lib/peer-web-view');
+const { webViewAffordance, tunnelPhase } = require('../renderer/lib/peer-web-view');
 
 const sshTunnel = { id: 'p1', sshHost: 'box', state: 'up', localPort: 40001 };
 const online = (webHost) => ({ id: 'p1', label: 'box', host: 'box', online: true, webHost });
@@ -245,17 +245,6 @@ test('every tip names the transport the operator is ACTUALLY getting', () => {
     'reachable row-less: a click in the pre-seed window sets peerWebTunnels while peerTunnels is still empty');
   assert.doesNotMatch(connectingRowless.tip, /over /, 'the connecting tip names none either');
   assert.doesNotMatch(connectingRowless.tip, /\s{2}|\s+…/, 'and reads cleanly without it');
-});
-
-test('isSshPeer keys off the wire tunnel`s sshHost — the renderer never sees the peer record', () => {
-  // Still the NARROW question (the deploy/setup flow is genuinely ssh-only:
-  // it copies files and runs a shell, which a port-forward carries neither of).
-  // The web-view route is `status.direct`, below — they must not be conflated.
-  assert.equal(isSshPeer({ sshHost: 'box' }), true);
-  assert.equal(isSshPeer({ id: 'p1' }), false, 'a tunnel row with no ssh host is not ssh');
-  assert.equal(isSshPeer({ kubectl: { target: 'svc/x' } }), false, 'a cloud peer is not an ssh peer');
-  assert.equal(isSshPeer(null), false);
-  assert.equal(isSshPeer(undefined), false);
 });
 
 test('t925 PIN: before the tunnel rows are seeded, a forwardable peer keeps the TUNNEL tip — no loopback in it', () => {

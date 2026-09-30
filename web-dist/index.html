@@ -31016,12 +31016,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_cursor_row = __commonJS({
     "renderer/lib/cursor-row.js"(exports, module) {
       "use strict";
-      function readCursorRow(terminal) {
-        const buf = terminal.buffer.active;
-        const line = buf.getLine(buf.baseY + buf.cursorY);
-        if (!line) return null;
-        return line.translateToString(false, 0, buf.cursorX);
-      }
       function readRowsToCursor(terminal) {
         try {
           const buf = terminal.buffer.active;
@@ -31036,7 +31030,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return null;
         }
       }
-      module.exports = { readCursorRow, readRowsToCursor };
+      module.exports = { readRowsToCursor };
     }
   });
 
@@ -31140,13 +31134,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (attention === "permission") return false;
         return true;
       }
-      function shouldRearm({ enabled, rearm, voiceMode, attention, from, to } = {}) {
-        if (enabled !== true) return false;
-        if (rearm !== true) return false;
-        if (voiceMode !== "tap") return false;
-        if (attention === "permission") return false;
-        return from === "thinking" && to === "idle";
-      }
       var COMPOSER_EMPTY = /^[\u276f>][\u0020\u00a0]?$/u;
       function composerIsEmpty(row) {
         if (typeof row !== "string") return false;
@@ -31162,27 +31149,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof row !== "string") return false;
         return COMPOSER_CONTINUATION.test(row);
       }
-      function composerHasDraftRows(rows) {
-        if (!Array.isArray(rows) || !rows.length) return false;
-        for (let i = rows.length - 1; i >= 0; i--) {
-          const row = rows[i];
-          if (typeof row !== "string") return false;
-          if (composerHasDraft(row)) return true;
-          if (composerIsEmpty(row)) return false;
-          if (!composerContinues(row)) return false;
-        }
-        return false;
-      }
       var RECORDING = RECORDING_INDICATOR;
       var PROCESSING = PROCESSING_INDICATOR;
       function recorderBlocksRearm(rows) {
         if (!Array.isArray(rows)) return true;
         return rows.some((row) => typeof row === "string" && (RECORDING.test(row) || PROCESSING.test(row)));
-      }
-      function isVoiceOriginated({ evidenceAt, now, windowMs } = {}) {
-        if (typeof evidenceAt !== "number" || !Number.isFinite(evidenceAt)) return false;
-        if (typeof now !== "number" || typeof windowMs !== "number") return false;
-        return now - evidenceAt <= windowMs && now >= evidenceAt;
       }
       function recordingObserved(rows) {
         if (!Array.isArray(rows)) return false;
@@ -31224,13 +31195,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         findSubmit,
         matchTrigger,
         shouldFire,
-        shouldRearm,
         composerIsEmpty,
         composerHasDraft,
         composerContinues,
-        composerHasDraftRows,
         recorderBlocksRearm,
-        isVoiceOriginated,
         recordingObserved,
         processingObserved,
         resolveTriggerKey,
@@ -45871,9 +45839,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     "renderer/lib/peer-web-view.js"(exports, module) {
       "use strict";
       var { directWebUrl } = require_peer_web_url();
-      function isSshPeer(tunnel) {
-        return !!(tunnel && tunnel.sshHost);
-      }
       var CLOUD_TRANSPORT_NAMES = {
         ssm: "an AWS SSM tunnel",
         kubectl: "a kubectl port-forward",
@@ -45979,7 +45944,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       module.exports = {
         webViewAffordance,
         tunnelPhase,
-        isSshPeer,
         cloudTransportName,
         transportPhrase
       };

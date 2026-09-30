@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
-  shouldRearm, composerIsEmpty, recorderBlocksRearm, recordingObserved, processingObserved,
+  composerIsEmpty, recorderBlocksRearm, recordingObserved, processingObserved,
   resolveTriggerKey, spaceTriggerAction, ptyTypedSinceEnter,
 } = require('../renderer/lib/voice-submit');
 
@@ -212,47 +212,6 @@ test('the gate is INDEPENDENT of the CLI voice mode, in every value it takes', (
     assert.strictEqual(shouldFire({ enabled: true, attention: 'permission', voiceMode }), false,
       `interlock holds with voiceMode ${String(voiceMode)}`);
   }
-});
-
-test('shouldRearm fires on the edge and only on the edge', () => {
-  const base = {
-    enabled: true, rearm: true, voiceMode: 'tap', attention: null,
-  };
-  assert.strictEqual(shouldRearm({ ...base, from: 'thinking', to: 'idle' }), true);
-  // A LEVEL check would pass all of these, and each one is a character written
-  // into a composer the operator may be typing in by hand.
-  for (const [from, to] of [
-    ['idle', 'idle'], ['thinking', 'thinking'], ['idle', 'thinking'],
-    [null, 'idle'], ['compacting', 'idle'], ['thinking', 'compacting'],
-  ]) {
-    assert.strictEqual(shouldRearm({ ...base, from, to }), false,
-      `${String(from)} -> ${String(to)} must not re-arm`);
-  }
-});
-
-test('shouldRearm: every gate declines on its own', () => {
-  const ok = {
-    enabled: true, rearm: true, voiceMode: 'tap', attention: null,
-    from: 'thinking', to: 'idle',
-  };
-  assert.strictEqual(shouldRearm(ok), true);
-  const cases = [
-    ['the feature is off', { enabled: false }],
-    ['the re-arm switch is off', { rearm: false }],
-    ['a dialog is open', { attention: 'permission' }],
-    // Not a preference: in hold mode one character cannot reach the CLI's
-    // auto-repeat threshold, so it lands in the draft as a literal instead.
-    ['voice mode is hold', { voiceMode: 'hold' }],
-    ['voice mode is off', { voiceMode: 'off' }],
-    ['voice mode is unknown', { voiceMode: null }],
-  ];
-  for (const [why, patch] of cases) {
-    assert.strictEqual(shouldRearm({ ...ok, ...patch }), false, why);
-  }
-  // Undefined must read as off everywhere, the same way the settings reader
-  // treats an omitted key.
-  assert.strictEqual(shouldRearm({}), false);
-  assert.strictEqual(shouldRearm(), false);
 });
 
 test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', () => {

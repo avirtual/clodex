@@ -1,12 +1,5 @@
 'use strict';
 
-function readCursorRow(terminal) {
-  const buf = terminal.buffer.active;
-  const line = buf.getLine(buf.baseY + buf.cursorY);
-  if (!line) return null;
-  return line.translateToString(false, 0, buf.cursorX);
-}
-
 function readRowsToCursor(terminal) {
   try {
     const buf = terminal.buffer.active;
@@ -20,4 +13,4 @@ function readRowsToCursor(terminal) {
   } catch { return null; }
 }
 
-module.exports = { readCursorRow, readRowsToCursor };
+module.exports = { readRowsToCursor };
