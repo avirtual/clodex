@@ -235,7 +235,7 @@ const {
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const nodePath = require('path');
-const { durableMessageCopyOf } = require('./file-resolve');
+const { durableMessageCopyOf, literalMessagePathOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
 
@@ -7575,8 +7575,8 @@ function createSessionManager(deps) {
       try {
         seedFiledRing(ring, [
           { dir: spillDir, kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message', mapPath: (p) => this._keptMessagePath(p) },
-          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message' },
+          { dir: path.join(MSG_DIR, name), kind: 'message' },
+          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => literalMessagePathOf(p, nodePath) || p },
         ]);
       } catch (e) {
         log.warn('files', `filed seed for ${name} failed: ${e.message}`);

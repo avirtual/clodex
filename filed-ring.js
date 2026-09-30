@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { utf8CutAt } = require('./file-peek');
 const { seatImageHead } = require('./seat-images');
+const { durableMessageCopyOf } = require('./file-resolve');
 
 const FILED_CAP = 50;
 const HEAD_MAX_BYTES = 120;
@@ -46,6 +47,10 @@ function spillHead(filePath, ev) {
   return title ? `[agent:${ev.head}] ${title}` : `[agent:${ev.head}]`;
 }
 
+function isFile(p) {
+  return !!p && fs.existsSync(p);
+}
+
 function createFiledRing(cap = FILED_CAP) {
   const entries = [];
   return {
@@ -70,7 +75,7 @@ function createFiledRing(cap = FILED_CAP) {
     },
     list() {
       return entries
-        .filter((e) => fs.existsSync(path.resolve(e.path)))
+        .filter((e) => fs.existsSync(path.resolve(e.path)) || isFile(durableMessageCopyOf(e.path, path)))
         .map((e) => ({ ...e }));
     },
     size() { return entries.length; },
@@ -89,12 +94,12 @@ function seedFiledRing(ring, dirs) {
       try { st = fs.lstatSync(p); } catch { continue; }
       if (!st.isFile()) continue;
       const kept = mapPath ? mapPath(p) : p;
-      if (!found.has(kept)) found.set(kept, { path: kept, kind, bytes: st.size, ts: Math.round(st.mtimeMs) });
+      if (!found.has(kept)) found.set(kept, { path: kept, src: p, kind, bytes: st.size, ts: Math.round(st.mtimeMs) });
     }
   }
   const sorted = [...found.values()].sort((a, b) => a.ts - b.ts);
   const take = sorted.slice(Math.max(0, sorted.length - ring.cap));
-  for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || firstLineOf(e.path) });
+  for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || firstLineOf(e.src) });
   return take.length;
 }
 
