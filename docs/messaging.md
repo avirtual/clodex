@@ -156,10 +156,9 @@ is minted lazily, so the edge can arrive well after the keystroke.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape
     and no rewind has been proven for it.*
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner:
-  a body runs from the intent line to the next column-1 real intent, a bare
-  `[agent:end]`, or — if the turn ends first — the head line only (the rest
-  is prose and the seat is bounced). Applies to dm, memory remember, remind,
-  shout, context compact/reload.
+  a body runs to the next column-1 real intent, a bare `[agent:end]`, or — if
+  the turn ends first — the head line only (the rest is prose and the seat is
+  bounced). Applies to dm, memory remember, remind, shout, context verbs.
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss

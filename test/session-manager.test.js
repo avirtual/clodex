@@ -13416,7 +13416,7 @@ test('term exec: a command written on the line BELOW is refused, not silently ru
 
 test('[agent:end]: escaped \\[agent:end] stays literal body text, not a boundary', () => {
   const m = mkExtract();
-  const out = m._extractIntents('[agent:dm clodex] quoting the terminator:\n\\[agent:end]\nstill the body');
+  const out = m._extractIntents('[agent:dm clodex] quoting the terminator:\n\\[agent:end]\nstill the body\n[agent:end]');
   assert.strictEqual(out[0].body, 'quoting the terminator:\n\\[agent:end]\nstill the body');
 });
 
@@ -13454,6 +13454,7 @@ test('fence: inside a dm body, a fenced example is body text, not a boundary', (
     '[agent:who]',
     '```',
     'end of message',
+    '[agent:end]',
   ].join('\n'));
   assert.deepStrictEqual(out.map((x) => x.type), ['dm']);
   assert.strictEqual(out[0].body,
@@ -13470,7 +13471,7 @@ test('fence: unclosed fence quotes the rest of the turn (markdown semantics)', (
 test('remind: multi-line reminder text is captured greedily (allow-set), stops at next intent', () => {
   const m = mkExtract();
   // Free-text body spans lines (greedy like dm — NOT the exec JSON terminator).
-  const r = m._extractIntents('[agent:remind every 30m] check the build\nand the deploy')[0];
+  const r = m._extractIntents('[agent:remind every 30m] check the build\nand the deploy\n[agent:end]')[0];
   assert.strictEqual(r.type, 'remind');
   assert.strictEqual(r.spec, 'every 30m');
   assert.strictEqual(r.body, 'check the build\nand the deploy');
@@ -13483,7 +13484,7 @@ test('remind: multi-line reminder text is captured greedily (allow-set), stops a
 test('shout: multi-line note is captured greedily (allow-set), stops at next intent', () => {
   const m = mkExtract();
   // Free-text body spans lines (greedy like dm).
-  const r = m._extractIntents('[agent:shout] blocked on the schema\nneed a decision')[0];
+  const r = m._extractIntents('[agent:shout] blocked on the schema\nneed a decision\n[agent:end]')[0];
   assert.strictEqual(r.type, 'shout');
   assert.strictEqual(r.body, 'blocked on the schema\nneed a decision');
   // A following col-1 intent ends the note and fires as its own intent.
@@ -14435,7 +14436,7 @@ test('extract: a top-level near-miss line synthesizes ONE unknown intent, counti
 
 test('extract: near-misses inside a dm body stay body text — quoting is safe', () => {
   const { m } = mkBounce();
-  const found = m._extractIntents('[agent:dm b] look at this example:\n[agent:frobnicate now]\ntrailing prose');
+  const found = m._extractIntents('[agent:dm b] look at this example:\n[agent:frobnicate now]\ntrailing prose\n[agent:end]');
   assert.strictEqual(found.length, 1, 'only the dm fires');
   assert.strictEqual(found[0].type, 'dm');
   assert.match(found[0].body, /\[agent:frobnicate now\]/, 'the near-miss was captured as body');
@@ -15715,7 +15716,7 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
     assert.deepStrictEqual(pi('[agent:branch] first'), { type: 'branch', body: 'first' });
     assert.strictEqual(pi('second line'), null, 'the continuation line is its own (non-)intent on this feed');
     // What the jsonl feed sees for the same two lines:
-    const out = mkExtract()._extractIntents('[agent:branch] first\nsecond line');
+    const out = mkExtract()._extractIntents('[agent:branch] first\nsecond line\n[agent:end]');
     assert.strictEqual(out[0].body, 'first\nsecond line');
   });
 });

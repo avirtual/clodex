@@ -1412,6 +1412,7 @@ test('a BOLDED review-done reaches the ticket loop and lands its verdict (t404)'
     '',
     'MUST-FIX',
     '- the guard is inverted',
+    '[agent:end]',
   ].join('\n');
 
   const { intents, dispatch } = verdictTurn(f, rec, turn);
@@ -1445,7 +1446,7 @@ test('the verdict body rides the bolded line exactly as it rides a bare one (t40
     });
     openTicket(f);
     const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
-    const turn = `${line}\nVERDICT: REWORK\n\nMUST-FIX\n- one\n- two`;
+    const turn = `${line}\nVERDICT: REWORK\n\nMUST-FIX\n- one\n- two\n[agent:end]`;
     const intents = f.m._extractIntents(turn);
     assert.strictEqual(intents.length, 1, `ENTER: ${line} produced exactly one intent`);
     await f.m._handleIntent(rec.name, intents[0]);
