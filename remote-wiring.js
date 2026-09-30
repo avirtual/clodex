@@ -331,6 +331,7 @@ function createRemoteWiring(deps) {
     const seed = { name };
     if (Array.isArray(rec.sessionIds)) seed.sessionIds = rec.sessionIds;
     if (rec.keepWarmAlways === true) seed.keepWarmAlways = true;
+    if (typeof rec.holdUntil === 'number' && rec.holdUntil > 0) seed.holdUntil = rec.holdUntil;
     if (rec.autoCompact === false) seed.autoCompact = false;
     if (Array.isArray(rec.digested)) seed.digested = rec.digested;
     seed.importedFrom = { peer: (rec.importedFrom && rec.importedFrom.peer) || null, at: Date.now() };

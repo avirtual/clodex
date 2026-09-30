@@ -383,6 +383,50 @@ test('a source-box CLAUDE_CONFIG_DIR never survives when the record names no lab
 });
 
 
+test('importCreate seeds a shipped numeric timed hold and nothing else', async () => {
+  for (const [holdUntil, want] of [[1700000000000, 1700000000000], [undefined, undefined], ['9', undefined]]) {
+    const w = mkWiring();
+    const out = await w.opts.importCreate({
+      name: 'ana',
+      record: record({ cwd: path.join(w.home, 'proj'), holdUntil }),
+      installed: {},
+      dropped: [],
+    });
+    assert.strictEqual(out.ok, true, out.error);
+    assert.strictEqual(w.persisted.get('ana').holdUntil, want, `holdUntil ${holdUntil}`);
+  }
+});
+
+test('importShip bails without a commit when a file shrinks between stat and read, and commits a whole one', async () => {
+  const fake = '/fake/transcript.jsonl';
+  const rows = [
+    { reads: [6, 0], want: { ok: false, error: 'transcript.jsonl changed size during import (read 6 of 10 bytes)' },
+      wantAsks: [['DELETE', '/api/import/0123456789abcdef']] },
+    { reads: [6, 4], want: { ok: true, installed: true },
+      wantAsks: [['POST', '/api/import/0123456789abcdef/commit']] },
+  ];
+  for (const row of rows) {
+    const reads = [...row.reads];
+    const orig = { statSync: fs.statSync, openSync: fs.openSync, readSync: fs.readSync, closeSync: fs.closeSync };
+    fs.statSync = (p, ...a) => (p === fake ? { size: 10 } : orig.statSync(p, ...a));
+    fs.openSync = (p, ...a) => (p === fake ? -7 : orig.openSync(p, ...a));
+    fs.readSync = (fd, ...a) => (fd === -7 ? reads.shift() : orig.readSync(fd, ...a));
+    fs.closeSync = (fd) => (fd === -7 ? undefined : orig.closeSync(fd));
+    const conn = new PeerConnection({ id: 'box', label: 'boxy', url: 'http://127.0.0.1:1', emit: () => {} });
+    const asks = [];
+    const puts = [];
+    conn._ask = async (method, p) => { asks.push([method, p]); return { ok: true, installed: true }; };
+    conn._askRaw = async (method, p, buf, headers) => { puts.push(headers['Content-Range']); return { ok: true }; };
+    let out;
+    try {
+      out = await conn.importShip({ id: '0123456789abcdef', files: [{ relPath: 'transcript.jsonl', path: fake }] });
+    } finally { Object.assign(fs, orig); }
+    assert.deepStrictEqual(out, row.want);
+    assert.deepStrictEqual(asks, row.wantAsks);
+    assert.deepStrictEqual(puts, ['bytes 0-5/*', ...(row.reads[1] ? ['bytes 6-9/*'] : [])]);
+  }
+});
+
 test('begin refuses a name that is live or persisted here, before any staging dir exists', async () => {
   for (const seat of ['live', 'persisted']) {
     const w = mkWiring();

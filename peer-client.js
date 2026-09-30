@@ -821,6 +821,9 @@ class PeerConnection {
             let read;
             try { read = fs.readSync(fd, buf, 0, buf.length, sent); }
             catch (e) { return bail({ ok: false, error: `cannot read ${relPath}: ${e.message}` }); }
+            if (read === 0 && sent < total) {
+              return bail({ ok: false, error: `${relPath} changed size during import (read ${sent} of ${total} bytes)` });
+            }
             chunk = buf.subarray(0, read);
           }
           const end = sent + chunk.length - 1;
