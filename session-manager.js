@@ -230,6 +230,7 @@ const {
   capResumeSnapshot, spillMimicBounce,
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
+const nodePath = require('path');
 const { durableMessageCopyOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
@@ -7554,7 +7555,7 @@ function createSessionManager(deps) {
     }
 
     _keptMessagePath(filePath) {
-      const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, path) : null;
+      const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, nodePath) : null;
       return durable && fs.existsSync(durable) ? durable : filePath;
     }
 

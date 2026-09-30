@@ -13,7 +13,7 @@ const SEAT = 'hand-one';
 const PAST_SWEEP = Date.now() + 2 * 3600 * 1000;
 
 function mkEngine() {
-  const tmp = mkTmpRoot('clodex-msgdur-');
+  const tmp = mkTmpRoot('clodex-spill-');
   const registryDir = path.join(tmp, 'clodex-home');
   const cwd = path.join(tmp, 'work');
   fs.mkdirSync(cwd, { recursive: true });
