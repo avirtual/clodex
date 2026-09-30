@@ -6,9 +6,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
-const remoteWiring = require('../remote-wiring');
-const { createRemoteWiring } = remoteWiring;
-const { createEngine } = require('../engine');
+const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer } = require('../remote');
 const { sliceSince } = require('../transcript');
 const { pathFor } = require('../clodex-paths');
@@ -189,24 +187,4 @@ test('the transcript route answers an async getTranscript, and hello advertises 
     const hello = await get(server.port, '/api/peer/hello');
     assert.ok(hello.json.caps.includes('transcript-images'));
   } finally { server.stop(); }
-});
-
-test('engine: seams.thumbnail reaches the remote wiring as its thumbnail dep', () => {
-  const orig = remoteWiring.createRemoteWiring;
-  const seen = [];
-  remoteWiring.createRemoteWiring = (deps) => { seen.push(deps.thumbnail); return orig(deps); };
-  const thumbnail = async () => null;
-  try {
-    for (const seams of [{ thumbnail }, {}]) {
-      const tmp = mkTmpRoot('clx-thumbs-');
-      createEngine({
-        userDataPath: tmp,
-        seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
-        log: { info() {}, warn() {}, error() {} },
-      });
-    }
-  } finally {
-    remoteWiring.createRemoteWiring = orig;
-  }
-  assert.deepStrictEqual(seen, [thumbnail, null]);
 });
