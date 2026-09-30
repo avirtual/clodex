@@ -70,7 +70,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-attention` | `name, attn` (needs-attention fact object, or null to clear) | session-manager `_setAttention` |
 | `session-compacting` | `name, c, end` — `c` is `{since, trigger}` while the seat compacts, null when it stops; on stop `end` is `{outcome: 'done'\|'valve'\|'exit', ms}` | session-manager `_onCompactStart` / `_onCompactEnd` |
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
-| `session:context-action` | `msg` object `{action, name, …}` (`reattach` on the reattach/spawn path; `retired` with `disposition`) | session-manager, team-tickets |
+| `session:context-action` | `msg` object `{action, name, …}` (`reattach` on the reattach/spawn path; `retired` with `disposition`) | session-manager, team-tickets, engine (`moveAccountByModel`) |
 | `selection-sent` | `name` — the pending selection list retired on submit | session-manager |
 | `wterm:data` | `data, seat, seq` (workbench terminal output; `seq` absent on the shell-exited line) — **direct handle** on the workspace's window (`windowForWorkspace`) | drawer-pty via engine.js `createDrawerPtys` `send` |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |
@@ -83,7 +83,7 @@ Every live window; a web host fans to every connection.
 
 | Channel | Payload | Emitter(s) |
 |---|---|---|
-| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | session-manager (intent routing, DM fan-out, remind/exec/notify), team-tickets, remote-wiring (wire relay), wirescope-proxy (`grep -rc "_broadcast('ipc-message'" --include=*.js .`) |
+| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | session-manager (intent routing, DM fan-out, remind/exec/notify), team-tickets, remote-wiring (wire relay), wirescope-proxy; count with `git grep -c "_broadcast('ipc-message'" -- '*.js' ':!test'` |
 | `pending-count` | `msg` object `{name, count}` (parked-DM badge) | session-manager |
 | `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`) changed in its record; broadcast to every window | session-manager `setVoice` |
 | `session-ticket` | `{name, ticket}` (the seat's open ticket id, or null) | team-tickets |
@@ -109,7 +109,7 @@ Every live window; a web host fans to every connection.
 | `peer-wterm-replay` | `id, seat, {data, cols, rows}` | peer-client |
 | `peer-wterm-data` | `id, seat, data` | peer-client |
 | `peer-wterm-exit` | `id, seat, exitCode` | peer-client |
-| `peer-wterm-closed` | `id, seat, reason` | peer-client |
+| `peer-wterm-closed` | `id, seat, text` (the `peerShellRefusal` sentence) | peer-client |
 
 All `peer-*` (except `peer-disabled`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
 `peer-client.js` `this._emit(...)`; the PeerManager `emit` closure in
@@ -150,7 +150,7 @@ a handler reading it works on the web host and reads `undefined` on the desktop.
 | `peer:context-action` | `msg` `{action, id, name}` | ipc-handlers `peer:context-menu` / `peer:header-menu` |
 
 `session:context-action` has two producers — this menu-click path (sender token)
-and the engine path (§A: session-manager and team-tickets). Both are legitimate; a web
+and the engine path (§A). Both are legitimate; a web
 host serves the menu path only if it renders these context menus server-side
 (Phase 3 degrades native menus to in-page menus, so the menu-click path likely
 becomes pure in-renderer and this channel is served only for the §A path).

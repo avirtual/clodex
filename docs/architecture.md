@@ -86,7 +86,8 @@ bundle), whose packaged form is the Docker image under
   defaulted to a no-op / sane fallback: `openPath`, `openExternal`, `notifyOS`,
   `setAppQuitting`, `appVersion`, `isPackaged`, `refreshAppMenu`,
   `scheduleAppMenuRefresh`, `refreshTrayMenu`, `scheduleTrayRefresh`,
-  `restartHost`, `restartHostWhenIdle`, `restartUnavailable`. A seam nothing reads is a lying contract — an inert
+  `restartHost`, `restartHostWhenIdle`, `restartUnavailable`, `thumbnail`,
+  `webInfo`. A seam nothing reads is a lying contract — an inert
   `getUserDataPath` seam was dropped (the engine derives `userDataPath` from
   its own param). `userDataPath` is a plain constructor arg, not a seam.
 - **main.js** — the **desktop adapter**. Its `whenReady`
