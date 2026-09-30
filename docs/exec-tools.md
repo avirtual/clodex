@@ -17,7 +17,9 @@ the agent is one line via `replyStderr` — the LAST stderr line, sliced to 200
 chars, which suits a digest and destroys a listing. A command whose answer is
 irreducibly multi-line (a ticket board, one error per bad file) opts into a
 wider reply with `replyMaxBytes`: whole lines from the TOP of stderr up to that
-budget, plus a `(+N more lines dropped …)` note when it overflows. Opt-in per
+budget, then a `(+N more lines dropped …)` note when it overflows (`(+N or
+more lines dropped — output also outran the collector)` when the collector cut
+it) and, when collection was complete, the LAST stderr line kept as a footer. Opt-in per
 def, because the default is what keeps a chatty command from billing its
 progress log into the caller's prompt on every call.
 
@@ -26,9 +28,8 @@ which is the exact split most "tools" want. The trick, for any tool that
 produces ongoing output, is to run the real work in a **detached worker** and
 have the worker deliver results back to the invoking agent as DMs over its
 `run/<agent>/agent.sock` socket (`{from, body, type:'dm'}` — the same
-"message from outside clodex to an agent inside" path wake scripts use). The
-exec code comment names this explicitly as the intended growth path
-("ephemeral DM channel, deliberately NOT built here"). This is that channel.
+"message from outside clodex to an agent inside" path wake scripts use). This
+is that channel.
 
 **The shape of a clodex tool, generalized:**
 
@@ -49,8 +50,8 @@ exec code comment names this explicitly as the intended growth path
 **Why the worker survives (load-bearing).** The dispatcher spawns the launcher
 NON-detached and, on the timeout path, does `child.kill('SIGKILL')` on the
 launcher PID — a single-PID signal, not a process-group kill (see the comment at
-`_handleExecIntent`, which notes v1 commands were "simple atomic writes with no
-grandchildren"). clodex-monitor is the **first** exec command that leaves a
+`_handleExecIntent`: detached:true "would add no group kill while risking
+orphaned grandchildren on timeout"). clodex-monitor is the **first** exec command that leaves a
 surviving grandchild, so it leans on two facts: (1) the worker is spawned
 `detached:true`, which `setsid`s it into its own session/process group, so a kill
 of the launcher PID can't reach it; (2) the launcher exits 0 in milliseconds, so
@@ -62,7 +63,7 @@ dispatcher group-kill the launcher, this guarantee must be re-checked.
   arrive as `[agent:from <tool>] …` exactly like peer mail. The wire envelope is
   `{from, body, type:'dm'}` — byte-identical to `Transport.static send()`, and
   verified to decode through the real `Transport` receiver into the
-  `_onIncoming(from/body/type)` read (agent-transport.js:111-121).
+  `SessionManager._onIncoming` from/body/type read.
 - Per-agent worker state lives under `~/.clodex/monitors/<agent>/` (a shared
   clodex-owned root, 0700), one `<id>.json` per running worker + an `<id>.log`
   for observability.
@@ -150,15 +151,16 @@ Teams control plane. `scripts/clodex-team.js`, registry
   the seat's worktree with it, so it is gated on that tree being CLEAN: an
   uncommitted diff, an untracked file, or a tree git cannot read downgrades the
   discard to an archive and tells the requester which tree and why (commit, then
-  retire again). The confirmation names what happened to the checkout rather
-  than the old flat "state lives in its task artifact", which was only ever true
-  of committed or written-out work. It
+  retire again). The confirmation names what happened to the checkout; the
+  flat "state lives in its task artifact" remains only for a discard with no
+  worktree removed and no removal error. It
   tells the owning window either way and confirms to the requester PASSIVELY;
   refusals wake the requester as loud DMs.
 - `tickets` (query → replies): the team's ticket board, `filter` one of
   `open` (default) / `done` / `cancelled` / `all`. This is the one command
   whose answer does not fit a line, so its def carries `replyMaxBytes`; a
-  large enough board still comes back head-clamped with a dropped-lines note.
+  large enough board still comes back head-clamped with a dropped-lines note
+  and its last line kept as a footer.
 - `cost` (query → replies): what this team has spent, read back out of
   `~/.clodex/teams/<team>/cost.jsonl` (docs/teams.md). One line — the total,
   since the earliest row, split into tickets, review rounds and standing seats,

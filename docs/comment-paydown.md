@@ -33,4 +33,4 @@ Run it on `git show <base>:FILE` and on the working file; the hashes must match.
 
 Some tests read comment text from the source (exemption markers, backticked literals in a table's comments) or strip comments with a quote-counting scanner; run the branch's tests and restore any comment a test reads.
 
-`node scripts/comment-delta.js` then shows a negative delta for the paid-down file and zero for every other file.
+`node scripts/comment-delta.js` then reports `0 added`; it prints no per-file rows, so read the paid-down file's `{before, after}` from the `commentDelta()` export.
