@@ -22,6 +22,9 @@ function detectNotice(detect) {
   if (!d.present) {
     return { kind: 'error', text: 'Docker isn’t installed — sandboxes need Docker Desktop.' };
   }
+  if (d.timedOut) {
+    return { kind: 'warn', text: 'Docker didn’t answer in time — the daemon may be wedged; restart Docker Desktop.' };
+  }
   if (!d.running) {
     return { kind: 'warn', text: 'Docker daemon isn’t running — start Docker Desktop.' };
   }

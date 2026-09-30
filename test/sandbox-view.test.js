@@ -20,6 +20,13 @@ test('detectNotice: installed but daemon down → warn + start remedy (distinct 
   assert.match(n.text, /start/i);
 });
 
+test('detectNotice: a probe that timed out reads as a wedged daemon, not a stopped one', () => {
+  assert.deepStrictEqual(detectNotice({ present: true, running: false, timedOut: true }),
+    { kind: 'warn', text: 'Docker didn’t answer in time — the daemon may be wedged; restart Docker Desktop.' });
+  assert.deepStrictEqual(detectNotice({ present: true, running: false }),
+    { kind: 'warn', text: 'Docker daemon isn’t running — start Docker Desktop.' });
+});
+
 test('detectNotice: running → ok', () => {
   const n = detectNotice({ present: true, running: true });
   assert.strictEqual(n.kind, 'ok');
