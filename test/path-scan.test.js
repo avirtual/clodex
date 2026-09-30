@@ -94,9 +94,14 @@ test('empty and non-string input returns no hits rather than throwing', () => {
 // The regexes are module-level with the `g` flag, so a leftover lastIndex from
 // one call would make the next skip its first hit. Both are reset per call.
 test('repeated scans of the same text are identical (lastIndex is reset)', () => {
+  assert.deepStrictEqual(scanPaths('see https://x.dev/q.js here'), []);
+  const want = [
+    { start: 0, end: 6, text: 'a.js:1', path: 'a.js', line: 1 },
+    { start: 34, end: 40, text: 'c/d.md', path: 'c/d.md', line: null },
+  ];
   const s = 'a.js:1 and https://x.dev/b.js and c/d.md';
-  assert.deepStrictEqual(scanPaths(s), scanPaths(s));
-  assert.deepStrictEqual(scanPaths(s), scanPaths(s)); // third call, in case of parity
+  assert.deepStrictEqual(scanPaths(s), want);
+  assert.deepStrictEqual(scanPaths(s), want);
 });
 
 // --- scanLinks -------------------------------------------------------------

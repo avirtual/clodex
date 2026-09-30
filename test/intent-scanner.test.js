@@ -635,7 +635,7 @@ test('shadowIntentKey: two scratch intents in one reply key by their label — d
   const key = (l) => shadowIntentKey('me', parseIntent(l));
   assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|cancel/probe2|');
   assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|cancel/probe|');
-  assert.strictEqual(key('[agent:scratch cancel probe]'), key('[agent:scratch cancel probe]'));
+  assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|cancel/probe|');
 });
 
 // The key is a pure function of the parse output, so it must never read

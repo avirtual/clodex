@@ -23081,6 +23081,7 @@ test('t1180: result, init, reset and close drop pending prompts without answerin
     const s = c.h.m.sessions.get(name);
     t.after(() => { c.clearTimers(s); s._dead = true; });
     c.h.line(name, { rec: c.rec('r1') });
+    assert.strictEqual(c.h.m.seatPermissions(name).items.length, 1, 'ENTER: the prompt was pending before the end event');
     const before = c.sent().length;
     if (end === 'close') c.h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
     else c.h.line(name, { rec: end });
