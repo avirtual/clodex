@@ -13361,12 +13361,16 @@ test('open body: a verb that ends or cuts the context is refused, not applied on
   const ran = [];
   m._handleContextIntent = (s, sub, body) => ran.push({ sub, body });
   m._handleScratchIntent = (s, intent) => ran.push({ sub: intent.sub, body: intent.body });
-  m._scanJsonlText('[agent:context compact] pick up t1\nstep two', 'seat', [], { interrupted: false });
-  m._scanJsonlText('[agent:scratch end] summary\nmore summary', 'seat', [], { interrupted: false });
-  assert.deepStrictEqual(ran, []);
-  assert.strictEqual(notes().length, 2);
-  assert.match(notes()[0], /\[agent:context compact\] was not closed — it was NOT applied/);
-  assert.match(notes()[1], /\[agent:scratch end\] was not closed — it was NOT applied/);
+  m._handleReviewDone = (s, body) => ran.push({ sub: 'review-done', body });
+  const verbs = ['context clear', 'context compact', 'context reload', 'scratch end', 'scratch rewind', 'review-done'];
+  for (const verb of verbs) {
+    const before = notes().length;
+    m._scanJsonlText(`[agent:${verb}] head\nmore body`, 'seat', [], { interrupted: false });
+    assert.deepStrictEqual(ran, [], `${verb}: nothing dispatched`);
+    const added = notes().slice(before);
+    assert.strictEqual(added.length, 1, `${verb}: one note`);
+    assert.match(added[0], new RegExp(`\\[agent:${verb}\\] was not closed — it was NOT applied`), verb);
+  }
   m._scanJsonlText('[agent:context compact] pick up t1\nstep two\n[agent:end]', 'seat', [], { interrupted: false });
   assert.deepStrictEqual(ran, [{ sub: 'compact', body: 'pick up t1\nstep two' }]);
 });
