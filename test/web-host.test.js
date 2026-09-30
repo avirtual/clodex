@@ -459,6 +459,24 @@ test('menu round-trip: click closures stay server-side and fire on pick (not sho
   } finally { host.close(); }
 });
 
+test('openInTerminal from a picked menu item reaches the browser as an open-in-terminal event, not a host process', async () => {
+  const registerHandlers = (deps) => {
+    deps.on('ctx', (e) => deps.popupMenu([{ label: 'Open in Terminal', click: () => deps.openInTerminal('/srv/x') }], e));
+  };
+  const { host, port } = await startHost({ registerHandlers });
+  try {
+    const c = connect(port);
+    await helloWelcome(c, { workspaceId: 'default' });
+    c.send({ t: 'send', channel: 'ctx', args: [] });
+    const show = await c.until((m) => m.t === 'menu-show');
+    c.send({ t: 'menu-pick', menuId: show.menuId, itemId: show.items[0].id });
+    c.send({ t: 'send', channel: 'ctx', args: [] });
+    const ev = await c.until((m) => m.t === 'event' || m.t === 'menu-show');
+    assert.deepEqual([ev.t, ev.channel, ev.args], ['event', 'open-in-terminal', ['/srv/x']]);
+    c.close();
+  } finally { host.close(); }
+});
+
 // A streaming handler guards each push with `wc.isDestroyed()` — the Electron
 // liveness check. The web host's sender token omitted it, so the guard threw on
 // the FIRST line into the handler's catch and every subsequent line with it: a

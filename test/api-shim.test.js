@@ -402,6 +402,15 @@ async function welcomed(shim, { proxyBase, wirescopePublicBase }) {
   return ws;
 }
 
+test('open-in-terminal toasts what the browser cannot do instead of acting', async () => {
+  const { shim, restore } = loadShim();
+  try {
+    const ws = await welcomed(shim, { proxyBase: '', wirescopePublicBase: '' });
+    dispatchCapturingToasts(ws, { t: 'event', channel: 'open-in-terminal', args: ['/srv/x'] });
+    assert.deepEqual(toastTexts(global.document.body), ["Can't open a terminal on this machine from the browser: /srv/x"]);
+  } finally { restore(); }
+});
+
 test('unreachableProxyUrl keys on origin-match AND an empty publicBase, never on publicBase alone', () => {
   const { shim, restore } = loadShim();
   try {

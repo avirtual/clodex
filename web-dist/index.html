@@ -11720,6 +11720,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           toast(`Can't reveal in Finder from the browser: ${args[0]}`);
           return;
         }
+        if (channel === "open-in-terminal") {
+          toast(`Can't open a terminal on this machine from the browser: ${args[0]}`);
+          return;
+        }
         if (channel === "focus-hint") {
           try {
             window.focus();

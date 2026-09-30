@@ -10,7 +10,7 @@
 //            we route by channel to the registered callbacks.
 // It also renders the minimal in-page UI for the host's degraded native-GUI
 // round-trips (menu-show / dialog-show), maps the synthetic shell channels
-// (open-external / open-path / show-item-in-folder / focus-hint), reports tab
+// (open-external / open-path / show-item-in-folder / open-in-terminal / focus-hint), reports tab
 // visibility, and reconnects (with a banner) on drop — reloading to re-run the
 // renderer's restore flow once the socket returns.
 //
@@ -256,6 +256,7 @@ function dispatchEvent(channel, args) {
   }
   if (channel === 'open-path') { toast(`Can't open on this machine from the browser: ${args[0]}`); return; }
   if (channel === 'show-item-in-folder') { toast(`Can't reveal in Finder from the browser: ${args[0]}`); return; }
+  if (channel === 'open-in-terminal') { toast(`Can't open a terminal on this machine from the browser: ${args[0]}`); return; }
   if (channel === 'focus-hint') { try { window.focus(); } catch { /* not permitted */ } return; }
   const set = subs.get(channel);
   if (set) for (const cb of [...set]) { try { cb(...args); } catch (err) { console.error(`event ${channel}`, err); } }

@@ -18,6 +18,9 @@ blocks a release.
 - Phone API: session rows carry `activityTs` (epoch ms of the seat's last wire event, null if never stamped) and the `activity` SSE event carries `ts`, so a client can show a true idle age after a reconnect.
 - Moving a seat to a peer now carries its timed keep-warm hold; before, only the perpetual one survived the move.
 - Peer import no longer commits a file that shrank while it was being read; the import fails with the byte counts instead.
+- Retrying a failed seat from another workspace's window no longer moves it into that workspace.
+- Forgetting a seat from another workspace's window now also removes its drawer terminal.
+- Web UI: "Open in Terminal" no longer opens a terminal on the machine serving the page; the browser shows what it cannot do instead.
 
 ## 5.94.0 — 2026-09-29
 
