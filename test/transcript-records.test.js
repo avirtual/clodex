@@ -402,9 +402,19 @@ test('a repeated marker numbers one image, so two blocks under [Image #1] [Image
   assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB']]);
 });
 
-test('image blocks beyond the markers are not shipped', () => {
-  const [r] = promptOf([{ type: 'text', text: '[Image #3] only one' }, image('AAAA'), image('BBBB')]);
-  assert.deepStrictEqual(r.images, [{ n: 3, mediaType: 'image/png', data: 'AAAA' }]);
+test('two image blocks under one marker both ship: the unmarked one takes the next n', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #1] pair' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images, [{ n: 1, mediaType: 'image/png', data: 'AAAA' }, { n: 2, mediaType: 'image/png', data: 'BBBB' }]);
+});
+
+test('image blocks with no marker at all are numbered 1..k in block order', () => {
+  const [r] = promptOf([{ type: 'text', text: 'no marks' }, image('AAAA'), image('BBBB')]);
+  assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB']]);
+});
+
+test('image blocks beyond the markers number on from the highest marker', () => {
+  const [r] = promptOf([{ type: 'text', text: '[Image #3] only one' }, image('AAAA'), image('BBBB'), image('CCCC')]);
+  assert.deepStrictEqual(r.images.map((i) => [i.n, i.data]), [[3, 'AAAA'], [4, 'BBBB'], [5, 'CCCC']]);
 });
 
 test('an inbound delivery with an image block carries no images', () => {

@@ -166,6 +166,19 @@ test('jsonlToMessages: a fold shifts past marks that have no image block too', (
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: a folded prompt with more blocks than marks keeps every image at a distinct n', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] b', [['image/jpeg', 'BBBB'], ['image/gif', 'CCCC']]),
+    imagePrompt('[Image #1] c', [['image/webp', 'DDDD']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] b\n\n[Image #4] c');
+    assert.deepStrictEqual(msgs[0].images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB'], [3, 'CCCC'], [4, 'DDDD']]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: scrubs control chars, delivery label, and slash-command echoes', () => {
   const p = writeJsonl([
     { type: 'user', message: { content: '\x15[agent:from user] hi' } },
