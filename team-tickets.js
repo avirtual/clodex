@@ -816,7 +816,13 @@ function createTicketMethods(deps, shared) {
     _forgetTeam(teamName, root) {
       let dropped = 0;
       for (const [name, w] of this._ticketWatch) {
-        if (w && w.root === root) { this._ticketWatch.delete(name); dropped += 1; }
+        if (!w) continue;
+        let gone = w.root === root;
+        if (root == null) {
+          let team = null; try { team = resolveTeam(w.root || ''); } catch { team = null; }
+          gone = !team;
+        }
+        if (gone) { this._ticketWatch.delete(name); dropped += 1; }
       }
       if (dropped) log.info('team', `forgot ${dropped} ticket watch(es) for deleted team "${teamName}"`);
       return dropped;
@@ -5352,8 +5358,7 @@ function createTicketMethods(deps, shared) {
       const body = String((suite && suite.output) || '').trim();
       // An empty capture is reported, never written: an empty file reads as the runner having said nothing.
       if (!body) return { ok: false, path: null, error: 'the run produced no captured output to preserve' };
-      const round = (Number(ticket.reworkRound) || 0) + 1;
-      // The stamp, not the round, makes the name unique: `reworkRound` does not move on a review round, so a re-merge would overwrite the first dump.
+      const round = (Number(ticket.reviewRound) || 0) + 1;
       // Millisecond resolution only discriminates; the existsSync loop below closes the name.
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const stem = path.join(dest.dir, `suite-failure-${ticket.id}-r${round}-${stamp}`);
