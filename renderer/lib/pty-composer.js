@@ -51,7 +51,7 @@ function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, app
     append(added);
     const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
     if (!r || !r.ok) {
-      drop(added.map((a) => a.n));
+      drop(added);
       toast(String((r && r.error) || 'Image upload failed.'));
       return;
     }
@@ -83,7 +83,7 @@ function renderImageStrip(el, items, onRemove) {
     rm.type = 'button';
     rm.className = 'seat-attachment-remove';
     rm.textContent = '×';
-    rm.addEventListener('click', () => onRemove(it.n));
+    rm.addEventListener('click', () => onRemove(it.n, it.image));
     thumb.append(pic, rm);
     el.appendChild(thumb);
   }
