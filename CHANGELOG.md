@@ -15,6 +15,7 @@ blocks a release.
 
 - Conversation mode tells a message typed in Clodex (`you`), one sent from the phone app (`phone`, with its own glyph) and one sent through `clodexctl dm` (`remote`) apart; the phone transcript carries the same `client` field.
 - The deploy-fix briefing Clodex injects into a session is no longer styled as a human message.
+- A ticket verb's success confirmation (`created`, `→ spawning …`, `respec'd`, `cancelled`, …) now rides the lead's next turn instead of waking it for an "aha"; errors and refusals still arrive at once.
 
 ## 5.97.0 — 2026-09-30
 
