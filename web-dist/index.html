@@ -8720,6 +8720,13 @@ body.web-frontend #sidebar-header {
 .tr-prompt-mid {
   border-left: 2px dashed var(--text-tertiary);
 }
+.tr-prompt > .tr-sender {
+  flex: none;
+  white-space: nowrap;
+}
+.tr-prompt > .tr-sender .tr-sender-name {
+  margin-right: 0;
+}
 .tr-inbound[data-via=subagent] .tr-head-text {
   color: var(--text-secondary);
 }
@@ -26321,7 +26328,7 @@ ${i3.join("\n")}
         const name = String(from == null ? "" : from);
         const system = systemGlyph(name);
         if (system) return { cls: "system", label: name, glyph: system };
-        if (name === "user") return { cls: "operator", label: "you", glyph: "\u25CF" };
+        if (name === "user") return { cls: "operator", label: "remote", glyph: "\u25CF" };
         if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
         const shape = SEAT_SHAPE.exec(name);
         if (shape) {
@@ -32906,6 +32913,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const mid = rec.source === "mid-turn";
         const row = headRow(doc, mid ? "tr-prompt tr-prompt-mid" : "tr-prompt", rec);
         if (mid) row.appendChild(el(doc, "span", "tr-mid", "mid-turn"));
+        row.appendChild(operatorBadge(doc, "you", "Typed in Clodex"));
         const text = el(doc, "span", "tr-head-text");
         if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
         else appendProse(doc, text, rec.text, ctx);
@@ -32919,6 +32927,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
           row.appendChild(state);
         }
         return row;
+      }
+      function operatorBadge(doc, label, title) {
+        const badge = el(doc, "span", "tr-sender tr-sender-operator");
+        badge.title = title;
+        badge.appendChild(el(doc, "span", "tr-sender-glyph", "\u25CF"));
+        badge.appendChild(el(doc, "span", "tr-sender-name", label));
+        return badge;
       }
       function senderBadge(doc, from) {
         const { cls, label, glyph } = classifySender(from);

@@ -477,6 +477,7 @@ function promptRow(doc, rec, ctx) {
   const mid = rec.source === 'mid-turn';
   const row = headRow(doc, mid ? 'tr-prompt tr-prompt-mid' : 'tr-prompt', rec);
   if (mid) row.appendChild(el(doc, 'span', 'tr-mid', 'mid-turn'));
+  row.appendChild(operatorBadge(doc, 'you', 'Typed in Clodex'));
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
@@ -490,6 +491,14 @@ function promptRow(doc, rec, ctx) {
     row.appendChild(state);
   }
   return row;
+}
+
+function operatorBadge(doc, label, title) {
+  const badge = el(doc, 'span', 'tr-sender tr-sender-operator');
+  badge.title = title;
+  badge.appendChild(el(doc, 'span', 'tr-sender-glyph', '●'));
+  badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
+  return badge;
 }
 
 function senderBadge(doc, from) {
