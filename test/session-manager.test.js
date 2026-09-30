@@ -17538,6 +17538,76 @@ test('task add start: the single reply names the seat and the branch, as task st
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
+test('t1458: task add start on a live team injects nothing and acks both success lines', async () => {
+  const { root, repo } = mkGitRepo();
+  const f = mkTicketWt(repo);
+  const injected = [];
+  const acks = [];
+  f.m._injectText = (_s, text) => { injected.push(text); };
+  f.m._taskAck = (_s, line) => { acks.push(line); };
+  let createdName = null;
+  f.m.create = async (...args) => { createdName = args[0]; f.seat(args[0], args[2]); return { name: args[0] }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, start: true, body: 'tasks/t1458/SPEC.md build the widget' });
+  await until(() => acks.length >= 2);
+  assert.strictEqual(createdName, 'team-hand-1');
+  assert.deepStrictEqual(injected, []);
+  assert.strictEqual(acks.length, 2, acks.join('\n'));
+  assert.match(acks[0], /^\[agent:task\] ticket t1 created and started → spawning team-hand-1/);
+  assert.match(acks[1], /^\[agent:task\] ticket t1 → team-hand-1 on branch t1-build-the-widget/);
+  fsReal.rmSync(root, { recursive: true, force: true });
+});
+
+test('t1458: task add with no resolvable team errors at once and acks nothing', () => {
+  const f = mkTasks();
+  const acks = [];
+  f.m._taskAck = (_s, line) => { acks.push(line); };
+  f.m._handleTask(f.seat('lost', '/elsewhere'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'tasks/x/SPEC.md do it' });
+  assert.strictEqual(f.injected.length, 1);
+  assert.match(f.injected[0], /^\[agent:task\] error: this session is not on a team/);
+  assert.deepStrictEqual(acks, []);
+});
+
+test('t1458: task list and a cancel of a missing id answer at once, never as an ack', () => {
+  const f = mkTasks();
+  const acks = [];
+  f.m._taskAck = (_s, line) => { acks.push(line); };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'list', id: null, body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't99', body: '' });
+  assert.strictEqual(f.injected.length, 2, f.injected.join('\n'));
+  assert.match(f.injected[1], /error: no ticket t99/);
+  assert.deepStrictEqual(acks, []);
+});
+
+test('t1458: task park and cancel successes ride as acks', () => {
+  const f = mkTasks();
+  const acks = [];
+  f.m._taskAck = (_s, line) => { acks.push(line); };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'tasks/x/SPEC.md do it' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'park', id: 't1', body: '' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', id: 't1', body: '' });
+  assert.deepStrictEqual(f.injected.filter((x) => /ticket t1/.test(x)), []);
+  assert.strictEqual(acks.length, 3, acks.join('\n'));
+  assert.match(acks[0], /ticket t1 → hand \(not started\)/);
+  assert.match(acks[1], /ticket t1 parked/);
+  assert.match(acks[2], /ticket t1 cancelled/);
+});
+
+test('t1458: _taskAck appends to the acks file for a claude seat and injects for a codex seat', () => {
+  const home = mkTmpRoot('clodex-tk-');
+  const m = mk({ REGISTRY_DIR: home, pathFor: pathForReal });
+  const injected = [];
+  m._injectText = (_s, line) => injected.push(line);
+  const file = pathForReal(home, 'c1', 'acks');
+  fsReal.mkdirSync(path.dirname(file), { recursive: true });
+  m._taskAck({ name: 'c1', agentType: 'claude' }, '[agent:task] ticket t1 cancelled');
+  assert.strictEqual(fsReal.readFileSync(file, 'utf8'), '[agent:task] ticket t1 cancelled\n');
+  assert.deepStrictEqual(injected, []);
+  m._taskAck({ name: 'x1', agentType: 'codex' }, '[agent:task] ticket t2 cancelled');
+  assert.deepStrictEqual(injected, ['[agent:task] ticket t2 cancelled']);
+  fsReal.rmSync(home, { recursive: true, force: true });
+});
+
 test('task add: the minted branch carries the REAL ticket id and no id from the title', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);
