@@ -15,6 +15,7 @@ blocks a release.
 
 - Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.
 - A preserved suite-failure file is numbered by the same review round as the diff and verdict beside it.
+- Conversation mode: every human message carries the operator circle badge — `you` for a prompt typed in Clodex, `remote` for one sent through the phone app or `clodexctl dm`.
 
 ## 5.96.0 — 2026-09-30
 
