@@ -717,8 +717,10 @@ class RemoteServer {
       }
       after = afterRaw;
     }
-    const out = this._getTranscript(name, limit, since, after);
-    return this._json(res, out.ok ? 200 : 404, out);
+    return Promise.resolve()
+      .then(() => this._getTranscript(name, limit, since, after))
+      .then((out) => this._json(res, out.ok ? 200 : 404, out))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
   }
 
   _handleQuery(name, req, res) {
@@ -1058,6 +1060,7 @@ class RemoteServer {
       if (this._seatImport && this._importCreate) caps.push('import');
       caps.push('resources');
       caps.push('images');
+      caps.push('transcript-images');
       return this._json(res, 200, {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, bootId: BOOT_ID, caps,

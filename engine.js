@@ -189,6 +189,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // A getter: web-host.js starts after createEngine returns, so nothing exists to pass now.
   // Electron omits the seam and reports null (no web host).
   const getWebInfo = seams.webInfo || (() => null);
+  const thumbnail = seams.thumbnail || null;
 
   const logFile = seams.logFile || null;
 
@@ -1759,6 +1760,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   // CLODEX_WIRESCOPE=off) without the box restarting.
   getWirescopeInfo: () => wirescope.localReach(),
   getNodeLogFile: logFile ? () => logFile : undefined,
+  thumbnail,
   getUserDataPath: () => userDataPath,
 });
 
