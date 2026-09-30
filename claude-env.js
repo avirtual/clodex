@@ -1,7 +1,7 @@
 // claude-env.js — read a Claude session's EFFECTIVE process environment by
 // merging process.env (base) with the `env` blocks of the settings layers the
 // CLI loads (user < project < local, per-key later-wins), and classify whether
-// that env routes the CLI to a TEE-BLIND backend (AWS Bedrock / GCP Vertex).
+// that env routes the CLI to a TEE-BLIND backend.
 //
 // Why it exists: the in-process wire tee only sees traffic that honors the
 // ANTHROPIC_BASE_URL our hook injects. A session whose settings set
