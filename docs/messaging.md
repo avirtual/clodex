@@ -155,10 +155,10 @@ is minted lazily, so the edge can arrive well after the keystroke.
     the mark left open.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape
     and no rewind has been proven for it.*
-- **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
-  remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
-  left open with lines after the head, only the head line applies, the rest is prose and the seat is told;
-  review-done, scratch end/rewind and context clear/compact/reload are refused then (an open head with nothing after it still applies).
+- **Multi-line bodies** are captured in `_extractIntents`, not the scanner:
+  a body (dm, memory remember, remind, shout, context compact/reload/clear) runs to
+  the next column-1 real intent or a bare `[agent:end]`; if the turn ends first, only the
+  head line applies, the rest is prose and the seat is told (review-done, scratch end/rewind and context verbs are refused).
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss
