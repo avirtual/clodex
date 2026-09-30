@@ -111,7 +111,7 @@ test('a durable copy left by an earlier launch with the same pid is never overwr
   assert.match(fs.readFileSync(path.join(durDir, name), 'utf8'), /fresh-body/);
 });
 
-test('a ring seeded at startup lists message spills at their transcript-literal messages/ paths, once each, durable-only ones included, and they survive the sweep', () => {
+test('a ring seeded at startup lists each message spill once at the path its transcript names (messages/ literal, durable for rejected/denied bodies), durable-only ones included, and they survive the sweep', () => {
   const { engine, registryDir } = mkEngine();
   const msgDir = path.join(registryDir, 'messages', SEAT);
   const durDir = path.join(registryDir, 'spill', SEAT, 'messages');
