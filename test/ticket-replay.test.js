@@ -1927,8 +1927,12 @@ test('t1250: more must-fixes parked by the turn-start window after a typed redel
     assert.match(redo.slice(beforeRedo.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
     assert.match(redo.slice(beforeRedo.length), /ALSO FIX THE LATCH/, 'and the typed redelivery carries the new must-fixes');
 
+    await settled(app, 'lead', /already open for rework/);
+    await writeComplete(app, 'lead');
     lead._awaitingTurnSince = null;
     const beforeLead = app.seen('lead');
+    assert.match(beforeLead, /already open for rework/, 'ENTER: the lead\'s follow-up reply was typed before the baseline');
+    assert.ok(beforeLead.endsWith('\r'), 'ENTER: and its write is complete, so the escalation is not parked behind it');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
     assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/, 'a typed redelivery with no turn after it escalates');
@@ -1963,8 +1967,12 @@ test('t1251: more must-fixes parked by the turn-start window after a typed FIRST
     assert.match(redo.slice(beforeRedo.length), /REDELIVERY/, 'the next deadline types the redelivery once the window has closed');
     assert.match(redo.slice(beforeRedo.length), /ALSO FIX THE LATCH/, 'and the typed redelivery carries the new must-fixes');
 
+    await settled(app, 'lead', /already open for rework/);
+    await writeComplete(app, 'lead');
     lead._awaitingTurnSince = null;
     const beforeLead = app.seen('lead');
+    assert.match(beforeLead, /already open for rework/, 'ENTER: the lead\'s follow-up reply was typed before the baseline');
+    assert.ok(beforeLead.endsWith('\r'), 'ENTER: and its write is complete, so the escalation is not parked behind it');
     fireConfirm(app, s);
     const leadSaw = await settled(app, 'lead', /ESCALATED/);
     assert.match(leadSaw.slice(beforeLead.length), /ESCALATED/, 'a typed redelivery with no turn after it escalates');
