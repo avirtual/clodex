@@ -11110,7 +11110,7 @@ test('t767: role-set hand model:opus derives templates/hand.json from the librar
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-set', name: 'hand', model: 'sonnet', body: '' });
   assert.deepStrictEqual(f.readTpl('hand').extraArgs, ['--model', 'claude-sonnet-5-5[1m]'],
     're-deriving from the own copy leaves exactly one --model pair, not two');
-  assert.ok(/derived from hand with --model claude-sonnet-5\[1m\]/.test(f.last()), f.last());
+  assert.ok(/derived from hand with --model claude-sonnet-5-5\[1m\]/.test(f.last()), f.last());
 });
 
 test('t1076: model: on a CODEX template takes a model id verbatim and refuses an alias', () => {
