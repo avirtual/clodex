@@ -4687,25 +4687,34 @@ test('spawner-hint (t151): CLODEX_SPAWNER_HINT=on POSTs on:true (the opt-IN mirr
   }], '"on" is a real value, not a synonym for unset');
 });
 
-test('spawner-hint (t151): unset (and any other value) POSTs NOTHING — the common path gains no traffic', async () => {
-  for (const [label, env] of [
-    ['unset', null],
-    ['empty string', { CLODEX_SPAWNER_HINT: '' }],
-    ['garbage', { CLODEX_SPAWNER_HINT: 'yes' }],
-    ['0 (not a synonym for off)', { CLODEX_SPAWNER_HINT: '0' }],
-  ]) {
+async function assertHintPostsNothing(cases) {
+  for (const [label, env] of cases) {
     const { m, hints, spawn } = mkHintProbe();
     await spawn('seat', env);
     assert.deepStrictEqual(hints, [], `${label} → no POST at all`);
     assert.strictEqual(m.sessions.get('seat').spawnerHintSet, false,
       `${label} → nothing recorded, so kill() posts no clear either`);
   }
+}
+
+test('spawner-hint (t151): unset and empty POST NOTHING — the common path gains no traffic', async () => {
+  await assertHintPostsNothing([
+    ['unset', null],
+    ['empty string', { CLODEX_SPAWNER_HINT: '' }],
+  ]);
+});
+
+test('spawner-hint (t151): any other value POSTs NOTHING (garbage, 0)', async () => {
+  await assertHintPostsNothing([
+    ['garbage', { CLODEX_SPAWNER_HINT: 'yes' }],
+    ['0 (not a synonym for off)', { CLODEX_SPAWNER_HINT: '0' }],
+  ]);
 });
 
 // The strict match means the likely typos all fail by doing nothing, and the only
 // symptom is a block reappearing in a prompt nobody reads. The warn is the whole
 // difference between "misconfigured" and "silently ignored".
-test('spawner-hint (t151): a set-but-unrecognized value WARNS; unset stays silent', async () => {
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (5 values)', async () => {
   for (const bad of ['0', 'OFF', ' off', 'yes', 'true']) {
     const { warns, hints, spawn } = mkHintProbe();
     await spawn('seat', { CLODEX_SPAWNER_HINT: bad });
@@ -4713,7 +4722,9 @@ test('spawner-hint (t151): a set-but-unrecognized value WARNS; unset stays silen
     assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify(bad))),
       `${bad} → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
   }
+});
 
+test('spawner-hint (t151): unset and empty stay silent', async () => {
   for (const [label, env] of [['unset', null], ['empty string', { CLODEX_SPAWNER_HINT: '' }]]) {
     const { warns, spawn } = mkHintProbe();
     await spawn('seat', env);
