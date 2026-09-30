@@ -134,6 +134,17 @@ test('the wire activity event carries false for a tool flush and true at end_tur
     `the tool-result idle must reach the wire false and only the end_turn idle true — got ${JSON.stringify(wire)}`);
 });
 
+test('the wire activity event carries the seat\'s activityTs, null when never stamped', () => {
+  const { mk } = require('./lib/session-fixtures');
+  const wire = [];
+  const m = mk({ getRemoteServer: () => ({ notifyActivity: (...a) => wire.push(a) }) });
+  m.sessions.set('seat', { name: 'seat', workspaceId: 'ws1', activityState: 'idle', activityTs: 1700000000000 });
+  m.sessions.set('cold', { name: 'cold', workspaceId: 'ws1', activityState: 'idle' });
+  m._emitActivity('seat', 'idle', false);
+  m._emitActivity('cold', 'idle', false);
+  assert.deepStrictEqual(wire, [['seat', 'idle', false, 1700000000000], ['cold', 'idle', false, null]]);
+});
+
 test('one poll consumes a backlog larger than the read buffer, so text behind a big tool_result is not stalled', () => {
   const dir = mkTmpRoot('clodex-watcher-');
   try {

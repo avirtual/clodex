@@ -4561,7 +4561,7 @@ function createSessionManager(deps) {
       // notify marks turn-end; idle also fires mid-turn (wire gap-idle, jsonl text flush), so a consumer
       // acting on state alone acts in the middle of turns.
       this._sendToSession(name, 'session-activity', name, state, !!notify);
-      if (getRemoteServer()) { try { getRemoteServer().notifyActivity(name, state, notify); } catch {} }
+      if (getRemoteServer()) { try { getRemoteServer().notifyActivity(name, state, notify, s && typeof s.activityTs === 'number' ? s.activityTs : null); } catch {} }
       if (!notify) return;
       const owningWin = this.windowForSession(name);
       if (!owningWin || !owningWin.isFocused()) {

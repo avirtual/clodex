@@ -119,7 +119,7 @@ function makeDeps() {
   const createCalls = [];
   const manager = {
     sessions: new Map([
-      ['alice', { name: 'alice', type: 'claude', cwd: path.join(root, 'a'), workspaceId: 'ws-alpha' }],
+      ['alice', { name: 'alice', type: 'claude', cwd: path.join(root, 'a'), workspaceId: 'ws-alpha', activityTs: 1700000000000 }],
       ['bob', { name: 'bob', type: 'codex', cwd: path.join(root, 'b'), workspaceId: 'ws-beta', io: 'stream' }],
       ['ghost', { name: 'ghost', type: 'claude', cwd: path.join(root, 'g'), workspaceId: 'ws-alpha', _dead: true }],
     ]),
@@ -890,7 +890,7 @@ test('catalogs: absent from /api/resources when getCatalogs is not injected', as
 });
 
 const ALICE_ROW = {
-  name: 'alice', type: 'claude', io: 'pty', workspace: 'Alpha', workspaceId: 'ws-alpha',
+  name: 'alice', type: 'claude', io: 'pty', workspace: 'Alpha', workspaceId: 'ws-alpha', activityTs: 1700000000000,
   stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
   activity: 'idle',
 };
@@ -904,7 +904,24 @@ test('GET /api/sessions/:name: 200 with the whole row the list serves, plus acti
     assert.ok(session.cwd, 'the row carries a cwd');
     const list = JSON.parse((await req(port, '/api/sessions')).body).sessions;
     assert.deepStrictEqual(session, list.find(s => s.name === 'alice'));
+    assert.deepStrictEqual(list.map(s => [s.name, s.activityTs]), [['alice', 1700000000000], ['bob', null]],
+      'the list carries activityTs, null for a seat never stamped');
   });
+});
+
+test('sessionRow: activityTs is the seat\'s epoch ms when stamped and null when not', () => {
+  const { deps } = makeDeps();
+  deps.manager.sessions = new Map([
+    ['s1', { name: 's1', type: 'claude', cwd: '/w/s1', workspaceId: 'ws-alpha', activityTs: 1700000000000 }],
+    ['s2', { name: 's2', type: 'codex', cwd: '/w/s2', workspaceId: 'ws-beta', io: 'stream' }],
+  ]);
+  const opts = captureOptions(deps);
+  const stats = { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null };
+  assert.deepStrictEqual(opts.getSessions(), [
+    { name: 's1', type: 'claude', io: 'pty', cwd: '/w/s1', workspace: 'Alpha', workspaceId: 'ws-alpha', activityTs: 1700000000000, stats },
+    { name: 's2', type: 'codex', io: 'stream', cwd: '/w/s2', workspace: 'Beta', workspaceId: 'ws-beta', activityTs: null, stats },
+  ]);
+  assert.deepStrictEqual(opts.getSession('s2').activityTs, null);
 });
 
 test('GET /api/sessions/:name: 404 for an unknown name and for a dead session', async () => {

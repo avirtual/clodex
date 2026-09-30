@@ -53,6 +53,14 @@ because `markRead` returns only whether the id exists: an already-read note must
 answer with its ORIGINAL `readAt`, which is what makes the route idempotent in
 the sense the app relies on.
 
+## notifyActivity
+
+The `activity` frame is `{ name, state, turnEnd, ts }`; `ts` is the seat's `activityTs` (epoch ms), null when unstamped.
+
+## _handleSessionGet
+
+Session rows (here and in the `/api/sessions` list) carry top-level `activityTs` (epoch ms), null when never stamped.
+
 ## resolveRemoteBasePath
 
 `DEFAULT_REMOTE_BASE_PATH` is the EMPTY STRING, not `'/'`. `'/'` would make

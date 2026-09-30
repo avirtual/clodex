@@ -52,6 +52,16 @@ test('notifyProgress broadcasts an event: progress frame carrying only the seat 
   });
 });
 
+test('notifyActivity broadcasts {name, state, turnEnd, ts}, ts null when the caller passes none', async () => {
+  await withServer(async (server) => {
+    const payload = async (emit) => JSON.parse((await collect(server, emit)).match(/event: activity\ndata: ([^\n]*)/)[1]);
+    assert.deepStrictEqual(await payload(() => server.notifyActivity('seat-a', 'idle', true, 1700000000000)),
+      { name: 'seat-a', state: 'idle', turnEnd: true, ts: 1700000000000 });
+    assert.deepStrictEqual(await payload(() => server.notifyActivity('seat-a', 'thinking', false)),
+      { name: 'seat-a', state: 'thinking', turnEnd: false, ts: null });
+  });
+});
+
 test('notifyProgress does not disturb the activity map the sidebar dot reads', async () => {
   await withServer(async (server) => {
     server.notifyActivity('seat-a', 'thinking', false);
