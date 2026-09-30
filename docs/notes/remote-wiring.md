@@ -47,5 +47,5 @@ forever. A failed spawn removes the record again, or the retry through
 `POST /api/sessions` would find the name taken.
 
 `_preserveAcrossRestart` is deliberately NOT used here: its always-preserve set
-carries `worktree`/`ticketId`/`wireLabel`/`pluginGrants`/`holdUntil`, which name
+carries `worktree`/`ticketId`/`wireLabel`/`pluginGrants`, which name
 things on the source box.

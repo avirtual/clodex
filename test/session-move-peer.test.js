@@ -399,7 +399,7 @@ test('the success arm ships exactly the seeded files, archives the source and st
   assert.deepStrictEqual(rec.intents, ['dm'],
     'intents are NOT stripped here — the far side strips the privileged ones and reports them');
   for (const k of ['worktree', 'archivedAt', 'failed', 'movedTo', 'ephemeral', 'reviewFor', 'reviewTicket',
-    'reviewerTemplate', 'pluginGrants', 'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt']) {
+    'reviewerTemplate', 'pluginGrants', 'wireLabel', 'ticketId', 'rosterSentAt']) {
     assert.strictEqual(rec[k], undefined, `${k} is omitted — the far create cannot re-seed it`);
   }
   assert.deepStrictEqual(rec.extraArgs, ['--model', 'opus'], 'everything else travels whole');
@@ -422,6 +422,24 @@ test('the success arm ships exactly the seeded files, archives the source and st
   assert.strictEqual(
     fsReal.readFileSync(pathReal.join(claudeDir, 'projects', claudeProjectSlug(SRC_CWD), `${SESSION_ID}.jsonl`), 'utf8'),
     '{"type":"user"}\n', 'the transcript is read-only — it stays byte-identical here');
+});
+
+test('the timed keep-warm hold ships with the perpetual one, and a record with neither ships neither', async () => {
+  const bare = { name: 'seat', type: 'claude', cwd: SRC_CWD, workspaceId: 'ws1', sessionId: SESSION_ID };
+  const rows = [
+    {
+      entry: { ...bare, holdUntil: 1700000000000, keepWarmAlways: true },
+      want: { ...bare, cwd: FAR_CWD, holdUntil: 1700000000000, keepWarmAlways: true },
+    },
+    { entry: bare, want: { ...bare, cwd: FAR_CWD } },
+  ];
+  for (const row of rows) {
+    const { m, shipped } = mkMove({ entries: [row.entry] });
+    seedLive(m, 'seat');
+    const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+    assert.strictEqual(out.ok, true, `expected ok (got: ${out.error})`);
+    assert.deepStrictEqual(shipped[0].record, row.want);
+  }
 });
 
 test('farCwd defaults to the seat\'s own cwd — the same path on the far box', async () => {

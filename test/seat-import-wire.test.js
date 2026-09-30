@@ -12,6 +12,7 @@ const { PeerConnection } = require('../peer-client');
 const { claudeProjectSlug } = require('../clodex-paths');
 const { drainPending } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { rearmPlan } = require('../wire/hold');
 
 const SID = '11111111-2222-3333-4444-555555555555';
 const DEFAULT_CAPS = [
@@ -382,6 +383,21 @@ test('a source-box CLAUDE_CONFIG_DIR never survives when the record names no lab
   assert.deepStrictEqual(out.dropped, ['account:unknown']);
 });
 
+
+test('importCreate seeds the shipped timed hold, and an expired one only disarms on arrival', async () => {
+  for (const [holdUntil, want] of [[1700000000000, 1700000000000], [undefined, undefined], ['9', undefined]]) {
+    const w = mkWiring();
+    const out = await w.opts.importCreate({
+      name: 'ana',
+      record: record({ cwd: path.join(w.home, 'proj'), holdUntil }),
+      installed: {},
+      dropped: [],
+    });
+    assert.strictEqual(out.ok, true, out.error);
+    assert.strictEqual(w.persisted.get('ana').holdUntil, want, `holdUntil ${holdUntil}`);
+  }
+  assert.deepStrictEqual(rearmPlan(1700000000000, Date.now(), false), { clear: true });
+});
 
 test('begin refuses a name that is live or persisted here, before any staging dir exists', async () => {
   for (const seat of ['live', 'persisted']) {

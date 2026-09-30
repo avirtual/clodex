@@ -485,7 +485,7 @@ function dmContentKey(senderTag, body) {
 const MOVE_TO_PEER_OMIT = [
   'execCommands', 'worktree', 'archivedAt', 'exitedAt', 'exitCode', 'exitSignal', 'failed', 'movedTo',
   'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
-  'wireLabel', 'ticketId', 'holdUntil', 'rosterSentAt', 'streamPid',
+  'wireLabel', 'ticketId', 'rosterSentAt', 'streamPid',
 ];
 
 function moveFileBytes(fs, f) {
