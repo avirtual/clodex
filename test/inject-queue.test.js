@@ -796,3 +796,78 @@ test('InjectQueue: a plain unit dying at the gates is re-parked only when it car
     assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'bare text dropped');
   }
 });
+
+const REVIEW_GATE_ROWS = [
+  ['U+200B', 'a​b', 'ab'],
+  ['U+200C', 'a‌b', 'ab'],
+  ['U+200D', 'a‍b', 'ab'],
+  ['U+FEFF', 'a﻿b', 'ab'],
+  ['U+2060', 'a⁠b', 'ab'],
+  ['U+2064', 'a⁤b', 'ab'],
+  ['U+202E', 'a‮b', 'ab'],
+  ['U+200E', 'a‎b', 'ab'],
+  ['U+2066', 'a⁦b', 'ab'],
+  ['U+061C', 'a؜b', 'ab'],
+  ['U+180E', 'a᠎b', 'ab'],
+  ['U+034F', 'a͏b', 'ab'],
+  ['U+00AD', 'a­b', 'ab'],
+  ['U+E0041', 'a\u{E0041}b', 'ab'],
+  ['U+E0001', 'a\u{E0001}b', 'ab'],
+  ['U+FE0F after a letter', 'a️b', 'ab'],
+  ['U+FE00 after a letter', 'a︀b', 'ab'],
+  ['U+E0100 after a Han ideograph', 'a葛\u{E0100}b', 'a葛b'],
+  ['U+200D letter then emoji', 'a‍\u{1F4BB}b', 'a\u{1F4BB}b'],
+  ['U+200D emoji then letter', 'a\u{1F469}‍b', 'a\u{1F469}b'],
+  ['U+200D inside the ZWJ emoji U+1F469 U+200D U+1F4BB', 'a\u{1F469}‍\u{1F4BB}b', 'a\u{1F469}‍\u{1F4BB}b'],
+  ['U+200D inside the non-RGI ZWJ pair U+1F469 U+200D U+1F996', 'a\u{1F469}‍\u{1F996}b', 'a\u{1F469}‍\u{1F996}b'],
+  ['U+FE0F U+200D inside U+1F3F3 U+FE0F U+200D U+1F308', '\u{1F3F3}️‍\u{1F308}', '\u{1F3F3}️‍\u{1F308}'],
+  ['U+FE0F after U+2764', 'a❤️b', 'a❤️b'],
+  ['U+FE0E after U+2764', 'a❤︎b', 'a❤︎b'],
+  ['U+FE0F in the keycap 1 U+FE0F U+20E3', 'a1️⃣b', 'a1️⃣b'],
+  ['tags U+E0067..U+E007F after U+1F3F4', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b'],
+  ['U+200C in Persian', 'a می‌خواهم b', 'a می‌خواهم b'],
+  ['U+200D after a Devanagari virama', 'a क्‍ष b', 'a क्‍ष b'],
+  ['U+200C after a Devanagari virama', 'a क्‌ष b', 'a क्‌ष b'],
+  ['U+200B in Thai', 'a ภาษา​ไทย b', 'a ภาษา​ไทย b'],
+  ['U+200E after Hebrew', 'a שלום‎ b', 'a שלום‎ b'],
+  ['U+061C after Arabic', 'a عربي؜123 b', 'a عربي؜123 b'],
+  ['U+200D after Arabic', 'a ب‍ b', 'a ب‍ b'],
+  ['U+180B after Mongolian', 'a ᠠ᠋ b', 'a ᠠ᠋ b'],
+  ['U+034F between combining marks', 'á͏̣b', 'á͏̣b'],
+  ['U+0600 is not gated', 'a؀b', 'a؀b'],
+  ['U+00E9 is not gated', 'aéb', 'aéb'],
+];
+
+for (const [label, input, written] of REVIEW_GATE_ROWS) {
+  test(`InjectQueue: review gate (CLI 2.1.286) — ${label} writes ${JSON.stringify(written)}`, async () => {
+    const writes = [];
+    const q = new InjectQueue({
+      write: (bytes) => writes.push(bytes),
+      settleMsFor: () => 0,
+      quietMs: 0, maxWaitMs: 0,
+      ctrlUSettleMs: 0,
+      sleep: async () => {},
+      lastHumanInputAt: () => 0,
+      isDead: () => false,
+    });
+    await q.enqueue(input);
+    assert.deepStrictEqual(writes, ['\x15', written, '\r']);
+  });
+}
+
+test('InjectQueue: a stripped review-gated character is gone before settle math and \\n→\\r', async () => {
+  const writes = [];
+  const settled = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: (text) => { settled.push(text); return 0; },
+    quietMs: 0, maxWaitMs: 0,
+    ctrlUSettleMs: 0,
+    sleep: async () => {},
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+  });
+  await q.enqueue('one​\ntwo﻿');
+  assert.deepStrictEqual(writes, ['\x15', 'one\rtwo', '\r']);
+  assert.deepStrictEqual(settled, ['one\ntwo']);
+});
