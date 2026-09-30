@@ -30,6 +30,16 @@ function durableMessageCopyOf(p, path) {
   return path.join(path.dirname(messagesDir), 'spill', path.basename(seatDir), 'messages', name);
 }
 
+function literalMessagePathOf(p, path) {
+  const abs = path.resolve(p);
+  const name = path.basename(abs);
+  const messagesDir = path.dirname(abs);
+  const seatDir = path.dirname(messagesDir);
+  const spillDir = path.dirname(seatDir);
+  if (!MESSAGE_SPILL_NAME_RE.test(name) || path.basename(messagesDir) !== 'messages' || path.basename(spillDir) !== 'spill') return null;
+  return path.join(path.dirname(spillDir), 'messages', path.basename(seatDir), name);
+}
+
 // `raw` as displayed; `cwd` the session's; `baseDir` the directory of the file
 // the text appeared IN (the peek's own path — null for a terminal click);
 // `touched` the session's touched-file absolutes (file-touch.js), used as a
@@ -109,4 +119,4 @@ function resolveDisplayedPath({ raw, cwd, baseDir = null, touched = [], home, pa
   return { ok: false, error: `Can't find "${trimmed}"` };
 }
 
-module.exports = { resolveDisplayedPath, durableMessageCopyOf, CANDIDATE_CAP };
+module.exports = { resolveDisplayedPath, durableMessageCopyOf, literalMessagePathOf, CANDIDATE_CAP };

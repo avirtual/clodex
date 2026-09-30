@@ -235,7 +235,7 @@ const {
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const nodePath = require('path');
-const { durableMessageCopyOf } = require('./file-resolve');
+const { durableMessageCopyOf, literalMessagePathOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
 
@@ -6320,10 +6320,10 @@ function createSessionManager(deps) {
       try {
         const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
-        const kept = this._keptMessagePath(path_);
-        this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${verb} (rejected)`));
-        return kept !== path_
-          ? ` — your ${verb} body (${bytes} bytes) is saved at ${kept}`
+        this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
+        const durable = this._durableCopyOf(path_);
+        return durable
+          ? ` — your ${verb} body (${bytes} bytes) is saved at ${path_} (swept after ${Math.round(MSG_MAX_AGE / 60)} minutes; a permanent copy stays at ${durable})`
           : ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
@@ -6342,11 +6342,11 @@ function createSessionManager(deps) {
         if (used < DENIED_SPILL_CAP) {
           try {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
-            const kept = this._keptMessagePath(path_);
-            this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${label} (denied)`));
+            this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
-            return kept !== path_
-              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${kept}`
+            const durable = this._durableCopyOf(path_);
+            return durable
+              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${path_} (swept after ${Math.round(MSG_MAX_AGE / 60)} minutes; a permanent copy stays at ${durable})`
               : `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
             log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
@@ -7575,8 +7575,8 @@ function createSessionManager(deps) {
       try {
         seedFiledRing(ring, [
           { dir: spillDir, kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message', mapPath: (p) => this._keptMessagePath(p) },
-          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message' },
+          { dir: path.join(MSG_DIR, name), kind: 'message' },
+          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => literalMessagePathOf(p, nodePath) || p },
         ]);
       } catch (e) {
         log.warn('files', `filed seed for ${name} failed: ${e.message}`);
@@ -7584,9 +7584,9 @@ function createSessionManager(deps) {
       return ring;
     }
 
-    _keptMessagePath(filePath) {
+    _durableCopyOf(filePath) {
       const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, nodePath) : null;
-      return durable && fs.existsSync(durable) ? durable : filePath;
+      return durable && fs.existsSync(durable) ? durable : null;
     }
 
     _noteFiled(name, entry) {
@@ -8003,7 +8003,7 @@ function createSessionManager(deps) {
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
-        this._noteFiled(target.name, filedEntry(this._keptMessagePath(filePath), 'message', `From: ${senderName}`));
+        this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
         // The trailing space after the path closes the @-autocomplete popup, so the deferred Enter
         // cannot select a different file.

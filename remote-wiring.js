@@ -6,6 +6,7 @@
 
 const { pathFor, projectDirFor } = require('./clodex-paths');
 const { spillDirFor } = require('./intent-spill');
+const { durableMessageCopyOf } = require('./file-resolve');
 const { createTicketsStore } = require('./tickets-store');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
@@ -731,14 +732,16 @@ function createRemoteWiring(deps) {
           const confineRemotePath = (target, requested) => {
             const p = String(requested || '');
             if (!p || !path.isAbsolute(p)) return { ok: false, code: 'outside', error: 'path must be absolute' };
-            const r = realpathNearest(fs, path, p);
+            const durable = fs.existsSync(p) ? null : durableMessageCopyOf(p, path);
+            const src = durable && fs.existsSync(durable) ? durable : p;
+            const r = realpathNearest(fs, path, src);
             if (!r.ok) return { ok: false, code: 'unreadable', error: r.error };
             const roots = remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, target, name);
             if (!roots.some((root) => r.real === root || r.real.startsWith(root + path.sep))) {
               return { ok: false, code: 'outside', error: 'path is outside what this seat may read over the phone-access server' };
             }
             try {
-              if (fs.lstatSync(p).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
+              if (fs.lstatSync(src).isSymbolicLink()) return { ok: false, code: 'not-a-file', error: 'Not a regular file' };
             } catch (e) {
               if (r.exists || !['ENOENT', 'ENOTDIR'].includes(e.code)) return { ok: false, code: 'unreadable', error: e.message };
             }

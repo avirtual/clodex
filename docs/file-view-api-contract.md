@@ -69,9 +69,11 @@ the list and the tap answers `gone`, and that is the ordinary path to `gone`,
 not a race the client may ignore. Source: a per-seat in-memory ring appended at each writer (`writeSpill`
 callers via the `wire.on('spill')` listener and `_handoffText`; `spillToFile`
 call sites), seeded on `create()`/resume by listing the spill dir, the messages
-dir (each message mapped to its durable copy when that exists) and
-`spill/<seat>/messages/` by mtime so a restarted host still lists earlier
-filings. Seeded spill-dir entries all come back as `kind: "intent"`, handoffs
+dir and `spill/<seat>/messages/` (each durable copy listed under its
+`messages/<seat>/` literal, `literalMessagePathOf`, once) by mtime so a
+restarted host still lists earlier filings. A swept `messages/<seat>/` entry
+whose durable copy (`durableMessageCopyOf`) exists stays listed, and its
+`filePeek` reads that copy under the literal path. Seeded spill-dir entries all come back as `kind: "intent"`, handoffs
 included, with the file's first line as `head` (no `[agent:<verb>]` prefix).
 
 ### 2. `filePeek` gains a range and hard error codes

@@ -15,6 +15,7 @@ const { projectDirFor } = require('../clodex-paths');
 const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer } = require('../remote');
 const { parseIntent, looksLikeIntent } = require('../intent-scanner');
+const { durableMessageCopyOf } = require('../file-resolve');
 
 const PAGE = path.join(__dirname, '..', 'renderer', 'remote.html');
 
@@ -164,10 +165,14 @@ test('writer: _buildDeliveryText message spill notes a message entry at exactly 
   h.seat('lead');
   const bob = h.seat('bob');
   const body = 'y'.repeat(900);
+  const durable = path.join(h.root, 'spill', 'bob', 'messages', `msg-${process.pid}-1.txt`);
+  fs.mkdirSync(path.dirname(durable), { recursive: true });
+  fs.writeFileSync(durable, body);
   const text = h.m._buildDeliveryText(bob, 'lead', body, 'dm');
   const m = text.match(/attached: @(\S+) /);
   assert.ok(m, `ENTER: the message was spilled: ${text.slice(0, 80)}`);
   assert.strictEqual(h.spilled.length, 1);
+  assert.strictEqual(durableMessageCopyOf(h.spilled[0], path), durable, 'ENTER: the durable copy of this spill is on disk');
   const [entry] = bob.filedRing.list();
   assert.strictEqual(entry.path, h.spilled[0], 'entry.path === spillToFile(...) return');
   assert.strictEqual(entry.path, m[1], 'and the literal in the delivery text');
@@ -408,6 +413,13 @@ test('confinement (remote query only): cwd, spill, messages and task dirs of the
   fs.rmSync(path.join(registry, 'messages', 'seat'), { recursive: true });
   session.filedRing.note({ path: sweptMsg, kind: 'message', head: 'From: x', bytes: 1, ts: 1 });
   assert.strictEqual(f.query('seat', 'filePeek', { path: sweptMsg }).code, 'gone', 'a root swept whole still confines, so a listed file under it is gone, not outside');
+  const sweptWithCopy = path.join(registry, 'messages', 'seat', 'msg-1-2.txt');
+  writeAt(path.join(registry, 'spill', 'seat', 'messages'), 'msg-1-2.txt', 'From: y\n\nkept');
+  const kept = f.query('seat', 'filePeek', { path: sweptWithCopy });
+  assert.deepStrictEqual([kept.ok, kept.path, kept.content], [true, sweptWithCopy, 'From: y\n\nkept'], 'a swept message literal peeks its durable copy under the literal identity');
+  fs.symlinkSync(out, path.join(registry, 'spill', 'seat', 'messages', 'msg-1-4.txt'));
+  const escaped = f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'seat', 'msg-1-4.txt') });
+  assert.deepStrictEqual([escaped.ok, escaped.code], [false, 'outside'], 'the durable copy\'s realpath is confined, not the literal\'s');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'seat', 'other.txt') }).code, 'not-found');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(cwd, 'src') }).code, 'not-a-file', 'a directory inside cwd');
   assert.strictEqual(f.query('seat', 'filePeek', { path: cwd }).code, 'not-a-file', 'the root itself is a directory, not outside');

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A large message's row in the phone's Files list matches the path the transcript shows again, stays listed after the 30-minute sweep and opens from its durable copy; the Intel build recipe in release notes and the `clodexctl get … | xargs logs` example in `clodexctl help` are corrected.
+
 ## 5.99.0 — 2026-09-30
 
 - A pasted image shows as a thumbnail above the seat's composer, with a × to drop it, so it is clear one is already attached before you send.

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-const { resolveDisplayedPath, durableMessageCopyOf } = require('../file-resolve');
+const { resolveDisplayedPath, durableMessageCopyOf, literalMessagePathOf } = require('../file-resolve');
 
 // `exists` is the set of paths that stat as regular files. Everything else is
 // injected, so nothing here touches a real disk.
@@ -224,4 +224,9 @@ test('only msg-<pid>-<n>.txt directly under messages/<seat>/ maps to a durable c
   assert.strictEqual(durableMessageCopyOf('/h/.clodex/messages/hand-1/img-1700000000000-1.png', path), null);
   assert.strictEqual(durableMessageCopyOf('/h/.clodex/other/hand-1/msg-1-2.txt', path), null);
   assert.strictEqual(durableMessageCopyOf('/h/.clodex/messages/../msg-1-2.txt', path), null);
+  assert.strictEqual(literalMessagePathOf('/h/.clodex/spill/hand-1/messages/msg-1-2.txt', path), '/h/.clodex/messages/hand-1/msg-1-2.txt');
+  assert.strictEqual(literalMessagePathOf(durableMessageCopyOf('/h/.clodex/messages/hand-1/msg-1-2.txt', path), path), '/h/.clodex/messages/hand-1/msg-1-2.txt');
+  assert.strictEqual(literalMessagePathOf('/h/.clodex/spill/hand-1/messages/img-1700000000000-1.png', path), null);
+  assert.strictEqual(literalMessagePathOf('/h/.clodex/spill/hand-1/0000000000000001.md', path), null);
+  assert.strictEqual(literalMessagePathOf('/h/.clodex/other/hand-1/messages/msg-1-2.txt', path), null);
 });
