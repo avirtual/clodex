@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -91,3 +91,5 @@ test('a denied dm body names its durable copy, with no sweep deadline', () => {
   assert.ok(suffix.endsWith(`. Your dm body (${Buffer.byteLength(body)} bytes) is saved at ${entry.path}`), suffix);
   assert.doesNotMatch(suffix, /swept|minutes/);
 });
+
+after(() => { setImmediate(() => process.exit(0)); });
