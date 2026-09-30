@@ -13124,8 +13124,7 @@ test('exec terminator: dm / memory multi-line capture is left untouched (greedy)
 
 // --- [agent:end] body terminator ---
 // The footgun this closes fired live: a memory-remember followed by
-// operator-facing prose saved the prose INTO the unit (bodies run to the next
-// intent or end of turn). `end` is the explicit close: it terminates the open
+// operator-facing prose saved the prose INTO the unit. `end` is the explicit close: it terminates the open
 // body via the generic boundary check and is itself discarded — never emitted
 // as an intent, so it can't be dispatched, deduped, or gated.
 
@@ -13349,6 +13348,27 @@ test('open body: a closed body, or an open one with nothing after its head, is n
   m._scanJsonlText('[agent:remind in 1m] continue: t1 phase\n\n', 'seat', [], { interrupted: false });
   assert.deepStrictEqual(reminded.map((r) => r.body), ['a\nb', 'continue: t1 phase']);
   assert.deepStrictEqual(notes(), []);
+});
+
+test('open body: a one-line tail is counted in the singular', () => {
+  const { m, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: false });
+  assert.match(notes()[0], /the 1 following line was treated as prose/);
+});
+
+test('open body: a verb that ends or cuts the context is refused, not applied on its head line', () => {
+  const { m, notes } = mkOpenBody();
+  const ran = [];
+  m._handleContextIntent = (s, sub, body) => ran.push({ sub, body });
+  m._handleScratchIntent = (s, intent) => ran.push({ sub: intent.sub, body: intent.body });
+  m._scanJsonlText('[agent:context compact] pick up t1\nstep two', 'seat', [], { interrupted: false });
+  m._scanJsonlText('[agent:scratch end] summary\nmore summary', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, []);
+  assert.strictEqual(notes().length, 2);
+  assert.match(notes()[0], /\[agent:context compact\] was not closed — it was NOT applied/);
+  assert.match(notes()[1], /\[agent:scratch end\] was not closed — it was NOT applied/);
+  m._scanJsonlText('[agent:context compact] pick up t1\nstep two\n[agent:end]', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, [{ sub: 'compact', body: 'pick up t1\nstep two' }]);
 });
 
 test('open body: an interrupted flush gets the interrupt note, not the open-body note', () => {

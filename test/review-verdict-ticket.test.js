@@ -1433,6 +1433,25 @@ test('a BOLDED review-done reaches the ticket loop and lands its verdict (t404)'
   assert.deepStrictEqual(f.killed, [rec.name], 'and the seat still retires');
 });
 
+test('an unclosed review-done lands no verdict and keeps the seat, which is told to re-emit (t1459)', async () => {
+  const f = mkVerdict({
+    parseIntent: require('../intent-scanner').parseIntent,
+    looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+    execBodyCap: 64 * 1024,
+  });
+  openTicket(f);
+  const rec = spawnReviewer(f, 'review the diff', { ticketId: 't1' });
+  f.injected.length = 0;
+  const { intents, dispatch } = verdictTurn(f, rec, '[agent:review-done] - **VERDICT**: REWORK\nMUST-FIX\n- x');
+  assert.deepStrictEqual(intents.map((i) => [i.type, i.bodyOpen]), [['review-done', true]]);
+  await dispatch();
+  const t = f.one('t1');
+  assert.ok(!t.verdict, 'no verdict landed on the ticket');
+  assert.deepStrictEqual(f.killed, [], 'the reviewer seat is still alive');
+  assert.match(f.notes(), /\[agent:review-done\] was not closed — it was NOT applied/);
+  assert.match(f.notes(), /close it with \[agent:end\]/);
+});
+
 test('the verdict body rides the bolded line exactly as it rides a bare one (t404)', async () => {
   // Same turn text, wrapper removed. Asserting EQUALITY of the two outcomes is
   // what makes this a tolerance rather than a second code path: a fix that

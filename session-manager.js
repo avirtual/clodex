@@ -107,7 +107,6 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
 const { scanIntentLines } = require('./intent-segments');
-const openBodyTails = new WeakMap();
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
@@ -136,6 +135,10 @@ const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_
 const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
 
 const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
+const openBodyTails = new WeakMap();
+const endsContextVerb = (intent) => intent.type === 'review-done'
+  || (intent.type === 'scratch' && (intent.sub === 'end' || intent.sub === 'rewind'))
+  || (intent.type === 'context' && (intent.sub === 'clear' || intent.sub === 'compact' || intent.sub === 'reload'));
 
 const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
 
@@ -5108,12 +5111,6 @@ function createSessionManager(deps) {
 
       if (intent.type === 'end') return;
 
-      if (session && session.agentType && intent.bodyOpen && openBodyTails.has(intent)) {
-        this._injectText(session, `[agent:intent] the body of [agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] `
-          + `was not closed — only its first line was applied; the ${openBodyTails.get(intent)} following lines were `
-          + 'treated as prose. Close bodies with [agent:end].', { parkable: true });
-      }
-
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
           const more = intent.more ? ` (+${intent.more} more unrecognized [agent:…] lines this turn)` : '';
@@ -5173,6 +5170,25 @@ function createSessionManager(deps) {
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
+      }
+
+      const openTail = intent.bodyOpen ? openBodyTails.get(intent) || 0 : 0;
+      if (openTail) {
+        const head = `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}]`;
+        const tail = `${openTail} following line${openTail === 1 ? '' : 's'}`;
+        if (endsContextVerb(intent)) {
+          if (session && session.agentType) {
+            this._injectText(session, `[agent:intent] the body of ${head} was not closed — it was NOT applied, `
+              + `because this verb ends or cuts your context and the ${tail} after its head would be lost. `
+              + 'Re-emit the whole intent and close it with [agent:end].', { parkable: true });
+          }
+          return;
+        }
+        if (session && session.agentType) {
+          this._injectText(session, `[agent:intent] the body of ${head} was not closed — only its first line was `
+            + `applied; the ${tail} ${openTail === 1 ? 'was' : 'were'} treated as prose. Close bodies with [agent:end].`,
+          { parkable: true });
+        }
       }
 
       const scratchWatched = !!(session && this._scratchOpenMarks(session).length && SCRATCH_DISPATCH_TYPES.has(intent.type));
