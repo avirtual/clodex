@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.97.0 — 2026-09-30
+
 - Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.
 - A preserved suite-failure file is numbered by the same review round as the diff and verdict beside it.
 - Phone: user messages in the transcript now carry thumbnails of attached images (`transcript-images` cap), downscaled to 256px on the host.
