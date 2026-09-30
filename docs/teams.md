@@ -52,7 +52,7 @@ the lead role's template, which the kit picks (`clodex-team-lead` in the clodex
 kit, `lead` in the default kit) — `claude-opus-5-5[1m]`, every skill off,
 `clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and the privileged
 intents off. A team created before that stem was recorded on the role has no
-`lead.template` line and reaches the same file by default. Want another shape:
+`lead.template` line and reaches `clodex-team-lead` by default. Want another shape:
 set `lead.template` in the app's team editor, or pass an explicit `template:` on the spawn, which always wins.
 
 A seat binds to a role by its NAME — `<team>-<role>`, or the team's `lead` — and
