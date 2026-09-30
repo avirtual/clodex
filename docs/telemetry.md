@@ -192,8 +192,8 @@ identical response shapes so render code is shared. `sessionFiles` carries
 offset, length, truncated, binary, content}` and, on failure,
 `{ok:false, code, error}`. Confinement of `filePeek`/`fileDiff` lives in the
 remote query path only, so the direct IPC and the peer drawer are unchanged. `peerProxyView` is
-the owner-side trim: no base/capabilities/sessionId crosses
-the wire (no reach-back), plus a computed `queries[]` advertising which
+the owner-side trim: no capabilities cross the wire, and no base/sessionId unless
+`CLODEX_WIRESCOPE_PUBLIC_URL` is set (then the public base and the real sessionId do), plus a computed `queries[]` advertising which
 popovers the owner will answer.
 
 ## 6. Side-channels
@@ -201,13 +201,13 @@ popovers the owner will answer.
 - **Statusline** (statusline.js): the generated per-session script always
   writes `{name}-ctx` (pct/used/size/model) even in `headless` mode
   (proxy-routed sessions suppress the visible line but the CLI is the sole
-  source of the context-window SIZE). `rebuildAllStatusScripts` (main.js)
+  source of the context-window SIZE). `rebuildAllStatusScripts` (engine.js)
   re-renders on preference changes. The template is a bash heredoc —
   byte-sensitive, test-pinned.
 - **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 150k,
   escalate 200k; Fable 5.1 200k/250k — cost scales with absolute context size, not window %),
-  per-model-capable and operator-overridable (no model ships a differentiated
-  row today). `ctxThresholdsFor` resolves settings-model
+  per-model-capable and operator-overridable (`CTX_MODEL_THRESHOLDS` ships the
+  Fable 5.1 row). `ctxThresholdsFor` resolves settings-model
   > builtin-model > settings-default > builtin-default and names which layer
   answered, so a lookup that found nothing is distinguishable from one that
   found the baseline. Models are keyed by the family `modelFamily` derives from
@@ -238,10 +238,10 @@ popovers the owner will answer.
 
 ## 6b. In-process keep-warm holds (wire/hold.js `HoldKeeper`)
 
-The built-in wire proxy's hold keeper is **in-memory by design** — it
-replays the session's last request as a 1-token cache-read ping, so its
-state includes request bytes + auth headers that must never touch disk.
-What DOES persist is the hold **intent**, in one of two mutually exclusive
+The built-in wire proxy's hold keeper replays the session's last request as a
+1-token cache-read ping, so its state includes request bytes + auth headers; only
+a perpetual hold's entry touches disk (`HoldEntryStore`, `wire-hold-entries.json`, 0600).
+The hold **intent** persists in one of two mutually exclusive
 fields on the session's sessions.json record:
 
 - `holdUntil` (epoch ms) for a timed hold, written on arm (from the arm
@@ -286,12 +286,13 @@ until the operator notices — which they will, because their own turns are
 failing alongside.
 
 Arming either one clears the other, as does an explicit disarm — a seat must
-never carry both. After an app restart the first main-line wire turn
+never carry both. After an app restart a perpetual hold re-arms at startup
+(`_restorePerpetualHolds`); for a timed hold the first main-line wire turn
 re-arms the remaining window — retried each turn until the warm-gated
 `arm()` accepts (a strict once-per-spawn guard would silently re-lose the
 hold on a first-turn decline). Failure-disarm detection keys on the
 disarm event's machine-readable `cause` field (`'failures'`), never the
-human `reason` string. Residual gap, accepted: a session that stays idle
+human `reason` string. Residual gap, accepted: a timed-hold session that stays idle
 across the restart has nothing to warm-gate against, so it sits cold
 until its next organic turn. Operator-facing lifecycle (disarms, ping
 failures) logs to clodex.log under `keepwarm`; the per-ping firehose
@@ -324,10 +325,11 @@ are a proxy-side concept; the nearest in-repo trace is the supervisor's
   TTL-relative.
 - The managed wirescope outlives the GUI; adopt, never double-spawn;
   vendor-bump restart at most once per launch.
-- Nothing that reaches a peer carries base/capabilities/sessionId.
+- Nothing that reaches a peer carries capabilities, nor base/sessionId unless
+  `CLODEX_WIRESCOPE_PUBLIC_URL` is set.
 - Keep-warm persistence carries the hold INTENT only (`holdUntil` for a
-  timed hold, `keepWarmAlways` for a perpetual one, never both) — never
-  request bytes or auth headers.
+  timed hold, `keepWarmAlways` for a perpetual one, never both); request bytes
+  and auth headers persist only in a perpetual hold's 0600 `HoldEntryStore` entry.
 - Ops log stays coarse and never throws.
 - Statusline heredoc bytes are pinned; headless still writes the
   side-channel.
