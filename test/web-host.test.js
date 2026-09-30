@@ -382,6 +382,21 @@ test('five-method handle: registered on first tab, unregistered on last; fans + 
   } finally { host.close(); }
 });
 
+test('scrollback ring trimmed past a split escape resumes at a clean boundary', async () => {
+  const MAX = 2 * 1024 * 1024;
+  const { host, port, registered } = await startHost({ sessions: { ws1: [{ name: 'sess' }] } });
+  try {
+    const a = connect(port);
+    await helloWelcome(a, { workspaceId: 'ws1' });
+    const handle = registered[0].handle;
+    handle.webContents.send('pty-data', 'sess', 'ab\x1b[3');
+    handle.webContents.send('pty-data', 'sess', `2m${'y'.repeat(MAX - 3)}`);
+    const ring = host._scrollback.get('sess');
+    assert.deepStrictEqual({ head: ring.slice(0, 4), length: ring.length }, { head: 'yyyy', length: MAX - 3 });
+    a.close();
+  } finally { host.close(); }
+});
+
 test('scrollback ring replays attached-period pty-data to a late-joining tab; Buffers are base64-framed', async () => {
   const { host, port, registered } = await startHost({ sessions: { ws1: [{ name: 'sess' }] } });
   try {
