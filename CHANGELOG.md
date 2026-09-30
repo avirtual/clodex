@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.99.0 — 2026-09-30
+
 - A pasted image shows as a thumbnail above the seat's composer, with a × to drop it, so it is clear one is already attached before you send.
 - In the browser a pasted image shows its thumbnail immediately, dimmed until the upload lands; the desktop Transcript pane draws images that arrived without an [Image #n] mark.
 - Docs: 64 contradictions with the code fixed across docs/how-to.md, exec-tools.md, file-view-api-contract.md, comment-paydown.md, peering.md, architecture.md, renderer-events.md, messaging.md, sessions.md, teams.md and telemetry.md.
