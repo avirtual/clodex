@@ -2,7 +2,7 @@
 // Covers statusline generation + proxy-base resolution. The ui-settings store
 // and registry dir are injected, so the script output is testable with a fake
 // settings object — no Electron, no real ~/.clodex.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const {
   renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase,
@@ -67,3 +67,46 @@ test('resolveProxyBase: null with the global pref disabled resolves to null', ()
   const ui = fakeUi({}, { proxyEnabled: false, proxyUrl: 'http://pref:9' });
   assert.strictEqual(resolveProxyBase(null, ui), null);
 });
+
+test('setupClaudeHook: a wire-routed seat with no proxyBase gets the headless statusline', () => {
+  const fs = require('fs');
+  const { createCliHooks } = require('../cli-hooks');
+  const { pathFor } = require('../clodex-paths');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const REGISTRY_DIR = mkTmpRoot('clodex-hooks-');
+  const h = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => fakeUi({ claude: ['model'], claudeCommand: '' }),
+    nodeInterp: process.execPath,
+  });
+  h.setupClaudeHook('wired', null, null, [], [], [], 'http://127.0.0.1:7801/w/wired');
+  h.setupClaudeHook('plain');
+  const wired = fs.readFileSync(pathFor(REGISTRY_DIR, 'wired', 'statusline'), 'utf-8');
+  const plain = fs.readFileSync(pathFor(REGISTRY_DIR, 'plain', 'statusline'), 'utf-8');
+  assert.ok(wired.includes('headless: side-channel only'), 'wire-only seat renders headless');
+  assert.ok(!plain.includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
+});
+
+test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headless after a settings save', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { createEngine } = require('../engine');
+  const { pathFor, runDirFor } = require('../clodex-paths');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const tmp = mkTmpRoot('clodex-hooks-');
+  const home = path.join(tmp, 'clodex-home');
+  const userData = path.join(tmp, 'userdata');
+  fs.mkdirSync(userData, { recursive: true });
+  const eng = createEngine({ userDataPath: userData, seams: { noSeed: true, registryDir: home }, log: { info() {}, warn() {}, error() {} } });
+  fs.mkdirSync(runDirFor(home, 'w'), { recursive: true });
+  fs.mkdirSync(runDirFor(home, 'p'), { recursive: true });
+  eng.rebuildAllStatusScripts({ sessions: new Map([
+    ['w', { agentType: 'claude', wireRouted: true, proxyBase: null }],
+    ['p', { agentType: 'claude', wireRouted: false, proxyBase: null }],
+  ]) });
+  assert.ok(fs.readFileSync(pathFor(home, 'w', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'wire-only seat stays headless');
+  assert.ok(!fs.readFileSync(pathFor(home, 'p', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
+});
+
+after(() => { setImmediate(() => process.exit(0)); });

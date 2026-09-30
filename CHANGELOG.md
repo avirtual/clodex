@@ -17,6 +17,9 @@ blocks a release.
 - A sandbox whose wire peer could not be registered now comes up and says so, instead of failing after its containers started.
 - Sandbox status distinguishes a Docker daemon that did not answer from one that is not running.
 - Web UI: a viewer joining a running seat no longer sees a garbled first line when the scrollback was trimmed mid-escape.
+- Clodex now reads `CLAUDE_CODE_USE_BEDROCK`/`VERTEX` the way the CLI does (on only for 1/true/yes/on); `=off` no longer switches a seat to the jsonl-only path.
+- `CLAUDE_CODE_USE_FOUNDRY` and `CLAUDE_CODE_USE_ANTHROPIC_AWS` are recognised as tee-blind backends and survive the inherited-env scrub.
+- A wire-routed seat no longer prints a second status line under the wirescope bar.
 
 ## 5.95.0 — 2026-09-30
 

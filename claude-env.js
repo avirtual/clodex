@@ -1,7 +1,7 @@
 // claude-env.js — read a Claude session's EFFECTIVE process environment by
 // merging process.env (base) with the `env` blocks of the settings layers the
 // CLI loads (user < project < local, per-key later-wins), and classify whether
-// that env routes the CLI to a TEE-BLIND backend (AWS Bedrock / GCP Vertex).
+// that env routes the CLI to a TEE-BLIND backend.
 //
 // Why it exists: the in-process wire tee only sees traffic that honors the
 // ANTHROPIC_BASE_URL our hook injects. A session whose settings set
@@ -21,13 +21,12 @@ const path = require('path');
 const os = require('os');
 const { readJsonSafe } = require('./fs-util');
 
-// CLI env truthiness: an env var is OFF when unset, "", "0", or "false"
-// (case-insensitive), and ON for any other non-empty string — matching how a
-// shell-exported flag or the CLI reads a boolean-ish env value.
+// CLI env truthiness: an env var is ON only when its trimmed, lowercased value
+// is "1", "true", "yes" or "on" — the CLI's own allow-list; any other value,
+// including unset, "off", "no" or a region name, is OFF.
 function isEnvTruthy(v) {
   if (v === undefined || v === null) return false;
-  const s = String(v).trim().toLowerCase();
-  return s !== '' && s !== '0' && s !== 'false';
+  return ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase());
 }
 
 // Merge process.env (base) < user < project < local `env` blocks, per-key
@@ -55,12 +54,14 @@ function readEffectiveClaudeEnv(cwd, { baseEnv = process.env, homeDir = os.homed
 }
 
 // Which tee-blind backend (if any) a merged env selects: 'bedrock' | 'vertex' |
-// null. Bedrock is checked first so a (nonsensical) both-set env is still
-// classified deterministically — either way the session is tee-blind.
+// 'foundry' | 'anthropic-aws' | null, checked in that order so a multi-set env
+// is still classified deterministically — either way the session is tee-blind.
 function teeBlindBackend(env) {
   if (!env) return null;
   if (isEnvTruthy(env.CLAUDE_CODE_USE_BEDROCK)) return 'bedrock';
   if (isEnvTruthy(env.CLAUDE_CODE_USE_VERTEX)) return 'vertex';
+  if (isEnvTruthy(env.CLAUDE_CODE_USE_FOUNDRY)) return 'foundry';
+  if (isEnvTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return 'anthropic-aws';
   return null;
 }
 
@@ -77,7 +78,7 @@ function teeBlindBackend(env) {
 //   sandbox seeds it into the container env (M4 auth.env) and sessions must
 //   inherit it — scrubbing it spawned unauthenticated REPLs on a seeded box
 //   (observed live 2026-07-16, first sandbox e2e).
-// - CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX are backend CONFIG, not
+// - CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY,ANTHROPIC_AWS} are backend CONFIG, not
 //   session state — the same class as the oauth token (a Fargate UseBedrock
 //   task / a Bedrock-env node sets them node-wide). Scrubbing them (a) broke
 //   session routing: PTY-spawned CLIs on a Bedrock node lost the flag and
@@ -88,7 +89,8 @@ function teeBlindBackend(env) {
 //   (ours or a dead predecessor's tee); a user's own global endpoint override
 //   survives.
 const SCRUB_SURVIVORS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CONFIG_DIR',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CONFIG_DIR',
 ]);
 function scrubInheritedClaudeMarkers(env) {
   for (const k of Object.keys(env)) {
