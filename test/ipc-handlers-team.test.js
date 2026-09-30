@@ -395,7 +395,7 @@ test('team:delete forgets the deleted team\'s ticket watches', async () => {
 
 test('team:delete of an UNLOADABLE team forgets the watches on roots no team resolves any more', async () => {
   const d = mkDeleteDoor({ manifest: 'not json at all' });
-  const liveRoot = mkTmpRoot('ipc-del-live-');
+  const liveRoot = mkTmpRoot('ipc-del-root-');
   const liveDir = path.join(path.dirname(d.dir), 'live');
   try {
     fs.mkdirSync(path.join(liveDir, 'prompts'), { recursive: true });
