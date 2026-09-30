@@ -18,6 +18,7 @@ const CTRLU_SETTLE_MS = 30;
 // proxy-util (a pure leaf, so this require keeps the module electron-free and
 // unit-testable under plain node).
 const { PASTE_START, PASTE_END } = require('./proxy-util');
+const { stripReviewGated } = require('./review-gate');
 
 // `hintHeld` covers the gap the typing window does not: a hint pre-armed against
 // the operator's draft is one-shot and pops at the next TURN START, so injecting
@@ -58,49 +59,14 @@ function canFireCompact({ pending, holdQueueLen, ptyQueueLen }) {
   return !!pending && (holdQueueLen || 0) === 0 && (ptyQueueLen || 0) === 0;
 }
 
-const REVIEW_GATED = /\p{Default_Ignorable_Code_Point}/u;
-const EMOJI_CHAR = /[\p{Emoji}\p{Extended_Pictographic}]/u;
-const MARK_CHAR = /\p{M}/u;
-const TAG_CHAR = /[\u{E0020}-\u{E007F}]/u;
-const JOINING_SCRIPTS = [
-  'Arabic', 'Hebrew', 'Syriac', 'Thaana', 'Nko', 'Samaritan', 'Mandaic', 'Adlam', 'Hanifi_Rohingya', 'Yezidi',
-  'Mongolian', 'Devanagari', 'Bengali', 'Gurmukhi', 'Gujarati', 'Oriya', 'Tamil', 'Telugu', 'Kannada', 'Malayalam',
-  'Sinhala', 'Myanmar', 'Khmer', 'Tibetan', 'Tifinagh', 'Thai', 'Lao', 'Egyptian_Hieroglyphs', 'Duployan', 'Brahmi',
-  'Phags_Pa', 'Manichaean',
-];
-const JOINING_SCRIPT_CHAR = new RegExp(`[${JOINING_SCRIPTS.map((s) => `\\p{Script=${s}}`).join('')}]`, 'u');
-
-function keptByReviewGate(cps, i) {
-  const c = cps[i];
-  const prev = cps[i - 1];
-  if (c === '\u200D' && prev && (EMOJI_CHAR.test(prev) || prev === '\uFE0F') && cps[i + 1] && EMOJI_CHAR.test(cps[i + 1])) return true;
-  if ((c === '\uFE0E' || c === '\uFE0F') && prev && EMOJI_CHAR.test(prev)) return true;
-  if (TAG_CHAR.test(c)) {
-    let j = i - 1;
-    while (j >= 0 && TAG_CHAR.test(cps[j])) j--;
-    if (cps[j] === '\u{1F3F4}') return true;
-  }
-  if (c === '\u034F' && prev && MARK_CHAR.test(prev)) return true;
-  let p = i - 1;
-  while (p >= 0 && REVIEW_GATED.test(cps[p])) p--;
-  let n = i + 1;
-  while (n < cps.length && REVIEW_GATED.test(cps[n])) n++;
-  return (p >= 0 && JOINING_SCRIPT_CHAR.test(cps[p])) || (n < cps.length && JOINING_SCRIPT_CHAR.test(cps[n]));
-}
-
-function stripReviewGated(text) {
-  if (typeof text !== 'string' || !REVIEW_GATED.test(text)) return text;
-  const cps = Array.from(text);
-  return cps.filter((c, i) => !REVIEW_GATED.test(c) || keptByReviewGate(cps, i)).join('');
-}
-
 class InjectQueue {
   // isDead(): writing into a closed fd throws Napi::Error natively.
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered, reviewGate }) {
     this._write = write;
+    this._reviewGate = !!reviewGate;
     this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
     this._onUndelivered = typeof onUndelivered === 'function' ? onUndelivered : null;
     this._settleMsFor = settleMsFor;
@@ -206,7 +172,7 @@ class InjectQueue {
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }
-    text = stripReviewGated(text);
+    if (this._reviewGate) text = stripReviewGated(text);
     // \n→\r makes every interior newline an ENTER if node-pty splits this write
     // across reads — the body submits early and the remainder lands as a second
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
@@ -225,4 +191,4 @@ class InjectQueue {
   }
 }
 
-module.exports = { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact, stripReviewGated, CTRLU_SETTLE_MS };
+module.exports = { InjectQueue, shouldDeferInject, shouldWaitForReady, isInjectInFlight, canFireCompact, CTRLU_SETTLE_MS };
