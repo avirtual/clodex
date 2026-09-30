@@ -350,7 +350,8 @@ test('a dropped socket rejects the invokes in flight and forgets their ids', asy
     const inv1 = ws.frames().find((f) => f.t === 'invoke');
     global.setTimeout = () => 0;
     try { ws.close(); } finally { global.setTimeout = realSetTimeout; }
-    await assert.rejects(p1, /socket closed/);
+    const settled = await Promise.race([p1.then(() => 'resolved', (e) => e.message), tick().then(() => 'still pending')]);
+    assert.equal(settled, 'socket closed');
     const p2 = global.window.api.listSessions();
     await tick();
     ws.onmessage({ data: JSON.stringify({ t: 'reply', id: inv1.id, ok: true, value: 'stale' }) });
