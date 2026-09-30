@@ -117,11 +117,13 @@ test('a ring seeded at startup lists message spills at their durable copies, old
   write(path.join(msgDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
   write(path.join(durDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
   const ring = engine.manager._seedFiledRing(SEAT);
-  fs.unlinkSync(path.join(msgDir, 'msg-7-2.txt'));
-  assert.deepStrictEqual(ring.list(), [
+  const expected = [
     { path: path.join(durDir, 'msg-7-2.txt'), kind: 'message', head: 'From: newer', bytes: 16, ts: 1700000100000 },
     { path: path.join(durDir, 'msg-7-1.txt'), kind: 'message', head: 'From: older', bytes: 16, ts: 1700000000000 },
-  ]);
+  ];
+  assert.deepStrictEqual(ring.list(), expected, 'the live messages/ copy is listed once, at its durable path');
+  fs.unlinkSync(path.join(msgDir, 'msg-7-2.txt'));
+  assert.deepStrictEqual(ring.list(), expected);
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
