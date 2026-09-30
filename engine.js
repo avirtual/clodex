@@ -20,7 +20,7 @@ const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { peekFile } = require('./file-peek');
-const { resolveDisplayedPath } = require('./file-resolve');
+const { resolveDisplayedPath, durableMessageCopyOf } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { migrateSeatLayout } = require('./seat-layout');
 const { readVoiceTrigger } = require('./voice-settings');
@@ -990,11 +990,24 @@ function spillToFile(sender, body, recipient) {
   // (the charset alone admits `..`); if that relaxes, this needs confine().
   const dir = path.join(MSG_DIR, recipient);
   ensureDir(dir);
-  msgCounter++;
-  const fname = `msg-${process.pid}-${msgCounter}.txt`;
-  const fpath = path.join(dir, fname);
+  const seatSpill = confine(path.join(REGISTRY_DIR, 'spill'), recipient);
+  let fname, fpath, durable;
+  do {
+    msgCounter++;
+    fname = `msg-${process.pid}-${msgCounter}.txt`;
+    fpath = path.join(dir, fname);
+    durable = seatSpill && durableMessageCopyOf(fpath, path);
+  } while (fs.existsSync(fpath) || (durable && fs.existsSync(durable)));
   const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${Buffer.byteLength(body)} bytes\n\n`;
   fs.writeFileSync(fpath, header + body);
+  if (durable) {
+    try {
+      ensureDir(path.dirname(durable));
+      fs.writeFileSync(durable, header + body, { flag: 'wx' });
+    } catch (e) {
+      log.warn('messages', `durable copy of ${fname} for ${recipient} failed: ${e.message}`);
+    }
+  }
   return fpath;
 }
 

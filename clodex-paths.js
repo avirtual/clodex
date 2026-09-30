@@ -46,7 +46,7 @@
 // script-RELOCATES-but-BODY-keeps-the-shared-spelling story, and all three MUST
 // outlive the run dir, which is rm -rf'd on every exit, or the resume and the
 // notice they exist to serve would find them gone,
-// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat), scratch/ (a scratch episode's pre-cut transcript backup — scratchDirFor; outlives run/<name>/, which the respawn deletes, and sits outside ~/.claude/projects/ so the picker's *.jsonl glob never sees it), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
+// fix/ (a deploy-fix session's scratch cwd — fixDirFor; outlives run/<name>/), spill/ (intent-body spill — spillDirFor, confined+resolved by intent-spill.js; content-addressed, outlives run/<name>/ AND the seat; its messages/ subdir holds the never-swept copy of each message spill), scratch/ (a scratch episode's pre-cut transcript backup — scratchDirFor; outlives run/<name>/, which the respawn deletes, and sits outside ~/.claude/projects/ so the picker's *.jsonl glob never sees it), agents/, skills/, library/, accounts/ + accounts.json (accounts.js is the authority),
 // plugins/ (the BYO plugin root — plugins/plugin-sources.md §3; deliberately NOT a
 // KIND, since it is shared rather than per-agent, and constructed at the engine
 // bootstrap like every other entry in this list), clodex.log,
