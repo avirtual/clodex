@@ -6,7 +6,9 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
-const { createRemoteWiring } = require('../remote-wiring');
+const remoteWiring = require('../remote-wiring');
+const { createRemoteWiring } = remoteWiring;
+const { createEngine } = require('../engine');
 const { RemoteServer } = require('../remote');
 const { sliceSince } = require('../transcript');
 const { pathFor } = require('../clodex-paths');
@@ -77,13 +79,13 @@ function page(images) {
   ];
 }
 
-test('with a seam: an image over 64 KiB is replaced by the seam output, a 10 KiB one passes through untouched', async () => {
+test('with a seam: the seam output replaces the image, and a seam null passes the original through untouched', async () => {
   const big = b64(100 * 1024, 1);
   const small = b64(10 * 1024, 2);
   const calls = [];
   const thumbnail = async (buf, mediaType) => {
     calls.push([buf.length, mediaType]);
-    return { mediaType: 'image/jpeg', data: 'THUMB' };
+    return buf.length <= 64 * 1024 ? null : { mediaType: 'image/jpeg', data: 'THUMB' };
   };
   const messages = page([{ n: 1, mediaType: 'image/png', data: big }, { n: 2, mediaType: 'image/png', data: small }]);
   const { getTranscript } = wiredTranscript({ thumbnail, messages });
@@ -94,7 +96,7 @@ test('with a seam: an image over 64 KiB is replaced by the seam output, a 10 KiB
     { n: 2, mediaType: 'image/png', data: small },
   ]);
   assert.strictEqual('images' in out.messages[1], false);
-  assert.deepStrictEqual(calls, [[100 * 1024, 'image/png']]);
+  assert.deepStrictEqual(calls, [[100 * 1024, 'image/png'], [10 * 1024, 'image/png']]);
   assert.strictEqual(messages[0].images[0].data, big);
 });
 
@@ -106,6 +108,33 @@ test('with a seam: a re-rendered page reuses the thumbnail instead of re-encodin
   const again = await getTranscript(100, null);
   assert.strictEqual(calls, 1);
   assert.deepStrictEqual(again.messages[0].images, [{ n: 1, mediaType: 'image/jpeg', data: 'T' }]);
+});
+
+test('with a seam: concurrent page builds encode a shared image once', async () => {
+  let calls = 0;
+  const thumbnail = async () => { calls++; return { mediaType: 'image/jpeg', data: 'T' }; };
+  const { getTranscript } = wiredTranscript({ thumbnail, messages: page([{ n: 1, mediaType: 'image/png', data: b64(90 * 1024, 7) }]) });
+  const [a, b] = await Promise.all([getTranscript(100, null), getTranscript(100, null)]);
+  assert.strictEqual(calls, 1);
+  assert.deepStrictEqual([a.messages[0].images, b.messages[0].images], [[{ n: 1, mediaType: 'image/jpeg', data: 'T' }], [{ n: 1, mediaType: 'image/jpeg', data: 'T' }]]);
+});
+
+test('with a seam: each encode runs on its own event-loop turn', async () => {
+  let ticks = 0;
+  const seen = [];
+  const thumbnail = async () => {
+    seen.push(ticks);
+    setImmediate(() => { ticks++; });
+    return { mediaType: 'image/jpeg', data: 'T' };
+  };
+  const messages = page([
+    { n: 1, mediaType: 'image/png', data: b64(70 * 1024, 8) },
+    { n: 2, mediaType: 'image/png', data: b64(70 * 1024, 9) },
+    { n: 3, mediaType: 'image/png', data: b64(70 * 1024, 10) },
+  ]);
+  const { getTranscript } = wiredTranscript({ thumbnail, messages });
+  await getTranscript(100, null);
+  assert.deepStrictEqual(seen, [0, 1, 2]);
 });
 
 test('a throwing seam yields {n, mediaType, bytes} and one warn per build, never a failed page', async () => {
@@ -160,4 +189,24 @@ test('the transcript route answers an async getTranscript, and hello advertises 
     const hello = await get(server.port, '/api/peer/hello');
     assert.ok(hello.json.caps.includes('transcript-images'));
   } finally { server.stop(); }
+});
+
+test('engine: seams.thumbnail reaches the remote wiring as its thumbnail dep', () => {
+  const orig = remoteWiring.createRemoteWiring;
+  const seen = [];
+  remoteWiring.createRemoteWiring = (deps) => { seen.push(deps.thumbnail); return orig(deps); };
+  const thumbnail = async () => null;
+  try {
+    for (const seams of [{ thumbnail }, {}]) {
+      const tmp = mkTmpRoot('clx-thumbs-');
+      createEngine({
+        userDataPath: tmp,
+        seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
+        log: { info() {}, warn() {}, error() {} },
+      });
+    }
+  } finally {
+    remoteWiring.createRemoteWiring = orig;
+  }
+  assert.deepStrictEqual(seen, [thumbnail, null]);
 });

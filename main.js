@@ -553,6 +553,7 @@ app.whenReady().then(() => {
         const img = nativeImage.createFromBuffer(buf);
         if (img.isEmpty()) return null;
         const { width, height } = img.getSize();
+        if (Math.max(width, height) <= 256 && buf.length <= 64 * 1024) return null;
         const scaled = Math.max(width, height) > 256 ? img.resize(width >= height ? { width: 256 } : { height: 256 }) : img;
         return { mediaType: 'image/jpeg', data: scaled.toJPEG(70).toString('base64') };
       },

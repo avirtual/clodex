@@ -26,36 +26,38 @@ const { readVoiceCapabilityCached } = require('./voice-capability');
 const crypto = require('crypto');
 
 const WIRE_PROMPT_MAX_BYTES = 4096;
-const THUMB_TRIGGER_BYTES = 64 * 1024;
 const THUMB_CACHE_MAX = 200;
 
 function createThumbnailer(thumbnail, log) {
   const cache = new Map();
-  function recall(key) {
-    const hit = cache.get(key);
-    cache.delete(key);
-    cache.set(key, hit);
-    return hit;
-  }
+  let queue = Promise.resolve();
   function remember(key, value) {
     cache.set(key, value);
     if (cache.size > THUMB_CACHE_MAX) cache.delete(cache.keys().next().value);
   }
+  function encode(key, img) {
+    const pending = queue
+      .then(() => new Promise(setImmediate))
+      .then(() => thumbnail(Buffer.from(img.data, 'base64'), img.mediaType))
+      .then((out) => (out && typeof out.data === 'string' ? { mediaType: out.mediaType, data: out.data } : null));
+    queue = pending.catch(() => {});
+    remember(key, pending);
+    pending.catch(() => { if (cache.get(key) === pending) cache.delete(key); });
+    return pending;
+  }
   async function thumbOne(img, onFail) {
     if (typeof img.data !== 'string') return img;
-    const bytes = Buffer.byteLength(img.data, 'base64');
-    if (bytes <= THUMB_TRIGGER_BYTES) return img;
     const key = crypto.createHash('sha1').update(img.data).digest('hex');
-    let hit;
-    if (cache.has(key)) hit = recall(key);
-    else {
-      let out;
-      try { out = await thumbnail(Buffer.from(img.data, 'base64'), img.mediaType); }
-      catch (e) { onFail(e); return { n: img.n, mediaType: img.mediaType, bytes }; }
-      hit = out && typeof out.data === 'string' ? { mediaType: out.mediaType, data: out.data } : null;
-      remember(key, hit);
+    let pending = cache.get(key);
+    if (pending) remember(key, pending);
+    else pending = encode(key, img);
+    try {
+      const hit = await pending;
+      return hit ? { n: img.n, ...hit } : img;
+    } catch (e) {
+      onFail(e);
+      return { n: img.n, mediaType: img.mediaType, bytes: Buffer.byteLength(img.data, 'base64') };
     }
-    return hit ? { n: img.n, ...hit } : img;
   }
   return async function thumbPage(messages) {
     if (typeof thumbnail !== 'function') return messages;
