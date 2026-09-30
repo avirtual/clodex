@@ -91,9 +91,7 @@ test('empty and non-string input returns no hits rather than throwing', () => {
   for (const v of ['', null, undefined, 42, {}]) assert.deepStrictEqual(scanPaths(v), []);
 });
 
-// The regexes are module-level with the `g` flag, so a leftover lastIndex from
-// one call would make the next skip its first hit. Both are reset per call.
-test('repeated scans of the same text are identical (lastIndex is reset)', () => {
+test('scanPaths returns the literal hits, including right after a scan of another text holding a URL', () => {
   assert.deepStrictEqual(scanPaths('see https://x.dev/q.js here'), []);
   const want = [
     { start: 0, end: 6, text: 'a.js:1', path: 'a.js', line: 1 },
