@@ -107,6 +107,7 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
 const { scanIntentLines } = require('./intent-segments');
+const openBodyTails = new WeakMap();
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
@@ -5016,6 +5017,7 @@ function createSessionManager(deps) {
         }
         if (seg.kind !== 'intent') continue;
         if (spillAt && spillAt.has(seg.from)) seg.intent.spill = spillAt.get(seg.from);
+        if (seg.tail) openBodyTails.set(seg.intent, seg.tail);
         intents.push(seg.intent);
       }
       return intents;
@@ -5105,6 +5107,12 @@ function createSessionManager(deps) {
       const session = this.sessions.get(senderName);
 
       if (intent.type === 'end') return;
+
+      if (session && session.agentType && intent.bodyOpen && openBodyTails.has(intent)) {
+        this._injectText(session, `[agent:intent] the body of [agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] `
+          + `was not closed — only its first line was applied; the ${openBodyTails.get(intent)} following lines were `
+          + 'treated as prose. Close bodies with [agent:end].', { parkable: true });
+      }
 
       if (intent.type === 'unknown') {
         if (session && session.agentType) {
