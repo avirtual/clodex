@@ -3633,6 +3633,19 @@ test('t373: a RED post-merge suite preserves its full output and names the file 
   assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'and master is back');
 });
 
+test('t1452: a RED post-merge dump carries the ACCEPTED review round, the one its diff and verdict carry', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redWithDiff', ticketOver: { reviewRound: 1, reworkRound: 2 } });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const kept = keptFiles(f.home);
+  assert.strictEqual(kept.length, 1, 'ENTER: exactly one preserved file');
+  assert.match(pathReal.basename(kept[0]), /^suite-failure-t1-r1-\d{4}-/,
+    'named by landedOn.reviewRound, not reviewRound + 1 and not reworkRound + 1');
+});
+
 test('t697: a RED post-merge suite reverts on the FIRST run — master is not re-measured', async () => {
   // The asymmetry with the verify step, and the reason for it: a red verify run
   // holds up one branch, so a second opinion costs one suite. A red master is
