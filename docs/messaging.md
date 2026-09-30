@@ -200,9 +200,7 @@ cold session re-bills its whole context). Held Claude targets get the message
 **parked** (`_parkHeldDelivery`); Codex/dead targets get a plain bounce
 (Codex has no drain hook, so it can't be a park target).
 
-**Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body (an
-operator dm whose POST named a `client` reads `[agent:from user] (via <client>) body`,
-the tag also riding a spill pointer line), and
+**Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body (an operator dm whose POST named a `client` reads `[agent:from user] (via <client>) body`; only `user`'s tag rides inline, every other sender's tag labels the spill pointer alone), and
 on a dm whose reply would DROP, the marker `(no reply path)`. Polarity is
 inverted against the old reply trailer: an answerable dm costs zero bytes, and
 the marker is emitted only when the reply path is missing on one end — the
