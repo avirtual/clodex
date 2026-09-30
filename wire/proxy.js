@@ -408,9 +408,11 @@ class WireProxy extends EventEmitter {
           // the role.
           const rawAgentId = req.headers['x-claude-code-agent-id'];
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
+          const rawRequestClass = req.headers['x-claude-code-request-class'];
+          const requestClass = typeof rawRequestClass === 'string' && rawRequestClass ? rawRequestClass : null;
           sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj);
-          compactCall = isCompactCall(obj);
-          role = this._roles.classify(obj, sessionId, agentId);
+          compactCall = isCompactCall(obj) || requestClass === 'compaction';
+          role = this._roles.classify(obj, sessionId, agentId, requestClass);
           if (!sideCall && !isSubagentRole(role)) {
             this._roles.noteMainFingerprint(sessionId, obj);
             if (sessionId) this._bindSession(agent, sessionId);

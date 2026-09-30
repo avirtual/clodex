@@ -778,9 +778,12 @@ exit 0
     // this wins even in repos that set their own ANTHROPIC_BASE_URL. wireBase
     // (shadow tee) sits in front and chains to any external proxy upstream.
     if (wireBase) {
-      settings.env = { ANTHROPIC_BASE_URL: `${wireBase}/anthropic` };
+      settings.env = { ANTHROPIC_BASE_URL: `${wireBase}/anthropic`, CLAUDE_CODE_GATEWAY_HINT_HEADERS: '1' };
     } else if (proxyBase) {
-      settings.env = { ANTHROPIC_BASE_URL: `${proxyBase}/agent/${proxyAgent || name}/anthropic` };
+      settings.env = {
+        ANTHROPIC_BASE_URL: `${proxyBase}/agent/${proxyAgent || name}/anthropic`,
+        CLAUDE_CODE_GATEWAY_HINT_HEADERS: '1',
+      };
     }
     // --agents is additive: built-in subagents stay registered unless denied
     // here. Tool names are filtered against the catalog because a stale name

@@ -173,10 +173,10 @@ function startFakeUpstream(body = SSE_BODY) {
   });
 }
 
-function request(port, path, body) {
+function request(port, path, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json' } },
+      { host: '127.0.0.1', port, path, method: 'POST', headers: { 'content-type': 'application/json', ...headers } },
       (res) => {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
@@ -458,6 +458,38 @@ test('identity binding: main line owns it; subagents and side-calls cannot rebin
     ['unknown', true],
   ]);
 
+});
+
+test('request-class compaction header marks the turn compact without the prompt needle', async (t) => {
+  const up = await startFakeUpstream();
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY,
+    { 'x-claude-code-request-class': 'compaction' });
+  assert.ok(await whenEvent(events, 'turn.completed', 2), 'both turns observed');
+  assert.deepEqual(events['turn.completed'].map((e) => e.compact), [false, true]);
+});
+
+test('a duplicated request-class header is ignored, not a crash', async (t) => {
+  const up = await startFakeUpstream();
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+
+  const res = await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY,
+    { 'x-claude-code-request-class': ['compaction', 'compaction'] });
+  assert.equal(res.status, 200);
+  assert.ok(await whenEvent(events, 'turn.completed'), 'turn observed');
+  const turn = events['turn.completed'][0];
+  assert.equal(turn.compact, false);
+  assert.equal(turn.role, 'parent');
 });
 
 test('warmth head: a subagent turn stamps the ledger but never repoints the session head', async (t) => {

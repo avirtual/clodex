@@ -89,6 +89,19 @@ test('setupClaudeHook: proxyBase routes ANTHROPIC_BASE_URL through the per-agent
   h.setupClaudeHook('a2', 'http://127.0.0.1:7800');
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'a2', 'settings'), 'utf-8'));
   assert.strictEqual(settings.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:7800/agent/a2/anthropic');
+  assert.strictEqual(settings.env.CLAUDE_CODE_GATEWAY_HINT_HEADERS, '1');
+});
+
+test('setupClaudeHook: wireBase opts in to gateway hint headers; a seat with no base has no env', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('w1', null, null, [], [], [], 'http://127.0.0.1:7900');
+  const wired = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'w1', 'settings'), 'utf-8'));
+  assert.strictEqual(wired.env.ANTHROPIC_BASE_URL, 'http://127.0.0.1:7900/anthropic');
+  assert.strictEqual(wired.env.CLAUDE_CODE_GATEWAY_HINT_HEADERS, '1');
+  h.setupClaudeHook('bare1');
+  const bare = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'bare1', 'settings'), 'utf-8'));
+  assert.strictEqual(bare.env, undefined);
 });
 
 test('setupCodexHook: writes a WB_WRAP_NAME-routed script + project hooks.json, backing up an existing one', () => {
