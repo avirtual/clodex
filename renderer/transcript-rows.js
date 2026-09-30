@@ -258,7 +258,7 @@ function cardHead(doc, seg, ctx, inline, filed) {
   for (const chip of h.chips) head.appendChild(el(doc, 'span', 'intent-chip', chip));
   if (seg.open) {
     const warn = el(doc, 'span', 'intent-chip intent-chip-warn', 'unclosed');
-    warn.title = 'no [agent:end]: the rest of the reply was delivered as this body';
+    warn.title = 'no [agent:end]: only the first line was applied; the rest of the reply is prose';
     head.appendChild(warn);
   }
   return head;

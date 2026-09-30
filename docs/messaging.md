@@ -156,9 +156,10 @@ is minted lazily, so the edge can arrive well after the keystroke.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape
     and no rewind has been proven for it.*
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner:
-  a body runs from the intent line to the next column-1 real intent or end
-  of turn (applies to dm, memory remember, remind, shout, context
-  compact/reload).
+  a body runs from the intent line to the next column-1 real intent, a bare
+  `[agent:end]`, or — if the turn ends first — the head line only (the rest
+  is prose and the seat is bounced). Applies to dm, memory remember, remind,
+  shout, context compact/reload.
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss
@@ -171,8 +172,8 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - `[agent:end]` (bare-only) is the explicit body TERMINATOR: it closes an
   open capture via the generic any-intent boundary and is itself discarded —
   `_extractIntents` never emits it, `_handleIntent` early-returns defensively.
-  It exists so operator-facing prose can FOLLOW a body (without it, trailing
-  text is swallowed into the message — fired live on a memory-remember) and
+  It exists so operator-facing prose can FOLLOW a body (without it, the body
+  keeps its head line only and the seat is told to close it) and
   so prose can interleave between several bodied intents in one turn.
 - `shadowIntentKey` gives each occurrence a stable identity for the dedupe
   ledger; `urgent` is folded into the key so an urgent retry isn't swallowed
