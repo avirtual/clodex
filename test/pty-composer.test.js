@@ -95,6 +95,7 @@ for (const [label, text, paths, want] of [
   ['no path map keeps every chip-shaped token', `${imageChip(1)}x`, undefined, '[Image #1] x'],
   ['a typed chip no paste inserted is kept', 'see [Image #1] above', {}, 'see [Image #1] above'],
   ['a typed chip beside an inserted one is kept', '[Image #1] see [Image #2] above', { 1: null }, 'see [Image #2] above'],
+  ['a chip sent while its web upload is still pending is dropped', 'look [Image #1] [Image #2] ', { 1: '/h/img-1.png', 2: null }, 'look Image #1: /h/img-1.png '],
 ]) {
   test(`expandImageChips: ${label}`, () => {
     assert.strictEqual(expandImageChips(text, paths), want);
@@ -123,7 +124,7 @@ test('clipboardImages reads each clipboard image item into { mediaType, data } b
 });
 
 function pasteRig({ web, reply, upload = null, readImages = null }) {
-  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [] };
+  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [], attached: [], dropped: [] };
   let n = 0;
   const handler = ptyImagePasteHandler({
     isWeb: () => web,
@@ -132,6 +133,8 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     toast: (m) => log.toasts.push(m),
     nextImage: () => { n += 1; return n; },
     append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
+    attached: (done) => { log.order.push('attached'); log.attached.push(...done); for (const a of done) log.paths[a.n] = a.path; },
+    drop: (ns) => { log.order.push('drop'); log.dropped.push(...ns); for (const n of ns) { log.draft = removeImageChip(log.draft, n); delete log.paths[n]; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
@@ -190,7 +193,10 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
   assert.match(src, /pastedImagePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
-  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image, path \}\);/u);
+  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image, path, pending \}\);/u);
+  assert.match(m[1], /attached: \(done\) => \{[\s\S]*?t\.n === n && t\.image === image[\s\S]*?pastedImagePaths\[n\] = path;/u, 'attached binds only the thumb it appended');
+  assert.match(m[1], /drop: \(ns\) => \{[\s\S]*?removeImageChip\(composerEl\.value, n\);\n\s*delete pastedImagePaths\[n\];[\s\S]*?syncImageStrip\(\);/u);
+  assert.match(src, /composerEl\.addEventListener\('input', pruneImageStrip\);/u, 'typing over a chip prunes its thumb');
 });
 
 test('on the desktop the pasted image reaches append for its thumb and Ctrl-V still fires once', async () => {
@@ -201,10 +207,58 @@ test('on the desktop the pasted image reaches append for its thumb and Ctrl-V st
   assert.deepStrictEqual(log.order, ['append', 'write']);
 });
 
-test('on the web the pasted image reaches append beside its uploaded path', async () => {
+test('on the web the pasted image reaches append pending, then attached beside its uploaded path', async () => {
   const { log, paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/img-1.png'] } });
   await paste();
-  assert.deepStrictEqual(log.added, [{ n: 1, chip: '[Image #1] ', path: '/h/img-1.png', image: { mediaType: 'image/png', data: 'QUJD' } }]);
+  const image = { mediaType: 'image/png', data: 'QUJD' };
+  assert.deepStrictEqual(log.added, [{ n: 1, chip: '[Image #1] ', path: null, image, pending: true }]);
+  assert.deepStrictEqual(log.attached, [{ n: 1, chip: '[Image #1] ', path: '/h/img-1.png', image, pending: false }]);
+  assert.strictEqual(log.attached[0].image, log.added[0].image);
+});
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+test('on the web the pasted image is appended pending before the upload resolves', async () => {
+  const d = deferred();
+  const { log, paste } = pasteRig({ web: true, upload: (images) => { log.order.push('upload'); log.uploads.push(images); return d.promise; } });
+  const done = paste();
+  await new Promise(setImmediate);
+  assert.deepStrictEqual(log.order, ['append', 'upload']);
+  assert.deepStrictEqual(log.added.map((a) => [a.n, a.path, a.pending]), [[1, null, true]]);
+  assert.strictEqual(log.draft, '[Image #1] ');
+  assert.deepStrictEqual(log.attached, []);
+  d.resolve({ ok: true, paths: ['/h/img-1.png'] });
+  await done;
+  assert.deepStrictEqual(log.order, ['append', 'upload', 'attached']);
+  assert.deepStrictEqual(log.paths, { 1: '/h/img-1.png' });
+});
+
+test('on the web a failed upload drops the pending chips by number and toasts, never attaching', async () => {
+  const d = deferred();
+  const { log, paste } = pasteRig({ web: true, upload: () => d.promise });
+  const done = paste();
+  await new Promise(setImmediate);
+  assert.strictEqual(log.draft, '[Image #1] ');
+  d.resolve({ ok: false, error: 'image larger than 5 MB' });
+  await done;
+  assert.deepStrictEqual(log.dropped, [1]);
+  assert.deepStrictEqual(log.toasts, ['image larger than 5 MB']);
+  assert.deepStrictEqual(log.attached, []);
+  assert.deepStrictEqual(log.order, ['append', 'drop']);
+  assert.strictEqual(log.draft, '');
+});
+
+test('on the web a clipboard with no readable image toasts and appends nothing', async () => {
+  const { log, paste } = pasteRig({ web: true, readImages: async () => [] });
+  await paste();
+  assert.deepStrictEqual(log.toasts, ['No readable image on the clipboard.']);
+  assert.deepStrictEqual(log.order, []);
+  assert.deepStrictEqual(log.uploads, []);
 });
 
 for (const [label, readImages] of [
@@ -233,7 +287,7 @@ test('chippedImages keeps only thumbs whose chip is still in the draft', () => {
 });
 
 function fakeNode(tag) {
-  const node = { tagName: tag, children: [], listeners: {}, hidden: false, className: '', title: '', textContent: '' };
+  const node = { tagName: tag, children: [], listeners: {}, hidden: true, className: '', title: '', textContent: '' };
   node.appendChild = (c) => node.children.push(c);
   node.append = (...cs) => node.children.push(...cs);
   node.replaceChildren = () => { node.children = []; };
@@ -245,13 +299,17 @@ test('renderImageStrip draws one removable thumb per image, titled by where the 
   const el = fakeNode('div');
   el.ownerDocument = { createElement: fakeNode };
   const removed = [];
-  const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' }, path: null }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' }, path: '/h/img-3.jpg' }];
+  const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' }, path: null }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' }, path: '/h/img-3.jpg' }, { n: 4, image: { mediaType: 'image/png', data: 'R0hJ' }, path: null, pending: true }];
   renderImageStrip(el, items, (n) => removed.push(n));
   assert.strictEqual(el.hidden, false);
   assert.deepStrictEqual(el.children.map((t) => [t.className, t.title, t.children[0].src]), [
     ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/png;base64,QUJD'],
     ['seat-attachment', 'Remove image', 'data:image/jpeg;base64,REVG'],
+    ['seat-attachment seat-attachment-pending', 'Uploading…', 'data:image/png;base64,R0hJ'],
   ]);
+  el.children[2].children[1].listeners.click();
+  assert.deepStrictEqual(removed, [4]);
+  removed.length = 0;
   const rm = el.children[1].children[1];
   assert.strictEqual(rm.className, 'seat-attachment-remove');
   rm.listeners.click();
@@ -259,4 +317,9 @@ test('renderImageStrip draws one removable thumb per image, titled by where the 
   renderImageStrip(el, [], () => {});
   assert.strictEqual(el.hidden, true);
   assert.deepStrictEqual(el.children, []);
+});
+
+test('a pending thumb is drawn dimmed', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.seat-attachment-pending \{\n {2}opacity: 0\.5;\n\}/u);
 });
