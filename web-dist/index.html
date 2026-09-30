@@ -9463,6 +9463,19 @@ button.seat-status-chip {
 .seat-attachments[hidden] {
   display: none;
 }
+.seat-attachments.seat-attachments-pty {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  z-index: 2;
+  pointer-events: none;
+}
+.seat-composer-pty[hidden] ~ .seat-attachments-pty {
+  display: none;
+}
+.seat-attachments-pty .seat-attachment {
+  pointer-events: auto;
+}
 .seat-attachment {
   position: relative;
   width: 48px;
@@ -31824,9 +31837,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (pasteKind(items) !== "image") return;
           e.preventDefault();
           const web = isWeb();
+          const images = await Promise.resolve().then(() => readImages(items)).catch(() => []);
           let paths = [null];
           if (web) {
-            const images = await readImages(items);
             const r = images.length ? await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) })) : { ok: false, error: "No readable image on the clipboard." };
             if (!r || !r.ok) {
               toast(String(r && r.error || "Image upload failed."));
@@ -31834,14 +31847,41 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             paths = r.paths;
           }
-          append(paths.map((p) => {
+          append(paths.map((p, i) => {
             const n = nextImage();
-            return { n, chip: imageChip(n), path: p };
+            return { n, chip: imageChip(n), path: p, image: images[i] || null };
           }));
           if (!web) writePty("");
         };
       }
-      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler };
+      function removeImageChip(text, n) {
+        return String(text).replace(new RegExp(`\\[Image #${Number(n)}\\] ?`, "gu"), "");
+      }
+      function chippedImages(items, text) {
+        const value = String(text);
+        return (items || []).filter((it) => it && it.image && value.includes(imageChip(it.n).trim()));
+      }
+      function renderImageStrip(el, items, { title, onRemove }) {
+        const doc = el.ownerDocument;
+        el.replaceChildren();
+        el.hidden = items.length === 0;
+        for (const it of items) {
+          const thumb = doc.createElement("div");
+          thumb.className = "seat-attachment";
+          thumb.title = title;
+          const pic = doc.createElement("img");
+          pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
+          pic.alt = imageChip(it.n).trim();
+          const rm = doc.createElement("button");
+          rm.type = "button";
+          rm.className = "seat-attachment-remove";
+          rm.textContent = "\xD7";
+          rm.addEventListener("click", () => onRemove(it.n));
+          thumb.append(pic, rm);
+          el.appendChild(thumb);
+        }
+      }
+      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip };
     }
   });
 
@@ -48303,7 +48343,7 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler } = require_pty_composer();
+      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require_pty_composer();
       var { readImageFile, clipboardImages } = require_clipboard_images();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
@@ -50522,6 +50562,28 @@ ${detail}` });
         const menuMirror = composerEl ? createMenuMirror() : null;
         let pastedImages = 0;
         let pastedImagePaths = {};
+        let pastedThumbs = [];
+        const imageStripEl = composerEl ? document.createElement("div") : null;
+        const placeImageStrip = () => {
+          imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`;
+        };
+        const syncImageStrip = () => {
+          pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
+          renderImageStrip(imageStripEl, pastedThumbs, {
+            title: window.__CLODEX_WEB__ || !window.require ? "Remove image" : "Removes the mark; the CLI keeps the pasted image",
+            onRemove: (n) => {
+              composerEl.value = removeImageChip(composerEl.value, n);
+              delete pastedImagePaths[n];
+              if (menuMirror.on()) syncMenuMirror();
+              composerKit.fit();
+              syncImageStrip();
+            }
+          });
+          placeImageStrip();
+        };
+        const pruneImageStrip = () => {
+          if (chippedImages(pastedThumbs, composerEl.value).length !== pastedThumbs.length) syncImageStrip();
+        };
         const sendPtyComposer = () => {
           const text = composerEl.value;
           if (!text.trim()) return;
@@ -50529,6 +50591,8 @@ ${detail}` });
           pastedImages = 0;
           const imagePaths = pastedImagePaths;
           pastedImagePaths = {};
+          pastedThumbs = [];
+          syncImageStrip();
           composerKit.fit();
           composerTrigger.resetSpan();
           const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
@@ -50555,6 +50619,7 @@ ${detail}` });
             composerEl.setSelectionRange(hit.draft.length, hit.draft.length);
             composerKit.fit();
             if (!hit.draft) composerTrigger.resetSpan();
+            pruneImageStrip();
             if (liveSplit) liveSplit.refresh();
           }
           return true;
@@ -50584,7 +50649,12 @@ ${detail}` });
           composerEl.classList.add("seat-composer-pty");
           composerEl.hidden = true;
           wrapperEl.appendChild(composerEl);
+          imageStripEl.className = "seat-attachments seat-attachments-pty";
+          imageStripEl.hidden = true;
+          wrapperEl.appendChild(imageStripEl);
+          if (typeof ResizeObserver === "function") new ResizeObserver(placeImageStrip).observe(composerEl);
           composerEl.addEventListener("input", syncMenuMirror);
+          composerEl.addEventListener("input", pruneImageStrip);
           composerEl.addEventListener("paste", ptyImagePasteHandler({
             isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
             readImages: (items) => clipboardImages(items, FileReader),
@@ -50595,14 +50665,16 @@ ${detail}` });
               return pastedImages;
             },
             append: (added) => {
-              for (const { n, chip, path } of added) {
+              for (const { n, chip, path, image } of added) {
                 composerEl.value += chip;
                 pastedImagePaths[n] = path || null;
+                if (image) pastedThumbs.push({ n, image });
               }
               if (menuMirror.on()) syncMenuMirror();
               const end = composerEl.value.length;
               composerEl.setSelectionRange(end, end);
               composerKit.fit();
+              syncImageStrip();
             },
             writePty
           }));

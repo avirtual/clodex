@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A pasted image shows as a thumbnail above the seat's composer, with a × to drop it, so it is clear one is already attached before you send.
+
 ## 5.98.0 — 2026-09-30
 
 - Conversation mode tells a message typed in Clodex (`you`), one sent from the phone app (`phone`, with its own glyph) and one sent through `clodexctl dm` (`remote`) apart; the phone transcript carries the same `client` field.
