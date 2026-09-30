@@ -124,7 +124,7 @@ test('clipboardImages reads each clipboard image item into { mediaType, data } b
 });
 
 function pasteRig({ web, reply, upload = null, readImages = null }) {
-  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [], attached: [], dropped: [] };
+  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [], attached: [], dropped: [], files: 0 };
   let n = 0;
   const handler = ptyImagePasteHandler({
     isWeb: () => web,
@@ -138,7 +138,7 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
-    clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => ({ url: 'data:image/png;base64,QUJD' }) }] },
+    clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => { log.files += 1; return { url: 'data:image/png;base64,QUJD' }; } }] },
     preventDefault: () => { log.prevented += 1; },
   };
   return { log, paste: () => handler(event) };
@@ -263,10 +263,9 @@ test('on the web a clipboard with no readable image toasts and appends nothing',
 });
 
 test('the clipboard items are read inside the paste dispatch, before its first await', async () => {
-  let reads = 0;
-  const { paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/img-1.png'] }, readImages: (items) => { reads += 1; return clipboardImages(items, FakeReader); } });
+  const { log, paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/img-1.png'] } });
   const done = paste();
-  assert.strictEqual(reads, 1);
+  assert.strictEqual(log.files, 1);
   await done;
 });
 
