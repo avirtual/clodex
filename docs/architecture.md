@@ -1029,12 +1029,15 @@ accept teardown removes.
 - **filed-ring.js** — the per-seat ring of files a seat's transcript points at
   (`session.filedRing`): spilled intent bodies, handoffs, message spills. Newest
   first, deduped by path, capped at 50, `list()` drops entries whose file is
-  gone; seeded on `create()` from the spill and messages dirs. `head` is clipped
+  gone (a message spill is noted at its durable `spill/<seat>/messages/` copy,
+  so it outlives the messages sweep); seeded on `create()` from the spill and
+  messages dirs. `head` is clipped
   to 120 UTF-8 bytes on a character boundary. Pure leaf, no coordinator names.
 - **file-resolve.js** — turn a path as it was DISPLAYED into a path that exists.
   Every path a user clicks was written for a human (relative to the repo, to the
   file it appears in, or shortened to fit a terminal); resolving it against the
-  MAIN PROCESS's cwd is the bug this closes. Pure leaf, fs injected.
+  MAIN PROCESS's cwd is the bug this closes. A swept `<root>/messages/<seat>/msg-*.txt`
+  falls back to its durable copy (`durableMessageCopyOf`). Pure leaf, fs injected.
 
 ### Shared pure leaves
 

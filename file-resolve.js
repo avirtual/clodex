@@ -19,6 +19,16 @@
 // unavailable on a file resolved outside it. Read anywhere, write in the repo.
 
 const CANDIDATE_CAP = 40; // touched-files suffix matching is O(n); bound it
+const MESSAGE_SPILL_NAME_RE = /^msg-\d+-\d+\.txt$/;
+
+function durableMessageCopyOf(p, path) {
+  const abs = path.resolve(p);
+  const name = path.basename(abs);
+  const seatDir = path.dirname(abs);
+  const messagesDir = path.dirname(seatDir);
+  if (!MESSAGE_SPILL_NAME_RE.test(name) || path.basename(messagesDir) !== 'messages') return null;
+  return path.join(path.dirname(messagesDir), 'spill', path.basename(seatDir), 'messages', name);
+}
 
 // `raw` as displayed; `cwd` the session's; `baseDir` the directory of the file
 // the text appeared IN (the peek's own path — null for a terminal click);
@@ -52,6 +62,8 @@ function resolveDisplayedPath({ raw, cwd, baseDir = null, touched = [], home, pa
   for (const form of forms) {
     if (path.isAbsolute(form)) {
       tries.push(['absolute', form]);
+      const durable = durableMessageCopyOf(form, path);
+      if (durable) tries.push(['durable copy of a swept message spill', durable]);
     } else {
       // The file's own directory FIRST: a relative path written inside a file is
       // relative to that file far more often than to the repo root, and when both
@@ -97,4 +109,4 @@ function resolveDisplayedPath({ raw, cwd, baseDir = null, touched = [], home, pa
   return { ok: false, error: `Can't find "${trimmed}"` };
 }
 
-module.exports = { resolveDisplayedPath, CANDIDATE_CAP };
+module.exports = { resolveDisplayedPath, durableMessageCopyOf, CANDIDATE_CAP };

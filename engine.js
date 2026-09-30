@@ -20,7 +20,7 @@ const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
 const { peekFile } = require('./file-peek');
-const { resolveDisplayedPath } = require('./file-resolve');
+const { resolveDisplayedPath, durableMessageCopyOf } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { migrateSeatLayout } = require('./seat-layout');
 const { readVoiceTrigger } = require('./voice-settings');
@@ -995,6 +995,15 @@ function spillToFile(sender, body, recipient) {
   const fpath = path.join(dir, fname);
   const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${Buffer.byteLength(body)} bytes\n\n`;
   fs.writeFileSync(fpath, header + body);
+  const durable = confine(path.join(REGISTRY_DIR, 'spill'), recipient) && durableMessageCopyOf(fpath, path);
+  if (durable) {
+    try {
+      ensureDir(path.dirname(durable));
+      fs.writeFileSync(durable, header + body);
+    } catch (e) {
+      log.warn('messages', `durable copy of ${fname} for ${recipient} failed: ${e.message}`);
+    }
+  }
   return fpath;
 }
 

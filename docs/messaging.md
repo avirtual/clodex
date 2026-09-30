@@ -215,7 +215,11 @@ seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
 `_isDmReachable` if local dm parking ever covers absent targets. Bodies over
 `MSG_SPILL_THRESHOLD` (500B) spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
-Codex gets a read-with-Read pointer.
+Codex gets a read-with-Read pointer. That hand-off copy is swept after
+`MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
+basename, to `~/.clodex/spill/<seat>/messages/`, which is never swept. The
+Files pane records the durable path, and `resolveDisplayedPath` maps a click on
+a swept `messages/<seat>/msg-*.txt` to it.
 
 **Inject** — `_injectText` has two layers:
 1. *Turn batching*: `_injectHoldReason` (compact window / permission dialog /

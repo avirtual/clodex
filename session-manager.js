@@ -230,6 +230,7 @@ const {
   capResumeSnapshot, spillMimicBounce,
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
+const { durableMessageCopyOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
 const { readPromptSnapshotMemo, restageAtReset, clearCache } = require('./ipc-prompt-cache');
 
@@ -6290,8 +6291,11 @@ function createSessionManager(deps) {
       try {
         const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
-        this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${verb} (rejected)`));
-        return ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+        const kept = this._keptMessagePath(path_);
+        this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${verb} (rejected)`));
+        return kept !== path_
+          ? ` — your ${verb} body (${bytes} bytes) is saved at ${kept}`
+          : ` — your ${verb} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
       } catch (e) {
         log.warn('intent', `spill of rejected ${verb} body for ${session.name} failed: ${e.message}`);
         return ` — WARNING: your ${verb} body could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
@@ -6309,9 +6313,12 @@ function createSessionManager(deps) {
         if (used < DENIED_SPILL_CAP) {
           try {
             const path_ = spillToFile(`${label} (denied)`, body, session.name);
-            this._noteFiled(session.name, filedEntry(path_, 'message', `From: ${label} (denied)`));
+            const kept = this._keptMessagePath(path_);
+            this._noteFiled(session.name, filedEntry(kept, 'message', `From: ${label} (denied)`));
             session._deniedSpills.set(label, used + 1);
-            return `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
+            return kept !== path_
+              ? `${off}. Your ${label} body (${bytes} bytes) is saved at ${kept}`
+              : `${off}. Your ${label} body (${bytes} bytes) is saved for the next ${Math.round(MSG_MAX_AGE / 60)} minutes and then swept: ${path_} — copy it out before then`;
           } catch (e) {
             log.warn('intent', `spill of denied ${label} body for ${session.name} failed: ${e.message}`);
             return `${off}. WARNING: your ${label} body (${bytes} bytes) could NOT be saved (${e.message}) and exists only in your own turn — copy it before you continue`;
@@ -7546,6 +7553,11 @@ function createSessionManager(deps) {
       return ring;
     }
 
+    _keptMessagePath(filePath) {
+      const durable = typeof filePath === 'string' ? durableMessageCopyOf(filePath, path) : null;
+      return durable && fs.existsSync(durable) ? durable : filePath;
+    }
+
     _noteFiled(name, entry) {
       const s = this.sessions.get(name);
       if (s && s.filedRing) s.filedRing.note(entry);
@@ -7960,7 +7972,7 @@ function createSessionManager(deps) {
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
-        this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
+        this._noteFiled(target.name, filedEntry(this._keptMessagePath(filePath), 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
         // The trailing space after the path closes the @-autocomplete popup, so the deferred Enter
         // cannot select a different file.

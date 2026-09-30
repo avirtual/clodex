@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-const { resolveDisplayedPath } = require('../file-resolve');
+const { resolveDisplayedPath, durableMessageCopyOf } = require('../file-resolve');
 
 // `exists` is the set of paths that stat as regular files. Everything else is
 // injected, so nothing here touches a real disk.
@@ -198,4 +198,30 @@ test('a throwing statFile is treated as "not a file", not an exception', () => {
   });
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /Can't find/);
+});
+
+test('a swept messages/<seat>/msg-*.txt resolves to its durable spill/<seat>/messages/ copy', () => {
+  const durable = '/h/.clodex/spill/hand-1/messages/msg-91677-25.txt';
+  assert.deepStrictEqual(call('@/h/.clodex/messages/hand-1/msg-91677-25.txt', { exists: [durable] }),
+    { ok: true, path: durable, via: 'durable copy of a swept message spill' });
+  assert.deepStrictEqual(call('~/.clodex/messages/hand-1/msg-91677-25.txt', { exists: [durable], home: '/h' }),
+    { ok: true, path: durable, via: 'durable copy of a swept message spill' });
+});
+
+test('a swept message spill whose durable copy is also gone is an honest miss', () => {
+  assert.deepStrictEqual(call('/h/.clodex/messages/hand-1/msg-91677-26.txt', { exists: ['/h/.clodex/spill/hand-1/messages/msg-91677-25.txt'] }),
+    { ok: false, error: 'Can\'t find "/h/.clodex/messages/hand-1/msg-91677-26.txt"' });
+});
+
+test('a messages/ path that is still on disk resolves to itself, not to the durable copy', () => {
+  const live = '/h/.clodex/messages/hand-1/msg-91677-27.txt';
+  assert.deepStrictEqual(call(live, { exists: [live, '/h/.clodex/spill/hand-1/messages/msg-91677-27.txt'] }),
+    { ok: true, path: live, via: 'absolute' });
+});
+
+test('only msg-<pid>-<n>.txt directly under messages/<seat>/ maps to a durable copy', () => {
+  assert.strictEqual(durableMessageCopyOf('/h/.clodex/messages/hand-1/msg-1-2.txt', path), '/h/.clodex/spill/hand-1/messages/msg-1-2.txt');
+  assert.strictEqual(durableMessageCopyOf('/h/.clodex/messages/hand-1/img-1700000000000-1.png', path), null);
+  assert.strictEqual(durableMessageCopyOf('/h/.clodex/other/hand-1/msg-1-2.txt', path), null);
+  assert.strictEqual(durableMessageCopyOf('/h/.clodex/messages/../msg-1-2.txt', path), null);
 });
