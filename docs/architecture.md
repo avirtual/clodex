@@ -1033,7 +1033,7 @@ accept teardown removes.
 - **filed-ring.js** — the per-seat ring of files a seat's transcript points at
   (`session.filedRing`): spilled intent bodies, handoffs, message spills. Newest
   first, deduped by path, capped at 50, `list()` drops entries whose file is
-  gone (it records a spill's transcript-literal `messages/<seat>/` path; `list()`,
+  gone (it records a message spill's transcript-literal `messages/<seat>/` path; `list()`,
   the remote peek and the resolver fall back to `durableMessageCopyOf`); seeded
   on `create()` from the spill and messages dirs. `head` is clipped
   to 120 UTF-8 bytes on a character boundary. Pure leaf, no coordinator names.
