@@ -73,7 +73,7 @@ test('setupClaudeHook: a wire-routed seat with no proxyBase gets the headless st
   const { createCliHooks } = require('../cli-hooks');
   const { pathFor } = require('../clodex-paths');
   const { mkTmpRoot } = require('./lib/tmp-roots');
-  const REGISTRY_DIR = mkTmpRoot('clodex-statusline-');
+  const REGISTRY_DIR = mkTmpRoot('clodex-hooks-');
   const h = createCliHooks({
     REGISTRY_DIR,
     memoryStore: { list: () => [] },
