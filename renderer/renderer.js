@@ -2330,10 +2330,10 @@ function createTerminal(name, peer = null) {
   const imageStripEl = composerEl ? document.createElement('div') : null;
   const placeImageStrip = () => { imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`; };
   const syncImageStrip = () => {
-    pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
-    renderImageStrip(imageStripEl, pastedThumbs, (n) => {
+    renderImageStrip(imageStripEl, chippedImages(pastedThumbs, composerEl.value), (n, image) => {
       composerEl.value = removeImageChip(composerEl.value, n);
       delete pastedImagePaths[n];
+      pastedThumbs = pastedThumbs.filter((t) => !(t.n === n && t.image === image));
       if (menuMirror.on()) syncMenuMirror();
       composerKit.fit();
       syncImageStrip();
@@ -2341,7 +2341,7 @@ function createTerminal(name, peer = null) {
     placeImageStrip();
   };
   const pruneImageStrip = () => {
-    if (chippedImages(pastedThumbs, composerEl.value).length !== pastedThumbs.length) syncImageStrip();
+    if (chippedImages(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
   };
   const sendPtyComposer = () => {
     const text = composerEl.value;
@@ -2442,10 +2442,13 @@ function createTerminal(name, peer = null) {
         }
         syncImageStrip();
       },
-      drop: (ns) => {
-        for (const n of ns) {
+      drop: (items) => {
+        for (const { n, image } of items) {
+          const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+          if (!thumb) continue;
           composerEl.value = removeImageChip(composerEl.value, n);
           delete pastedImagePaths[n];
+          pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
         }
         if (menuMirror.on()) syncMenuMirror();
         composerKit.fit();

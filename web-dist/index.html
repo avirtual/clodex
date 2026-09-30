@@ -31858,7 +31858,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           append(added);
           const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
           if (!r || !r.ok) {
-            drop(added.map((a) => a.n));
+            drop(added);
             toast(String(r && r.error || "Image upload failed."));
             return;
           }
@@ -31887,7 +31887,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           rm.type = "button";
           rm.className = "seat-attachment-remove";
           rm.textContent = "\xD7";
-          rm.addEventListener("click", () => onRemove(it.n));
+          rm.addEventListener("click", () => onRemove(it.n, it.image));
           thumb.append(pic, rm);
           el.appendChild(thumb);
         }
@@ -50584,10 +50584,10 @@ ${detail}` });
           imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`;
         };
         const syncImageStrip = () => {
-          pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
-          renderImageStrip(imageStripEl, pastedThumbs, (n) => {
+          renderImageStrip(imageStripEl, chippedImages(pastedThumbs, composerEl.value), (n, image) => {
             composerEl.value = removeImageChip(composerEl.value, n);
             delete pastedImagePaths[n];
+            pastedThumbs = pastedThumbs.filter((t) => !(t.n === n && t.image === image));
             if (menuMirror.on()) syncMenuMirror();
             composerKit.fit();
             syncImageStrip();
@@ -50595,7 +50595,7 @@ ${detail}` });
           placeImageStrip();
         };
         const pruneImageStrip = () => {
-          if (chippedImages(pastedThumbs, composerEl.value).length !== pastedThumbs.length) syncImageStrip();
+          if (chippedImages(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
         };
         const sendPtyComposer = () => {
           const text = composerEl.value;
@@ -50699,10 +50699,13 @@ ${detail}` });
               }
               syncImageStrip();
             },
-            drop: (ns) => {
-              for (const n of ns) {
+            drop: (items) => {
+              for (const { n, image } of items) {
+                const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+                if (!thumb) continue;
                 composerEl.value = removeImageChip(composerEl.value, n);
                 delete pastedImagePaths[n];
+                pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
               }
               if (menuMirror.on()) syncMenuMirror();
               composerKit.fit();

@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A large message's row in the phone's Files list matches the path the transcript shows again, stays listed after the 30-minute sweep and opens from its durable copy; the Intel build recipe in release notes and the `clodexctl get … | xargs logs` example in `clodexctl help` are corrected.
+- Web composer: a failed image upload removes only its own chip (no longer the chip of a later draft with the same number), and a pending image whose chip was typed over still sends once the upload lands and the chip is restored.
 
 ## 5.99.0 — 2026-09-30
 

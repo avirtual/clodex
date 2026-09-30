@@ -134,7 +134,7 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     nextImage: () => { n += 1; return n; },
     append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
     attached: (done) => { log.order.push('attached'); log.attached.push(...done); for (const a of done) log.paths[a.n] = a.path; },
-    drop: (ns) => { log.order.push('drop'); log.dropped.push(...ns); for (const n of ns) { log.draft = removeImageChip(log.draft, n); delete log.paths[n]; } },
+    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n } of items) { log.draft = removeImageChip(log.draft, n); delete log.paths[n]; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
@@ -163,7 +163,7 @@ test('on the web a rejecting upload toasts once and the paste handler does not t
   assert.deepStrictEqual(log.writes, []);
 });
 
-test('on the web an { ok:false } upload toasts the error and appends nothing', async () => {
+test('on the web an { ok:false } upload toasts the error and drops the chip', async () => {
   const { log, paste } = pasteRig({ web: true, reply: { ok: false, error: 'image larger than 5 MB' } });
   await paste();
   assert.strictEqual(log.uploads.length, 1);
@@ -195,7 +195,7 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(src, /pastedImagePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
   assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image, path, pending \}\);/u);
   assert.match(m[1], /attached: \(done\) => \{[\s\S]*?t\.n === n && t\.image === image[\s\S]*?pastedImagePaths\[n\] = path;/u, 'attached binds only the thumb it appended');
-  assert.match(m[1], /drop: \(ns\) => \{[\s\S]*?removeImageChip\(composerEl\.value, n\);\n\s*delete pastedImagePaths\[n\];[\s\S]*?syncImageStrip\(\);/u);
+  assert.match(m[1], /drop: \(items\) => \{[\s\S]*?t\.n === n && t\.image === image[\s\S]*?if \(!thumb\) continue;\n\s*composerEl\.value = removeImageChip\(composerEl\.value, n\);\n\s*delete pastedImagePaths\[n\];[\s\S]*?syncImageStrip\(\);/u, 'drop removes only the chip whose thumb it appended');
   assert.match(src, /composerEl\.addEventListener\('input', pruneImageStrip\);/u, 'typing over a chip prunes its thumb');
 });
 
@@ -238,7 +238,7 @@ test('on the web the pasted image is appended pending before the upload resolves
   assert.deepStrictEqual(log.paths, { 1: '/h/img-1.png' });
 });
 
-test('on the web a failed upload drops the pending chips by number and toasts, never attaching', async () => {
+test('on the web a failed upload drops the pending items it appended and toasts, never attaching', async () => {
   const d = deferred();
   const { log, paste } = pasteRig({ web: true, upload: () => d.promise });
   const done = paste();
@@ -246,7 +246,8 @@ test('on the web a failed upload drops the pending chips by number and toasts, n
   assert.strictEqual(log.draft, '[Image #1] ');
   d.resolve({ ok: false, error: 'image larger than 5 MB' });
   await done;
-  assert.deepStrictEqual(log.dropped, [1]);
+  assert.deepStrictEqual(log.dropped.map(({ n, image }) => ({ n, image })), [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' } }]);
+  assert.strictEqual(log.dropped[0].image, log.added[0].image);
   assert.deepStrictEqual(log.toasts, ['image larger than 5 MB']);
   assert.deepStrictEqual(log.attached, []);
   assert.deepStrictEqual(log.order, ['append', 'drop']);
@@ -322,4 +323,86 @@ test('renderImageStrip draws one removable thumb per image, titled by where the 
 test('a pending thumb is drawn dimmed', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.seat-attachment-pending \{\n {2}opacity: 0\.5;\n\}/u);
+});
+
+function composerHarness() {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const slice = (from, to) => {
+    const i = src.indexOf(from);
+    const j = src.indexOf(to, i);
+    assert.ok(i >= 0 && j > i, `renderer.js carries ${from}`);
+    return src.slice(i, j);
+  };
+  const start = src.indexOf('ptyImagePasteHandler({', src.indexOf("composerEl.addEventListener('paste', "));
+  const handlerSrc = src.slice(start, src.indexOf('\n    }));', start) + '\n    })'.length);
+  const document = { createElement: (tag) => {
+    const node = fakeNode(tag);
+    node.style = {};
+    node.ownerDocument = document;
+    Object.defineProperty(node, 'childElementCount', { get: () => node.children.length });
+    return node;
+  } };
+  const uploads = [];
+  const writes = [];
+  const env = {
+    composerEl: { value: '', offsetHeight: 40, setSelectionRange() {} },
+    document,
+    menuMirror: { on: () => false },
+    composerKit: { fit() {} },
+    composerTrigger: { resetSpan() {} },
+    liveSplit: null,
+    writePty: (d) => writes.push(d),
+    window: { __CLODEX_WEB__: true, api: { seatImageUpload: () => { const d = deferred(); uploads.push(d); return d.promise; } } },
+    clipboardImages,
+    FileReader: FakeReader,
+    showToast() {},
+    name: 'seat',
+    ptyImagePasteHandler, chippedImages, renderImageStrip, removeImageChip, ptyComposerWrites, expandImageChips,
+  };
+  const names = Object.keys(env);
+  const body = [
+    slice('let pastedImages = 0;', '  const onMenuKey'),
+    `const handler = ${handlerSrc};`,
+    'return { handler, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths };',
+  ].join('\n');
+  const out = new Function(...names, body)(...names.map((n) => env[n]));
+  const event = {
+    clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => ({ url: 'data:image/png;base64,QUJD' }) }] },
+    preventDefault() {},
+  };
+  const paste = () => out.handler(event);
+  return { ...out, el: env.composerEl, uploads, writes, paste };
+}
+
+test('ENTER: a late upload failure from a sent draft leaves the next draft\'s [Image #1] chip in place', async () => {
+  const h = composerHarness();
+  const first = h.paste();
+  await new Promise(setImmediate);
+  h.el.value += 'look';
+  h.send();
+  assert.strictEqual(h.el.value, '');
+  const second = h.paste();
+  await new Promise(setImmediate);
+  assert.strictEqual(h.el.value, '[Image #1] ');
+  h.uploads[0].resolve({ ok: false, error: 'image larger than 5 MB' });
+  await first;
+  assert.strictEqual(h.el.value, '[Image #1] ');
+  assert.ok(Object.hasOwn(h.paths(), 1));
+  h.uploads[1].resolve({ ok: true, paths: ['/h/img-2.png'] });
+  await second;
+  assert.deepStrictEqual(h.paths(), { 1: '/h/img-2.png' });
+});
+
+test('ENTER: a pending chip typed over still binds its path when the upload lands, and sends once restored', async () => {
+  const h = composerHarness();
+  const done = h.paste();
+  await new Promise(setImmediate);
+  h.el.value = 'hi ';
+  h.prune();
+  h.uploads[0].resolve({ ok: true, paths: ['/h/img-1.png'] });
+  await done;
+  assert.strictEqual(h.paths()[1], '/h/img-1.png');
+  h.el.value = 'hi [Image #1] ';
+  h.send();
+  assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image #1: /h/img-1.png '));
 });
