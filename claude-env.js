@@ -54,12 +54,14 @@ function readEffectiveClaudeEnv(cwd, { baseEnv = process.env, homeDir = os.homed
 }
 
 // Which tee-blind backend (if any) a merged env selects: 'bedrock' | 'vertex' |
-// null. Bedrock is checked first so a (nonsensical) both-set env is still
-// classified deterministically — either way the session is tee-blind.
+// 'foundry' | 'anthropic-aws' | null, checked in that order so a multi-set env
+// is still classified deterministically — either way the session is tee-blind.
 function teeBlindBackend(env) {
   if (!env) return null;
   if (isEnvTruthy(env.CLAUDE_CODE_USE_BEDROCK)) return 'bedrock';
   if (isEnvTruthy(env.CLAUDE_CODE_USE_VERTEX)) return 'vertex';
+  if (isEnvTruthy(env.CLAUDE_CODE_USE_FOUNDRY)) return 'foundry';
+  if (isEnvTruthy(env.CLAUDE_CODE_USE_ANTHROPIC_AWS)) return 'anthropic-aws';
   return null;
 }
 
@@ -76,7 +78,7 @@ function teeBlindBackend(env) {
 //   sandbox seeds it into the container env (M4 auth.env) and sessions must
 //   inherit it — scrubbing it spawned unauthenticated REPLs on a seeded box
 //   (observed live 2026-07-16, first sandbox e2e).
-// - CLAUDE_CODE_USE_BEDROCK / CLAUDE_CODE_USE_VERTEX are backend CONFIG, not
+// - CLAUDE_CODE_USE_{BEDROCK,VERTEX,FOUNDRY,ANTHROPIC_AWS} are backend CONFIG, not
 //   session state — the same class as the oauth token (a Fargate UseBedrock
 //   task / a Bedrock-env node sets them node-wide). Scrubbing them (a) broke
 //   session routing: PTY-spawned CLIs on a Bedrock node lost the flag and
@@ -87,7 +89,8 @@ function teeBlindBackend(env) {
 //   (ours or a dead predecessor's tee); a user's own global endpoint override
 //   survives.
 const SCRUB_SURVIVORS = new Set([
-  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CONFIG_DIR',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX',
+  'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_ANTHROPIC_AWS', 'CLAUDE_CONFIG_DIR',
 ]);
 function scrubInheritedClaudeMarkers(env) {
   for (const k of Object.keys(env)) {

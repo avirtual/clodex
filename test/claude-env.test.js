@@ -103,6 +103,15 @@ test('teeBlindBackend: bedrock is reported first when both are set', () => {
   );
 });
 
+test('teeBlindBackend: CLAUDE_CODE_USE_FOUNDRY / CLAUDE_CODE_USE_ANTHROPIC_AWS classify, off does not', () => {
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_FOUNDRY: '1' }), 'foundry');
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_FOUNDRY: 'off' }), null);
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' }), 'anthropic-aws');
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_ANTHROPIC_AWS: 'off' }), null);
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_FOUNDRY: '1', CLAUDE_CODE_USE_ANTHROPIC_AWS: '1' }), 'foundry');
+  assert.strictEqual(teeBlindBackend({ CLAUDE_CODE_USE_VERTEX: '1', CLAUDE_CODE_USE_FOUNDRY: '1' }), 'vertex');
+});
+
 // ── scrubInheritedClaudeMarkers — the entry-point env self-decontamination.
 // Pins the survivors alongside the strip: the OAuth token (credential config —
 // scrubbing it spawned unauthenticated REPLs on a token-seeded sandbox, found
@@ -144,6 +153,21 @@ test('scrub: Bedrock/Vertex backend flags survive — node-level backend config,
     CLAUDE_CODE_USE_BEDROCK: '1',
     CLAUDE_CODE_USE_VERTEX: 'true',
     AWS_REGION: 'us-west-2',
+  });
+});
+
+test('scrub: Foundry/Anthropic-AWS backend flags survive, other CLAUDE_CODE_* still go', () => {
+  const env = {
+    CLAUDE_CODE_SOMETHING_ELSE: '1',
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CLAUDE_CODE_USE_ANTHROPIC_AWS: 'true',
+    PATH: '/usr/bin',
+  };
+  scrubInheritedClaudeMarkers(env);
+  assert.deepStrictEqual(env, {
+    CLAUDE_CODE_USE_FOUNDRY: '1',
+    CLAUDE_CODE_USE_ANTHROPIC_AWS: 'true',
+    PATH: '/usr/bin',
   });
 });
 
