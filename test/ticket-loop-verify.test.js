@@ -3493,7 +3493,7 @@ test('t370 r2: the header records the COMMIT, so two rounds are distinguishable'
   git(realWt, ['commit', '-q', '-m', 'the round 2 fix']);
   const sha2 = git(realWt, ['rev-parse', 'HEAD']);
   assert.notStrictEqual(sha1, sha2, 'ENTER: the branch really moved between rounds');
-  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reportedBy: 'team-hand' }]);
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r2', reviewRound: 1, reportedBy: 'team-hand' }]);
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
 
