@@ -2306,10 +2306,12 @@ function registerIpcHandlers(deps) {
 
   handle('session:forget', (e, name) => {
     manager.clearHintForRecord(name);
+    const rec = persistence.get(name);
     persistence.remove(name);
     try {
       const w = getDrawerPtys();
-      const ws = workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e);
+      const ws = (rec && rec.workspaceId)
+        || (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
       if (w && ws && w.killSeat) w.killSeat(ws, String(name || ''));
     } catch {}
     return true;
