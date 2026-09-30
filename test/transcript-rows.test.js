@@ -52,7 +52,7 @@ test('an unchanged record keeps its node identity across renders, a new one is a
   m.render([next]);
   assert.strictEqual(m.pane.childNodes.length, 1);
   assert.strictEqual(turn.parentNode, null);
-  assert.strictEqual(m.pane.childNodes[0].childNodes[0].textContent, 'again');
+  assert.strictEqual(m.pane.childNodes[0].childNodes[0].textContent, '●youagain');
 });
 
 test('markup in prompt, prose and tool arguments lands as text, never as elements', () => {
@@ -64,7 +64,7 @@ test('markup in prompt, prose and tool arguments lands as text, never as element
   walk(m.pane);
   assert.deepStrictEqual([...new Set(all.filter((n) => n.nodeType === 1).map((n) => n.tag))].sort(), ['div', 'span']);
   const turn = m.pane.childNodes[0];
-  assert.strictEqual(turn.childNodes[0].textContent, evil);
+  assert.strictEqual(turn.childNodes[0].textContent, `●you${evil}`);
   assert.strictEqual(turn.childNodes[1].textContent, evil);
   assert.strictEqual(turn.childNodes[2].childNodes[0].childNodes[2].textContent, evil);
 });
@@ -224,7 +224,7 @@ test('a prompt head carries its local clock time; a boundary reads its token dro
     { id: 'x1', kind: 'assistant', ts: null, turn: 1, text: 'API Error: 500', apiError: true },
   ]);
   const [head, boundary, notice] = m.pane.childNodes[0].childNodes;
-  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-head-text', 'run it'], ['tr-time', '10:42']]);
+  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'run it'], ['tr-time', '10:42']]);
   assert.strictEqual(boundary.textContent, 'compacted · 210k → 8k tokens · manual');
   assert.deepStrictEqual([notice.className, notice.textContent], ['tr-row tr-notice tr-notice-error', 'API Error: 500']);
   assert.deepStrictEqual(notice.childNodes.map((n) => n.className), ['tr-mark', 'tr-notice-text']);
@@ -1205,7 +1205,7 @@ test('a queued prompt replaced by its delivered attachment leaves only the deliv
   assert.ok(rowIn(m, 'queued:1'), 'ENTER: the queued row painted');
   m.render([ask('p1', 1), midAsk('delivered')]);
   assert.strictEqual(rowIn(m, 'queued:1'), undefined);
-  const state = rowIn(m, 'q1').childNodes[3];
+  const state = rowIn(m, 'q1').childNodes[4];
   assert.deepStrictEqual([state.className, state.textContent, state.dataset.state], ['tr-mid-state', 'delivered', 'delivered']);
 });
 
