@@ -60,14 +60,14 @@ function chippedImages(items, text) {
   return (items || []).filter((it) => it && it.image && value.includes(imageChip(it.n).trim()));
 }
 
-function renderImageStrip(el, items, { title, onRemove }) {
+function renderImageStrip(el, items, onRemove) {
   const doc = el.ownerDocument;
   el.replaceChildren();
   el.hidden = items.length === 0;
   for (const it of items) {
     const thumb = doc.createElement('div');
     thumb.className = 'seat-attachment';
-    thumb.title = title;
+    thumb.title = it.path ? 'Remove image' : 'Removes the mark; the CLI keeps the pasted image';
     const pic = doc.createElement('img');
     pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
     pic.alt = imageChip(it.n).trim();

@@ -2331,15 +2331,12 @@ function createTerminal(name, peer = null) {
   const placeImageStrip = () => { imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`; };
   const syncImageStrip = () => {
     pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
-    renderImageStrip(imageStripEl, pastedThumbs, {
-      title: window.__CLODEX_WEB__ || !window.require ? 'Remove image' : 'Removes the mark; the CLI keeps the pasted image',
-      onRemove: (n) => {
-        composerEl.value = removeImageChip(composerEl.value, n);
-        delete pastedImagePaths[n];
-        if (menuMirror.on()) syncMenuMirror();
-        composerKit.fit();
-        syncImageStrip();
-      },
+    renderImageStrip(imageStripEl, pastedThumbs, (n) => {
+      composerEl.value = removeImageChip(composerEl.value, n);
+      delete pastedImagePaths[n];
+      if (menuMirror.on()) syncMenuMirror();
+      composerKit.fit();
+      syncImageStrip();
     });
     placeImageStrip();
   };
@@ -2427,7 +2424,7 @@ function createTerminal(name, peer = null) {
         for (const { n, chip, path, image } of added) {
           composerEl.value += chip;
           pastedImagePaths[n] = path || null;
-          if (image) pastedThumbs.push({ n, image });
+          if (image) pastedThumbs.push({ n, image, path });
         }
         if (menuMirror.on()) syncMenuMirror();
         const end = composerEl.value.length;

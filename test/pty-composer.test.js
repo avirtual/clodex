@@ -190,7 +190,7 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
   assert.match(src, /pastedImagePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
-  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image \}\);/u);
+  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image, path \}\);/u);
 });
 
 test('on the desktop the pasted image reaches append for its thumb and Ctrl-V still fires once', async () => {
@@ -241,22 +241,22 @@ function fakeNode(tag) {
   return node;
 }
 
-test('renderImageStrip draws one removable thumb per image and hides when empty', () => {
+test('renderImageStrip draws one removable thumb per image, titled by where the image lives, and hides when empty', () => {
   const el = fakeNode('div');
   el.ownerDocument = { createElement: fakeNode };
   const removed = [];
-  const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' } }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' } }];
-  renderImageStrip(el, items, { title: 'Removes the mark; the CLI keeps the pasted image', onRemove: (n) => removed.push(n) });
+  const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' }, path: null }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' }, path: '/h/img-3.jpg' }];
+  renderImageStrip(el, items, (n) => removed.push(n));
   assert.strictEqual(el.hidden, false);
   assert.deepStrictEqual(el.children.map((t) => [t.className, t.title, t.children[0].src]), [
     ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/png;base64,QUJD'],
-    ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/jpeg;base64,REVG'],
+    ['seat-attachment', 'Remove image', 'data:image/jpeg;base64,REVG'],
   ]);
   const rm = el.children[1].children[1];
   assert.strictEqual(rm.className, 'seat-attachment-remove');
   rm.listeners.click();
   assert.deepStrictEqual(removed, [3]);
-  renderImageStrip(el, [], { title: '', onRemove: () => {} });
+  renderImageStrip(el, [], () => {});
   assert.strictEqual(el.hidden, true);
   assert.deepStrictEqual(el.children, []);
 });

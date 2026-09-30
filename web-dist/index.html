@@ -31861,14 +31861,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const value = String(text);
         return (items || []).filter((it) => it && it.image && value.includes(imageChip(it.n).trim()));
       }
-      function renderImageStrip(el, items, { title, onRemove }) {
+      function renderImageStrip(el, items, onRemove) {
         const doc = el.ownerDocument;
         el.replaceChildren();
         el.hidden = items.length === 0;
         for (const it of items) {
           const thumb = doc.createElement("div");
           thumb.className = "seat-attachment";
-          thumb.title = title;
+          thumb.title = it.path ? "Remove image" : "Removes the mark; the CLI keeps the pasted image";
           const pic = doc.createElement("img");
           pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
           pic.alt = imageChip(it.n).trim();
@@ -50569,15 +50569,12 @@ ${detail}` });
         };
         const syncImageStrip = () => {
           pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
-          renderImageStrip(imageStripEl, pastedThumbs, {
-            title: window.__CLODEX_WEB__ || !window.require ? "Remove image" : "Removes the mark; the CLI keeps the pasted image",
-            onRemove: (n) => {
-              composerEl.value = removeImageChip(composerEl.value, n);
-              delete pastedImagePaths[n];
-              if (menuMirror.on()) syncMenuMirror();
-              composerKit.fit();
-              syncImageStrip();
-            }
+          renderImageStrip(imageStripEl, pastedThumbs, (n) => {
+            composerEl.value = removeImageChip(composerEl.value, n);
+            delete pastedImagePaths[n];
+            if (menuMirror.on()) syncMenuMirror();
+            composerKit.fit();
+            syncImageStrip();
           });
           placeImageStrip();
         };
@@ -50668,7 +50665,7 @@ ${detail}` });
               for (const { n, chip, path, image } of added) {
                 composerEl.value += chip;
                 pastedImagePaths[n] = path || null;
-                if (image) pastedThumbs.push({ n, image });
+                if (image) pastedThumbs.push({ n, image, path });
               }
               if (menuMirror.on()) syncMenuMirror();
               const end = composerEl.value.length;
