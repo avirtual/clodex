@@ -2683,7 +2683,6 @@ function createTicketMethods(deps, shared) {
     _handleTask(session, intent) {
       let stale = '';
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
-      const ack = (msg) => this._taskAck(session, `[agent:task] ${msg}${stale}`);
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
       // This is the only rejecting return reached before the verb runs, so the payload spill lives here
@@ -2695,18 +2694,18 @@ function createTicketMethods(deps, shared) {
       try { stale = this._hostIsThisTeamsCode(team) ? this._staleHostSuffix() : ''; } catch { stale = ''; }
       try {
         switch (intent.sub) {
-          case 'add': this._taskAdd(session, team, intent, reply, ack); break;
-          case 'assign': this._taskAssign(session, team, intent, reply, ack); break;
-          case 'start': this._taskStart(session, team, intent, reply, ack); break;
+          case 'add': this._taskAdd(session, team, intent, reply); break;
+          case 'assign': this._taskAssign(session, team, intent, reply); break;
+          case 'start': this._taskStart(session, team, intent, reply); break;
           case 'done': this._taskDone(session, team, intent, reply); break;
-          case 'reject': this._taskReject(session, team, intent, reply, ack); break;
-          case 'respec': this._taskRespec(session, team, intent, reply, ack); break;
-          case 'cancel': this._taskCancel(session, team, intent, reply, ack); break;
-          case 'accept': this._taskAccept(session, team, intent, reply, ack).catch((e) => {
+          case 'reject': this._taskReject(session, team, intent, reply); break;
+          case 'respec': this._taskRespec(session, team, intent, reply); break;
+          case 'cancel': this._taskCancel(session, team, intent, reply); break;
+          case 'accept': this._taskAccept(session, team, intent, reply).catch((e) => {
             log.warn('intent', `task accept ${intent.id} by ${session.name} failed: ${e.message}`);
             reply(`error: accept ${intent.id || ''} failed: ${e.message}`);
           }); break;
-          case 'park': this._taskPark(session, team, intent, reply, ack); break;
+          case 'park': this._taskPark(session, team, intent, reply); break;
           case 'list': this._taskList(session, team, intent, reply); break;
         }
       } catch (e) {
@@ -3847,7 +3846,6 @@ function createTicketMethods(deps, shared) {
     _spawnTicketSeat(opener, team, ticket, roleKey, seat, mode = 'worktree', fromBacklog = false, prelude = '') {
       const isSpawn = mode === 'spawn';
       const reply = (msg) => this._injectText(opener, `[agent:task] ${msg}`, { parkable: true });
-      const ack = (msg) => this._taskAck(opener, `[agent:task] ${msg}`);
       // The wire label must be on the record before the deferred create() reads it back to mint the proxy id.
       const seatLabel = teamCost.wireLabelFor({
         team: team.name, ticketId: ticket.id, role: roleKey,
@@ -4000,13 +3998,9 @@ function createTicketMethods(deps, shared) {
               : '');
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
-          const seatSuffix = this._ticketDeliverySuffix(d, seat.name, team, ticket);
-          const seatWarn = isSpawn
-            ? `${seatSuffix}${envWarn}${cwdWarn}${promptWarn}`
-            : `${seatSuffix}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${cwdDirWarn}`;
-          (seatWarn ? reply : ack)(isSpawn
-            ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${seatWarn}`
-            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${seatWarn}`);
+          reply(isSpawn
+            ? `ticket ${ticket.id} → ${seat.name} in the shared checkout ${shape.cwd} (no branch, no worktree)${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}`
+            : `ticket ${ticket.id} → ${seat.name} on ${reused ? 'its existing tree, branch' : 'branch'} ${wt.branch}${this._ticketDeliverySuffix(d, seat.name, team, ticket)}${envWarn}${cwdWarn}${promptWarn}${linkWarn}${cwdDirWarn}`);
         } catch (err) {
           const live = this.sessions.has(seat.name);
           if (!live) getPersistence().remove(seat.name);
@@ -4040,7 +4034,7 @@ function createTicketMethods(deps, shared) {
       } catch { return []; }
     },
 
-    _taskAdd(session, team, intent, reply, ack = reply) {
+    _taskAdd(session, team, intent, reply) {
       // Read before the permission check: a non-lead's spec is the longest payload of any ticket verb and this rejection has no re-send to fall back on.
       const spec = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can open a ticket${this._spillRejectedPayload(session, 'task add', spec)}`); return; }
@@ -4093,32 +4087,29 @@ function createTicketMethods(deps, shared) {
       log.info('intent', `task add by ${session.name} → ${ticket.id} (${assignee || 'backlog'}${parked ? ', parked' : ''})`);
       const rvNote = reviewerTemplate ? ` — reviewer template: ${reviewerTemplate}` : '';
       if (parked) {
-        ack(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it${rvNote}`);
+        reply(`ticket ${ticket.id} parked${assignee ? ` for ${assignee}` : ' (backlog)'} — spec NOT delivered; [agent:task start ${ticket.id}] dispatches it${rvNote}`);
         return;
       }
       if (intent.start) {
         const startMsgs = [];
-        let startWarned = false;
-        this._taskStart(session, team, { id: ticket.id, reviewer: null },
-          (m) => { startWarned = true; startMsgs.push(String(m)); },
-          (m) => startMsgs.push(String(m)));
+        this._taskStart(session, team, { id: ticket.id, reviewer: null }, (m) => startMsgs.push(String(m)));
         const after = (ticketsStore.load(team.root) || []).find((t) => t.id === ticket.id);
         const raw = startMsgs.join(' ').trim();
         if (after && ticketStarted(after)) {
           const tail = raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim();
-          (startWarned ? reply : ack)(`ticket ${ticket.id} created and started ${tail}${rvNote}`);
+          reply(`ticket ${ticket.id} created and started ${tail}${rvNote}`);
           return;
         }
         reply(`ticket ${ticket.id} created but NOT started — the ticket exists and is unstarted. Start leg: ${raw || 'no reply'}`);
         return;
       }
-      ack((assignee
+      reply((assignee
         ? `ticket ${ticket.id} → ${assignee} (not started) — [agent:task start ${ticket.id}] mints its tree and seat and delivers the spec`
         : `ticket ${ticket.id} (backlog)`) + rvNote);
     },
 
     // Not a second `assign`: start mints once, and re-sends are assign's job, which the refusals below name.
-    _taskStart(session, team, intent, reply, ack = reply) {
+    _taskStart(session, team, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can start a ticket`); return; }
       if (!intent.id) { reply('error: start needs a ticket id — [agent:task start <id>]'); return; }
       const tickets = ticketsStore.load(team.root);
@@ -4197,7 +4188,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', dispatchMode === 'spawn'
           ? `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
           : `task start by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-        ack((dispatchMode === 'spawn'
+        reply((dispatchMode === 'spawn'
           ? `ticket ${ticket.id}${unparked} → spawning ${minted.name} in the shared checkout (no branch)`
           : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`) + rvNote);
         return;
@@ -4211,10 +4202,10 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
       log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
-      (suffix ? reply : ack)(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
+      reply(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
     },
 
-    _taskAssign(session, team, intent, reply, ack = reply) {
+    _taskAssign(session, team, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can assign a ticket`); return; }
       if (!intent.id) { reply('error: assign needs a ticket id — [agent:task assign <id> <role|name>]'); return; }
       if (!intent.who) { reply('error: assign needs an assignee — [agent:task assign <id> <role|name>]'); return; }
@@ -4288,8 +4279,7 @@ function createTicketMethods(deps, shared) {
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: ownSeat, body: `ticket ${ticket.id} re-sent` });
         log.info('intent', `task assign by ${session.name}: ${ticket.id} re-sent to its own seat ${ownSeat}`);
-        const ownSuffix = this._ticketDeliverySuffix(d2, ownSeat, team, ticket);
-        (ownSuffix ? reply : ack)(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${ownSuffix}`);
+        reply(`ticket ${ticket.id} → ${ownSeat}${wasParked ? ' (unparked)' : ''} (its own seat, spec re-sent)${this._ticketDeliverySuffix(d2, ownSeat, team, ticket)}`);
         return;
       }
       if (oneShot) {
@@ -4302,7 +4292,7 @@ function createTicketMethods(deps, shared) {
           log.info('intent', dispatchMode === 'spawn'
             ? `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, shared checkout`
             : `task assign by ${session.name}: ${ticket.id} → seat ${minted.name}, branch ${minted.branch}`);
-          ack(dispatchMode === 'spawn'
+          reply(dispatchMode === 'spawn'
             ? `ticket ${ticket.id} → spawning ${minted.name} in the shared checkout (no branch)`
             : `ticket ${ticket.id} → spawning ${minted.name} in a worktree on branch ${minted.branch}`);
           return;
@@ -4321,7 +4311,7 @@ function createTicketMethods(deps, shared) {
       const unparked = wasParked ? ' (unparked)' : '';
       // Shows the role the ticket was filed under, not the seat: a seat-to-role arrow would report a move the lead never made.
       const prevShown = prevRole || prev;
-      (suffix ? reply : ack)(reassigning ? `ticket ${ticket.id}: ${prevShown} → ${assignee}${unparked}${suffix}` : `ticket ${ticket.id} → ${assignee}${unparked}${suffix}`);
+      reply(reassigning ? `ticket ${ticket.id}: ${prevShown} → ${assignee}${unparked}${suffix}` : `ticket ${ticket.id} → ${assignee}${unparked}${suffix}`);
     },
 
     _taskDone(session, team, intent, reply) {
@@ -5723,7 +5713,7 @@ function createTicketMethods(deps, shared) {
       });
     },
 
-    _taskReject(session, team, intent, reply, ack = reply) {
+    _taskReject(session, team, intent, reply) {
       const reason = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!intent.id) { reply(`error: reject needs a ticket id — [agent:task reject <id>] <reason>${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
@@ -5782,12 +5772,12 @@ function createTicketMethods(deps, shared) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
       if (cancelsMerge) log.info('ticket', `task reject ${ticket.id}: the round ${ticket.reviewRound} ACCEPT is stale — its queued auto-merge will not run, and the rework's next task done is reviewed again`);
-      ack(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}`);
+      reply(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}`);
     },
 
     // Gated to `open` because respec delivers: re-dispatching a done or accepted ticket restarts work without reopening it.
     // Not folded into reject, whose body only undoes a close and would make one verb mean two things.
-    _taskRespec(session, team, intent, reply, ack = reply) {
+    _taskRespec(session, team, intent, reply) {
       const spec = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can respec a ticket${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (!intent.id) { reply(`error: respec needs a ticket id — [agent:task respec <id>] <new spec>${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
@@ -5835,19 +5825,18 @@ function createTicketMethods(deps, shared) {
       const sendVerb = (!ticket.assignee || ticketStarted(ticket))
         ? `[agent:task assign ${ticket.id} ${this._resolvableAssignTarget(team, ticket)}]`
         : `[agent:task start ${ticket.id}]`;
-      const deliveryNote = (ticket.parked || !dispatched) ? '' : this._ticketDeliverySuffix(d, target, team, ticket);
       const note = ticket.parked
         ? ` (parked — spec replaced, NOT dispatched; ${sendVerb} sends it)`
         : !dispatched
           ? ` (not started — spec replaced, NOT dispatched; ${sendVerb} sends it)`
-          : deliveryNote;
+          : this._ticketDeliverySuffix(d, target, team, ticket);
       const dirNote = (hadTaskDir && !ticket.taskDir)
         ? ` — NOTE: the previous spec named a tasks/… dir and this one does not, so the artifact link was dropped`
         : '';
-      (deliveryNote || dirNote ? reply : ack)(`ticket ${ticket.id} respec'd → ${target}${note}${dirNote}`);
+      reply(`ticket ${ticket.id} respec'd → ${target}${note}${dirNote}`);
     },
 
-    _taskCancel(session, team, intent, reply, ack = reply) {
+    _taskCancel(session, team, intent, reply) {
       const reason = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (!intent.id) { reply(`error: cancel needs a ticket id — [agent:task cancel <id>] [reason]${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
@@ -5870,8 +5859,7 @@ function createTicketMethods(deps, shared) {
       this._writeTicketCost(team, ticket);
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       const dropped = this._cancelTicketReminders(session.name, ticket.id);
-      const nextSuffix = next ? this._ticketDeliverySuffix(adv.d || {}, seat, team, next) : '';
-      (nextSuffix ? reply : ack)(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}${nextSuffix}` : ''}${dropped ? ` ${dropped}` : ''}`);
+      reply(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}${this._ticketDeliverySuffix(adv.d || {}, seat, team, next)}` : ''}${dropped ? ` ${dropped}` : ''}`);
     },
 
     // Called from accept and cancel only: a reject reopens a done ticket and its reminder is wanted through the rework round.
@@ -5977,7 +5965,7 @@ function createTicketMethods(deps, shared) {
     },
 
     // Not folded into `done`, which the assignee emits: retiring there would kill the seat before the lead read a word or sent rework.
-    async _taskAccept(session, team, intent, reply, ack = reply) {
+    async _taskAccept(session, team, intent, reply) {
       const note = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       if (!intent.id) { reply(`error: accept needs a ticket id — [agent:task accept <id>] [note]${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
@@ -6009,7 +5997,7 @@ function createTicketMethods(deps, shared) {
           await this.archive(seatName);
           archived = true;
         }
-        ack(this._finishAccept(team, ticket, tickets, {
+        reply(this._finishAccept(team, ticket, tickets, {
           by: session.name, note, seatName, closedOut: true, complete: false,
           actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
           msg: archived
@@ -6020,7 +6008,7 @@ function createTicketMethods(deps, shared) {
       }
 
       const r = await this._closeOutMergedTicket(team, ticket, tickets, { by: session.name, note });
-      (r.merged ? ack : reply)(r.text);
+      reply(r.text);
     },
 
     async _closeOutMergedTicket(team, ticket, tickets, { by, note = '' }) {
@@ -6038,9 +6026,8 @@ function createTicketMethods(deps, shared) {
       // What this accept acted on, for the compare-and-clear in `_finishAccept`; a plain let because `mergeStamp` below
       // is in its temporal dead zone on the two arms that finish before it.
       let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
-      const finish = (msg, closedOut = false, complete = false, merged = false) => ({
+      const finish = (msg, closedOut = false, complete = false) => ({
         ok: !!complete,
-        merged: !!merged,
         closedOut: !!closedOut,
         text: this._finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }),
       });
@@ -6260,7 +6247,7 @@ function createTicketMethods(deps, shared) {
         && !!removed && removed.ok !== false && removed.worktreeRemoved !== false
         && del.ok === true && !del.skipped;
       try {
-        return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete, complete && c.ok && c.count > 0);
+        return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete);
       } catch (e) {
         log.error('ticket', `accept ${ticket.id} by ${by}: the board save after the teardown failed: ${e.message}`);
         return { ok: false, closedOut: false,
@@ -6271,7 +6258,7 @@ function createTicketMethods(deps, shared) {
 
     // Deliberately does not deliver on unpark: that is `assign`'s job, and a second delivery path would let the two disagree
     // about what a seat was told.
-    _taskPark(session, team, intent, reply, ack = reply) {
+    _taskPark(session, team, intent, reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can park a ticket`); return; }
       if (!intent.id) { reply('error: park needs a ticket id — [agent:task park <id>]'); return; }
       const tickets = ticketsStore.load(team.root);
@@ -6289,7 +6276,7 @@ function createTicketMethods(deps, shared) {
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(backlog)', body: `ticket ${ticket.id} ${parking ? 'parked' : 'unparked'}` });
       log.info('intent', `task ${parking ? 'park' : 'unpark'} ${ticket.id} by ${session.name}`);
-      ack(parking
+      reply(parking
         ? `ticket ${ticket.id} parked — held out of dispatch; [agent:task assign ${ticket.id} ${this._resolvableAssignTarget(team, ticket)}] releases it`
         : `ticket ${ticket.id} unparked → ${ticket.role || ticket.assignee || 'backlog'} — the spec was NOT re-sent; use [agent:task assign ${ticket.id} <role|name>] to deliver it`);
     },

@@ -6179,10 +6179,6 @@ function createSessionManager(deps) {
       this._injectText(session, line);
     }
 
-    _taskAck(session, line) {
-      this._memoryAck(session, line);
-    }
-
     removeMemoryUnit(agent, id) {
       try {
         // forget() validates both arguments (MEMORY_AGENT_RE / MEMORY_ID_RE) and

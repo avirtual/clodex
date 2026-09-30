@@ -2566,8 +2566,7 @@ function fireOwed(app, s) {
 // says nothing about the code.
 async function writeComplete(app, name, tries = 400) {
   for (let i = 0; i < tries; i++) {
-    const seen = app.seen(name);
-    if (seen === '' || seen.endsWith('\r')) return;
+    if (app.seen(name).endsWith('\r')) return;
     await new Promise((r) => setTimeout(r, 5));
   }
   assert.fail(`ENTER: the write to ${name} never completed, so a baseline taken here is mid-unit`);
