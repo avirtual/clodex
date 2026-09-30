@@ -68,7 +68,7 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler } = require('./lib/pty-composer');
+const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require('./lib/pty-composer');
 const { readImageFile, clipboardImages } = require('./lib/clipboard-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
@@ -2326,6 +2326,26 @@ function createTerminal(name, peer = null) {
   const menuMirror = composerEl ? createMenuMirror() : null;
   let pastedImages = 0;
   let pastedImagePaths = {};
+  let pastedThumbs = [];
+  const imageStripEl = composerEl ? document.createElement('div') : null;
+  const placeImageStrip = () => { imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`; };
+  const syncImageStrip = () => {
+    pastedThumbs = chippedImages(pastedThumbs, composerEl.value);
+    renderImageStrip(imageStripEl, pastedThumbs, {
+      title: window.__CLODEX_WEB__ || !window.require ? 'Remove image' : 'Removes the mark; the CLI keeps the pasted image',
+      onRemove: (n) => {
+        composerEl.value = removeImageChip(composerEl.value, n);
+        delete pastedImagePaths[n];
+        if (menuMirror.on()) syncMenuMirror();
+        composerKit.fit();
+        syncImageStrip();
+      },
+    });
+    placeImageStrip();
+  };
+  const pruneImageStrip = () => {
+    if (chippedImages(pastedThumbs, composerEl.value).length !== pastedThumbs.length) syncImageStrip();
+  };
   const sendPtyComposer = () => {
     const text = composerEl.value;
     if (!text.trim()) return;
@@ -2333,6 +2353,8 @@ function createTerminal(name, peer = null) {
     pastedImages = 0;
     const imagePaths = pastedImagePaths;
     pastedImagePaths = {};
+    pastedThumbs = [];
+    syncImageStrip();
     composerKit.fit();
     composerTrigger.resetSpan();
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
@@ -2359,6 +2381,7 @@ function createTerminal(name, peer = null) {
       composerEl.setSelectionRange(hit.draft.length, hit.draft.length);
       composerKit.fit();
       if (!hit.draft) composerTrigger.resetSpan();
+      pruneImageStrip();
       if (liveSplit) liveSplit.refresh();
     }
     return true;
@@ -2388,7 +2411,12 @@ function createTerminal(name, peer = null) {
     composerEl.classList.add('seat-composer-pty');
     composerEl.hidden = true;
     wrapperEl.appendChild(composerEl);
+    imageStripEl.className = 'seat-attachments seat-attachments-pty';
+    imageStripEl.hidden = true;
+    wrapperEl.appendChild(imageStripEl);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(placeImageStrip).observe(composerEl);
     composerEl.addEventListener('input', syncMenuMirror);
+    composerEl.addEventListener('input', pruneImageStrip);
     composerEl.addEventListener('paste', ptyImagePasteHandler({
       isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
       readImages: (items) => clipboardImages(items, FileReader),
@@ -2396,14 +2424,16 @@ function createTerminal(name, peer = null) {
       toast: (message) => showToast(message, { kind: 'error', name }),
       nextImage: () => { pastedImages += 1; return pastedImages; },
       append: (added) => {
-        for (const { n, chip, path } of added) {
+        for (const { n, chip, path, image } of added) {
           composerEl.value += chip;
           pastedImagePaths[n] = path || null;
+          if (image) pastedThumbs.push({ n, image });
         }
         if (menuMirror.on()) syncMenuMirror();
         const end = composerEl.value.length;
         composerEl.setSelectionRange(end, end);
         composerKit.fit();
+        syncImageStrip();
       },
       writePty,
     }));

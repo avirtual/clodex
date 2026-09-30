@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler } = require('../renderer/lib/pty-composer');
+const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require('../renderer/lib/pty-composer');
 const { clipboardImages } = require('../renderer/lib/clipboard-images');
 const { PASTE_OPEN, PASTE_CLOSE, bracketPaste } = require('../renderer/lib/composer-voice');
 
@@ -122,16 +122,16 @@ test('clipboardImages reads each clipboard image item into { mediaType, data } b
   assert.deepStrictEqual(await clipboardImages(undefined, FakeReader), []);
 });
 
-function pasteRig({ web, reply, upload = null }) {
-  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [] };
+function pasteRig({ web, reply, upload = null, readImages = null }) {
+  const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [] };
   let n = 0;
   const handler = ptyImagePasteHandler({
     isWeb: () => web,
-    readImages: (items) => clipboardImages(items, FakeReader),
+    readImages: readImages || ((items) => clipboardImages(items, FakeReader)),
     upload: upload || (async (images) => { log.uploads.push(images); return reply; }),
     toast: (m) => log.toasts.push(m),
     nextImage: () => { n += 1; return n; },
-    append: (added) => { log.order.push('append'); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
+    append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
@@ -189,4 +189,74 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(m[1], /if \(menuMirror\.on\(\)\) syncMenuMirror\(\);/u);
   assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
+  assert.match(src, /pastedImagePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
+  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image \}\);/u);
+});
+
+test('on the desktop the pasted image reaches append for its thumb and Ctrl-V still fires once', async () => {
+  const { log, paste } = pasteRig({ web: false });
+  await paste();
+  assert.deepStrictEqual(log.added, [{ n: 1, chip: '[Image #1] ', path: null, image: { mediaType: 'image/png', data: 'QUJD' } }]);
+  assert.deepStrictEqual(log.writes, ['\x16']);
+  assert.deepStrictEqual(log.order, ['append', 'write']);
+});
+
+test('on the web the pasted image reaches append beside its uploaded path', async () => {
+  const { log, paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/img-1.png'] } });
+  await paste();
+  assert.deepStrictEqual(log.added, [{ n: 1, chip: '[Image #1] ', path: '/h/img-1.png', image: { mediaType: 'image/png', data: 'QUJD' } }]);
+});
+
+for (const [label, readImages] of [
+  ['rejects', async () => { throw new Error('reader broke'); }],
+  ['finds nothing', async () => []],
+]) {
+  test(`on the desktop a clipboard read that ${label} still appends the chip with no image and writes Ctrl-V`, async () => {
+    const { log, paste } = pasteRig({ web: false, readImages });
+    await paste();
+    assert.deepStrictEqual(log.added, [{ n: 1, chip: '[Image #1] ', path: null, image: null }]);
+    assert.deepStrictEqual(log.writes, ['\x16']);
+    assert.deepStrictEqual(log.toasts, []);
+  });
+}
+
+test('removeImageChip drops that chip only and leaves its neighbours', () => {
+  assert.strictEqual(removeImageChip('a [Image #1] b [Image #2] c', 1), 'a b [Image #2] c');
+  assert.strictEqual(removeImageChip('[Image #12] x', 1), '[Image #12] x');
+});
+
+test('chippedImages keeps only thumbs whose chip is still in the draft', () => {
+  const img = { mediaType: 'image/png', data: 'QUJD' };
+  const items = [{ n: 1, image: img }, { n: 2, image: img }, { n: 3, image: null }];
+  assert.deepStrictEqual(chippedImages(items, '[Image #2] [Image #3] hi'), [{ n: 2, image: img }]);
+  assert.deepStrictEqual(chippedImages(items, ''), []);
+});
+
+function fakeNode(tag) {
+  const node = { tagName: tag, children: [], listeners: {}, hidden: false, className: '', title: '', textContent: '' };
+  node.appendChild = (c) => node.children.push(c);
+  node.append = (...cs) => node.children.push(...cs);
+  node.replaceChildren = () => { node.children = []; };
+  node.addEventListener = (type, fn) => { node.listeners[type] = fn; };
+  return node;
+}
+
+test('renderImageStrip draws one removable thumb per image and hides when empty', () => {
+  const el = fakeNode('div');
+  el.ownerDocument = { createElement: fakeNode };
+  const removed = [];
+  const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' } }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' } }];
+  renderImageStrip(el, items, { title: 'Removes the mark; the CLI keeps the pasted image', onRemove: (n) => removed.push(n) });
+  assert.strictEqual(el.hidden, false);
+  assert.deepStrictEqual(el.children.map((t) => [t.className, t.title, t.children[0].src]), [
+    ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/png;base64,QUJD'],
+    ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/jpeg;base64,REVG'],
+  ]);
+  const rm = el.children[1].children[1];
+  assert.strictEqual(rm.className, 'seat-attachment-remove');
+  rm.listeners.click();
+  assert.deepStrictEqual(removed, [3]);
+  renderImageStrip(el, [], { title: '', onRemove: () => {} });
+  assert.strictEqual(el.hidden, true);
+  assert.deepStrictEqual(el.children, []);
 });
