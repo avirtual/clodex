@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- Conversation mode tells a message typed in Clodex (`you`), one sent from the phone app (`phone`, with its own glyph) and one sent through `clodexctl dm` (`remote`) apart; the phone transcript carries the same `client` field.
+- The deploy-fix briefing Clodex injects into a session is no longer styled as a human message.
+
 ## 5.97.0 — 2026-09-30
 
 - Deleting a team whose manifest no longer loads now also drops its ticket watches, so a team later created on the same root does not inherit them.

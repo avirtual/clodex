@@ -118,3 +118,7 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
+
+## _buildDeliveryText
+
+`tag` is a spill-pointer label for every sender but `user`: ticket-loop and dispatch tags repeat what the inline body already opens with, so only an operator delivery's `(via <client>)` tag rides the inline form too.

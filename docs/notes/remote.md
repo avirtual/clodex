@@ -105,3 +105,6 @@ Computed once at module load so a hello does not fork `ps` per request.
 ## _handleTranscript
 
 A role `user` message carries `images: [{ n, mediaType, data }]` (base64) or `{ n, mediaType, bytes }` (original over 1 MiB, or a thumbnail that failed), present only when the prompt had at least one image. `n` keys the message's `[Image #n]` mark and is unique within a message: folded prompts are renumbered. An image block without a mark still ships, numbered after the highest marked `n`. The `transcript-images` hello cap is pushed unconditionally: it announces the field, not the host-side 256px downscale, since originals are a valid value.
+
+A role `user` message also carries `client` (e.g. `ios`) when its delivery was tagged `[agent:from user] (via <client>)` — the `client` a POST `/api/sessions/:name/dm` body named; absent otherwise. A folded message keeps its first prompt's `client`.
+
