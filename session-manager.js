@@ -7543,10 +7543,12 @@ function createSessionManager(deps) {
 
     _seedFiledRing(name) {
       const ring = createFiledRing();
+      const spillDir = spillDirFor(REGISTRY_DIR, name);
       try {
         seedFiledRing(ring, [
-          { dir: spillDirFor(REGISTRY_DIR, name), kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message' },
+          { dir: spillDir, kind: 'intent' },
+          { dir: path.join(MSG_DIR, name), kind: 'message', mapPath: (p) => this._keptMessagePath(p) },
+          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message' },
         ]);
       } catch (e) {
         log.warn('files', `filed seed for ${name} failed: ${e.message}`);

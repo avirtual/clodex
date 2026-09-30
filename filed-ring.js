@@ -78,8 +78,8 @@ function createFiledRing(cap = FILED_CAP) {
 }
 
 function seedFiledRing(ring, dirs) {
-  const found = [];
-  for (const { dir, kind } of dirs) {
+  const found = new Map();
+  for (const { dir, kind, mapPath } of dirs) {
     if (!dir) continue;
     let names;
     try { names = fs.readdirSync(dir); } catch { continue; }
@@ -88,11 +88,12 @@ function seedFiledRing(ring, dirs) {
       let st;
       try { st = fs.lstatSync(p); } catch { continue; }
       if (!st.isFile()) continue;
-      found.push({ path: p, kind, bytes: st.size, ts: Math.round(st.mtimeMs) });
+      const kept = mapPath ? mapPath(p) : p;
+      if (!found.has(kept)) found.set(kept, { path: kept, kind, bytes: st.size, ts: Math.round(st.mtimeMs) });
     }
   }
-  found.sort((a, b) => a.ts - b.ts);
-  const take = found.slice(Math.max(0, found.length - ring.cap));
+  const sorted = [...found.values()].sort((a, b) => a.ts - b.ts);
+  const take = sorted.slice(Math.max(0, sorted.length - ring.cap));
   for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || firstLineOf(e.path) });
   return take.length;
 }

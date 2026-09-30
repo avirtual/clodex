@@ -990,16 +990,20 @@ function spillToFile(sender, body, recipient) {
   // (the charset alone admits `..`); if that relaxes, this needs confine().
   const dir = path.join(MSG_DIR, recipient);
   ensureDir(dir);
-  msgCounter++;
-  const fname = `msg-${process.pid}-${msgCounter}.txt`;
-  const fpath = path.join(dir, fname);
+  const seatSpill = confine(path.join(REGISTRY_DIR, 'spill'), recipient);
+  let fname, fpath, durable;
+  do {
+    msgCounter++;
+    fname = `msg-${process.pid}-${msgCounter}.txt`;
+    fpath = path.join(dir, fname);
+    durable = seatSpill && durableMessageCopyOf(fpath, path);
+  } while (fs.existsSync(fpath) || (durable && fs.existsSync(durable)));
   const header = `From: ${sender}\nTime: ${new Date().toTimeString().slice(0, 8)}\nSize: ${Buffer.byteLength(body)} bytes\n\n`;
   fs.writeFileSync(fpath, header + body);
-  const durable = confine(path.join(REGISTRY_DIR, 'spill'), recipient) && durableMessageCopyOf(fpath, path);
   if (durable) {
     try {
       ensureDir(path.dirname(durable));
-      fs.writeFileSync(durable, header + body);
+      fs.writeFileSync(durable, header + body, { flag: 'wx' });
     } catch (e) {
       log.warn('messages', `durable copy of ${fname} for ${recipient} failed: ${e.message}`);
     }

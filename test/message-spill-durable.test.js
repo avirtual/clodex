@@ -92,4 +92,36 @@ test('a denied dm body names its durable copy, with no sweep deadline', () => {
   assert.doesNotMatch(suffix, /swept|minutes/);
 });
 
+test('a durable copy left by an earlier launch with the same pid is never overwritten: the spill takes the next free name', () => {
+  const { engine, registryDir, session } = mkEngine();
+  const durDir = path.join(registryDir, 'spill', SEAT, 'messages');
+  fs.mkdirSync(durDir, { recursive: true });
+  const stale = path.join(durDir, `msg-${process.pid}-1.txt`);
+  fs.writeFileSync(stale, 'OLD');
+  const text = engine.manager._buildDeliveryText(session, 'lead', 'fresh-body '.repeat(80), 'dm');
+  const name = path.basename(text.match(/attached: @(\S+) /)[1]);
+  assert.strictEqual(fs.readFileSync(stale, 'utf8'), 'OLD');
+  assert.strictEqual(name, `msg-${process.pid}-2.txt`);
+  assert.deepStrictEqual(session.filedRing.list().map((e) => e.path), [path.join(durDir, name)]);
+  assert.match(fs.readFileSync(path.join(durDir, name), 'utf8'), /fresh-body/);
+});
+
+test('a ring seeded at startup lists message spills at their durable copies, older ones included, and they survive the sweep', () => {
+  const { engine, registryDir } = mkEngine();
+  const msgDir = path.join(registryDir, 'messages', SEAT);
+  const durDir = path.join(registryDir, 'spill', SEAT, 'messages');
+  fs.mkdirSync(msgDir, { recursive: true });
+  fs.mkdirSync(durDir, { recursive: true });
+  const write = (file, text, sec) => { fs.writeFileSync(file, text); fs.utimesSync(file, sec, sec); };
+  write(path.join(durDir, 'msg-7-1.txt'), 'From: older\n\nold', 1700000000);
+  write(path.join(msgDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
+  write(path.join(durDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
+  const ring = engine.manager._seedFiledRing(SEAT);
+  fs.unlinkSync(path.join(msgDir, 'msg-7-2.txt'));
+  assert.deepStrictEqual(ring.list(), [
+    { path: path.join(durDir, 'msg-7-2.txt'), kind: 'message', head: 'From: newer', bytes: 16, ts: 1700000100000 },
+    { path: path.join(durDir, 'msg-7-1.txt'), kind: 'message', head: 'From: older', bytes: 16, ts: 1700000000000 },
+  ]);
+});
+
 after(() => { setImmediate(() => process.exit(0)); });
