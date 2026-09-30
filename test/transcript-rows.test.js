@@ -603,6 +603,34 @@ test('the operator prompt row unclamps its head text while other head rows keep 
   assert.ok(rule.includes('-webkit-line-clamp: unset'));
 });
 
+test('a typed prompt row leads with the operator badge: glyph ● and name you, titled Typed in Clodex', () => {
+  const m = mount();
+  m.render([prompt]);
+  const row = m.pane.childNodes[0].childNodes[0];
+  const badge = row.childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
+  assert.strictEqual(badge.title, 'Typed in Clodex');
+  assert.deepStrictEqual(badge.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender-glyph', '●'], ['tr-sender-name', 'you']]);
+  assert.strictEqual(row.childNodes[1].className, 'tr-head-text');
+});
+
+test('a mid-turn prompt row keeps tr-mid first, then the operator badge reading you', () => {
+  const m = mount();
+  m.render([{ ...prompt, id: 'p2', source: 'mid-turn', state: 'delivered' }]);
+  const row = m.pane.childNodes[0].childNodes.find((n) => n.dataset && n.dataset.id === 'p2');
+  assert.deepStrictEqual(row.childNodes.slice(0, 2).map((n) => n.className), ['tr-mid', 'tr-sender tr-sender-operator']);
+  assert.strictEqual(row.childNodes[1].childNodes[1].textContent, 'you');
+});
+
+test('an inbound from user carries the operator badge labelled remote', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the phone' }]);
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
+  const badge = card.childNodes[0].childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
+  assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['●', 'remote']);
+});
+
 function mountWorking() {
   const doc = fakeDocument();
   const pane = doc.createElement('div');
@@ -1146,8 +1174,8 @@ test('a mid-turn prompt row reads mid-turn, its text, its time and delivered, an
   m.render([ask('p1', 1), midAsk('delivered')]);
   const row = rowIn(m, 'q1');
   assert.match(row.className, /\btr-prompt tr-prompt-mid\b/);
-  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-head-text', 'hi'], ['tr-time', '10:42'], ['tr-mid-state', 'delivered']]);
-  assert.strictEqual(row.childNodes[3].dataset.state, 'delivered');
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'hi'], ['tr-time', '10:42'], ['tr-mid-state', 'delivered']]);
+  assert.strictEqual(row.childNodes[4].dataset.state, 'delivered');
 });
 
 test('a mid-turn prompt that turns read rebuilds its row and the state reads ✓ read', () => {
@@ -1167,8 +1195,8 @@ test('a queued mid-turn prompt row reads mid-turn, its text, its time and queued
   const m = mount();
   m.render([ask('p1', 1), queuedAsk('queued')]);
   const row = rowIn(m, 'queued:1');
-  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-head-text', 'hi'], ['tr-time', '10:43'], ['tr-mid-state', 'queued']]);
-  assert.strictEqual(row.childNodes[3].dataset.state, 'queued');
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'hi'], ['tr-time', '10:43'], ['tr-mid-state', 'queued']]);
+  assert.strictEqual(row.childNodes[4].dataset.state, 'queued');
 });
 
 test('a queued prompt replaced by its delivered attachment leaves only the delivered row', () => {

@@ -20,7 +20,7 @@ function classifySender(from) {
   const name = String(from == null ? '' : from);
   const system = systemGlyph(name);
   if (system) return { cls: 'system', label: name, glyph: system };
-  if (name === 'user') return { cls: 'operator', label: 'you', glyph: '●' };
+  if (name === 'user') return { cls: 'operator', label: 'remote', glyph: '●' };
   if (name.includes('@')) return { cls: 'peer', label: name, glyph: '⇢' };
   const shape = SEAT_SHAPE.exec(name);
   if (shape) {
