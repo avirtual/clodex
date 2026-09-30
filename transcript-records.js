@@ -563,4 +563,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, imagesOf, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };

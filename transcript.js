@@ -10,8 +10,9 @@
 
 const fs = require('fs');
 const {
-  sniffReader, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
+  sniffReader, promptContent, extractText, isTurnEndEntry, isInterruptEntry, isCodexReply,
 } = require('./transcript-readers');
+const { imagesOf } = require('./transcript-records');
 
 // Panel/phone sends carry the operator delivery label; every consumer of
 // jsonlToMessages renders the operator's own chat, so drop it (peer labels like
@@ -95,10 +96,11 @@ function jsonlToMessages(jsonlPath, limit = 100) {
     if (obj.isSidechain || obj.isMeta) continue;
     for (const rec of sniffReader(obj).expand(obj)) {
       const c = sniffReader(rec).classify(rec);
-      let role = null, text = '';
+      let role = null, text = '', images = [];
       if (c.isReply) { role = 'assistant'; text = c.text; }
       else if (c.prompt) {
         role = 'user';
+        images = imagesOf(promptContent(rec), c.prompt);
         // local slash-command echoes and injected context aren't conversation
         text = c.prompt.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, '')
           .replace(/<task-notification>[\s\S]*?<\/task-notification>/g, '').trim();
@@ -109,7 +111,9 @@ function jsonlToMessages(jsonlPath, limit = 100) {
         if (c.turnEnd) records.push({ role: null, text: '', ts: null, turnEnd: true });
         continue;
       }
-      records.push({ role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd });
+      const row = { role, text: text.trim(), ts: rec.timestamp || null, turnEnd: c.turnEnd };
+      if (images.length) row.images = images;
+      records.push(row);
     }
   }
 
@@ -135,8 +139,14 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       if (!r.role) continue;
       const interim = r.role === 'assistant' && !(i === lastAssistant && tailFinal);
       const prev = messages[messages.length - 1];
-      if (prev && prev.role === r.role && prev.interim === interim) prev.text += '\n\n' + r.text;
-      else messages.push({ role: r.role, text: r.text, ts: r.ts, interim });
+      if (prev && prev.role === r.role && prev.interim === interim) {
+        prev.text += '\n\n' + r.text;
+        if (r.images) prev.images = (prev.images || []).concat(r.images);
+      } else {
+        const m = { role: r.role, text: r.text, ts: r.ts, interim };
+        if (r.images) m.images = r.images;
+        messages.push(m);
+      }
     }
   }
 
