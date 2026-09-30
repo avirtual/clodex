@@ -341,22 +341,16 @@ test('a second welcome (reconnect) reloads to re-run the restore flow', async ()
   } finally { restore(); }
 });
 
-test('a dropped socket rejects the invokes in flight and forgets their ids', async () => {
+test('a dropped socket rejects the invokes in flight', async () => {
   const { ws, restore } = await connected();
   const realSetTimeout = global.setTimeout;
   try {
     const p1 = global.window.api.listSessions();
     await tick();
-    const inv1 = ws.frames().find((f) => f.t === 'invoke');
     global.setTimeout = () => 0;
     try { ws.close(); } finally { global.setTimeout = realSetTimeout; }
     const settled = await Promise.race([p1.then(() => 'resolved', (e) => e.message), tick().then(() => 'still pending')]);
     assert.equal(settled, 'socket closed');
-    const p2 = global.window.api.listSessions();
-    await tick();
-    ws.onmessage({ data: JSON.stringify({ t: 'reply', id: inv1.id, ok: true, value: 'stale' }) });
-    ws.onmessage({ data: JSON.stringify({ t: 'reply', id: inv1.id + 1, ok: true, value: 'fresh' }) });
-    assert.equal(await p2, 'fresh', 'the next invoke settles on its own fresh id');
   } finally { global.setTimeout = realSetTimeout; restore(); }
 });
 

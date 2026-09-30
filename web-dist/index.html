@@ -40349,10 +40349,10 @@ void main() {
             bodyEl.appendChild(renderDoc(parsed, { resolveHref }));
             titleEl.textContent = res.title ? `Clodex Help \u2014 ${res.title}` : "Clodex Help";
           }
-          await runSearch();
           if (slug) scrollToSlug(slug);
           else bodyEl.scrollTop = 0;
           updateHistoryButtons();
+          await runSearch();
         }
         async function openHelpPanel(name = DEFAULT_PAGE, slug = null) {
           const page = name || DEFAULT_PAGE;

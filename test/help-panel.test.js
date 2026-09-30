@@ -528,6 +528,28 @@ test('Enter in the search input opens the first hit at its anchor', async () => 
   assert.ok(reopened !== opened && reopened.scrolled === 1, 'so a second Enter opens the first hit again');
 });
 
+test('a page opened while the search index builds updates the history buttons without waiting for it', async () => {
+  const ctx = mount();
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
+  await withDocument(ctx, () => ctx.panel.openHelpPanel('messaging', null));
+  await withDocument(ctx, () => ctx.byId.get('help-back').fire('click', {}));
+  assert.strictEqual(ctx.byId.get('help-back').disabled, true, 'ENTER: Back must be disabled at the start of the trail');
+  const input = ctx.byId.get('help-search');
+  ctx.harness.hold(true);
+  await withDocument(ctx, async () => {
+    input.value = 'zz';
+    input.fire('input', {});
+    await ctx.harness.settle();
+    ctx.byId.get('help-fwd').fire('click', {});
+    await ctx.harness.settle();
+  });
+  const backDisabled = ctx.byId.get('help-back').disabled;
+  ctx.harness.hold(false);
+  await withDocument(ctx, () => ctx.harness.release());
+  await withDocument(ctx, () => ctx.harness.release());
+  assert.strictEqual(backDisabled, false, 'Forward must enable Back before the corpus walk finishes');
+});
+
 test('closing keeps the caches: a second open refetches nothing', async () => {
   const ctx = mount();
   await withDocument(ctx, () => ctx.panel.openHelpPanel('how-to', null));
