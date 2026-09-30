@@ -15,6 +15,7 @@ blocks a release.
 
 - A pasted image shows as a thumbnail above the seat's composer, with a × to drop it, so it is clear one is already attached before you send.
 - In the browser a pasted image shows its thumbnail immediately, dimmed until the upload lands; the desktop Transcript pane draws images that arrived without an [Image #n] mark.
+- Docs: 22 contradictions with the code fixed across docs/messaging.md, docs/sessions.md, docs/teams.md, docs/telemetry.md.
 
 ## 5.98.0 — 2026-09-30
 
