@@ -3,7 +3,6 @@
 const { bracketPaste } = require('./composer-voice');
 
 const BACKSPACE = '\x7f';
-const ESCAPE = '\x1b';
 const MIRROR_DRAFT = /^\/\S*$/u;
 const ARROWS = { ArrowDown: '\x1b[B', ArrowUp: '\x1b[A' };
 
@@ -70,7 +69,11 @@ function createMenuMirror() {
       slack = 1;
       return { writes: ['\t'], draft: sent };
     }
-    if (e.key === 'Escape') return { writes: [ESCAPE] };
+    if (e.key === 'Escape') {
+      const writes = [erase()];
+      reset();
+      return { writes, draft: '' };
+    }
     if (e.key === 'Enter') {
       const row = hasRows() ? read.rows.find((r) => r.selected) : null;
       const command = row ? completionOf(row.name) : sent;

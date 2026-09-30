@@ -20,6 +20,9 @@ blocks a release.
 - Clodex now reads `CLAUDE_CODE_USE_BEDROCK`/`VERTEX` the way the CLI does (on only for 1/true/yes/on); `=off` no longer switches a seat to the jsonl-only path.
 - `CLAUDE_CODE_USE_FOUNDRY` and `CLAUDE_CODE_USE_ANTHROPIC_AWS` are recognised as tee-blind backends and survive the inherited-env scrub.
 - A wire-routed seat no longer prints a second status line under the wirescope bar.
+- Web viewer: a dropped socket now fails the popovers that were waiting on it instead of leaving them on "Loading…" until reopened.
+- Composer: Escape while a `/command` draft is mirrored into the pty now clears the draft on both sides, so a later Enter can no longer submit a stale fragment.
+- Help panel: opening a search hit keeps the hit list while the query is in the box, so Enter keeps working.
 
 ## 5.95.0 — 2026-09-30
 

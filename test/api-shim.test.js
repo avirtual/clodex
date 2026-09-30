@@ -341,6 +341,19 @@ test('a second welcome (reconnect) reloads to re-run the restore flow', async ()
   } finally { restore(); }
 });
 
+test('a dropped socket rejects the invokes in flight', async () => {
+  const { ws, restore } = await connected();
+  const realSetTimeout = global.setTimeout;
+  try {
+    const p1 = global.window.api.listSessions();
+    await tick();
+    global.setTimeout = () => 0;
+    try { ws.close(); } finally { global.setTimeout = realSetTimeout; }
+    const settled = await Promise.race([p1.then(() => 'resolved', (e) => e.message), tick().then(() => 'still pending')]);
+    assert.equal(settled, 'socket closed');
+  } finally { global.setTimeout = realSetTimeout; restore(); }
+});
+
 // ── appVersion (t28) ────────────────────────────────────────────────────────
 // The browser has no About panel, so on a headless box the sidebar footer's
 // version line is the only way to tell what is deployed — which makes it a

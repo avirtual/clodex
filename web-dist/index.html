@@ -11810,6 +11810,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         ws.onmessage = (ev) => onMessage(ev.data);
         ws.onclose = () => {
           socketOpen = false;
+          const dropped = [...pending.values()];
+          pending.clear();
+          outbox = outbox.filter((f) => f.t !== "invoke");
+          for (const p of dropped) p.reject(new Error("socket closed"));
           showBanner(everWelcomed ? "Disconnected \u2014 reconnecting\u2026" : "Connecting\u2026");
           scheduleReconnect();
         };
@@ -31891,7 +31895,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       "use strict";
       var { bracketPaste } = require_composer_voice();
       var BACKSPACE = "\x7F";
-      var ESCAPE = "\x1B";
       var MIRROR_DRAFT = /^\/\S*$/u;
       var ARROWS = { ArrowDown: "\x1B[B", ArrowUp: "\x1B[A" };
       var isMirrorDraft = (text) => typeof text === "string" && MIRROR_DRAFT.test(text);
@@ -31950,7 +31953,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
             slack = 1;
             return { writes: ["	"], draft: sent };
           }
-          if (e.key === "Escape") return { writes: [ESCAPE] };
+          if (e.key === "Escape") {
+            const writes = [erase()];
+            reset();
+            return { writes, draft: "" };
+          }
           if (e.key === "Enter") {
             const row = hasRows() ? read.rows.find((r) => r.selected) : null;
             const command = row ? completionOf(row.name) : sent;
@@ -40342,10 +40349,10 @@ void main() {
             bodyEl.appendChild(renderDoc(parsed, { resolveHref }));
             titleEl.textContent = res.title ? `Clodex Help \u2014 ${res.title}` : "Clodex Help";
           }
-          renderNav();
           if (slug) scrollToSlug(slug);
           else bodyEl.scrollTop = 0;
           updateHistoryButtons();
+          await runSearch();
         }
         async function openHelpPanel(name = DEFAULT_PAGE, slug = null) {
           const page = name || DEFAULT_PAGE;

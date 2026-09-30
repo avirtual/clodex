@@ -59,7 +59,7 @@ let welcomeInfo = null;
 let seq = 1;
 const pending = new Map();        // invoke id → { resolve, reject }
 const subs = new Map();           // channel → Set<callback>
-let outbox = [];                  // send-kind frames queued while the socket is down
+let outbox = [];
 let readyResolve;
 const ready = new Promise((r) => { readyResolve = r; }); // resolves on the FIRST welcome
 
@@ -320,6 +320,10 @@ function connect() {
   ws.onmessage = (ev) => onMessage(ev.data);
   ws.onclose = () => {
     socketOpen = false;
+    const dropped = [...pending.values()];
+    pending.clear();
+    outbox = outbox.filter((f) => f.t !== 'invoke');
+    for (const p of dropped) p.reject(new Error('socket closed'));
     showBanner(everWelcomed ? 'Disconnected — reconnecting…' : 'Connecting…');
     scheduleReconnect();
   };

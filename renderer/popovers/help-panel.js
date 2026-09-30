@@ -198,10 +198,10 @@ function initHelpPanel({ api }) {
       bodyEl.appendChild(renderDoc(parsed, { resolveHref }));
       titleEl.textContent = res.title ? `Clodex Help — ${res.title}` : 'Clodex Help';
     }
-    renderNav();
     if (slug) scrollToSlug(slug);
     else bodyEl.scrollTop = 0;
     updateHistoryButtons();
+    await runSearch();
   }
 
   async function openHelpPanel(name = DEFAULT_PAGE, slug = null) {
