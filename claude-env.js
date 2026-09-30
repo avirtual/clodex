@@ -21,13 +21,12 @@ const path = require('path');
 const os = require('os');
 const { readJsonSafe } = require('./fs-util');
 
-// CLI env truthiness: an env var is OFF when unset, "", "0", or "false"
-// (case-insensitive), and ON for any other non-empty string — matching how a
-// shell-exported flag or the CLI reads a boolean-ish env value.
+// CLI env truthiness: an env var is ON only when its trimmed, lowercased value
+// is "1", "true", "yes" or "on" — the CLI's own allow-list; any other value,
+// including unset, "off", "no" or a region name, is OFF.
 function isEnvTruthy(v) {
   if (v === undefined || v === null) return false;
-  const s = String(v).trim().toLowerCase();
-  return s !== '' && s !== '0' && s !== 'false';
+  return ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase());
 }
 
 // Merge process.env (base) < user < project < local `env` blocks, per-key

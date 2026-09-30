@@ -36,11 +36,11 @@ function backendFor({ home, cwd }) {
   return teeBlindBackend(readEffectiveClaudeEnv(cwd, { baseEnv: {}, homeDir: home }));
 }
 
-test('isEnvTruthy: unset/empty/"0"/"false" are OFF, anything else ON', () => {
-  for (const off of [undefined, null, '', ' ', '0', 'false', 'FALSE', ' False ']) {
+test('isEnvTruthy: ON only for the CLI allow-list 1/true/yes/on, anything else OFF', () => {
+  for (const off of [undefined, null, '', ' ', '0', 'false', 'FALSE', ' False ', 'x', 'us-east-1', 'off', 'no']) {
     assert.strictEqual(isEnvTruthy(off), false, `${JSON.stringify(off)} should be off`);
   }
-  for (const on of ['1', 'true', 'yes', 'x', 'us-east-1']) {
+  for (const on of ['1', 'true', 'yes', 'ON', ' yes ']) {
     assert.strictEqual(isEnvTruthy(on), true, `${JSON.stringify(on)} should be on`);
   }
 });
