@@ -13105,7 +13105,7 @@ test('exec terminator: 64KB region cap — multi-line growth past the cap is not
   const m = mkExtract();
   const parts = ['[agent:exec bridge-reply] {', `"pad":"${'a'.repeat(70 * 1024)}",`, '"id":"r1.json"', '}', 'trailing prose'];
   const body = execBodyOf(m, parts.join('\n'));
-  assert.ok(body.includes('trailing prose'), 'over-cap multiline falls to greedy (not terminated)');
+  assert.strictEqual(body, '{', 'over-cap multiline falls to greedy, which never closes: head line only');
   assert.throws(() => JSON.parse(body));
   // A clean value already complete ON the intent line is accepted regardless of
   // size — the cap only guards multi-line growth, and the precise per-command cap
@@ -13116,9 +13116,9 @@ test('exec terminator: 64KB region cap — multi-line growth past the cap is not
 
 test('exec terminator: dm / memory multi-line capture is left untouched (greedy)', () => {
   const m = mkExtract();
-  const dm = m._extractIntents('[agent:dm clodex] line one\nline two\nline three')[0];
+  const dm = m._extractIntents('[agent:dm clodex] line one\nline two\nline three\n[agent:end]')[0];
   assert.strictEqual(dm.body, 'line one\nline two\nline three');
-  const mem = m._extractIntents('[agent:memory remember] fact one\nfact two')[0];
+  const mem = m._extractIntents('[agent:memory remember] fact one\nfact two\n[agent:end]')[0];
   assert.strictEqual(mem.body, 'fact one\nfact two');
 });
 
@@ -13209,10 +13209,12 @@ test('[agent:end]: closes a scratch end summary; begin and cancel capture no bod
 });
 
 // The contrast that makes the terminator worth documenting on the line at all.
-test('[agent:end]: without it a task report swallows the trailing prose (greedy)', () => {
+test('[agent:end]: without it a task report applies only the head line; the trailing prose is not the body', () => {
   const m = mkExtract();
   const out = m._extractIntents('[agent:task done t42] the report\nNow I talk to my operator.');
-  assert.strictEqual(out[0].body, 'the report\nNow I talk to my operator.');
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].body, 'the report');
+  assert.strictEqual(out[0].bodyOpen, true);
 });
 
 // --- bodyOpen: did the body CLOSE, or did the text just run out? ---
@@ -13223,10 +13225,12 @@ test('[agent:end]: without it a task report swallows the trailing prose (greedy)
 test('bodyOpen: a greedy body that runs off the end of the text is marked open', () => {
   const m = mkExtract();
   const [dm] = m._extractIntents('[agent:dm bob] a\nb');
-  assert.strictEqual(dm.body, 'a\nb', 'ENTER: the same body a finished turn would produce');
+  assert.strictEqual(dm.body, 'a', 'only the head line is the body');
   assert.strictEqual(dm.bodyOpen, true);
   // The commonest fragment shape: cut before even the first newline.
-  assert.strictEqual(m._extractIntents('[agent:dm bob] hell')[0].bodyOpen, true);
+  const [cut] = m._extractIntents('[agent:dm bob] hell');
+  assert.strictEqual(cut.bodyOpen, true);
+  assert.strictEqual(cut.body, 'hell');
 });
 
 test('bodyOpen: a body closed by [agent:end] or a following intent carries no key', () => {
@@ -13254,6 +13258,9 @@ test('bodyOpen: a json body is open only when it never terminated', () => {
 
   const cut = m._extractIntents('[agent:exec bridge-reply] {"id":')[0];
   assert.strictEqual(cut.bodyOpen, true, 'unterminated JSON at the end of the text is a fragment');
+  const grown = m._extractIntents('[agent:exec bridge-reply] {"id":\n"r1.json"\nprose')[0];
+  assert.strictEqual(grown.bodyOpen, true);
+  assert.strictEqual(grown.body, '{"id":', 'a json body that never completes keeps its head line only');
 });
 
 // --- the interrupt guard at the jsonl junction ---
@@ -13316,6 +13323,41 @@ test('interrupt guard: a flush with no meta at all is untouched', () => {
   m._scanJsonlText('[agent:dm bob] hello\nsecond li', 'seat', []);
   assert.deepStrictEqual(handled.map((h) => h.intent.type), ['dm'],
     'every caller that passes no meta keeps behaving exactly as before');
+});
+
+function mkOpenBody() {
+  const m = mkExtract();
+  m.sessions.set('seat', { name: 'seat', agentType: 'claude' });
+  const injected = [];
+  const reminded = [];
+  m._injectText = (s, text) => injected.push(text);
+  m._handleRemindIntent = (s, spec, body) => reminded.push({ spec, body });
+  const notes = () => injected.filter((t) => /was not closed/.test(t));
+  return { m, injected, reminded, notes };
+}
+
+test('open body: a turn that ends inside a body applies the head line and tells the seat once', () => {
+  const { m, reminded, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind for t1458 in 60m] check the merge\nPara one.\n\nPara two.\n', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(reminded, [{ spec: 'for t1458 in 60m', body: 'check the merge' }]);
+  assert.deepStrictEqual(notes(), ['[agent:intent] the body of [agent:remind] was not closed — only its first line was '
+    + 'applied; the 3 following lines were treated as prose. Close bodies with [agent:end].']);
+});
+
+test('open body: a closed body, or an open one with nothing after its head, is never bounced', () => {
+  const { m, reminded, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb\n[agent:end]\nprose after', 'seat', [], { interrupted: false });
+  m._scanJsonlText('[agent:remind in 1m] continue: t1 phase\n\n', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(reminded.map((r) => r.body), ['a\nb', 'continue: t1 phase']);
+  assert.deepStrictEqual(notes(), []);
+});
+
+test('open body: an interrupted flush gets the interrupt note, not the open-body note', () => {
+  const { m, reminded, injected, notes } = mkOpenBody();
+  m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(reminded, []);
+  assert.strictEqual(injected.length, 1);
+  assert.deepStrictEqual(notes(), []);
 });
 
 // --- term exec is LINE-SCOPED (t233) ---
