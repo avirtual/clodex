@@ -798,48 +798,48 @@ test('InjectQueue: a plain unit dying at the gates is re-parked only when it car
 });
 
 const REVIEW_GATE_ROWS = [
-  ['U+200B', 'a​b', 'ab'],
-  ['U+200C', 'a‌b', 'ab'],
-  ['U+200D', 'a‍b', 'ab'],
-  ['U+FEFF', 'a﻿b', 'ab'],
-  ['U+2060', 'a⁠b', 'ab'],
-  ['U+2064', 'a⁤b', 'ab'],
-  ['U+202E', 'a‮b', 'ab'],
-  ['U+200E', 'a‎b', 'ab'],
-  ['U+2066', 'a⁦b', 'ab'],
-  ['U+061C', 'a؜b', 'ab'],
-  ['U+180E', 'a᠎b', 'ab'],
-  ['U+034F', 'a͏b', 'ab'],
-  ['U+00AD', 'a­b', 'ab'],
+  ['U+200B', 'a\u200Bb', 'ab'],
+  ['U+200C', 'a\u200Cb', 'ab'],
+  ['U+200D', 'a\u200Db', 'ab'],
+  ['U+FEFF', 'a\uFEFFb', 'ab'],
+  ['U+2060', 'a\u2060b', 'ab'],
+  ['U+2064', 'a\u2064b', 'ab'],
+  ['U+202E', 'a\u202Eb', 'ab'],
+  ['U+200E', 'a\u200Eb', 'ab'],
+  ['U+2066', 'a\u2066b', 'ab'],
+  ['U+061C', 'a\u061Cb', 'ab'],
+  ['U+180E', 'a\u180Eb', 'ab'],
+  ['U+034F', 'a\u034Fb', 'ab'],
+  ['U+00AD', 'a\u00ADb', 'ab'],
   ['U+E0041', 'a\u{E0041}b', 'ab'],
   ['U+E0001', 'a\u{E0001}b', 'ab'],
-  ['U+FE0F after a letter', 'a️b', 'ab'],
-  ['U+FE00 after a letter', 'a︀b', 'ab'],
-  ['U+E0100 after a Han ideograph', 'a葛\u{E0100}b', 'a葛b'],
-  ['U+200D letter then emoji', 'a‍\u{1F4BB}b', 'a\u{1F4BB}b'],
-  ['U+200D emoji then letter', 'a\u{1F469}‍b', 'a\u{1F469}b'],
-  ['U+200D inside the ZWJ emoji U+1F469 U+200D U+1F4BB', 'a\u{1F469}‍\u{1F4BB}b', 'a\u{1F469}‍\u{1F4BB}b'],
-  ['U+200D inside the non-RGI ZWJ pair U+1F469 U+200D U+1F996', 'a\u{1F469}‍\u{1F996}b', 'a\u{1F469}‍\u{1F996}b'],
-  ['U+FE0F U+200D inside U+1F3F3 U+FE0F U+200D U+1F308', '\u{1F3F3}️‍\u{1F308}', '\u{1F3F3}️‍\u{1F308}'],
-  ['U+FE0F after U+2764', 'a❤️b', 'a❤️b'],
-  ['U+FE0E after U+2764', 'a❤︎b', 'a❤︎b'],
-  ['U+FE0F in the keycap 1 U+FE0F U+20E3', 'a1️⃣b', 'a1️⃣b'],
+  ['U+FE0F after a letter', 'a\uFE0Fb', 'ab'],
+  ['U+FE00 after a letter', 'a\uFE00b', 'ab'],
+  ['U+E0100 after a Han ideograph', 'a\u845B\u{E0100}b', 'a\u845Bb'],
+  ['U+200D letter then emoji', 'a\u200D\u{1F4BB}b', 'a\u{1F4BB}b'],
+  ['U+200D emoji then letter', 'a\u{1F469}\u200Db', 'a\u{1F469}b'],
+  ['U+200D inside the ZWJ emoji U+1F469 U+200D U+1F4BB', 'a\u{1F469}\u200D\u{1F4BB}b', 'a\u{1F469}\u200D\u{1F4BB}b'],
+  ['U+200D inside the non-RGI ZWJ pair U+1F469 U+200D U+1F996', 'a\u{1F469}\u200D\u{1F996}b', 'a\u{1F469}\u200D\u{1F996}b'],
+  ['U+FE0F U+200D inside U+1F3F3 U+FE0F U+200D U+1F308', '\u{1F3F3}\uFE0F\u200D\u{1F308}', '\u{1F3F3}\uFE0F\u200D\u{1F308}'],
+  ['U+FE0F after U+2764', 'a\u2764\uFE0Fb', 'a\u2764\uFE0Fb'],
+  ['U+FE0E after U+2764', 'a\u2764\uFE0Eb', 'a\u2764\uFE0Eb'],
+  ['U+FE0F in the keycap 1 U+FE0F U+20E3', 'a1\uFE0F\u20E3b', 'a1\uFE0F\u20E3b'],
   ['tags U+E0067..U+E007F after U+1F3F4', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b', 'a\u{1F3F4}\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}b'],
-  ['U+200C in Persian', 'a می‌خواهم b', 'a می‌خواهم b'],
-  ['U+200D after a Devanagari virama', 'a क्‍ष b', 'a क्‍ष b'],
-  ['U+200C after a Devanagari virama', 'a क्‌ष b', 'a क्‌ष b'],
-  ['U+200B in Thai', 'a ภาษา​ไทย b', 'a ภาษา​ไทย b'],
-  ['U+200E after Hebrew', 'a שלום‎ b', 'a שלום‎ b'],
-  ['U+061C after Arabic', 'a عربي؜123 b', 'a عربي؜123 b'],
-  ['U+200D after Arabic', 'a ب‍ b', 'a ب‍ b'],
-  ['U+180B after Mongolian', 'a ᠠ᠋ b', 'a ᠠ᠋ b'],
-  ['U+034F between combining marks', 'á͏̣b', 'á͏̣b'],
-  ['U+0600 is not gated', 'a؀b', 'a؀b'],
-  ['U+00E9 is not gated', 'aéb', 'aéb'],
+  ['U+200C in Persian', 'a \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 b', 'a \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 b'],
+  ['U+200D after a Devanagari virama', 'a \u0915\u094D\u200D\u0937 b', 'a \u0915\u094D\u200D\u0937 b'],
+  ['U+200C after a Devanagari virama', 'a \u0915\u094D\u200C\u0937 b', 'a \u0915\u094D\u200C\u0937 b'],
+  ['U+200B in Thai', 'a \u0E20\u0E32\u0E29\u0E32\u200B\u0E44\u0E17\u0E22 b', 'a \u0E20\u0E32\u0E29\u0E32\u200B\u0E44\u0E17\u0E22 b'],
+  ['U+200E after Hebrew', 'a \u05E9\u05DC\u05D5\u05DD\u200E b', 'a \u05E9\u05DC\u05D5\u05DD\u200E b'],
+  ['U+061C after Arabic', 'a \u0639\u0631\u0628\u064A\u061C123 b', 'a \u0639\u0631\u0628\u064A\u061C123 b'],
+  ['U+200D after Arabic', 'a \u0628\u200D b', 'a \u0628\u200D b'],
+  ['U+180B after Mongolian', 'a \u1820\u180B b', 'a \u1820\u180B b'],
+  ['U+034F between combining marks', 'a\u0301\u034F\u0323b', 'a\u0301\u034F\u0323b'],
+  ['U+0600 is not gated', 'a\u0600b', 'a\u0600b'],
+  ['U+00E9 is not gated', 'a\u00E9b', 'a\u00E9b'],
 ];
 
 for (const [label, input, written] of REVIEW_GATE_ROWS) {
-  test(`InjectQueue: review gate (CLI 2.1.286) — ${label} writes ${JSON.stringify(written)}`, async () => {
+  test(`InjectQueue: review gate (CLI 2.1.286): ${label}`, async () => {
     const writes = [];
     const q = new InjectQueue({
       write: (bytes) => writes.push(bytes),
@@ -855,7 +855,7 @@ for (const [label, input, written] of REVIEW_GATE_ROWS) {
   });
 }
 
-test('InjectQueue: a stripped review-gated character is gone before settle math and \\n→\\r', async () => {
+test('InjectQueue: a stripped review-gated character is gone before settle math and \\n to \\r', async () => {
   const writes = [];
   const settled = [];
   const q = new InjectQueue({
@@ -867,7 +867,7 @@ test('InjectQueue: a stripped review-gated character is gone before settle math 
     lastHumanInputAt: () => 0,
     isDead: () => false,
   });
-  await q.enqueue('one​\ntwo﻿');
+  await q.enqueue('one\u200B\ntwo\uFEFF');
   assert.deepStrictEqual(writes, ['\x15', 'one\rtwo', '\r']);
   assert.deepStrictEqual(settled, ['one\ntwo']);
 });

@@ -73,14 +73,14 @@ const JOINING_SCRIPT_CHAR = new RegExp(`[${JOINING_SCRIPTS.map((s) => `\\p{Scrip
 function keptByReviewGate(cps, i) {
   const c = cps[i];
   const prev = cps[i - 1];
-  if (c === '‍' && prev && (EMOJI_CHAR.test(prev) || prev === '️') && cps[i + 1] && EMOJI_CHAR.test(cps[i + 1])) return true;
-  if ((c === '︎' || c === '️') && prev && EMOJI_CHAR.test(prev)) return true;
+  if (c === '\u200D' && prev && (EMOJI_CHAR.test(prev) || prev === '\uFE0F') && cps[i + 1] && EMOJI_CHAR.test(cps[i + 1])) return true;
+  if ((c === '\uFE0E' || c === '\uFE0F') && prev && EMOJI_CHAR.test(prev)) return true;
   if (TAG_CHAR.test(c)) {
     let j = i - 1;
     while (j >= 0 && TAG_CHAR.test(cps[j])) j--;
     if (cps[j] === '\u{1F3F4}') return true;
   }
-  if (c === '͏' && prev && MARK_CHAR.test(prev)) return true;
+  if (c === '\u034F' && prev && MARK_CHAR.test(prev)) return true;
   let p = i - 1;
   while (p >= 0 && REVIEW_GATED.test(cps[p])) p--;
   let n = i + 1;
