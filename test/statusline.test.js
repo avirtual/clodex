@@ -2,7 +2,7 @@
 // Covers statusline generation + proxy-base resolution. The ui-settings store
 // and registry dir are injected, so the script output is testable with a fake
 // settings object — no Electron, no real ~/.clodex.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const {
   renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase,
@@ -98,7 +98,7 @@ test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headle
   const home = path.join(tmp, 'clodex-home');
   const userData = path.join(tmp, 'userdata');
   fs.mkdirSync(userData, { recursive: true });
-  const eng = createEngine({ userDataPath: userData, seams: { registryDir: home }, log: { info() {}, warn() {}, error() {} } });
+  const eng = createEngine({ userDataPath: userData, seams: { noSeed: true, registryDir: home }, log: { info() {}, warn() {}, error() {} } });
   fs.mkdirSync(runDirFor(home, 'w'), { recursive: true });
   fs.mkdirSync(runDirFor(home, 'p'), { recursive: true });
   eng.rebuildAllStatusScripts({ sessions: new Map([
@@ -108,3 +108,5 @@ test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headle
   assert.ok(fs.readFileSync(pathFor(home, 'w', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'wire-only seat stays headless');
   assert.ok(!fs.readFileSync(pathFor(home, 'p', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
 });
+
+after(() => { setImmediate(() => process.exit(0)); });
