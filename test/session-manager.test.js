@@ -17715,6 +17715,32 @@ test('t1458: _taskAck appends to the acks file for a claude seat and injects for
   fsReal.rmSync(home, { recursive: true, force: true });
 });
 
+test('t1473: a _taskAck that cannot use the acks file injects parkable, for a claude and a codex seat alike', () => {
+  const home = mkTmpRoot('clodex-tk-');
+  const m = mk({ REGISTRY_DIR: pathReal.join(home, 'absent'), pathFor: pathForReal });
+  const injected = [];
+  m._injectText = (_s, line, opts) => injected.push({ line, opts });
+  m._taskAck({ name: 'c1', agentType: 'claude' }, '[agent:task] ticket t1 cancelled');
+  m._taskAck({ name: 'x1', agentType: 'codex' }, '[agent:task] ticket t2 cancelled');
+  assert.strictEqual(fsReal.existsSync(pathForReal(pathReal.join(home, 'absent'), 'c1', 'acks')), false);
+  assert.deepStrictEqual(injected, [
+    { line: '[agent:task] ticket t1 cancelled', opts: { parkable: true } },
+    { line: '[agent:task] ticket t2 cancelled', opts: { parkable: true } },
+  ]);
+  fsReal.rmSync(home, { recursive: true, force: true });
+});
+
+test('t1473: task add start on a standing role with no live seat replies at once and acks nothing', () => {
+  const f = mkTasks();
+  const acks = [];
+  f.m._taskAck = (_s, line) => { acks.push(line); };
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, start: true, body: 'tasks/t1473/SPEC.md build the widget' });
+  assert.ok(f.one('t1').startedAt, 'ENTER: the start leg stamped the ticket started');
+  assert.strictEqual(f.injected.length, 1, f.injected.join('\n'));
+  assert.match(f.injected[0], /ticket t1 created and started .*no live seat for "hand"/);
+  assert.deepStrictEqual(acks, []);
+});
+
 test('task add: the minted branch carries the REAL ticket id and no id from the title', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo);

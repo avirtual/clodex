@@ -6193,14 +6193,14 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never break the turn handler */ }
     }
 
-    _memoryAck(session, line) {
+    _memoryAck(session, line, opts = { parkable: true }) {
       if (session.agentType === 'claude') {
         try {
           fs.appendFileSync(pathFor(REGISTRY_DIR, session.name, 'acks'), line + '\n');
           return;
         } catch { /* fall through to the injected line */ }
       }
-      this._injectText(session, line);
+      this._injectText(session, line, opts);
     }
 
     _taskAck(session, line) {

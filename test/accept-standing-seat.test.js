@@ -1556,3 +1556,58 @@ test('an accept whose board save fails after the teardown does not claim nothing
   assert.doesNotMatch(replies.join('\n'), /nothing was removed/);
   assert.match(replies.join('\n'), /board could NOT be updated/);
 });
+
+const acceptSplit = async (f, id) => {
+  const replies = [];
+  const acks = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id, who: null, body: '' },
+    (msg) => { replies.push(msg); }, (msg) => { acks.push(msg); });
+  return { replies, acks };
+};
+
+const seatAt = (f, t, branch, baseSha) => {
+  const wt = pathReal.join(osReal.tmpdir(), `clodex-t1473-wt-${Date.now()}`);
+  execFileSync('git', ['-C', f.repoDir, 'worktree', 'add', '-q', wt, branch], { encoding: 'utf8' });
+  t.after(() => { try { fsReal.rmSync(wt, { recursive: true, force: true }); } catch {} });
+  f.persistence.upsert({ name: 'team-hand-t1', cwd: wt, ephemeral: true, worktree: { path: wt, branch, ...(baseSha ? { baseSha } : {}) } });
+  f.seat('team-hand-t1', f.repoDir);
+  return wt;
+};
+
+test('t1473: an accept whose branch carried nothing replies at once and acks nothing', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
+  seatAt(f, t, 'landed', baseSha);
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const { replies, acks } = await acceptSplit(f, 't1');
+  assert.deepStrictEqual(acks, []);
+  assert.strictEqual(replies.length, 1, replies.join('\n'));
+  assert.match(replies[0], /has 0 commits beyond .*NOTHING was merged/);
+});
+
+test('t1473: an accept whose count is UNKNOWN replies at once and acks nothing', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  seatAt(f, t, 'landed', null);
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const { replies, acks } = await acceptSplit(f, 't1');
+  assert.deepStrictEqual(acks, []);
+  assert.strictEqual(replies.length, 1, replies.join('\n'));
+  assert.match(replies[0], /whether it carried any work is UNKNOWN/);
+});
+
+test('t1473: an accept that merged commits rides as an ack and replies nothing', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', f.repoDir, 'merge', '-q', '--ff-only', 'pending'], { encoding: 'utf8' });
+  const wt = seatAt(f, t, 'pending', baseSha);
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'pending' });
+  const { replies, acks } = await acceptSplit(f, 't1');
+  assert.deepStrictEqual(replies, []);
+  assert.strictEqual(acks.length, 1, acks.join('\n'));
+  assert.match(acks[0], /accepted — merged into master/);
+  assert.strictEqual(exists(wt), false, 'ENTER: the teardown completed, which is what makes the close-out merged');
+});
