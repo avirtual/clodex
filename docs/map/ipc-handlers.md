@@ -465,7 +465,7 @@
 - `on:peer:header-menu` offers Pause offline as well as online, since the info popover only renders its pause for an online peer with a version.
 
 ### Hazards
-- Switching main.js's `openInTerminal` from execFile with an argv to exec routes an agent-supplied cwd through /bin/sh, where $(...) runs.
+- A desktop `openInTerminal` behind `on:session:context-menu` that uses exec instead of execFile with an argv routes an agent-supplied cwd through /bin/sh, where $(...) runs.
 - `handle:session:exportMarkdown` writes wherever the save dialog answers; on the web host that is the exports dir, not the operator's desktop.
 
 ## Confirm dialogs — handle:dialog:confirmPeerRestart … handle:dialog:confirmKill
