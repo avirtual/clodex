@@ -417,9 +417,9 @@ test('confinement (remote query only): cwd, spill, messages and task dirs of the
   writeAt(path.join(registry, 'spill', 'seat', 'messages'), 'msg-1-2.txt', 'From: y\n\nkept');
   const kept = f.query('seat', 'filePeek', { path: sweptWithCopy });
   assert.deepStrictEqual([kept.ok, kept.path, kept.content], [true, sweptWithCopy, 'From: y\n\nkept'], 'a swept message literal peeks its durable copy under the literal identity');
-  const otherCopy = path.join(registry, 'messages', 'other', 'msg-1-3.txt');
-  writeAt(path.join(registry, 'spill', 'other', 'messages'), 'msg-1-3.txt', 'not yours');
-  assert.strictEqual(f.query('seat', 'filePeek', { path: otherCopy }).code, 'outside', 'another seat\'s durable copy stays outside');
+  fs.symlinkSync(out, path.join(registry, 'spill', 'seat', 'messages', 'msg-1-4.txt'));
+  const escaped = f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'seat', 'msg-1-4.txt') });
+  assert.deepStrictEqual([escaped.ok, escaped.code], [false, 'outside'], 'the durable copy\'s realpath is confined, not the literal\'s');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(registry, 'messages', 'seat', 'other.txt') }).code, 'not-found');
   assert.strictEqual(f.query('seat', 'filePeek', { path: path.join(cwd, 'src') }).code, 'not-a-file', 'a directory inside cwd');
   assert.strictEqual(f.query('seat', 'filePeek', { path: cwd }).code, 'not-a-file', 'the root itself is a directory, not outside');

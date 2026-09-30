@@ -233,7 +233,7 @@ const {
   receiptOf, resolveReceipt,
   capResumeSnapshot, spillMimicBounce,
 } = require('./intent-spill');
-const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
+const { createFiledRing, seedFiledRing, filedEntry, spillHead, firstLineOf } = require('./filed-ring');
 const nodePath = require('path');
 const { durableMessageCopyOf, literalMessagePathOf } = require('./file-resolve');
 const { spillGrammarLine } = require('./ipc-prompt');
@@ -7572,11 +7572,12 @@ function createSessionManager(deps) {
     _seedFiledRing(name) {
       const ring = createFiledRing();
       const spillDir = spillDirFor(REGISTRY_DIR, name);
+      const keepsDurable = (p) => /^From: .+ \((?:rejected|denied)\)$/.test(firstLineOf(p));
       try {
         seedFiledRing(ring, [
           { dir: spillDir, kind: 'intent' },
-          { dir: path.join(MSG_DIR, name), kind: 'message' },
-          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => literalMessagePathOf(p, nodePath) || p },
+          { dir: path.join(MSG_DIR, name), kind: 'message', mapPath: (p) => (keepsDurable(p) ? this._keptMessagePath(p) : p) },
+          { dir: spillDir && nodePath.join(spillDir, 'messages'), kind: 'message', mapPath: (p) => (keepsDurable(p) ? p : (literalMessagePathOf(p, nodePath) || p)) },
         ]);
       } catch (e) {
         log.warn('files', `filed seed for ${name} failed: ${e.message}`);

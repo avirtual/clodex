@@ -121,13 +121,17 @@ test('a ring seeded at startup lists message spills at their transcript-literal 
   write(path.join(durDir, 'msg-7-1.txt'), 'From: older\n\nold', 1700000000);
   write(path.join(msgDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
   write(path.join(durDir, 'msg-7-2.txt'), 'From: newer\n\nnew', 1700000100);
+  write(path.join(msgDir, 'msg-7-3.txt'), 'From: task add (rejected)\n\nspec', 1700000200);
+  write(path.join(durDir, 'msg-7-3.txt'), 'From: task add (rejected)\n\nspec', 1700000200);
   const ring = engine.manager._seedFiledRing(SEAT);
   const expected = [
+    { path: path.join(durDir, 'msg-7-3.txt'), kind: 'message', head: 'From: task add (rejected)', bytes: 31, ts: 1700000200000 },
     { path: path.join(msgDir, 'msg-7-2.txt'), kind: 'message', head: 'From: newer', bytes: 16, ts: 1700000100000 },
     { path: path.join(msgDir, 'msg-7-1.txt'), kind: 'message', head: 'From: older', bytes: 16, ts: 1700000000000 },
   ];
-  assert.deepStrictEqual(ring.list(), expected, 'a file in both dirs is listed once, and a durable-only one under its literal');
+  assert.deepStrictEqual(ring.list(), expected, 'a file in both dirs is listed once, a durable-only one under its literal, and a rejected body at the durable path its transcript names');
   fs.unlinkSync(path.join(msgDir, 'msg-7-2.txt'));
+  fs.unlinkSync(path.join(msgDir, 'msg-7-3.txt'));
   assert.deepStrictEqual(ring.list(), expected);
 });
 

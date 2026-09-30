@@ -47,7 +47,7 @@ function spillHead(filePath, ev) {
   return title ? `[agent:${ev.head}] ${title}` : `[agent:${ev.head}]`;
 }
 
-function isFile(p) {
+function exists(p) {
   return !!p && fs.existsSync(p);
 }
 
@@ -75,7 +75,7 @@ function createFiledRing(cap = FILED_CAP) {
     },
     list() {
       return entries
-        .filter((e) => fs.existsSync(path.resolve(e.path)) || isFile(durableMessageCopyOf(e.path, path)))
+        .filter((e) => fs.existsSync(path.resolve(e.path)) || exists(durableMessageCopyOf(e.path, path)))
         .map((e) => ({ ...e }));
     },
     size() { return entries.length; },
