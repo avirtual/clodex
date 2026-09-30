@@ -1,7 +1,7 @@
 # intent-spill notes
 
-The format leaf for intent-body spill. Format spec: `proxy-lab/SPILL.md`;
-conformance arbiter: `proxy-lab/test_spill.py`. The line state machine and the
+The format leaf for intent-body spill. Format spec `SPILL.md`; conformance arbiter
+`test_spill.py` — both in the upstream wirescope repo (vendor/wirescope/VENDOR.json `repo` at `ref`), not this one. The line state machine and the
 SSE rewriter that consume this live in `wire/spill.js`.
 
 ## writeSpill

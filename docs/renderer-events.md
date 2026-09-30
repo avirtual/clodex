@@ -83,7 +83,7 @@ Every live window; a web host fans to every connection.
 
 | Channel | Payload | Emitter(s) |
 |---|---|---|
-| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | session-manager (intent routing, DM fan-out, remind/exec/notify), team-tickets, remote-wiring (wire relay), wirescope-proxy; count with `git grep -c "_broadcast('ipc-message'" -- '*.js' ':!test'` |
+| `ipc-message` | `msg` object, a union keyed by `.type` — `dm`/`notify`/`remind`/`exec`/`attention`/`file`/`spawn`/`spill` (carries `{path}`; the log renders it as a link)/… — common fields `{type, from, to, body}`; some carry `{ts, kind}`; `keepwarm` carries `{session}` and NO `to`, which is what makes it render as a one-sided row | session-manager (intent routing, DM fan-out, remind/exec/notify), team-tickets, remote-wiring (wire relay), wirescope-proxy, plugin-host-engine (`broadcast('ipc-message',…)` via engine.js injection), peer-client (`_emit('ipc-message')`, funnelled by peer-wiring.js); count with `git grep -cE "(_broadcast|broadcast|_emit)\('ipc-message'" -- '*.js' ':!test'` |
 | `pending-count` | `msg` object `{name, count}` (parked-DM badge) | session-manager |
 | `seat-voice` | `name, mode` — a seat's voice mode (`off`, `tap`) changed in its record; broadcast to every window | session-manager `setVoice` |
 | `session-ticket` | `{name, ticket}` (the seat's open ticket id, or null) | team-tickets |

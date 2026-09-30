@@ -158,7 +158,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;
-  review-done, scratch end/rewind and context clear/compact/reload are refused then (an open head with nothing after it still applies).
+  review-done, scratch end/rewind and context clear/compact/reload are refused outright (an open head with nothing after it still applies).
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss
@@ -171,8 +171,8 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - `[agent:end]` (bare-only) is the explicit body TERMINATOR: it closes an
   open capture via the generic any-intent boundary and is itself discarded —
   `_extractIntents` never emits it, `_handleIntent` early-returns defensively.
-  It exists so operator-facing prose can FOLLOW a body (without it, the body
-  keeps its head line only and the seat is told to close it) and
+  It exists so operator-facing prose can FOLLOW a body (without it, an open
+  body is handled as the Multi-line bodies bullet says) and
   so prose can interleave between several bodied intents in one turn.
 - `shadowIntentKey` gives each occurrence a stable identity for the dedupe
   ledger; `urgent` is folded into the key so an urgent retry isn't swallowed

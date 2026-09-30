@@ -16,8 +16,8 @@ built in remote-wiring.js · **consumer protocol** → peer-client.js ·
 
 - The server binds **127.0.0.1** unless `CLODEX_REMOTE_HOST` says otherwise;
   on loopback the tunnel/tailnet IS the auth boundary. `_authGate` fronts the
-  whole peer surface with the shared secret `CLODEX_REMOTE_TOKEN` (401 without
-  it) and refuses a non-loopback bind that has no token (503).
+  whole peer surface with the shared secret `CLODEX_REMOTE_TOKEN` (401 when one is
+  set and the caller lacks it) and refuses a non-loopback bind with no token (503).
 - **Only input and resize are token-gated** (single-holder control token) —
   that stops a read-only viewer typing by accident, not an attacker.
   Control *acquisition* is un-gated, last-wins ("both laptops are the same

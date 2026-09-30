@@ -1,6 +1,6 @@
 # wire/spill notes
 
-Format spec `proxy-lab/SPILL.md`; arbiter `proxy-lab/test_spill.py`, ported into
+Format spec `SPILL.md`; arbiter `test_spill.py` (upstream wirescope repo: vendor/wirescope/VENDOR.json `repo` at `ref`), ported into
 `test/wire-spill-filter.test.js`: same sha over the same delimited bytes, so a
 drift here is a drift against a consumer this repo cannot see.
 
