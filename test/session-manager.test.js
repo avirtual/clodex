@@ -14719,6 +14719,16 @@ test('T35 wiring: a codex seat is NOT gated (own boot-settle machinery, pass-thr
   assert.deepStrictEqual(writes, ['\x15', 'cmd', '\r']);
 });
 
+test('t1478 wiring: a claude seat strips review-gated characters; codex and bash seats write them as-is', async () => {
+  for (const [agentType, written] of [['claude', 'ab'], ['codex', 'a\u200Bb'], [null, 'a\u200Bb']]) {
+    const m = mkBoot();
+    const { s, writes } = bootSession({ agentType, _bootReadySeen: true });
+    await m._injectQueueFor(s).enqueue('a\u200Bb');
+    clearTimeout(s._bootNudgeTimer);
+    assert.deepStrictEqual(writes, ['\x15', written, '\r'], String(agentType));
+  }
+});
+
 test('T35 latch: the boot gate reads the latch live, and the latch never un-sets', async () => {
   // The queue re-reads _bootReadySeen each drain, so a second item on an
   // already-ready seat drains with no extra waiting — and because the caller's

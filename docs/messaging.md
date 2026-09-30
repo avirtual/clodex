@@ -230,7 +230,7 @@ records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
    serializes Ctrl-U → text → settle → Enter as one atomic unit. Ctrl-U MUST
    be its own write with a ~30ms settle gap — sent in the same chunk as the
    text it lands as a literal character (this was the historical
-   mid-draft truncation bug). The text write first drops the invisible characters Claude Code 2.1.286 would strip and hold for a second Enter (review-gate.js ports its rule: controls and default-ignorables such as zero-width spaces, soft hyphens, bidi controls outside right-to-left lines and stray tag or variation characters, but not the joiners and selectors the CLI keeps inside emoji or joining scripts); Codex seats are written as-is. The quiet-gate defers firing while the
+   mid-draft truncation bug). The text write first drops the invisible characters Claude Code 2.1.286 would strip and hold for a second Enter (review-gate.js ports its rule: controls and default-ignorables such as zero-width spaces, soft hyphens, directional marks outside right-to-left lines and all other bidi controls and stray tag or variation characters, but not the joiners and selectors the CLI keeps inside emoji or joining scripts); Codex seats are written as-is. The quiet-gate defers firing while the
    operator typed within `INJECT_QUIET_MS` (2s), capped at
    `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk).
 
