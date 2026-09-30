@@ -4714,14 +4714,44 @@ test('spawner-hint (t151): any other value POSTs NOTHING (garbage, 0)', async ()
 // The strict match means the likely typos all fail by doing nothing, and the only
 // symptom is a block reappearing in a prompt nobody reads. The warn is the whole
 // difference between "misconfigured" and "silently ignored".
-test('spawner-hint (t151): a set-but-unrecognized value WARNS (5 values)', async () => {
-  for (const bad of ['0', 'OFF', ' off', 'yes', 'true']) {
-    const { warns, hints, spawn } = mkHintProbe();
-    await spawn('seat', { CLODEX_SPAWNER_HINT: bad });
-    assert.deepStrictEqual(hints, [], `${bad} → still no POST; the warn does not loosen the match`);
-    assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify(bad))),
-      `${bad} → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
-  }
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (\'0\')', async () => {
+  const { warns, hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: '0' });
+  assert.deepStrictEqual(hints, [], `'0' → still no POST; the warn does not loosen the match`);
+  assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify('0'))),
+    `'0' → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
+});
+
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (\'OFF\')', async () => {
+  const { warns, hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: 'OFF' });
+  assert.deepStrictEqual(hints, [], `'OFF' → still no POST; the warn does not loosen the match`);
+  assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify('OFF'))),
+    `'OFF' → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
+});
+
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (\' off\')', async () => {
+  const { warns, hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: ' off' });
+  assert.deepStrictEqual(hints, [], `' off' → still no POST; the warn does not loosen the match`);
+  assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify(' off'))),
+    `' off' → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
+});
+
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (\'yes\')', async () => {
+  const { warns, hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: 'yes' });
+  assert.deepStrictEqual(hints, [], `'yes' → still no POST; the warn does not loosen the match`);
+  assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify('yes'))),
+    `'yes' → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
+});
+
+test('spawner-hint (t151): a set-but-unrecognized value WARNS (\'true\')', async () => {
+  const { warns, hints, spawn } = mkHintProbe();
+  await spawn('seat', { CLODEX_SPAWNER_HINT: 'true' });
+  assert.deepStrictEqual(hints, [], `'true' → still no POST; the warn does not loosen the match`);
+  assert.ok(warns.some((w) => w.includes('spawner-hint') && w.includes(JSON.stringify('true'))),
+    `'true' → warned, with the offending value quoted so whitespace/case is visible: ${JSON.stringify(warns)}`);
 });
 
 test('spawner-hint (t151): unset and empty stay silent', async () => {

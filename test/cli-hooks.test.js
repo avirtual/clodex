@@ -2,7 +2,7 @@
 // Covers cli-hooks' generated hook-script / settings strings against real temp
 // dirs. The uiSettings + memoryStore deps are injected as minimal fakes (an
 // empty statusline + an empty memory list), which is all the string generation
-// touches. No PTY / CLI is spawned — only the files the setup functions write.
+// touches.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
@@ -742,7 +742,7 @@ test('the console hook loses nothing when Bash hooks fire concurrently', async (
 
   // All six started before any is waited on — spawnSync in a loop would
   // serialize them and prove nothing about the race.
-  const kids = payloads.map(() => cp.spawn('bash', [scriptPath], { stdio: ['pipe', 'ignore', 'ignore'] }));
+  const kids = payloads.map(() => cp.spawn('bash', [scriptPath], { ...HOOK_SPAWN, stdio: ['pipe', 'ignore', 'ignore'] }));
   const closed = kids.map((k) => new Promise((res) => k.on('close', res)));
   kids.forEach((k, i) => { k.stdin.end(payloads[i]); });
   const codes = await Promise.all(closed);
@@ -1358,9 +1358,9 @@ test('cleanupCodexHook: a Clodex body from another registry dir is ours, so the 
 
 test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child fails its test instead of wedging the suite', () => {
   const src = fs.readFileSync(__filename, 'utf8');
-  const calls = src.match(/(?:spawnSync|execFileSync)\('bash'/g) || [];
-  const guarded = src.match(/(?:spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
-  assert.strictEqual(calls.length, 19);
+  const calls = src.match(/(?:spawn|spawnSync|execFileSync)\('bash'/g) || [];
+  const guarded = src.match(/(?:spawn|spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
+  assert.strictEqual(calls.length, 20);
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
