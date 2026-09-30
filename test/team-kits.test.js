@@ -381,7 +381,7 @@ test('kitCatalog lists each kit with its description, one line each', () => {
 
 test('the default kit description counts the hand template\'s disabled tools', () => {
   const off = Number(/ (\d+) tools off /u.exec(readKitJson('default').description)[1]);
-  assert.strictEqual(off, 36);
+  assert.strictEqual(off, 35);
   assert.strictEqual(off, readTpl('default', 'hand').disabledTools.length);
 });
 

@@ -44,7 +44,7 @@ const CLAUDE_TOOLS = [
   // Plan mode & worktrees
   'EnterPlanMode', 'ExitPlanMode', 'EnterWorktree', 'ExitWorktree',
   // Task list
-  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TaskOutput', 'TodoWrite',
+  'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'TodoWrite',
   // Scheduling
   'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup',
   // Notifications, remote & prompts
