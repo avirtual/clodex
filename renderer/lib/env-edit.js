@@ -4,7 +4,7 @@
 // that free text into the flat `{ KEY: value }` object create() persists and
 // merges (env-scopes.js precedence: process.env < global < workspace < session).
 // Kept pure (no fs, no env-scopes require — that module pulls in env-file's fs)
-// so it unit-tests standalone; the KEY grammar + deny key are mirrored from
+// so it unit-tests standalone; the KEY grammar + deny keys are mirrored from
 // env-scopes.js on purpose (a one-line duplication buys a fs-free leaf). The box
 // re-validates every key server-side regardless, so this is a convenience/echo
 // filter, not the security boundary.
@@ -16,7 +16,7 @@ const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
 
 // Parse KEY=value lines into { env, skipped }. Blank lines and lines whose first
 // non-space char is `#` are ignored silently (comments). A line with no `=`, an
-// empty/invalid KEY, or the deny key is dropped and reported in `skipped` (with a
+// empty/invalid KEY, or a deny key is dropped and reported in `skipped` (with a
 // reason) so the caller can surface a hint — never thrown, so a stray line can't
 // block Create. Value is everything after the first `=` (so values may contain
 // `=`), trimmed of surrounding whitespace on neither side except a trailing CR

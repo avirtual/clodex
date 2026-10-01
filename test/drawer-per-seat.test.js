@@ -408,7 +408,7 @@ test('drawer badge: a hidden tab shows a textless activity dot, then attention, 
     notify('activity');
     assert.deepEqual(state(), { zero: false, attention: false, text: '' });
 
-    notify('activity');
+    notify();
     assert.deepEqual(state(), { zero: false, attention: false, text: '' });
 
     notify('attention');
@@ -420,5 +420,10 @@ test('drawer badge: a hidden tab shows a textless activity dot, then attention, 
 
     notify('attention');
     assert.deepEqual(state(), { zero: true, attention: false, text: '' });
+
+    h.clickTab('log');
+    h.flush();
+    notify('activity');
+    assert.deepEqual(state(), { zero: false, attention: false, text: '' });
   });
 });

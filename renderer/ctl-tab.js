@@ -111,7 +111,7 @@ function createCtlTab({ host }) {
       if (block && block.ctx !== undefined) { ctxName = block.ctx; renderPrompt(); }
       // Badge only a FAILING command: a REPL the operator drove themselves is
       // not news when it worked, and a badge on every success would make the
-      // count meaningless for the one case worth surfacing.
+      // dot meaningless for the one case worth surfacing.
       if (block && block.exitCode) notify('attention');
     } catch (e) {
       // An IPC-level failure (no handler on this surface, main threw) still

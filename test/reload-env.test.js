@@ -169,7 +169,7 @@ test('[agent:context reload] leaves entry.env on the record, so the NEXT --resum
 });
 
 test('[agent:context reload] does not need its own deny filter — the merge still gates CLODEX_REMOTE_TOKEN', async () => {
-  // env-scopes.js DENY_KEYS = { CLODEX_REMOTE_TOKEN }: the wire gate must not be
+  // CLODEX_REMOTE_TOKEN is deny-listed: the wire gate must not be
   // settable through the surface it gates. Threading entry.env raw is safe
   // because create() feeds it to mergeSessionEnv, whose sanitizeFlat drops denied
   // keys — so no filter belongs at this call site. Pinned because the property is
