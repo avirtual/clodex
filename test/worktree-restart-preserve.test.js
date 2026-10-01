@@ -43,7 +43,7 @@ const { createEngine } = require('../engine');
 const gitWorktree = require('../git-worktree');
 const { createMemoryStore } = require('../memory-store');
 
-// Same shape as test/git-worktree.test.js:13 and test/team-measure.test.js — the
+// Same shape as test/git-worktree.test.js:13 — the
 // six subjects below shell out to a real `git`, and without the gate a git-less
 // box gets an opaque execFileSync throw instead of a skip.
 function gitAvailable() {

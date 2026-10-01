@@ -9,8 +9,8 @@
 // it as `Bin 0 -> 5964 bytes` with no content, and grep skips it silently. The
 // module was therefore invisible to review: the lead reading the branch as a
 // diff, and the cold reviewer after them, would both have been shown
-// "Binary files differ" where a new module should be. Two older files
-// (basket-retrieve.js, scripts/mine-operator-messages.js) had the same idiom and
+// "Binary files differ" where a new module should be. An older file
+// (scripts/mine-operator-messages.js) had the same idiom and
 // had already been shipping as un-diffable binaries unnoticed.
 //
 // That is the profile that earns a guard: silent to the author, silent to the

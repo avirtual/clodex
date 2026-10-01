@@ -482,24 +482,6 @@ not by size:
   The gate is `_teamInUse` on the manager (live role seats, non-terminal tickets);
   a team whose manifest will not load skips it and is deletable, because that is
   the team an operator most wants gone.
-- **team-measure.js** — what can be PROVEN about a project directory, as five
-  findings (suite, packageManager, vcs, worktreeSupport, generatedPaths), each
-  `{ id, claim, status, evidence }`. The measured half of the team helper; the
-  generative half that turns these into a prompt cannot be pinned by a test,
-  which is why this half carries the load. Pure leaf over injected
-  fs/path/childProcess — no requires — so the table is assertable against a
-  fixture directory. NEVER GUESSES: an `absent` finding is a first-class result
-  with its own claim sentence, never an omission and never a default, and all
-  five ids come back on every call. Two lockfiles is `absent` naming the
-  ambiguity rather than a pick. The JS suite claim is COMPOSED with the measured
-  lockfile (`pnpm test`, not `npm test`, in a pnpm repo — npm would run against a
-  dependency graph it never installed); an ambiguous lockfile set falls back to
-  `npm` rather than picking a contender. `vcs` falls back to `git rev-parse
-  --git-dir` before declaring absence, so a monorepo package inside a checkout is
-  not told it has no version control. It reads the suite command and never RUNS
-  it — `childProcess` is for `git rev-parse` and nothing else, because executing
-  an unknown repo's scripts as a side effect of describing it is not this
-  module's business. Sync subprocesses: not a render path.
 - **team-preflight.js** — "does this team's manifest name anything that resolves
   to nothing?", as findings rather than as N scattered warns. One resolver, and
   every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
@@ -786,11 +768,6 @@ accept teardown removes.
   a binary blob plus a JSON sidecar mapping row → record. Not the JSON cache in
   `hint-embed.js`, which holds the whole map in memory and rewrites on flush —
   right for 184 curated units, wrong for a corpus that grows daily.
-- **basket-retrieve.js** — the retriever over the operator BASKET (things the
-  operator actually said, plus the reply that answered each). Same interface as
-  the memory retriever so the arming side never learns there are two sources;
-  a separate module because two measured properties of that corpus break the
-  memory retriever's assumptions.
 - **memory-load.js** — which memory units are LIVE in an agent's context right
   now, as a fold over transitions Clodex already observes (digest delivery,
   recall, /clear, compaction) — not an inference about what the model retained.
