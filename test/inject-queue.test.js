@@ -1029,10 +1029,11 @@ function quietAfterPasteQueue(stampAt, { maxWaitMs = 30_000, restamp = false } =
 }
 
 test('InjectQueue paste gate: a draft typed during the paste wait re-arms the quiet gate before the write', async () => {
-  const { q, st, writeClock } = quietAfterPasteQueue(10_500, { maxWaitMs: 1000 });
+  const { q, st, writeClock, quietCapFired } = quietAfterPasteQueue(10_500, { maxWaitMs: 1000 });
   await q.enqueue('one\ntwo');
   assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
   assert.ok(writeClock() >= 10_500 + 1000, `written only after quietMs past the stamp: writeClock=${writeClock()}`);
+  assert.deepStrictEqual(quietCapFired, [], 'the re-armed gate settled before its cap');
 });
 
 test('InjectQueue paste gate: typing through the second quiet gate to its cap fires onCapFire once, then writes', async () => {
