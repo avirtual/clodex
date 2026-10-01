@@ -23794,13 +23794,15 @@ test('t1493: seatSetModel resolves no-reply after 60s without an ack, and a late
   h.line('sm2', { type: 'system', subtype: 'init', session_id: 'sid-sm2', model: 'm', slash_commands: [] });
   t.mock.timers.enable({ apis: ['setTimeout'] });
   let settled = null;
-  const p = h.m.seatSetModel('sm2', 'claude-sonnet-4-6').then((r) => { settled = r; return r; });
+  h.m.seatSetModel('sm2', 'claude-sonnet-4-6').then((r) => { settled = r; });
   const sent = h.handles[0].sent.at(-1);
   t.mock.timers.tick(59_999);
   await Promise.resolve();
   assert.strictEqual(settled, null, 'ENTER: still waiting on the probe');
   t.mock.timers.tick(1);
-  assert.deepStrictEqual(await p, { ok: false, error: 'no reply from the CLI' });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepStrictEqual(settled, { ok: false, error: 'no reply from the CLI' });
   h.line('sm2', { type: 'control_response', response: { subtype: 'success', request_id: sent.request_id } });
   assert.deepStrictEqual(settled, { ok: false, error: 'no reply from the CLI' });
 });
