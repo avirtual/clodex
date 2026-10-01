@@ -137,3 +137,54 @@ test('t1172: applySessionArgs accepts io:stream on a codex seat', async () => {
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
+
+const MODEL_ENTRY = (name, io = 'stream') => ({ name, type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 's-1', io, extraArgs: ['--model', 'claude-haiku-4-5', '--verbose'] });
+const DIALOG_PATCH = (extraArgs, extra = {}) => ({
+  extraArgs, restart: true, proxy: null, systemPrompt: undefined, agents: [], denyBuiltins: [], disabledTools: [],
+  disabledSkills: [], injectSkills: [], systemPromptFile: null, appendPromptFiles: [], intents: undefined,
+  execCommands: [], env: {}, plugins: undefined, io: 'stream', effort: undefined, ...extra,
+});
+
+function modelSeat(name, reply, io = 'stream') {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert(MODEL_ENTRY(name, io));
+  liveSession(eng, name, MODEL_ENTRY(name, io)).io = io;
+  const { seen } = probe(eng);
+  const calls = { setModel: [], kill: 0 };
+  eng.manager.seatSetModel = async (n, model) => { calls.setModel.push([n, model]); return reply; };
+  const kill = eng.manager.kill.bind(eng.manager);
+  eng.manager.kill = (...a) => { calls.kill += 1; return kill(...a); };
+  return { eng, seen, calls };
+}
+
+test('t1493: a model-only change on a live claude stream seat switches it with set_model, no respawn, and persists on ok', async () => {
+  const { eng, seen, calls } = modelSeat('sm-ok', { ok: true });
+  const res = await eng.applySessionArgs('sm-ok', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose']), 'default');
+  assert.deepStrictEqual(res, { ok: true, restarted: false, modelSwitched: true });
+  assert.deepStrictEqual(calls.setModel, [['sm-ok', 'claude-sonnet-4-6']]);
+  assert.strictEqual(calls.kill, 0);
+  assert.strictEqual(seen.length, 0);
+  assert.deepStrictEqual(eng.stores.persistence.get('sm-ok').extraArgs, ['--model', 'claude-sonnet-4-6', '--verbose']);
+});
+
+test('t1493: a set_model the CLI rejects persists nothing and returns its error', async () => {
+  const { eng, seen, calls } = modelSeat('sm-err', { ok: false, error: "Model 'claude-nope-1' not found", errorCode: 'catalog_unknown' });
+  const res = await eng.applySessionArgs('sm-err', DIALOG_PATCH(['--model', 'claude-nope-1', '--verbose']), 'default');
+  assert.deepStrictEqual(res, { ok: false, error: "Model 'claude-nope-1' not found" });
+  assert.strictEqual(calls.kill + seen.length, 0);
+  assert.deepStrictEqual(eng.stores.persistence.get('sm-err').extraArgs, ['--model', 'claude-haiku-4-5', '--verbose']);
+});
+
+for (const [label, patch, io] of [
+  ['a model plus another arg', DIALOG_PATCH(['--model', 'claude-sonnet-4-6']), 'stream'],
+  ['a model plus another field', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose'], { disabledTools: ['WebFetch'] }), 'stream'],
+  ['a model-only change on a pty seat', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose'], { io: 'pty' }), 'pty'],
+]) {
+  test(`t1493: ${label} still respawns`, async () => {
+    const { eng, seen, calls } = modelSeat(`sm-${label.length}`, { ok: true }, io);
+    const res = await eng.applySessionArgs(`sm-${label.length}`, patch, 'default');
+    assert.strictEqual(res.restarted, true);
+    assert.deepStrictEqual(calls.setModel, []);
+    assert.strictEqual(seen.length, 1);
+  });
+}

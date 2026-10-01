@@ -198,3 +198,21 @@ test('decode: the control_response acknowledging an interrupt is other and keeps
   assert.deepStrictEqual(codec.decode(ack), { kind: 'other' });
   assert.ok(codec.encodePermission(CAN_USE_WRITE.request_id, 'deny'));
 });
+
+test('encodeSetModel is a set_model control_request with a fresh request id per call', () => {
+  const codec = create();
+  assert.deepStrictEqual(codec.encodeSetModel('claude-sonnet-4-6'), { type: 'control_request', request_id: 'clodex-set-model-1', request: { subtype: 'set_model', model: 'claude-sonnet-4-6' } });
+  assert.deepStrictEqual(codec.encodeSetModel('claude-haiku-4-5'), { type: 'control_request', request_id: 'clodex-set-model-2', request: { subtype: 'set_model', model: 'claude-haiku-4-5' } });
+});
+
+test('decode: a control_response for a sent set_model is a control-ack, once; an unknown id stays other', () => {
+  const codec = create();
+  const ok = codec.encodeSetModel('claude-sonnet-4-6');
+  const bad = codec.encodeSetModel('claude-nope-1');
+  const success = { type: 'control_response', response: { subtype: 'success', request_id: ok.request_id } };
+  const error = { type: 'control_response', response: { subtype: 'error', request_id: bad.request_id, error: "Model 'claude-nope-1' not found", error_code: 'catalog_unknown' } };
+  assert.deepStrictEqual(codec.decode(success), { kind: 'control-ack', id: 'clodex-set-model-1', ok: true, error: null, errorCode: null });
+  assert.deepStrictEqual(codec.decode(error), { kind: 'control-ack', id: 'clodex-set-model-2', ok: false, error: "Model 'claude-nope-1' not found", errorCode: 'catalog_unknown' });
+  assert.deepStrictEqual(codec.decode(success), { kind: 'other' });
+  assert.deepStrictEqual(codec.decode({ type: 'control_response', response: { subtype: 'success', request_id: 'clodex-set-model-9' } }), { kind: 'other' });
+});

@@ -292,6 +292,7 @@ const CLAUDE_SLASH_DESCRIPTIONS = Object.freeze({
 });
 const STREAM_HINT_POLL_MS = 50;
 const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
+const STREAM_SET_MODEL_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // Imported only to re-export: tests import ticketCloseLine and ticketTaskDirLine from this module, so do not drop them as unused.
 const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
@@ -2687,6 +2688,25 @@ function createSessionManager(deps) {
       return { ok: true };
     }
 
+    seatSetModel(name, model) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream || s.type !== 'claude') return Promise.resolve({ ok: false, error: 'not a live claude stream seat' });
+      const obj = typeof s.streamCodec.encodeSetModel === 'function' ? s.streamCodec.encodeSetModel(model) : null;
+      if (!obj) return Promise.resolve({ ok: false, error: 'this seat cannot switch models in place' });
+      if (!s._controlAcks) s._controlAcks = new Map();
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          s._controlAcks.delete(obj.request_id);
+          resolve({ ok: false, error: 'no reply from the CLI' });
+        }, STREAM_SET_MODEL_MS);
+        s._controlAcks.set(obj.request_id, (rec) => {
+          clearTimeout(timer);
+          resolve(rec.ok ? { ok: true } : { ok: false, error: rec.error || 'set_model failed', errorCode: rec.errorCode });
+        });
+        this._streamSend(s, obj);
+      });
+    }
+
     _armStreamInitWatchdog(s) {
       this._clearStreamInitWatchdog(s);
       const ms = STREAM_INIT_MS;
@@ -2821,6 +2841,7 @@ function createSessionManager(deps) {
           this._dropStreamPermissions(s);
           if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
           if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
+          if (rec.model) s.streamModel = rec.model;
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {
@@ -2860,6 +2881,11 @@ function createSessionManager(deps) {
         case 'permission-request':
           this._onStreamPermission(s, rec);
           break;
+        case 'control-ack': {
+          const settle = s._controlAcks && s._controlAcks.get(rec.id);
+          if (settle) { s._controlAcks.delete(rec.id); settle(rec); }
+          break;
+        }
         default:
           break;
       }

@@ -94,9 +94,15 @@ function encodeUser(text, images = []) {
 
 function create() {
   const pending = new Map();
+  const outbound = new Set();
   let interrupts = 0;
+  let setModels = 0;
 
   const decodeTracked = (obj) => {
+    const ack = obj && obj.type === 'control_response' && obj.response;
+    if (ack && outbound.delete(ack.request_id)) {
+      return { kind: 'control-ack', id: ack.request_id, ok: ack.subtype === 'success', error: ack.error || null, errorCode: ack.error_code || null };
+    }
     const rec = decode(obj);
     if (rec.kind === 'permission-request') {
       pending.set(rec.id, { input: rec.input, suggestions: Array.isArray(obj.request.permission_suggestions) ? obj.request.permission_suggestions : [] });
@@ -121,7 +127,13 @@ function create() {
 
   const encodeInterrupt = () => ({ type: 'control_request', request_id: `clodex-interrupt-${++interrupts}`, request: { subtype: 'interrupt' } });
 
-  return { decode: decodeTracked, encodeUser, encodePermission, encodeInterrupt };
+  const encodeSetModel = (model) => {
+    const id = `clodex-set-model-${++setModels}`;
+    outbound.add(id);
+    return { type: 'control_request', request_id: id, request: { subtype: 'set_model', model } };
+  };
+
+  return { decode: decodeTracked, encodeUser, encodePermission, encodeInterrupt, encodeSetModel };
 }
 
 module.exports = { create, decode, encodeUser };
