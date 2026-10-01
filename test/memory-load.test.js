@@ -425,3 +425,52 @@ test('load: a tracker with no log directory still tracks, and reports an empty l
   assert.deepStrictEqual(t.recallLog('a'), [],
     'and it must report an EMPTY log rather than throwing on the missing directory');
 });
+
+function stampUnit(h, id, iso) {
+  const file = path.join(h.root, 'library', 'memory', 'a', `${id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace(/^learned_at: .*$/m, `learned_at: ${iso}`));
+}
+
+function captureDeliveries(h) {
+  const out = [];
+  h.m._deliverMessage = (to, from, text) => { out.push(text); };
+  return out;
+}
+
+test('recall: three matches deliver the newest in full and the other two as also-lines, newest first', async () => {
+  const h = mkManager({ units: [
+    { text: 'widget ruling gen one' },
+    { text: 'widget ruling gen three' },
+    { text: 'widget ruling gen two\nsecond line' },
+  ] });
+  const [one, three, two] = h.ids;
+  stampUnit(h, one, '2026-01-01T00:00:00.000Z');
+  stampUnit(h, two, '2026-01-02T00:00:00.000Z');
+  stampUnit(h, three, '2026-01-03T00:00:00.000Z');
+  try {
+    const s = await spawned(h, 'a');
+    const sent = captureDeliveries(h);
+    h.m._handleMemoryIntent(s, 'recall', 'widget ruling');
+    assert.strictEqual(sent.length, 1, `one message expected; got ${JSON.stringify(sent)}`);
+    const lines = sent[0].split('\n');
+    assert.strictEqual(lines[0], `(${three})`);
+    assert.strictEqual(lines[1], 'widget ruling gen three');
+    assert.strictEqual(lines[2], '');
+    assert.match(lines[3], new RegExp(`^also: ${two} \\(\\d+d\\) — widget ruling gen two second line$`));
+    assert.match(lines[4], new RegExp(`^also: ${one} \\(\\d+d\\) — widget ruling gen one$`));
+    assert.strictEqual(lines.length, 5);
+    assert.deepStrictEqual(h.m.memoryRecallLog('a').map(e => e.id), [three],
+      'only the unit delivered in full is in context');
+  } finally { h.stop('a'); }
+});
+
+test('recall: a single match delivers its body with no also-line', async () => {
+  const h = mkManager({ units: [{ text: 'the lone widget ruling' }, { text: 'unrelated' }] });
+  const [lone] = h.ids;
+  try {
+    const s = await spawned(h, 'a');
+    const sent = captureDeliveries(h);
+    h.m._handleMemoryIntent(s, 'recall', 'widget');
+    assert.deepStrictEqual(sent, [`(${lone})\nthe lone widget ruling`]);
+  } finally { h.stop('a'); }
+});
