@@ -14878,6 +14878,18 @@ test('T35 wiring: a claude seat with the boot latch already set injects immediat
   assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
 });
 
+test('t1506 wiring: a claude seat gets the paste-mode wait cap and its cap callback; a codex seat gets neither', () => {
+  const seen = [];
+  class StubQueue { constructor(opts) { seen.push(opts); } }
+  const m = mkBoot({ InjectQueue: StubQueue, INJECT_PASTE_MAXWAIT: 10_000 });
+  m._injectQueueFor(bootSession().s);
+  m._injectQueueFor(bootSession({ agentType: 'codex' }).s);
+  assert.strictEqual(seen[0].pasteMaxWaitMs, 10_000);
+  assert.strictEqual(typeof seen[0].onPasteCapFire, 'function');
+  assert.ok(!Number.isFinite(seen[1].pasteMaxWaitMs));
+  assert.strictEqual(seen[1].onPasteCapFire, null);
+});
+
 test('t1103 wiring: the latch alone is not ready — a unit enqueued at the edge waits BOOT_DRAIN_SETTLE_MS past _bootReadyAt', async () => {
   const m = mkBoot({ bootDrainSettleMs: 300 });
   const readyAt = Date.now();
