@@ -164,11 +164,6 @@ const SCANNED_MODULES = [
   // hint id or its text.
   'voice-origin-arm.js',
   'hint-retrieve.js',
-  // The second retriever the seam above was built for. It shares only the
-  // tokenizer with hint-retrieve.js; its thresholds are deliberately its own,
-  // because the ones derived on the memory store do not transfer to a corpus
-  // three orders of magnitude larger.
-  'basket-retrieve.js',
   // The semantic re-ranker. Takes its fetch, cache and corpus by injection so
   // the no-daemon path is testable without one installed; hint-arm.js holds it
   // as an optional dep and must keep working with it absent.
@@ -262,11 +257,6 @@ const SCANNED_MODULES = [
   // test/ticket-mixin-surface.test.js; this entry only catches the module-scope
   // half (a moved body still reaching for a coordinator const).
   'team-tickets.js',
-  // The team helper's measured layer (t474). Pure leaf: fs/path/childProcess all
-  // arrive by injection, which is what makes its findings table assertable
-  // against a fixture directory with no repo wired up. A reach for a real `fs`
-  // or a coordinator const would quietly undo that.
-  'team-measure.js',
   'seat-layout.js',
   'muse-skills.js',
   'stream-seat.js',
