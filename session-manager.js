@@ -119,7 +119,6 @@ const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
-const { fmtAge } = require('./memory-store');
 const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -6347,8 +6346,7 @@ function createSessionManager(deps) {
       if (sub === 'recall') {
         // A hint may offer a common unit's id whose body lives in another store, so fall back to
         // commonMemoryRecall or the offer names an action the agent cannot take.
-        const matches = memoryStore.recallMany(agent, body, 3);
-        let unit = matches[0] || null;
+        let unit = memoryStore.recall(agent, body);
         if (!unit && commonMemoryRecall) {
           try { unit = commonMemoryRecall(body); } catch { unit = null; }
         }
@@ -6357,10 +6355,7 @@ function createSessionManager(deps) {
           return;
         }
         try { memLoad.noteRecall(agent, unit.id, session.sessionId); } catch { /* observer-grade */ }
-        const also = matches.slice(1).map(u =>
-          `also: ${u.id} (${fmtAge(u.learned_at)}) — ${u.body.slice(0, 100).replace(/\n/g, ' ')}`);
-        const tail = also.length ? `\n\n${also.join('\n')}` : '';
-        this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}${tail}`, 'memory');
+        this._deliverMessage(agent, 'memory', `(${unit.id}${unit.scope ? ` ${unit.scope}` : ''})\n${unit.body}`, 'memory');
         return;
       }
       if (sub === 'pin' || sub === 'unpin') {

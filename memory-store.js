@@ -165,21 +165,19 @@ function createMemoryStore(rootDir) {
       fs.writeFileSync(this._file(agent, id), serializeMemoryUnit(meta, body), { mode: 0o600 });
       return { id, ...meta, pinned: !!pinned, body };
     },
+    // Resolve a recall arg: exact id first, else a case-insensitive substring
+    // match against scope+tags+body (first by learned_at). Returns the unit or
+    // null. Tags are in the haystack because a tag nobody can search for is not
+    // worth writing; the REST of the frontmatter stays out on purpose — ids and
+    // ISO timestamps make short queries match on digits.
     recall(agent, arg) {
-      return this.recallMany(agent, arg, 1)[0] || null;
-    },
-    recallMany(agent, arg, limit = 3) {
       const units = this.list(agent);
       const q = String(arg || '').trim();
-      if (!q) return [];
+      if (!q) return null;
       const exact = units.find(u => u.id === q);
-      if (exact) return [exact];
+      if (exact) return exact;
       const ql = q.toLowerCase();
-      const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
-      return units
-        .filter(u => (u.scope + '\n' + u.tags + '\n' + u.body).toLowerCase().includes(ql))
-        .sort((a, b) => cmp(String(b.learned_at), String(a.learned_at)) || cmp(b.id, a.id))
-        .slice(0, Math.max(0, limit));
+      return units.find(u => (u.scope + '\n' + u.tags + '\n' + u.body).toLowerCase().includes(ql)) || null;
     },
     // The AGENT's flag. It orders the recent tier and nothing more — it does
     // NOT guarantee a body in the digest. See the OPERATOR_PIN_CAP note.
@@ -415,5 +413,5 @@ function composeDigest(units, opts) {
 
 module.exports = {
   createMemoryStore, composeDigest, digestTiers, serializeMemoryUnit, parseMemoryUnit,
-  MEMORY_ID_RE, DIGEST_BUDGET, OPERATOR_PIN_CAP, RECENT_BODY_CAP, fmtAge,
+  MEMORY_ID_RE, DIGEST_BUDGET, OPERATOR_PIN_CAP, RECENT_BODY_CAP,
 };

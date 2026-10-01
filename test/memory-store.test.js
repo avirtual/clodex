@@ -495,39 +495,3 @@ test('composeDigest: the digest never exceeds its budget, whatever the mix', () 
     }
   }
 });
-
-function stampLearnedAt(dir, agent, id, iso) {
-  const file = path.join(dir, agent, `${id}.md`);
-  fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace(/^learned_at: .*$/m, `learned_at: ${iso}`));
-}
-
-function twoGenerations() {
-  const { store, dir } = tmpStore();
-  const newer = store.remember('alpha', { text: 'ruling on widgets: allowed' });
-  const older = store.remember('alpha', { text: 'ruling on widgets: forbidden' });
-  stampLearnedAt(dir, 'alpha', older.id, '2026-01-01T00:00:00.000Z');
-  stampLearnedAt(dir, 'alpha', newer.id, '2026-01-02T00:00:00.000Z');
-  return { store, dir, newer, older };
-}
-
-test('memoryStore: recall by query returns the NEWEST match, not the oldest (an overturned ruling must not win)', () => {
-  const { store, newer } = twoGenerations();
-  const got = store.recall('alpha', 'ruling on widgets');
-  assert.ok(got, 'a query that matches two units returned nothing');
-  assert.strictEqual(got.id, newer.id);
-});
-
-test('memoryStore: recallMany returns every match newest-first, capped at limit', () => {
-  const { store, newer, older } = twoGenerations();
-  assert.deepStrictEqual(store.recallMany('alpha', 'RULING').map(u => u.id), [newer.id, older.id]);
-  assert.deepStrictEqual(store.recallMany('alpha', 'ruling', 1).map(u => u.id), [newer.id]);
-  assert.deepStrictEqual(store.recallMany('alpha', 'no such text anywhere'), []);
-});
-
-test('memoryStore: recallMany by exact id returns only that unit even when a newer unit matches its text', () => {
-  const { store, dir, older } = twoGenerations();
-  const mentions = store.remember('alpha', { text: `supersedes ${older.id}` });
-  stampLearnedAt(dir, 'alpha', mentions.id, '2026-02-01T00:00:00.000Z');
-  assert.deepStrictEqual(store.recallMany('alpha', older.id).map(u => u.id), [older.id]);
-  assert.strictEqual(store.recall('alpha', older.id).id, older.id);
-});
