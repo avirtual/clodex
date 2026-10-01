@@ -10,13 +10,6 @@
 // agent run a command, but stop narrating everything I type" could not be
 // expressed. Marks are knowledge, not disclosure; the two gates must stay
 // separate, and a single condition serving both is the regression to catch.
-//
-// The engine half is pinned against SOURCE rather than a live engine: engine.js
-// requires node-pty at load, so neither gate is reachable from a unit test.
-// Same technique term-marks.test.js and team-frontdoor-seam.test.js already use.
-// A source pin cannot see behaviour, so it is written to fail on the specific
-// wrong EDIT — the two gates collapsing into one comparison — rather than to
-// describe the right one loosely.
 
 const { test, after } = require('node:test');
 const assert = require('node:assert');

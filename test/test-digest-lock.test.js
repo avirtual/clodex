@@ -485,7 +485,9 @@ test('lock: npm test and the digest share ONE lock dir, or the mutex is not a mu
     'the shell path names the lock dir, rooted at its own checkout');
   assert.match(js, /: path\.join\(ROOT, '\.test-digest\.lock'\);/,
     'run-tests.js must use the SAME dir — a second lock name excludes nothing');
-  // Staleness and the sweep-only rule are driven by 'lock: npm test reclaims a lock whose holder is dead, and releases on exit' and 'lock: a named-file run ignores a held lock — the suite spawns this runner'.
+  // Staleness and the sweep-only rule are driven by
+  // 'lock: npm test reclaims a lock whose holder is dead, and releases on exit'
+  // and 'lock: a named-file run ignores a held lock — the suite spawns this runner'.
 });
 
 test('lock: npm test REFUSES while another run holds it, and says how to clear it', () => {
