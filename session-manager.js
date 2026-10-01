@@ -521,6 +521,7 @@ function createSessionManager(deps) {
     DEFAULT_COMPACT_CONTINUATION,
     DEFAULT_WORKSPACE_ID,
     INJECT_BOOT_MAXWAIT,
+    INJECT_PASTE_MAXWAIT,
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
@@ -8364,6 +8365,10 @@ function createSessionManager(deps) {
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
           onReadyCapFire: isClaude ? () => {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
+          } : null,
+          pasteMaxWaitMs: isClaude ? INJECT_PASTE_MAXWAIT : undefined,
+          onPasteCapFire: isClaude ? () => {
+            log.warn('inject', `paste-mode cap fired for ${session.name} — multi-line inject written bracketed with mode-2004 off (${INJECT_PASTE_MAXWAIT / 1000}s cap)`);
           } : null,
           onCapFire: () => {
             log.warn('inject', `quiet-gate cap fired for ${session.name} — injected through active typing or dictation (${INJECT_QUIET_MAXWAIT / 1000}s cap)`);

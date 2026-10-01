@@ -232,7 +232,7 @@ records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
    text it lands as a literal character (this was the historical
    mid-draft truncation bug). The text write first drops the invisible characters Claude Code 2.1.286 would strip and hold for a second Enter (review-gate.js ports its rule: controls and default-ignorables such as zero-width spaces, soft hyphens, directional marks outside right-to-left lines and all other bidi controls and stray tag or variation characters, but not the joiners and selectors the CLI keeps inside emoji or joining scripts); Codex seats are written as-is. The quiet-gate defers firing while the
    operator typed within `INJECT_QUIET_MS` (2s), capped at
-   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). The bracketed-paste write lets Claude Code wrap a large delivery as untrusted pasted text; the PREAMBLE's peer-messages paragraph in ipc-prompt.js tells seats the sender line sets the trust (tasks/opus-5-5-prompting-survey/REPORT.md item 2).
+   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). The bracketed-paste write lets Claude Code wrap a large delivery as untrusted pasted text; the PREAMBLE's peer-messages paragraph in ipc-prompt.js tells seats the sender line sets the trust (tasks/opus-5-5-prompting-survey/REPORT.md item 2). A multi-line text to a Claude seat also waits for mode 2004 (`pasteMaxWaitMs` = `INJECT_PASTE_MAXWAIT`, 10s), since a raw multi-line write is held unsent in the composer; at the cap a parkable delivery is re-parked and any other is written bracketed anyway.
 
 **Park-at-fire divert** — injects marked `parkable` re-check
 `_parkDivertFor` at the moment of writing: if the operator has a draft open,
