@@ -345,6 +345,22 @@ test('deploy docker --json: run + verify + context objects, no secrets', async (
   assert.deepStrictEqual(objs[1], { type: 'context', action: 'added', name: 'n', tokenGated: false });
 });
 
+test('deploy docker --json: a failed docker run carries its stderr tail in the error object, not "above"', async () => {
+  const contextsFile = tmpCtxFile();
+  const { code, stdout, stderr } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {
+    spawnFn: fakeDocker({}, { exitCode: 125, stderr: 'docker: Error response from daemon: conflict.\n' }),
+    pollHello: async () => { throw new Error('should not verify'); },
+    contextsFile,
+  });
+  assert.strictEqual(code, 1);
+  const err = stdout.trim().split('\n').map((l) => JSON.parse(l)).find((o) => o.type === 'error');
+  assert.strictEqual(err.reason, 'docker-run-failed');
+  assert.strictEqual(err.code, 125);
+  assert.match(err.stderr, /Error response from daemon: conflict/);
+  assert.doesNotMatch(stderr, /above/);
+  assert.match(stderr, /stderr is in the JSON error object/);
+});
+
 test('deploy docker --json 401: verify tokenGated + context tokenGated', async () => {
   const contextsFile = tmpCtxFile();
   const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {
