@@ -956,13 +956,13 @@ function initPeersUi({
     renderPeers();
   });
 
-  // Peer paused/resumed from any window (main flips `disabled` + broadcasts this
-  // BEFORE re-running the syncs, so it lands ahead of the peer-removed it triggers).
   window.api.onPeerVisible((map) => {
     peerVisibleMap = map || {};
     renderPeers();
   });
 
+  // Peer paused/resumed from any window (main flips `disabled` + broadcasts this
+  // BEFORE re-running the syncs, so it lands ahead of the peer-removed it triggers).
   window.api.onPeerDisabled((id, on, label) => {
     id = String(id);
     if (on) {

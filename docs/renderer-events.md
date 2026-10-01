@@ -112,7 +112,7 @@ Every live window; a web host fans to every connection.
 | `peer-wterm-exit` | `id, seat, exitCode` | peer-client |
 | `peer-wterm-closed` | `id, seat, text` (the `peerShellRefusal` sentence) | peer-client |
 
-All `peer-*` (except `peer-disabled`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
+All `peer-*` (except `peer-disabled`/`peer-visible`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
 `peer-client.js` `this._emit(...)`; the PeerManager `emit` closure in
 **peer-wiring.js** is the single funnel that routes them to `manager._broadcast`
 (and fires the menu/ops-log side effects). That closure is the natural single
