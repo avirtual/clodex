@@ -5753,7 +5753,7 @@ function createSessionManager(deps) {
         return;
       }
       try {
-        parkNotice(this._buildDeliveryText({ name: notice.name, agentType: entry.type }, 'reboot', body, 'dm'));
+        parkNotice(this._buildDeliveryText({ name: notice.name, agentType: entry.type, io: entry.io }, 'reboot', body, 'dm'));
         log.info('intent', `reboot notice for ${notice.name} parked (offline) — drains on resume; retained until a turn confirms it`);
       } catch (e) {
         retainOrExpire(`park failed: ${e.message}`);
@@ -8125,7 +8125,7 @@ function createSessionManager(deps) {
         log.info('intent', `remind fire for ${agent} dropped — no live session, no persisted entry`);
         return 'gone';
       }
-      const finalText = this._buildDeliveryText({ name: agent, agentType: entry.type }, 'reminder', body, 'dm');
+      const finalText = this._buildDeliveryText({ name: agent, agentType: entry.type, io: entry.io }, 'reminder', body, 'dm');
       try {
         parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq(), null, false, this._bornFor(agent));
         log.info('intent', `remind fire for ${agent} parked (offline) — drains on resume`);

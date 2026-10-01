@@ -13878,7 +13878,7 @@ test('_deliverClaimedInbox: a note the store refuses is logged and not toasted, 
 const { createRemindScheduler: createRemindSchedulerReal } = require('../remind-scheduler');
 const { initStores: initStoresReal } = require('../stores');
 
-function mkDeliver({ persisted = null } = {}) {
+function mkDeliver({ persisted = null, deps = {} } = {}) {
   const PENDING_DIR = mkTmpRoot('clodex-remind-pending-');
   const persistence = { list: () => [], get: (n) => (persisted && persisted.name === n ? persisted : null) };
   const m = mk({
@@ -13888,6 +13888,7 @@ function mkDeliver({ persisted = null } = {}) {
     MSG_SPILL_THRESHOLD: 500,
     getPersistence: () => persistence,
     log: { info: () => {}, warn: () => {}, error: () => {} },
+    ...deps,
   });
   const injected = [];
   m._injectText = (_s, t) => injected.push(t);
@@ -13918,6 +13919,25 @@ test('_deliverReminder: offline WITH a persistence entry → parked (drains on r
   // The parked bytes are the real delivery text.
   const drained = drainPending(PENDING_DIR, 't1', 'test');
   assert.match(drained.join('\n'), /\[agent:from reminder\] \[ab12 in 1h\] ship it/);
+});
+
+test('t1505 _deliverReminder: an offline seat parks under its persisted io — a stream seat inline, a PTY seat spilled', () => {
+  const dir = mkTmpRoot('clodex-t1504-spill-');
+  const deps = {
+    MSG_SPILL_LINES: 4,
+    spillToFile: (sender, body, rcv) => {
+      const f = pathReal.join(dir, `${rcv}-${sender}.txt`);
+      fsReal.writeFileSync(f, body);
+      return f;
+    },
+  };
+  const parked = (entry) => {
+    const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', ...entry }, deps });
+    assert.strictEqual(m._deliverReminder('t1', 'a\nb\nc\nd'), 'parked');
+    return drainPending(PENDING_DIR, 't1', 'test').join('\n');
+  };
+  assert.strictEqual(parked({ type: 'claude', io: 'stream' }), '[agent:from reminder] a\nb\nc\nd');
+  assert.match(parked({ type: 'claude' }), /^\[agent:from reminder\] Message \(7 bytes\) attached: @\S+ $/);
 });
 
 test('_deliverReminder: offline WITHOUT a persistence entry → dropped, returns "gone"', () => {
