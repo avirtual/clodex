@@ -11,3 +11,4 @@ earlier user message can quote the sentence (an agent reading compaction code) a
 
 On claude 2.1.286 with `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`, `x-claude-code-request-class` was seen as `main`, `subagent` and `compaction`; `x-claude-code-agent-type` carries the subagent's name (e.g. `Explore`), and the compact request also sends `x-claude-code-compaction: manual` (auto value unmeasured).
 Title, classifier and probe requests were not produced, so their values are unmeasured; without the env var only `x-claude-code-session-id` is sent. Capture: `~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/gateway-hint-headers/CAPTURE.md`.
+The proxy passes `x-claude-code-request-class: subagent` to `genuineSubagent` as one more trigger under the fingerprint backstop, not a replacement for it, and `compaction` marks a compact call alongside `isCompactCall`; `main` decides nothing.

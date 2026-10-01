@@ -107,6 +107,31 @@ test('stale-agent-id leak: leaked parent turn stays on the main line', () => {
   assert.equal(stateless.classify(leaked, SID, 'recycled-agent-id'), 'subagent');
 });
 
+test('request-class hint: subagent with no billing flag and no agent-id is a subagent', () => {
+  const c = new RoleClassifier();
+  const hinted = {
+    system: [
+      { type: 'text', text: billing('dddd33.1', 'false') },
+      { type: 'text', text: 'You are Claude Code, an agentic coding tool.' },
+    ],
+  };
+  assert.equal(c.classify(hinted, SID, null), 'parent');
+  assert.equal(c.classify(hinted, SID, null, 'subagent'), 'subagent');
+});
+
+test('request-class hint: the fingerprint backstop holds over a subagent hint', () => {
+  const c = new RoleClassifier();
+  const fp = 'a1b2c3.1.0.53';
+  c.noteMainFingerprint(SID, parentTurn(fp));
+  assert.equal(c.classify(parentTurn(fp), SID, null, 'subagent'), 'parent');
+});
+
+test('request-class hint: main changes nothing on a plain parent request', () => {
+  const c = new RoleClassifier();
+  assert.equal(c.classify(parentTurn(), SID, null, 'main'), 'parent');
+  assert.equal(c.classify({ system: 'something else entirely' }, SID, null, 'main'), 'unknown');
+});
+
 test('fingerprint state is per-session and forgettable', () => {
   const c = new RoleClassifier();
   const fp = 'eeee33.1';

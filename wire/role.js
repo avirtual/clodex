@@ -20,7 +20,7 @@
 
 // Roles assigned to Task-spawned subagents. "subagent" is the generic
 // bucket for a custom agent whose system prompt matched no known signature
-// (the wire carries no custom agent name, only the boolean flag).
+// (the x-claude-code-agent-type hint name is never used as a role).
 const SUBAGENT_ROLES = new Set(['Plan', 'verification', 'general-purpose', 'subagent']);
 
 function isSubagentRole(role) {
@@ -105,14 +105,14 @@ class RoleClassifier {
     this._mainFp = new Map();
   }
 
-  // True only for a REAL subagent. Signal (either suffices): the header
-  // flag, or a present x-claude-code-agent-id (the only signal carried by
-  // proxy/teammate-spawned top-level agents). In both cases the
-  // fingerprint backstop must clear it: a leaked parent turn carries the
+  // True only for a REAL subagent. Signal (any suffices): the header flag,
+  // a present x-claude-code-agent-id (the only signal carried by proxy/
+  // teammate-spawned top-level agents), or request class `subagent`; the
+  // fingerprint backstop must clear each: a leaked parent turn carries the
   // main line's fingerprint and reads NOT-genuine — fail closed onto the
   // main line. Pure read; never mutates the fingerprint map.
-  genuineSubagent(obj, sessionId, agentId) {
-    if (!billingIsSubagent(obj) && !agentId) return false;
+  genuineSubagent(obj, sessionId, agentId, requestClass) {
+    if (!billingIsSubagent(obj) && !agentId && requestClass !== 'subagent') return false;
     const mainFp = sessionId ? this._mainFp.get(sessionId) : null;
     const fp = billingFingerprint(obj);
     if (mainFp && fp && fp === mainFp) return false; // leaked parent turn (stale agent-id)
@@ -120,12 +120,12 @@ class RoleClassifier {
   }
 
   // System-prompt signature first, wire subagent signals as the backstop.
-  classify(obj, sessionId, agentId) {
+  classify(obj, sessionId, agentId, requestClass) {
     const s = sysText(obj);
     if (s.includes('software architect and planning')) return 'Plan';
     if (s.includes('verification specialist')) return 'verification';
     if (s.includes('agent for Claude Code') || s.includes('Searching for code')) return 'general-purpose';
-    if (this.genuineSubagent(obj, sessionId, agentId)) return 'subagent';
+    if (this.genuineSubagent(obj, sessionId, agentId, requestClass)) return 'subagent';
     if (s.includes('Claude Code')) return 'parent';
     return 'unknown';
   }
