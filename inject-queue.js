@@ -164,6 +164,20 @@ class InjectQueue {
       text = produced;
     }
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+    let forceBracket = false;
+    if (this._reviewGate && this._pasteMaxWaitMs !== null
+      && stripReviewGated(text).includes('\n') && !this._pasteOn()) {
+      const pasteSince = this._now();
+      while (!this._isDead() && !(this._pasteOn() && this._ready()) && this._now() - pasteSince < this._pasteMaxWaitMs) {
+        await this._sleep(Math.min(this._pasteMaxWaitMs, this._readyPollMs));
+      }
+      if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+      if (!this._pasteOn()) {
+        if (divert) { this._undelivered(text); return; }
+        forceBracket = true;
+        if (this._onPasteCapFire) { try { this._onPasteCapFire(text); } catch {} }
+      }
+    }
     if (divert) {
       let claimed = false;
       try { claimed = !!divert(text); } catch {}
@@ -172,20 +186,6 @@ class InjectQueue {
     if (deferred && this._onCapFire
       && (this._now() - (this._lastHumanInputAt() || 0) < this._quietMs || this._speakingNow())) {
       try { this._onCapFire(text); } catch {}
-    }
-    let forceBracket = false;
-    if (this._reviewGate && this._pasteMaxWaitMs !== null
-      && stripReviewGated(text).includes('\n') && !this._pasteOn()) {
-      const pasteSince = this._now();
-      while (!this._isDead() && !this._pasteOn() && this._now() - pasteSince < this._pasteMaxWaitMs) {
-        await this._sleep(Math.min(this._pasteMaxWaitMs, this._readyPollMs));
-      }
-      if (this._isDead()) { if (parkable) this._undelivered(text); return; }
-      if (!this._pasteOn()) {
-        if (parkable) { this._undelivered(text); return; }
-        forceBracket = true;
-        if (this._onPasteCapFire) { try { this._onPasteCapFire(text); } catch {} }
-      }
     }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);

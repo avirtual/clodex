@@ -951,6 +951,46 @@ test('InjectQueue paste gate: unparkable multi-line with 2004 off past the cap i
   assert.ok(st.clock >= 10_000, `waited out the cap, clock=${st.clock}`);
 });
 
+test('InjectQueue paste gate: a produce-only multi-line with 2004 off past the cap is written bracketed, not re-parked', async () => {
+  const { q, st } = pasteGateQueue(() => ({}));
+  await q.enqueue('', { produce: () => 'one\ntwo' });
+  assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
+  assert.deepStrictEqual(st.capFired, ['one\ntwo']);
+  assert.deepStrictEqual(st.undelivered, []);
+  assert.ok(st.clock >= 10_000, `waited out the cap, clock=${st.clock}`);
+});
+
+test('InjectQueue paste gate: the wait releases only once 2004 is on AND the seat is boot-ready', async () => {
+  let ready = false;
+  let writeClock = null;
+  const { q, st } = pasteGateQueue((st) => ({
+    readyMaxWaitMs: 250,
+    ready: () => ready,
+    write: (bytes) => { if (writeClock === null) writeClock = st.clock; st.writes.push(bytes); },
+    sleep: (ms) => {
+      st.clock += ms;
+      if (st.clock >= 750) st.paste = true;
+      if (st.clock >= 1250) ready = true;
+      return Promise.resolve();
+    },
+  }));
+  await q.enqueue('one\ntwo');
+  assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
+  assert.ok(writeClock >= 1250, `written after ready flipped, not at the bare 2004 edge: writeClock=${writeClock}`);
+  assert.deepStrictEqual(st.capFired, []);
+});
+
+test('InjectQueue paste gate: the fire-time divert runs after the paste wait, at the moment of writing', async () => {
+  let divertClock = null;
+  const { q, st } = pasteGateQueue((st) => ({
+    sleep: (ms) => { st.clock += ms; if (st.clock >= 750) st.paste = true; return Promise.resolve(); },
+  }));
+  await q.enqueue('one\ntwo', { divert: () => { divertClock = st.clock; return true; } });
+  assert.deepStrictEqual(st.writes, []);
+  assert.deepStrictEqual(st.undelivered, []);
+  assert.ok(divertClock >= 750, `divert ran after 3 polls of the wait: divertClock=${divertClock}`);
+});
+
 test('InjectQueue paste gate: a single-line text with 2004 off is written without waiting', async () => {
   const { q, st } = pasteGateQueue(() => ({}));
   await q.enqueue('one line');
