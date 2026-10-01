@@ -121,6 +121,23 @@ class InjectQueue {
     return this._chain;
   }
 
+  async _waitQuiet() {
+    const waitingSince = this._now();
+    let deferred = false;
+    while (!this._isDead()
+      && shouldDeferInject({
+        now: this._now(),
+        lastHumanInputAt: this._lastHumanInputAt(),
+        waitingSince, quietMs: this._quietMs, maxWaitMs: this._maxWaitMs,
+        hintHeld: this._held(),
+        speaking: this._speakingNow(),
+      })) {
+      deferred = true;
+      await this._sleep(Math.min(this._quietMs, 500));
+    }
+    return { deferred };
+  }
+
   async _drain(text, divert = null, produce = null, human = false) {
     // Bytes written before a fresh seat's input loop enters raw mode are buffered
     // and read as ONE paste-like chunk, so the trailing Enter lands as content
@@ -141,19 +158,7 @@ class InjectQueue {
     if (readyDeferred && !this._ready() && this._onReadyCapFire) {
       try { this._onReadyCapFire(text); } catch {}
     }
-    const waitingSince = this._now();
-    let deferred = false;
-    while (!this._isDead()
-      && shouldDeferInject({
-        now: this._now(),
-        lastHumanInputAt: this._lastHumanInputAt(),
-        waitingSince, quietMs: this._quietMs, maxWaitMs: this._maxWaitMs,
-        hintHeld: this._held(),
-        speaking: this._speakingNow(),
-      })) {
-      deferred = true;
-      await this._sleep(Math.min(this._quietMs, 500));
-    }
+    let { deferred } = await this._waitQuiet();
     if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
     // Must run after the gates: the producer's claim is destructive.
     if (produce) {
@@ -167,10 +172,16 @@ class InjectQueue {
     if (this._reviewGate && this._pasteMaxWaitMs !== null
       && stripReviewGated(text).includes('\n') && !this._pasteOn()) {
       const pasteSince = this._now();
+      let pasteSlept = false;
       while (!this._isDead() && !(this._pasteOn() && this._ready()) && this._now() - pasteSince < this._pasteMaxWaitMs) {
+        pasteSlept = true;
         await this._sleep(Math.min(this._pasteMaxWaitMs, this._readyPollMs));
       }
       if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+      if (pasteSlept) {
+        if ((await this._waitQuiet()).deferred) deferred = true;
+        if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+      }
       if (!this._pasteOn()) {
         if (divert) { this._undelivered(text); return; }
         forceBracket = true;
