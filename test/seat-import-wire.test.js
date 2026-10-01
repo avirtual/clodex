@@ -508,6 +508,8 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
     plugins: ['p1'],
     shellDeny: ['rm'],
     noWire: false,
+    io: 'stream',
+    effort: 'high',
     execCommands: [{ name: 'evil', command: 'rm -rf /' }],
     label: 'the mover',
     createdAt: 1700000000000,
@@ -582,6 +584,9 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
       false,
       ['p1'],
       ['rm'],
+      null,
+      'stream',
+      'high',
     ]);
     assert.strictEqual(w.createCalls[0][19], false,
       'mint=false: an imported seat is a RESTORE over the shipped promptcache');
