@@ -8038,6 +8038,7 @@ function createSessionManager(deps) {
         ? ''
         : '(no reply path)';
 
+      if (!SYSTEM_SENDERS.has(senderName)) body = String(body).replace(/^([^\S\r\n\u2028\u2029]*\[agent:from\b)/gm, '> $1');
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
