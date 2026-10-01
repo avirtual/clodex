@@ -1243,7 +1243,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     const m = /^web\.port=(.*)$/.exec(s);
     if (!m) continue;
     const v = m[1].trim();
-    if (!/^[1-9]\d*$/.test(v) || Number(v) < 1 || Number(v) > 65535) {
+    if (!/^[1-9]\d*$/.test(v) || Number(v) > 65535) {
       throw new CliError(EXIT.USAGE, `bad --set web.port=${m[1]} — an integer port in 1..65535`);
     }
     webPortFlag = Number(v);
