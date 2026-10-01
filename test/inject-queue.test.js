@@ -1006,31 +1006,41 @@ test('InjectQueue paste gate: a non-claude seat (no reviewGate) writes multi-lin
   assert.deepStrictEqual(st.capFired, []);
 });
 
-function quietAfterPasteQueue(stampAt) {
+function quietAfterPasteQueue(stampAt, { maxWaitMs = 30_000, restamp = false } = {}) {
   let human = 0;
   let writeClock = null;
+  const quietCapFired = [];
   const { q, st } = pasteGateQueue((st) => {
     st.clock = 10_000;
     return {
-      quietMs: 1000, maxWaitMs: 30_000,
+      quietMs: 1000, maxWaitMs,
+      onCapFire: (t) => quietCapFired.push(t),
       lastHumanInputAt: () => human,
       write: (bytes) => { if (writeClock === null) writeClock = st.clock; st.writes.push(bytes); },
       sleep: (ms) => {
         st.clock += ms;
-        if (stampAt !== null && st.clock === stampAt) human = st.clock;
+        if (stampAt !== null && (restamp ? st.clock >= stampAt : st.clock === stampAt)) human = st.clock;
         if (st.clock >= 10_750) st.paste = true;
         return Promise.resolve();
       },
     };
   });
-  return { q, st, writeClock: () => writeClock };
+  return { q, st, writeClock: () => writeClock, quietCapFired };
 }
 
 test('InjectQueue paste gate: a draft typed during the paste wait re-arms the quiet gate before the write', async () => {
-  const { q, st, writeClock } = quietAfterPasteQueue(10_500);
+  const { q, st, writeClock } = quietAfterPasteQueue(10_500, { maxWaitMs: 1000 });
   await q.enqueue('one\ntwo');
   assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
   assert.ok(writeClock() >= 10_500 + 1000, `written only after quietMs past the stamp: writeClock=${writeClock()}`);
+});
+
+test('InjectQueue paste gate: typing through the second quiet gate to its cap fires onCapFire once, then writes', async () => {
+  const { q, st, writeClock, quietCapFired } = quietAfterPasteQueue(10_500, { maxWaitMs: 1000, restamp: true });
+  await q.enqueue('one\ntwo');
+  assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
+  assert.strictEqual(writeClock(), 11_750, 'written at the second gate\'s cap');
+  assert.deepStrictEqual(quietCapFired, ['one\ntwo']);
 });
 
 test('InjectQueue paste gate: no human input during the paste wait → no second deferral', async () => {
