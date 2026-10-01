@@ -137,7 +137,7 @@ Today there are six kill-and-respawn paths for one seat (docs/sessions.md §3,
 | trigger | today | stream seat | why |
 |---|---|---|---|
 | `[agent:context compact]` (and its continuation) | latch on the wire terminal stop, type `/compact`, then inject the continuation at the compact edge | **in-process.** Send the user text `/compact` when the seat is idle (§2). `compact_boundary` followed by `result` is the edge. The continuation is the next user message. | S3. `_compactRegen` stays a respawn (row below). |
-| `_compactRegen`, `_promptDeltaPending` at clear (prompt regenerated) | `_coldRespawn` | **stays a respawn** unless M17 proves otherwise | `--append-system-prompt-file` is read at spawn. The bundle's `set_model` accepts an optional `system_prompt` (README, "Request shapes"). If M17 shows it replaces the append channel in-process, both regen arms become a control request. Nothing is designed on that until it is measured. |
+| `_compactRegen`, `_promptDeltaPending` at clear (prompt regenerated) | `_coldRespawn` | **stays a respawn** (M17 measured) | `--append-system-prompt-file` is read at spawn. M17: `set_model {system_prompt}` fills the `--system-prompt` slot (it drops the CLI default body) and leaves the append text in place, so it cannot carry the regenerated prompt. |
 | `[agent:context clear]` (plain arm) | type `/clear`; the continuation fires on the sessionId-change edge from the symlink repoint | **in-process.** Send `/clear`. The edge is the next `init` whose `session_id` differs from the current one, not `conversation_reset` (S4: that event names a different id). The continuation is the next user message. | S4 |
 | `[agent:context reload]` | `_coldRespawn` without `--resume` | **respawn**, fresh `--session-id` | a new process is the point |
 | Move Session… (cwd) | `_moving`, kill, `_waitForExit`, `create()` with `--resume` | **respawn**, the same shape | The bundle has a `set_cwd` control (README, "Request shapes"), but the transcript slug is derived from the cwd, and the move-to-peer notes show a resumed conversation keeps writing under its original slug. An in-process cwd change would make the transcript path ambiguous. Not worth it. |
@@ -197,7 +197,7 @@ apply. `S` means stdin, `O` means stdout, and `J` means the transcript file.
 | M14 | caller-supplied uuid | send `{type:"user", uuid:"<V>", message:…}` with `--replay-user-messages` | whether the replay `uuid === V` and J's user `uuid === V` |
 | M15 | slash command mid-turn | during an E3-style tool turn, send `/compact` | executed after the turn, folded in as text, or dropped |
 | M16 | fold repeatability and `queued_turn_count` | E3 three times with different prompts; then E3 with `interrupt {cancel_queued:true}` after msg 2 | whether msg 2 ever gets its own `result`; `queued_turn_count` in each `result`; what `cancel_queued` does to msg 2 |
-| M17 | `set_model` with `system_prompt` | `set_model {model:<current>, system_prompt:"Always end replies with NONCE-9."}` between turns, captured through wirescope | whether the next request's system prompt carries it; whether it **replaced** the whole system prompt, the append part, or was appended |
+| M17 | `set_model` with `system_prompt` | `set_model {model:<current>, system_prompt:"Always end replies with NONCE-9."}` between turns, captured through wirescope | **Measured 2026-10-01, CLI 2.1.286** (task set-model-measure, CAPTURE.md): the model switches both ways from the next request (`system init` and `assistant` follow), after a 1-token probe on the new model; a bad id gets `error_code:"check_failed"` and the session keeps its model. `system_prompt` replaces the custom-prompt slot (CLI default body) and keeps the append; it is sent only after the next compaction, or from the next turn under `initialize {systemPromptSnapshot:false}` |
 | M18 | through the proxy | run A with `--settings` `{"env":{"ANTHROPIC_BASE_URL":"<wirescope>"}}` | requests are seen; the wire turn events Clodex's tee keys on; the user-agent and entrypoint headers wirescope parses |
 | M19 | permission flag set | `--permission-prompt-tool stdio` **without** `--permission-prompts host`; then an allow that carries `updatedPermissions: [<the suggestion>]` | whether `can_use_tool` arrives; whether a second Write is prompted again |
 | M20 | permission inside a subagent | an Agent-tool subagent that calls Write | whether `can_use_tool` arrives; its `tool_use_id`, and any parent or agent id field |
@@ -1034,6 +1034,6 @@ to the argv.
 3. **Voice.** Is OS dictation into Clodex's composer an acceptable replacement
    for the CLI's hold-to-talk, or is voice a reason to keep some seats on the
    terminal?
-4. **If M17 shows `set_model {system_prompt}` swaps the prompt in-process**,
-   prompt regeneration at compact and clear stops needing a respawn. Is that
-   worth a follow-up, given that the respawn path already works?
+4. ~~Can `set_model {system_prompt}` replace prompt regeneration at compact
+   and clear?~~ No (M17, 2.1.286): it replaces the `--system-prompt` slot, not
+   the append channel. Both regeneration arms stay respawns.
