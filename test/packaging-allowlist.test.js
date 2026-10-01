@@ -255,6 +255,8 @@ test('layer 3: every top-level directory is either shipped or explicitly exclude
     .sort();
   const ignored = gitIgnored(present);
   const dirs = present.filter((d) => !ignored.has(d));
+  assert.ok(dirs.length > 10,
+    `ENTER: only ${dirs.length} top-level dirs survived gitIgnored — the layer classified nothing`);
   const unclassified = dirs.filter((d) => !touchesTree(d) && !EXCLUDED[d + '/']);
   assert.deepStrictEqual(unclassified, [],
     'these top-level directories are neither covered by a build.files pattern nor listed in '
@@ -328,6 +330,8 @@ test('every build.files pattern is a shape this test understands', () => {
   // The matcher above implements three shapes. A pattern outside them would be
   // silently treated as covering nothing, which would turn this whole file into
   // a test that passes because it stopped looking.
+  assert.ok(PATTERNS.length > 10,
+    `ENTER: build.files has only ${PATTERNS.length} patterns — the shape check classified nothing`);
   const unknown = PATTERNS.filter((p) => classifyPattern(p).kind === 'unknown');
   assert.deepStrictEqual(unknown, [],
     `build.files contains pattern shapes this test cannot evaluate: ${unknown.join(', ')}. `

@@ -313,6 +313,8 @@ const CALLABLE_KINDS = ['invoke', 'send'];
 test('every invoke channel has a registered handler in ipc-handlers', () => {
   const registered = captureRegistrations();
   const invokeChannels = API_CONTRACT.filter((r) => r.kind === 'invoke').map((r) => r.channel);
+  assert.ok(invokeChannels.length > 200,
+    `ENTER: only ${invokeChannels.length} invoke rows in API_CONTRACT — the handler check compared nothing`);
   const missing = invokeChannels.filter((ch) => !registered.has(ch));
   assert.deepEqual(missing, [], `invoke channels with no registered handler: ${missing}`);
 });
