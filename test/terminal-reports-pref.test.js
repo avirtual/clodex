@@ -185,12 +185,12 @@ test('the capability gate and the disclosure gate read the pref DIFFERENTLY', ()
       assert.strictEqual(deps.shimEnv('seat') !== null, shims, `${pref}: shimEnv('seat') non-null should be ${shims}`);
       fs.rmSync(file, { force: true });
       deps.onCommand('seat', rec);
-      const rows = readRows(file);
       if (writes) {
+        const rows = readRows(file);
         assert.strictEqual(rows.length, 1, `${pref}: onCommand writes one row`);
         assert.strictEqual(rows[0].kind, 'terminal-passive', `${pref}: the row is tagged passive`);
       } else {
-        assert.deepStrictEqual(rows, [], `${pref}: onCommand must write nothing`);
+        assert.strictEqual(fs.existsSync(file), false, `${pref}: onCommand must write nothing`);
       }
     }
   } finally {

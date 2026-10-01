@@ -11,7 +11,7 @@
 // handlers forward to them correctly.
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -667,3 +667,5 @@ test('t1096: team:addRole with an empty def on an absent stock role logs the sto
   assert.strictEqual(lines.length, 1);
   assert.match(lines[0][1], /^role "hand" added to team "shop" \(stock; /);
 });
+
+after(() => { setImmediate(() => process.exit(0)); });
