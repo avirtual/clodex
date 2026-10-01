@@ -12,4 +12,4 @@ Measured 2026-10-01 on claude 2.1.286 (PTY seat), `<pasted_content>` wrap: a bra
 An unbracketed multi-line write is held for a review Enter (the composer strips `\r`), so it is not a usable alternative. Stream-io seats deliver through the SDK, not a paste, and are unaffected.
 Evidence: ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/paste-wrap-threshold/MEASURE.md.
 
-`SYSTEM_SENDERS` bodies skip the `> ` defuse: a ticket-loop notice legitimately quotes a hand's sender lines.
+`SYSTEM_SENDERS` bodies skip the `> ` defuse here; the loop's notices defuse the hand- and reviewer-authored spans they embed before interpolation (team-tickets.js, `defuseSenderLines`). The match runs on the strip-reduced line so a character the inject strip deletes cannot hide the marker.

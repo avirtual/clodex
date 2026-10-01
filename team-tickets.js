@@ -1,5 +1,6 @@
 const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
+const { defuseSenderLines } = require('./review-gate');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
 const { TEST_ROOTS } = require('./scripts/clodex-run-tests');
@@ -1271,7 +1272,7 @@ function createTicketMethods(deps, shared) {
       if (titles.length) {
         out.push('', 'MUST-FIX:');
         for (const t of titles.slice(0, VERDICT_BRIEF_TITLES)) {
-          out.push(`- ${t.length > VERDICT_BRIEF_TITLE_BYTES ? `${t.slice(0, VERDICT_BRIEF_TITLE_BYTES - 1)}…` : t}`);
+          out.push(`- ${defuseSenderLines(t.length > VERDICT_BRIEF_TITLE_BYTES ? `${t.slice(0, VERDICT_BRIEF_TITLE_BYTES - 1)}…` : t)}`);
         }
         const more = titles.length - VERDICT_BRIEF_TITLES;
         if (more > 0) out.push(`+${more} more, in the verdict file below.`);
@@ -1297,7 +1298,7 @@ function createTicketMethods(deps, shared) {
       try {
         if (!team) return { ok: false, error: 'the team could not be resolved from the reviewer seat' };
         const items = landedOn.mustFix
-          ? `MUST-FIX:\n${landedOn.mustFix}`
+          ? `MUST-FIX:\n${defuseSenderLines(landedOn.mustFix)}`
           : 'The verdict named no must-fix items — read it and fix what it says, or say in your report why it is wrong.';
         const where = written && written.ok
           ? `FULL VERDICT (the reasoning, the nits and what was checked): ${written.path}\nRead it; it is why, and the items above are only what.`
@@ -1858,10 +1859,10 @@ function createTicketMethods(deps, shared) {
           '',
           stepLine,
           '',
-          `Review rounds: ${rounds}. Suite on ${into} after the merge: ${summary}.`,
-          ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${wideLine(slow.join('; '))}`] : []),
+          `Review rounds: ${rounds}. Suite on ${into} after the merge: ${defuseSenderLines(summary)}.`,
+          ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
-          ...(stamp ? [`Verify suite was re-measured. First run: ${oneLine(stamp.first) || 'unrecorded'} (${wideLine(stamp.firstFailing) || 'no names recorded'}).`] : []),
+          ...(stamp ? [`Verify suite was re-measured. First run: ${defuseSenderLines(oneLine(stamp.first)) || 'unrecorded'} (${defuseSenderLines(wideLine(stamp.firstFailing)) || 'no names recorded'}).`] : []),
           changelogLine,
           ...(closedOutOk || (closeOut && (closeOut.reopened || closeOut.tornDown)) ? [] : [`Nothing was torn down: the worktree, the branch and the seat are still there. [agent:task accept ${ticketId}] retires them when you are ready.`]),
         ].join('\n');
@@ -4636,7 +4637,7 @@ function createTicketMethods(deps, shared) {
             ? `FULL OUTPUT (assertion text, diff and stack): ${kept.path}\n`
               + 'Read it instead of re-running the suite.'
             : `The failing output could not be preserved (${kept.error}), so the names above are all there is.`;
-          const names = (s) => s.failing || '(the runner reported no test names)';
+          const names = (s) => defuseSenderLines(s.failing || '(the runner reported no test names)');
           const failingLines = firstRed
             ? `FAILING (run 2): ${names(suite)}\n`
               + `FAILING (run 1): ${names(firstRed)}\n\n`
@@ -4644,18 +4645,18 @@ function createTicketMethods(deps, shared) {
               + 'means the box was starved and you should say so in your report rather than hunt.'
             : `FAILING: ${names(suite)}`;
           const remeasureLine = remeasureError
-            ? `\n\nA re-measure was attempted and could not run: ${remeasureError}`
+            ? `\n\nA re-measure was attempted and could not run: ${defuseSenderLines(remeasureError)}`
             : '';
           const rejected = slowOwned.length
             ? this._rejectTicketFromLoop(team, ticketId,
-              `the suite's slow gate tripped on your branch — ${suite.summary}, 0 failing\n\n`
-              + `SLOW GATE: ${slowOwned.join('; ')}\n\n`
+              `the suite's slow gate tripped on your branch — ${defuseSenderLines(suite.summary)}, 0 failing\n\n`
+              + `SLOW GATE: ${defuseSenderLines(slowOwned.join('; '))}\n\n`
               + 'These are tests a file your branch changed contains, and each ran past the six-second '
               + 'bar. Nothing asserted wrong: inject the clock or the timeout constant through a seam, '
               + 'or list the test in test/slow-tests.json with the mechanism it genuinely waits on. '
               + 'No reviewer was spawned: the suite is the gate.')
             : this._rejectTicketFromLoop(team, ticketId,
-              `the test suite FAILS on your branch — ${suite.summary}\n\n`
+              `the test suite FAILS on your branch — ${defuseSenderLines(suite.summary)}\n\n`
               + `${failingLines}${remeasureLine}\n\n`
               + `${evidence}\n\n`
               + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
@@ -5130,7 +5131,7 @@ function createTicketMethods(deps, shared) {
         if (!seat || seat === team.lead) return;
         // The trailing sentence carries only what the `hand` recovery text does not state; its rework-round fact must not be restated beside it.
         const body = `[ticket ${ticketId} HELD] the loop stopped at: ${step}\n\n`
-          + `EVIDENCE: ${evidence}\n\n`
+          + `EVIDENCE: ${defuseSenderLines(evidence)}\n\n`
           + `${holdRecoveryText('hand', ticketId)}\n\n`
           + 'Nothing was torn down — your worktree, your branch and this seat are exactly as they were. '
           + 'The ticket was NOT rejected.';
@@ -5521,8 +5522,8 @@ function createTicketMethods(deps, shared) {
         const body = [
           `[ticket ${ticketId} ESCALATED] the loop stopped at: ${step}`,
           '',
-          `EVIDENCE: ${evidence}`,
-          `ALREADY TRIED: ${tried}`,
+          `EVIDENCE: ${defuseSenderLines(evidence)}`,
+          `ALREADY TRIED: ${defuseSenderLines(tried)}`,
           '',
           NOTHING_TORN_DOWN,
           ...(recovery ? ['', `RECOVERY: ${recovery}`] : []),
