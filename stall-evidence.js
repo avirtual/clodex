@@ -61,10 +61,9 @@ function readTail(fs, file, bytes = 64 * 1024) {
 // `tool_use Task` falls outside the window. This returns null there, and the
 // alarm loses its strongest field on the seat most likely to be wedged. It is
 // the fail-safe direction — omitting beats misattributing a subagent's call to
-// the seat — and consistent with the module's stated policy above. The fix, if
-// this is ever measured to matter, is to keep scanning BACKWARD past the
-// sidechain volume (re-read with a larger window when a tail yields no
-// non-sidechain `tool_use`), never to widen what counts as the seat's own call.
+// the seat — and consistent with the module's stated policy above.
+// `lastToolFromFile` re-reads a wider window when the tail names no tool; what
+// counts as the seat's own call is never widened.
 function lastToolFrom(text) {
   if (!text) return null;
   let use = null;          // { name, id } — the most recent tool_use seen
@@ -92,6 +91,12 @@ function lastToolFrom(text) {
   if (!use) return null;
   if (use.id == null || !results.has(use.id)) return { tool: use.name, outcome: 'pending' };
   return { tool: use.name, outcome: results.get(use.id) };
+}
+
+function lastToolFromFile(fs, file, tail, wideBytes = 1024 * 1024) {
+  const hit = lastToolFrom(tail);
+  if (hit) return hit;
+  return lastToolFrom(readTail(fs, file, wideBytes));
 }
 
 // The API error a transcript ENDS on, or null.
@@ -502,7 +507,7 @@ function formatReviewSeatClause({ seat, verdict, cpuRead = true, flatFor = null,
 }
 
 module.exports = {
-  readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
+  readTail, lastToolFrom, lastToolFromFile, lastApiErrorFrom, formatStallBody, formatOrphanBody,
   parseCpuTime, sumTreeCpuMs, parsePsRows, descendantPids, classifyReviewSeat,
   formatReviewSeatClause, didGrow,
   CPU_RATE_MS_PER_MIN, MIN_GAP_MS, API_ERROR_MAX,
