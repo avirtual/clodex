@@ -43,6 +43,46 @@ test('billing header parsing', () => {
   assert.equal(billingFingerprint({ system: 'no header here' }), null);
 });
 
+function parentWithScope(fp, scope) {
+  const t = parentTurn(fp);
+  t.system[1] = { type: 'text', text: `${t.system[1].text} ${scope}` };
+  return t;
+}
+
+test('the subagent flag in later system prose does not make a parent a subagent', () => {
+  const c = new RoleClassifier();
+  const turn = parentWithScope('a1b2c3.1', billing('0000aa.1', 'true'));
+  assert.equal(billingIsSubagent(turn), false);
+  assert.equal(c._mainFp.size, 0);
+  assert.equal(c.classify(turn, SID, null), 'parent');
+});
+
+test('a cc_version in later system prose is not the fingerprint', () => {
+  const turn = parentWithScope('a1b2c3.1', 'cc_version=deadbeef.9');
+  assert.equal(billingFingerprint(turn), 'a1b2c3.1');
+  const c = new RoleClassifier();
+  c.noteMainFingerprint(SID, turn);
+  assert.equal(c._mainFp.get(SID), 'a1b2c3.1');
+});
+
+test('a string system that starts with the billing header is read both ways', () => {
+  assert.equal(billingIsSubagent({ system: billing('abc1.2', 'true') }), true);
+  assert.equal(billingIsSubagent({ system: billing('abc1.2', 'false') }), false);
+  assert.equal(billingFingerprint({ system: billing('abc1.2', 'false') }), 'abc1.2');
+  assert.equal(billingIsSubagent({ system: `prose ${billing('abc1.2', 'true')}` }), false);
+});
+
+test('no billing header in block 0 means no flag and no fingerprint', () => {
+  const turn = {
+    system: [
+      { type: 'text', text: 'You are Claude Code, an agentic coding tool.' },
+      { type: 'text', text: billing('beef12.3', 'true') },
+    ],
+  };
+  assert.equal(billingIsSubagent(turn), false);
+  assert.equal(billingFingerprint(turn), null);
+});
+
 test('signature roles win over the generic bucket', () => {
   const c = new RoleClassifier();
   assert.equal(c.classify({ system: [{ type: 'text', text: 'You are a software architect and planning specialist.' }] }, SID, null), 'Plan');
