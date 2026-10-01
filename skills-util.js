@@ -6,7 +6,7 @@
 // `--plugin-dir` flag — a plugin's skills/ folder joins the always-on roster,
 // while writing nothing into the user's repo or ~/.claude.
 //
-// Unlike subagents (inline `--agents <json>`), the CLI has no `--skills` flag:
+// Unlike subagents (agent files scaffolded by agentMd), the CLI has no `--skills` flag:
 // skills are filesystem/plugin-based, so a plugin scaffold is the only analog.
 //
 // Kept dependency-free (no electron, no fs) so it can be unit-tested under plain

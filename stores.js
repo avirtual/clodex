@@ -1229,8 +1229,8 @@ function initStores(userDataPath, {
         try {
           const raw = fs.readFileSync(path.join(AGENTS_DIR, f), 'utf-8');
           const { meta, body } = parseAgentFrontmatter(raw);
-          // Identity is the filename stem (canonical: raw()/remove() and the
-          // --agents JSON key all use it). Frontmatter `name` stays purely
+          // Identity is the filename stem (canonical: raw()/remove() and
+          // agentMd all use it). Frontmatter `name` stays purely
           // informational/portable (it matters when a file is copied into a
           // real .claude/agents dir, but clodex never keys off it).
           const name = f.replace(/\.md$/, '');

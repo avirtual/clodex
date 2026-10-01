@@ -58,8 +58,7 @@ function readTail(fs, file, bytes = 64 * 1024) {
 // KNOWN BLIND SPOT, not a bug to patch by reinstating sidechain entries: a seat
 // blocked on a long `Task` subagent writes sidechain lines continuously, so the
 // 64KB tail can hold nothing BUT sidechain volume and the seat's own
-// `tool_use Task` falls outside the window. This returns null there, and the
-// alarm loses its strongest field on the seat most likely to be wedged. It is
+// `tool_use Task` falls outside the window. This returns null there. It is
 // the fail-safe direction — omitting beats misattributing a subagent's call to
 // the seat — and consistent with the module's stated policy above.
 // `lastToolFromFile` re-reads a wider window when the tail names no tool; what

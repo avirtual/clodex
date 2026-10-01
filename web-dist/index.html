@@ -28310,7 +28310,7 @@ ${i3.join("\n")}
           const v = meta[k];
           if (v == null || v === "") continue;
           if (BOOLEAN_AGENT_FIELDS.has(k)) {
-            if (v === true || String(v).trim() === "true") lines.push(`${k}: true`);
+            if (v === true || /^true$/i.test(String(v).trim())) lines.push(`${k}: true`);
             continue;
           }
           lines.push(`${k}: ${JSON.stringify(String(v))}`);

@@ -10833,6 +10833,37 @@ test('t322 the alarm carries the seat`s last tool, and never dirty on its own', 
   assert.doesNotMatch(nudges[0].body, /last tool Read/, 'the completed call before it is not the story');
 });
 
+test('t1487 the alarm still carries the seat`s last tool when a prompt_snapshot fills the tail', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead'); f.seat('team-hand');
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+
+  const runDir = pathReal.join(f.home, 'run', 'team-hand');
+  fsReal.mkdirSync(runDir, { recursive: true });
+  const real = pathReal.join(runDir, 'real.jsonl');
+  fsReal.writeFileSync(real, [
+    JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Read', id: 'x1' }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_result', tool_use_id: 'x1', is_error: false }] } }),
+    JSON.stringify({ message: { content: [{ type: 'tool_use', name: 'Bash', id: 'x2' }] } }),
+    JSON.stringify({ isSidechain: false, attachment: { type: 'prompt_snapshot', systemPrompt: ['x'.repeat(70 * 1024)] }, type: 'attachment' }),
+  ].join('\n') + '\n');
+  fsReal.symlinkSync(real, pathReal.join(runDir, 'transcript.jsonl'));
+
+  const arr = f.load();
+  arr[0].lastActivityAt = Date.now() - stallMs * 2;
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+  await f.m._sweepTickets(Date.now());
+
+  const nudges = f.gated.filter((g) => /stalled/.test(g.body));
+  assert.strictEqual(nudges.length, 1, 'ENTER: the stalled ticket produced exactly one alarm');
+  assert.match(nudges[0].body, /last tool Bash never returned/,
+    'the tool_use sits behind a 70KB snapshot line, past the 64KB tail');
+});
+
 test('t389 the alarm names the API error the seat stopped on, read from its real transcript', async () => {
   // END TO END, because the formatter unit tests pass whether or not anything
   // WIRES them: `_stallEvidence` must read the record off the seat's actual

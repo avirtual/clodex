@@ -90,6 +90,8 @@ test('agentMd: an authored omitClaudeMd: true rides as a YAML boolean; absent em
   const lines = agentMd('a', meta, 'body').split('\n');
   assert.ok(lines.includes('omitClaudeMd: true'), 'the unquoted boolean reaches the scaffolded file');
   assert.ok(!lines.includes('omitClaudeMd: "true"'), 'never the quoted string');
+  const titled = agentMd('a', parseAgentFrontmatter('---\ndescription: d\nomitClaudeMd: True\n---\nbody\n').meta, 'body');
+  assert.ok(titled.split('\n').includes('omitClaudeMd: true'), 'YAML reads True as true, so the scaffold does too');
   const absent = agentMd('a', parseAgentFrontmatter('---\ndescription: d\n---\nbody\n').meta, 'body');
   assert.ok(!absent.includes('omitClaudeMd'), 'an agent without the key carries none');
   assert.ok(!agentMd('a', { description: 'd', omitClaudeMd: 'false' }, 'b').includes('omitClaudeMd'),
