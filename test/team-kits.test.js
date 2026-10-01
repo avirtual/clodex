@@ -380,7 +380,8 @@ test('kitCatalog lists each kit with its description, one line each', () => {
 });
 
 test('the clodex and default kit descriptions count their hand template\'s disabled tools', () => {
-  for (const [kit, stem] of [['clodex', 'clodex-team-hand'], ['default', 'hand']]) {
+  for (const kit of ['clodex', 'default']) {
+    const stem = readKitJson(kit).roles.hand.template;
     const off = Number(/ (\d+) tools off\b/u.exec(readKitJson(kit).description)[1]);
     assert.strictEqual(off, 35, kit);
     assert.strictEqual(off, readTpl(kit, stem).disabledTools.length, kit);

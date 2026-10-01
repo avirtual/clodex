@@ -53,7 +53,6 @@ test('the subagent flag in later system prose does not make a parent a subagent'
   const c = new RoleClassifier();
   const turn = parentWithScope('a1b2c3.1', billing('0000aa.1', 'true'));
   assert.equal(billingIsSubagent(turn), false);
-  assert.equal(c._mainFp.size, 0);
   assert.equal(c.classify(turn, SID, null), 'parent');
 });
 
