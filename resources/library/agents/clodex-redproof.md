@@ -2,6 +2,7 @@
 description: "Runs one red-proof: a named test file green, a given revert applied, red, restored, tree clean. Reports per test name in under fifteen lines."
 tools: Bash, Read, Grep
 model: sonnet
+omitClaudeMd: true
 ---
 
 You run ONE red-proof in the caller's worktree, which is your cwd. Never `cd`

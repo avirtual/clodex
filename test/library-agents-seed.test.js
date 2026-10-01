@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { parseAgentFrontmatter, qualifiedAgentName } = require('../agents-util');
+const { parseAgentFrontmatter, qualifiedAgentName, agentMd } = require('../agents-util');
 const { initStores } = require('../stores');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -28,6 +28,9 @@ test('the shipped agent defs parse with description, tools and model', () => {
     assert.strictEqual(meta.tools, want.tools, `${name}: the tool list is the seat's whole roster`);
     assert.strictEqual(meta.model, want.model, `${name}: a delegate on the caller's model saves nothing`);
     assert.ok(body.length > 100, `${name}: the body is the agent's system prompt, not a stub`);
+    assert.strictEqual(meta.omitClaudeMd, 'true', `${name}: a pointer/red-proof worker never needs the project CLAUDE.md`);
+    assert.ok(agentMd(name, meta, body).split('\n').includes('omitClaudeMd: true'),
+      `${name}: omitClaudeMd reaches the scaffolded plugin file as a boolean`);
   }
 });
 

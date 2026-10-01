@@ -49,12 +49,15 @@ const AGENT_PLUGIN_NAME = 'clodex-agents';
 const qualifiedAgentName = (name) => `${AGENT_PLUGIN_NAME}:${name}`;
 
 // The frontmatter keys the PLUGIN agent loader reads, verified against the
-// installed 2.1.232 binary. Anything else is dropped rather than emitted: the
+// installed 2.1.286 binary. Anything else is dropped rather than emitted: the
 // loader warns per spawn on three of the four below and ignores the fourth.
 const PLUGIN_AGENT_FIELDS = [
   'description', 'when_to_use', 'tools', 'disallowedTools', 'skills',
   'model', 'color', 'effort', 'maxTurns', 'background', 'memory', 'isolation',
+  'omitClaudeMd',
 ];
+
+const BOOLEAN_AGENT_FIELDS = new Set(['omitClaudeMd']);
 
 // What the flag-era encoder mapped and the plugin loader does not. The spawn
 // warns on these: silent, an operator keeps believing a permissionMode they
@@ -64,7 +67,7 @@ const DROPPED_AGENT_FIELDS = ['permissionMode', 'initialPrompt', 'hooks', 'mcpSe
 // Render one library agent as the file the plugin loader parses. The loader
 // prefers a frontmatter `name:` over the file stem, so the canonical name is
 // forced here (any authored one dropped), exactly as skillMd does — otherwise
-// the library and dispatch names drift. Values are double-quoted via
+// the library and dispatch names drift. Non-boolean values are quoted via
 // JSON.stringify: the CLI parses this as real YAML, where an unquoted `:` or
 // `#` re-parses as a map or truncates, silently un-discovering the agent.
 //
@@ -80,6 +83,10 @@ function agentMd(name, meta, body) {
   for (const k of PLUGIN_AGENT_FIELDS) {
     const v = meta[k];
     if (v == null || v === '') continue;
+    if (BOOLEAN_AGENT_FIELDS.has(k)) {
+      if (v === true || String(v).trim() === 'true') lines.push(`${k}: true`);
+      continue;
+    }
     lines.push(`${k}: ${JSON.stringify(String(v))}`);
   }
   return `---\n${lines.join('\n')}\n---\n${String(body || '').trim()}\n`;

@@ -85,6 +85,17 @@ test('agentMd: a numeric field is quoted, which the loader still coerces', () =>
   assert.ok(bad.includes('description: "d"'), 'ENTER: the agent still carries its required field');
 });
 
+test('agentMd: an authored omitClaudeMd: true rides as a YAML boolean; absent emits no key', () => {
+  const { meta } = parseAgentFrontmatter('---\ndescription: d\nomitClaudeMd: true\n---\nbody\n');
+  const lines = agentMd('a', meta, 'body').split('\n');
+  assert.ok(lines.includes('omitClaudeMd: true'), 'the unquoted boolean reaches the scaffolded file');
+  assert.ok(!lines.includes('omitClaudeMd: "true"'), 'never the quoted string');
+  const absent = agentMd('a', parseAgentFrontmatter('---\ndescription: d\n---\nbody\n').meta, 'body');
+  assert.ok(!absent.includes('omitClaudeMd'), 'an agent without the key carries none');
+  assert.ok(!agentMd('a', { description: 'd', omitClaudeMd: 'false' }, 'b').includes('omitClaudeMd'),
+    'a false value is the default and is not emitted');
+});
+
 test('agentMd: no frontmatter value can break out of the block', () => {
   // A body-fence injected through a value would end the frontmatter early and
   // the rest of the fields would read as prose.
