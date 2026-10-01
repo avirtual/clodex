@@ -180,7 +180,7 @@ function fakeSsh(rec, { lines = [], exitCode = 0, stderr = '' } = {}) {
     child.pid = null;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    child.stdin = { write: (s) => { rec.stdin += s; }, end: () => {
+    child.stdin = { on: () => {}, write: (s) => { rec.stdin += s; }, end: () => {
       // Once the script is delivered, play the transcript then exit — async so
       // the caller's data/exit listeners are attached first.
       setImmediate(() => {
