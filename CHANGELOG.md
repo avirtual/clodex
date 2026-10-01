@@ -17,6 +17,7 @@ blocks a release.
 - Stock templates no longer deny the TaskOutput tool the CLI removed in 2.1.277, the sonnet alias resolves to Sonnet 5.5, and the context bar reads the 1M window for bare Opus 5.5 and Sonnet 5.5 ids.
 - A message injected into a terminal seat no longer stalls at the CLI's "Removed N invisible characters — review" prompt: the characters that trip it are stripped before the write.
 - Wire: Claude seats opt in to the CLI's gateway hint headers; a subagent or compaction request is recognised by `x-claude-code-request-class` as well as by prompt text, so a reworded CLI prompt no longer blinds the classifier.
+- Wire: a seat whose system prompt merely mentions the CLI's subagent billing flag is no longer classified as a subagent for its whole life, which silently dropped its intents (two review verdicts were lost this way).
 
 ## 5.101.0 — 2026-09-30
 
