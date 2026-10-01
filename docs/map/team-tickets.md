@@ -196,7 +196,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleTask` | Entry point for task intents: resolves team or solo context, adds the stale-host suffix, dispatches the sub-verb with a parkable reply | none directly (verbs mutate the board) | _soloContext, _staleHostSuffix, _taskAccept, _taskAdd | task-start.test.js solo-tickets.test.js session-manager.test.js |
+| `_handleTask` | Entry point for task intents: resolves team or solo context, adds the stale-host suffix, dispatches the sub-verb; errors take a parkable reply, successes a deferred `_taskAck` | none directly (verbs mutate the board) | _soloContext, _staleHostSuffix, _taskAccept, _taskAdd, _taskAck | task-start.test.js solo-tickets.test.js session-manager.test.js |
 | `_resolveAssignee` | Returns who if it is a team role key or a live seat name on the team root, else null | none | _teamLiveSeatNames | task-start.test.js task-respec.test.js accept-standing-seat.test.js |
 | `_ticketAssigneeSeat` | The one ticket-to-seat resolver: role to first live seat, live pin to itself, else mint-pending or role degradation off-worktree | reads live seats and persistence | _seatMintPending, matchSeatRole | team-cost-wiring.test.js task-start.test.js |
 | `_repinTicketToSeat` | Re-pins a role-assigned or dead-pinned ticket in memory to the seat delivery will reach; never pins the lead; caller saves | ticket role and assignee (in memory) | _ticketAssigneeSeat | ticket-replay.test.js task-start.test.js tickets-viewer-plugin.test.js |

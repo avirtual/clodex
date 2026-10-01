@@ -23,7 +23,7 @@ function expandImageChips(text, paths) {
   const map = paths || {};
   return String(text).replace(IMAGE_CHIP_RE, (chip, n) => {
     if (!Object.hasOwn(map, n)) return chip;
-    return map[n] ? `Image #${n}: ${map[n]} ` : '';
+    return map[n] ? `Image: ${map[n]} ` : '';
   });
 }
 

@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- PTY composer: a pasted image's path is sent as `Image: <path>` instead of `Image #n: <path>`, since the CLI numbers image marks per session and the draft's number never matched.
 
 ## 5.103.0 — 2026-10-01
 
