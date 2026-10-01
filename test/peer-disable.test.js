@@ -172,6 +172,15 @@ test('peer:visibleAdd on an unmaterialized or already-listed name writes nothing
   assert.equal(calls.broadcast.length, 0);
 });
 
+test('peer:visibleAdd rejects a name visibleNames refuses before any write or broadcast', () => {
+  const { handlers, calls } = visibleFixture({ a: ['alpha'] });
+  for (const bad of ['..', '../x', 7, '']) {
+    assert.deepEqual(handlers.get('peer:visibleAdd')({}, 'a', bad), { ok: false, error: 'bad name' });
+  }
+  assert.equal(calls.set.length, 0);
+  assert.equal(calls.broadcast.length, 0);
+});
+
 test('peer:visibleRemove reads the saved map at call time, so a stale caller keeps the other window\'s name', () => {
   const { handlers, store, calls } = visibleFixture({ a: ['alpha', 'beta'] });
   store.peerVisible = { a: ['alpha', 'beta', 'other'] };

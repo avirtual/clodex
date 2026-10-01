@@ -1595,6 +1595,7 @@ function registerIpcHandlers(deps) {
     return { ok: true, peerVisible: map };
   });
   handle('peer:visibleAdd', (_e, id, name) => {
+    if (visibleNames([name]).length !== 1) return { ok: false, error: 'bad name' };
     const sel = (uiSettings.get().peerVisible || {})[id];
     return writeVisible(id, nextVisibleWithName(sel, name));
   });

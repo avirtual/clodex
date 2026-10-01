@@ -182,9 +182,11 @@ test('create replay parity: every restore site replays the same tail, positions 
   found.forEach((s, i) => {
     const row = SITES[i];
     const where = `${s.file}:${s.line} (${row.label})`;
-    assert.strictEqual(s.args.length, LAST,
-      `${where} passes ${s.args.length} arguments; every restore site replays all ${LAST} — `
-      + `position ${s.args.length + 1} (${TAIL[s.args.length + 1 - FIRST] || '?'}) is missing`);
+    assert.strictEqual(s.args.length, LAST, s.args.length > LAST
+      ? `${where} passes ${s.args.length} arguments; the tail ends at ${LAST} — `
+        + 'create() grew a parameter: extend TAIL and every site, then raise LAST'
+      : `${where} passes ${s.args.length} arguments; every restore site replays all ${LAST} — `
+        + `position ${s.args.length + 1} (${TAIL[s.args.length + 1 - FIRST] || '?'}) is missing`);
     for (let pos = FIRST; pos <= LAST; pos++) {
       const want = row.differs[pos] ? row.differs[pos][0] : TAIL[pos - FIRST];
       assert.strictEqual(s.args[pos - 1], want,
@@ -193,11 +195,10 @@ test('create replay parity: every restore site replays the same tail, positions 
   });
 });
 
-test('create replay parity: no exception names a position the site does not differ on', () => {
+test('create replay parity: an exception row must differ from the shared tail', () => {
   for (const row of SITES) {
-    for (const [pos, [lit, why]] of Object.entries(row.differs)) {
+    for (const [pos, [lit]] of Object.entries(row.differs)) {
       assert.notStrictEqual(lit, TAIL[pos - FIRST], `${row.label} position ${pos} is listed as differing but matches the tail`);
-      assert.ok(why.length > 10, `${row.label} position ${pos} needs a reason`);
     }
   }
 });

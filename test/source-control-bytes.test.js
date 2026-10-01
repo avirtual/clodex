@@ -10,8 +10,8 @@
 // module was therefore invisible to review: the lead reading the branch as a
 // diff, and the cold reviewer after them, would both have been shown
 // "Binary files differ" where a new module should be. An older file
-// (scripts/mine-operator-messages.js) had the same idiom and
-// had already been shipping as an un-diffable binary unnoticed.
+// (scripts/mine-operator-messages.js) had the same idiom and had already been
+// shipping as an un-diffable binary unnoticed.
 //
 // That is the profile that earns a guard: silent to the author, silent to the
 // suite, silent to the reviewer. ESCAPED forms are FINE and stay legal here —
