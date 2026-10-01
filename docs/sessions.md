@@ -649,7 +649,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed (`_moving`) + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
-| Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io` | tab rebuilt as a terminal or a stream pane to match `io` |
+| Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io`; except a live claude stream seat whose Edit Session save differs from both the record it was spawned with (`_spawnRecord`) and the saved record only in `--model`: `applySessionArgs` sends `seatSetModel` (the CLI's `set_model`) instead and persists the args only on its success ack | tab rebuilt as a terminal or a stream pane to match `io`; untouched on an in-place model switch |
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set (the local backup; a click resumes a fork) — untouched on failure | killed (`_moving`); transcript + seat dirs shipped via `importSeat`, far box restores it with `mint=false`; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 
@@ -672,7 +672,8 @@ before its kind is acted on (codex declines approvals this way); an `init` with
 `transcriptPath` is linked as the seat transcript when the spec's
 `transcriptRepoint` is `'record'` (codex: the thread's rollout file); `encodeUser` may return
 null to write nothing; `encodeContext('compact'|'clear')` replaces the slash
-text for `[agent:context]`; and `encodeInterrupt()` backs `seatInterrupt`.
+text for `[agent:context]`; `encodeInterrupt()` backs `seatInterrupt`; and the claude codec's
+`encodeSetModel(model)` backs `seatSetModel`, its ack decoding to `control-ack`.
 
 **Move Session…** (right-click, agent rows only) changes a seat's cwd. A move is
 "same record, new cwd, restart": `manager.move(name, newCwd)` refuses an unknown

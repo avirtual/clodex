@@ -292,6 +292,7 @@ const CLAUDE_SLASH_DESCRIPTIONS = Object.freeze({
 });
 const STREAM_HINT_POLL_MS = 50;
 const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
+const STREAM_SET_MODEL_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // Imported only to re-export: tests import ticketCloseLine and ticketTaskDirLine from this module, so do not drop them as unused.
 const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
@@ -2045,6 +2046,8 @@ function createSessionManager(deps) {
           return Object.keys(clean).length ? { env: clean } : {};
         })(),
       });
+      const spawnedAs = getPersistence().get(name);
+      session._spawnRecord = spawnedAs ? { ...spawnedAs } : null;
       if (existingEntry && existingEntry.exitedAt) getPersistence().setExited(name, null);
 
       const onSessionId = (sessionId) => {
@@ -2687,6 +2690,26 @@ function createSessionManager(deps) {
       return { ok: true };
     }
 
+    seatSetModel(name, model) {
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s.io !== 'stream' || !s.stream || s.type !== 'claude') return Promise.resolve({ ok: false, error: 'not a live claude stream seat' });
+      const obj = typeof s.streamCodec.encodeSetModel === 'function' ? s.streamCodec.encodeSetModel(model) : null;
+      if (!obj) return Promise.resolve({ ok: false, error: 'this seat cannot switch models in place' });
+      if (!s._controlAcks) s._controlAcks = new Map();
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          s._controlAcks.delete(obj.request_id);
+          resolve({ ok: false, error: 'no reply from the CLI' });
+        }, STREAM_SET_MODEL_MS);
+        timer.unref?.();
+        s._controlAcks.set(obj.request_id, (rec) => {
+          clearTimeout(timer);
+          resolve(rec.ok ? { ok: true } : { ok: false, error: rec.error || 'set_model failed', ...(rec.errorCode ? { errorCode: rec.errorCode } : {}) });
+        });
+        this._streamSend(s, obj);
+      });
+    }
+
     _armStreamInitWatchdog(s) {
       this._clearStreamInitWatchdog(s);
       const ms = STREAM_INIT_MS;
@@ -2801,6 +2824,8 @@ function createSessionManager(deps) {
         this._clearStreamResultHold(s);
         this._clearStreamInitWatchdog(s);
         this._dropStreamPermissions(s);
+        if (s._controlAcks) for (const settle of s._controlAcks.values()) settle({ ok: false, error: 'the CLI exited' });
+        if (s._controlAcks) s._controlAcks.clear();
         const { code, signal } = ev.close;
         if (s.stream && s.stream.stderrTail && code) {
           log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
@@ -2821,6 +2846,7 @@ function createSessionManager(deps) {
           this._dropStreamPermissions(s);
           if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
           if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
+          if (rec.model) s.streamModel = rec.model;
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {
@@ -2860,6 +2886,11 @@ function createSessionManager(deps) {
         case 'permission-request':
           this._onStreamPermission(s, rec);
           break;
+        case 'control-ack': {
+          const settle = s._controlAcks && s._controlAcks.get(rec.id);
+          if (settle) { s._controlAcks.delete(rec.id); settle(rec); } else log.warn('session', `stream ${s.name}: control ack ${rec.id} (${rec.ok ? 'success' : rec.errorCode || 'error'}) arrived with no waiter`);
+          break;
+        }
         default:
           break;
       }

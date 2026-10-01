@@ -23760,3 +23760,67 @@ test('a role cwd named ..cache is a child of the root, not an escape', async () 
     assert.strictEqual(createdCwd, path.join(wtPath, '..cache'));
   } finally { fsReal.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('t1493: seatSetModel sends set_model and resolves on the matching ack, ok or error; init records the model', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sm1');
+  h.line('sm1', { type: 'system', subtype: 'init', session_id: 'sid-sm', model: 'claude-haiku-4-5', slash_commands: [] });
+  const s = h.m.sessions.get('sm1');
+  assert.strictEqual(s.streamModel, 'claude-haiku-4-5');
+  const okP = h.m.seatSetModel('sm1', 'claude-sonnet-4-6');
+  const sent = h.handles[0].sent.at(-1);
+  assert.deepStrictEqual(sent.request, { subtype: 'set_model', model: 'claude-sonnet-4-6' });
+  h.line('sm1', { type: 'control_response', response: { subtype: 'success', request_id: sent.request_id } });
+  assert.deepStrictEqual(await okP, { ok: true });
+  const badP = h.m.seatSetModel('sm1', 'claude-nope-1');
+  const bad = h.handles[0].sent.at(-1);
+  h.line('sm1', { type: 'control_response', response: { subtype: 'error', request_id: bad.request_id, error: "Model 'claude-nope-1' not found", error_code: 'catalog_unknown' } });
+  assert.deepStrictEqual(await badP, { ok: false, error: "Model 'claude-nope-1' not found", errorCode: 'catalog_unknown' });
+});
+
+test('t1493: seatSetModel refuses a pty seat and an unknown seat without sending', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  h.m.sessions.set('pty1', { name: 'pty1', type: 'claude', io: 'pty' });
+  assert.deepStrictEqual(await h.m.seatSetModel('pty1', 'claude-sonnet-4-6'), { ok: false, error: 'not a live claude stream seat' });
+  assert.deepStrictEqual(await h.m.seatSetModel('ghost', 'claude-sonnet-4-6'), { ok: false, error: 'not a live claude stream seat' });
+});
+
+test('t1493: seatSetModel resolves no-reply after 60s without an ack, and a late ack is ignored', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sm2');
+  h.line('sm2', { type: 'system', subtype: 'init', session_id: 'sid-sm2', model: 'm', slash_commands: [] });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let settled = null;
+  h.m.seatSetModel('sm2', 'claude-sonnet-4-6').then((r) => { settled = r; });
+  const sent = h.handles[0].sent.at(-1);
+  t.mock.timers.tick(59_999);
+  await Promise.resolve();
+  assert.strictEqual(settled, null, 'ENTER: still waiting on the probe');
+  t.mock.timers.tick(1);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepStrictEqual(settled, { ok: false, error: 'no reply from the CLI' });
+  assert.strictEqual(h.m.sessions.get('sm2')._controlAcks.size, 0);
+  h.line('sm2', { type: 'control_response', response: { subtype: 'success', request_id: sent.request_id } });
+  assert.ok(h.logs.some((l) => l[0] === 'warn' && /control ack clodex-set-model-1 \(success\) arrived with no waiter/.test(l[2])));
+});
+
+test('t1493: a CLI exit settles a pending seatSetModel, and create() keeps the record the seat was spawned with', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sm3');
+  h.line('sm3', { type: 'system', subtype: 'init', session_id: 'sid-sm3', model: 'm', slash_commands: [] });
+  const s = h.m.sessions.get('sm3');
+  assert.strictEqual(s._spawnRecord.io, 'stream');
+  assert.deepStrictEqual(s._spawnRecord.extraArgs, []);
+  let settled = null;
+  h.m.seatSetModel('sm3', 'claude-sonnet-4-6').then((r) => { settled = r; });
+  h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepStrictEqual(settled, { ok: false, error: 'the CLI exited' });
+  assert.strictEqual(s._controlAcks.size, 0);
+});

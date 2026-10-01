@@ -803,6 +803,7 @@ const { unionEnabled } = require('./scope-util');
 const { sshRun } = require('./ssh-run');
 const { probePeer, fixSessionName, buildDeployFixBriefing, classifyDeployFolder, homeRelativize, resolveDeployFolder } = require('./peer-deploy');
 const { resolveSessionArgsPatch } = require('./session-args');
+const { splitModelArg } = require('./renderer/lib/args-model');
 const { ProxyClient, createProxyPoller, PROXY_REPORT_TIMEOUT } = require('./wirescope-proxy');
 const ProxyPoller = createProxyPoller({
   log, stripLevelOf, WIRE_TELEMETRY_LIVE,
@@ -1537,6 +1538,14 @@ function readSessionArgs(name) {
   } : { ok: false };
 }
 
+function modelOnlyChange(prev, patch, base = prev) {
+  const before = splitModelArg(prev.extraArgs);
+  const after = splitModelArg(patch.extraArgs);
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (!same(before.rest, after.rest) || !same(patch.proxy ?? null, prev.proxy ?? null)) return null;
+  return same(resolveSessionArgsPatch(patch, base), resolveSessionArgsPatch({}, prev)) ? { from: before.model, to: after.model } : null;
+}
+
 async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const { extraArgs, restart, proxy } = patch;
   const beforeKill = persistence.get(name);
@@ -1547,6 +1556,23 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     intents: nextIntents, execCommands: nextExec, env: nextEnv, plugins: nextPlugins,
   } = resolveSessionArgsPatch(patch, beforeKill);
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
+  const priorIo = beforeKill.io || 'pty';
+  const nextIo = (patch.io === 'stream' || patch.io === 'pty') && !!streamFor(beforeKill.type) ? patch.io : priorIo;
+  const priorEffort = (typeof beforeKill.effort === 'string' && beforeKill.effort) ? beforeKill.effort : null;
+  const nextEffort = patch.effort === undefined ? priorEffort
+    : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
+  const live = restart && beforeKill.type === 'claude' && nextIo === 'stream' && priorIo === 'stream' && nextEffort === priorEffort ? manager.sessions.get(name) : null;
+  const spawned = live && !live._dead && live.io === 'stream' ? live._spawnRecord : null;
+  const spawnedEffort = spawned && typeof spawned.effort === 'string' && spawned.effort ? spawned.effort : null;
+  const vsSpawn = spawned && (spawned.io || 'pty') === 'stream' && spawnedEffort === nextEffort ? modelOnlyChange(spawned, patch, beforeKill) : null;
+  const inPlaceModel = vsSpawn && vsSpawn.to && vsSpawn.to !== vsSpawn.from && modelOnlyChange(beforeKill, patch) ? vsSpawn.to : null;
+  if (inPlaceModel) {
+    const res = await manager.seatSetModel(name, inPlaceModel);
+    if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'set_model failed' };
+    persistence.setExtraArgs(name, extraArgs);
+    spawned.extraArgs = extraArgs;
+    return { ok: true, restarted: false, modelSwitched: true };
+  }
   persistence.setExtraArgs(name, extraArgs);
   persistence.setProxy(name, proxy ?? null);
   persistence.setSystemPrompt(name, nextInline);
@@ -1564,13 +1590,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
   persistence.setExecCommands(name, nextExec);
   persistence.setEnv(name, nextEnv);
-  const priorIo = (beforeKill && beforeKill.io) || 'pty';
-  const nextIo = (patch.io === 'stream' || patch.io === 'pty') && beforeKill && !!streamFor(beforeKill.type)
-    ? patch.io : priorIo;
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
-  const priorEffort = (beforeKill && typeof beforeKill.effort === 'string' && beforeKill.effort) ? beforeKill.effort : null;
-  const nextEffort = patch.effort === undefined ? priorEffort
-    : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
   if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
   if (!restart) return { ok: true, restarted: false };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
