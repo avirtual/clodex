@@ -156,31 +156,47 @@ test('a set that names only terminalReports leaves terminalRemote alone', () => 
     'and a junk write cannot land a value that reads back as itself');
 });
 
-// ── engine: the two gates, pinned in source ───────────────────────────────
+// ── engine: the two gates ─────────────────────────────────────────────────
 
 const engineSrc = fs.readFileSync(require.resolve('../engine.js'), 'utf8');
 
 test('the capability gate and the disclosure gate read the pref DIFFERENTLY', () => {
-  // The whole ticket in one assertion. `shimEnv` decides whether marks exist;
-  // `onCommand` decides whether the operator's commands are handed over. If a
-  // future edit makes these two comparisons the same, the tri-state has
-  // silently become a boolean again and `asked` stops being a state.
-  const shim = engineSrc.match(/shimEnv: \(seat\) => \{\n\s*(if \(.*?\) return null;)/);
-  assert.ok(shim, 'ENTER: the shimEnv gate was found in engine.js');
-  assert.match(shim[1], /terminalReports === 'off'/,
-    'capability is withdrawn ONLY by `off`');
-
-  const onCmd = engineSrc.match(/onCommand: \(seat, rec\) => \{\n\s*(if \(.*?\) return;)/);
-  assert.ok(onCmd, 'ENTER: the onCommand gate was found in engine.js');
-  assert.match(onCmd[1], /terminalReports !== 'all'/,
-    'disclosure is granted ONLY by `all`');
-
-  // Stated as absences too, because the collapse can land either way round: a
-  // single `!== 'all'` serving both would revoke the capability the moment the
-  // firehose went off, and a single `=== 'off'` would put the operator's
-  // commands back on the wire under `asked`.
-  assert.doesNotMatch(shim[1], /'all'/, 'the capability gate must not consult `all`');
-  assert.doesNotMatch(onCmd[1], /'off'/, 'the disclosure gate must not consult `off`');
+  // The whole ticket in one table. `shimEnv` decides whether marks exist;
+  // `onCommand` decides whether the operator's commands are handed over. If the
+  // two gates collapse into one comparison, the tri-state has silently become a
+  // boolean again and `asked` stops being a state.
+  const dp = require('../drawer-pty');
+  const orig = dp.createDrawerPtys;
+  let deps = null;
+  dp.createDrawerPtys = (d) => { deps = d; return { exec() {}, dispose() {} }; };
+  let booted;
+  try { booted = bootEngine(); } finally { dp.createDrawerPtys = orig; }
+  const { eng, restore } = booted;
+  const prevShell = process.env.SHELL;
+  try {
+    assert.ok(deps && deps.shimEnv && deps.onCommand, 'ENTER: the drawer-pty deps were captured');
+    process.env.SHELL = '/bin/zsh';
+    const file = path.join(eng.REGISTRY_DIR, 'run', 'seat', 'selection.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const rec = { command: 'git status', exitCode: 0, output: '' };
+    for (const [pref, shims, writes] of [['off', false, false], ['asked', true, false], ['all', true, true]]) {
+      eng.stores.uiSettings.set({ terminalReports: pref });
+      assert.strictEqual(eng.stores.uiSettings.get().terminalReports, pref, `ENTER: the pref took ${pref}`);
+      assert.strictEqual(deps.shimEnv('seat') !== null, shims, `${pref}: shimEnv('seat') non-null should be ${shims}`);
+      fs.rmSync(file, { force: true });
+      deps.onCommand('seat', rec);
+      if (writes) {
+        const rows = readRows(file);
+        assert.strictEqual(rows.length, 1, `${pref}: onCommand writes one row`);
+        assert.strictEqual(JSON.parse(rows[0]).kind, 'terminal-passive', `${pref}: the row is tagged passive`);
+      } else {
+        assert.strictEqual(fs.existsSync(file), false, `${pref}: onCommand must write nothing`);
+      }
+    }
+  } finally {
+    if (prevShell === undefined) delete process.env.SHELL; else process.env.SHELL = prevShell;
+    restore();
+  }
 });
 
 test('the passive firehose is the only queue writer that tags its rows', () => {

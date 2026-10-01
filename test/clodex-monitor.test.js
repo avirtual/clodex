@@ -30,6 +30,17 @@ const EXEC_DEF = JSON.parse(fs.readFileSync(EXEC_DEF_PATH, 'utf-8'));
 const SRC = fs.readFileSync(SCRIPT, 'utf-8');
 
 const ok = (payload) => parseAndValidate(EXEC_DEF, JSON.stringify(payload));
+const cpMon = require('child_process');
+const launchMon = (home, payload) => new Promise((resolve) => {
+  const ch = cpMon.spawn(process.execPath, [SCRIPT], {
+    env: { ...process.env, CLODEX_HOME: home },
+    stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  let err = '';
+  ch.stderr.on('data', (d) => { err += d.toString(); });
+  ch.on('exit', (code) => resolve({ code, err: err.trim() }));
+  ch.stdin.end(JSON.stringify(payload));
+});
 
 // ENTER CHECK. Every assertion in this file is only worth its salt if EXEC_DEF
 // is the shipped def rather than a copy of it, so this pins PATH IDENTITY: the
@@ -139,13 +150,48 @@ test('exec-def encodes ws.protocols as a comma-separated string, and the script 
   assert.deepStrictEqual(EXEC_DEF.schema.properties.ws.properties.protocols,
     { type: 'string', maxLength: 400 },
     'the whole protocols spec — the string type is the deliberate encoding, not an oversight');
-  assert.match(SRC, /typeof p\.ws\.protocols === 'string'/,
-    'the script reads protocols as a string; the def must not promise it an array');
-  assert.match(SRC, /p\.ws\.protocols\.split\(','\)/,
-    "and splits it on commas — that is what makes the string encoding lossless");
 
   const arr = ok({ action: 'start', agent: 'a', ws: { url: 'wss://x', protocols: ['a', 'b'] } });
   assert.strictEqual(arr.ok, false, 'an array must be refused at the gate, not dropped in the script');
+});
+
+test('a ws start offers the comma-string protocols to the server as a subprotocol list', async () => {
+  const http = require('http');
+  const home = mkTmpRoot('clodex-mon-');
+  fs.mkdirSync(path.join(home, 'run', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'run', 'a', 'agent.json'),
+    JSON.stringify({ socket: path.join(home, 'no-such.sock') }));
+  let gotHeader;
+  const upgraded = new Promise((resolve) => { gotHeader = resolve; });
+  const server = http.createServer();
+  server.on('upgrade', (req, socket) => {
+    gotHeader(req.headers['sec-websocket-protocol']);
+    socket.destroy();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const monDir = path.join(home, 'monitors', 'a');
+  let timer;
+  try {
+    const r = await launchMon(home, {
+      action: 'start', agent: 'a',
+      ws: { url: `ws://127.0.0.1:${server.address().port}`, protocols: 'a,b' },
+    });
+    assert.strictEqual(r.code, 0, `start must succeed: ${r.err}`);
+    const header = await Promise.race([
+      upgraded,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('no ws upgrade reached the server within 10s')), 10000);
+      }),
+    ]);
+    assert.strictEqual(header, 'a, b');
+  } finally {
+    clearTimeout(timer);
+    server.close();
+    for (const f of fs.existsSync(monDir) ? fs.readdirSync(monDir) : []) {
+      if (!f.endsWith('.json')) continue;
+      try { process.kill(JSON.parse(fs.readFileSync(path.join(monDir, f), 'utf-8')).pid); } catch {}
+    }
+  }
 });
 
 // The division of labour, pinned deliberately rather than asserted as a gate
@@ -159,7 +205,7 @@ test('exec-def encodes ws.protocols as a comma-separated string, and the script 
 // grows the vocabulary and the def starts gating these, the accepts below flip
 // and this fails — which is the moment to move the rule forward, not a
 // regression.
-test('exec-def cannot express start XOR or stop-needs-id — the script is their only enforcement', () => {
+test('exec-def cannot express start XOR or stop-needs-id — the script is their only enforcement', async () => {
   for (const [payload, why] of [
     [{ action: 'start', agent: 'a' }, 'neither command nor ws'],
     [{ action: 'start', agent: 'a', command: 'c', ws: { url: 'wss://x' } }, 'both command and ws'],
@@ -171,12 +217,21 @@ test('exec-def cannot express start XOR or stop-needs-id — the script is their
       + 'and this test should move with it');
   }
   // …and the script refuses each one, so nothing reaches the daemon spawn.
-  assert.match(SRC, /if \(!hasCmd && !hasWs\) die\('start needs a command or a ws:\{url\}'\)/,
-    'the script must refuse a start with neither, since the gate does not');
-  assert.match(SRC, /if \(hasCmd && hasWs\) die\('start takes command OR ws, not both'\)/,
-    'and refuse a start with both — silently preferring one would spawn a watcher on the wrong source');
-  assert.match(SRC, /if \(!p\.id\) die\('stop needs an id'\)/,
-    'and refuse a stop with no id, since `required` is a flat list and adding id there breaks list/start');
+  const home = mkTmpRoot('clodex-mon-');
+  const enter = await launchMon(home, { action: 'list', agent: 'a' });
+  assert.strictEqual(enter.code, 0, `a valid list must exit 0, so a refusal below is the guard: ${enter.err}`);
+  for (const [payload, expected, why] of [
+    [{ action: 'start', agent: 'a' }, /start needs a command or a ws:\{url\}/,
+      'the script must refuse a start with neither, since the gate does not'],
+    [{ action: 'start', agent: 'a', command: 'c', ws: { url: 'wss://x' } }, /start takes command OR ws, not both/,
+      'and refuse a start with both — silently preferring one would spawn a watcher on the wrong source'],
+    [{ action: 'stop', agent: 'a' }, /stop needs an id/,
+      'and refuse a stop with no id, since `required` is a flat list and adding id there breaks list/start'],
+  ]) {
+    const r = await launchMon(home, payload);
+    assert.strictEqual(r.code, 1, `${why} — exit`);
+    assert.match(r.err, expected, why);
+  }
 });
 
 // TRAVERSAL. `agent` and `id` are both joined into paths (monitors/<agent>/,
@@ -185,17 +240,6 @@ test('exec-def cannot express start XOR or stop-needs-id — the script is their
 // The schema's maxLength constrains length, never characters — so the script's
 // own guard is the enforcement, and it must hold when the script is run
 // standalone as well as through the dispatcher.
-const cpMon = require('child_process');
-const launchMon = (home, payload) => new Promise((resolve) => {
-  const ch = cpMon.spawn(process.execPath, [SCRIPT], {
-    env: { ...process.env, CLODEX_HOME: home },
-    stdio: ['pipe', 'ignore', 'pipe'],
-  });
-  let err = '';
-  ch.stderr.on('data', (d) => { err += d.toString(); });
-  ch.on('exit', (code) => resolve({ code, err: err.trim() }));
-  ch.stdin.end(JSON.stringify(payload));
-});
 
 test('launcher refuses a traversing agent or id before touching the filesystem', async () => {
   const home = mkTmpRoot('clodex-mon-');

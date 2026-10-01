@@ -11,7 +11,7 @@
 // handlers forward to them correctly.
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -443,28 +443,31 @@ test('team:preflight surfaces an unreadable manifest as an error with an EMPTY f
 // The regression guard proper. The handler tests above inject the writer as a
 // dep directly, so they prove the handler FORWARDS to it — but not that engine
 // actually populates that dep. The original bug lived in engine's RETURN
-// surface: the four names were passed only into the SessionManager deps block
-// (inside createEngine, one name per line), never the returned object main.js
-// spreads into ipc-handlers. So target the RETURN surface precisely: the four
-// names appear comma-separated on ONE line only in the return literal (the deps
-// block lists them one-per-line), so this regex fails loudly if the export is
-// dropped again without matching the deps block by accident.
+// surface, so boot a real engine and read the writers off what it returns.
 
 test('createEngine returns the front-door writers on the seam ipc-handlers spreads', () => {
-  const src = require('fs').readFileSync(require.resolve('../engine.js'), 'utf-8');
-  assert.match(src, /createTeam, addRole, resolveTeam, listTeams,/,
-    'engine.js return object must list the four front-door writers on the ipc-handlers seam');
-  // setLead (t420) rides the same seam and would fail the same silent way — the
-  // handler destructures it, so an unexported name is `undefined` and every
-  // team:setLead returns {ok:false, error:"setLead is not a function"}.
-  //
-  // Anchored to the RETURN literal by matching the PAIR of lines: the require
-  // destructure at the top of engine.js also carries `setLead` on a line of
-  // mutators, and matching that one would pass while the return surface stayed
-  // broken — precisely the false green this whole file exists to prevent. Only
-  // the return literal has `loadManifest,` ending the preceding line.
-  assert.match(src, /createTeam, addRole, resolveTeam, listTeams, loadManifest,\n\s*setRole, removeRole, renameRole, setTeamWatchdog, setLead,/,
-    'engine.js return object must export setLead on the ipc-handlers seam');
+  const path = require('path');
+  const home = mkTmpRoot('clodex-t416-');
+  const prevHome = process.env.HOME;
+  process.env.HOME = home;
+  const { createEngine } = require('../engine');
+  const eng = createEngine({
+    userDataPath: mkTmpRoot('clodex-t416-ud-'),
+    seams: { noSeed: true, registryDir: path.join(home, '.clodex') },
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  try {
+    assert.strictEqual(eng.notAFrontDoorWriter, undefined,
+      'ENTER: an unknown name is absent, so the engine is not a proxy that answers every key');
+    for (const k of ['createTeam', 'addRole', 'resolveTeam', 'listTeams', 'loadManifest',
+      'setRole', 'removeRole', 'renameRole', 'setTeamWatchdog', 'setLead']) {
+      assert.strictEqual(typeof eng[k], 'function',
+        `createEngine must return ${k} on the ipc-handlers seam`);
+    }
+  } finally {
+    try { eng.shutdown(); } catch {}
+    if (prevHome === undefined) delete process.env.HOME; else process.env.HOME = prevHome;
+  }
 });
 
 // The garbled-def split lives in the HANDLER's probe, not in the leaf: only the
@@ -664,3 +667,5 @@ test('t1096: team:addRole with an empty def on an absent stock role logs the sto
   assert.strictEqual(lines.length, 1);
   assert.match(lines[0][1], /^role "hand" added to team "shop" \(stock; /);
 });
+
+after(() => { setImmediate(() => process.exit(0)); });
