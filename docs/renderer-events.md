@@ -93,6 +93,7 @@ Every live window; a web host fans to every connection.
 | `wire-quota` | `{accounts, latest}` (plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown). `accounts` is one labelled snapshot per account the wire has seen, `default` first; `latest` is the last-seen account's alone | session-manager `_broadcastQuota` / the wire `response` consumer, both via `_quotaPayload` |
 | `session:move-progress` | `{name, phase, bytes, total, files, fileIndex}` — phases `begin` → `transcript` → `seat` → `commit`; `bytes`/`total` are BYTES across the whole shipment (monotonic, so a bar can read `bytes/total` directly), `files`/`fileIndex` the file count and the one in flight | session-manager `moveToPeer` |
 | `peer-disabled` | `id, on, label` | ipc-handlers (`peer:setDisabled`) |
+| `peer-visible` | `map` (the whole saved `peerVisible` whitelist map) | ipc-handlers (`peer:setVisible`, `peer:visibleAdd`, `peer:visibleRemove`) |
 | `peer-state` | `id, status` (`{online, label, …}`) | peer-client `_emit` → peer-wiring `emit` |
 | `peer-removed` | `id` | peer-client / peer-wiring |
 | `peer-tunnel` | `id, status` | peer-wiring (TunnelManager onState) |

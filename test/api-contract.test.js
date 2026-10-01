@@ -85,6 +85,7 @@ const PINNED_NAMES = [
   // below: this writes a setting on THIS box, it does not open a shell.
   'peerSetShellAllowed',
   'peerControlledNames', 'peerForgetControlled', 'peerVisible', 'peerSetVisible',
+  'peerVisibleAdd', 'peerVisibleRemove', 'onPeerVisible',
   'peerControl', 'peerResize', 'peerInput', 'peerQuery',
   'peerRestart', 'peerCreateSession', 'peerCatalogs', 'peerKillSession', 'peerRestartSession',
   'peerSessionArgs', 'peerSetSessionArgs', 'peerSkillCatalog', 'peerSetSessionSkills',

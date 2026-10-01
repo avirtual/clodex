@@ -26,6 +26,7 @@ const { catalogRows, allowlistFromChecked, pruneForPlugins, rows: intentRows } =
 const { feedSince } = require('./subagent-ring');
 // Main-side on purpose: an imported token must never round-trip through the renderer.
 const peerImport = require('./peer-import');
+const { nextVisibleWithName, nextVisibleWithoutName } = require('./peer-visibility');
 const { wireSeatFor } = require('./peer-shell');
 const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 const { createTranscriptSpikeReader } = require('./transcript-spike');
@@ -1571,17 +1572,36 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
   handle('peer:visible', () => uiSettings.get().peerVisible || {});
+  const visibleNames = (names) => names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
+  const writeVisible = (id, next) => {
+    const cur = uiSettings.get().peerVisible || {};
+    if (!next) return { ok: true, peerVisible: cur };
+    const map = { ...cur, [id]: visibleNames(next) };
+    uiSettings.set({ peerVisible: map });
+    manager._broadcast('peer-visible', map);
+    return { ok: true, peerVisible: map };
+  };
   handle('peer:setVisible', (_e, id, names) => {
     const map = { ...(uiSettings.get().peerVisible || {}) };
     if (names === null || names === undefined) {
       delete map[id];
     } else if (Array.isArray(names)) {
-      map[id] = names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
+      map[id] = visibleNames(names);
     } else {
       return { ok: false, error: 'names must be an array or null' };
     }
     uiSettings.set({ peerVisible: map });
+    manager._broadcast('peer-visible', map);
     return { ok: true, peerVisible: map };
+  });
+  handle('peer:visibleAdd', (_e, id, name) => {
+    const sel = (uiSettings.get().peerVisible || {})[id];
+    return writeVisible(id, nextVisibleWithName(sel, name));
+  });
+  handle('peer:visibleRemove', (_e, id, name, liveNames) => {
+    const sel = (uiSettings.get().peerVisible || {})[id];
+    const live = Array.isArray(liveNames) ? visibleNames(liveNames) : undefined;
+    return writeVisible(id, nextVisibleWithoutName(sel, name, live));
   });
   handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
