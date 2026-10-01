@@ -251,7 +251,7 @@
 | `handle:session:agentCatalog` | the subagents visible to a seat, which are enabled and the denied builtins | sessions.json (read), agent library | agentLibrary.listFor, sessionScopeCtx | unpinned |
 | `handle:session:skillCatalog` | the skills visible to a seat | none | readSkillCatalog | codex-skills-popover.test.js default-skill-catalog.test.js |
 | `handle:settings:skillCatalogFor` | the skills visible for a cwd and agent type before any seat exists | none | readSkillCatalog | default-skill-catalog.test.js optimized-late-skills.test.js template-editor-deny-roundtrip.test.js |
-| `handle:settings:voiceMode` | the voice mode of a seat (or the focused one), the trigger and whether the host can record | none | manager.voiceModeFor, readVoiceTrigger, readVoiceCapability | voice-trigger-ipc.test.js voice-core.test.js |
+| `handle:settings:voiceMode` | the voice mode of a seat (or the focused one) and whether the host can record | none | manager.voiceModeFor, readVoiceCapability | voice-capability.test.js |
 | `handle:settings:setVoiceMode` | sets the voice mode globally or for one seat | voice mode via manager | manager.voiceMode | unpinned |
 | `handle:session:setVoice` | sets one seat's voice mode | voice mode via manager | manager.setVoice | unpinned |
 | `handle:settings:toolCatalogFor` | the effective tool overrides for a cwd | none | readEffectiveToolState | template-editor-deny-roundtrip.test.js |

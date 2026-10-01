@@ -30138,20 +30138,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         window.addEventListener("focus", () => {
           if (holds > 0) refresh();
         });
-        function triggerBinding() {
-          return state && state.trigger && state.trigger.binding || null;
-        }
-        return {
-          snapshot,
-          subscribe,
-          choose,
-          refresh,
-          repaint: emit,
-          start,
-          stop,
-          isMode,
-          triggerBinding
-        };
+        return { snapshot, subscribe, choose, refresh, repaint: emit, start, stop, isMode };
       }
       module.exports = { createVoiceCore, VOICE_ITEMS };
     }

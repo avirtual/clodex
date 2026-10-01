@@ -411,7 +411,7 @@ session      restartClodex (= seams.restartHost), restartUnavailable, restartSes
 views        fetchProxyContext, fetchProxyReport, fetchProxyBust, fetchSessionFiles, fetchFilePeek,
              fetchFileDiff, writeFilePeek, resolveFilePath
 library      knownSkillNames, listAllTemplates, listAllPrompts, resolveSystemPromptFile, readAppendBodies,
-             readSystemPromptBody, readEffectiveSkillState, readEffectiveToolState, readVoiceTrigger,
+             readSystemPromptBody, readEffectiveSkillState, readEffectiveToolState,
              readVoiceCapability, listSpeakVoices
 teams        createTeam, addRole, resolveTeam, listTeams, loadManifest, setRole, removeRole, renameRole,
              setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir, teamDeleteCheck, teamDeleteGated

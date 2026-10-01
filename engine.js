@@ -23,7 +23,6 @@ const { peekFile } = require('./file-peek');
 const { resolveDisplayedPath, durableMessageCopyOf } = require('./file-resolve');
 const { runLegacySweep, findOrphans } = require('./legacy-sweep');
 const { migrateSeatLayout } = require('./seat-layout');
-const { readVoiceTrigger } = require('./voice-settings');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
@@ -2275,7 +2274,7 @@ const toolCache = createToolCache({ whichBin });
     restartSession, waitForSessionExit,
     readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills,
     accounts, moveAccountByModel,
-    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState, readVoiceTrigger,
+    sessionScopeCtx, readEffectiveSkillState, readEffectiveToolState,
     readVoiceCapability: readVoiceCapabilityCached,
     readSessionMeta, sessionMeta, sessionInfo, claudeProjectDir, rebuildAllStatusScripts, whichBin,
     stripLevelOf, updateApplies, jsonlToMarkdown, sshRun,
