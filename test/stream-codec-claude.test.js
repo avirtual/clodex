@@ -34,6 +34,7 @@ const ROWS = [
     kind: 'init', sessionId: 'cc887621-34fe-485b-a555-12bddec12af1', model: 'claude-haiku-4-5-20251001',
     slashCommands: INIT_SLASH,
     terminalSlashCommands: ['doctor', 'color', 'focus', 'reload-plugins'],
+    pluginErrors: [],
   }],
   ['result/success', 1, { kind: 'result', durationMs: 1330, costUsd: 0.008299500000000001, isError: false }],
   ['result/error_during_execution', 2, { kind: 'result', durationMs: 0, costUsd: 0, isError: true }],
@@ -58,6 +59,13 @@ for (const [label, idx, want] of ROWS) {
 
 test('decode: an init without terminal_slash_commands reports an empty terminal set', () => {
   assert.deepStrictEqual(decode({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact'] }).terminalSlashCommands, []);
+});
+
+test('decode: an init carrying the measured 2.1.286 plugin_errors entry keeps it, path preserved', () => {
+  const message = 'Failed to load plugin: Plugin clodex-agents has a corrupt manifest file at /tmp/p/.claude-plugin/plugin.json. JSON parse error: Unexpected token';
+  const rec = decode({ type: 'system', subtype: 'init', session_id: 's', slash_commands: [],
+    plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message, path: '/tmp/p' }, null, 'x'] });
+  assert.deepStrictEqual(rec.pluginErrors, [{ plugin: 'inline[0]', type: 'generic-error', message, path: '/tmp/p' }]);
 });
 
 test('decode: assistant and user content records are not decoded', () => {
