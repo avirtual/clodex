@@ -66,6 +66,12 @@ function decode(obj) {
         model: obj.model || null,
         slashCommands: Array.isArray(obj.slash_commands) ? obj.slash_commands : [],
         terminalSlashCommands: Array.isArray(obj.terminal_slash_commands) ? obj.terminal_slash_commands : [],
+        pluginErrors: Array.isArray(obj.plugin_errors) ? obj.plugin_errors.filter((e) => e && typeof e === 'object').map((e) => ({
+          plugin: typeof e.plugin === 'string' ? e.plugin : null,
+          type: typeof e.type === 'string' ? e.type : null,
+          message: typeof e.message === 'string' ? e.message : '',
+          path: typeof e.path === 'string' ? e.path : null,
+        })) : [],
       };
     case 'compact_boundary': {
       const meta = obj.compact_metadata || {};

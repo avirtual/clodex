@@ -23024,6 +23024,41 @@ test('t1208: seatCommands on a claude seat after init lists its slash commands m
   ]);
 });
 
+test('t1513: a claude init with a plugin error, sent twice, logs one warn naming the path and broadcasts one plugin-error, and still applies model and slash commands', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const sent = [];
+  h.m._broadcast = (ch, msg) => sent.push([ch, msg]);
+  await h.create('pe1');
+  h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'],
+    plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message: 'Failed to load plugin: corrupt manifest\nsecond line', path: '/abs/bad-plugin' }] });
+  h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'],
+    plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message: 'Failed to load plugin: corrupt manifest\nsecond line', path: '/abs/bad-plugin' }] });
+  const s = h.m.sessions.get('pe1');
+  assert.strictEqual(s.streamModel, 'm-pe');
+  assert.deepStrictEqual(s._slashCommands, ['compact']);
+  const warns = h.logs.filter(([lvl, , msg]) => lvl === 'warn' && msg.includes('plugin dir(s) failed to load'));
+  assert.strictEqual(warns.length, 1, JSON.stringify(h.logs));
+  assert.ok(warns[0][2].includes('/abs/bad-plugin: Failed to load plugin: corrupt manifest'), warns[0][2]);
+  assert.ok(!warns[0][2].includes('second line'), warns[0][2]);
+  const pe = sent.filter(([ch, msg]) => ch === 'ipc-message' && msg.kind === 'plugin-error');
+  assert.strictEqual(pe.length, 1);
+  assert.strictEqual(pe[0][1].to, 'pe1');
+  assert.strictEqual(pe[0][1].body, warns[0][2]);
+  assert.ok(!s.needsAttention, 'a bad plugin is not a blocked seat');
+});
+
+test('t1513: a claude init with an empty plugin_errors neither warns nor broadcasts a plugin-error', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const sent = [];
+  h.m._broadcast = (ch, msg) => sent.push([ch, msg]);
+  await h.create('pe2');
+  h.line('pe2', { type: 'system', subtype: 'init', session_id: 'sid-pe2', model: 'm', slash_commands: [], plugin_errors: [] });
+  assert.strictEqual(h.logs.filter(([lvl, , msg]) => lvl === 'warn' && msg.includes('plugin dir(s)')).length, 0);
+  assert.strictEqual(sent.filter(([, msg]) => msg && msg.kind === 'plugin-error').length, 0);
+});
+
 function mkRealCodexSeat() {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const h = mkStreamSeatManager({

@@ -2850,6 +2850,15 @@ function createSessionManager(deps) {
           if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
           if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
           if (rec.model) s.streamModel = rec.model;
+          if (Array.isArray(rec.pluginErrors)) {
+            const entries = rec.pluginErrors.map((e) => `${e.path || e.plugin || '?'}: ${String(e.message || '').split('\n')[0]}`).join('; ');
+            if (entries && entries !== s._pluginErrorEntries) {
+              const text = `${s.name}: ${rec.pluginErrors.length} plugin dir(s) failed to load — ${entries}`;
+              log.warn('stream', text);
+              this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: s.name, kind: 'plugin-error', body: text });
+            }
+            s._pluginErrorEntries = entries;
+          }
           if (rec.transcriptPath) this._repointStreamTranscript(s, rec.sessionId, rec.transcriptPath);
           if (rec.sessionId && rec.sessionId !== s.sessionId) onSessionId(rec.sessionId);
           if (s._replayAtInit) {
