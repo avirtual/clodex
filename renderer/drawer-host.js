@@ -80,9 +80,6 @@ const DRAWER_MAX_FRACTION = 0.7;
 // is a programming error, not a new tab.
 const TAB_IDS = Object.freeze(['log', 'activity', 'console', 'ctl', 'term']);
 
-// Beyond this the badge is "a lot"; the count itself keeps counting.
-const BADGE_MAX = 99;
-
 // onArmChanged: something was armed, handed over, or released — the inspector's
 // badge is stale. Fired rather than polled so the badge costs a proxy read only
 // when the state it reports actually moved.
@@ -160,13 +157,13 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   const isVisible = (id) => !isCollapsed() && activeId === id;
 
   function renderBadge(rec) {
-    rec.badgeEl.textContent = rec.unread > BADGE_MAX ? `${BADGE_MAX}+` : String(rec.unread);
-    rec.badgeEl.classList.toggle('zero', rec.unread === 0);
-    rec.badgeEl.classList.toggle('attention', rec.attention && rec.unread > 0);
+    rec.badgeEl.textContent = '';
+    rec.badgeEl.classList.toggle('zero', !rec.unread);
+    rec.badgeEl.classList.toggle('attention', rec.attention && rec.unread);
   }
 
   function clearBadge(rec) {
-    rec.unread = 0;
+    rec.unread = false;
     rec.attention = false;
     renderBadge(rec);
   }
@@ -334,8 +331,6 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
       // subtree and a tab button is inside it.
       rec.tabEl.classList.toggle('unavailable', !ok);
       if (!ok && rec.id === activeId) activeLost = true;
-      // A hidden tab keeps counting nothing: clear so a switch back does not
-      // show a badge for bytes that arrived while it was inapplicable.
       if (!ok) clearBadge(rec);
     }
     if (!activeLost) return;
@@ -365,7 +360,6 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     labelEl.textContent = def.label || def.id;
     const badgeEl = document.createElement('span');
     badgeEl.className = 'drawer-badge zero';
-    badgeEl.textContent = '0';
     tabEl.appendChild(labelEl);
     tabEl.appendChild(badgeEl);
     tabEl.addEventListener('click', (e) => {
@@ -378,7 +372,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
 
     const rec = {
       id: def.id, def, pane, actions, tabEl, badgeEl,
-      unread: 0, attention: false, mounted: false,
+      unread: false, attention: false, mounted: false,
       shown: false,        // the onShow/onHide edge state (rule 2)
       pendingResize: false,
     };
@@ -396,7 +390,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     if (activeId === null && servesSeat(rec)) selectFirst(rec);
     function notify(level) {
       if (isVisible(rec.id)) return; // the operator is looking at it
-      rec.unread++;
+      rec.unread = true;
       if (level === 'attention') rec.attention = true;
       renderBadge(rec);
     }
