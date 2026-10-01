@@ -422,8 +422,9 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   const childEnv = dockerHost ? { ...(io.env || process.env), DOCKER_HOST: dockerHost } : null;
   const writeErr = io.stderr || ((s) => process.stderr.write(s));
   let res;
+  let stderrTail = '';
   try {
-    res = await runDocker({ args: runArgs, env: childEnv, spawnFn: io.spawnFn, onStderr: (s) => { if (!json) writeErr(s); } });
+    res = await runDocker({ args: runArgs, env: childEnv, spawnFn: io.spawnFn, onStderr: (s) => { if (json) stderrTail = (stderrTail + s).slice(-2048); else writeErr(s); } });
   } catch (e) {
     if (e && (e.code === 'ENOENT' || /ENOENT|not found/i.test(e.message || ''))) {
       throw new CliError(EXIT.SERVER, `could not run docker: ${e.message} — is docker installed and on PATH?`);
@@ -431,8 +432,12 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
     throw new CliError(EXIT.SERVER, `could not run docker: ${e.message}`);
   }
   if (res.code !== 0) {
-    if (json) emit({ type: 'error', reason: 'docker-run-failed', code: res.code });
-    throw new CliError(EXIT.SERVER, `docker run failed (exit ${res.code == null ? '?' : res.code}) — see docker's output above`);
+    const exit = res.code == null ? '?' : res.code;
+    if (json) {
+      emit({ type: 'error', reason: 'docker-run-failed', code: res.code, stderr: stderrTail.split('\n').slice(-20).join('\n') });
+      throw new CliError(EXIT.SERVER, `docker run failed (exit ${exit}) — docker's stderr is in the JSON error object`);
+    }
+    throw new CliError(EXIT.SERVER, `docker run failed (exit ${exit}) — see docker's output above`);
   }
   const containerId = res.stdout ? res.stdout.split('\n').pop().trim() : '';
   if (!json) printer.line(`started container ${CONTAINER_PREFIX + name}${containerId ? ` (${containerId.slice(0, 12)})` : ''}`);
@@ -1232,6 +1237,17 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (m) webEnabledFlag = !/^(false|0|no)$/i.test(m[1].trim());
   }
   let webEnabled = webEnabledFlag == null ? true : webEnabledFlag;
+  let webPortFlag = null;
+  for (const s of sets) {
+    const m = /^web\.port=(.*)$/.exec(s);
+    if (!m) continue;
+    const v = m[1].trim();
+    if (!/^\d+$/.test(v) || Number(v) < 1 || Number(v) > 65535) {
+      throw new CliError(EXIT.USAGE, `bad --set web.port=${m[1]} — an integer port in 1..65535`);
+    }
+    webPortFlag = Number(v);
+  }
+  let webPort = webPortFlag == null ? CONTAINER_WEB_PORT : webPortFlag;
   const valuesFiles = Array.isArray(flags.values) ? flags.values.map(String) : (flags.values ? [String(flags.values)] : []);
   // Claude auth (optional): read + validate the token NOW (fail fast before any
   // cluster call). The EXTRACTED value is re-staged into its own 0600 tempfile
@@ -1252,7 +1268,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
 
   if (flags['dry-run']) {
     const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles, forceConflicts: !!flags['force-conflicts'] });
-    const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), token: '<minted-or-reused>', deploy: { flavor: 'helm', release: name, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null } };
+    const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), ...(webEnabled ? { webPort } : {}), token: '<minted-or-reused>', deploy: { flavor: 'helm', release: name, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null } };
     if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : name, ctxEntry }); return; }
     printer.line([
       `dry-run — would deploy release "${name}" from the helm chart:`,
@@ -1371,6 +1387,10 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
         && typeof carriedValues.web.enabled === 'boolean') {
       webEnabled = carriedValues.web.enabled;
     }
+    if (webPortFlag == null && carriedValues.web && typeof carriedValues.web === 'object'
+        && Number.isInteger(carriedValues.web.port)) {
+      webPort = carriedValues.web.port;
+    }
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-'));
@@ -1412,17 +1432,16 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   if (installed) {
     if (!portFlagged && Number.isInteger(installed.wirePort)) port = installed.wirePort;
     if (installed.web && typeof installed.web === 'object' && typeof installed.web.enabled === 'boolean') webEnabled = installed.web.enabled;
+    if (webPortFlag == null && installed.web && typeof installed.web === 'object' && Number.isInteger(installed.web.port)) webPort = installed.web.port;
   }
 
   const entry = {
     kubectl: { target: `svc/${name}`, namespace, context: kubeContext },
     ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
-    // webPort: the image's FIXED web GUI port (CONTAINER_WEB_PORT=8080), the
-    // same one the chart's Service now publishes as its `web` port. Without
-    // this `clodexctl web <ctx>` fell back to wire+1 (7901), which the Service
-    // never exposes → "does not have a service port 7901". Skipped when the
-    // chart's web is disabled (--set web.enabled=false): no port to reach.
-    ...(webEnabled ? { webPort: CONTAINER_WEB_PORT } : {}),
+    // webPort: the Service's `web` port (a --values file's web.port arrives via
+    // the read-back). Without it `clodexctl web <ctx>` falls back to wire+1,
+    // which the Service never exposes. Skipped when the chart's web is disabled.
+    ...(webEnabled ? { webPort } : {}),
     token,
     deploy: { flavor: 'helm', release: name, namespace, kubeContext },
   };

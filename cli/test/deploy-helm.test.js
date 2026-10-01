@@ -509,6 +509,39 @@ test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAV
   assert.strictEqual(saved2.contexts.n.webPort, 8080, 'this run\'s --set web.enabled=true beats the carried false');
 });
 
+test('deploy helm: the saved webPort follows web.port — flag, carried, --values read-back; a bad flag is a usage error', async () => {
+  const runOnce = async (argv, opts = {}) => {
+    const contextsFile = tmpCtxFile();
+    const r = await cli(['deploy', 'node', 'n', '--helm', ...argv], {
+      execFn: fakeK8s({}, opts), probeHelm: async () => ({ app: 'clodex' }), contextsFile,
+    });
+    return { ...r, saved: r.code === 0 ? JSON.parse(fs.readFileSync(contextsFile, 'utf8')) : null };
+  };
+  const rerun = { releaseExists: true, secretB64: Buffer.from('e'.repeat(48)).toString('base64'), priorValues: { web: { port: 9191 } } };
+
+  const a = await runOnce(['--set', 'web.port=9090']);
+  assert.strictEqual(a.code, 0, a.stderr);
+  assert.strictEqual(a.saved.contexts.n.webPort, 9090);
+
+  const b = await runOnce([], rerun);
+  assert.strictEqual(b.code, 0, b.stderr);
+  assert.strictEqual(b.saved.contexts.n.webPort, 9191);
+
+  const b2 = await runOnce(['--set', 'web.port=9090'], rerun);
+  assert.strictEqual(b2.code, 0, b2.stderr);
+  assert.strictEqual(b2.saved.contexts.n.webPort, 9090);
+
+  const valuesFile = path.join(mkTmpRoot('clodexctl-helm-t-'), 'values.json');
+  fs.writeFileSync(valuesFile, JSON.stringify({ web: { port: 9292 } }));
+  const c = await runOnce(['--values', valuesFile]);
+  assert.strictEqual(c.code, 0, c.stderr);
+  assert.strictEqual(c.saved.contexts.n.webPort, 9292);
+
+  const d = await runOnce(['--set', 'web.port=abc']);
+  assert.strictEqual(d.code, EXIT.USAGE);
+  assert.match(d.stderr, /web\.port=abc/);
+});
+
 test('deploy helm re-run: an UNREADABLE prior-values set is a hard error, never a silent revert', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile();
@@ -691,6 +724,19 @@ test('deploy helm --dry-run: plan only — cluster/ns/release/chart/ctx entry, c
   assert.match(stdout, /context n \(kubectl svc\/n -n clodex/);
   assert.doesNotMatch(stdout, /sk-drysecret/);
   assert.strictEqual(fs.existsSync(contextsFile), false);
+});
+
+test('deploy helm --json --dry-run: the ctxEntry preview carries webPort unless web is disabled', async () => {
+  const preview = async (extra) => {
+    const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--json', '--dry-run', ...extra], {
+      execFn: async () => { throw new Error('should not run'); }, probeHelm: async () => { throw new Error('should not verify'); }, contextsFile: tmpCtxFile(),
+    });
+    assert.strictEqual(code, 0);
+    return stdout.trim().split('\n').map((l) => JSON.parse(l)).find((o) => o.type === 'dry-run').ctxEntry;
+  };
+  assert.strictEqual((await preview([])).webPort, 8080);
+  assert.strictEqual((await preview(['--set', 'web.port=9090'])).webPort, 9090);
+  assert.strictEqual('webPort' in (await preview(['--set', 'web.enabled=false'])), false);
 });
 
 test('deploy helm: helm failure mid---wait → SERVER + "exists; fix and re-run" honesty, no ctx/verify', async () => {
