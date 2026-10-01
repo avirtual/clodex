@@ -126,6 +126,7 @@ const {
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
+const { defuseSenderLines } = require('./review-gate');
 
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
@@ -8040,7 +8041,7 @@ function createSessionManager(deps) {
         ? ''
         : '(no reply path)';
 
-      if (!SYSTEM_SENDERS.has(senderName)) body = String(body).replace(/(^|[\n\v\f\r\x85\u2028\u2029])((?:(?![\n\v\f\r\x85\u2028\u2029])[\s\p{C}\p{M}\p{Default_Ignorable_Code_Point}])*\[agent:from\b)/giu, '$1> $2');
+      if (!SYSTEM_SENDERS.has(senderName)) body = defuseSenderLines(body);
       const bytes = Buffer.byteLength(body);
       const lines = 1 + (String(body).match(/\r\n|[\n\v\f\r\x85\u2028\u2029]/g) || []).length + extraLines;
       if (bytes > MSG_SPILL_THRESHOLD || (target.agentType === 'claude' && target.io !== 'stream' && lines >= MSG_SPILL_LINES)) {
