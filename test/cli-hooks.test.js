@@ -1377,3 +1377,49 @@ test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child 
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
+
+test('pending drain (hook): each handed-over entry spools one delivered.jsonl line, in claim order', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('dlv1');
+  const long = 'x'.repeat(150) + '\nline two\r\n' + 'y'.repeat(100);
+  parkFor(REGISTRY_DIR, 'dlv1', {
+    '0002.json': { text: long },
+    '0001.json': { text: 'first\nsecond' },
+  });
+  const out = runPending(REGISTRY_DIR, 'dlv1', JSON.stringify({ hook_event_name: 'PostToolUse' }));
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /first/);
+  const lines = fs.readFileSync(pathFor(REGISTRY_DIR, 'dlv1', 'delivered'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines.map((e) => e.file), ['0001.json', '0002.json']);
+  assert.ok(lines.every((e) => e.ev === 'PostToolUse' && typeof e.ts === 'number'));
+  assert.strictEqual(lines[0].head, 'first second');
+  assert.strictEqual(lines[1].head, long.slice(0, 200).replace(/[\r\n]/g, ' '));
+  assert.strictEqual(lines[1].head.length, 200);
+});
+
+test('pending drain (hook): a subagent input spools no delivered.jsonl line', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('dlv2');
+  parkFor(REGISTRY_DIR, 'dlv2', { '0001.json': { text: 'held for main' } });
+  runPending(REGISTRY_DIR, 'dlv2', JSON.stringify({ hook_event_name: 'PostToolUse', agent_id: 'sub' }));
+  assert.ok(!fs.existsSync(pathFor(REGISTRY_DIR, 'dlv2', 'delivered')));
+});
+
+test('pending drain (hook): an unwritable spool still delivers and consumes — the spool append never aborts the drain', { skip: process.getuid && process.getuid() === 0 }, () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('dlv3');
+  const pendDir = parkFor(REGISTRY_DIR, 'dlv3', { '0001.json': { text: 'still arrives' } });
+  const runDir = path.dirname(pathFor(REGISTRY_DIR, 'dlv3', 'delivered'));
+  fs.chmodSync(runDir, 0o500);
+  let out;
+  try {
+    out = runPending(REGISTRY_DIR, 'dlv3', MAIN);
+  } finally {
+    fs.chmodSync(runDir, 0o700);
+  }
+  assert.strictEqual(JSON.parse(out).hookSpecificOutput.additionalContext, 'still arrives');
+  assert.ok(!fs.existsSync(pendDir));
+  assert.ok(!fs.existsSync(pathFor(REGISTRY_DIR, 'dlv3', 'delivered')));
+});
