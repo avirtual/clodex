@@ -5990,7 +5990,9 @@ function createSessionManager(deps) {
         let done = false;
         let stderr = '';
         let stderrTruncated = false;
-        let stderrRecent = '';
+        let stderrLine = '';
+        let stderrDone = '';
+        const lastStderrLine = () => stderrLine.trim() || stderrDone;
 
         const tracked = timeoutMs >= EXEC_ACK_MIN_TIMEOUT_MS && child.pid !== undefined;
         const startedAt = Date.now();
@@ -6018,7 +6020,7 @@ function createSessionManager(deps) {
             + 'Do not poll, do not re-emit — END YOUR TURN. '
             + `A status line arrives every ${everyLabel} and the result when it ends.`);
           statusTimer = setInterval(() => {
-            const latest = stderrRecent.trim().split('\n').pop().trim().slice(0, 200);
+            const latest = lastStderrLine().slice(0, 200);
             notice(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
               + `of a ${ceilingMin}m ceiling (run #${seq})${latest ? ` — ${latest}` : ''}. Do not poll; END YOUR TURN.`);
           }, statusEveryMs);
@@ -6058,7 +6060,12 @@ function createSessionManager(deps) {
           // and every ticket row carries an em-dash.
           if (typeof child.stderr.setEncoding === 'function') child.stderr.setEncoding('utf8');
           child.stderr.on('data', (d) => {
-            stderrRecent = (stderrRecent + d.toString()).slice(-1000);
+            const parts = d.toString().split('\n');
+            stderrLine = (stderrLine + parts[0]).slice(0, 4000);
+            for (const part of parts.slice(1)) {
+              if (stderrLine.trim()) stderrDone = stderrLine.trim();
+              stderrLine = part.slice(0, 4000);
+            }
             if (stderr.length < stderrCap) stderr += d.toString();
             else stderrTruncated = true;
           });
@@ -6074,7 +6081,7 @@ function createSessionManager(deps) {
             // whose last line is a footer; the narrow default keeps the last line, which is its digest.
             const body = entry.replyStderr !== true ? ''
               : replyMax ? clamp(stderr, replyMax, { truncated: stderrTruncated })
-                : (stderrRecent.trim().split('\n').pop() || '').slice(0, 200);
+                : lastStderrLine().slice(0, 200);
             endRun('ok', body ? `${runTag}${body}` : '');
             if (body) {
               reply(`${cmd}: ${runTag}${body}`);
@@ -6088,7 +6095,7 @@ function createSessionManager(deps) {
             return;
           }
           const how = signal ? `killed (${signal})` : `exit ${code}`;
-          const tail = stderrRecent.trim().split('\n').pop() || '';
+          const tail = lastStderrLine();
           const body = `${runTag}${tail ? `${how}: ${tail.slice(0, 200)}` : how}`;
           endRun('failed', body);
           fail(body);

@@ -451,10 +451,12 @@ if (code === 0 && fail === 0) {
   retireKeep();
   const breakdown = selected ? ` — ${selected.counts}` : '';
   const ADVISORY_RE = /^SLOW \(advisory, unlocked run\): (\d+)ms (.+)$/gm;
-  let slow = '';
+  const advised = [];
   for (let m = ADVISORY_RE.exec(stdout); m; m = ADVISORY_RE.exec(stdout)) {
-    slow += ` — SLOW(advisory): ${m[2]} ${m[1]}ms`;
+    const name = m[2].length > 60 ? `${m[2].slice(0, 59)}…` : m[2];
+    advised.push(` — SLOW(advisory): ${name} ${m[1]}ms`);
   }
+  const slow = advised.slice(0, 3).join('') + (advised.length > 3 ? `; +${advised.length - 3} more` : '');
   emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
 }
 

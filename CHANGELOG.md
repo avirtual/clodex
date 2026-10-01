@@ -16,6 +16,7 @@ blocks a release.
 - Subagents: an agent file's `omitClaudeMd: true` now reaches the CLI, and the built-in clodex-locate and clodex-redproof agents set it, so a lookup or red-proof no longer bills the project's CLAUDE.md on every request.
 - Stall alarm: a seat resumed after it died mid-tool-call now reports that call as interrupted with an unknown outcome, instead of as a plain failed call.
 - Stall alarm: a seat whose recent transcript is dominated by the CLI's 70KB prompt-snapshot records no longer loses its last-tool field; the reader re-reads a wider window when the usual tail names no tool.
+- Exec results: a long last stderr line (a test digest with many slow-test advisories) now reaches the seat head-first instead of as a tail of advisory fragments; the run-tests digest itself caps its advisories at three plus a count.
 
 ## 5.102.0 — 2026-10-01
 
