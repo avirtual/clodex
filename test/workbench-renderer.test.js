@@ -374,7 +374,6 @@ test('a file size never reaches innerHTML unescaped by luck — the formatter is
   }
 });
 
-// ── Browse controls: Go to Folder and Up, driven by click ───────────────────
 const setRoots = (state) => state.invokes.filter((i) => i.method === 'fs.setRoot').map((i) => i.args);
 
 const DIRTY_OPTS = {
