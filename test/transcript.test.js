@@ -166,6 +166,19 @@ test('jsonlToMessages: a fold shifts past marks that have no image block too', (
   } finally { fs.unlinkSync(p); }
 });
 
+test('jsonlToMessages: three folded prompts each marked [Image #1] number 1, 2, 3', () => {
+  const p = writeJsonl([
+    imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),
+    imagePrompt('[Image #1] b', [['image/jpeg', 'BBBB']]),
+    imagePrompt('[Image #1] c', [['image/gif', 'CCCC']]),
+  ]);
+  try {
+    const msgs = jsonlToMessages(p);
+    assert.strictEqual(msgs[0].text, '[Image #1] a\n\n[Image #2] b\n\n[Image #3] c');
+    assert.deepStrictEqual(msgs[0].images.map((i) => [i.n, i.data]), [[1, 'AAAA'], [2, 'BBBB'], [3, 'CCCC']]);
+  } finally { fs.unlinkSync(p); }
+});
+
 test('jsonlToMessages: a folded prompt with more blocks than marks keeps every image at a distinct n', () => {
   const p = writeJsonl([
     imagePrompt('[Image #1] a', [['image/png', 'AAAA']]),

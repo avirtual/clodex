@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - PTY composer: a pasted image's path is sent as `Image: <path>` instead of `Image #n: <path>`, since the CLI numbers image marks per session and the draft's number never matched.
+- Context bar: Bedrock and Vertex model ids (`us.anthropic.claude-…`) now get the same 1M window as the plain id, instead of a 200k bar.
 
 ## 5.103.0 — 2026-10-01
 

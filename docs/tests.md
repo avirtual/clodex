@@ -5,7 +5,7 @@ before arguing with one of them.
 
 A test can fail to reach the state it names and still pass every assertion.
 Seven instances so far; what made most of them silent was the assertion shape,
-not the mistake. The first three rules follow from that; the last two are about
+not the mistake. The first three rules follow from that; the next two are about
 the pins themselves.
 
 ## Assert the whole built object
@@ -76,3 +76,11 @@ reasoning, not a typo.
 
 None of these is a blanket requirement, and there is no `ENTER:` count to
 satisfy — a ratchet on a count measures compliance, not coverage.
+
+## A spawned child always carries a timeout
+
+A test that spawns node, bash or claude and waits on its exit passes a
+`timeout` (with `killSignal: 'SIGKILL'`) or arms a kill timer. A wedged child
+otherwise hangs the whole suite, not the one test. t1470 gave every hook spawn
+in `cli-hooks.test.js` a 30s SIGKILL timeout, so its ARG_MAX drain case now
+fails as one ETIMEDOUT test instead of stalling the run.

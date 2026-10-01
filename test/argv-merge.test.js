@@ -101,6 +101,8 @@ test('effectiveWindowSize: 1M-suffix, fable and bare 5.5 ids get bumped, never s
   assert.strictEqual(effectiveWindowSize('claude-fable-5', 200_000), 1_000_000);
   assert.strictEqual(effectiveWindowSize('claude-opus-5-5', 200_000), 1_000_000);
   assert.strictEqual(effectiveWindowSize('claude-sonnet-5-5', 200_000), 1_000_000);
+  assert.strictEqual(effectiveWindowSize('us.anthropic.claude-opus-5-5-20260401-v1:0', 200_000), 1_000_000);
+  assert.strictEqual(effectiveWindowSize('us.anthropic.claude-sonnet-4-6', 200_000), 200_000);
   // never shrinks: a correctly-reported larger size passes through
   assert.strictEqual(effectiveWindowSize('claude-opus-4-8[1m]', 2_000_000), 2_000_000);
   // unknown model → reported value untouched
