@@ -447,12 +447,12 @@ test('team:preflight surfaces an unreadable manifest as an error with an EMPTY f
 
 test('createEngine returns the front-door writers on the seam ipc-handlers spreads', () => {
   const path = require('path');
-  const home = mkTmpRoot('clodex-frontdoor-home-');
+  const home = mkTmpRoot('clodex-t416-');
   const prevHome = process.env.HOME;
   process.env.HOME = home;
   const { createEngine } = require('../engine');
   const eng = createEngine({
-    userDataPath: mkTmpRoot('clodex-frontdoor-ud-'),
+    userDataPath: mkTmpRoot('clodex-t416-ud-'),
     seams: { noSeed: true, registryDir: path.join(home, '.clodex') },
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
