@@ -634,7 +634,7 @@ test('a commit that installs but cannot create answers 500 naming what is on dis
     seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
   }, async (s) => {
     const begun = await call(s.port, 'POST', '/api/import/begin',
-      { body: { name: 'ana', record: record({ cwd }) } });
+      { body: { name: 'ana', record: record({ cwd, createdAt: 1700000000000 }) } });
     assert.strictEqual(begun.status, 200, begun.raw);
     const id = begun.body.id;
     const put = await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`,
