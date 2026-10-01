@@ -532,6 +532,7 @@ function createSessionManager(deps) {
     LONG_TEXT_THRESHOLD,
     MSG_DIR,
     MSG_SPILL_THRESHOLD,
+    MSG_SPILL_LINES,
     MSG_MAX_AGE,
     OUTBOX_DIR,
     PENDING_DIR,
@@ -8041,7 +8042,7 @@ function createSessionManager(deps) {
       if (!SYSTEM_SENDERS.has(senderName)) body = String(body).replace(/(^|[\n\v\f\r\x85\u2028\u2029])((?:(?![\n\v\f\r\x85\u2028\u2029])[\s\p{C}\p{M}\p{Default_Ignorable_Code_Point}])*\[agent:from\b)/giu, '$1> $2');
       const bytes = Buffer.byteLength(body);
       const lines = 1 + (String(body).match(/\r\n|[\n\v\f\r\x85\u2028\u2029]/g) || []).length + extraLines;
-      if (bytes > MSG_SPILL_THRESHOLD || (target.agentType === 'claude' && target.io !== 'stream' && lines >= 4)) {
+      if (bytes > MSG_SPILL_THRESHOLD || (target.agentType === 'claude' && target.io !== 'stream' && lines >= MSG_SPILL_LINES)) {
         const filePath = spillToFile(senderName, body, target.name);
         this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;

@@ -14345,6 +14345,7 @@ function mkLineGate() {
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: () => null }),
     MSG_SPILL_THRESHOLD: 500,
+    MSG_SPILL_LINES: 4,
     spillToFile: (sender, body, rcv) => {
       const f = pathReal.join(dir, `${rcv}-${sender}-${++n}.txt`);
       fsReal.writeFileSync(f, body);
