@@ -125,15 +125,7 @@ test('activatePluginRenderer asks for source ONLY on the web, and only on a regi
 });
 
 test('a plugin stylesheet needs NO build step — it crosses as text over the existing transport', () => {
-  // Worth pinning because it is the reason W8 is small. The plan reads "the
-  // plugin renderer module + CSS via a build-generated registry"; the CSS half
-  // was already solved at W1 by sending stylesheet TEXT from `renderer.info`
-  // rather than a path, which works identically in the file:// window and the
-  // browser. If someone later "fixes" this by emitting a path, the browser build
-  // breaks silently — no path resolves there.
-  const loader = fs.readFileSync(path.join(ROOT, 'plugin-loader.js'), 'utf8');
-  const info = loader.slice(loader.indexOf('function rendererInfo'));
-  assert.match(info.slice(0, info.indexOf('\n  }\n')), /readFileSync\(rec\.stylePath, 'utf8'\)/,
-    'rendererInfo must send the stylesheet TEXT, not its path');
+  // rendererInfo sending the stylesheet TEXT is driven by plugin-loader.test.js's
+  // 'rendererInfo returns the renderer path and the stylesheet TEXT'.
   assert.ok(!registrySrc.includes('.css'), 'the bundle registry carries modules only — CSS is not its job');
 });
