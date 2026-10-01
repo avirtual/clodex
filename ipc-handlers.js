@@ -1600,8 +1600,7 @@ function registerIpcHandlers(deps) {
   });
   handle('peer:visibleRemove', (_e, id, name, liveNames) => {
     const sel = (uiSettings.get().peerVisible || {})[id];
-    const live = Array.isArray(liveNames) ? visibleNames(liveNames) : undefined;
-    return writeVisible(id, nextVisibleWithoutName(sel, name, live));
+    return writeVisible(id, nextVisibleWithoutName(sel, name, liveNames));
   });
   handle('peer:control', (_e, id, name, on) => new Promise((resolve) => {
     const conn = getPeerManager() && getPeerManager().get(id);
