@@ -14359,7 +14359,7 @@ test('t1504 _buildDeliveryText: a spilled peer body carries the quoted line in t
 });
 
 test('t1508 _buildDeliveryText: a marker split by a zero-width space is quoted, inline and in the spilled file', () => {
-  const dir = mkTmpRoot('clodex-t1508-spill-');
+  const dir = mkTmpRoot('clodex-t1504-spill-');
   const m = mk({
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: () => null }),
