@@ -361,6 +361,18 @@ test('deploy docker --json: a failed docker run carries its stderr tail in the e
   assert.match(stderr, /stderr is in the JSON error object/);
 });
 
+test('deploy docker --json: the stderr tail is the last 20 real lines when docker\'s stderr ends in a newline', async () => {
+  const lines = Array.from({ length: 30 }, (_, i) => `line ${i}`);
+  const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {
+    spawnFn: fakeDocker({}, { exitCode: 125, stderr: lines.join('\n') + '\n' }),
+    pollHello: async () => { throw new Error('should not verify'); },
+    contextsFile: tmpCtxFile(),
+  });
+  assert.strictEqual(code, 1);
+  const err = stdout.trim().split('\n').map((l) => JSON.parse(l)).find((o) => o.type === 'error');
+  assert.deepStrictEqual(err.stderr.split('\n'), lines.slice(-20));
+});
+
 test('deploy docker --json 401: verify tokenGated + context tokenGated', async () => {
   const contextsFile = tmpCtxFile();
   const { code, stdout } = await cli(['deploy', 'node', 'n', '--docker', '-o', 'json'], {

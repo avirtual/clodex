@@ -434,7 +434,7 @@ async function deployDockerVerb({ printer, flags, args, io = {} }) {
   if (res.code !== 0) {
     const exit = res.code == null ? '?' : res.code;
     if (json) {
-      emit({ type: 'error', reason: 'docker-run-failed', code: res.code, stderr: stderrTail.split('\n').slice(-20).join('\n') });
+      emit({ type: 'error', reason: 'docker-run-failed', code: res.code, stderr: stderrTail.replace(/\n$/, '').split('\n').slice(-20).join('\n') });
       throw new CliError(EXIT.SERVER, `docker run failed (exit ${exit}) — docker's stderr is in the JSON error object`);
     }
     throw new CliError(EXIT.SERVER, `docker run failed (exit ${exit}) — see docker's output above`);
@@ -1226,23 +1226,24 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   // secrets.* via --set is a double footgun: the value would ride argv (ps-
   // visible — the discipline this verb exists to uphold) AND, last-wins, it
   // would override the minted/reused token under the ctx entry. Reject early.
-  for (const s of sets) {
+  const setPairs = sets.flatMap((s) => s.split(/(?<!\\),/));
+  for (const s of setPairs) {
     if (/^secrets\./.test(s)) {
       throw new CliError(EXIT.USAGE, `--set ${s.split('=')[0]} is not allowed — secret values must never ride argv; the wire token is minted/reused automatically and claude auth rides --claude-token-file`);
     }
   }
   let webEnabledFlag = null;
-  for (const s of sets) {
+  for (const s of setPairs) {
     const m = /^web\.enabled=(.*)$/.exec(s);
     if (m) webEnabledFlag = !/^(false|0|no)$/i.test(m[1].trim());
   }
   let webEnabled = webEnabledFlag == null ? true : webEnabledFlag;
   let webPortFlag = null;
-  for (const s of sets) {
+  for (const s of setPairs) {
     const m = /^web\.port=(.*)$/.exec(s);
     if (!m) continue;
     const v = m[1].trim();
-    if (!/^\d+$/.test(v) || Number(v) < 1 || Number(v) > 65535) {
+    if (!/^[1-9]\d*$/.test(v) || Number(v) < 1 || Number(v) > 65535) {
       throw new CliError(EXIT.USAGE, `bad --set web.port=${m[1]} — an integer port in 1..65535`);
     }
     webPortFlag = Number(v);
@@ -1440,7 +1441,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     ...(port !== DEFAULT_PORT ? { remotePort: port } : {}),
     // webPort: the Service's `web` port (a --values file's web.port arrives via
     // the read-back). Without it `clodexctl web <ctx>` falls back to wire+1,
-    // which the Service never exposes. Skipped when the chart's web is disabled.
+    // which the Service never exposes.
     ...(webEnabled ? { webPort } : {}),
     token,
     deploy: { flavor: 'helm', release: name, namespace, kubeContext },
