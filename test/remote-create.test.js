@@ -27,8 +27,7 @@ const IDX = {
 };
 
 // A createRemoteWiring dep bundle sufficient to reach `new RemoteServer(...)`.
-// Only manager/persistence/libraries matter for the create path; the rest are
-// inert stubs (their handlers never run in these tests).
+// Only manager/persistence/libraries matter for the create path.
 function makeDeps(overrides = {}) {
   let srv = null;
   const createCalls = [];
