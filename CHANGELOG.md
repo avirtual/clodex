@@ -16,6 +16,7 @@ blocks a release.
 - PTY composer: a pasted image's path is sent as `Image: <path>` instead of `Image #n: <path>`, since the CLI numbers image marks per session and the draft's number never matched.
 - Context bar: Bedrock model ids (`us.anthropic.claude-…`) now get the same 1M window as the plain id, instead of a 200k bar.
 - Stream seats: changing only the Model in a seat's Edit Settings now switches the running CLI in place (`set_model`) instead of restarting it, so the seat keeps its context; a model the API rejects leaves the seat on its old model and shows the CLI's error.
+- Env scopes: `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_ENVIRONMENT_KIND` and `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` can no longer be set through a global/workspace/session env scope or the override file — on CLI 2.1.286 any of them makes an exported `ANTHROPIC_BASE_URL` beat the seat's settings, bypassing the wire tee.
 
 ## 5.103.0 — 2026-10-01
 

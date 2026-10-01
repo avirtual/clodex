@@ -124,7 +124,8 @@ and survive. Global + per-workspace scopes live in `<userData>/env-scopes.json`
 returns `{ key, secret:true, hasValue:true }`, never the bytes, so a secret
 never reaches the renderer, a log, an ack, or an error string. `CLODEX_REMOTE_TOKEN`
 is deny-listed in every scope (the wire gate must not be clobberable through the
-surface it gates); keys must match `[A-Za-z_][A-Za-z0-9_]*` and values carry no
+surface it gates), as are `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_ENVIRONMENT_KIND` and
+`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` (they would route `ANTHROPIC_BASE_URL` around the tee); keys must match `[A-Za-z_][A-Za-z0-9_]*` and values carry no
 newlines. The per-session map is passed to `create()` and persisted flat on the
 sessions.json entry so `--resume` respawns identically. A box operator's
 `<userData>/env-override.env` (env-file format, read at spawn) has the final say.

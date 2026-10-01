@@ -91,6 +91,27 @@ test('CLODEX_REMOTE_TOKEN is deny-listed in the merge (every scope)', () => {
   assert.strictEqual(merged.CLODEX_REMOTE_TOKEN, 'real-gate');
 });
 
+for (const key of ['CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']) {
+  test(`${key} is deny-listed in the merge (every scope)`, () => {
+    assert.ok(DENY_KEYS.has(key));
+    assert.match(envKeyError(key, 'x'), /not allowed/);
+    const merged = mergeSessionEnv({
+      base: {},
+      global: { [key]: { value: 'via-global' } },
+      workspace: { [key]: { value: 'via-workspace' } },
+      session: { [key]: 'via-session' },
+      overrideFile: tmpFile(`${key}=via-override\n`),
+    });
+    assert.ok(!(key in merged));
+  });
+}
+
+test('the host-marker deny-list is narrow: CLAUDE_CODE_OAUTH_TOKEN still merges via a session scope', () => {
+  assert.ok(!DENY_KEYS.has('CLAUDE_CODE_OAUTH_TOKEN'));
+  const merged = mergeSessionEnv({ base: {}, session: { CLAUDE_CODE_OAUTH_TOKEN: 'per-session' } });
+  assert.strictEqual(merged.CLAUDE_CODE_OAUTH_TOKEN, 'per-session');
+});
+
 test('envKeyError rejects deny-listed key, invalid key, newline value', () => {
   assert.match(envKeyError('CLODEX_REMOTE_TOKEN', 'x'), /not allowed/);
   assert.match(envKeyError('1BAD', 'x'), /invalid env key/);

@@ -82,6 +82,16 @@ test('prototype-reserved keys (__proto__, constructor, prototype) are dropped AN
   for (const k of ['__proto__', 'constructor', 'prototype']) assert.ok(envKeyError(k, 'v'), `server also refuses ${k}`);
 });
 
+test('every server DENY_KEYS key is dropped AND reported reserved by the dialog parser', () => {
+  const { DENY_KEYS } = require('../env-scopes');
+  for (const k of DENY_KEYS) {
+    const { env, skipped } = parseEnvLines(`${k}=x\nOK=1`);
+    assert.deepStrictEqual(env, { OK: '1' }, k);
+    assert.strictEqual(skipped.length, 1, k);
+    assert.match(skipped[0].reason, /reserved/, k);
+  }
+});
+
 test('a lone CR ends a line, so a CR-only paste sets every var instead of one CR-bearing value', () => {
   const { env, skipped } = parseEnvLines('A=x\rB=y\nOK=1');
   assert.deepStrictEqual(env, { A: 'x', B: 'y', OK: '1' });
