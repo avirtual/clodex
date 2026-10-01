@@ -4044,19 +4044,18 @@ body.drawer-dragging { cursor: row-resize; user-select: none; }
 }
 
 .drawer-badge {
-  font-size: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  padding: 0;
+  min-width: 0;
+  font-size: 0;
   background: var(--accent);
-  color: white;
-  border-radius: 10px;
-  padding: 1px 7px;
-  min-width: 18px;
-  text-align: center;
   flex-shrink: 0;
 }
 
 .drawer-badge.zero {
-  background: var(--border);
-  color: var(--text-dim);
+  visibility: hidden;
 }
 
 /* notify('attention') vs notify('activity') — the two levels must be tellable
@@ -5592,8 +5591,8 @@ body.web-frontend #sidebar-header {
   transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 .drawer-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
-.drawer-badge { font-size: 10px; font-weight: 600; line-height: 16px; min-width: 16px; padding: 0 5px; color: var(--accent-fg); }
-.drawer-badge.zero { background: var(--surface-selected); color: var(--text-tertiary); }
+.drawer-badge { width: 6px; height: 6px; border-radius: 50%; padding: 0; min-width: 0; font-size: 0; }
+.drawer-badge.zero { visibility: hidden; }
 #drawer-header button:not(.drawer-tab) {
   font-size: var(--fs-xs);
   border-radius: var(--radius-sm);

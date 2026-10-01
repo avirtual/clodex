@@ -5862,18 +5862,17 @@ body.drawer-dragging {
   border-bottom-color: var(--accent);
 }
 .drawer-badge {
-  font-size: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  padding: 0;
+  min-width: 0;
+  font-size: 0;
   background: var(--accent);
-  color: white;
-  border-radius: 10px;
-  padding: 1px 7px;
-  min-width: 18px;
-  text-align: center;
   flex-shrink: 0;
 }
 .drawer-badge.zero {
-  background: var(--border);
-  color: var(--text-dim);
+  visibility: hidden;
 }
 .drawer-badge.attention {
   background: var(--error);
@@ -7749,16 +7748,15 @@ body.web-frontend #sidebar-header {
   border-bottom-color: var(--accent);
 }
 .drawer-badge {
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  min-width: 16px;
-  padding: 0 5px;
-  color: var(--accent-fg);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  padding: 0;
+  min-width: 0;
+  font-size: 0;
 }
 .drawer-badge.zero {
-  background: var(--surface-selected);
-  color: var(--text-tertiary);
+  visibility: hidden;
 }
 #drawer-header button:not(.drawer-tab) {
   font-size: var(--fs-xs);
@@ -29127,7 +29125,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var DRAWER_MIN_H = 120;
       var DRAWER_MAX_FRACTION = 0.7;
       var TAB_IDS = Object.freeze(["log", "activity", "console", "ctl", "term"]);
-      var BADGE_MAX = 99;
       function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType = null, onArmChanged = null }) {
         const armChanged = () => {
           try {
@@ -29209,12 +29206,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (storedHeight != null) applyHeight();
         const isVisible = (id) => !isCollapsed() && activeId === id;
         function renderBadge(rec) {
-          rec.badgeEl.textContent = rec.unread > BADGE_MAX ? `${BADGE_MAX}+` : String(rec.unread);
-          rec.badgeEl.classList.toggle("zero", rec.unread === 0);
-          rec.badgeEl.classList.toggle("attention", rec.attention && rec.unread > 0);
+          rec.badgeEl.textContent = "";
+          rec.badgeEl.classList.toggle("zero", !rec.unread);
+          rec.badgeEl.classList.toggle("attention", rec.attention && rec.unread);
         }
         function clearBadge(rec) {
-          rec.unread = 0;
+          rec.unread = false;
           rec.attention = false;
           renderBadge(rec);
         }
@@ -29351,7 +29348,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
           labelEl.textContent = def.label || def.id;
           const badgeEl = document.createElement("span");
           badgeEl.className = "drawer-badge zero";
-          badgeEl.textContent = "0";
           tabEl.appendChild(labelEl);
           tabEl.appendChild(badgeEl);
           tabEl.addEventListener("click", (e) => {
@@ -29371,7 +29367,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             actions,
             tabEl,
             badgeEl,
-            unread: 0,
+            unread: false,
             attention: false,
             mounted: false,
             shown: false,
@@ -29385,7 +29381,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (activeId === null && servesSeat(rec)) selectFirst(rec);
           function notify(level) {
             if (isVisible(rec.id)) return;
-            rec.unread++;
+            rec.unread = true;
             if (level === "attention") rec.attention = true;
             renderBadge(rec);
           }

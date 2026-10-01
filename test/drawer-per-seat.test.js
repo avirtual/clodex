@@ -386,3 +386,39 @@ test('#drawer-resize straddles the drawer top edge instead of covering the heade
   assert.match(block[0], /overflow: clip;/);
   assert.match(block[0], /overflow-clip-margin: 3px;/);
 });
+
+test('drawer badge: a hidden tab shows a textless activity dot, then attention, cleared when shown', () => {
+  harness((h) => {
+    h.types.set('seat-a', 'claude');
+    h.tenant('log');
+    const notify = h.host.register({ id: 'term', label: 'term', mount() {}, onShow() {}, onHide() {} });
+    h.firstSeat('seat-a');
+    h.clickTab('log');
+    h.flush();
+    const tab = h.byId.get('drawer-tabs').children.find((c) => c.dataset.tab === 'term');
+    const badge = tab.children[1];
+    const state = () => ({
+      zero: badge.classList.contains('zero'),
+      attention: badge.classList.contains('attention'),
+      text: badge.textContent,
+    });
+
+    assert.deepEqual(state(), { zero: true, attention: false, text: '' });
+
+    notify('activity');
+    assert.deepEqual(state(), { zero: false, attention: false, text: '' });
+
+    notify('activity');
+    assert.deepEqual(state(), { zero: false, attention: false, text: '' });
+
+    notify('attention');
+    assert.deepEqual(state(), { zero: false, attention: true, text: '' });
+
+    h.clickTab('term');
+    h.flush();
+    assert.deepEqual(state(), { zero: true, attention: false, text: '' });
+
+    notify('attention');
+    assert.deepEqual(state(), { zero: true, attention: false, text: '' });
+  });
+});
