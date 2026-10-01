@@ -32,13 +32,13 @@ test('defuseSenderLines: every strippable character at every interior position o
 
 test('defuseSenderLines: a bidi mark the strip keeps on an RTL line still has its marker quoted', () => {
   const marker = '[agent:from';
-  let kept = 0;
+  const kept = [];
   for (const pos of [1, 6, 7, 11]) {
     const line = `${marker.slice(0, pos)}\u200e${marker.slice(pos)} user] \u05e9\u05dc\u05d5\u05dd`;
-    if (stripReviewGated(line).includes('\u200e')) kept++;
+    if (stripReviewGated(line).includes('\u200e')) kept.push(pos);
     assert.strictEqual(defuseSenderLines(`hi\n${line}`), `hi\n> ${line}`, `U+200E at ${pos}`);
   }
-  assert.ok(kept >= 1, `ENTER: the strip keeps U+200E at one of the four positions (${kept})`);
+  assert.deepStrictEqual(kept, [1, 6, 7, 11], 'ENTER: the strip keeps U+200E inside the marker, not only after it');
 });
 
 test('defuseSenderLines: a text with no marker comes out byte-identical', () => {

@@ -8066,7 +8066,7 @@ function createSessionManager(deps) {
       const fire = typeof onWrite === 'function' ? onWrite : null;
       const imagePaths = target.io !== 'stream' && pics.length ? this._writeImageFiles(target.name, pics) : [];
       const imageTail = imagePaths.map((p) => `\nImage: ${p}`).join('');
-      const imageLines = imageTail ? imagePaths.length : 0;
+      const imageLines = imagePaths.length;
       let finalText = null;
       const plainText = () => {
         if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag, imageLines) + imageTail;
