@@ -142,11 +142,11 @@ test('exec-def schema admits timeout_ms at both its bounds', () => {
 });
 
 // ws.protocols is a comma-separated STRING because the exec validator has no
-// array type. Both halves of that encoding are pinned here: an innocent-looking
-// "fix" to `type: array` in the def would pass the gate and then hit the
-// script's `typeof === 'string'` branch, which silently drops it to undefined —
-// a subprotocol list that vanishes rather than errors.
-test('exec-def encodes ws.protocols as a comma-separated string, and the script splits it', () => {
+// array type. An innocent-looking "fix" to `type: array` in the def would pass
+// the gate and then hit the script's `typeof === 'string'` branch, which
+// silently drops it to undefined — a subprotocol list that vanishes rather than
+// errors.
+test('exec-def encodes ws.protocols as a comma-separated string', () => {
   assert.deepStrictEqual(EXEC_DEF.schema.properties.ws.properties.protocols,
     { type: 'string', maxLength: 400 },
     'the whole protocols spec — the string type is the deliberate encoding, not an oversight');

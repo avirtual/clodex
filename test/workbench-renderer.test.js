@@ -168,8 +168,8 @@ function mountWorkbench({ web }) {
     try { state.mount(dom.rootEl); } catch (e) { error = e; }
     return { error, dom, state };
   } finally {
-    global.window = savedWindow;
-    global.document = savedDocument;
+    if (savedWindow === undefined) delete global.window; else global.window = savedWindow;
+    if (savedDocument === undefined) delete global.document; else global.document = savedDocument;
     if (savedConfirm === undefined) delete global.confirm; else global.confirm = savedConfirm;
   }
 }
@@ -184,8 +184,8 @@ async function openFilesSession({
 } = {}) {
   const saved = { window: global.window, document: global.document, confirm: global.confirm };
   const restore = () => {
-    global.window = saved.window;
-    global.document = saved.document;
+    if (saved.window === undefined) delete global.window; else global.window = saved.window;
+    if (saved.document === undefined) delete global.document; else global.document = saved.document;
     if (saved.confirm === undefined) delete global.confirm; else global.confirm = saved.confirm;
   };
   const dom = makeDom();
@@ -223,6 +223,8 @@ async function openFilesSession({
 async function openFilesTab(entries) {
   const { rows, state, restore } = await openFilesSession({ entries });
   restore();
+  assert.ok(!('confirm' in global) && !('window' in global) && !('document' in global),
+    'openFilesSession\'s restore leaves no harness key on global');
   return { rows: rows(), state };
 }
 
@@ -233,7 +235,8 @@ test('the overlay wires completely on the WEB frontend', () => {
   const { error } = mountWorkbench({ web: true });
   assert.equal(error, null,
     `mount() threw on the web frontend, leaving the overlay half-wired: ${error && error.stack}`);
-  assert.ok(!('confirm' in global), 'the harness leaves no confirm key on global');
+  assert.ok(!('confirm' in global) && !('window' in global) && !('document' in global),
+    'the harness leaves no confirm, window or document key on global');
 });
 
 test('the overlay wires completely on the DESKTOP frontend', () => {
