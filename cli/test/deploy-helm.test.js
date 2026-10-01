@@ -125,7 +125,7 @@ test('HELM_RELEASE_RE: DNS-1123 — rejects dots, underscores, uppercase, edges'
 // (t54's carry-forward). `null` is helm's own rendering of "no overrides", so
 // that is the default — an existing release with nothing carried.
 // `getValuesFail`: make the read-back fail, for the hard-error path.
-function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null, nsExists = true, nsCreateFail = null, helmFail = null, statusFail = null, priorValues = null, getValuesFail = null } = {}) {
+function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null, nsExists = true, nsCreateFail = null, helmFail = null, statusFail = null, priorValues = null, getValuesFail = null, getValuesFailAfterInstall = false } = {}) {
   rec.calls = [];
   return async (cmd, args) => {
     rec.calls.push([cmd, ...args]);
@@ -133,6 +133,7 @@ function fakeK8s(rec, { releaseExists = false, secretB64 = null, oauthB64 = null
     if (cmd === 'helm' && args[0] === 'version') return { stdout: 'v3.14.0+g0000000' };
     if (cmd === 'helm' && args[0] === 'get' && args[1] === 'values') {
       if (getValuesFail) { const e = new Error('helm get values failed'); e.stderr = getValuesFail; throw e; }
+      if (getValuesFailAfterInstall && rec.helmArgs) throw new Error('helm get values failed');
       if (rec.helmArgs && !helmFail) return { stdout: JSON.stringify(mergedValues(rec)) };
       // helm prints the JSON literal `null` when a release has no overrides.
       return { stdout: priorValues == null ? 'null' : JSON.stringify(priorValues) };
@@ -491,6 +492,22 @@ test('deploy helm re-run: carried wirePort/web.enabled follow through to the SAV
   assert.strictEqual(saved.contexts.n.webPort, undefined,
     'web.enabled=false was carried, so the Service publishes no web port and the ctx must not claim one');
 
+  const recNoReadBack = {};
+  const contextsFileNoReadBack = tmpCtxFile();
+  const { code: cNoReadBack } = await cli(['deploy', 'node', 'n', '--helm'], {
+    execFn: fakeK8s(recNoReadBack, {
+      releaseExists: true,
+      secretB64: Buffer.from('e'.repeat(48)).toString('base64'),
+      priorValues: { wirePort: 8100 },
+      getValuesFailAfterInstall: true,
+    }),
+    probeHelm: async () => ({ app: 'clodex' }),
+    contextsFile: contextsFileNoReadBack,
+  });
+  assert.strictEqual(cNoReadBack, 0);
+  assert.strictEqual(JSON.parse(fs.readFileSync(contextsFileNoReadBack, 'utf8')).contexts.n.remotePort, 8100,
+    'with the post-install read-back failing, only the carry can supply the release\'s wirePort');
+
   // Same release, but this run says otherwise: the flags win both.
   const rec2 = {};
   const contextsFile2 = tmpCtxFile();
@@ -527,6 +544,10 @@ test('deploy helm: the saved webPort follows web.port — flag, carried, --value
   assert.strictEqual(b.code, 0, b.stderr);
   assert.strictEqual(b.saved.contexts.n.webPort, 9191);
 
+  const bNoReadBack = await runOnce([], { ...rerun, getValuesFailAfterInstall: true });
+  assert.strictEqual(bNoReadBack.code, 0, bNoReadBack.stderr);
+  assert.strictEqual(bNoReadBack.saved.contexts.n.webPort, 9191);
+
   const b2 = await runOnce(['--set', 'web.port=9090'], rerun);
   assert.strictEqual(b2.code, 0, b2.stderr);
   assert.strictEqual(b2.saved.contexts.n.webPort, 9090);
@@ -540,6 +561,22 @@ test('deploy helm: the saved webPort follows web.port — flag, carried, --value
   const d = await runOnce(['--set', 'web.port=abc']);
   assert.strictEqual(d.code, EXIT.USAGE);
   assert.match(d.stderr, /web\.port=abc/);
+
+  const d2 = await runOnce(['--set', 'web.port=08080']);
+  assert.strictEqual(d2.code, EXIT.USAGE);
+  assert.match(d2.stderr, /web\.port=08080/);
+
+  const e = await runOnce(['--set', 'image.tag=x,web.port=9090']);
+  assert.strictEqual(e.code, 0, e.stderr);
+  assert.strictEqual(e.saved.contexts.n.webPort, 9090);
+
+  const f = await runOnce(['--set', 'web.enabled=false,image.tag=x']);
+  assert.strictEqual(f.code, 0, f.stderr);
+  assert.strictEqual(f.saved.contexts.n.webPort, undefined);
+
+  const g = await runOnce(['--set', 'image.tag=x,secrets.foo=1']);
+  assert.strictEqual(g.code, EXIT.USAGE);
+  assert.match(g.stderr, /--set secrets\.foo is not allowed/);
 });
 
 test('deploy helm re-run: an UNREADABLE prior-values set is a hard error, never a silent revert', async () => {
