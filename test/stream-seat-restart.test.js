@@ -145,10 +145,10 @@ const DIALOG_PATCH = (extraArgs, extra = {}) => ({
   execCommands: [], env: {}, plugins: undefined, io: 'stream', effort: undefined, ...extra,
 });
 
-function modelSeat(name, reply, io = 'stream') {
+function modelSeat(name, reply, io = 'stream', spawnRecord = true) {
   const eng = mkEngine();
   eng.stores.persistence.upsert(MODEL_ENTRY(name, io));
-  liveSession(eng, name, MODEL_ENTRY(name, io)).io = io;
+  Object.assign(liveSession(eng, name, MODEL_ENTRY(name, io)), { io, _spawnRecord: spawnRecord ? eng.stores.persistence.get(name) : undefined });
   const { seen } = probe(eng);
   const calls = { setModel: [], kill: 0 };
   eng.manager.seatSetModel = async (n, model) => { calls.setModel.push([n, model]); return reply; };
@@ -188,3 +188,30 @@ for (const [label, patch, io] of [
     assert.strictEqual(seen.length, 1);
   });
 }
+
+test('t1493: a model-only restart save over settings saved without a restart still respawns', async () => {
+  const { eng, seen, calls } = modelSeat('sm-pend', { ok: true });
+  await eng.applySessionArgs('sm-pend', DIALOG_PATCH(['--model', 'claude-haiku-4-5', '--verbose'], { disabledTools: ['Bash'], restart: false }), 'default');
+  assert.strictEqual(seen.length, 0, 'ENTER: the first save did not restart');
+  const res = await eng.applySessionArgs('sm-pend', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose'], { disabledTools: ['Bash'] }), 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.deepStrictEqual(calls.setModel, []);
+  assert.strictEqual(seen.length, 1);
+});
+
+test('t1493: a live seat with no spawn record respawns on a model-only change', async () => {
+  const { eng, seen, calls } = modelSeat('sm-nosnap', { ok: true }, 'stream', false);
+  const res = await eng.applySessionArgs('sm-nosnap', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose']), 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.deepStrictEqual(calls.setModel, []);
+  assert.strictEqual(seen.length, 1);
+});
+
+test('t1493: switching back to the spawn model after an in-place switch is switched in place too', async () => {
+  const { eng, seen, calls } = modelSeat('sm-back', { ok: true });
+  await eng.applySessionArgs('sm-back', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose']), 'default');
+  const res = await eng.applySessionArgs('sm-back', DIALOG_PATCH(['--model', 'claude-haiku-4-5', '--verbose']), 'default');
+  assert.deepStrictEqual(res, { ok: true, restarted: false, modelSwitched: true });
+  assert.deepStrictEqual(calls.setModel, [['sm-back', 'claude-sonnet-4-6'], ['sm-back', 'claude-haiku-4-5']]);
+  assert.strictEqual(seen.length, 0);
+});

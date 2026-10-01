@@ -23803,6 +23803,24 @@ test('t1493: seatSetModel resolves no-reply after 60s without an ack, and a late
   await Promise.resolve();
   await Promise.resolve();
   assert.deepStrictEqual(settled, { ok: false, error: 'no reply from the CLI' });
+  assert.strictEqual(h.m.sessions.get('sm2')._controlAcks.size, 0);
   h.line('sm2', { type: 'control_response', response: { subtype: 'success', request_id: sent.request_id } });
-  assert.deepStrictEqual(settled, { ok: false, error: 'no reply from the CLI' });
+  assert.ok(h.logs.some((l) => l[0] === 'warn' && /control ack clodex-set-model-1 \(success\) arrived with no waiter/.test(l[2])));
+});
+
+test('t1493: a CLI exit settles a pending seatSetModel, and create() keeps the record the seat was spawned with', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sm3');
+  h.line('sm3', { type: 'system', subtype: 'init', session_id: 'sid-sm3', model: 'm', slash_commands: [] });
+  const s = h.m.sessions.get('sm3');
+  assert.strictEqual(s._spawnRecord.io, 'stream');
+  assert.deepStrictEqual(s._spawnRecord.extraArgs, []);
+  let settled = null;
+  h.m.seatSetModel('sm3', 'claude-sonnet-4-6').then((r) => { settled = r; });
+  h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepStrictEqual(settled, { ok: false, error: 'the CLI exited' });
+  assert.strictEqual(s._controlAcks.size, 0);
 });

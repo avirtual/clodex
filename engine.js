@@ -1542,9 +1542,8 @@ function modelOnlyChange(prev, patch) {
   const before = splitModelArg(prev.extraArgs);
   const after = splitModelArg(patch.extraArgs);
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-  if (!after.model || after.model === before.model || !same(before.rest, after.rest)) return null;
-  if (!same(patch.proxy ?? null, prev.proxy ?? null)) return null;
-  return same(resolveSessionArgsPatch(patch, prev), resolveSessionArgsPatch({}, prev)) ? after.model : null;
+  if (!same(before.rest, after.rest) || !same(patch.proxy ?? null, prev.proxy ?? null)) return null;
+  return same(resolveSessionArgsPatch(patch, prev), resolveSessionArgsPatch({}, prev)) ? { from: before.model, to: after.model } : null;
 }
 
 async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
@@ -1562,12 +1561,16 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const priorEffort = (typeof beforeKill.effort === 'string' && beforeKill.effort) ? beforeKill.effort : null;
   const nextEffort = patch.effort === undefined ? priorEffort
     : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
-  const live = restart && beforeKill.type === 'claude' && nextIo === priorIo && nextEffort === priorEffort ? manager.sessions.get(name) : null;
-  const inPlaceModel = live && !live._dead && live.io === 'stream' ? modelOnlyChange(beforeKill, patch) : null;
+  const live = restart && beforeKill.type === 'claude' && nextIo === 'stream' && priorIo === 'stream' && nextEffort === priorEffort ? manager.sessions.get(name) : null;
+  const spawned = live && !live._dead && live.io === 'stream' ? live._spawnRecord : null;
+  const spawnedEffort = spawned && typeof spawned.effort === 'string' && spawned.effort ? spawned.effort : null;
+  const vsSpawn = spawned && (spawned.io || 'pty') === 'stream' && spawnedEffort === nextEffort ? modelOnlyChange(spawned, patch) : null;
+  const inPlaceModel = vsSpawn && vsSpawn.to && vsSpawn.to !== vsSpawn.from && modelOnlyChange(beforeKill, patch) ? vsSpawn.to : null;
   if (inPlaceModel) {
     const res = await manager.seatSetModel(name, inPlaceModel);
     if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'set_model failed' };
     persistence.setExtraArgs(name, extraArgs);
+    spawned.extraArgs = extraArgs;
     return { ok: true, restarted: false, modelSwitched: true };
   }
   persistence.setExtraArgs(name, extraArgs);

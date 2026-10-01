@@ -2046,6 +2046,8 @@ function createSessionManager(deps) {
           return Object.keys(clean).length ? { env: clean } : {};
         })(),
       });
+      const spawnedAs = getPersistence().get(name);
+      session._spawnRecord = spawnedAs ? { ...spawnedAs } : null;
       if (existingEntry && existingEntry.exitedAt) getPersistence().setExited(name, null);
 
       const onSessionId = (sessionId) => {
@@ -2699,9 +2701,10 @@ function createSessionManager(deps) {
           s._controlAcks.delete(obj.request_id);
           resolve({ ok: false, error: 'no reply from the CLI' });
         }, STREAM_SET_MODEL_MS);
+        timer.unref?.();
         s._controlAcks.set(obj.request_id, (rec) => {
           clearTimeout(timer);
-          resolve(rec.ok ? { ok: true } : { ok: false, error: rec.error || 'set_model failed', errorCode: rec.errorCode });
+          resolve(rec.ok ? { ok: true } : { ok: false, error: rec.error || 'set_model failed', ...(rec.errorCode ? { errorCode: rec.errorCode } : {}) });
         });
         this._streamSend(s, obj);
       });
@@ -2821,6 +2824,8 @@ function createSessionManager(deps) {
         this._clearStreamResultHold(s);
         this._clearStreamInitWatchdog(s);
         this._dropStreamPermissions(s);
+        if (s._controlAcks) for (const settle of s._controlAcks.values()) settle({ ok: false, error: 'the CLI exited' });
+        if (s._controlAcks) s._controlAcks.clear();
         const { code, signal } = ev.close;
         if (s.stream && s.stream.stderrTail && code) {
           log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
@@ -2883,7 +2888,7 @@ function createSessionManager(deps) {
           break;
         case 'control-ack': {
           const settle = s._controlAcks && s._controlAcks.get(rec.id);
-          if (settle) { s._controlAcks.delete(rec.id); settle(rec); }
+          if (settle) { s._controlAcks.delete(rec.id); settle(rec); } else log.warn('session', `stream ${s.name}: control ack ${rec.id} (${rec.ok ? 'success' : rec.errorCode || 'error'}) arrived with no waiter`);
           break;
         }
         default:
