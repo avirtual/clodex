@@ -14,7 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Seats: a multi-line delivery to a Claude terminal seat waits for the CLI's paste mode instead of being typed raw, so it can no longer end up stuck in the composer as an unsent draft.
-- Messaging: the sender-line quoting now also covers a marker hidden by invisible characters and the hand/reviewer text the ticket loop embeds in its notices, so neither a peer nor a ticket report can pose as the operator or a system sender.
+- Messaging: the sender-line quoting now also covers a marker broken up by invisible or bidi characters and the hand/reviewer text the ticket loop embeds in its notices, so neither a peer nor a ticket report can pose as the operator or a system sender.
 
 ## 5.105.0 — 2026-10-01
 
