@@ -246,6 +246,7 @@ clodex-surface-
 clodex-surface-gate-
 clodex-sweep-
 clodex-sweeptest-
+clodex-t1504-spill-
 clodex-t166-
 clodex-t170-
 clodex-t188-
