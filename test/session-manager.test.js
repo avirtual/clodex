@@ -23024,7 +23024,7 @@ test('t1208: seatCommands on a claude seat after init lists its slash commands m
   ]);
 });
 
-test('t1513: a claude init with a plugin error, sent twice, logs one warn naming the path and broadcasts one plugin-error, and still applies model and slash commands', async (t) => {
+test('t1513: a claude init with a plugin error, sent twice, logs one warn naming the path and broadcasts one plugin-error, and still applies model and slash commands; after an empty set it warns again', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
   const sent = [];
@@ -23046,6 +23046,11 @@ test('t1513: a claude init with a plugin error, sent twice, logs one warn naming
   assert.strictEqual(pe[0][1].to, 'pe1');
   assert.strictEqual(pe[0][1].body, warns[0][2]);
   assert.ok(!s.needsAttention, 'a bad plugin is not a blocked seat');
+  h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'], plugin_errors: [] });
+  h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'],
+    plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message: 'Failed to load plugin: corrupt manifest\nsecond line', path: '/abs/bad-plugin' }] });
+  assert.strictEqual(h.logs.filter(([lvl, , msg]) => lvl === 'warn' && msg.includes('plugin dir(s) failed to load')).length, 2, 'an empty set clears the latch, so the error returning warns again');
+  assert.strictEqual(sent.filter(([ch, msg]) => ch === 'ipc-message' && msg.kind === 'plugin-error').length, 2);
 });
 
 test('t1513: a claude init with an empty plugin_errors neither warns nor broadcasts a plugin-error', async (t) => {
