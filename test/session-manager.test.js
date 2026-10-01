@@ -21881,7 +21881,9 @@ test('t1099 _scratchCutAfterGuard: the pty queue is quiesced BEFORE the recycle 
 
 test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stamped with the dead seat\'s createdAt, not unstamped', async () => {
   const { InjectQueue } = require('../inject-queue');
-  const { m, PENDING_DIR } = mkPark({ InjectQueue, SHORT_TEXT_DELAY: 1, LONG_TEXT_DELAY: 1, LONG_TEXT_THRESHOLD: 1000 });
+  const warns = [];
+  const { m, PENDING_DIR } = mkPark({ InjectQueue, SHORT_TEXT_DELAY: 1, LONG_TEXT_DELAY: 1, LONG_TEXT_THRESHOLD: 1000,
+    log: { info: () => {}, warn: (_c, msg) => warns.push(msg), error: () => {}, debug: () => {} } });
   delete m._injectText;
   const session = {
     name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, _bootReadySeen: true,
@@ -21900,6 +21902,21 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
   const entry = JSON.parse(fsReal.readFileSync(pathReal.join(PENDING_DIR, 'a', files[0]), 'utf8'));
   assert.strictEqual(entry.born, session.createdAt,
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
+  assert.ok(warns.some((w) => /re-parked an undelivered inject for a \(dead, /.test(w)), JSON.stringify(warns));
+});
+
+test('t1507 onUndelivered: a re-park on a live seat (the paste cap) logs at warn as paste mode off, not dead', () => {
+  const { InjectQueue } = require('../inject-queue');
+  const warns = [];
+  const infos = [];
+  const { m, PENDING_DIR } = mkPark({ InjectQueue,
+    log: { info: (_c, msg) => infos.push(msg), warn: (_c, msg) => warns.push(msg), error: () => {}, debug: () => {} } });
+  const session = { name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, pty: { write: () => {} } };
+  m.sessions.set('a', session);
+  m._injectQueueFor(session)._undelivered('one\ntwo');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), true, 're-parked on disk');
+  assert.ok(warns.some((w) => w.includes('re-parked an undelivered inject for a (paste mode off, 7 chars)')), JSON.stringify(warns));
+  assert.ok(!infos.some((w) => w.includes('re-parked an undelivered')), 'not at info');
 });
 
 function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null, streamFor = null, loadStreamCodec = null, extraDeps = {} } = {}) {
