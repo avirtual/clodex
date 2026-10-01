@@ -49,3 +49,7 @@ forever. A failed spawn removes the record again, or the retry through
 `_preserveAcrossRestart` is deliberately NOT used here: its always-preserve set
 carries `worktree`/`ticketId`/`wireLabel`/`pluginGrants`, which name
 things on the source box.
+
+The call carries `fixFor`, `io` and `effort` (positions 24-26) like every other
+restore site, so a stream seat or an effort-pinned seat lands on the far box as
+it left; before t1519 it stopped at `shellDeny` and came back pty at default effort.

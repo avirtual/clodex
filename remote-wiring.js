@@ -375,6 +375,9 @@ function createRemoteWiring(deps) {
         rec.noWire === true,
         Array.isArray(rec.plugins) ? rec.plugins : null,
         Array.isArray(rec.shellDeny) ? rec.shellDeny : null,
+        typeof rec.fixFor === 'string' ? rec.fixFor : null,
+        rec.io || 'pty',
+        typeof rec.effort === 'string' ? rec.effort : null,
       );
     } catch (e) {
       try { getPersistence().remove(name); } catch {}
