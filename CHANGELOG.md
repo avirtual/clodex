@@ -16,6 +16,7 @@ blocks a release.
 - Drawer tabs: the per-tab unread counts are gone; a tab that got something while hidden shows a dot (red when it was a failure), cleared when you open it.
 - Seats: a delivery the CLI wraps as pasted text is no longer read as untrusted paste — the IPC prompt now says the wrap is an artefact of how Clodex types into the terminal and that the sender line sets the trust.
 - Messaging: a line inside a peer's message that starts with `[agent:from …]` is quoted (`> `) at delivery, so a peer cannot pose as the operator or a system sender inside its own dm.
+- Messaging: a delivery to a Claude terminal seat that would be 4 or more lines is handed over as an attached file instead of pasted text, so the CLI no longer wraps it as untrusted paste (short deliveries stay inline).
 
 ## 5.104.0 — 2026-10-01
 
