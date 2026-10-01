@@ -83,9 +83,9 @@ test('pasteKind reads an array-like item list', () => {
 
 for (const [label, text, paths, want] of [
   ['ENTER: text with no chip is untouched', 'describe this', {}, 'describe this'],
-  ['a mapped chip becomes the path line', '[Image #1] hi', { 1: '/a/img.png' }, 'Image #1: /a/img.png hi'],
+  ['a mapped chip becomes the path line', '[Image #1] hi', { 1: '/a/img.png' }, 'Image: /a/img.png hi'],
   ['an inserted pathless chip is stripped', '[Image #1] hi', { 1: null }, 'hi'],
-  ['two chips, one mapped', '[Image #1] [Image #2] hi', { 1: null, 2: '/a/two.png' }, 'Image #2: /a/two.png hi'],
+  ['two chips, one mapped', '[Image #1] [Image #2] hi', { 1: null, 2: '/a/two.png' }, 'Image: /a/two.png hi'],
   ['a chip-free text is unchanged with paths given', 'plain words', { 1: '/a/img.png' }, 'plain words'],
   ['a leading chip is dropped with its space', `${imageChip(1)}describe this`, { 1: null }, 'describe this'],
   ['chips after text are dropped', `look ${imageChip(1)}${imageChip(2)}`, { 1: null, 2: null }, 'look '],
@@ -95,7 +95,7 @@ for (const [label, text, paths, want] of [
   ['no path map keeps every chip-shaped token', `${imageChip(1)}x`, undefined, '[Image #1] x'],
   ['a typed chip no paste inserted is kept', 'see [Image #1] above', {}, 'see [Image #1] above'],
   ['a typed chip beside an inserted one is kept', '[Image #1] see [Image #2] above', { 1: null }, 'see [Image #2] above'],
-  ['a chip sent while its web upload is still pending is dropped', 'look [Image #1] [Image #2] ', { 1: '/h/img-1.png', 2: null }, 'look Image #1: /h/img-1.png '],
+  ['a chip sent while its web upload is still pending is dropped', 'look [Image #1] [Image #2] ', { 1: '/h/img-1.png', 2: null }, 'look Image: /h/img-1.png '],
 ]) {
   test(`expandImageChips: ${label}`, () => {
     assert.strictEqual(expandImageChips(text, paths), want);
@@ -425,7 +425,7 @@ test('ENTER: a pending chip typed over still binds its path when the upload land
   h.prune();
   assert.strictEqual(h.strip.children.length, 1);
   h.send();
-  assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image #1: /h/img-1.png '));
+  assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image: /h/img-1.png '));
   const again = h.paste();
   await new Promise(setImmediate);
   assert.strictEqual(h.strip.children.length, 1);

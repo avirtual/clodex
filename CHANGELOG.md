@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- PTY composer: a pasted image's path is sent as `Image: <path>` instead of `Image #n: <path>`, since the CLI numbers image marks per session and the draft's number never matched.
+
 ## 5.103.0 — 2026-10-01
 
 - Subagents: an agent file's `omitClaudeMd: true` now reaches the CLI, and the built-in clodex-locate and clodex-redproof agents set it, so a lookup or red-proof no longer bills the project's CLAUDE.md on every request.
