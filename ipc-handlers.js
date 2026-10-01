@@ -75,7 +75,7 @@ function registerIpcHandlers(deps) {
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, os,
     path, persistence, probePeer, proxyPoller,
-    pty, readEffectiveToolState, readVoiceTrigger, readVoiceCapability, readSessionMeta,
+    pty, readEffectiveToolState, readVoiceCapability, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
@@ -1071,7 +1071,7 @@ function registerIpcHandlers(deps) {
     const cap = readVoiceCapability ? readVoiceCapability() : { capable: true, cause: null };
     const seat = (typeof name === 'string' && name) || manager._focusedSession || null;
     const mode = seat && manager.sessions.has(seat) ? manager.voiceModeFor(seat) : null;
-    return { ok: true, seat, mode, effective: mode, trigger: readVoiceTrigger(), capable: cap.capable !== false, cause: cap.cause || null };
+    return { ok: true, seat, mode, effective: mode, capable: cap.capable !== false, cause: cap.cause || null };
   });
   handle('settings:setVoiceMode', (_e, mode, name) => manager.voiceMode(mode, typeof name === 'string' && name ? name : null));
   handle('session:setVoice', (_e, name, mode) => manager.setVoice(String(name || ''), mode));

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { readVoiceCapability, readVoiceCapabilityCached, SOX_MISSING, NO_DEVICE } = require('../voice-capability');
+const { registerIpcHandlers } = require('../ipc-handlers');
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'voice-capability.js'), 'utf-8');
 
@@ -116,4 +117,52 @@ test('the cached read answers the same shape as the uncached one and is memoized
   assert.ok(a.cause === null || typeof a.cause === 'string');
   assert.strictEqual(readVoiceCapability.cached, readVoiceCapabilityCached,
     'both spellings the spec names must reach the one memo');
+});
+
+function fakeVoiceManager() {
+  const modes = new Map([['seat-a', 'tap'], ['seat-b', 'off']]);
+  return {
+    sessions: new Map([['seat-a', {}], ['seat-b', {}]]),
+    _focusedSession: 'seat-a',
+    voiceModeFor: (name) => modes.get(name),
+  };
+}
+
+function voiceModeHandler(capability) {
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    ...(capability ? { readVoiceCapability: () => capability } : {}),
+    manager: fakeVoiceManager(),
+    log: { info() {}, error() {} },
+  });
+  const fn = handlers.get('settings:voiceMode');
+  assert.ok(fn, 'settings:voiceMode is registered');
+  return fn;
+}
+
+test('settings:voiceMode carries the machine’s capability — the whole payload, as the handler builds it', () => {
+  const payload = voiceModeHandler({ capable: false, cause: 'SoX is not installed on this machine' })();
+  assert.deepStrictEqual(payload, {
+    ok: true,
+    seat: 'seat-a',
+    mode: 'tap',
+    effective: 'tap',
+    capable: false,
+    cause: 'SoX is not installed on this machine',
+  });
+});
+
+test('settings:voiceMode answers the NAMED seat’s mode over the focused one', () => {
+  const payload = voiceModeHandler({ capable: true, cause: null })(null, 'seat-b');
+  assert.strictEqual(payload.seat, 'seat-b');
+  assert.strictEqual(payload.mode, 'off');
+  assert.strictEqual(payload.effective, 'off');
+});
+
+test('settings:voiceMode with no capability read wired answers capable, not disabled', () => {
+  const payload = voiceModeHandler(null)();
+  assert.strictEqual(payload.capable, true);
+  assert.strictEqual(payload.cause, null);
 });

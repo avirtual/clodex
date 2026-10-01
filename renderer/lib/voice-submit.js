@@ -104,8 +104,8 @@ function shouldFire({ enabled, attention } = {}) {
 // The composer with nothing typed in it, matched against the CURSOR ROW
 // truncated at the cursor.
 //
-// At most ONE space: that one is the separator the CLI paints after the marker, and a
-// second is the operator's (or dictation's, which prepends one).
+// At most ONE space: that one is the separator the CLI paints after the marker,
+// and a second is the operator's (or dictation's, which prepends one).
 //
 // The marker is REQUIRED, and that direction is chosen for how it fails. If
 // the glyph is wrong this returns false and the feature goes quiet; if the
