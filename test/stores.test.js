@@ -2176,7 +2176,7 @@ test('seed: shipped team prompts carry the comment rule, in both directions', ()
   assert.doesNotMatch(hand, /boundary-check\.js/,
     'and with it the post-cut lint it ran — scripts/boundary-check.js stays in the repo, unrun by hands');
   const reviewer = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-reviewer.md'), 'utf-8');
-  assert.match(reviewer, /DELETING IS THE DEFAULT REPAIR/,
+  assert.match(reviewer, /Comments: deleting is the default repair/,
     'reviewer prompt makes deletion the default repair for an over-wide comment');
   assert.match(reviewer, /Qualifying is the exception/,
     'reviewer prompt marks qualifying as the exception, not the reflex');
@@ -2411,9 +2411,9 @@ test('seed (t673): the shell reviewer PROMPT ships, and differs from the default
   const dir = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'system');
   const dflt = fs.readFileSync(path.join(dir, 'clodex-team-reviewer.md'), 'utf-8').split('\n');
   const shell = fs.readFileSync(path.join(dir, 'clodex-team-reviewer-shell.md'), 'utf-8').split('\n');
-  assert.ok(shell.some((l) => /YOUR SHELL IS TRUSTED/.test(l)), 'the shell seat is told it has one');
-  assert.ok(!shell.some((l) => /YOU HAVE NO SHELL/.test(l)), 'and is NOT also told it has none');
-  assert.ok(dflt.some((l) => /YOU HAVE NO SHELL/.test(l)), 'ENTER: the default still says the opposite — the two prompts really do differ here');
+  assert.ok(shell.some((l) => /Your shell is trusted/.test(l)), 'the shell seat is told it has one');
+  assert.ok(!shell.some((l) => /You have no shell/.test(l)), 'and is NOT also told it has none');
+  assert.ok(dflt.some((l) => /You have no shell/.test(l)), 'ENTER: the default still says the opposite — the two prompts really do differ here');
   // The gap no deny rule can close. A prompt that only listed the denied verbs
   // would leave the seat believing the CLI stops every write, which for a
   // redirection it does not.
@@ -2430,7 +2430,7 @@ test('seed (t673): the shell reviewer PROMPT ships, and differs from the default
     assert.ok(i > 0, `ENTER: the marker ${marker} was found — otherwise the tail compared is empty`);
     return lines.slice(i).join('\n');
   };
-  assert.strictEqual(tailFrom(shell, 'ISSUE INDEPENDENT CALLS TOGETHER'), tailFrom(dflt, 'ISSUE INDEPENDENT CALLS TOGETHER'),
+  assert.strictEqual(tailFrom(shell, 'Issue independent calls together'), tailFrom(dflt, 'Issue independent calls together'),
     'everything from the next bullet onward is byte-identical, verdict grammar included');
 });
 
