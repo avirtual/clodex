@@ -849,7 +849,8 @@ test('scope own: twelve long slow advisories keep the digest head and a bounded 
     const r = run(root, '{"scope":"own"}');
     assert.strictEqual(r.code, 0);
     assert.ok(r.digest.startsWith(`[${path.basename(root)}] own: 12/12 green (`), r.digest.slice(0, 120));
-    assert.ok(r.digest.length <= 400, `${r.digest.length}: ${r.digest}`);
+    const advisory = r.digest.slice(r.digest.indexOf(' — SLOW(advisory)'));
+    assert.ok(advisory.length <= 300, `${advisory.length}: ${advisory}`);
     assert.strictEqual(r.digest.split('SLOW(advisory)').length - 1, 3);
     assert.ok(r.digest.endsWith('9002ms; +9 more'), r.digest.slice(-80));
   } finally { fs.rmSync(root, { recursive: true, force: true }); }

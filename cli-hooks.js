@@ -785,9 +785,9 @@ exit 0
         CLAUDE_CODE_GATEWAY_HINT_HEADERS: '1',
       };
     }
-    // --agents is additive: built-in subagents stay registered unless denied
-    // here. Tool names are filtered against the catalog because a stale name
-    // makes the CLI warn "matches no known tool" on every startup.
+    // Built-in subagents stay registered unless denied here. Tool names are
+    // filtered against the catalog because a stale name makes the CLI warn
+    // "matches no known tool" on every startup.
     const toolSet = new Set(CLAUDE_TOOLS);
     const denyRules = [...new Set([
       ...denyAgentRules(denyBuiltins),
