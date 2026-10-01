@@ -640,7 +640,7 @@ test('wt.selected reports kind null when nothing is selected', async () => {
 
 // ── The renderer half's side of the visibility property ─────────────────────
 // The browse-control behaviour (picker, Up at the root, the unsaved-edit
-// prompt) is driven by click through `mountWorkbench`'s harness in
+// prompt) is driven by click through `openFilesSession` in
 // test/workbench-renderer.test.js, not pinned as source here.
 test('t277: the indicator label word comes from the engine kind, never a constant', () => {
   // The one thing that makes the folder root non-invisible is that it is NOT
