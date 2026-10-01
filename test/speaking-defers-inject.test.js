@@ -101,12 +101,9 @@ test('speaking defers even though the typing gate is wide open', async () => {
     'a seat that reads idle on the typing gate must still wait out the recorder');
 });
 
-// THE POLARITY CASE, and it is the OPPOSITE of `recorderBlocksRearm`'s in
-// voice-submit.js, deliberately. There an unreadable screen BLOCKS the re-arm,
-// because a missed indicator writes a key that cuts him off mid-sentence. Here
-// an unreadable screen must NOT defer: nothing releases a deferral that no
-// reader can clear, so a permanently-unreadable terminal would silently stop
-// every delivery to the seat forever. Doubt blocks there; doubt delivers here.
+// THE POLARITY CASE: an unreadable screen must NOT defer. Nothing releases a
+// deferral that no reader can clear, so a permanently-unreadable terminal would
+// silently stop every delivery to the seat forever.
 test('an unreadable screen does NOT defer — doubt must never wedge delivery', async () => {
   // `false` is exactly what the renderer contributes when it cannot read the
   // screen: `recordingObserved(null) === false`, and a watcher that has gone
