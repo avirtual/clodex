@@ -624,16 +624,17 @@ killed agent's record is gone.
 Session…, Delete Workspace…, the archived and failed rows' ✕ (`forgetSession`),
 team-retire with discard, `sweepReviewerGraveyard`, the team-review
 spawn-failure rollback, the seat-import spawn-failure rollback
-(remote-wiring.js), and both ticket-seat spawn-failure rollbacks in
-`_spawnTicketSeat` (team-tickets.js: the createWorktree-failed arm, and the
-create()-threw catch, which drops only when the seat is not live). `destroy()`
-is on the list separately from `kill()`, not as its caller: `kill()` returns at
-`if (!s) return;` before its remove, so on an already-dead seat only
-`destroy()`'s own drop runs — without it the tree went and the record naming it
-stayed (a record pointing at nothing rather than nothing pointing at a record).
-The list is the point: a new `getPersistence().remove()` call site that is not
-on it is a record dropped where nobody expects one. ✕ / Cmd+W archives instead
-of killing for bash shells and sandbox rows too.
+(remote-wiring.js, drops only when the seat is not live), and both ticket-seat
+spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
+createWorktree-failed arm, and the create()-threw catch, which drops only when
+the seat is not live). `destroy()` is on the list separately from `kill()`, not
+as its caller: `kill()` returns at `if (!s) return;` before its remove, so on an
+already-dead seat only `destroy()`'s own drop runs — without it the tree went
+and the record naming it stayed (a record pointing at nothing rather than
+nothing pointing at a record). The list is the point: a new
+`getPersistence().remove()` call site that is not on it is a record dropped
+where nobody expects one. ✕ / Cmd+W archives instead of killing for bash shells
+and sandbox rows too.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)

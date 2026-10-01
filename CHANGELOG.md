@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Peers: a seat moved to a peer keeps its stream mode and effort level on the far box instead of coming back as a terminal seat at default effort.
+- Peers: a seat move that loses a same-name race on the far box no longer forgets the session that won it.
 
 ## 5.106.0 — 2026-10-01
 
