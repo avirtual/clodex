@@ -82,15 +82,15 @@ function extractClaudeBlocks(content) {
   return out.join('\n');
 }
 
-// Transcript → chat messages for every transcript reader: user/assistant
-// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
-// regardless of which observation path (wire vs JsonlWatcher) is live — so the
-// remote view never depends on the intent machinery.
 function maxImageMark(text, images) {
   const marks = [...text.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1]));
   return Math.max(0, ...marks, ...(images || []).map((img) => img.n));
 }
 
+// Transcript → chat messages for every transcript reader: user/assistant
+// only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
+// regardless of which observation path (wire vs JsonlWatcher) is live — so the
+// remote view never depends on the intent machinery.
 function jsonlToMessages(jsonlPath, limit = 100) {
   const raw = fs.readFileSync(jsonlPath, 'utf-8');
   const records = [];

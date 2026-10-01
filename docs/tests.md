@@ -72,6 +72,11 @@ that exact shape, and it was right — the record is a snapshot, and a successor
 can write between the read and the unlink. The pin caught a flaw in the
 reasoning, not a typo.
 
+## Not a quota
+
+None of these is a blanket requirement, and there is no `ENTER:` count to
+satisfy — a ratchet on a count measures compliance, not coverage.
+
 ## A spawned child always carries a timeout
 
 A test that spawns node, bash or claude and waits on its exit passes a
@@ -79,8 +84,3 @@ A test that spawns node, bash or claude and waits on its exit passes a
 otherwise hangs the whole suite, not the one test. t1470 gave every hook spawn
 in `cli-hooks.test.js` a 30s SIGKILL timeout, so its ARG_MAX drain case now
 fails as one ETIMEDOUT test instead of stalling the run.
-
-## Not a quota
-
-None of these is a blanket requirement, and there is no `ENTER:` count to
-satisfy — a ratchet on a count measures compliance, not coverage.
