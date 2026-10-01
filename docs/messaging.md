@@ -219,7 +219,7 @@ Codex gets a read-with-Read pointer. That hand-off copy is swept after
 `MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
 basename, to `~/.clodex/spill/<seat>/messages/`, which is never swept. The ring
 records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
-`resolveDisplayedPath` fall back to the durable copy (`durableMessageCopyOf`). A non-system sender's body line that starts with `[agent:from` is quoted with `> ` before either branch, spilled file included, so a peer cannot forge a sender line.
+`resolveDisplayedPath` fall back to the durable copy (`durableMessageCopyOf`). A non-system sender's body line that starts with `[agent:from` is quoted with `> ` before either branch, spilled file included, so a peer cannot forge a sender line; the ticket-loop defuses the hand/reviewer spans inside its own notices the same way.
 
 **Inject** — `_injectText` has two layers:
 1. *Turn batching*: `_injectHoldReason` (compact window / permission dialog /
