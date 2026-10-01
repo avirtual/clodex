@@ -143,6 +143,9 @@ session env), so a remote Edit-Session view omits the section and the wire strip
 `env` in both directions. It applies at the next spawn; ticking "Restart session
 now" applies it immediately (`applySessionArgs` threads the edited env into the
 respawn's `create()`).
+On a live claude stream seat, a "Restart session now" save whose only difference is the
+`--model` value skips the respawn: `applySessionArgs` sends `seatSetModel` (the CLI's
+`set_model` control request) and persists the args only on its success ack.
 Clodex SHIPS a set of default vars for wrapped seats in `resources/env-defaults.json`
 (`{ KEY: { value, note } }`), seeded into the GLOBAL scope at `initStores` — once per
 key ever, recorded on a `seeded` list in `env-scopes.json`. They are ordinary global
