@@ -22177,16 +22177,16 @@ test('phone dm images: _deliverMessage with images to a pty seat writes one file
   ];
   h.m._deliverMessage('pi1', 'user', 'see these', 'dm', '', null, null, images);
   const dir = path.join(h.root, 'messages', 'pi1');
-  const files = fs.readdirSync(dir).filter((f) => f.startsWith('img-')).sort();
+  const files = fs.readdirSync(dir).sort();
   assert.strictEqual(files.length, 3);
   assert.deepStrictEqual(files.map((f) => path.extname(f)), ['.png', '.jpg', '.webp']);
   for (const f of files) assert.match(f, /^img-\d+-[123]\.(png|jpg|webp)$/);
   assert.deepStrictEqual(files.map((f) => fs.readFileSync(path.join(dir, f), 'utf8')), ['PNGBYTES', 'JPGBYTES', 'WEBPBYTES']);
   assert.strictEqual(injected.length, 1);
   const lines = injected[0].split('\n');
-  assert.match(lines[0], /^\[agent:from user\] Message \(9 bytes\) attached: @\S+ $/);
+  assert.strictEqual(lines[0], '[agent:from user] see these');
   assert.deepStrictEqual(lines.slice(1), files.map((f) => `Image: ${path.join(dir, f)}`));
-  assert.deepStrictEqual(h.m.sessions.get('pi1').filedRing.list().map((e) => [e.path, e.kind, e.head]).reverse().slice(0, 3), [
+  assert.deepStrictEqual(h.m.sessions.get('pi1').filedRing.list().map((e) => [e.path, e.kind, e.head]).reverse(), [
     [path.join(dir, files[0]), 'message', 'Image #1 (image/png)'],
     [path.join(dir, files[1]), 'message', 'Image #2 (image/jpeg)'],
     [path.join(dir, files[2]), 'message', 'Image #3 (image/webp)'],
