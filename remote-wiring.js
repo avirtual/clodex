@@ -641,7 +641,7 @@ function createRemoteWiring(deps) {
           if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntentsFor(safePatch.intents);
           const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && (out.restarted || out.modelSwitched) && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
-          log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
+          log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : out.modelSwitched ? ' (model switched)' : '') : ` failed: ${out && out.error}`}`);
           return out;
         },
         getSkillCatalog: (name) => readSkillCatalog({ name }),

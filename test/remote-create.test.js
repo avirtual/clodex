@@ -51,10 +51,11 @@ function makeDeps(overrides = {}) {
   };
   const persistence = { get: () => undefined, setStripLevel: (n, l) => stripCalls.push([n, l]) };
   const argsCalls = [];
+  const infoLines = [];
   const uiSettings = { get: () => ({ remoteEnabled: true, remotePort: 0, proxyUrl: 'http://127.0.0.1:8123', proxyEnabled: true }) };
   const deps = {
     path, fs: require('fs'), os,
-    log: { info() {}, error() {} },
+    log: { info: (...a) => { infoLines.push(a.join(' ')); }, error() {} },
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR: '/tmp/reg', OUTBOX_DIR: '/tmp/outbox', SELF_LABEL: 'testbox',
@@ -65,7 +66,7 @@ function makeDeps(overrides = {}) {
       || ((n) => { throw new Error(`no such team "${n}"`); }),
     restartClodex: () => {}, restartSession: () => {}, peerProxyView: () => null,
     readSessionArgs: () => ({ ok: false }),
-    applySessionArgs: (n, p, w) => { argsCalls.push([n, p, w]); return { ok: true }; },
+    applySessionArgs: (n, p, w) => { argsCalls.push([n, p, w]); return overrides.argsResult || { ok: true }; },
     readSkillCatalog: () => ({ ok: false }), applySessionSkills: () => ({ ok: false }),
     fetchProxyContext: () => {}, fetchProxyReport: () => {}, fetchProxyBust: () => {},
     fetchSessionFiles: () => {}, fetchFilePeek: () => {}, fetchFileDiff: () => {},
@@ -80,7 +81,7 @@ function makeDeps(overrides = {}) {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
   };
-  return { deps, createCalls, stripCalls, argsCalls, spawnCalls, manager };
+  return { deps, createCalls, stripCalls, argsCalls, spawnCalls, manager, infoLines };
 }
 
 // Patch RemoteServer (require()d lazily inside syncRemoteServer) with a capturing
@@ -90,18 +91,20 @@ function captureOptions(deps) {
   const remoteMod = require('../remote');
   const orig = remoteMod.RemoteServer;
   let opts = null;
+  const notifyCalls = [];
   remoteMod.RemoteServer = function (o) {
     opts = o;
     // setWtermCallbacks is reconciled on every sync (t219), so the fake must
     // answer it. Deliberately not a guard in syncRemoteServer: a real server
     // that lacked the method would be a wiring break worth crashing on.
-    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() {}, setWtermCallbacks() {} };
+    return { start: () => Promise.resolve(), stop() {}, port: 0, notifySessions() { notifyCalls.push(1); }, setWtermCallbacks() {} };
   };
   try {
     createRemoteWiring(deps).syncRemoteServer();
   } finally {
     remoteMod.RemoteServer = orig;
   }
+  if (opts) opts.notifyCalls = notifyCalls;
   return opts;
 }
 
@@ -375,6 +378,21 @@ test('setSessionArgs (t8 F1): a PLUGIN verb in a peer patch is stripped before t
       'the plugin verb AND reboot are both dropped on the wire edit');
   });
 });
+
+for (const row of [
+  { result: { ok: true }, notifies: 0, suffix: '' },
+  { result: { ok: true, restarted: true }, notifies: 1, suffix: ' (respawned)' },
+  { result: { ok: true, modelSwitched: true }, notifies: 1, suffix: ' (model switched)' },
+]) {
+  test(`setSessionArgs: ${JSON.stringify(row.result)} → ${row.notifies} notify, log suffix "${row.suffix}"`, async () => {
+    const { deps, infoLines } = makeDeps({ argsResult: row.result });
+    const opts = captureOptions(deps);
+    await opts.setSessionArgs('box1', { model: 'opus' });
+    assert.strictEqual(opts.notifyCalls.length, row.notifies);
+    const line = infoLines.find((l) => l.includes('setArgs box1 via peer'));
+    assert.strictEqual(line, `session setArgs box1 via peer${row.suffix}`);
+  });
+}
 
 // ── createSession: warnings forwarded on the ack ─────────────────────────────
 
