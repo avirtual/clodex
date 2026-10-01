@@ -483,16 +483,9 @@ test('lock: npm test and the digest share ONE lock dir, or the mutex is not a mu
   // mutex, which excludes nothing.
   assert.match(shell, /LOCK="\$root\/\.test-digest\.lock"/,
     'the shell path names the lock dir, rooted at its own checkout');
-  assert.match(js, /'\.test-digest\.lock'/,
+  assert.match(js, /: path\.join\(ROOT, '\.test-digest\.lock'\);/,
     'run-tests.js must use the SAME dir — a second lock name excludes nothing');
-  assert.match(js, /process\.kill\(holder, 0\)/,
-    'and the same staleness rule, or a crashed run wedges the other entry point forever');
-  // The lock guards a SWEEP only. The suite spawns this runner against explicit
-  // files (test-escapes.test.js proves the escape detector; these tests drive a
-  // stub), and those children run INSIDE a run that already holds the lock — so
-  // taking it for a named-file run deadlocks the suite against itself.
-  assert.match(js, /const sweeping = !passthrough\.some/,
-    'a named-file run must not take the lock, or the suite blocks on its own children');
+  // Staleness and the sweep-only rule are driven by 'lock: npm test reclaims a lock whose holder is dead, and releases on exit' and 'lock: a named-file run ignores a held lock — the suite spawns this runner'.
 });
 
 test('lock: npm test REFUSES while another run holds it, and says how to clear it', () => {
