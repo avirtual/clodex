@@ -639,12 +639,9 @@ test('wt.selected reports kind null when nothing is selected', async () => {
 });
 
 // ── The renderer half's side of the visibility property ─────────────────────
-// These read the SOURCE rather than driving the DOM, which is the established
-// shape in this file (the W9 gates above do the same) because no DOM harness for
-// the workbench half exists. The limit is real and worth stating: they pin that
-// the code says a thing, not that the rendered panel does it. A behavioural
-// version would need a harness that mounts the overlay, which is a larger piece
-// of work than this ticket, and its absence is why these stay narrow.
+// The browse-control behaviour (picker, Up at the root, the unsaved-edit
+// prompt) is driven by click through `mountWorkbench`'s harness in
+// test/workbench-renderer.test.js, not pinned as source here.
 test('t277: the indicator label word comes from the engine kind, never a constant', () => {
   // The one thing that makes the folder root non-invisible is that it is NOT
   // labelled "worktree". A hardcoded label would pass every engine test above
@@ -659,39 +656,9 @@ test('t277: the indicator label word comes from the engine kind, never a constan
     'and "worktree" is never baked into the indicator markup');
 });
 
-test('t277: Go to Folder uses the host picker, and Up cannot spin at the fs root', () => {
+test('t277: the renderer half never reaches window.api', () => {
   const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(code, /ui\.pickDirectory\(\)/,
-    'the native dialog arrives through the host surface — a plugin cannot reach window.api');
-  assert.ok(!/window\.api/.test(code), 'and never through window.api');
-  assert.match(code, /upBtn\.disabled/, 'Up is disabled rather than looping on dirname("/")');
-  // The unsaved-edit prompt must come BEFORE the dialog, or the operator picks a
-  // folder and only then gets asked, with a cancel discarding the pick.
-  assert.match(code, /if \(!confirmDiscardEdit\(\)\) return;\s*const dir = await h\.ui\.pickDirectory\(\);/,
-    'confirmDiscardEdit guards the dialog, not just the apply');
-});
-
-test('t277: a Go to Folder click asks about unsaved edits exactly ONCE', () => {
-  // The property meant here is a COUNT: one modal per click. The ordering pin
-  // in the test above cannot express it — it passed while the guard in front of
-  // the dialog was a SECOND one and a dirty editor got the same modal twice,
-  // which is the failure the guard existed to remove, surviving in a new place.
-  //
-  // A behavioural version would drive the click and count the calls; that needs
-  // the overlay-mounting harness this file does not have (see the note above
-  // this block). So what is reachable is pinned instead: the guard is MOVED, not
-  // duplicated — setFolderRoot takes the opt-out flag, and the goto path is the
-  // caller that passes it.
-  const code = rendererSrc.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-  assert.match(code, /async function setFolderRoot\(dir, \{ confirmed = false \} = \{\}\)/,
-    'ENTER: the flag exists and defaults to false, so an unflagged caller still asks');
-  assert.match(code, /if \(!confirmed && !confirmDiscardEdit\(\)\) return;/,
-    'and the guard inside setFolderRoot honours it');
-  assert.match(code, /await setFolderRoot\(dir, \{ confirmed: true \}\);/,
-    'the goto path opts out, because it already asked before opening the dialog');
-  // Up does NOT opt out: it never asked, so it must still be asked for.
-  assert.match(code, /await setFolderRoot\(parent\);/,
-    'Up relies on the default and is guarded by setFolderRoot itself');
+  assert.ok(!/window\.api/.test(code), 'the native dialog arrives through the host surface, never window.api');
 });
 
 // The web-surface removal of the browse controls is asserted in

@@ -51,7 +51,7 @@ function makeDom() {
       classList: {
         add() {}, remove() {}, toggle() {}, contains() { return false; },
       },
-      addEventListener(type) { listeners.push({ id, type }); },
+      addEventListener(type, fn) { listeners.push({ id, type, fn }); },
       removeEventListener() {},
       appendChild() {},
       querySelectorAll() { return []; },
@@ -86,8 +86,8 @@ function makeDom() {
 // ── A fake rhost ────────────────────────────────────────────────────────────
 // `mount` is captured rather than called: the host calls it at first open, and
 // the test drives that moment itself.
-function makeRhost({ answers = {}, sessions = [] } = {}) {
-  const state = { mount: null, onOpen: null, toasts: [], invokes: [] };
+function makeRhost({ answers = {}, sessions = [], confirmAnswer = true, pickAnswer = null } = {}) {
+  const state = { mount: null, onOpen: null, toasts: [], invokes: [], confirms: 0, picks: 0 };
   const rhost = {
     workspaceId: 'default',
     setTimeout(fn) { return 0; },
@@ -109,8 +109,8 @@ availability: () => ({}),
     },
     ui: {
       showToast(msg) { state.toasts.push(msg); },
-      pickDirectory: () => Promise.resolve(null),
-      confirm: () => true,
+      pickDirectory: () => { state.picks++; return Promise.resolve(pickAnswer); },
+      confirm: () => { state.confirms++; return confirmAnswer; },
       surfaces: {
         overlay(spec) {
           state.mount = spec.mount;
@@ -132,13 +132,16 @@ availability: () => ({}),
 // Mount the plugin with `window.__CLODEX_WEB__` set to `web`, and report whether
 // wire() ran to completion. Globals are set for the duration and restored, so
 // this cannot leak into another test file sharing the process.
-function installGlobals({ web, dom, created }) {
+function installGlobals({ web, dom, created, rhost }) {
   global.window = { __CLODEX_WEB__: web, addEventListener() {}, removeEventListener() {} };
+  global.confirm = rhost.ui.confirm;
   global.document = {
     createElement: () => {
+      const listeners = [];
       const el = {
-        style: {}, dataset: {}, classList: { add() {}, remove() {} },
-        appendChild() {}, addEventListener() {}, textContent: '', innerHTML: '', value: '',
+        style: {}, dataset: {}, classList: { add() {}, remove() {} }, listeners,
+        appendChild() {}, addEventListener(type, fn) { listeners.push({ type, fn }); },
+        textContent: '', innerHTML: '', value: '',
       };
       created.push(el);
       return el;
@@ -151,10 +154,11 @@ function installGlobals({ web, dom, created }) {
 function mountWorkbench({ web }) {
   const savedWindow = global.window;
   const savedDocument = global.document;
+  const savedConfirm = global.confirm;
   const dom = makeDom();
   const { rhost, state } = makeRhost();
 
-  installGlobals({ web, dom, created: [] });
+  installGlobals({ web, dom, created: [], rhost });
 
   try {
     delete require.cache[require.resolve(PLUGIN)];
@@ -166,40 +170,60 @@ function mountWorkbench({ web }) {
   } finally {
     global.window = savedWindow;
     global.document = savedDocument;
+    global.confirm = savedConfirm;
   }
 }
 
+const drain = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+
 // Mount AND drive the host's open on the Files tab, against a canned `fs.list`.
-// The globals must stay installed across the open (it creates the tree rows), so
-// unlike mountWorkbench this cannot restore them before returning.
-async function openFilesTab(entries) {
-  const savedWindow = global.window;
-  const savedDocument = global.document;
+// The globals must stay installed across the open (it creates the tree rows) and
+// across any click a test drives afterwards, so the caller owns `restore()`.
+async function openFilesSession({
+  entries = [], cwd = '/tmp/seat', answers = {}, confirmAnswer, pickAnswer, seed,
+} = {}) {
+  const saved = { window: global.window, document: global.document, confirm: global.confirm };
+  const restore = () => {
+    global.window = saved.window;
+    global.document = saved.document;
+    global.confirm = saved.confirm;
+  };
   const dom = makeDom();
   const created = [];
   const { rhost, state } = makeRhost({
-    sessions: [{ name: 'seat', cwd: '/tmp/seat' }],
+    sessions: [{ name: 'seat', cwd }],
+    confirmAnswer,
+    pickAnswer,
     answers: {
       'fs.list': (name, rel) => ({ ok: true, dir: rel, entries: rel === '' ? entries : [] }),
       'wt.selected': { ok: true, selected: null },
+      ...answers,
     },
   });
 
-  installGlobals({ web: false, dom, created });
+  installGlobals({ web: false, dom, created, rhost });
   try {
+    if (seed) seed(dom);
     delete require.cache[require.resolve(PLUGIN)];
     require(PLUGIN).activate(rhost);
     state.mount(dom.rootEl);
     await state.onOpen({ tab: 'files' });
     // setTab -> refreshTab -> renderExplorer is fired, not awaited; drain the
     // microtask chain behind its two fs.list round trips.
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-  } finally {
-    global.window = savedWindow;
-    global.document = savedDocument;
-  }
-  const rows = created.filter((el) => String(el.className || '').includes('explorer-row'));
-  return { rows, state };
+    await drain();
+  } catch (e) { restore(); throw e; }
+  const rows = () => created.filter((el) => String(el.className || '').includes('explorer-row'));
+  const fire = async (id, type = 'click') => {
+    await Promise.all(dom.listeners.filter((l) => l.id === id && l.type === type).map((l) => l.fn({})));
+    await drain();
+  };
+  return { dom, rows, state, fire, restore };
+}
+
+async function openFilesTab(entries) {
+  const { rows, state, restore } = await openFilesSession({ entries });
+  restore();
+  return { rows: rows(), state };
 }
 
 test('the overlay wires completely on the WEB frontend', () => {
@@ -348,4 +372,77 @@ test('a file size never reaches innerHTML unescaped by luck — the formatter is
     assert.equal(m ? m[1] : '', expected,
       `size ${JSON.stringify(cases[i][0])} should render as ${JSON.stringify(expected)}: ${rows[i].innerHTML}`);
   }
+});
+
+const setRoots = (state) => state.invokes.filter((i) => i.method === 'fs.setRoot').map((i) => i.args);
+
+const DIRTY_OPTS = {
+  entries: [{ name: 'a.txt', rel: 'a.txt', type: 'file', size: 1, mtime: MTIME }],
+  answers: { 'fs.read': { ok: true, content: 'a' } },
+};
+
+async function dirtyEditor(s) {
+  const [row] = s.rows();
+  assert.ok(row, 'ENTER: the file row was painted');
+  await Promise.all(row.listeners.filter((l) => l.type === 'click').map((l) => l.fn({})));
+  await drain();
+  s.dom.resolve('#wb-textarea').value = 'b';
+  await s.fire('wb-textarea', 'input');
+  assert.equal(s.dom.resolve('#wb-save').disabled, false, 'ENTER: the open file is dirty');
+  assert.equal(s.state.confirms, 0, 'ENTER: opening a clean editor asked nothing');
+}
+
+test('Go to Folder opens the host picker', async () => {
+  const s = await openFilesSession();
+  try {
+    await s.fire('wb-files-goto');
+    assert.equal(s.state.picks, 1, 'one click, one native dialog, through rhost.ui.pickDirectory');
+    assert.equal(s.state.confirms, 0, 'a clean editor is not asked about');
+    assert.deepStrictEqual(setRoots(s.state), [], 'a cancelled dialog sets no root');
+  } finally { s.restore(); }
+});
+
+test('Up is disabled at the fs root and enabled below it', async () => {
+  for (const [cwd, disabled] of [['/', true], ['/tmp/seat', false]]) {
+    const s = await openFilesSession({
+      cwd,
+      seed: (dom) => { dom.resolve('#wb-files-up').disabled = !disabled; },
+    });
+    try {
+      assert.equal(s.dom.resolve('#wb-files-up').disabled, disabled,
+        `cwd ${cwd}: Up must be ${disabled ? 'disabled, or it loops on dirname("/")' : 'enabled'}`);
+    } finally { s.restore(); }
+  }
+});
+
+test('a declined unsaved-edit prompt stops Go to Folder before the dialog opens', async () => {
+  const s = await openFilesSession({ ...DIRTY_OPTS, confirmAnswer: false, pickAnswer: '/picked' });
+  try {
+    await dirtyEditor(s);
+    await s.fire('wb-files-goto');
+    assert.equal(s.state.confirms, 1, 'the dirty editor was asked about');
+    assert.equal(s.state.picks, 0, 'confirmDiscardEdit guards the dialog, not just the apply');
+    assert.deepStrictEqual(setRoots(s.state), [], 'and no root was set');
+  } finally { s.restore(); }
+});
+
+test('a Go to Folder click asks about unsaved edits exactly ONCE', async () => {
+  const s = await openFilesSession({ ...DIRTY_OPTS, confirmAnswer: true, pickAnswer: '/picked' });
+  try {
+    await dirtyEditor(s);
+    await s.fire('wb-files-goto');
+    assert.equal(s.state.confirms, 1, 'one modal per click, not one before the dialog and one in setFolderRoot');
+    assert.equal(s.state.picks, 1, 'the dialog opened once');
+    assert.deepStrictEqual(setRoots(s.state), [['seat', '/picked']], 'the picked folder became the root');
+  } finally { s.restore(); }
+});
+
+test('an Up click with unsaved edits asks exactly once and moves to the parent', async () => {
+  const s = await openFilesSession({ ...DIRTY_OPTS, confirmAnswer: true });
+  try {
+    await dirtyEditor(s);
+    await s.fire('wb-files-up');
+    assert.equal(s.state.confirms, 1, 'Up never asked itself, so setFolderRoot asks for it');
+    assert.deepStrictEqual(setRoots(s.state), [['seat', '/tmp']], 'the root moved to the parent');
+  } finally { s.restore(); }
 });
