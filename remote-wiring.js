@@ -640,7 +640,7 @@ function createRemoteWiring(deps) {
           const safePatch = withoutLocalOnly(patch || {});
           if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntentsFor(safePatch.intents);
           const out = await applySessionArgs(name, safePatch, wsId);
-          if (out && out.ok && out.restarted && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          if (out && out.ok && (out.restarted || out.modelSwitched) && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : '') : ` failed: ${out && out.error}`}`);
           return out;
         },

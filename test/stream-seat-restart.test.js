@@ -215,3 +215,25 @@ test('t1493: switching back to the spawn model after an in-place switch is switc
   assert.deepStrictEqual(calls.setModel, [['sm-back', 'claude-sonnet-4-6'], ['sm-back', 'claude-haiku-4-5']]);
   assert.strictEqual(seen.length, 0);
 });
+
+test('t1493: a peer model-only save that omits env respawns when the saved env differs from the spawned one', async () => {
+  const { eng, seen, calls } = modelSeat('sm-peer', { ok: true });
+  eng.stores.persistence.setEnv('sm-peer', { FOO: 'bar' });
+  const peer = DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose']);
+  delete peer.env; delete peer.execCommands; delete peer.plugins;
+  const res = await eng.applySessionArgs('sm-peer', peer, 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.deepStrictEqual(calls.setModel, []);
+  assert.strictEqual(seen.length, 1);
+});
+
+test('t1493: a model-only restart save on a stream seat whose saved io went pty without a restart respawns', async () => {
+  const { eng, seen, calls } = modelSeat('sm-io', { ok: true });
+  await eng.applySessionArgs('sm-io', DIALOG_PATCH(['--model', 'claude-haiku-4-5', '--verbose'], { io: 'pty', restart: false }), 'default');
+  assert.strictEqual(eng.stores.persistence.get('sm-io').io, 'pty', 'ENTER: the first save moved the saved io without a restart');
+  const res = await eng.applySessionArgs('sm-io', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose'], { io: 'pty' }), 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.deepStrictEqual(calls.setModel, []);
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0][24], 'pty');
+});
