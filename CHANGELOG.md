@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Peers: a seat moved to a peer keeps its stream mode and effort level on the far box instead of coming back as a terminal seat at default effort.
+
 ## 5.106.0 — 2026-10-01
 
 - Seats: a multi-line delivery to a Claude terminal seat waits for the CLI's paste mode instead of being typed raw, so it can no longer end up stuck in the composer as an unsent draft.
