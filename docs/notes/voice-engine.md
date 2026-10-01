@@ -65,7 +65,7 @@ macOS-only, so the rule is dark off macOS.
 
 ## PROCESSING_INDICATOR
 
-The CLI's processing indicator REPLACES the lit one rather than joining it:
+The CLI's processing indicator (2.1.251 binary) REPLACES the lit one rather than joining it:
 when recording stops, `⏺ REC` is gone and this is painted in its place while
 the CLI finishes transcribing.
 

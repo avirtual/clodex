@@ -3,9 +3,6 @@
 //
 // The CLI declines to auto-submit when the FINAL streamed segment is under
 // three words, so a trailing-off utterance leaves the composer full.
-//
-// It reads ONE row, the cursor row truncated at the cursor, and anchors at `$`:
-// a wrapped draft ends on the cursor row, so no upward walk is needed.
 
 const { RECORDING_INDICATOR, PROCESSING_INDICATOR } = require('../../voice-engine');
 
@@ -62,14 +59,7 @@ function normalizePhrase(phrase) {
   return triggerWords(phrase).join(' ');
 }
 
-// The cursor row's tail, matched for the phrase. `text` is that row already
-// truncated at the cursor column. Returns `{ content, erase }`, or null only
-// for an unusable row — the watcher fires Enter, so "I cannot read this" and
-// "do not fire" must be the same answer.
-//
-// `erase` is bounded by the match, which is what makes reading a raw row safe:
-// the backspaces can never reach past the phrase into the prompt ornament or
-// anything else the CLI drew to the left of the draft.
+// `erase` is bounded by the match: the slice never reaches text before the phrase.
 function findSubmit(text, phrase) {
   if (typeof text !== 'string') return null;
   const hit = matchTrigger(text, phrase);
@@ -114,19 +104,13 @@ function shouldFire({ enabled, attention } = {}) {
 // The composer with nothing typed in it, matched against the CURSOR ROW
 // truncated at the cursor.
 //
-// The bar this has to clear is the CLI's own, and it is `value.length > 0`:
-// the tap handler returns on ANY non-empty composer, so a single space of
-// draft is already enough to make it decline. Ours must decline there too, or
-// we write a character the CLI will not swallow into the draft. Hence at most ONE
-// space: that one is the separator the CLI paints after the marker, and a
+// At most ONE space: that one is the separator the CLI paints after the marker, and a
 // second is the operator's (or dictation's, which prepends one).
 //
 // The marker is REQUIRED, and that direction is chosen for how it fails. If
 // the glyph is wrong this returns false and the feature goes quiet; if the
 // marker were optional a bare whitespace row would read as an empty composer,
 // and a dialog interior and a mid-repaint screen both look exactly like that.
-// A silent feature is recoverable, a character typed into a permission dialog
-// is not.
 //
 // THE SEPARATOR IS U+00A0, NOT U+0020. Measured 2026-08-31 off a live seat
 // (CLI 2.1.251) from the same read this rule is given: cursor row

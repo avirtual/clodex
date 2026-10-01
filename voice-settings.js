@@ -10,10 +10,6 @@ function voiceModeOf(record) {
 }
 
 // The key that arms the CLI's recorder, read from `~/.claude/keybindings.json`.
-// Reported as a PARSED CHORD rather than a character so the caller can tell
-// "space" from "meta+k" — a modifier chord cannot be armed by writing a byte,
-// and flattening it to a character here would lose exactly the distinction the
-// caller needs to decline.
 //
 // The CLI takes the LAST matching binding, so a file that binds the action
 // twice resolves to the later one; a rebinding of the same key to another
