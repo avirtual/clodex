@@ -42,6 +42,7 @@ function readTail(fs, file, bytes = 64 * 1024) {
 //   { tool: 'Bash', outcome: 'error'   }  the call returned an error result
 //   { tool: 'Bash', outcome: 'pending' }  NO result ever arrived
 //   { tool: 'Bash', outcome: 'ok'      }  the call returned cleanly
+//   { tool: 'Bash', outcome: 'interrupted' }  a resume answered a call the session died holding
 //   null                                  nothing readable — say nothing
 //
 // `pending` is the strongest wedge signal available anywhere in this repo. A
@@ -67,7 +68,7 @@ function readTail(fs, file, bytes = 64 * 1024) {
 function lastToolFrom(text) {
   if (!text) return null;
   let use = null;          // { name, id } — the most recent tool_use seen
-  const results = new Map(); // tool_use_id -> is_error
+  const results = new Map();
   for (const line of String(text).split('\n')) {
     const s = line.trim();
     if (!s || s[0] !== '{') continue;
@@ -82,12 +83,15 @@ function lastToolFrom(text) {
     for (const b of content) {
       if (!b || typeof b !== 'object') continue;
       if (b.type === 'tool_use' && b.name) use = { name: String(b.name), id: b.id || null };
-      else if (b.type === 'tool_result' && b.tool_use_id) results.set(b.tool_use_id, b.is_error === true);
+      else if (b.type === 'tool_result' && b.tool_use_id) {
+        const resumed = d.toolDenialKind === 'interrupted' && String(d.toolUseResult || '').startsWith('[Tool call interrupted:');
+        results.set(b.tool_use_id, resumed ? 'interrupted' : b.is_error === true ? 'error' : 'ok');
+      }
     }
   }
   if (!use) return null;
   if (use.id == null || !results.has(use.id)) return { tool: use.name, outcome: 'pending' };
-  return { tool: use.name, outcome: results.get(use.id) ? 'error' : 'ok' };
+  return { tool: use.name, outcome: results.get(use.id) };
 }
 
 // The API error a transcript ENDS on, or null.
@@ -226,6 +230,7 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   if (tool && tool.tool) {
     if (tool.outcome === 'pending') bits.push(`last tool ${tool.tool} never returned`);
     else if (tool.outcome === 'error') bits.push(`last tool ${tool.tool} errored`);
+    else if (tool.outcome === 'interrupted') bits.push(`${tool.tool} call was interrupted by a crash and resumed with an unknown outcome`);
     else bits.push(`last tool ${tool.tool} ok`);
   }
   if (commits != null) bits.push(commits === 0 ? 'no commits' : `${commits} commit${commits === 1 ? '' : 's'}`);
