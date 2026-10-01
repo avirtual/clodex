@@ -42,6 +42,7 @@ function readTail(fs, file, bytes = 64 * 1024) {
 //   { tool: 'Bash', outcome: 'error'   }  the call returned an error result
 //   { tool: 'Bash', outcome: 'pending' }  NO result ever arrived
 //   { tool: 'Bash', outcome: 'ok'      }  the call returned cleanly
+//   { tool: 'Bash', outcome: 'interrupted' }  a resume answered a call the session died holding
 //   null                                  nothing readable — say nothing
 //
 // `pending` is the strongest wedge signal available anywhere in this repo. A
@@ -83,7 +84,8 @@ function lastToolFrom(text) {
       if (!b || typeof b !== 'object') continue;
       if (b.type === 'tool_use' && b.name) use = { name: String(b.name), id: b.id || null };
       else if (b.type === 'tool_result' && b.tool_use_id) {
-        results.set(b.tool_use_id, d.toolDenialKind === 'interrupted' ? 'interrupted' : b.is_error === true ? 'error' : 'ok');
+        const resumed = d.toolDenialKind === 'interrupted' && String(d.toolUseResult || '').startsWith('[Tool call interrupted:');
+        results.set(b.tool_use_id, resumed ? 'interrupted' : b.is_error === true ? 'error' : 'ok');
       }
     }
   }

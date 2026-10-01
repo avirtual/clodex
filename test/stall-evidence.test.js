@@ -78,10 +78,20 @@ test('the result a resume writes for a call orphaned by a crash reads as interru
   assert.deepStrictEqual(t, { tool: 'Bash', outcome: 'interrupted' });
 });
 
-test('the interrupted reading keys on toolDenialKind, not on the result text', () => {
+test('the resume text without toolDenialKind reads as a plain error', () => {
   const { toolDenialKind, ...plain } = resumedResult('r2');
   assert.strictEqual(toolDenialKind, 'interrupted');
   assert.deepStrictEqual(lastToolFrom(jsonl(use('Bash', 'r2'), plain)), { tool: 'Bash', outcome: 'error' });
+});
+
+test('a user interrupt carries the same toolDenialKind but reads as error, not as a crash', () => {
+  const userInterrupt = {
+    type: 'user',
+    message: { role: 'user', content: [{ type: 'tool_result', content: '[Request interrupted by user for tool use]', is_error: true, tool_use_id: 'r3' }] },
+    toolUseResult: 'Error: [Request interrupted by user for tool use]',
+    toolDenialKind: 'interrupted',
+  };
+  assert.deepStrictEqual(lastToolFrom(jsonl(use('Bash', 'r3'), userInterrupt)), { tool: 'Bash', outcome: 'error' });
 });
 
 test('nothing readable returns null rather than a guess', () => {
