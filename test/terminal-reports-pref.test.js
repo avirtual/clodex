@@ -188,7 +188,7 @@ test('the capability gate and the disclosure gate read the pref DIFFERENTLY', ()
       if (writes) {
         const rows = readRows(file);
         assert.strictEqual(rows.length, 1, `${pref}: onCommand writes one row`);
-        assert.strictEqual(rows[0].kind, 'terminal-passive', `${pref}: the row is tagged passive`);
+        assert.strictEqual(JSON.parse(rows[0]).kind, 'terminal-passive', `${pref}: the row is tagged passive`);
       } else {
         assert.strictEqual(fs.existsSync(file), false, `${pref}: onCommand must write nothing`);
       }
