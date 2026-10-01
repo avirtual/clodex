@@ -31185,10 +31185,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var RECORDING = RECORDING_INDICATOR;
       var PROCESSING = PROCESSING_INDICATOR;
-      function recorderBlocksRearm(rows) {
-        if (!Array.isArray(rows)) return true;
-        return rows.some((row) => typeof row === "string" && (RECORDING.test(row) || PROCESSING.test(row)));
-      }
       function recordingObserved(rows) {
         if (!Array.isArray(rows)) return false;
         return rows.some((row) => typeof row === "string" && RECORDING.test(row));
@@ -31196,11 +31192,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function processingObserved(rows) {
         if (!Array.isArray(rows)) return true;
         return rows.some((row) => typeof row === "string" && PROCESSING.test(row));
-      }
-      function resolveTriggerKey(binding) {
-        if (!binding || typeof binding !== "object") return null;
-        if (binding.ctrl || binding.alt || binding.shift || binding.meta || binding.super) return null;
-        return typeof binding.key === "string" && binding.key.length === 1 ? binding.key : null;
       }
       function readVoiceSubmitSettings(settings) {
         const raw = settings && typeof settings === "object" ? settings : {};
@@ -31232,10 +31223,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         composerIsEmpty,
         composerHasDraft,
         composerContinues,
-        recorderBlocksRearm,
         recordingObserved,
         processingObserved,
-        resolveTriggerKey,
         readVoiceSubmitSettings,
         spaceTriggerAction,
         ptyTypedSinceEnter
