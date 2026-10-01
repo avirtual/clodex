@@ -9,4 +9,4 @@ Measured 2026-09-26 in a tmux pty with `tmux paste-buffer -p` (bracketed paste):
 
 ## _buildDeliveryText
 
-`SYSTEM_SENDERS` bodies skip the `> ` defuse: the host authors them and legitimately quotes sender lines (a ticket-loop notice attaching a hand's report).
+`SYSTEM_SENDERS` bodies skip the `> ` defuse: a ticket-loop notice legitimately quotes a hand's sender lines.

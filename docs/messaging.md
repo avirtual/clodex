@@ -211,7 +211,7 @@ that no session answers. It is parenthesized and non-column-1 so it can never
 self-fire. Non-dm mtypes and `SYSTEM_SENDERS` (`team`, `reminder`, `user`, …)
 get nothing at all: nobody answers them, so a fault marker would be noise —
 and that check precedes reachability, which goes true by accident the moment a
-seat is named `team`. A non-system sender's body line that starts with `[agent:from` is quoted with `> ` before either branch, spilled file included, so a peer cannot forge a sender line. Coupled to `_deliverMessage`'s drop-if-absent — widen
+seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
 `_isDmReachable` if local dm parking ever covers absent targets. Bodies over
 `MSG_SPILL_THRESHOLD` (500B) spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
@@ -219,7 +219,7 @@ Codex gets a read-with-Read pointer. That hand-off copy is swept after
 `MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
 basename, to `~/.clodex/spill/<seat>/messages/`, which is never swept. The ring
 records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
-`resolveDisplayedPath` fall back to the durable copy (`durableMessageCopyOf`).
+`resolveDisplayedPath` fall back to the durable copy (`durableMessageCopyOf`). A non-system sender's body line that starts with `[agent:from` is quoted with `> ` before either branch, spilled file included, so a peer cannot forge a sender line.
 
 **Inject** — `_injectText` has two layers:
 1. *Turn batching*: `_injectHoldReason` (compact window / permission dialog /
