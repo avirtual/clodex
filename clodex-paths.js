@@ -249,13 +249,6 @@ function projectDirFor(root, projectPath) {
   return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
 }
 
-// Where one task's artifacts live. `tasks/<name>` is preserved as the tail so
-// the shape a lead already writes in a ticket body stays literal-truthy under
-// the new root.
-function taskDirFor(root, projectPath, taskName) {
-  return path.join(projectDirFor(root, projectPath), 'tasks', taskName);
-}
-
 // The absolute path to one per-agent artifact. Throws on an unknown kind so a
 // typo fails loud at the call site rather than minting a stray file.
 function pathFor(root, name, kind) {
@@ -282,6 +275,6 @@ function claudeProjectSlug(cwd) {
 
 module.exports = {
   KINDS, LEGACY_SUFFIXES, runDirFor, fixDirFor, spillDirFor, scratchDirFor, pathFor, legacyPathsFor, legacySuffixes,
-  projectDirFor, taskDirFor, defaultClodexHome,
+  projectDirFor, defaultClodexHome,
   SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor, claudeProjectSlug,
 };

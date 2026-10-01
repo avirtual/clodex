@@ -8,8 +8,8 @@ const assert = require('node:assert');
 const {
   DEFAULT_SUBMIT_PHRASE, normalizePhrase, findSubmit, matchTrigger,
   foldConfusables, shouldFire, readVoiceSubmitSettings,
-  composerIsEmpty, recorderBlocksRearm, recordingObserved, processingObserved,
-  resolveTriggerKey, spaceTriggerAction, ptyTypedSinceEnter,
+  composerIsEmpty, recordingObserved, processingObserved,
+  spaceTriggerAction, ptyTypedSinceEnter,
 } = require('../renderer/lib/voice-submit');
 
 test('the phrase is matched case-insensitively and through dictation punctuation', () => {
@@ -261,10 +261,9 @@ test('composerIsEmpty: ornament is empty, a draft is not, unreadable is not', ()
 // reviewed by eye.
 const REC_ROW = ' agents \u23fa\u0020REC \u00b7 tap to send';
 
-test('recorderBlocksRearm: the measured indicator row blocks, ordinary output does not', () => {
-  // The case the whole gate exists for, first and by itself.
-  assert.strictEqual(recorderBlocksRearm([REC_ROW]), true,
-    'the measured REC row must block the re-arm');
+test('recordingObserved: the measured indicator row is lit, ordinary output is not', () => {
+  assert.strictEqual(recordingObserved([REC_ROW]), true,
+    'the measured REC row must read as recording');
 
   // The MEASURED false positives. U+23FA opens every ordinary tool bullet and
   // `REC` is a common substring, so an anchor of either alone hits real
@@ -279,43 +278,20 @@ test('recorderBlocksRearm: the measured indicator row blocks, ordinary output do
     '\u276f\u00a0',
     '',
   ]) {
-    assert.strictEqual(recorderBlocksRearm([row]), false, JSON.stringify(row));
+    assert.strictEqual(recordingObserved([row]), false, JSON.stringify(row));
   }
 
-  // Any row in the window blocks, not just the first: the indicator paints
+  // Any row in the window counts, not just the first: the indicator paints
   // BELOW the composer in the real footer layout.
-  assert.strictEqual(recorderBlocksRearm(['\u276f\u00a0', 'border', REC_ROW]), true);
-  assert.strictEqual(recorderBlocksRearm(['\u276f\u00a0', 'border']), false);
+  assert.strictEqual(recordingObserved(['\u276f\u00a0', 'border', REC_ROW]), true);
+  assert.strictEqual(recordingObserved(['\u276f\u00a0', 'border']), false);
 
-  // UNREADABLE BLOCKS — the opposite polarity to composerIsEmpty, and the
-  // asymmetry is deliberate: a missed indicator STOPS a live recording and
-  // loses the operator's words, a phantom one only skips one re-arm.
   for (const bad of [null, undefined, 'string', 0, {}]) {
-    assert.strictEqual(recorderBlocksRearm(bad), true, JSON.stringify(bad));
+    assert.strictEqual(recordingObserved(bad), false, JSON.stringify(bad));
   }
-  // A read that succeeded and saw nothing is NOT unreadable.
-  assert.strictEqual(recorderBlocksRearm([]), false);
+  assert.strictEqual(recordingObserved([]), false);
   // A row that is not a string cannot be matched, and must not throw.
-  assert.strictEqual(recorderBlocksRearm([null, undefined, 7]), false);
-});
-
-test('resolveTriggerKey takes a plain character and refuses a chord', () => {
-  const plain = { key: ' ', ctrl: false, alt: false, shift: false, meta: false, super: false };
-  assert.strictEqual(resolveTriggerKey(plain), ' ');
-  assert.strictEqual(resolveTriggerKey({ ...plain, key: 'k' }), 'k');
-  // A modifier chord cannot be armed by writing a byte — the CLI compares the
-  // typed character against a single-character binding only.
-  for (const mod of ['ctrl', 'alt', 'shift', 'meta', 'super']) {
-    assert.strictEqual(resolveTriggerKey({ ...plain, key: 'k', [mod]: true }), null, mod);
-  }
-  // Named keys ('escape', 'up') are not characters either.
-  assert.strictEqual(resolveTriggerKey({ ...plain, key: 'escape' }), null);
-  assert.strictEqual(resolveTriggerKey({ ...plain, key: '' }), null);
-  // Null is the CLEARED binding, not a missing default: the CLI's own default
-  // is seeded by the read in voice-settings.js, so defaulting to a space here
-  // would write one into a session that has no push-to-talk key at all.
-  assert.strictEqual(resolveTriggerKey(null), null);
-  assert.strictEqual(resolveTriggerKey(undefined), null);
+  assert.strictEqual(recordingObserved([null, undefined, 7]), false);
 });
 
 // THE PROCESSING ROW, spelled as escapes and captured from the CLI BINARY rather
@@ -332,14 +308,7 @@ const PROCESSING_ROW = ' agents Voice: processing\u2026';
 
 const PROCESSING_ROW_ASCII = ' agents Voice: processing...';
 
-test('the PROCESSING state blocks the re-arm, in every form the row can take', () => {
-  // The CLI REPLACES the lit indicator with this rather than adding to it, so a
-  // gate anchored only on the lit form reads NOT-RECORDING for this whole
-  // window. Measured in 2.1.251: the tap handler's processing arm returns
-  // WITHOUT swallowing a single-char trigger, so the key never reaches the
-  // voice session -- it falls through as a literal into the composer, and from
-  // then on composerIsEmpty is false and EVERY later re-arm is blocked until
-  // the operator clears the draft by hand.
+test('processingObserved reads the PROCESSING state in every form the row can take', () => {
   for (const row of [
     PROCESSING_ROW,
     PROCESSING_ROW_ASCII,
@@ -348,11 +317,11 @@ test('the PROCESSING state blocks the re-arm, in every form the row can take', (
     'Voice:\u00a0processing\u2026',
     'voice: PROCESSING\u2026',
   ]) {
-    assert.strictEqual(recorderBlocksRearm([row]), true, JSON.stringify(row));
+    assert.strictEqual(processingObserved([row]), true, JSON.stringify(row));
   }
 
   // Below the composer too, which is where the real footer paints it.
-  assert.strictEqual(recorderBlocksRearm(['\u276f ', 'border', PROCESSING_ROW]), true);
+  assert.strictEqual(processingObserved(['\u276f ', 'border', PROCESSING_ROW]), true);
 
   // The anchor must not swallow ordinary transcript. `processing` alone is a
   // common word in this repo's own output, which is why the rule requires
@@ -364,30 +333,26 @@ test('the PROCESSING state blocks the re-arm, in every form the row can take', (
     'Voice',
     '',
   ]) {
-    assert.strictEqual(recorderBlocksRearm([row]), false, JSON.stringify(row));
+    assert.strictEqual(processingObserved([row]), false, JSON.stringify(row));
   }
 });
 
 test('recordingObserved stays REC-ONLY, so processing never draws the stop key', () => {
-  // The two predicates must NOT be unified. `recorderBlocksRearm` widened to the
-  // processing state because a key written there is not swallowed and sticks in
-  // the composer; this one must not, because by then the recorder has ALREADY
-  // stopped and the same key would ARM a recording nobody asked for.
+  // By processing time the recorder has ALREADY stopped, and the stop key would
+  // ARM a recording nobody asked for.
   assert.strictEqual(recordingObserved([PROCESSING_ROW]), false,
     'processing is not a LIVE recording, and a key written there arms one');
   assert.strictEqual(recordingObserved([PROCESSING_ROW_ASCII]), false);
   assert.strictEqual(recordingObserved([REC_ROW]), true);
-  // Unreadable is NOT lit, the opposite of the re-arm gate's polarity.
   assert.strictEqual(recordingObserved(null), false);
 });
 
-test('processingObserved is its OWN polarity, not either neighbour', () => {
-  // Three readings of one footer, and unifying any two breaks a different thing.
+test('processingObserved is its OWN polarity, not recordingObserved\'s', () => {
   assert.strictEqual(processingObserved([PROCESSING_ROW]), true);
   assert.strictEqual(processingObserved([PROCESSING_ROW_ASCII]), true);
-  // A LIT recorder is not processing. Widened to match `recorderBlocksRearm`,
-  // the wait would never end while the turn-end re-arm has the mic lit again,
-  // and every deferred submit would go out at the abandon deadline instead.
+  // A LIT recorder is not processing: widened to it, the wait would never end
+  // while the mic is lit again, and every deferred submit would go out at the
+  // abandon deadline instead.
   assert.strictEqual(processingObserved([REC_ROW]), false);
   assert.strictEqual(processingObserved([' agents \u00b7 tap to talk']), false);
   assert.strictEqual(processingObserved([]), false);

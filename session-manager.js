@@ -8339,8 +8339,8 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           hintHeld: () => { try { return !!(arm.holding && arm.holding(session.name)); } catch { return false; } },
-          // Dictation is its own input, not a lastUserInputTs stamp, which has other readers. Absent evidence
-          // reads as not speaking, opposite to recorderBlocksRearm: a deferral that cannot release wedges the seat.
+          // Dictation is its own input, not a lastUserInputTs stamp, which has other readers. A deferral that
+          // cannot release wedges the seat, so absent evidence reads as not speaking.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!(session._dead || session._recycling),
           onUndelivered: (t) => {

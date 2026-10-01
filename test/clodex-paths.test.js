@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
-  projectDirFor, taskDirFor, spillDirFor, scratchDirFor,
+  projectDirFor, spillDirFor, scratchDirFor,
   SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor,
 } = require('../clodex-paths');
 
@@ -100,15 +100,6 @@ test('projectDirFor: stable across calls and trailing-slash/relative spellings',
   assert.strictEqual(projectDirFor(ROOT, '/home/x/work/api/'), canonical);
   assert.strictEqual(projectDirFor(ROOT, '/home/x/work/./api'), canonical);
   assert.strictEqual(projectDirFor(ROOT, '/home/x/work/sub/../api'), canonical);
-});
-
-test('taskDirFor: task artifacts land under the project dir, never in the repo', () => {
-  const d = taskDirFor(ROOT, '/home/x/work/api', 'durable-state');
-  assert.ok(d.startsWith(path.join(ROOT, 'projects')), d);
-  assert.strictEqual(path.basename(d), 'durable-state');
-  assert.strictEqual(path.basename(path.dirname(d)), 'tasks');
-  // The user's own tree is never a prefix of an artifact path.
-  assert.ok(!d.startsWith('/home/x/work/api'), d);
 });
 
 test('spillDirFor: a SHARED root dir, deliberately not under run/', () => {

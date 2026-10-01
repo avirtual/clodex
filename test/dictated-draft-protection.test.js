@@ -219,8 +219,7 @@ test('the dictated stamp is its own field, not an overload of the typed ones', (
 test('composerHasDraft: an UNREADABLE screen is not a draft still open', () => {
   // The whole reason this is a positive rule rather than !composerIsEmpty. Main
   // PARKS on this answer, so a row nobody could read must not park deliveries
-  // that nothing then releases. Doubt delivers here — the same direction as the
-  // speaking gate, the opposite of recorderBlocksRearm.
+  // that nothing then releases. Doubt delivers here, as at the speaking gate.
   for (const unreadable of [null, undefined, '', 'mid-repaint garbage', '⏺ Bash(ls)']) {
     assert.strictEqual(composerHasDraft(unreadable), false,
       `an unreadable row must not read as a draft: ${JSON.stringify(unreadable)}`);
