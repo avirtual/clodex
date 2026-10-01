@@ -566,6 +566,14 @@ test('deploy helm: the saved webPort follows web.port — flag, carried, --value
   assert.strictEqual(d2.code, EXIT.USAGE);
   assert.match(d2.stderr, /web\.port=08080/);
 
+  const d3 = await runOnce(['--set', 'web.port=65536']);
+  assert.strictEqual(d3.code, EXIT.USAGE);
+  assert.match(d3.stderr, /web\.port=65536/);
+
+  const d4 = await runOnce(['--set', 'web.port=0']);
+  assert.strictEqual(d4.code, EXIT.USAGE);
+  assert.match(d4.stderr, /web\.port=0/);
+
   const e = await runOnce(['--set', 'image.tag=x,web.port=9090']);
   assert.strictEqual(e.code, 0, e.stderr);
   assert.strictEqual(e.saved.contexts.n.webPort, 9090);

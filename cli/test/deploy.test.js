@@ -470,6 +470,38 @@ test('deploy: --ssh without a destination is a usage error, no spawn', async () 
   assert.strictEqual(spawned, false);
 });
 
+test('deploy: ssh exiting before the installer is delivered (stdin EPIPE) reports the exit, does not crash', async () => {
+  const rec = {};
+  let probed = false;
+  const spawnFn = (cmd, args) => {
+    rec.cmd = cmd; rec.args = args;
+    const child = new EventEmitter();
+    child.pid = null;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.write = () => {
+      setImmediate(() => {
+        child.stdin.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+        child.stderr.emit('data', Buffer.from('Permission denied (publickey).'));
+        child.emit('exit', 255, null);
+      });
+      return false;
+    };
+    child.stdin.end = () => {};
+    child.kill = () => { rec.killed = true; };
+    return child;
+  };
+  const { code, stderr } = await cli(['deploy', 'node', 'box', '--ssh', 'user@box'], {
+    spawnFn,
+    probeHello: async () => { probed = true; return {}; },
+  });
+  assert.strictEqual(code, 3);
+  assert.match(stderr, /ssh could not connect to user@box/);
+  assert.match(stderr, /Permission denied \(publickey\)/);
+  assert.strictEqual(probed, false);
+});
+
 test('deploy: ssh connect failure (exit 255) → EXIT.CONNECT, no verify', async () => {
   const rec = {};
   let probed = false;
