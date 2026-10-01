@@ -65,6 +65,25 @@ test('a clean result reads as ok — a working seat must not look wedged', () =>
   // measured dismissal happened in the first place.
 });
 
+const INTERRUPTED_TEXT = "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]";
+const resumedResult = (id) => ({
+  type: 'user',
+  message: { role: 'user', content: [{ type: 'tool_result', content: INTERRUPTED_TEXT, is_error: true, tool_use_id: id }] },
+  toolUseResult: INTERRUPTED_TEXT,
+  toolDenialKind: 'interrupted',
+});
+
+test('the result a resume writes for a call orphaned by a crash reads as interrupted, not error', () => {
+  const t = lastToolFrom(jsonl(use('Bash', 'r1'), resumedResult('r1')));
+  assert.deepStrictEqual(t, { tool: 'Bash', outcome: 'interrupted' });
+});
+
+test('the interrupted reading keys on toolDenialKind, not on the result text', () => {
+  const { toolDenialKind, ...plain } = resumedResult('r2');
+  assert.strictEqual(toolDenialKind, 'interrupted');
+  assert.deepStrictEqual(lastToolFrom(jsonl(use('Bash', 'r2'), plain)), { tool: 'Bash', outcome: 'error' });
+});
+
 test('nothing readable returns null rather than a guess', () => {
   for (const input of ['', null, undefined, 'not json at all\n{"broken":', jsonl({ message: { content: 'plain text' } })]) {
     assert.strictEqual(lastToolFrom(input), null, `no field for input ${JSON.stringify(input)}`);
@@ -158,6 +177,11 @@ test('a dirty tree is never reported without the tool outcome beside it', () => 
     'two states the lead could not tell apart must not produce the same alarm');
   assert.ok(/never returned/.test(wedged), 'the wedged one names the unreturned call');
   assert.ok(!/never returned|errored/.test(working), 'the working one makes no wedge claim');
+});
+
+test('an interrupted call is named as a crash with an unknown outcome, not as a healthy or failed call', () => {
+  const body = formatStallBody({ ticketId: 't1', who: 'hand', age: '30m', tool: { tool: 'Bash', outcome: 'interrupted' } });
+  assert.strictEqual(body, '[ticket t1] stalled: hand quiet 30m (Bash call was interrupted by a crash and resumed with an unknown outcome)');
 });
 
 test('a repeat says it is a repeat and carries the updated age', () => {

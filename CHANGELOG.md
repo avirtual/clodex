@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Subagents: an agent file's `omitClaudeMd: true` now reaches the CLI, and the built-in clodex-locate and clodex-redproof agents set it, so a lookup or red-proof no longer bills the project's CLAUDE.md on every request.
+- Stall alarm: a seat resumed after it died mid-tool-call now reports that call as interrupted instead of reading the CLI's synthetic result as a healthy outcome.
 
 ## 5.102.0 — 2026-10-01
 
