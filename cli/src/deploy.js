@@ -162,6 +162,7 @@ function runDeploy({ host, sshOpts = [], stdin, spawnFn = spawn, onLine = null, 
       resolve({ code: timedOut ? null : code, timedOut });
     });
 
+    if (child.stdin) child.stdin.on('error', () => {});
     try { if (child.stdin) { child.stdin.write(stdin); child.stdin.end(); } } catch {}
   });
 }

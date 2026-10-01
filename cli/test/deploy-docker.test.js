@@ -460,7 +460,7 @@ function fakeSsh(rec) {
     child.pid = null;
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
-    child.stdin = { write: (s) => { rec.stdin += s; }, end: () => {
+    child.stdin = { on: () => {}, write: (s) => { rec.stdin += s; }, end: () => {
       setImmediate(() => {
         for (const l of ['::step clone', '::ok clone', '::done']) child.stdout.emit('data', Buffer.from(l + '\n'));
         child.emit('exit', 0, null);
