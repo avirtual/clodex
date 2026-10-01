@@ -170,7 +170,7 @@ function mountWorkbench({ web }) {
   } finally {
     global.window = savedWindow;
     global.document = savedDocument;
-    global.confirm = savedConfirm;
+    if (savedConfirm === undefined) delete global.confirm; else global.confirm = savedConfirm;
   }
 }
 
@@ -186,7 +186,7 @@ async function openFilesSession({
   const restore = () => {
     global.window = saved.window;
     global.document = saved.document;
-    global.confirm = saved.confirm;
+    if (saved.confirm === undefined) delete global.confirm; else global.confirm = saved.confirm;
   };
   const dom = makeDom();
   const created = [];
@@ -233,6 +233,7 @@ test('the overlay wires completely on the WEB frontend', () => {
   const { error } = mountWorkbench({ web: true });
   assert.equal(error, null,
     `mount() threw on the web frontend, leaving the overlay half-wired: ${error && error.stack}`);
+  assert.ok(!('confirm' in global), 'the harness leaves no confirm key on global');
 });
 
 test('the overlay wires completely on the DESKTOP frontend', () => {

@@ -384,12 +384,12 @@ test('the toggle applies through the IPC and says what it exposes', () => {
   const from = js.indexOf("prefsPeerShell.addEventListener('change'");
   const region = js.slice(from, js.indexOf('window.api.onPeerShellAllowed(', from));
   assert.ok(from > 0 && region.length > 200 && region.length < 5000,
-    `ENTER: the change handler region is ${region.length} chars — it no longer ends at onPeerShellAllowed`);
+    `ENTER: the change handler region is ${region.length} chars, outside (200, 5000)`);
   assert.match(region, /window\.api\.peerSetShellAllowed\(on\)/, 'through the dedicated handler');
   assert.doesNotMatch(js, /peerShellEnabled:\s*prefsPeerShell/,
     'and NOT also written by the setSettings batch, which would be a second door');
   assert.match(region, /can open a shell here/, 'the warm toast names the exposure in plain words');
-  assert.match(region, /open remote shells were closed/, 'and the revocation says what it ended');
+  assert.match(region, /'Terminal sharing off — open remote shells were closed\.'/, 'and the revocation says what it ended');
   // A swallowed rejection under an unconditional toast tells the operator a
   // revocation happened while the box is still serving — the worst sentence
   // this feature can print.

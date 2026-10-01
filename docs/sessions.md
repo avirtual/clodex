@@ -892,12 +892,6 @@ tree again — a permanent ENOENT behind the retry button. Persisted, the record
 already repaired whether or not the spawn lands, and the next call takes the
 healthy-record arm instead of falling back a second time.
 
-The ten restore `create()` sites (every non-mint call past the box registry)
-replay one argument tail, positions 10-26, pinned by
-`test/create-replay-parity.test.js`: a drifted or dropped trailing argument
-fails naming file:line and the position, and only the exceptions its table
-lists (importCreate's exec/intents/env, applySessionArgs' patched fields) may differ.
-
 Nothing else reads the pointer in a way a missing tree breaks:
 `_ticketTreeHolder` only scans live sessions; the ticket-dispatch mint's
 `claimTree` (team-tickets.js) clears any other record naming a path it mints —
@@ -918,6 +912,12 @@ dangerous state. `resumeCwdOf` is not an exception to that: it drops the pointer
 only where it has a `main` to put in `cwd` at the same moment, so the record it
 leaves names a checkout that exists rather than nothing at all — and it acts on
 one record being resumed, never as a sweep over the store.
+
+The ten restore `create()` sites (every non-mint call past the box registry)
+replay one argument tail, positions 10-26, pinned by
+`test/create-replay-parity.test.js`: a drifted or dropped trailing argument
+fails naming file:line and the position, and only the exceptions its table
+lists (importCreate's exec/intents/env, applySessionArgs' patched fields) may differ.
 
 The New Session dialog opens on Name / Type / Working directory / **Mode**;
 everything else lives in the collapsed **Advanced** section. Mode is a preset
