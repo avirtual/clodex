@@ -11,7 +11,7 @@
 // lib/ipc-export.js's ipcRowParts, shared with the export mirror and pinned there.
 
 const { esc } = require('./lib/format');
-const { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
+const { MAX_EXPORT_LINES, ipcRowParts, ipcStateKind, formatIpcLine, buildExportText, exportFilename } = require('./lib/ipc-export');
 
 function createIpcLog({ host, openFilePeek, showToast }) {
   let ipcLogBody = null;
@@ -119,9 +119,11 @@ function createIpcLog({ host, openFilePeek, showToast }) {
     const targetBadge = to === null
       ? (session ? `<span class="ipc-session">${esc(session)}</span>` : '')
       : `<span class="ipc-to">${esc(to)}</span>`;
+    const kind = ipcStateKind(msg);
+    const kindBadge = kind ? `<span class="ipc-kind">${kind}</span>` : '';
     const body = `<span class="ipc-body">${bodyHtml(msg)}</span>`;
 
-    entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
+    entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${kindBadge}${body}`;
     ipcLogBody.appendChild(entry);
 
     // Auto-scroll if already near the bottom

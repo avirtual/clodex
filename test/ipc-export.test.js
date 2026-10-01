@@ -109,3 +109,21 @@ test('exportFilename: local-time stamp, .txt', () => {
 test('MAX_EXPORT_LINES is a sane positive cap', () => {
   assert.ok(Number.isInteger(MAX_EXPORT_LINES) && MAX_EXPORT_LINES >= 1000);
 });
+
+test('formatIpcLine: the message-state kinds prefix the body; a plain dm stays byte-identical', () => {
+  const d = new Date('2026-07-15T12:34:56.789Z');
+  for (const kind of ['parked', 'passive', 'delivered']) {
+    assert.strictEqual(
+      formatIpcLine({ from: 'clodex', to: 'seat', kind, body: 'hi' }, d),
+      `2026-07-15T12:34:56.789Z clodex -> seat [${kind}] hi`,
+    );
+  }
+  assert.strictEqual(
+    formatIpcLine({ type: 'dm', from: 'clodex', to: 'seat', body: 'hi' }, d),
+    '2026-07-15T12:34:56.789Z clodex -> seat hi',
+  );
+  assert.strictEqual(
+    formatIpcLine({ from: 'clodex', to: 'seat', kind: 'message', body: 'hi' }, d),
+    '2026-07-15T12:34:56.789Z clodex -> seat hi',
+  );
+});

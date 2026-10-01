@@ -534,6 +534,7 @@ try {
   process.exit(0);
 }
 const texts = [];
+const handed = [];
 for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.json'); }).sort()) {
   try {
     const raw = fs.readFileSync(path.join(claim, f), 'utf8');
@@ -552,16 +553,22 @@ for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.
       continue;
     }
     texts.push(inline_spill(obj.text));
+    handed.push({ file: f, head: obj.text.slice(0, 200).replace(/[\\r\\n]/g, ' ') });
   } catch (e) {}                  // skip a corrupt entry, never abort the drain
 }
 if (texts.length) {
   console.log(JSON.stringify({ hookSpecificOutput: {
     hookEventName: ev,
     additionalContext: texts.join('\\n\\n') } }));
+  try {
+    fs.appendFileSync(process.argv[5], handed.map(function (h) {
+      return JSON.stringify({ ts: Date.now(), ev: ev, file: h.file, head: h.head });
+    }).join('\\n') + '\\n');
+  } catch (e) {}
 }
 fs.rmSync(claim, { recursive: true, force: true });
 JSEOF
-${INTERP} -e "$JS" - "${pendingDir}" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}"
+${INTERP} -e "$JS" - "${pendingDir}" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}" "${pathFor(REGISTRY_DIR, name, 'delivered')}"
 `, { mode: 0o700 });
 
     // This hook only READS the file — it never consumes it, so the reminder

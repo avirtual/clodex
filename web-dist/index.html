@@ -6129,6 +6129,12 @@ body.drawer-dragging {
   color: var(--accent);
   flex-shrink: 0;
 }
+.ipc-kind {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
 .ipc-from,
 .ipc-to {
   font-weight: 600;
@@ -29713,10 +29719,16 @@ ${m[2].replace(/^\r?\n/, "")}`;
           to: m.to != null ? String(m.to) : "?"
         };
       }
+      var STATE_KINDS = /* @__PURE__ */ new Set(["parked", "passive", "delivered"]);
+      function ipcStateKind(msg) {
+        const kind = msg && msg.kind;
+        return STATE_KINDS.has(kind) ? kind : null;
+      }
       function formatIpcLine(msg, date) {
         const ts = (date instanceof Date ? date : /* @__PURE__ */ new Date()).toISOString();
         const { name, session, to } = ipcRowParts(msg);
-        const body = msg && msg.body != null ? String(msg.body) : "";
+        const kind = ipcStateKind(msg);
+        const body = (kind ? `[${kind}] ` : "") + (msg && msg.body != null ? String(msg.body) : "");
         const head = to === null ? `${name}${session ? ` (${session})` : ""}` : `${name} -> ${to}`;
         return `${ts} ${head} ${body.replace(/\r\n|\r|\n/g, "\\n")}`;
       }
@@ -29730,7 +29742,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const p = (n, w) => String(n).padStart(w || 2, "0");
         return `clodex-ipc-log-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.txt`;
       }
-      module.exports = { MAX_EXPORT_LINES, shortSessionId, ipcRowParts, formatIpcLine, buildExportText, exportFilename };
+      module.exports = { MAX_EXPORT_LINES, shortSessionId, ipcRowParts, ipcStateKind, formatIpcLine, buildExportText, exportFilename };
     }
   });
 
@@ -29738,7 +29750,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_ipc_log = __commonJS({
     "renderer/ipc-log.js"(exports, module) {
       var { esc } = require_format();
-      var { MAX_EXPORT_LINES, ipcRowParts, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
+      var { MAX_EXPORT_LINES, ipcRowParts, ipcStateKind, formatIpcLine, buildExportText, exportFilename } = require_ipc_export();
       function createIpcLog({ host, openFilePeek, showToast }) {
         let ipcLogBody = null;
         let ipcEmpty = null;
@@ -29828,8 +29840,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const fromBadge = `<span class="ipc-from">${esc(name)}</span>`;
           const arrow = to === null ? "" : `<span class="ipc-arrow">\u2192</span>`;
           const targetBadge = to === null ? session ? `<span class="ipc-session">${esc(session)}</span>` : "" : `<span class="ipc-to">${esc(to)}</span>`;
+          const kind = ipcStateKind(msg);
+          const kindBadge = kind ? `<span class="ipc-kind">${kind}</span>` : "";
           const body = `<span class="ipc-body">${bodyHtml(msg)}</span>`;
-          entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${body}`;
+          entry.innerHTML = `<span class="ipc-time">${time}</span>${fromBadge}${arrow}${targetBadge}${kindBadge}${body}`;
           ipcLogBody.appendChild(entry);
           const nearBottom = ipcLogBody.scrollHeight - ipcLogBody.scrollTop - ipcLogBody.clientHeight < 40;
           if (nearBottom) ipcLogBody.scrollTop = ipcLogBody.scrollHeight;

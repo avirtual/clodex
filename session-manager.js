@@ -2232,29 +2232,44 @@ function createSessionManager(deps) {
             }
           } catch {}
         };
-        const attnPath = pathFor(REGISTRY_DIR, name, 'attn');
-        let attnOffset = 0;
-        const readAttn = () => {
-          try {
-            const st = fs.statSync(attnPath);
-            if (st.size <= attnOffset) return;
-            const fd = fs.openSync(attnPath, 'r');
-            const buf = Buffer.alloc(st.size - attnOffset);
-            fs.readSync(fd, buf, 0, buf.length, attnOffset);
-            fs.closeSync(fd);
-            attnOffset = st.size;
-            for (const line of buf.toString('utf-8').split('\n')) {
-              if (!line.trim()) continue;
-              let entry = null;
-              try { entry = JSON.parse(line); } catch {}
-              this._routeAttnEntry(session, entry);
-            }
-          } catch { /* observer-grade */ }
+        const tailJsonl = (filePath, onEntry) => {
+          let offset = 0;
+          return () => {
+            try {
+              const st = fs.statSync(filePath);
+              if (st.size <= offset) return;
+              const fd = fs.openSync(filePath, 'r');
+              const buf = Buffer.alloc(st.size - offset);
+              fs.readSync(fd, buf, 0, buf.length, offset);
+              fs.closeSync(fd);
+              offset = st.size;
+              for (const line of buf.toString('utf-8').split('\n')) {
+                if (!line.trim()) continue;
+                let entry = null;
+                try { entry = JSON.parse(line); } catch {}
+                onEntry(entry);
+              }
+            } catch { /* observer-grade */ }
+          };
         };
+        const readAttn = tailJsonl(pathFor(REGISTRY_DIR, name, 'attn'), (entry) => this._routeAttnEntry(session, entry));
+        const readDelivered = tailJsonl(pathFor(REGISTRY_DIR, name, 'delivered'), (entry) => {
+          if (!entry || typeof entry !== 'object') return;
+          this._broadcast('ipc-message', {
+            ts: typeof entry.ts === 'number' ? entry.ts : Date.now(),
+            from: 'clodex', to: name, kind: 'delivered',
+            body: `drained by ${entry.ev} hook: ${entry.head}`,
+          });
+          const count = countPending(PENDING_DIR, name);
+          if (count > 0) this._lastPendingCounts.set(name, count);
+          else this._lastPendingCounts.delete(name);
+          this._broadcast('pending-count', { name, count });
+        });
         try {
           session.ctxWatcher = fs.watch(runDirFor(REGISTRY_DIR, name), (_event, fname) => {
             if (fname === 'ctx') readCtx();
             else if (fname === 'attn.jsonl') readAttn();
+            else if (fname === 'delivered.jsonl') readDelivered();
           });
         } catch {}
         readCtx();

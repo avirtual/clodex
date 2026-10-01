@@ -33,10 +33,18 @@ function ipcRowParts(msg) {
   };
 }
 
+const STATE_KINDS = new Set(['parked', 'passive', 'delivered']);
+
+function ipcStateKind(msg) {
+  const kind = msg && msg.kind;
+  return STATE_KINDS.has(kind) ? kind : null;
+}
+
 function formatIpcLine(msg, date) {
   const ts = (date instanceof Date ? date : new Date()).toISOString();
   const { name, session, to } = ipcRowParts(msg);
-  const body = msg && msg.body != null ? String(msg.body) : '';
+  const kind = ipcStateKind(msg);
+  const body = (kind ? `[${kind}] ` : '') + (msg && msg.body != null ? String(msg.body) : '');
   // One line per message keeps the file greppable; embedded newlines become
   // literal \n so nothing is lost.
   const head = to === null ? `${name}${session ? ` (${session})` : ''}` : `${name} -> ${to}`;
@@ -57,4 +65,4 @@ function exportFilename(date) {
   return `clodex-ipc-log-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.txt`;
 }
 
-module.exports = { MAX_EXPORT_LINES, shortSessionId, ipcRowParts, formatIpcLine, buildExportText, exportFilename };
+module.exports = { MAX_EXPORT_LINES, shortSessionId, ipcRowParts, ipcStateKind, formatIpcLine, buildExportText, exportFilename };

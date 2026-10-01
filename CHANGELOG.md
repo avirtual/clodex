@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- IPC Traffic: a message the seat's hooks pulled from its queue now shows as a `delivered` row the moment it reaches the CLI, and the pending badge drops with it, instead of the message vanishing after its `parked` row.
 
 ## 5.107.0 — 2026-10-01
 
