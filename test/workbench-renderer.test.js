@@ -130,8 +130,7 @@ availability: () => ({}),
 }
 
 // Mount the plugin with `window.__CLODEX_WEB__` set to `web`, and report whether
-// wire() ran to completion. Globals are set for the duration and restored, so
-// this cannot leak into another test file sharing the process.
+// wire() ran to completion.
 function installGlobals({ web, dom, created, rhost }) {
   global.window = { __CLODEX_WEB__: web, addEventListener() {}, removeEventListener() {} };
   global.confirm = rhost.ui.confirm;

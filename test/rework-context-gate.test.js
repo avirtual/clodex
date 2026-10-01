@@ -259,6 +259,15 @@ async function settle() {
   for (let i = 0; i < 40; i += 1) await new Promise((r) => setTimeout(r, 5));
 }
 
+async function waitForFile(file, { ms = 5000 } = {}) {
+  for (let waited = 0; waited < ms; waited += 10) {
+    if (fsReal.existsSync(file)) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  if (fsReal.existsSync(file)) return;
+  throw new Error(`waitForFile: ${file} did not appear within ${ms} ms`);
+}
+
 const FRESH = 'team-hand-1-r2';
 
 test('mkFixture injects every dep team-tickets.js reads', () => {
@@ -425,10 +434,10 @@ test('COST.json for a replaced ticket bills BOTH seats, not just the one that fi
   // The real rollup, which mkFixture stubs out for every other subject here.
   delete f.m._writeTicketCost;
   const closed = { ...f.one(), state: 'done', closedAt: 5, closedBy: FRESH };
-  f.m._writeTicketCost(f.team, closed);
-  await settle();
-
   const file = pathReal.join(projectDirFor(world.home, world.repo), 'tasks', 't1-fixture', 'COST.json');
+  f.m._writeTicketCost(f.team, closed);
+  await waitForFile(file);
+
   assert.ok(fsReal.existsSync(file), `ENTER: the rollup landed at ${file}`);
   const rec = JSON.parse(fsReal.readFileSync(file, 'utf8'));
   assert.strictEqual(rec.seat, FRESH, 'the row names the seat that closed it, which is the joinable one');
@@ -456,11 +465,11 @@ test('a replaced ticket whose archived seat record is GONE declares unknown rath
   f.persistence.remove('team-hand-1');
 
   delete f.m._writeTicketCost;
+  const file = pathReal.join(projectDirFor(world.home, world.repo), 'tasks', 't1-fixture', 'COST.json');
   f.m._writeTicketCost(f.team, { ...f.one(), state: 'done', closedAt: 5, closedBy: FRESH });
-  await settle();
+  await waitForFile(file);
 
-  const rec = JSON.parse(fsReal.readFileSync(
-    pathReal.join(projectDirFor(world.home, world.repo), 'tasks', 't1-fixture', 'COST.json'), 'utf8'));
+  const rec = JSON.parse(fsReal.readFileSync(file, 'utf8'));
   assert.strictEqual(rec.sessions.attribution, 'unknown',
     'the gap is declared: one unknown row is cheap, a confident 2 against a 42 ticket is not');
   assert.strictEqual(rec.usd, null, 'and no number is published beside it');
