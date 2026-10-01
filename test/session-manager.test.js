@@ -23024,12 +23024,14 @@ test('t1208: seatCommands on a claude seat after init lists its slash commands m
   ]);
 });
 
-test('t1513: a claude init with a plugin error logs one warn naming the path and broadcasts one plugin-error, and still applies model and slash commands', async (t) => {
+test('t1513: a claude init with a plugin error, sent twice, logs one warn naming the path and broadcasts one plugin-error, and still applies model and slash commands', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
   const sent = [];
   h.m._broadcast = (ch, msg) => sent.push([ch, msg]);
   await h.create('pe1');
+  h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'],
+    plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message: 'Failed to load plugin: corrupt manifest\nsecond line', path: '/abs/bad-plugin' }] });
   h.line('pe1', { type: 'system', subtype: 'init', session_id: 'sid-pe', model: 'm-pe', slash_commands: ['compact'],
     plugin_errors: [{ plugin: 'inline[0]', type: 'generic-error', message: 'Failed to load plugin: corrupt manifest\nsecond line', path: '/abs/bad-plugin' }] });
   const s = h.m.sessions.get('pe1');

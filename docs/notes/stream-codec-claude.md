@@ -10,4 +10,4 @@ CLI 2.1.286 answers `set_model` only after a 1-token probe request to the new mo
 
 ## decode
 
-The `system/init` record's `plugin_errors` (measured 2026-10-01, CLI 2.1.286, corrupt `.claude-plugin/plugin.json`) is an array of `{ plugin: "inline[0]", type: "generic-error", message: "Failed to load plugin: …", path: "<abs dir>" }`; a clean boot sends `[]`. It is the only report of a `--plugin-dir` that failed to load on a stream seat.
+The `system/init` record's `plugin_errors` (measured 2026-10-01, CLI 2.1.286, corrupt `.claude-plugin/plugin.json`) is an array of `{ plugin: "inline[0]", type: "generic-error", message: "Failed to load plugin: …", path: "<abs dir>" }`; a clean boot sends `[]`. It is the only report of a `--plugin-dir` that failed to load on a stream seat. Since an `init` arrives before every turn, the field can be re-sent on every init, so the session manager reports a set of errors only when it changes.
