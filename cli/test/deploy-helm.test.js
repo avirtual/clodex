@@ -728,7 +728,7 @@ test('deploy helm --dry-run: plan only — cluster/ns/release/chart/ctx entry, c
 
 test('deploy helm --json --dry-run: the ctxEntry preview carries webPort unless web is disabled', async () => {
   const preview = async (extra) => {
-    const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '--json', '--dry-run', ...extra], {
+    const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '-o', 'json', '--dry-run', ...extra], {
       execFn: async () => { throw new Error('should not run'); }, probeHelm: async () => { throw new Error('should not verify'); }, contextsFile: tmpCtxFile(),
     });
     assert.strictEqual(code, 0);
