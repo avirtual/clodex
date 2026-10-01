@@ -92,8 +92,9 @@ const MODEL_WINDOWS = [
 
 function effectiveWindowSize(modelId, reported) {
   if (modelId) {
+    const id = String(modelId).replace(/^.*claude-/, 'claude-');
     for (const [re, size] of MODEL_WINDOWS) {
-      if (re.test(modelId)) return Math.max(size, reported || 0);
+      if (re.test(id)) return Math.max(size, reported || 0);
     }
   }
   return reported;

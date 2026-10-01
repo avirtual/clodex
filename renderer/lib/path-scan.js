@@ -54,7 +54,6 @@ function trimUrl(url) {
 
 function urlMatches(text) {
   const out = [];
-  URL_RE.lastIndex = 0;
   for (let u = URL_RE.exec(text); u; u = URL_RE.exec(text)) {
     const url = trimUrl(u[2]);
     const start = u.index + u[1].length;

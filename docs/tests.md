@@ -5,7 +5,7 @@ before arguing with one of them.
 
 A test can fail to reach the state it names and still pass every assertion.
 Seven instances so far; what made most of them silent was the assertion shape,
-not the mistake. The first three rules follow from that; the last two are about
+not the mistake. The first three rules follow from that; the next two are about
 the pins themselves.
 
 ## Assert the whole built object
@@ -71,6 +71,14 @@ successor could never own a corrupt record; `wirescope-env-gate.test.js` pinned
 that exact shape, and it was right — the record is a snapshot, and a successor
 can write between the read and the unlink. The pin caught a flaw in the
 reasoning, not a typo.
+
+## A spawned child always carries a timeout
+
+A test that spawns node, bash or claude and waits on its exit passes a
+`timeout` (with `killSignal: 'SIGKILL'`) or arms a kill timer. A wedged child
+otherwise hangs the whole suite, not the one test. t1470 gave every hook spawn
+in `cli-hooks.test.js` a 30s SIGKILL timeout, so its ARG_MAX drain case now
+fails as one ETIMEDOUT test instead of stalling the run.
 
 ## Not a quota
 

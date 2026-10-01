@@ -86,6 +86,11 @@ function extractClaudeBlocks(content) {
 // only, no tool traffic. Reads the on-disk JSONL, which is written by the CLI
 // regardless of which observation path (wire vs JsonlWatcher) is live — so the
 // remote view never depends on the intent machinery.
+function maxImageMark(text, images) {
+  const marks = [...text.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1]));
+  return Math.max(0, ...marks, ...(images || []).map((img) => img.n));
+}
+
 function jsonlToMessages(jsonlPath, limit = 100) {
   const raw = fs.readFileSync(jsonlPath, 'utf-8');
   const records = [];
@@ -129,6 +134,7 @@ function jsonlToMessages(jsonlPath, limit = 100) {
   if (turn.length) turns.push(turn);
 
   const messages = [];
+  const markMax = new Map();
   for (let t = 0; t < turns.length; t++) {
     const entries = turns[t];
     let lastAssistant = -1;
@@ -144,8 +150,8 @@ function jsonlToMessages(jsonlPath, limit = 100) {
       const prev = messages[messages.length - 1];
       if (prev && prev.role === r.role && prev.interim === interim) {
         if (r.role === 'user') {
-          const marks = [...prev.text.matchAll(/\[Image #(\d+)\]/g)].map((m) => Number(m[1]));
-          const offset = Math.max(0, ...marks, ...(prev.images || []).map((img) => img.n));
+          const offset = markMax.has(prev) ? markMax.get(prev) : maxImageMark(prev.text, prev.images);
+          markMax.set(prev, offset + maxImageMark(r.text, r.images));
           prev.text += '\n\n' + r.text.replace(/\[Image #(\d+)\]/g, (m, n) => `[Image #${Number(n) + offset}]`);
           if (r.images) prev.images = (prev.images || []).concat(r.images.map((img) => ({ ...img, n: img.n + offset })));
         } else prev.text += '\n\n' + r.text;
