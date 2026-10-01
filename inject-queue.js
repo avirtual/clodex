@@ -64,7 +64,7 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, pasteMaxWaitMs, onPasteCapFire, hintHeld, speaking, onSubmitted, onUndelivered, reviewGate }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, hintHeld, speaking, onSubmitted, onUndelivered, reviewGate }) {
     this._write = write;
     this._reviewGate = !!reviewGate;
     this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
@@ -85,8 +85,6 @@ class InjectQueue {
     this._readyMaxWaitMs = Number.isFinite(readyMaxWaitMs) ? readyMaxWaitMs : Infinity;
     this._readyPollMs = Number.isFinite(readyPollMs) ? readyPollMs : 250;
     this._onReadyCapFire = onReadyCapFire || null;
-    this._pasteMaxWaitMs = Number.isFinite(pasteMaxWaitMs) ? pasteMaxWaitMs : null;
-    this._onPasteCapFire = typeof onPasteCapFire === 'function' ? onPasteCapFire : null;
     this._chain = Promise.resolve();
     this._length = 0;
   }
@@ -108,8 +106,6 @@ class InjectQueue {
   // A deferral that cannot be released strands every message to the seat, so a
   // throwing reader must not be the thing that makes injection stop forever.
   _speakingNow() { try { return !!this._speaking(); } catch { return false; } }
-
-  _pasteOn() { try { return !!this._bracketedPaste(); } catch { return false; } }
 
   enqueue(text, opts = {}) {
     this._length++;
@@ -173,20 +169,6 @@ class InjectQueue {
       && (this._now() - (this._lastHumanInputAt() || 0) < this._quietMs || this._speakingNow())) {
       try { this._onCapFire(text); } catch {}
     }
-    let forceBracket = false;
-    if (this._reviewGate && this._pasteMaxWaitMs !== null
-      && stripReviewGated(text).includes('\n') && !this._pasteOn()) {
-      const pasteSince = this._now();
-      while (!this._isDead() && !this._pasteOn() && this._now() - pasteSince < this._pasteMaxWaitMs) {
-        await this._sleep(Math.min(this._pasteMaxWaitMs, this._readyPollMs));
-      }
-      if (this._isDead()) { if (parkable) this._undelivered(text); return; }
-      if (!this._pasteOn()) {
-        if (parkable) { this._undelivered(text); return; }
-        forceBracket = true;
-        if (this._onPasteCapFire) { try { this._onPasteCapFire(text); } catch {} }
-      }
-    }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }
@@ -196,7 +178,11 @@ class InjectQueue {
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
     // CLI actually has mode 2004 on; otherwise the markers land as literal text.
     let out = text.replace(/\n/g, '\r');               // the text (\n→\r)
-    if (text.includes('\n') && (forceBracket || this._pasteOn())) out = PASTE_START + out + PASTE_END;
+    if (text.includes('\n')) {
+      let pasteOn = false;
+      try { pasteOn = !!this._bracketedPaste(); } catch {}
+      if (pasteOn) out = PASTE_START + out + PASTE_END;
+    }
     this._write(out);
     await this._sleep(this._settleMsFor(text));
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }

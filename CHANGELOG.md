@@ -13,8 +13,6 @@ blocks a release.
 
 ## Unreleased
 
-- Seats: a multi-line delivery to a Claude terminal seat waits for the CLI's paste mode instead of being typed raw, so it can no longer end up stuck in the composer as an unsent draft.
-
 ## 5.105.0 — 2026-10-01
 
 - Drawer tabs: the per-tab unread counts are gone; a tab that got something while hidden shows a dot (red when it was a failure), cleared when you open it.
