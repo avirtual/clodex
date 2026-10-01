@@ -200,7 +200,7 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
       + `(${defuseSenderLines(text(remeasured.firstFailing)) || 'no names recorded'}); the second run, on the same commit, `
       + 'was green. Treat that as a box-contention flake unless the diff touches those tests.');
   }
-  const slow = Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean) : [];
+  const slow = Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean).map(defuseSenderLines) : [];
   if (slow.length) {
     out.push(`SLOW GATE (not a failure, outside this diff): ${slow.join('; ')}. `
       + 'Those tests crossed the suite\'s six-second duration bar on a loaded box, which exits the runner '

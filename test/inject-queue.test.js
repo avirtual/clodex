@@ -1005,3 +1005,37 @@ test('InjectQueue paste gate: a non-claude seat (no reviewGate) writes multi-lin
   assert.strictEqual(st.clock, 1, 'only the settle sleep advanced the clock');
   assert.deepStrictEqual(st.capFired, []);
 });
+
+function quietAfterPasteQueue(stampAt) {
+  let human = 0;
+  let writeClock = null;
+  const { q, st } = pasteGateQueue((st) => {
+    st.clock = 10_000;
+    return {
+      quietMs: 1000, maxWaitMs: 30_000,
+      lastHumanInputAt: () => human,
+      write: (bytes) => { if (writeClock === null) writeClock = st.clock; st.writes.push(bytes); },
+      sleep: (ms) => {
+        st.clock += ms;
+        if (stampAt !== null && st.clock === stampAt) human = st.clock;
+        if (st.clock >= 10_750) st.paste = true;
+        return Promise.resolve();
+      },
+    };
+  });
+  return { q, st, writeClock: () => writeClock };
+}
+
+test('InjectQueue paste gate: a draft typed during the paste wait re-arms the quiet gate before the write', async () => {
+  const { q, st, writeClock } = quietAfterPasteQueue(10_500);
+  await q.enqueue('one\ntwo');
+  assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
+  assert.ok(writeClock() >= 10_500 + 1000, `written only after quietMs past the stamp: writeClock=${writeClock()}`);
+});
+
+test('InjectQueue paste gate: no human input during the paste wait → no second deferral', async () => {
+  const { q, st, writeClock } = quietAfterPasteQueue(null);
+  await q.enqueue('one\ntwo');
+  assert.deepStrictEqual(st.writes, ['\x15', '\x1b[200~one\rtwo\x1b[201~', '\r']);
+  assert.strictEqual(writeClock(), 10_750, 'written right after the paste flip');
+});
