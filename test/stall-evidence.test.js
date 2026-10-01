@@ -170,7 +170,7 @@ const snapshot = () => ({
 });
 
 test('lastToolFromFile re-reads a wider window when a prompt_snapshot fills the tail', () => {
-  const dir = mkTmpRoot('stall-snap-');
+  const dir = mkTmpRoot('stall-tail-');
   const file = path.join(dir, 'transcript.jsonl');
   const userLine = { type: 'user', message: { role: 'user', content: 'go' } };
   fs.writeFileSync(file, jsonl(userLine, use('Bash', 'b1'), snapshot()));
@@ -196,7 +196,7 @@ test('lastToolFromFile does not re-read when the tail already names a tool', () 
 });
 
 test('lastToolFromFile returns null when even the wide window names no tool', () => {
-  const dir = mkTmpRoot('stall-snap-');
+  const dir = mkTmpRoot('stall-tail-');
   const file = path.join(dir, 'transcript.jsonl');
   fs.writeFileSync(file, jsonl(snapshot(), snapshot()));
   assert.strictEqual(lastToolFromFile(fs, file, readTail(fs, file)), null);
