@@ -475,7 +475,7 @@ test('request-class compaction header marks the turn compact without the prompt 
   assert.deepEqual(events['turn.completed'].map((e) => e.compact), [false, true]);
 });
 
-test('a duplicated request-class header is ignored, not a crash', async (t) => {
+test('a duplicated (comma-joined) request-class header is ignored, not a crash', async (t) => {
   const up = await startFakeUpstream();
   t.after(() => up.server.close());
   const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });

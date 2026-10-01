@@ -35,16 +35,28 @@ function sysText(obj) {
   return typeof sys === 'string' ? sys : '';
 }
 
+const BILLING_PREFIX = 'x-anthropic-billing-header:';
+
+function billingText(obj) {
+  const sys = obj.system;
+  if (Array.isArray(sys)) {
+    const b = sys[0];
+    const t = b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string' ? b.text : '';
+    return t.startsWith(BILLING_PREFIX) ? t : '';
+  }
+  return typeof sys === 'string' && sys.startsWith(BILLING_PREFIX) ? sys : '';
+}
+
 // Ground-truth subagent flag from the billing header (block 0 of system[]).
 // Not trusted alone — see the fingerprint backstop above.
 function billingIsSubagent(obj) {
-  return sysText(obj).includes('cc_is_subagent=true');
+  return billingText(obj).includes('cc_is_subagent=true');
 }
 
 const BILLING_FP_RE = /cc_version=([0-9a-f.]+)/;
 
 function billingFingerprint(obj) {
-  const m = BILLING_FP_RE.exec(sysText(obj));
+  const m = BILLING_FP_RE.exec(billingText(obj));
   return m ? m[1] : null;
 }
 
@@ -145,6 +157,6 @@ class RoleClassifier {
 
 module.exports = {
   RoleClassifier, SUBAGENT_ROLES, isSubagentRole,
-  sysText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall, isClassifierCall,
+  sysText, billingText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall, isClassifierCall,
   isCompactCall,
 };
