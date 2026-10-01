@@ -368,7 +368,9 @@ Persisted map writers: `peerAttached` on attach, forgotten on explicit
 detach — **peer-exit and the disable soft-shed deliberately don't forget**,
 so attachments survive a box restart or a pause. `peerControlled` on
 successful acquire only (a failed take never persists), forgotten on
-release/detach/stale-claim drop. `peerVisible` via the eye popover's Apply.
+release/detach/stale-claim drop. `peerVisible` via Apply (full replace) and
+row-hide/create (`peer:visibleRemove`/`peer:visibleAdd`, merged in main against
+the saved map); every write broadcasts `peer-visible`.
 
 ## 5. Control model
 

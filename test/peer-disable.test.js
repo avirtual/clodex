@@ -138,3 +138,58 @@ test('peer:setDisabled on an unknown id is a no-op error', () => {
   assert.equal(calls.set.length, 0);
   assert.equal(calls.sync, 0);
 });
+
+function visibleFixture(peerVisible) {
+  const { handlers, capture, registerIpcHandlers } = loadHandlers();
+  const store = { peers: [{ id: 'a', label: 'A', url: 'http://a' }], peerVisible };
+  const calls = { broadcast: [], set: [] };
+  registerIpcHandlers({
+    ...capture,
+    uiSettings: {
+      get: () => store,
+      set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },
+    },
+    manager: { _broadcast: (...a) => calls.broadcast.push(a) },
+    log: { info() {}, error() {} },
+  });
+  return { handlers, store, calls };
+}
+
+test('peer:visibleAdd reads the saved map at call time, so a stale caller keeps the other window\'s name', () => {
+  const { handlers, store, calls } = visibleFixture({ a: ['alpha'] });
+  store.peerVisible = { a: ['alpha', 'other'] };
+  const res = handlers.get('peer:visibleAdd')({}, 'a', 'fresh');
+  assert.deepEqual(res, { ok: true, peerVisible: { a: ['alpha', 'other', 'fresh'] } });
+  assert.deepEqual(store.peerVisible.a, ['alpha', 'other', 'fresh']);
+  assert.deepEqual(calls.broadcast, [['peer-visible', { a: ['alpha', 'other', 'fresh'] }]]);
+});
+
+test('peer:visibleAdd on an unmaterialized or already-listed name writes nothing and replies the current map', () => {
+  const { handlers, calls } = visibleFixture({ a: ['alpha'] });
+  assert.deepEqual(handlers.get('peer:visibleAdd')({}, 'a', 'alpha'), { ok: true, peerVisible: { a: ['alpha'] } });
+  assert.deepEqual(handlers.get('peer:visibleAdd')({}, 'b', 'x'), { ok: true, peerVisible: { a: ['alpha'] } });
+  assert.equal(calls.set.length, 0);
+  assert.equal(calls.broadcast.length, 0);
+});
+
+test('peer:visibleRemove reads the saved map at call time, so a stale caller keeps the other window\'s name', () => {
+  const { handlers, store, calls } = visibleFixture({ a: ['alpha', 'beta'] });
+  store.peerVisible = { a: ['alpha', 'beta', 'other'] };
+  const res = handlers.get('peer:visibleRemove')({}, 'a', 'alpha', ['alpha', 'beta']);
+  assert.deepEqual(res, { ok: true, peerVisible: { a: ['beta', 'other'] } });
+  assert.deepEqual(calls.broadcast, [['peer-visible', { a: ['beta', 'other'] }]]);
+});
+
+test('peer:visibleRemove materializes an unset selection from validated liveNames minus the name', () => {
+  const { handlers, store, calls } = visibleFixture({});
+  const res = handlers.get('peer:visibleRemove')({}, 'a', 'alpha', ['alpha', 'beta', '..', '../x', 7, 'gamma']);
+  assert.deepEqual(res.peerVisible, { a: ['beta', 'gamma'] });
+  assert.deepEqual(store.peerVisible, { a: ['beta', 'gamma'] });
+  assert.equal(calls.broadcast.length, 1);
+});
+
+test('peer:setVisible broadcasts the replaced map to every window', () => {
+  const { handlers, calls } = visibleFixture({ a: ['alpha'], b: ['x'] });
+  handlers.get('peer:setVisible')({}, 'a', null);
+  assert.deepEqual(calls.broadcast, [['peer-visible', { b: ['x'] }]]);
+});

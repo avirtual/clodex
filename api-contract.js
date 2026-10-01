@@ -314,6 +314,8 @@ const API_CONTRACT = [
   { name: 'peerForgetControlled', kind: 'invoke', channel: 'peer:forgetControlled' },
   { name: 'peerVisible', kind: 'invoke', channel: 'peer:visible' },
   { name: 'peerSetVisible', kind: 'invoke', channel: 'peer:setVisible' },
+  { name: 'peerVisibleAdd', kind: 'invoke', channel: 'peer:visibleAdd' },
+  { name: 'peerVisibleRemove', kind: 'invoke', channel: 'peer:visibleRemove' },
   { name: 'peerControl', kind: 'invoke', channel: 'peer:control' },
   { name: 'peerResize', kind: 'invoke', channel: 'peer:resize' },
   { name: 'peerInput', kind: 'send', channel: 'peer:input' },
@@ -366,6 +368,7 @@ const API_CONTRACT = [
   { name: 'onPeerExit', kind: 'on', channel: 'peer-exit' },
   { name: 'onPeerRemoved', kind: 'on', channel: 'peer-removed' },
   { name: 'onPeerDisabled', kind: 'on', channel: 'peer-disabled' },
+  { name: 'onPeerVisible', kind: 'on', channel: 'peer-visible' },
   { name: 'onPeerTunnel', kind: 'on', channel: 'peer-tunnel' },
   // Peer web view (t30b): the on-demand ssh forward to a peer's browser
   // frontend, and its live state. Separate from the wire tunnel above — that one

@@ -11430,6 +11430,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "peerForgetControlled", kind: "invoke", channel: "peer:forgetControlled" },
         { name: "peerVisible", kind: "invoke", channel: "peer:visible" },
         { name: "peerSetVisible", kind: "invoke", channel: "peer:setVisible" },
+        { name: "peerVisibleAdd", kind: "invoke", channel: "peer:visibleAdd" },
+        { name: "peerVisibleRemove", kind: "invoke", channel: "peer:visibleRemove" },
         { name: "peerControl", kind: "invoke", channel: "peer:control" },
         { name: "peerResize", kind: "invoke", channel: "peer:resize" },
         { name: "peerInput", kind: "send", channel: "peer:input" },
@@ -11482,6 +11484,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onPeerExit", kind: "on", channel: "peer-exit" },
         { name: "onPeerRemoved", kind: "on", channel: "peer-removed" },
         { name: "onPeerDisabled", kind: "on", channel: "peer-disabled" },
+        { name: "onPeerVisible", kind: "on", channel: "peer-visible" },
         { name: "onPeerTunnel", kind: "on", channel: "peer-tunnel" },
         // Peer web view (t30b): the on-demand ssh forward to a peer's browser
         // frontend, and its live state. Separate from the wire tunnel above — that one
@@ -45865,18 +45868,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
-  // renderer/lib/peer-visibility.js
-  var require_peer_visibility = __commonJS({
-    "renderer/lib/peer-visibility.js"(exports, module) {
-      "use strict";
-      function nextVisibleWithName(sel, name) {
-        if (!Array.isArray(sel) || sel.includes(name)) return null;
-        return [...sel, name];
-      }
-      module.exports = { nextVisibleWithName };
-    }
-  });
-
   // peer-web-url.js
   var require_peer_web_url = __commonJS({
     "peer-web-url.js"(exports, module) {
@@ -46115,7 +46106,6 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { SEV_LINE } = require_constants();
       var { esc, baseName } = require_format();
       var { wireBulkToggles } = require_checklists();
-      var { nextVisibleWithName } = require_peer_visibility();
       var { webViewAffordance } = require_peer_web_view();
       var { peerStateText, NEEDS_UPGRADE_TIP } = require_peer_state_text();
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
@@ -46822,25 +46812,16 @@ ${detail}` });
         });
         async function peerHideFromList(id, name) {
           const st = peerStatuses.get(id);
-          const sel = peerVisibleMap[id];
-          let next;
-          if (Array.isArray(sel)) {
-            next = sel.filter((n) => n !== name);
-          } else {
-            const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
-            const attachedNames = [...sessions.entries()].filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => e.peer.name);
-            next = [.../* @__PURE__ */ new Set([...liveNames, ...attachedNames])].filter((n) => n !== name);
-          }
-          const res = await window.api.peerSetVisible(id, next);
+          const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
+          const attachedNames = [...sessions.entries()].filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => e.peer.name);
+          const res = await window.api.peerVisibleRemove(id, name, [.../* @__PURE__ */ new Set([...liveNames, ...attachedNames])]);
           if (res && res.ok) peerVisibleMap = res.peerVisible || {};
           const key = peerKey(id, name);
           if (sessions.has(key)) removeSession(key);
           renderPeers();
         }
         async function ensurePeerSessionVisible(id, name) {
-          const next = nextVisibleWithName(peerVisibleMap[id], name);
-          if (!next) return;
-          const res = await window.api.peerSetVisible(id, next);
+          const res = await window.api.peerVisibleAdd(id, name);
           if (res && res.ok) peerVisibleMap = res.peerVisible || {};
           renderPeers();
         }
@@ -47005,6 +46986,10 @@ ${detail}` });
           for (const [key, entry] of [...sessions.entries()]) {
             if (entry.peer && entry.peer.id === id) removeSession(key, { keepPersisted: soft });
           }
+          renderPeers();
+        });
+        window.api.onPeerVisible((map) => {
+          peerVisibleMap = map || {};
           renderPeers();
         });
         window.api.onPeerDisabled((id, on, label) => {

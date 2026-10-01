@@ -703,6 +703,11 @@ accept teardown removes.
   for both halves of that open — main pops what it returns and the renderer's
   tip promises it — so the tooltip cannot name an address the click does not go
   to. Pure leaf, `null` on anything it cannot read rather than a guess.
+- **peer-visibility.js** — a peer's "visible sessions" selection: either
+  UNMATERIALIZED (no explicit array ⇒ every known session shows) or an explicit
+  whitelist. Main applies the single-name add/remove math at call time
+  (`peer:visibleAdd` / `peer:visibleRemove`) against the saved map and
+  broadcasts `peer-visible`, so a window's stale copy never reverts another's.
 - **peer-deploy.js** + **ssh-run.js** — deploy-wizard classification +
   one-shot ssh transport.
 - **peer-input-queue.js** — PendingInput buffer behind type-to-take.
@@ -1562,9 +1567,6 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **peer-collapse.js** — per-workspace fold state for peer headers. The state
   lives outside the DOM because `renderPeers()` rebuilds every row. The
   persisted set names the peers the operator EXPANDED, never the folded ones.
-- **peer-visibility.js** — a peer's "visible sessions" selection: either
-  UNMATERIALIZED (no explicit array ⇒ every known session shows) or an explicit
-  whitelist.
 - **peer-web-view.js** — the pure decision behind the peer web-view (↗)
   affordance: given a peer's live hello state and its web-tunnel state, does the
   button render, what does it say, is a click a "close".

@@ -345,7 +345,9 @@
 | `handle:peer:setRelayAllowed` | allows or disallows relaying through a peer | ui-settings peers | none | unpinned |
 | `handle:peer:setShellAllowed` | the box-wide peer-terminal grant; revoking closes open far shells | ui-settings peerShellEnabled | manager._broadcast, syncRemoteServer | peer-shell-grant.test.js |
 | `handle:peer:visible` | which far seats are visible per peer | ui-settings peerVisible (read) | none | unpinned |
-| `handle:peer:setVisible` | sets or clears one peer's visible seat names (names validated) | ui-settings peerVisible | none | unpinned |
+| `handle:peer:setVisible` | sets or clears one peer's visible seat names (names validated) and broadcasts the map | ui-settings peerVisible | manager._broadcast | peer-disable.test.js |
+| `handle:peer:visibleAdd` | adds one name to a materialized whitelist read at call time; broadcasts on a write | ui-settings peerVisible | peer-visibility.nextVisibleWithName, manager._broadcast | peer-disable.test.js |
+| `handle:peer:visibleRemove` | drops one name from the whitelist read at call time, materializing from the caller's liveNames when unset; broadcasts on a write | ui-settings peerVisible | peer-visibility.nextVisibleWithoutName, manager._broadcast | peer-disable.test.js |
 | `handle:peer:control` | takes or releases input control of a far seat and remembers it | ui-settings peerControlled | conn.control, rememberPeerControlled | unpinned |
 | `handle:peer:controlledNames` | the remembered controlled seats per peer | ui-settings peerControlled (read) | none | unpinned |
 | `handle:peer:forgetControlled` | forgets one controlled record | ui-settings peerControlled | forgetPeerControlled | unpinned |

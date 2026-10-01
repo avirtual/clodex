@@ -6,7 +6,6 @@ const { parseDeployLine } = require('../peer-deploy');
 const { SEV_LINE } = require('./lib/constants');
 const { esc, baseName } = require('./lib/format');
 const { wireBulkToggles } = require('./lib/checklists');
-const { nextVisibleWithName } = require('./lib/peer-visibility');
 const { webViewAffordance } = require('./lib/peer-web-view');
 const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
@@ -748,17 +747,10 @@ function initPeersUi({
 
   async function peerHideFromList(id, name) {
     const st = peerStatuses.get(id);
-    const sel = peerVisibleMap[id];
-    let next;
-    if (Array.isArray(sel)) {
-      next = sel.filter((n) => n !== name);
-    } else {
-      const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
-      const attachedNames = [...sessions.entries()]
-        .filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => e.peer.name);
-      next = [...new Set([...liveNames, ...attachedNames])].filter((n) => n !== name);
-    }
-    const res = await window.api.peerSetVisible(id, next);
+    const liveNames = st && st.online ? (st.sessions || []).map((s) => s.name) : [];
+    const attachedNames = [...sessions.entries()]
+      .filter(([, e]) => e.peer && e.peer.id === id).map(([, e]) => e.peer.name);
+    const res = await window.api.peerVisibleRemove(id, name, [...new Set([...liveNames, ...attachedNames])]);
     if (res && res.ok) peerVisibleMap = res.peerVisible || {};
     const key = peerKey(id, name);
     if (sessions.has(key)) removeSession(key);
@@ -769,9 +761,7 @@ function initPeersUi({
   // it and never renders. This is the only thing that surfaces a no-attach create;
   // attachment overrides visibility at the render site, this keeps the row after detach.
   async function ensurePeerSessionVisible(id, name) {
-    const next = nextVisibleWithName(peerVisibleMap[id], name);
-    if (!next) return;
-    const res = await window.api.peerSetVisible(id, next);
+    const res = await window.api.peerVisibleAdd(id, name);
     if (res && res.ok) peerVisibleMap = res.peerVisible || {};
     renderPeers();
   }
@@ -963,6 +953,11 @@ function initPeersUi({
     for (const [key, entry] of [...sessions.entries()]) {
       if (entry.peer && entry.peer.id === id) removeSession(key, { keepPersisted: soft });
     }
+    renderPeers();
+  });
+
+  window.api.onPeerVisible((map) => {
+    peerVisibleMap = map || {};
     renderPeers();
   });
 

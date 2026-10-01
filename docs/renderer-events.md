@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (255 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (257 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (71 channels). This doc maps each to its emission point, its
+`preload.js` (72 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -93,6 +93,7 @@ Every live window; a web host fans to every connection.
 | `wire-quota` | `{accounts, latest}` (plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown). `accounts` is one labelled snapshot per account the wire has seen, `default` first; `latest` is the last-seen account's alone | session-manager `_broadcastQuota` / the wire `response` consumer, both via `_quotaPayload` |
 | `session:move-progress` | `{name, phase, bytes, total, files, fileIndex}` — phases `begin` → `transcript` → `seat` → `commit`; `bytes`/`total` are BYTES across the whole shipment (monotonic, so a bar can read `bytes/total` directly), `files`/`fileIndex` the file count and the one in flight | session-manager `moveToPeer` |
 | `peer-disabled` | `id, on, label` | ipc-handlers (`peer:setDisabled`) |
+| `peer-visible` | `map` (the whole saved `peerVisible` whitelist map) | ipc-handlers (`peer:setVisible`, `peer:visibleAdd`, `peer:visibleRemove`) |
 | `peer-state` | `id, status` (`{online, label, …}`) | peer-client `_emit` → peer-wiring `emit` |
 | `peer-removed` | `id` | peer-client / peer-wiring |
 | `peer-tunnel` | `id, status` | peer-wiring (TunnelManager onState) |
@@ -111,7 +112,7 @@ Every live window; a web host fans to every connection.
 | `peer-wterm-exit` | `id, seat, exitCode` | peer-client |
 | `peer-wterm-closed` | `id, seat, text` (the `peerShellRefusal` sentence) | peer-client |
 
-All `peer-*` (except `peer-disabled`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
+All `peer-*` (except `peer-disabled`/`peer-visible`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
 `peer-client.js` `this._emit(...)`; the PeerManager `emit` closure in
 **peer-wiring.js** is the single funnel that routes them to `manager._broadcast`
 (and fires the menu/ops-log side effects). That closure is the natural single

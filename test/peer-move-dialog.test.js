@@ -392,3 +392,18 @@ for (const row of [
       'the buffer reset stays unconditional: a wedged acquiring flag kills type-to-take');
   });
 }
+
+test('onPeerVisible replaces the saved whitelist and re-renders the peer rows', () => {
+  const { handlers, peerStatuses, sessionList, withDom } = mkPeersUi();
+  peerStatuses.set('p1', { online: true, label: 'murmurfi', sessions: [{ name: 'alpha' }, { name: 'beta' }] });
+  const count = () => {
+    const header = sessionList.children.filter((c) => c.className && c.className.startsWith('peer-header')).at(-1);
+    const m = header && /class="peer-count">(\d+)</.exec(header.innerHTML);
+    return m ? Number(m[1]) : null;
+  };
+  assert.strictEqual(typeof handlers.onPeerVisible, 'function', 'ENTER: onPeerVisible listener registered');
+  withDom(() => handlers.onPeerVisible({ p1: ['alpha'] }));
+  assert.strictEqual(count(), 1, 'the broadcast whitelist hides beta');
+  withDom(() => handlers.onPeerVisible({}));
+  assert.strictEqual(count(), 2, 'an emptied map shows every session again');
+});
