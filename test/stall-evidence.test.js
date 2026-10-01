@@ -18,7 +18,7 @@ const os = require('node:os');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
-  readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
+  readTail, lastToolFrom, lastToolFromFile, lastApiErrorFrom, formatStallBody, formatOrphanBody,
   parseCpuTime, sumTreeCpuMs, classifyReviewSeat, formatReviewSeatClause, API_ERROR_MAX,
 } = require('../stall-evidence');
 
@@ -160,6 +160,47 @@ test('readTail returns only the tail of a large file, and the tail is what parse
 
 test('readTail on a missing file returns empty, never throws', () => {
   assert.strictEqual(readTail(fs, '/nonexistent/nope.jsonl'), '');
+});
+
+const snapshot = () => ({
+  parentUuid: 'p', isSidechain: false,
+  attachment: { type: 'prompt_snapshot', systemPrompt: ['x'.repeat(70 * 1024)], tools: [], cliPrefix: 'You are' },
+  type: 'attachment', uuid: 'u', timestamp: '2026-10-01T00:37:58.632Z', userType: 'external',
+  entrypoint: 'sdk-cli', cwd: '/tmp', sessionId: 's', version: '2.1.286', gitBranch: 'HEAD',
+});
+
+test('lastToolFromFile re-reads a wider window when a prompt_snapshot fills the tail', () => {
+  const dir = mkTmpRoot('stall-snap-');
+  const file = path.join(dir, 'transcript.jsonl');
+  const userLine = { type: 'user', message: { role: 'user', content: 'go' } };
+  fs.writeFileSync(file, jsonl(userLine, use('Bash', 'b1'), snapshot()));
+  assert.ok(Buffer.byteLength(JSON.stringify(snapshot())) >= 70 * 1024);
+
+  const tail = readTail(fs, file);
+  assert.strictEqual(lastToolFrom(tail), null);
+  assert.deepStrictEqual(lastToolFromFile(fs, file, tail), { tool: 'Bash', outcome: 'pending' });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('lastToolFromFile does not re-read when the tail already names a tool', () => {
+  let reads = 0;
+  const stub = {
+    statSync: () => { reads++; throw new Error('no wide read expected'); },
+    openSync: () => { reads++; throw new Error('no wide read expected'); },
+    readSync: () => { reads++; return 0; },
+    closeSync: () => {},
+  };
+  const tail = jsonl(use('Edit', 'e1'), result('e1', false));
+  assert.deepStrictEqual(lastToolFromFile(stub, '/x.jsonl', tail), { tool: 'Edit', outcome: 'ok' });
+  assert.strictEqual(reads, 0);
+});
+
+test('lastToolFromFile returns null when even the wide window names no tool', () => {
+  const dir = mkTmpRoot('stall-snap-');
+  const file = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(file, jsonl(snapshot(), snapshot()));
+  assert.strictEqual(lastToolFromFile(fs, file, readTail(fs, file)), null);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 // ── formatStallBody ────────────────────────────────────────────────────────

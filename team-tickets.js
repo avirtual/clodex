@@ -7,7 +7,7 @@ const { TEST_ROOTS } = require('./scripts/clodex-run-tests');
 // and shadowing it would swap a fixture's probe for the real module.
 const nodePath = require('path');
 const {
-  readTail, lastToolFrom, lastApiErrorFrom, formatStallBody, formatOrphanBody,
+  readTail, lastToolFromFile, lastApiErrorFrom, formatStallBody, formatOrphanBody,
   sumTreeCpuMs, parsePsRows, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
@@ -6433,10 +6433,11 @@ function createTicketMethods(deps, shared) {
       if (seat) {
         try {
           const link = pathFor(REGISTRY_DIR, seat, 'transcript');
-          // One tail read feeds both readers; a second read could observe a different
-          // tail across an append and present two moments as one reading.
-          const tail = readTail(fs, fs.realpathSync(link));
-          out.tool = lastToolFrom(tail);
+          // The wide re-read runs only when the tail named no tool: a later moment
+          // for that field beats no field at all.
+          const file = fs.realpathSync(link);
+          const tail = readTail(fs, file);
+          out.tool = lastToolFromFile(fs, file, tail);
           // Measured: the error record sits at most 2957 bytes from EOF (p90 1985),
           // so the 64KB window is not widened for it.
           out.apiError = lastApiErrorFrom(tail);
