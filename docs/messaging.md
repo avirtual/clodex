@@ -213,7 +213,7 @@ get nothing at all: nobody answers them, so a fault marker would be noise —
 and that check precedes reachability, which goes true by accident the moment a
 seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
 `_isDmReachable` if local dm parking ever covers absent targets. Bodies over
-`MSG_SPILL_THRESHOLD` (500B) spill to `~/.clodex/messages/` — Claude gets
+`MSG_SPILL_THRESHOLD` (500B), and a Claude PTY delivery of 4 or more delivered lines (image lines included; docs/notes/session-manager-stream.md `## _buildDeliveryText`), spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
 Codex gets a read-with-Read pointer. That hand-off copy is swept after
 `MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
