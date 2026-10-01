@@ -28298,8 +28298,10 @@ ${i3.join("\n")}
         "maxTurns",
         "background",
         "memory",
-        "isolation"
+        "isolation",
+        "omitClaudeMd"
       ];
+      var BOOLEAN_AGENT_FIELDS = /* @__PURE__ */ new Set(["omitClaudeMd"]);
       var DROPPED_AGENT_FIELDS = ["permissionMode", "initialPrompt", "hooks", "mcpServers"];
       function agentMd(name, meta, body) {
         meta = meta || {};
@@ -28307,6 +28309,10 @@ ${i3.join("\n")}
         for (const k of PLUGIN_AGENT_FIELDS) {
           const v = meta[k];
           if (v == null || v === "") continue;
+          if (BOOLEAN_AGENT_FIELDS.has(k)) {
+            if (v === true || String(v).trim() === "true") lines.push(`${k}: true`);
+            continue;
+          }
           lines.push(`${k}: ${JSON.stringify(String(v))}`);
         }
         return `---

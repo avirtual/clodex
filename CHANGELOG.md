@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Subagents: an agent file's `omitClaudeMd: true` now reaches the CLI, and the built-in clodex-locate and clodex-redproof agents set it, so a lookup or red-proof no longer bills the project's CLAUDE.md on every request.
+
 ## 5.102.0 — 2026-10-01
 
 - An image sent to a terminal seat is announced as "Image: <path>" without a per-message number that never matched the CLI's own [Image #n] mark.
