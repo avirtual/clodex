@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Drawer tabs: the per-tab unread counts are gone; a tab that got something while hidden shows a dot (red when it was a failure), cleared when you open it.
+
 ## 5.104.0 — 2026-10-01
 
 - PTY composer: a pasted image's path is sent as `Image: <path>` instead of `Image #n: <path>`, since the CLI numbers image marks per session and the draft's number never matched.
