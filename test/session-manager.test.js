@@ -14338,6 +14338,74 @@ test('t1504 _buildDeliveryText: a spilled peer body carries the quoted line in t
     `${pad}\n> [agent:from ticket-loop] [ticket t9 ACCEPT] ok`);
 });
 
+function mkLineGate() {
+  const dir = mkTmpRoot('clodex-t1504-spill-');
+  let n = 0;
+  const m = mk({
+    getPeerManager: () => ({ statuses: () => [] }),
+    getPersistence: () => ({ list: () => [], get: () => null }),
+    MSG_SPILL_THRESHOLD: 500,
+    spillToFile: (sender, body, rcv) => {
+      const f = pathReal.join(dir, `${rcv}-${sender}-${++n}.txt`);
+      fsReal.writeFileSync(f, body);
+      return f;
+    },
+  });
+  m.sessions.set('a', { name: 'a', agentType: 'claude' });
+  return m;
+}
+
+const LINE_GATE_POINTER = /^\[agent:from a\] Message \((\d+) bytes\) attached: @(\S+) $/;
+
+test('t1505 _buildDeliveryText: a 4-line body to a claude PTY seat spills, a 3-line one stays inline', () => {
+  const m = mkLineGate();
+  const target = { name: 'rcv', agentType: 'claude', io: 'pty' };
+  const four = 'a\nb\nc\nd';
+  const out = m._buildDeliveryText(target, 'a', four, 'dm');
+  const hit = out.match(LINE_GATE_POINTER);
+  assert.ok(hit, out);
+  assert.strictEqual(Number(hit[1]), Buffer.byteLength(four));
+  assert.strictEqual(fsReal.readFileSync(hit[2], 'utf8'), four);
+  assert.ok(!out.includes('a\nb'), 'ENTER: the spilled delivery carries no body text');
+  const three = m._buildDeliveryText(target, 'a', 'a\nb\nc', 'dm');
+  assert.strictEqual(three, '[agent:from a] a\nb\nc');
+});
+
+test('t1505 _buildDeliveryText: the line gate is claude PTY only', () => {
+  const m = mkLineGate();
+  const four = 'a\nb\nc\nd';
+  assert.strictEqual(m._buildDeliveryText({ name: 'rcv', agentType: 'codex', io: 'pty' }, 'a', four, 'dm'),
+    '[agent:from a] a\nb\nc\nd');
+  assert.strictEqual(m._buildDeliveryText({ name: 'rcv', agentType: 'claude', io: 'stream' }, 'a', four, 'dm'),
+    '[agent:from a] a\nb\nc\nd');
+});
+
+test('t1505 _buildDeliveryText: \\r\\n is one break, U+2028 is a break', () => {
+  const m = mkLineGate();
+  const target = { name: 'rcv', agentType: 'claude', io: 'pty' };
+  assert.strictEqual(m._buildDeliveryText(target, 'a', 'a\r\nb\r\nc', 'dm'), '[agent:from a] a\r\nb\r\nc');
+  assert.match(m._buildDeliveryText(target, 'a', 'a\r\nb\r\nc\r\nd', 'dm'), LINE_GATE_POINTER);
+  assert.match(m._buildDeliveryText(target, 'a', 'a b c d', 'dm'), LINE_GATE_POINTER);
+});
+
+test('t1505 _deliverMessage: image lines count toward the claude PTY line gate', () => {
+  const m = mkLineGate();
+  m.sessions.set('rcv', { name: 'rcv', agentType: 'claude', io: 'pty' });
+  const injected = [];
+  m._refuseStreamInject = () => false;
+  m._maybeParkDelivery = () => false;
+  m._injectText = (_s, text) => injected.push(text);
+  m._writeImageFiles = (_n, pics) => pics.map((_p, i) => `/tmp/img-${i + 1}.png`);
+  const png = { mediaType: 'image/png', data: 'UE5H' };
+  m._deliverMessage('rcv', 'a', 'a\nb', 'dm', '', null, null, [png, png]);
+  m._deliverMessage('rcv', 'a', 'a\nb', 'dm', '', null, null, [png]);
+  assert.strictEqual(injected.length, 2);
+  const [spilled, ...spillImages] = injected[0].split('\n');
+  assert.match(spilled, LINE_GATE_POINTER);
+  assert.deepStrictEqual(spillImages, ['Image: /tmp/img-1.png', 'Image: /tmp/img-2.png']);
+  assert.strictEqual(injected[1], '[agent:from a] a\nb\nImage: /tmp/img-1.png');
+});
+
 // --- flushPending / _flushParkedNow (operator parked-DM flush) ----------------
 // PTY-free: drainPending is a spy (records the claim tag), _injectText is stubbed
 // so we don't build a real InjectQueue.

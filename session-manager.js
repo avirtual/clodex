@@ -8026,7 +8026,7 @@ function createSessionManager(deps) {
       return !!(s && s.agentType && !s._dead);
     }
 
-    _buildDeliveryText(target, senderName, body, mtype, tag = '') {
+    _buildDeliveryText(target, senderName, body, mtype, tag = '', extraLines = 0) {
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
@@ -8040,7 +8040,8 @@ function createSessionManager(deps) {
 
       if (!SYSTEM_SENDERS.has(senderName)) body = String(body).replace(/(^|[\n\v\f\r\x85\u2028\u2029])((?:(?![\n\v\f\r\x85\u2028\u2029])[\s\p{C}\p{M}\p{Default_Ignorable_Code_Point}])*\[agent:from\b)/giu, '$1> $2');
       const bytes = Buffer.byteLength(body);
-      if (bytes > MSG_SPILL_THRESHOLD) {
+      const lines = 1 + (String(body).match(/\r\n|[\n\v\f\r\x85\u2028\u2029]/g) || []).length + extraLines;
+      if (bytes > MSG_SPILL_THRESHOLD || (target.agentType === 'claude' && target.io !== 'stream' && lines >= 4)) {
         const filePath = spillToFile(senderName, body, target.name);
         this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
@@ -8060,19 +8061,19 @@ function createSessionManager(deps) {
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       const pics = Array.isArray(images) ? images : [];
       const fire = typeof onWrite === 'function' ? onWrite : null;
-      const imageTail = target.io !== 'stream' && pics.length
-        ? this._writeImageFiles(target.name, pics).map((p) => `\nImage: ${p}`).join('')
-        : '';
+      const imagePaths = target.io !== 'stream' && pics.length ? this._writeImageFiles(target.name, pics) : [];
+      const imageTail = imagePaths.map((p) => `\nImage: ${p}`).join('');
+      const imageLines = imageTail ? imagePaths.length : 0;
       let finalText = null;
       const plainText = () => {
-        if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag) + imageTail;
+        if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag, imageLines) + imageTail;
         return finalText;
       };
       const textFor = (disposition) => {
         let b = null;
         if (rebody) { try { b = rebody(disposition); } catch { b = null; } }
         return typeof b === 'string' && b
-          ? this._buildDeliveryText(target, senderName, b, mtype, tag) + imageTail
+          ? this._buildDeliveryText(target, senderName, b, mtype, tag, imageLines) + imageTail
           : plainText();
       };
       if (target.io === 'stream') {
