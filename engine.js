@@ -310,6 +310,7 @@ const INJECT_QUIET_MAXWAIT = 5 * 60 * 1000;
 // First inject into a fresh claude seat waits for the mode-2004 readiness edge plus
 // BOOT_DRAIN_SETTLE_MS: text+Enter written before readline is up reads as one paste.
 const INJECT_BOOT_MAXWAIT = 20 * 1000;
+const INJECT_PASTE_MAXWAIT = 10 * 1000;
 // A staleness bound on the renderer's 300ms recorder-lit poll: it must clear several missed
 // polls and stay well above INJECT_QUIET_MS (a pause between words outlasts one between keys).
 const INJECT_SPEAKING_STALE_MS = 3 * 1000;
@@ -1074,6 +1075,7 @@ const SessionManager = createSessionManager({
     DEFAULT_COMPACT_CONTINUATION,
     DEFAULT_WORKSPACE_ID,
     INJECT_BOOT_MAXWAIT,
+    INJECT_PASTE_MAXWAIT,
     INJECT_HOLD_TIMEOUT,
     INJECT_QUIET_MAXWAIT,
     INJECT_QUIET_MS,
