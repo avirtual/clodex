@@ -197,7 +197,7 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   const remeasured = t.suiteRemeasured;
   if (remeasured) {
     out.push(`SUITE RE-MEASURED: the first run was ${text(remeasured.first) || '(unrecorded)'} `
-      + `(${text(remeasured.firstFailing) || 'no names recorded'}); the second run, on the same commit, `
+      + `(${defuseSenderLines(text(remeasured.firstFailing)) || 'no names recorded'}); the second run, on the same commit, `
       + 'was green. Treat that as a box-contention flake unless the diff touches those tests.');
   }
   const slow = Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean) : [];

@@ -2,7 +2,7 @@
 // env-edit.test.js — the pure New-Session-dialog env parse leaf (T46). Pins the
 // KEY=value-per-line grammar the dialog feeds into create()'s session-env param:
 // valid keys land, junk is dropped (never thrown — a stray line can't block
-// Create), and the deny key can't ride in through the textarea either.
+// Create), and a deny key can't ride in through the textarea either.
 
 const { test } = require('node:test');
 const assert = require('node:assert');

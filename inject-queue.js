@@ -155,8 +155,7 @@ class InjectQueue {
       await this._sleep(Math.min(this._quietMs, 500));
     }
     if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
-    // Must run after the gates: the producer's claim is destructive, so a delivery
-    // that can't land yet is never claimed off disk.
+    // Must run after the gates: the producer's claim is destructive.
     if (produce) {
       let produced = null;
       try { produced = produce(); } catch { produced = null; }

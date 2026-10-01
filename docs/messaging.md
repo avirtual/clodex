@@ -485,7 +485,7 @@ Per-agent markdown units (frontmatter: id/scope/learned_at/pinned + body).
 Intents: list / remember (`scope=`, `pinned=` prefixes) / recall (exact id,
 then substring) / pin / unpin / forget. Mutation acks ride the silent
 `run/<name>/acks` drain for Claude (Codex: immediate inject); recall delivers
-through the normal message path (spills if large).
+through the normal message path (spills if large or, on a Claude terminal seat, at 4 delivered lines).
 
 Fresh sessions get a **boot digest** (`composeDigest`, 8KB budget, half of it for
 bodies), newest first throughout: up to `OPERATOR_PIN_CAP` operator-pinned units in
@@ -546,7 +546,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 A stream seat has no PTY to inject into, so everything that would be injected goes
 into ONE in-memory outbox per seat (`s.outbox`, items `{text, images, origin}`):
 what the operator types (`seatSend`, origin `operator`) and everything Clodex
-delivers — dms (spilled over 500 bytes exactly as for a PTY seat), ticket
+delivers — dms (spilled over 500 bytes exactly as for a PTY seat; the 4-line gate is terminal-only), ticket
 deliveries, reminders, exec results, continuations (`_deliverMessage` /
 `_injectText`, origin `system`). An idle seat takes the item at once as its own
 stdin message.
