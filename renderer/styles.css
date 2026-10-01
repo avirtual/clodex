@@ -4374,6 +4374,13 @@ body.drawer-dragging { cursor: row-resize; user-select: none; }
   flex-shrink: 0;
 }
 
+.ipc-kind {
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
 .ipc-from, .ipc-to {
   font-weight: 600;
   color: #60a5fa;
