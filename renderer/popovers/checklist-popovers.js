@@ -239,8 +239,8 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
 
   // --- Per-session Agents popover ------------------------------------------
   // A shortcut for composing the custom-subagent library into a running session
-  // (--agents) + toggling the built-in agents, instead of right-click → Edit
-  // settings → check/uncheck. Denying a built-in (Agent(Explore) etc.) filters it
+  // + toggling the built-in agents, instead of right-click → Edit settings →
+  // check/uncheck. Denying a built-in (Agent(Explore) etc.) filters it
   // out of the injected roster — reclaiming its per-turn description tokens — and
   // stops delegation to it, so this IS a (capability-costing) trim lever. Like
   // skills, the roster is frozen at conversation creation, so applying needs a
