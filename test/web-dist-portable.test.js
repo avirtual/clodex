@@ -88,7 +88,9 @@ test('web-dist bundle embeds no absolute path from this machine', () => {
   // look like a home directory" when the question is "is this a path from the
   // machine that built this". Caught by this test failing on its first run.
   const src = fs.readFileSync(BUNDLE, 'utf8');
-  const home = require('os').homedir();
+  assert.ok(src.length > 100_000,
+    `ENTER: web-dist/index.html is ${src.length} bytes — the path scan read no bundle`);
+  const home = require('os').homedir().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const abs = [...new Set(src.match(new RegExp(`${home}[^\\s"'\`)]{0,60}`, 'g')) || [])];
   assert.deepStrictEqual(abs, [],
     `web-dist/index.html embeds absolute paths from the build machine: ${abs.join(', ')}. `

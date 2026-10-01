@@ -161,10 +161,14 @@ test('the onExit call site sits between the exit broadcast and _cleanup', () => 
   // order strands a dead sidebar tab, and the failure is invisible until a real
   // session exits with a window attached. Reordering the source must fail here.
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const exitSend = src.indexOf("this._sendToSession(name, 'session-exit'");
-  const hook = src.indexOf('getPluginHooks().fireExit(name)');
+  const at = src.indexOf('const onProcExit = ({ exitCode, signal }) => {');
+  const end = src.indexOf('ptyExitRoute = onProcExit', at);
+  assert.ok(at > 0 && end > at, 'ENTER: the onProcExit handler and its ptyExitRoute assignment are found');
+  const exitSend = src.indexOf("this._sendToSession(name, 'session-exit'", at);
+  const hook = src.indexOf('getPluginHooks().fireExit(name)', at);
   const cleanup = src.indexOf('this._cleanup(name);', exitSend);
   assert.ok(exitSend > 0 && hook > 0 && cleanup > 0, 'all three landmarks found');
+  assert.ok(cleanup < end, 'all three landmarks sit inside onProcExit, before ptyExitRoute = onProcExit');
   assert.ok(exitSend < hook,
     'the plugin exit hook must fire AFTER the session-exit send (the renderer still needs session → workspace → window resolution)');
   assert.ok(hook < cleanup,

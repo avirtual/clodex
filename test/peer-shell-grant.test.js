@@ -381,16 +381,20 @@ test('the toggle applies through the IPC and says what it exposes', () => {
   const js = readRenderer('renderer.js');
   assert.match(js, /prefsPeerShell\.addEventListener\('change'/,
     'applied on change, not batched into Save — Save does not run syncRemoteServer');
-  assert.match(js, /window\.api\.peerSetShellAllowed\(on\)/, 'through the dedicated handler');
+  const from = js.indexOf("prefsPeerShell.addEventListener('change'");
+  const region = js.slice(from, js.indexOf('window.api.onPeerShellAllowed(', from));
+  assert.ok(from > 0 && region.length > 200 && region.length < 5000,
+    `ENTER: the change handler region is ${region.length} chars — it no longer ends at onPeerShellAllowed`);
+  assert.match(region, /window\.api\.peerSetShellAllowed\(on\)/, 'through the dedicated handler');
   assert.doesNotMatch(js, /peerShellEnabled:\s*prefsPeerShell/,
     'and NOT also written by the setSettings batch, which would be a second door');
-  assert.match(js, /can open a shell here/, 'the warm toast names the exposure in plain words');
-  assert.match(js, /open remote shells were closed/, 'and the revocation says what it ended');
+  assert.match(region, /can open a shell here/, 'the warm toast names the exposure in plain words');
+  assert.match(region, /open remote shells were closed/, 'and the revocation says what it ended');
   // A swallowed rejection under an unconditional toast tells the operator a
   // revocation happened while the box is still serving — the worst sentence
   // this feature can print.
-  assert.match(js, /res\.ok !== true/, 'success is claimed only on ok === true');
-  assert.match(js, /STILL serving shells/, 'and a failed revocation says the box is still serving');
+  assert.match(region, /res\.ok !== true/, 'success is claimed only on ok === true');
+  assert.match(region, /STILL serving shells/, 'and a failed revocation says the box is still serving');
 });
 
 // The chip is a standing statement, so every window has to re-derive it when

@@ -173,9 +173,14 @@ test('session-manager pushes the flag and logs ONLY inside the reason guard', ()
   // The block from the call to the end of its `if (reason) { … }`.
   const open = src.indexOf('if (reason) {', at);
   assert.ok(open > at, 'the reason is no longer used as the guard');
-  const close = src.indexOf('\n          }', open);
+  let close = -1;
+  for (let i = src.indexOf('{', open), depth = 0; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}' && --depth === 0) { close = i + 1; break; }
+  }
   assert.ok(close > open, 'could not find the end of the reason guard');
   const guarded = src.slice(open, close);
+  assert.ok(!guarded.includes('const userPluginDir'), 'the walked region runs past the reason guard');
 
   // Both effects live INSIDE the guard.
   assert.ok(guarded.includes("args.push('--strict-mcp-config')"), 'the flag is not pushed inside the guard');
