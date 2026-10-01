@@ -12343,6 +12343,21 @@ test('_handleExecIntent: a def WITHOUT replyMaxBytes still gets the last line on
     'widening must be opt-in per def — every existing command keeps its one-line digest');
 });
 
+test('_handleExecIntent: a last stderr line longer than the window arrives head-first', async () => {
+  const head = '[leaf] own: 811/811 green (1m 2s)';
+  const line = head + ' — SLOW(advisory): filler'.repeat(60).slice(0, 1500 - head.length);
+  const entry = {
+    argv: ['/bin/sh', '-c', `cat >/dev/null; printf 'earlier\\n%s\\n' '${line}' 1>&2`],
+    replyStderr: true, schema: { type: 'object' },
+  };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const body = replies.at(-1).replace('[agent:exec] bridge-reply: ', '');
+  assert.ok(body.startsWith('[leaf] own: 811/811 green'), body.slice(0, 80));
+  assert.ok(body.length <= 200, `${body.length}`);
+});
+
 test('_handleExecIntent: replyMaxBytes overflow is clamped at a line break and SAYS so', async () => {
   // 40 rows of 20 bytes against a 200-byte cap: the cut lands mid-listing.
   const rows = Array.from({ length: 40 }, (_, i) => `t${String(i).padStart(3, '0')} [open] row${i}`);

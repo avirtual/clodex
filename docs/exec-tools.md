@@ -13,8 +13,9 @@ An operator-registered exec command (`~/.clodex/library/exec/<cmd>.json`) is a
 wholly from the registry (the agent's JSON payload never reaches argv, so
 injection is structurally impossible), the payload arrives on STDIN, stdout is
 dropped, and the launcher is SIGKILLed at the entry's `timeoutMs`. Feedback to
-the agent is one line via `replyStderr` — the LAST stderr line, sliced to 200
-chars, which suits a digest and destroys a listing. A command whose answer is
+the agent is one line via `replyStderr` — the LAST stderr line, kept from its
+start however long it runs and sliced to 200 chars, which suits a digest and
+destroys a listing. A command whose answer is
 irreducibly multi-line (a ticket board, one error per bad file) opts into a
 wider reply with `replyMaxBytes`: whole lines from the TOP of stderr up to that
 budget, then a `(+N more lines dropped …)` note when it overflows (`(+N or

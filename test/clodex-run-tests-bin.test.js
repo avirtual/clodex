@@ -833,6 +833,28 @@ test('scope own: a test file the branch DELETED is not handed to the runner', ()
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('scope own: twelve long slow advisories keep the digest head and a bounded length', () => {
+  const root = mkRoot();
+  try {
+    const advisories = Array.from({ length: 12 }, (_, i) => `console.log(${JSON.stringify(
+      `SLOW (advisory, unlocked run): ${9000 + i}ms ${`t${i} `.padEnd(150, 'x')}`)});`);
+    mkBranchRepo(root, {
+      stub: { body: [...advisories, "console.log('TOTALS: 12 pass, 0 fail, 12 tests');"].join('\n') },
+      onBranch: ({ put: p, git: g }) => {
+        p('test/alpha.test.js', EMPTY_TEST);
+        g('add', '-A');
+        g('commit', '-qm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    assert.strictEqual(r.code, 0);
+    assert.ok(r.digest.startsWith(`[${path.basename(root)}] own: 12/12 green (`), r.digest.slice(0, 120));
+    assert.ok(r.digest.length <= 400, `${r.digest.length}: ${r.digest}`);
+    assert.strictEqual(r.digest.split('SLOW(advisory)').length - 1, 3);
+    assert.ok(r.digest.endsWith('9002ms; +9 more'), r.digest.slice(-80));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 const NON_JS_CASES = [
   {
     what: 'an exec definition',
