@@ -624,7 +624,7 @@ killed agent's record is gone.
 Session…, Delete Workspace…, the archived and failed rows' ✕ (`forgetSession`),
 team-retire with discard, `sweepReviewerGraveyard`, the team-review
 spawn-failure rollback, the seat-import spawn-failure rollback
-(remote-wiring.js), and both ticket-seat spawn-failure rollbacks in
+(remote-wiring.js, drops only when the seat is not live), and both ticket-seat spawn-failure rollbacks in
 `_spawnTicketSeat` (team-tickets.js: the createWorktree-failed arm, and the
 create()-threw catch, which drops only when the seat is not live). `destroy()`
 is on the list separately from `kill()`, not as its caller: `kill()` returns at

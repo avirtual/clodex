@@ -380,7 +380,7 @@ function createRemoteWiring(deps) {
         typeof rec.effort === 'string' ? rec.effort : null,
       );
     } catch (e) {
-      try { getPersistence().remove(name); } catch {}
+      try { if (!manager.sessions.has(name)) getPersistence().remove(name); } catch {}
       log.error('session', `import create ${name} failed: ${e.message}`);
       return { ok: false, error: `spawn failed: ${e.message}` };
     }

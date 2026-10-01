@@ -269,6 +269,7 @@ function mkWiring(over = {}) {
     upsert: (e) => { persisted.set(e.name, { ...(persisted.get(e.name) || {}), ...e }); },
     setLabel: (name, label) => { persisted.set(name, { ...(persisted.get(name) || {}), label }); },
     setStripLevel: (name, lvl) => { persisted.set(name, { ...(persisted.get(name) || {}), stripLevel: lvl }); },
+    remove: (name) => { persisted.delete(name); },
   };
   const manager = {
     sessions: new Map(),
@@ -276,6 +277,11 @@ function mkWiring(over = {}) {
       createCalls.push(args);
       const existingEntry = persisted.get(args[0]) || null;
       bornBaked.push((existingEntry && existingEntry.createdAt) || Date.now());
+      if (over.createThrowsAfterLive) {
+        manager.sessions.set(args[0], {});
+        persisted.set(args[0], { name: args[0], type: 'codex', winner: true });
+        throw new Error(over.createThrowsAfterLive);
+      }
       if (over.createThrows) throw new Error(over.createThrows);
       return { name: args[0], type: args[1], pid: 4242 };
     },
@@ -647,6 +653,30 @@ test('a commit that installs but cannot create answers 500 naming what is on dis
       'the files stay installed — a second commit would refuse on collision');
     assert.deepStrictEqual(fs.readdirSync(path.join(w.root, 'import')), [],
       'the staging is gone: commit consumed it before create was asked');
+    assert.strictEqual(w.persisted.has('ana'), false,
+      'the rollback drops the record when no seat holds the name');
+  });
+});
+
+test('a commit whose create loses a same-name race keeps the winner\'s record', async () => {
+  const w = mkWiring({ createThrowsAfterLive: 'name already registered' });
+  const cwd = path.join(w.home, 'proj');
+  await withServer({
+    seatImport: w.opts.seatImport, importCreate: w.opts.importCreate, getSessions: () => [],
+  }, async (s) => {
+    const begun = await call(s.port, 'POST', '/api/import/begin',
+      { body: { name: 'ana', record: record({ cwd }) } });
+    assert.strictEqual(begun.status, 200, begun.raw);
+    const id = begun.body.id;
+    const put = await call(s.port, 'PUT', `/api/import/${id}/file/transcript.jsonl`,
+      { body: Buffer.from('{"t":1}\n') });
+    assert.strictEqual(put.status, 200);
+
+    const res = await call(s.port, 'POST', `/api/import/${id}/commit`);
+    assert.strictEqual(res.status, 500);
+    assert.match(res.body.error, /name already registered/);
+    assert.deepStrictEqual(w.persisted.get('ana'), { name: 'ana', type: 'codex', winner: true },
+      'the live winner keeps its record');
   });
 });
 
