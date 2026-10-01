@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.107.0 — 2026-10-01
+
 - Peers: a seat moved to a peer keeps its stream mode and effort level on the far box instead of coming back as a terminal seat at default effort.
 - Peers: a seat move that loses a same-name race on the far box no longer forgets the session that won it.
 - clodexctl: a helm deploy records the chart's `web.port` (flag, read-back or carried value) as the context's web port instead of a fixed 8080, the dry-run preview shows it, and a `--json` docker failure carries docker's stderr instead of pointing at output it suppressed.
