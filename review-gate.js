@@ -216,13 +216,13 @@ function stripReviewGated(text) {
 }
 
 const LINE_BREAK = /(\r\n|[\n\v\f\r\x85\u2028\u2029])/;
-const LEADING_INVISIBLE = /^[\s\p{C}\p{M}\p{Default_Ignorable_Code_Point}]*/u;
 const SENDER_LINE = /^\[agent:from\b/i;
 
 function defuseSenderLines(text) {
   const parts = String(text).split(LINE_BREAK);
   for (let i = 0; i < parts.length; i += 2) {
-    if (SENDER_LINE.test(stripReviewGated(parts[i]).replace(LEADING_INVISIBLE, ''))) parts[i] = `> ${parts[i]}`;
+    const bare = parts[i].replace(/[\p{C}\p{M}\p{Default_Ignorable_Code_Point}]/gu, '').replace(/^\s+/, '');
+    if (SENDER_LINE.test(bare)) parts[i] = `> ${parts[i]}`;
   }
   return parts.join('');
 }

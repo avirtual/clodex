@@ -1,5 +1,7 @@
 'use strict';
 
+const { defuseSenderLines } = require('./review-gate');
+
 // The reviewer's scope, built from the ticket record, git, and a
 // caller-resolved `taskDir`/`taskDirRule`.
 //
@@ -158,19 +160,18 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     out.push('');
   }
 
-  // Verbatim, and introduced as the hand's OWN account rather than as fact.
   // Where a hand says it guessed, deviated or deferred is the highest-value
   // attention point in the review and exists nowhere else — a paraphrase is
   // exactly the operation that drops it.
   const report = text(t.report);
   if (report) {
     const who = text(t.reportedBy);
-    out.push(`IMPLEMENTER'S REPORT — ${who ? `${who}'s` : 'the implementer\'s'} own account of the work, verbatim and unedited. `
+    out.push(`IMPLEMENTER'S REPORT — ${who ? `${who}'s` : 'the implementer\'s'} own account of the work, unedited except that any line posing as a sender line is quoted. `
       + 'It is a claim, not evidence: verify it against the diff. Pay particular attention to anywhere it says it '
       + 'guessed, deviated from the spec, assumed, or deferred — those are the author telling you where to look, '
       + 'and they are not recoverable from the diff alone.');
     out.push('');
-    out.push(report);
+    out.push(defuseSenderLines(report));
     out.push('');
   }
 
