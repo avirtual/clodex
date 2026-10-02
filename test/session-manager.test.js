@@ -22257,7 +22257,7 @@ test('t1543 F2 a scratch clone registers with the wire under the parent\'s spill
   assert.strictEqual(typeof turnInjected, 'function');
   assert.ok(Array.isArray(verbs) && verbs.length > 0);
   assert.deepStrictEqual({ ...opts, spill }, {
-    sessionId: null,
+    sessionId: 'sid-clone',
     upstreams: { anthropic: 'http://127.0.0.1:9999/agent/agent-x/anthropic' },
     spill: { root: h.root, examples: 1, owner: 'clodex-hand-7' },
     spillShownSeed: { from: 'clodex-hand-7', sessionId: 'sid-clone' },
