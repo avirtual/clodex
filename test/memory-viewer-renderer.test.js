@@ -101,7 +101,7 @@ function makeRhost(units) {
   const rhost = {
     invoke(method, ...args) {
       invokes.push({ method, args });
-      if (method === 'agents') return Promise.resolve({ ok: true, agents: [{ agent: 'clodex', count: units.length, pinned: 0, live: true }] });
+      if (method === 'agents') return Promise.resolve({ ok: true, agents: [{ agent: 'clodex', count: units.length, pinned: units.filter((u) => u.operatorPinned).length, live: true }] });
       if (method === 'units') return Promise.resolve({ ok: true, agent: 'clodex', units });
       if (method === 'forget') return Promise.resolve({ ok: true });
       return Promise.resolve({ ok: false, error: 'no such method' });
@@ -128,7 +128,8 @@ function fakeDom() {
       set textContent(v) { this._text = String(v); this.children.length = 0; },
       get textContent() { return this._text; },
       set innerHTML(_v) { this.children.length = 0; },
-      appendChild(c) { this.children.push(c); return c; },
+      appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
+      removeChild(c) { this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; return c; },
       addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
       setAttribute() {},
       classList: { toggle: () => {}, add: () => {}, remove: () => {} },
@@ -243,4 +244,55 @@ test('deleteErrorText: an id-grammar refusal is translated into something action
   // failure would hide it.
   assert.match(deleteErrorText({ ok: false, error: 'EACCES' }), /Could not delete: EACCES/);
   assert.match(deleteErrorText(null), /unknown error/);
+});
+
+function findByClass(node, cls, out = []) {
+  if (node.className === cls) out.push(node);
+  for (const c of node.children) findByClass(c, cls, out);
+  return out;
+}
+
+async function acceptDelete(btn) {
+  btn.click();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+}
+
+test('an ACCEPTED delete removes ONLY that card and re-fetches NOTHING', async () => {
+  const units = [unit({ key: 'a' }), unit({ key: 'b' }), unit({ key: 'c' })];
+  await withDom(units, true, async ({ root, del, invokes }) => {
+    const pane = findByClass(root, 'mv-units')[0];
+    const [first, , third] = pane.children;
+    await acceptDelete(del[1]);
+    const at = invokes.findIndex((i) => i.method === 'forget');
+    assert.equal(invokes.filter((i) => i.method === 'forget').length, 1);
+    assert.deepEqual(invokes.slice(at + 1).map((i) => i.method), [],
+      'no units/agents refetch after the forget');
+    assert.deepEqual(pane.children, [first, third]);
+  });
+});
+
+test('an ACCEPTED delete decrements the agent row count in place', async () => {
+  await withDom([unit({ key: 'a' }), unit({ key: 'b' }), unit({ key: 'c' })], true, async ({ root, del }) => {
+    const span = findByClass(root, 'mv-agent-count')[0];
+    assert.equal(span.textContent, '3');
+    await acceptDelete(del[0]);
+    assert.equal(span.textContent, '2');
+  });
+  const units = [unit({ key: 'a', operatorPinned: true }), unit({ key: 'b' }), unit({ key: 'c' })];
+  await withDom(units, true, async ({ root, del }) => {
+    const span = findByClass(root, 'mv-agent-count')[0];
+    assert.equal(span.textContent, '3 · 1 pinned');
+    await acceptDelete(del[0]);
+    assert.equal(span.textContent, '2');
+  });
+});
+
+test('deleting the last unit shows the empty state', async () => {
+  await withDom([unit()], true, async ({ root, del }) => {
+    await acceptDelete(del[0]);
+    const pane = findByClass(root, 'mv-units')[0];
+    assert.equal(pane.children.length, 1);
+    assert.equal(pane.children[0].textContent, 'No memories for clodex.');
+  });
 });

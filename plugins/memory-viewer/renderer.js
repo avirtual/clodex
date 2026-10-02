@@ -150,8 +150,27 @@ module.exports.activate = (rhost) => {
     let selected = null;
     let selectSeq = 0;
     let reloadSeq = 0;
+    const counts = new Map();
 
-    async function deleteUnit(agent, u, btn) {
+    function countText(count, pinned) {
+      return pinned > 0 ? `${count} · ${pinned} pinned` : String(count);
+    }
+
+    function dropUnit(agent, u, card) {
+      const c = counts.get(agent);
+      if (c) {
+        c.count -= 1;
+        if (u.operatorPinned) c.pinned -= 1;
+        c.span.textContent = countText(c.count, c.pinned);
+      }
+      if (card.parentNode !== unitsPane) return;
+      unitsPane.removeChild(card);
+      if (!unitsPane.children.length) {
+        unitsPane.appendChild(el('div', 'mv-empty', `No memories for ${agent}.`));
+      }
+    }
+
+    async function deleteUnit(agent, u, btn, card) {
       // Re-entrancy guard: a double-click would otherwise raise two dialogs and
       // fire a second forget that fails with `no unit`, reading as a broken
       // delete rather than a duplicate one.
@@ -176,11 +195,7 @@ module.exports.activate = (rhost) => {
           rhost.ui.showToast(deleteErrorText(res), { kind: 'error' });
           return;
         }
-        // Full reload, not just dropping the card: the agent list's counts are
-        // derived from the store, and the overlay's stated freshness bound is
-        // "as of open" — leaving `12 · 3 pinned` beside a pane showing 11 breaks
-        // the one guarantee this surface makes.
-        await reload();
+        dropUnit(agent, u, card);
       } finally {
         if (alive() && btn.isConnected) btn.disabled = false;
       }
@@ -255,7 +270,7 @@ module.exports.activate = (rhost) => {
         // The promise is discarded, so it needs its own catch: an unhandled
         // rejection out of a click handler is invisible to the user.
         del.addEventListener('click', () => {
-          deleteUnit(agent, u, del).catch((e) => rhost.log.error('delete failed', e));
+          deleteUnit(agent, u, del, card).catch((e) => rhost.log.error('delete failed', e));
         });
         head.appendChild(del);
         card.appendChild(head);
@@ -266,10 +281,7 @@ module.exports.activate = (rhost) => {
 
     async function selectAgent(agent) {
       // A monotonic token, not `selected !== agent`: agent identity cannot tell
-      // two requests for the SAME agent apart, and deleteUnit's reload makes
-      // that collision reachable — delete, then click the same row while forget
-      // is in flight, and the slower fetch wins, painting a ghost card for a
-      // unit that is gone.
+      // two requests for the SAME agent apart.
       const my = ++selectSeq;
       selected = agent;
       for (const row of agentsPane.querySelectorAll('.mv-agent-row')) {
@@ -296,6 +308,7 @@ module.exports.activate = (rhost) => {
 
     function renderAgents(agents) {
       agentsPane.innerHTML = '';
+      counts.clear();
       if (!agents) {
         // Not the same as an empty store, and the difference is the whole
         // point: one says "nothing saved", the other says "do not believe me".
@@ -315,8 +328,9 @@ module.exports.activate = (rhost) => {
         dot.title = a.live ? 'Session is running' : 'No running session';
         row.appendChild(dot);
         row.appendChild(el('span', 'mv-agent-name', a.agent));
-        const meta = a.pinned > 0 ? `${a.count} · ${a.pinned} pinned` : String(a.count);
-        row.appendChild(el('span', 'mv-agent-count', meta));
+        const span = el('span', 'mv-agent-count', countText(a.count, a.pinned));
+        counts.set(a.agent, { count: a.count, pinned: a.pinned, span });
+        row.appendChild(span);
         row.addEventListener('click', () => selectAgent(a.agent));
         agentsPane.appendChild(row);
       }
@@ -326,11 +340,9 @@ module.exports.activate = (rhost) => {
       selectAgent(selected);
     }
 
-    // Named because deleteUnit re-runs it: a delete changes the agent list's
-    // counts, not just the unit pane.
     async function reload() {
       // Its own token, matching selectSeq: two overlapping reloads can otherwise
-      // repaint pre-delete COUNTS while selectSeq keeps the units pane correct,
+      // repaint stale COUNTS while selectSeq keeps the units pane correct,
       // leaving the two panes disagreeing about the same store.
       const my = ++reloadSeq;
       agentsPane.innerHTML = '';
