@@ -203,24 +203,48 @@ const execTimers = (timers) => timers.filter(
 // first: the gap between a check and the write is a foreground program starting,
 // and the command then lands in that program's stdin.
 
-test('a seat with no terminal open is refused — exec never spawns one', () => {
+test('a seat with no terminal open gets one spawned, and the command is typed only after its handshake', () => {
   const { w, spawn, results } = mk();
   const r = w.exec('ws-1', 'alice', 'ls');
 
-  assert.deepStrictEqual(r, { ok: false, code: 'no-shell' });
-  // The load-bearing half: spawning here would put a shell on the operator's
-  // screen they never asked for and run a command in it before they could look.
-  assert.strictEqual(spawn.spawned.length, 0, 'nothing was spawned to satisfy the request');
-  assert.deepStrictEqual(results, [], 'a synchronous refusal is the answer; nothing is queued');
+  assert.deepStrictEqual(r, { ok: true, command: 'ls', fresh: true });
+  assert.strictEqual(spawn.spawned.length, 1, 'the seat\'s shell was opened for the command');
+  assert.strictEqual(spawn.spawned[0].opts.cwd, '/tmp/ws', 'in the seat\'s cwd');
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C], 'nothing but the abandon before the handshake');
+
+  ackAbandon(spawn.spawned[0]);
+  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`], 'the command follows the handshake');
+  assert.deepStrictEqual(results, []);
+  assert.strictEqual(w.exec('ws-1', 'alice', 'pwd').fresh, undefined, 'a second exec reuses the shell');
+  assert.strictEqual(spawn.spawned.length, 1);
 });
 
-test('a closed window is refused too, not queued against a dead shell', () => {
+test('a bad command opens no shell', () => {
+  const { w, spawn } = mk();
+  const r = w.exec('ws-1', 'alice', `echo one${LF}rm -rf /`);
+
+  assert.strictEqual(r.code, 'bad-command');
+  assert.strictEqual(spawn.spawned.length, 0, 'the vet ran before the spawn');
+});
+
+test('a spawn failure is a refusal, not a throw', () => {
+  const spawn = () => { throw new Error('posix_spawnp failed'); };
+  const { w, results } = mk({ spawn });
+  const r = w.exec('ws-1', 'alice', 'ls');
+
+  assert.deepStrictEqual(r, { ok: false, code: 'spawn-failed', error: 'posix_spawnp failed' });
+  assert.deepStrictEqual(results, []);
+});
+
+test('a closed window is reopened for the next exec, not queued against the dead shell', () => {
   const { w, spawn } = mk();
   w.spawn('ws-1', 'alice', {});
   assert.strictEqual(spawn.spawned.length, 1, 'ENTER: the shell existed first');
   w.kill('ws-1');
 
-  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'), { ok: false, code: 'no-shell' });
+  assert.strictEqual(w.exec('ws-1', 'alice', 'ls').ok, true);
+  assert.strictEqual(spawn.spawned.length, 2, 'a fresh shell, not the killed one');
+  assert.deepStrictEqual(spawn.spawned[0].written, [], 'nothing was typed into the dead shell');
 });
 
 test('the seatless workspace shell is not addressable', () => {

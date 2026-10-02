@@ -6185,7 +6185,7 @@ function createSessionManager(deps) {
       const where = res.inside ? ` (inside \`${res.inside}\`)` : '';
       this._broadcast('ipc-message', {
         type: 'term', from: session.name, to: session.name,
-        body: res.ok ? `exec${where}: ${res.command}` : `exec REFUSED: ${res.error}`,
+        body: res.ok ? `exec${where}: ${res.command}${res.opened ? ' (your terminal was opened for it)' : ''}` : `exec REFUSED: ${res.error}`,
       });
       if (!res.ok) {
         log.warn('intent', `term exec by ${session.name}: refused (${res.error})`);
