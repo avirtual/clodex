@@ -38969,6 +38969,7 @@ void main() {
               return;
             }
             if (!drawn && !res.fresh && res.scrollback) terminal.write(res.scrollback);
+            if (!res.fresh && (res.cols !== terminal.cols || res.rows !== terminal.rows)) window.api.wtermResize(seat, terminal.cols, terminal.rows);
             drawn = true;
             flushPending(res.seq);
           }).catch(() => {

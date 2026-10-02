@@ -293,7 +293,7 @@ for (const [name, shellPath] of SHELLS) {
       const out = { s: '' };
       const results = [];
       let proc = null;
-      const dir = mkTmpRoot('clodex-keymap-fresh-');
+      const dir = mkTmpRoot('clodex-keymap-');
       const ptys = createDrawerPtys({
         spawn: (file, args, opts) => {
           proc = pty.spawn(file, args, { ...opts, cols: 200 });
