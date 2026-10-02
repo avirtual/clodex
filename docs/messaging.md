@@ -160,8 +160,12 @@ is minted lazily, so the edge can arrive well after the keystroke.
     `_scratchCloneBegin` (`scratch-clone.js`) forks a clone seat named
     `<parent>-scratch-<4 hex>` with `--resume <parent sid> --fork-session
     --session-id <new uuid>` and the create() arguments the parent's own respawn
-    builds from its record (`_recordCreateArgs`). The parent's strip level (the
-    poller's last assertion for the parent sid, else the record's `stripLevel`) is
+    builds from its record (`_scratchRespawn`), except that agents and skills are
+    the parent's effective sets, so items scoped to the parent's name by
+    `sessions:` carry over. The parent's strip level (the poller's last assertion
+    for the parent sid, else the proxy's configured level for it, else the
+    record's `stripLevel` clamped to the proxy's `max_level`; an explicit 0 under
+    a global default is mirrored as one) is
     POSTed for the new sid BEFORE create(): without it the clone's first request
     goes out unstripped and pays a full cache write. The brief is the clone's
     first user turn. The clone's `[agent:scratch end] <summary>` reaches the
@@ -169,7 +173,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
     other clone intent is refused with one line. The parent's
     `[agent:scratch cancel]` kills the clone (`[scratch] clone cancelled, no
     summary`). Refused: Codex seats, a second clone while one lives, an
-    empty brief, and any begin from a clone.
+    empty brief, a brief left unclosed, and any begin from a clone.
   - **Clone mute list** (`session.clone`, never persisted, not restorable):
     `_notifyComposition` and `_maybeInjectComposition` (no roster, no
     spawned/retired notice), `_teamLiveSeats` and `who` (never listed),

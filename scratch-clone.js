@@ -1,6 +1,8 @@
 'use strict';
 
+const fs = require('fs');
 const { randomUUID, randomBytes } = require('crypto');
+const { removeSeat } = require('./seat-layout');
 
 const SCRATCH_CLONE_REFUSAL = 'you are a scratch clone — put it in your summary; only [agent:scratch end] and harness subagents are yours';
 
@@ -10,17 +12,29 @@ function scratchCloneBrief(parentName, brief) {
 }
 
 function createScratchCloneMethods(deps, shared) {
-  const { getPersistence, ProxyClient, log, stripLevelOf, AGENT_NAME_RE, DEFAULT_WORKSPACE_ID } = deps;
+  const {
+    getPersistence, ProxyClient, log, stripLevelOf, AGENT_NAME_RE, DEFAULT_WORKSPACE_ID,
+    effectiveInjectedAgents, effectiveInjectedSkills, REGISTRY_DIR,
+  } = deps;
   const { SCRATCH_CLONE_CEILING_MS } = shared;
 
   return {
     _scratchCloneStripLevel(parent) {
       const poller = this._proxyPoller;
+      const shaped = poller && poller.last instanceof Map ? poller.last.get(parent.name) : null;
+      const ps = shaped && shaped.sessionId === parent.sessionId && shaped.strip ? shaped.strip : null;
+      const globalOn = !!(ps && (ps.globalDefaultLevel || 0) >= 1);
       const asserted = poller && poller.stripAsserted instanceof Map ? poller.stripAsserted.get(parent.name) : null;
       if (asserted && asserted.sessionId === parent.sessionId && typeof asserted.level === 'number') {
-        return { level: asserted.level, source: 'asserted' };
+        return { level: asserted.level, explicitZero: asserted.level === 0 && globalOn, source: 'asserted' };
       }
-      return { level: stripLevelOf(getPersistence().get(parent.name)), source: 'record' };
+      if (ps && typeof ps.configuredLevel === 'number') {
+        return { level: ps.configuredLevel, explicitZero: ps.configuredLevel === 0 && globalOn, source: `proxy ${ps.source || '?'}` };
+      }
+      const cap = poller && poller.stripCapBases instanceof Map ? poller.stripCapBases.get(parent.proxyBase) : null;
+      const recorded = stripLevelOf(getPersistence().get(parent.name));
+      const level = cap ? Math.min(recorded, typeof cap.max_level === 'number' ? cap.max_level : 1) : recorded;
+      return { level, explicitZero: false, source: 'record' };
     },
 
     _scratchCloneBegin(parent, body, reply) {
@@ -50,24 +64,25 @@ function createScratchCloneMethods(deps, shared) {
 
     async _scratchCloneSpawn(parent, entry, cloneName, brief, reply) {
       const cloneSid = randomUUID();
-      const { level, source } = this._scratchCloneStripLevel(parent);
-      const stripBase = level >= 1 && parent.proxyBase ? parent.proxyBase : null;
+      const { level, explicitZero, source } = this._scratchCloneStripLevel(parent);
+      const stripBase = (level >= 1 || explicitZero) && parent.proxyBase ? parent.proxyBase : null;
       try {
-        if (stripBase) await ProxyClient.stripThinking(stripBase, cloneSid, level);
+        if (stripBase) await ProxyClient.stripThinking(stripBase, cloneSid, level, explicitZero);
       } catch (e) {
         parent._scratchClone = null;
         reply(`[agent:scratch] begin refused: setting the clone's strip level failed (${e.message}), and without it the clone pays a full cache write. Nothing was forked.`);
         return;
       }
       if (!(this._scratchCloneSpawning instanceof Map)) this._scratchCloneSpawning = new Map();
-      this._scratchCloneSpawning.set(cloneName, parent.name);
+      this._scratchCloneSpawning.set(cloneName, { parent: parent.name, sid: cloneSid, stripBase });
       try {
         await this.create(
           cloneName, entry.type, parent.cwd, [...(entry.extraArgs || []), '--session-id', cloneSid], parent.sessionId,
           entry.workspaceId || DEFAULT_WORKSPACE_ID,
-          entry.systemPrompt || null, true, entry.proxy ?? null, entry.agents || [],
+          entry.systemPrompt || null, true, entry.proxy ?? null,
+          effectiveInjectedAgents(parent.name, entry.agents || []).map((a) => a.name),
           entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
-          entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+          effectiveInjectedSkills(parent.name, entry.injectSkills || []).map((s) => s.name), entry.systemPromptFile || null, entry.appendPromptFiles || [],
           Array.isArray(entry.execCommands) ? entry.execCommands : [],
           Array.isArray(entry.intents) ? entry.intents : null,
           (entry.env && typeof entry.env === 'object') ? entry.env : null,
@@ -89,19 +104,27 @@ function createScratchCloneMethods(deps, shared) {
         this._scratchCloneSpawning.delete(cloneName);
       }
       const clone = this.sessions.get(cloneName);
-      if (!clone) { parent._scratchClone = null; return; }
-      clone.clone = parent.name;
-      clone._scratchCloneSid = cloneSid;
-      clone._scratchCloneStripBase = stripBase;
+      if (!clone) {
+        parent._scratchClone = null;
+        reply(`[agent:scratch] begin failed: the clone ${cloneName} exited as it started. Nothing was forked.`);
+        return;
+      }
       if (parent._scratchClone !== cloneName || parent._dead) { this._scratchCloneRetire(clone); return; }
       clone._scratchCloneTimer = setTimeout(() => this._scratchCloneExpire(clone), SCRATCH_CLONE_CEILING_MS);
       if (typeof clone._scratchCloneTimer.unref === 'function') clone._scratchCloneTimer.unref();
       log.info('intent', `scratch clone ${cloneName} of ${parent.name} sid=${cloneSid} strip=${stripBase ? `${level} (${source})` : 'none'}`);
       this._injectText(clone, scratchCloneBrief(parent.name, brief), { parkable: true });
-      reply(`[agent:scratch] clone ${cloneName} forked — it reads, you idle; its summary arrives as a message from scratch.`);
+      this._injectTextPassive(parent, `[agent:scratch] clone ${cloneName} forked — it reads, you idle; its summary arrives as a message from scratch.`);
+    },
+
+    _scratchCloneMarkerFields(name) {
+      const marker = this._scratchCloneSpawning instanceof Map ? this._scratchCloneSpawning.get(name) : null;
+      if (!marker) return {};
+      return { clone: marker.parent, _scratchCloneSid: marker.sid, _scratchCloneStripBase: marker.stripBase };
     },
 
     _scratchCloneEnd(clone, intent, reply) {
+      if (clone._scratchCloneRetired) return;
       if (intent.sub !== 'end') { reply(`[agent:scratch] ${SCRATCH_CLONE_REFUSAL}`); return; }
       const body = String(intent.body == null ? '' : intent.body).trim();
       if (!body) {
@@ -157,8 +180,16 @@ function createScratchCloneMethods(deps, shared) {
       }
       clone.spawnerHintSet = false;
       getPersistence().remove(clone.name);
-      if (clone._dead) return;
-      Promise.resolve().then(() => this.kill(clone.name)).catch((e) => {
+      const dropSeat = () => {
+        try {
+          const r = removeSeat({ root: REGISTRY_DIR, name: clone.name, fs });
+          for (const f of r.failed) log.warn('intent', `scratch clone ${clone.name}: ${f.path} not removed (${f.error})`);
+        } catch (e) {
+          log.warn('intent', `scratch clone ${clone.name}: seat dir not removed (${e.message})`);
+        }
+      };
+      if (clone._dead) { dropSeat(); return; }
+      Promise.resolve().then(() => this.kill(clone.name)).then(dropSeat, (e) => {
         log.warn('intent', `scratch clone ${clone.name}: kill failed: ${e.message}`);
       });
     },

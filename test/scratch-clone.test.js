@@ -8,12 +8,20 @@ const { AGENT_NAME_RE } = require('../catalogs');
 const { parseIntent } = require('../intent-scanner');
 const registry = require('../intent-registry');
 const { SCRATCH_CLONE_REFUSAL, scratchCloneBrief } = require('../scratch-clone');
+const { unionEnabled } = require('../scope-util');
+const fs = require('node:fs');
 
 const SID = 'aaaa1111-2222-3333-4444-555566667777';
 const BASE = 'http://127.0.0.1:9999';
 const CEILING_MS = 45 * 60 * 1000;
 
-function mkClone({ record: over = {}, asserted = null, stripFail = false } = {}) {
+const AGENT_LIB = [{ name: 'clodex-locate', meta: {} }];
+const effectiveFrom = (lib) => (name, list) => {
+  const byName = new Map(lib.map((x) => [x.name, x]));
+  return unionEnabled(list, lib, name).map((n) => byName.get(n)).filter(Boolean);
+};
+
+function mkClone({ record: over = {}, asserted = null, stripFail = false, poller = null, agentLib = AGENT_LIB, skillLib = [] } = {}) {
   const root = mkTmpRoot('scratch-clone-');
   const seq = [];
   const creates = [];
@@ -61,10 +69,16 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false } = {})
     writeClaudeDigestFile: () => {},
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: root,
+    effectiveInjectedAgents: effectiveFrom(agentLib),
+    effectiveInjectedSkills: effectiveFrom(skillLib),
   });
   m._broadcast = () => {};
   m._sendToSession = () => {};
   m._injectText = (s, text) => injected.push({ to: s.name, text });
+  const passive = [];
+  const realPassive = m._injectTextPassive.bind(m);
+  m._injectTextPassive = (s, text) => { passive.push({ to: s.name, text }); realPassive(s, text); };
   m._buildDeliveryText = (target, from, body) => `[agent:from ${from}] ${body}`;
   const realDeliver = m._deliverMessage.bind(m);
   m._deliverMessage = (to, from, body, mtype) => {
@@ -78,11 +92,13 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false } = {})
     const fresh = {
       name: args[0], agentType: 'claude', type: 'claude', cwd: args[2], sessionId: args[4],
       proxyBase: BASE, proxyAgent: `clodex-${args[0]}`, activityState: 'idle',
+      ...m._scratchCloneMarkerFields(args[0]),
     };
     m.sessions.set(args[0], fresh);
     return fresh;
   };
   if (asserted) m._proxyPoller = { stripAsserted: new Map([['a', asserted]]), snapshot: () => null };
+  if (poller) m._proxyPoller = { stripAsserted: new Map(), last: new Map(), stripCapBases: new Map(), snapshot: () => null, ...poller };
   const s = {
     name: 'a', agentType: 'claude', type: 'claude', cwd: root, sessionId: SID, workspaceId: 'ws1',
     proxyBase: BASE, proxyAgent: 'clodex-a', activityState: 'idle',
@@ -95,7 +111,7 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false } = {})
   const begin = (body = 'read the poller and say where strip levels live') =>
     m._handleScratchIntent(s, { type: 'scratch', sub: 'begin', label: null, replay: false, body });
   return {
-    m, s, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed,
+    m, s, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed, passive,
     replies, cloneName, clone, begin,
   };
 }
@@ -121,7 +137,7 @@ test('t1539 bodied begin: one create() with fork=true on the parent sid, the par
   const strip = (list) => list.map((v, i) => (i === 0 || i === 7 ? '<own>' : i === 3 ? v.filter((x, j) => j !== sidAt && j !== sidAt + 1) : v));
   assert.deepStrictEqual(strip(args), strip(parentArgs),
     'every create() argument but the name, fork and --session-id is the one the parent\'s own respawn builds from its record');
-  assert.strictEqual(f.creates[0].spawning, 'a', 'create() sees the clone marker, so its live record carries clone and its upsert is skipped');
+  assert.strictEqual(f.creates[0].spawning.parent, 'a', 'create() sees the clone marker, so its live record carries clone and its upsert is skipped');
   assert.ok(!f.seq.some((x) => x.startsWith('upsert')), 'nothing persisted');
   assert.strictEqual(f.clone().clone, 'a');
   const first = f.injected.filter((i) => i.to === name);
@@ -129,7 +145,10 @@ test('t1539 bodied begin: one create() with fork=true on the parent sid, the par
   assert.strictEqual(first[0].text, scratchCloneBrief('a', 'read the poller and say where strip levels live'));
   assert.ok(first[0].text.startsWith('You are a scratch clone of a. Do exactly this, then end with [agent:scratch end] <summary>'));
   assert.strictEqual(f.s._scratchClone, name);
-  assert.match(f.replies().at(-1), /clone a-scratch-[0-9a-f]{4} forked/);
+  assert.deepStrictEqual(f.replies(), [], 'the success ack never wakes the parent');
+  assert.deepStrictEqual(f.passive.filter((p) => p.to === 'a').map((p) => p.text),
+    [`[agent:scratch] clone ${name} forked — it reads, you idle; its summary arrives as a message from scratch.`]);
+  assert.ok(f.parked.some((p) => p.name === 'a' && /forked/.test(p.text)), 'the ack parks for the parent\'s next turn');
 });
 
 test('t1539 ORDER: the strip level lands on the clone sid BEFORE create(), at the parent\'s level', async () => {
@@ -303,4 +322,113 @@ test('t1539 parent kill kills the clone; parent cancel kills it with no summary'
 test('t1539 grammar: a bodied begin is greedy, a bare begin is not', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin] look at x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin]')), 'none');
+});
+
+test('t1541 the clone carries the parent\'s effective agents and skills, so items scoped to the parent\'s name by sessions: survive the new name', async () => {
+  const agentLib = [{ name: 'clodex-locate', meta: {} }, { name: 'parent-agent', meta: { sessions: 'a' } }];
+  const skillLib = [{ name: 'lib-skill', meta: {} }, { name: 'parent-skill', meta: { sessions: 'a, other' } }];
+  const f = mkClone({ agentLib, skillLib, record: { injectSkills: ['lib-skill'] } });
+  await f.m._scratchRespawn('a', f.record);
+  const parentArgs = f.creates.shift().args;
+  await f.begin();
+  const args = f.creates[0].args;
+  const names = (list) => list.map((x) => x.name);
+  const agentsOf = effectiveFrom(agentLib);
+  const skillsOf = effectiveFrom(skillLib);
+  assert.deepStrictEqual(args[9], ['clodex-locate', 'parent-agent']);
+  assert.deepStrictEqual(args[13], ['lib-skill', 'parent-skill']);
+  assert.deepStrictEqual(names(agentsOf(args[0], args[9])), names(agentsOf('a', parentArgs[9])),
+    'create() derives the same agent set for the clone as for the parent');
+  assert.deepStrictEqual(names(skillsOf(args[0], args[13])), names(skillsOf('a', parentArgs[13])),
+    'create() derives the same skill set for the clone as for the parent');
+});
+
+test('t1541 refusals and failures stay active: a refused begin wakes the parent, nothing goes passive', async () => {
+  const f = mkClone({ stripFail: true });
+  await f.begin();
+  assert.strictEqual(f.replies().length, 1);
+  assert.deepStrictEqual(f.passive, []);
+});
+
+test('t1541 a summary after retire is dropped: a second end, and an end after cancel, deliver nothing more', async () => {
+  const f = mkClone();
+  await f.begin();
+  const clone = f.clone();
+  const end = (body) => f.m._handleScratchIntent(clone, { type: 'scratch', sub: 'end', label: null, replay: false, body });
+  end('first');
+  end('second');
+  assert.deepStrictEqual(f.delivered.filter((d) => d.to === 'a').map((d) => d.body), ['[scratch] clone summary:\nfirst']);
+
+  const g = mkClone();
+  await g.begin();
+  const c2 = g.clone();
+  g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  const before = g.injected.length;
+  g.m._handleScratchIntent(c2, { type: 'scratch', sub: 'end', label: null, replay: false, body: 'late' });
+  assert.deepStrictEqual(g.delivered.filter((d) => d.to === 'a'), []);
+  assert.strictEqual(g.injected.length, before, 'nothing reaches the parent or the clone');
+});
+
+test('t1541 strip level: an explicit 0 under a global default is mirrored, and the record fallback is clamped to the proxy\'s max_level', async () => {
+  const f = mkClone({
+    record: { stripLevel: 0 },
+    poller: { last: new Map([['a', { sessionId: SID, strip: { configuredLevel: 0, source: 'override', globalDefaultLevel: 1 } }]]) },
+  });
+  await f.begin();
+  const cloneSid = f.creates[0].args[3][f.creates[0].args[3].indexOf('--session-id') + 1];
+  assert.deepStrictEqual(f.strips, [{ base: BASE, sid: cloneSid, level: 0, explicitZero: true }]);
+  assert.deepStrictEqual(f.seq, ['strip', 'create']);
+
+  const g = mkClone({ poller: { stripCapBases: new Map([[BASE, { available: true, max_level: 1 }]]) } });
+  await g.begin();
+  assert.strictEqual(g.strips[0].level, 1, 'record level 2 rides as 1 on a proxy whose max_level is 1');
+  assert.strictEqual(g.strips[0].explicitZero, false);
+});
+
+test('t1541 a clone gone when create() resolves: the parent hears the begin failed', async () => {
+  const f = mkClone();
+  const realCreate = f.m.create;
+  f.m.create = async (...args) => { await realCreate(...args); f.m.sessions.delete(args[0]); };
+  await f.begin();
+  assert.strictEqual(f.s._scratchClone, null);
+  assert.match(f.replies().at(-1), /^\[agent:scratch\] begin failed: the clone a-scratch-[0-9a-f]{4} exited as it started/);
+});
+
+test('t1541 the spawning marker carries the clone sid and strip base, so a clone dying before create() returns still clears its override', async () => {
+  const f = mkClone();
+  await f.begin();
+  const { spawning } = f.creates[0];
+  const cloneSid = f.creates[0].args[3][f.creates[0].args[3].indexOf('--session-id') + 1];
+  assert.deepStrictEqual(spawning, { parent: 'a', sid: cloneSid, stripBase: BASE });
+  const clone = f.clone();
+  assert.strictEqual(clone._scratchCloneSid, cloneSid);
+  assert.strictEqual(clone._scratchCloneStripBase, BASE);
+});
+
+test('t1541 retire removes the clone\'s seat dir after the kill', async () => {
+  const f = mkClone();
+  await f.begin();
+  const clone = f.clone();
+  const dir = require('../clodex-paths').seatDirFor(f.root, clone.name);
+  fs.mkdirSync(dir, { recursive: true });
+  f.m._handleScratchIntent(clone, { type: 'scratch', sub: 'end', label: null, replay: false, body: 'done' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(f.kills, [clone.name]);
+  assert.strictEqual(fs.existsSync(dir), false);
+});
+
+test('t1541 a throw before the spawn try is caught at the scratch call site, not left unhandled', async () => {
+  const f = mkClone();
+  const errors = [];
+  f.m._scratchCloneSpawn = async () => { throw new Error('boom'); };
+  const onUnhandled = (e) => errors.push(e);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    await f.m._handleIntent('a', parseIntent('[agent:scratch begin] look\n[agent:end]'));
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+  assert.deepStrictEqual(errors, []);
 });
