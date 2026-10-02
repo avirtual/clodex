@@ -113,12 +113,21 @@ function createScratchCloneMethods(deps, shared) {
         reply(`[agent:scratch] begin failed: the clone ${cloneName} exited as it started. Nothing was forked.`);
         return;
       }
-      if (parent._scratchClone !== cloneName || parent._dead) { this._scratchCloneRetire(clone); return; }
-      clone._scratchCloneTimer = setTimeout(() => this._scratchCloneExpire(clone), SCRATCH_CLONE_CEILING_MS);
-      if (typeof clone._scratchCloneTimer.unref === 'function') clone._scratchCloneTimer.unref();
-      log.info('intent', `scratch clone ${cloneName} of ${parent.name} sid=${cloneSid} strip=${stripBase ? `${level} (${source})` : 'none'}`);
-      this._injectText(clone, scratchCloneBrief(parent.name, brief), { parkable: true });
-      this._injectTextPassive(parent, `[agent:scratch] clone ${cloneName} forked — it reads, you idle; its summary arrives as a message from scratch.`);
+      const ours = parent._scratchClone === cloneName;
+      try {
+        if (!ours || parent._dead) { this._scratchCloneRetire(clone); return; }
+        clone._scratchCloneTimer = setTimeout(() => this._scratchCloneExpire(clone), SCRATCH_CLONE_CEILING_MS);
+        if (typeof clone._scratchCloneTimer.unref === 'function') clone._scratchCloneTimer.unref();
+        log.info('intent', `scratch clone ${cloneName} of ${parent.name} sid=${cloneSid} strip=${stripBase ? `${level} (${source})` : 'none'}`);
+        this._injectText(clone, scratchCloneBrief(parent.name, brief), { parkable: true });
+        this._injectTextPassive(parent, `[agent:scratch] clone ${cloneName} forked — it reads, you idle; its summary arrives as a message from scratch.`);
+      } catch (e) {
+        log.error('intent', `scratch clone ${cloneName} of ${parent.name} failed after the fork: ${e.message}`);
+        this._scratchCloneRetire(clone);
+        if (!ours) return;
+        if (parent._scratchClone === cloneName) parent._scratchClone = null;
+        reply(`[agent:scratch] begin failed after the fork: ${e.message}; the clone was retired.`);
+      }
     },
 
     _scratchCloneMarkerFields(name) {

@@ -1558,7 +1558,7 @@ function createSessionManager(deps) {
             try {
               const wire = await this._ensureWire();
               wireBase = wire.registerAgent(name, {
-                sessionId: resumeId || null,
+                sessionId: (cloneMarker.clone ? cloneMarker._scratchCloneSid : resumeId) || null,
                 upstreams: proxyBase
                   ? { anthropic: `${proxyBase}/agent/${proxyAgent || name}/anthropic` }
                   : null,

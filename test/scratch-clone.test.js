@@ -458,3 +458,22 @@ test('t1543 F3 a throw before the spawn try replies begin failed and frees the p
   await f.begin();
   assert.strictEqual(f.creates.length, 1);
 });
+
+test('t1544 a throw after create() resolved retires the clone and says so instead of "Nothing was forked"', async () => {
+  const f = mkClone();
+  const realInject = f.m._injectText;
+  f.m._injectText = (sess, text, opts) => {
+    if (sess.clone) throw new Error('inject broke');
+    return realInject(sess, text, opts);
+  };
+  await f.begin();
+  await new Promise((r) => setImmediate(r));
+  const name = f.cloneName();
+  assert.strictEqual(f.creates.length, 1);
+  assert.deepStrictEqual(f.replies(), [`[agent:scratch] begin failed after the fork: inject broke; the clone was retired.`]);
+  assert.strictEqual(f.s._scratchClone, null);
+  assert.strictEqual(f.clone()._scratchCloneRetired, true);
+  assert.strictEqual(f.clone()._scratchCloneTimer, null);
+  assert.deepStrictEqual(f.kills, [name]);
+  assert.deepStrictEqual(f.strips.at(-1), { base: f.strips[0].base, sid: f.strips[0].sid, level: 0, explicitZero: false });
+});

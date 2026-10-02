@@ -561,6 +561,29 @@ test('registerAgent pre-binds a resumed session id', async (t) => {
 
 });
 
+test('t1544 a scratch clone bound under its own sid leaves its parent\'s main-line fingerprint intact', async (t) => {
+  const up = await startFakeUpstream();
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  const CLONE_SID = '0c0c0c0c-1111-4222-8333-444444444444';
+  proxy.registerAgent('lead', { sessionId: SESSION_ID });
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  proxy.registerAgent('lead-scratch-ab12', { sessionId: CLONE_SID });
+  const cloneBody = makeBody({
+    metadata: { user_id: JSON.stringify({ session_id: CLONE_SID }) },
+  });
+  await request(proxy.port, '/agent/lead-scratch-ab12/v1/messages', cloneBody);
+  assert.ok(await whenEvent(events, 'turn.completed', 2));
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY, { 'x-claude-code-agent-id': 'stale-agent' });
+  assert.ok(await whenEvent(events, 'turn.completed', 3));
+  assert.equal(events['turn.completed'][2].role, 'parent');
+  assert.equal(proxy.sessionOf('lead'), SESSION_ID);
+});
+
 test('per-agent upstream override chains through an external proxy base', async (t) => {
   const up = await startFakeUpstream();
   t.after(() => up.server.close());

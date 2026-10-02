@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Scratch clone: a clone of a team lead or a ticket hand now starts on its parent's prompt cache — the clone's system prompt and spilled-intent expansion match the parent byte for byte, where before any role, lead or spill made the clone rewrite the whole context.
+- Scratch clone: a clone no longer makes the wire proxy forget its parent's role on the clone's first request, and a fork that fails after the clone started retires the clone instead of leaving it running.
 
 ## 5.109.0 — 2026-10-02
 - Memories: deleting a unit removes just that card and updates the agent's count, keeping your place in the list instead of reloading the overlay to the top.
