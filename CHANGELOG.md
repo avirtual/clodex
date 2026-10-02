@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.108.0 — 2026-10-02
 - IPC Traffic: a message the seat's hooks pulled from its queue now shows as a `delivered` row the moment it reaches the CLI, and the pending badge drops with it, instead of the message vanishing after its `parked` row.
 - Memory: `[agent:memory recall] <query>` returns the newest matching unit (it used to return the oldest) and lists the next two matches by id and age.
 - Sessions: a Claude seat resumed from an "exited" row continues the turn the crash interrupted instead of waiting for input. A tool that was mid-run when the CLI died may run again on resume, since it left no result.
