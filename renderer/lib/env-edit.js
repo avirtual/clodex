@@ -11,7 +11,7 @@
 
 // Same grammar as env-scopes.ENV_KEY_RE.
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const DENY = new Set(['CLODEX_REMOTE_TOKEN', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']);
+const DENY = new Set(['CLODEX_REMOTE_TOKEN', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN']);
 const UNSAFE = new Set(['__proto__', 'constructor', 'prototype']);
 
 // Parse KEY=value lines into { env, skipped }. Blank lines and lines whose first
