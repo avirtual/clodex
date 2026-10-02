@@ -12897,6 +12897,57 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
     'the scope did not inject the deny key (base value, whatever it is, untouched)');
 });
 
+const RESUME_KEY = 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN';
+async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {} } = {}) {
+  let capturedEnv = null;
+  const rig = mkSkillsOffRig({
+    pty: { spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; } },
+    mergeSessionEnv: (args) => require('../env-scopes').mergeSessionEnv({ ...args, base: { ...process.env }, global, overrideFile: null }),
+  });
+  const exitedCalls = [];
+  rig.persistence.setExited = (n, v) => {
+    exitedCalls.push([n, v]);
+    const cur = rig.persistence.get(n);
+    if (cur && v === null) delete cur.exitedAt;
+  };
+  if (entry) rig.persistence.upsert({ name: 'rs', ...entry });
+  try {
+    await rig.m.create('rs', 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
+      [], [], [], [], [], null, [], [], null, sessionEnv);
+  } finally { rig.stop('rs'); }
+  return { env: capturedEnv, exitedCalls, entryAfter: rig.persistence.get('rs') };
+}
+
+test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1', async () => {
+  const crashed = await resumeEnvProbe({ entry: { exitedAt: 1, exitCode: 1 }, resumeId: 'sid-1' });
+  const plain = await resumeEnvProbe({ entry: {}, resumeId: 'sid-1' });
+  assert.ok(crashed.env && plain.env, 'ENTER: both creates reached pty.spawn');
+  const { CLODEX_HOME: _a, ...crashedRest } = crashed.env;
+  const { CLODEX_HOME: _b, ...plainRest } = plain.env;
+  assert.deepStrictEqual(crashedRest, { ...plainRest, [RESUME_KEY]: '1' });
+  assert.deepStrictEqual(crashed.exitedCalls, [['rs', null]], 'the exitedAt stamp is cleared after the env is built');
+  assert.strictEqual('exitedAt' in crashed.entryAfter, false);
+});
+
+test('create → PTY env: a claude --resume of an entry without exitedAt (archived / plain resume) has no resume-turn key', async () => {
+  const archived = await resumeEnvProbe({ entry: { archivedAt: 1 }, resumeId: 'sid-1' });
+  assert.strictEqual(RESUME_KEY in archived.env, false);
+  const plain = await resumeEnvProbe({ entry: {}, resumeId: 'sid-1' });
+  assert.strictEqual(RESUME_KEY in plain.env, false);
+});
+
+test('create → PTY env: a fresh claude create (no resumeId) never carries the resume-turn key, even on an exited entry', async () => {
+  const fresh = await resumeEnvProbe({ entry: { exitedAt: 1 }, resumeId: null });
+  assert.strictEqual(RESUME_KEY in fresh.env, false);
+});
+
+test('create → PTY env: an env scope or sessionEnv carrying the resume-turn key is stripped', async () => {
+  const viaScope = await resumeEnvProbe({ global: { [RESUME_KEY]: { value: '1' } } });
+  assert.strictEqual(RESUME_KEY in viaScope.env, false, 'global scope');
+  const viaSession = await resumeEnvProbe({ sessionEnv: { [RESUME_KEY]: '1' } });
+  assert.strictEqual(RESUME_KEY in viaSession.env, false, 'sessionEnv');
+});
+
 // --- t746: a UTF-8 charset for a Finder-launched app -------------------------
 // A GUI process launched from Finder/Dock inherits launchd's env, which carries
 // no LANG/LC_ALL/LC_CTYPE, and pbcopy inside the CLI then writes the pasteboard

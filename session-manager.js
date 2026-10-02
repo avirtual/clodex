@@ -1842,6 +1842,8 @@ function createSessionManager(deps) {
       const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
+      if (type === 'claude' && !streamIo && resumeId && !fork && !mint && existingEntry && existingEntry.exitedAt) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';
+      else delete env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN;
 
       let ptyProc = null;
       let streamSeat = null;

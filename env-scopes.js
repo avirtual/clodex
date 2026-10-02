@@ -40,7 +40,7 @@ const { readEnvFile } = require('./env-file');
 // CLAUDE_CODE_* host markers flip the CLI to launch-env-wins for ANTHROPIC_BASE_URL,
 // bypassing the tee (measured, docs/notes/claude-env.md). Overriding
 // CLAUDE_CODE_OAUTH_TOKEN et al. is a FEATURE (per-session identity).
-const DENY_KEYS = new Set(['CLODEX_REMOTE_TOKEN', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']);
+const DENY_KEYS = new Set(['CLODEX_REMOTE_TOKEN', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST', 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN']);
 const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
