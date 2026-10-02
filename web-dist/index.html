@@ -13154,7 +13154,24 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           let selected = null;
           let selectSeq = 0;
           let reloadSeq = 0;
-          async function deleteUnit(agent, u, btn) {
+          const counts = /* @__PURE__ */ new Map();
+          function countText(count, pinned) {
+            return pinned > 0 ? `${count} \xB7 ${pinned} pinned` : String(count);
+          }
+          function dropUnit(agent, u, card) {
+            const c = counts.get(agent);
+            if (c) {
+              c.count -= 1;
+              if (u.operatorPinned) c.pinned -= 1;
+              c.span.textContent = countText(c.count, c.pinned);
+            }
+            if (card.parentNode !== unitsPane) return;
+            unitsPane.removeChild(card);
+            if (!unitsPane.children.length) {
+              unitsPane.appendChild(el("div", "mv-empty", `No memories for ${agent}.`));
+            }
+          }
+          async function deleteUnit(agent, u, btn, card) {
             if (btn.disabled) return;
             btn.disabled = true;
             try {
@@ -13171,7 +13188,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
                 rhost.ui.showToast(deleteErrorText(res), { kind: "error" });
                 return;
               }
-              await reload();
+              dropUnit(agent, u, card);
             } finally {
               if (alive() && btn.isConnected) btn.disabled = false;
             }
@@ -13228,7 +13245,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
               del.title = `Delete ${u.key}`;
               del.setAttribute("aria-label", `Delete memory ${u.key}`);
               del.addEventListener("click", () => {
-                deleteUnit(agent, u, del).catch((e) => rhost.log.error("delete failed", e));
+                deleteUnit(agent, u, del, card).catch((e) => rhost.log.error("delete failed", e));
               });
               head.appendChild(del);
               card.appendChild(head);
@@ -13265,6 +13282,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           }
           function renderAgents(agents) {
             agentsPane.innerHTML = "";
+            counts.clear();
             if (!agents) {
               agentsPane.appendChild(el("div", "mv-empty", "Could not read the memory store."));
               unitsPane.innerHTML = "";
@@ -13282,8 +13300,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
               dot.title = a.live ? "Session is running" : "No running session";
               row.appendChild(dot);
               row.appendChild(el("span", "mv-agent-name", a.agent));
-              const meta = a.pinned > 0 ? `${a.count} \xB7 ${a.pinned} pinned` : String(a.count);
-              row.appendChild(el("span", "mv-agent-count", meta));
+              const span = el("span", "mv-agent-count", countText(a.count, a.pinned));
+              counts.set(a.agent, { count: a.count, pinned: a.pinned, span });
+              row.appendChild(span);
               row.addEventListener("click", () => selectAgent(a.agent));
               agentsPane.appendChild(row);
             }
