@@ -22264,6 +22264,19 @@ test('t1543 F2 a scratch clone registers with the wire under the parent\'s spill
   });
 });
 
+test('t1544 a scratch clone forked from its parent\'s sid registers with the wire under the clone sid, not the parent\'s', async (t) => {
+  const { team, realDeps } = mkPromptParityRig('clodex');
+  const regs = [];
+  const h = mkStreamSeatManager({ team, persisted: { 'clodex-hand-7': { ephemeral: true } }, extraDeps: { ...realDeps, WIRE_SHADOW: true } });
+  t.after(() => h.stopAll());
+  h.m._ensureWire = async () => ({ registerAgent: (name, opts) => { regs.push([name, opts]); return 'http://127.0.0.1:1/agent/x'; }, unregisterAgent: () => {} });
+  const clone = 'clodex-hand-7-scratch-ab12';
+  h.m._scratchCloneSpawning = new Map([[clone, { parent: 'clodex-hand-7', sid: 'sid-clone', stripBase: null }]]);
+  await h.create(clone, '11111111-2222-4333-8444-555555555555');
+  assert.strictEqual(regs.length, 1);
+  assert.strictEqual(regs[0][1].sessionId, 'sid-clone');
+});
+
 test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
