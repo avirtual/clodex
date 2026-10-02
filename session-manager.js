@@ -1967,8 +1967,7 @@ function createSessionManager(deps) {
         sessionId: resumeId || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
-        ...(this._scratchCloneSpawning instanceof Map && this._scratchCloneSpawning.has(name)
-          ? { clone: this._scratchCloneSpawning.get(name) } : {}),
+        ...this._scratchCloneMarkerFields(name),
         workspaceId,
         proxyAgent, proxyBase,
         // Recorded from the POST actually made, not re-read in kill(): env can change under a live seat, and a clear
@@ -5249,10 +5248,12 @@ function createSessionManager(deps) {
       if (openTail) {
         const head = `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}]`;
         const tail = `${openTail} following line${openTail === 1 ? '' : 's'}`;
-        if (endsContextVerb(intent)) {
+        const cloneBegin = intent.type === 'scratch' && intent.sub === 'begin' && intent.body;
+        if (endsContextVerb(intent) || cloneBegin) {
           if (session && session.agentType) {
+            const why = cloneBegin ? 'this verb forks a clone on its brief' : 'this verb ends or cuts your context';
             this._injectText(session, `[agent:intent] the body of ${head} was not closed — it was NOT applied, `
-              + `because this verb ends or cuts your context and the ${tail} after its head would be lost. `
+              + `because ${why} and the ${tail} after its head would be lost. `
               + 'Re-emit the whole intent and close it with [agent:end].', { parkable: true });
           }
           return;
@@ -5452,7 +5453,9 @@ function createSessionManager(deps) {
         }
         case 'scratch': {
           if (!session || !session.agentType) break;
-          this._handleScratchIntent(session, intent);
+          Promise.resolve(this._handleScratchIntent(session, intent)).catch((e) => {
+            log.error('intent', `scratch ${intent.sub || ''} from ${session.name} failed: ${e.message}`);
+          });
           break;
         }
         case 'memory': {
@@ -8583,11 +8586,11 @@ function createSessionManager(deps) {
 
   // defineProperty, not Object.assign: class methods are non-enumerable and an enumerable graft changes what for-in sees.
   // Ticket state (_ticketWatch, _stallProbing) stays initialised in the constructor; moving it needs a new init call.
-  const ticketMethods = {
+  const graftedMethods = {
     ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS }),
     ...createScratchCloneMethods(deps, { SCRATCH_CLONE_CEILING_MS }),
   };
-  for (const [k, v] of Object.entries(ticketMethods)) {
+  for (const [k, v] of Object.entries(graftedMethods)) {
     Object.defineProperty(SessionManager.prototype, k,
       { value: v, writable: true, configurable: true, enumerable: false });
   }

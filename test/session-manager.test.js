@@ -13533,6 +13533,19 @@ test('open body: a verb that ends or cuts the context is refused, not applied on
   assert.deepStrictEqual(ran, [{ sub: 'compact', body: 'pick up t1\nstep two' }]);
 });
 
+test('t1541 open body: a bodied scratch begin left unclosed refuses with one line and forks nothing', () => {
+  const { m, notes, injected } = mkOpenBody();
+  const ran = [];
+  m._handleScratchIntent = (s, intent) => ran.push({ sub: intent.sub, body: intent.body });
+  m._scanJsonlText('[agent:scratch begin] read the poller\nand the store', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, []);
+  assert.strictEqual(injected.length, 1);
+  assert.match(notes()[0], /^\[agent:intent\] the body of \[agent:scratch begin\] was not closed — it was NOT applied, because this verb forks a clone on its brief/);
+  m._scanJsonlText('[agent:scratch begin]\nprose', 'seat', [], { interrupted: false });
+  m._scanJsonlText('[agent:scratch begin] read it\n[agent:end]', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(ran, [{ sub: 'begin', body: '' }, { sub: 'begin', body: 'read it' }]);
+});
+
 test('open body: an interrupted flush gets the interrupt note, not the open-body note', () => {
   const { m, reminded, injected, notes } = mkOpenBody();
   m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: true });
@@ -22181,6 +22194,22 @@ test('a stream seat that comes up without a pid is killed like any other failed 
 });
 
 const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+
+test('t1541 a scratch clone\'s real create() persists nothing under the clone\'s name and carries the marker\'s sid and strip base', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  h.m._scratchCloneSpawning = new Map([['st-clone', { parent: 'a', sid: 'sid-clone', stripBase: 'http://127.0.0.1:9999' }]]);
+  await h.create('st-clone');
+  assert.strictEqual(h.spawns.length, 1);
+  assert.strictEqual(h.store.has('st-clone'), false, 'no record under the clone\'s name');
+  const s = h.m.sessions.get('st-clone');
+  assert.strictEqual(s.clone, 'a');
+  assert.strictEqual(s._scratchCloneSid, 'sid-clone');
+  assert.strictEqual(s._scratchCloneStripBase, 'http://127.0.0.1:9999');
+  h.m._scratchCloneSpawning = null;
+  await h.create('st-plain');
+  assert.strictEqual(h.store.has('st-plain'), true, 'positive control: a plain seat is persisted');
+});
 
 test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();

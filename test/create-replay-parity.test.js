@@ -156,7 +156,10 @@ const SITES = [
     18: ['withoutPrivilegedIntentsFor(Array.isArray(E.intents) ? E.intents : null)', 'privileged intents are stripped from a seat arriving from another box'],
     19: ['envKeys.length ? env : null', 'the env is rebuilt by importEnv for the far box, not replayed from the record'],
   } },
-  { file: 'scratch-clone.js', label: 'scratch clone fork of the parent record', differs: {} },
+  { file: 'scratch-clone.js', label: 'scratch clone fork of the parent record', differs: {
+    10: ['effectiveInjectedAgents(parent.name, E.agents || []).map((a) => a.name)', 'the clone is named apart from the parent, so it carries the parent\'s effective agent set or loses the agents scoped to the parent\'s name'],
+    14: ['effectiveInjectedSkills(parent.name, E.injectSkills || []).map((s) => s.name)', 'the clone is named apart from the parent, so it carries the parent\'s effective skill set or loses the skills scoped to the parent\'s name'],
+  } },
   { file: 'session-manager.js', label: 'rename', differs: {} },
   { file: 'session-manager.js', label: 'move', differs: {} },
   { file: 'session-manager.js', label: 'moveToPeer failure arm', differs: {} },
