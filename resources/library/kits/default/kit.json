@@ -1,5 +1,5 @@
 {
-  "description": "Stock team on your own Claude Code: every skill off; the lead keeps all its tools, while the hand runs with 35 tools off (plan mode, web, task and cron among them) and adds the clodex-locate and clodex-redproof agents to the built-in ones; costs more per ticket than the clodex kit.",
+  "description": "Stock team on your own Claude Code: every skill off; the lead carries the stock lead's tool floor, while the hand runs with 35 tools off (plan mode, web, task and cron among them) and adds the clodex-locate and clodex-redproof agents to the built-in ones; costs more per ticket than the clodex kit.",
   "roles": {
     "lead": {
       "prompt": "lead",

@@ -45,9 +45,7 @@ const readTpl = (stem) => JSON.parse(fs.readFileSync(path.join(TPL_DIR, `${stem}
 const STEMS = ['clodex-team-hand', 'clodex-team-lead'];
 
 // t803: the clodex KIT ships byte-identical copies of these two (pinned in
-// test/team-kits.test.js), so the partition below covers them transitively. The
-// default kit's copies are a different question and belong to that file: their
-// denylist is deliberately EMPTY, which no partition against KEEP can express.
+// test/team-kits.test.js), so the partition below covers them transitively.
 // What is kit-independent is the STALE-NAME check — a denylist naming a tool the
 // catalog does not have makes the CLI warn on every seat boot, whatever the
 // list's length — so that one runs over every shipped template, kit or not.
@@ -133,6 +131,24 @@ test('t803: no shipped template, in any kit, denies a tool the catalog does not 
     assert.deepStrictEqual(stale, [], `${label} names tools the catalog does not have: ${stale.join(', ')}`);
     assert.strictEqual(new Set(tpl.disabledTools || []).size, (tpl.disabledTools || []).length,
       `${label} repeats a name in disabledTools`);
+  }
+});
+
+test('every kit lead carries at least the stock lead\'s floor', () => {
+  const stock = readTpl('clodex-team-lead');
+  const leadLabels = fs.readdirSync(KIT_DIR).map((kit) => {
+    const stem = JSON.parse(fs.readFileSync(path.join(KIT_DIR, kit, 'kit.json'), 'utf-8')).roles.lead.template;
+    return `kits/${kit}/templates/${stem}`;
+  });
+  const leads = everyShippedTemplate().filter(([label]) => leadLabels.includes(label));
+  assert.ok(leads.some(([label]) => label === 'kits/default/templates/lead'), 'ENTER: the walk reaches the default kit lead');
+  assert.ok(leads.some(([label]) => label === 'kits/clodex/templates/clodex-team-lead'), 'ENTER: the walk reaches the clodex kit lead');
+  assert.ok(stock.disabledTools.length > 20 && stock.denyBuiltins.length > 0, 'ENTER: the stock lead denies a real list');
+  for (const [label, tpl] of leads) {
+    const missingTools = stock.disabledTools.filter((t) => !(tpl.disabledTools || []).includes(t));
+    assert.deepStrictEqual(missingTools, [], `${label} re-enables tools the stock lead denies`);
+    const missingAgents = stock.denyBuiltins.filter((a) => !(tpl.denyBuiltins || []).includes(a));
+    assert.deepStrictEqual(missingAgents, [], `${label} re-enables builtin agents the stock lead denies`);
   }
 });
 

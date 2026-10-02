@@ -88,7 +88,7 @@ for (const kit of ['clodex', 'default']) {
 
 const STOCK_AGENTS = { lead: [], hand: ['clodex-redproof', 'clodex-locate'] };
 
-test('the default kit lifts the plugin and builtin restrictions, and keeps the skill/tool denials', () => {
+test('the default kit\'s hand lifts the plugin and builtin restrictions, its lead keeps the stock ones, and both keep the skill denials', () => {
   for (const stem of ['lead', 'hand']) {
     const tpl = readTpl('default', stem);
     const stock = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', `clodex-team-${stem}.json`), 'utf-8'));
@@ -97,7 +97,7 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
     assert.deepStrictEqual(stock.disabledSkills, ['*'], `ENTER: stock ${stem} must disable every skill`);
     assert.deepStrictEqual(stock.plugins, [], `ENTER: stock ${stem} must carry the empty plugin list`);
 
-    assert.deepStrictEqual(tpl.denyBuiltins, []);
+    assert.deepStrictEqual(tpl.denyBuiltins, stem === 'lead' ? stock.denyBuiltins : []);
 
     assert.deepStrictEqual(tpl.disabledSkills, ['*'],
       `${stem}: a default-kit seat must not boot with every host skill`);
@@ -114,7 +114,8 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
     // `plugins` is the key where `[]` is the RESTRICTION: seatHasPlugin reads a
     // non-array as "every SHIPPED plugin" and an array as an allowlist. So the
     // "no restriction" literal is the ABSENT key, not an empty one.
-    assert.ok(!('plugins' in tpl),
+    if (stem === 'lead') assert.deepStrictEqual(tpl.plugins, stock.plugins, 'lead: the stock lead carries no bundle, and neither does the kit lead');
+    else assert.ok(!('plugins' in tpl),
       `${stem}: a plugins key — even [] — withholds every shipped bundle; absent is what grants them`);
 
     // Kept, per the spec: these are not restrictions.
@@ -132,7 +133,8 @@ test('the default kit lifts the plugin and builtin restrictions, and keeps the s
   assert.ok(libHand.disabledTools.length > 10,
     'ENTER: the library hand must deny a real list, or the copy below pins nothing');
   assert.deepStrictEqual(readTpl('default', 'hand').disabledTools, libHand.disabledTools);
-  assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, []);
+  const libLead = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-lead.json'), 'utf-8'));
+  assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, libLead.disabledTools);
 });
 
 test('ticket hands ship with wire stripping off, leads keep level 2', () => {
@@ -237,6 +239,15 @@ test('createTeam with kit:default writes the default hand template, whole', () =
   assert.strictEqual(team.kit, 'default');
   assert.strictEqual(JSON.parse(fs.readFileSync(team.file, 'utf-8')).kit, 'default',
     'and the kit is recorded ON DISK — a later addRole reads it from there');
+});
+
+test('createTeam with kit:default writes the default lead template, whole', () => {
+  const home = mkHome();
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'x', root: mkTmpRoot('t1540-proj-'), lead: 'x-lead', kit: 'default' });
+
+  assert.deepStrictEqual(readTeamTpl(home, 'x', 'lead'), readTpl('default', 'lead'));
+  assert.ok(readTeamTpl(home, 'x', 'lead').disabledTools.length > 20, 'ENTER: the shipped kit lead carries a real denylist');
 });
 
 test('createTeam with kit:clodex writes the AGGRESSIVE hand template', () => {
