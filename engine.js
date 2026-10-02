@@ -2000,10 +2000,15 @@ function termRefusalName(running) {
 function termExec(workspaceId, seat, command) {
   if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };
   const r = drawerPtys.exec(workspaceId, seat, command);
-  if (r.ok) return r.inside ? { ...r, inside: sanitizeName(r.inside) } : r;
+  if (r.ok) {
+    const ok = { ok: true, command: r.command };
+    if (r.inside) ok.inside = sanitizeName(r.inside);
+    if (r.fresh) ok.opened = true;
+    return ok;
+  }
   switch (r.code) {
     case 'bad-command': return { ok: false, error: r.error };
-    case 'no-shell': return { ok: false, error: 'no terminal is open for your seat — ask your operator to open the terminal tab in the drawer. Nothing was queued.' };
+    case 'spawn-failed': return { ok: false, error: `your terminal could not be opened (${r.error}). Nothing ran.` };
     case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
     case 'busy': {
       const shown = termRefusalName(r.running);

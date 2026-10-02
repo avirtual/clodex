@@ -196,6 +196,8 @@ by default and switched on in Settings ▸ Terminal, separately from command
 reporting: driving a session the operator authenticated to is its own consent,
 and no upgrade grants it. A far editor or pager on the alternate screen, and any
 program that is not a shell, still refuse by name with nothing typed.
+A closed tab no longer refuses: the shell is opened on demand in the seat's cwd
+and shows in the tab, with its output, when the operator opens it.
 
 ## Known v1 limitations / growth path
 

@@ -287,6 +287,46 @@ for (const [name, shellPath, keymaps] of SHELLS) {
 // `trap -p HUP` is a bashism zsh does not implement, and the bare `trap` both
 // accept spells the signal `HUP` in zsh and `SIGHUP` in bash. Measured: both
 // survive a SIGHUP once armed, so the property is not bash-only.
+for (const [name, shellPath] of SHELLS) {
+  test(`a ${name} that exec itself opens runs the command once, with a result`,
+    { skip: !pty ? 'node-pty unavailable' : false, timeout: 90000 }, async () => {
+      const out = { s: '' };
+      const results = [];
+      let proc = null;
+      const dir = mkTmpRoot('clodex-keymap-');
+      const ptys = createDrawerPtys({
+        spawn: (file, args, opts) => {
+          proc = pty.spawn(file, args, { ...opts, cols: 200 });
+          proc.onData((d) => { out.s += d; });
+          return proc;
+        },
+        send: () => {},
+        shell: shellPath,
+        cwdFor: () => process.env.HOME || '/',
+        shimEnv: () => buildTermShim({ dir, shell: shellPath }),
+        withUtf8Charset: require('../env-scopes').withUtf8Charset,
+        makeMarkParser: createMarkParser,
+        onCommand: () => {},
+        onExecResult: (seat, r) => results.push(r),
+        log: { info() {}, warn() {}, error() {} },
+      });
+      try {
+        const res = ptys.exec('w', 'seat', `echo ${MARK}`);
+        assert.deepStrictEqual(res, { ok: true, command: `echo ${MARK}`, fresh: true });
+        const settled = await waitFor(() => results, (r) => r.length > 0);
+        assert.ok(settled, `a result was delivered\n--- output ---\n${out.s}`);
+        assert.strictEqual(results[0].status, 'ok', `${JSON.stringify(results[0])}\n--- output ---\n${out.s}`);
+        assert.ok(stripAnsi(out.s).split(/\r?\n/).some((l) => l.trim() === MARK),
+          `the shell ran the command\n--- output ---\n${out.s}`);
+        assert.strictEqual(ptys._execState('w', 'seat').shimmed, true);
+      } finally {
+        try { ptys.dispose(); } catch {}
+        try { await reapPty(proc); } catch {}
+        try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+      }
+    });
+}
+
 for (const [name, shellPath, keymaps] of SHELLS) {
   test(`a ${name} that ignores SIGHUP is still gone once the teardown returns`,
     { skip: !pty ? 'node-pty unavailable' : false, timeout: 90000 }, async () => {

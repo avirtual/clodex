@@ -278,6 +278,14 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     }
   }
 
+  function firstPrompt(rec, p) {
+    const ack = () => {
+      if (rec.execPromptAck === ack) rec.execPromptAck = null;
+      if (rec.pending === p) typePending(rec, p);
+    };
+    rec.execPromptAck = ack;
+  }
+
   function armNested(rec, p) {
     handshake(rec, p, 1, () => typePending(rec, p));
   }
@@ -384,16 +392,16 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
-    // Never spawns, unlike write(): a shell the operator did not ask for would appear
-    // with a command already running in it. Every refusal is checked HERE, not by a
-    // caller reading a status first — a foreground program can start in the gap
-    // between a check and the write, and the command lands in its stdin.
     exec(windowId, seat, command) {
       if (!seat) return { ok: false, code: 'no-seat' };
       const vet = vetCommand ? vetCommand(command) : { ok: true, command };
       if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
-      const rec = ptys.get(keyFor(windowId, seat));
-      if (!rec) return { ok: false, code: 'no-shell' };
+      const key = keyFor(windowId, seat);
+      const fresh = !ptys.has(key);
+      if (fresh && !(onCommand && makeMarkParser && shimEnv && shimEnv(seat))) return { ok: false, code: 'no-marks' };
+      const rec = fresh ? spawnFor(windowId, seat, {}) : ptys.get(key);
+      if (!rec) return { ok: false, code: 'spawn-failed', error: 'drawer terminals are unavailable on this host' };
+      if (rec.error) return { ok: false, code: 'spawn-failed', error: rec.error };
       // No marks ⇒ no D ⇒ nothing tells the agent this finished, but it still runs.
       if (!rec.shimmed || !rec.marks) return { ok: false, code: 'no-marks' };
       // A timed-out command over an idle terminal never got an ending and never will;
@@ -431,6 +439,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         if (!rec.remote || rec.remote.seq !== rec.marks.outerSeq()) {
           rec.remote = { seq: rec.marks.outerSeq(), installed: false };
         }
+      }
+      if (fresh) {
+        firstPrompt(rec, p);
+        armDeadline(rec, p);
+        return { ok: true, command: vet.command, fresh: true };
       }
       try {
         // Abandon the line first: `isBusy()` false says nothing about the line editor,
