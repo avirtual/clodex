@@ -191,7 +191,13 @@ class WireProxy extends EventEmitter {
     }
     else this._agentSpill.delete(name);
     const rec = this._spillShownRecords[name];
-    this._agentSpillShown.set(name, rec && Array.isArray(rec.shown)
+    const seed = opts.spillShownSeed;
+    const seedFrom = seed && seed.from ? this._agentSpillShown.get(seed.from) : null;
+    if (seed && seed.sessionId) {
+      this._agentSpillShown.set(name, {
+        shown: new Set(seedFrom ? seedFrom.shown : []), sessionId: seed.sessionId, lastAt: this.now(), compacted: false,
+      });
+    } else this._agentSpillShown.set(name, rec && Array.isArray(rec.shown)
       ? { shown: new Set(rec.shown), sessionId: rec.sessionId ?? null, lastAt: Number(rec.lastAt) || 0, compacted: false }
       : { shown: new Set(), sessionId: null, lastAt: 0, compacted: false });
     if (opts.voiceSink === true) this._voiceSinks.add(name);
@@ -386,7 +392,7 @@ class WireProxy extends EventEmitter {
             const shown = this._spillShownFor(agent, obj);
             shownTouched = true;
             sticky = shown.size;
-            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent, examples: cutCfg.examples, sticky: shown } : { root: null, agent: null });
+            r = cutSpillStubs(obj, cutCfg ? { root: cutCfg.root, agent: cutCfg.owner || agent, examples: cutCfg.examples, sticky: shown } : { root: null, agent: null });
             for (const key of r.expanded) shown.add(key);
           } catch (e) {
             this.emit('spill-cut-error', { agent, reqId, error: e.message });
