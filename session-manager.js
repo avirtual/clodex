@@ -1501,7 +1501,10 @@ function createSessionManager(deps) {
       const existingEntry = getPersistence().get(name);
       const createdAt = (existingEntry && existingEntry.createdAt) || Date.now();
 
-      const { teamBlock, teamName, resolvedTeam, missingPrompt } = this._teamBlockFor(name, cwd, agentType, systemPromptFile);
+      const cloneMarker = this._scratchCloneMarkerFields(name);
+      const promptOwner = cloneMarker.clone || name;
+      const promptEntry = cloneMarker.clone ? getPersistence().get(promptOwner) : existingEntry;
+      const { teamBlock, teamName, resolvedTeam, missingPrompt } = this._teamBlockFor(promptOwner, cwd, agentType, systemPromptFile);
       if (missingPrompt) warnings.push(missingPrompt);
 
       const librarySkills = [];
@@ -1533,7 +1536,7 @@ function createSessionManager(deps) {
             intents,
             execCommands,
             spillArmed: spillVerbs.length > 0,
-            spillExamples: existingEntry && existingEntry.ephemeral === true ? 1 : 2,
+            spillExamples: promptEntry && promptEntry.ephemeral === true ? 1 : 2,
             // Captured at spawn like `intents`: refreshPrompt replays this object, so a member re-reading persistence
             // would make clear/compact stage a delta the spawn never baked.
             pluginGrants: (existingEntry && existingEntry.pluginGrants) || null,
@@ -1543,7 +1546,7 @@ function createSessionManager(deps) {
             hasSystemFile: !!sysFile,
             ipcDisabled: mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1',
           };
-          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam, name);
+          const { cleaned, realIpc } = this._realIpcFor(promptRecipe, teamBlock, resolvedTeam, promptOwner);
           args = cleaned;
           const staleSettings = args.findIndex(
             (a, i) => a === '--settings' && (args[i + 1] || '').startsWith('/tmp/wb-wrap/'));
@@ -1564,9 +1567,11 @@ function createSessionManager(deps) {
                     root: REGISTRY_DIR,
                     verbs: spillVerbs,
                     turnInjected: () => this.sessions.get(name)?.lastSubmitInjected === true,
-                    examples: existingEntry && existingEntry.ephemeral === true ? 1 : 2,
+                    examples: promptEntry && promptEntry.ephemeral === true ? 1 : 2,
+                    ...(cloneMarker.clone ? { owner: promptOwner } : {}),
                   }
                   : null,
+                ...(cloneMarker.clone ? { spillShownSeed: { from: promptOwner, sessionId: cloneMarker._scratchCloneSid } } : {}),
               });
             } catch (e) {
               console.error('wire shadow unavailable, spawning unshadowed:', e.message);

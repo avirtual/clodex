@@ -432,3 +432,29 @@ test('t1541 a throw before the spawn try is caught at the scratch call site, not
   }
   assert.deepStrictEqual(errors, []);
 });
+
+test('t1543 F3 a clone that exits inside create(): the parent hears one notice, not the exit notice plus "exited as it started"', async () => {
+  const f = mkClone();
+  const realCreate = f.m.create;
+  f.m.create = async (...args) => {
+    await realCreate(...args);
+    f.m._scratchCloneOnExit(f.m.sessions.get(args[0]));
+    f.m.sessions.delete(args[0]);
+  };
+  await f.begin();
+  const notices = [...f.delivered.filter((d) => d.to === 'a').map((d) => d.body), ...f.replies()];
+  assert.deepStrictEqual(notices, [`[scratch] clone ${f.cloneName()} exited without a summary`]);
+  assert.strictEqual(f.s._scratchClone, null);
+});
+
+test('t1543 F3 a throw before the spawn try replies begin failed and frees the parent for a second begin', async () => {
+  const f = mkClone();
+  const realStrip = f.m._scratchCloneStripLevel;
+  f.m._scratchCloneStripLevel = () => { throw new Error('poller gone'); };
+  await f.begin();
+  assert.deepStrictEqual(f.replies(), ['[agent:scratch] begin failed: poller gone. Nothing was forked.']);
+  assert.strictEqual(f.s._scratchClone, null);
+  f.m._scratchCloneStripLevel = realStrip;
+  await f.begin();
+  assert.strictEqual(f.creates.length, 1);
+});

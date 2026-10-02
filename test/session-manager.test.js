@@ -22211,6 +22211,59 @@ test('t1541 a scratch clone\'s real create() persists nothing under the clone\'s
   assert.strictEqual(h.store.has('st-plain'), true, 'positive control: a plain seat is persisted');
 });
 
+function mkPromptParityRig(lead) {
+  const team = { name: 'clodex', root: '/team', lead, roles: { hand: { prompt: 'hand-brief' }, lead: {} } };
+  const realDeps = {
+    buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt,
+    mergeClaudeSystemPrompt: require('../argv-merge').mergeClaudeSystemPrompt,
+    bakePrompt: require('../ipc-prompt-cache').bakePrompt,
+    readSystemPromptBody: (stem) => `ROLE PROMPT ${stem}`,
+  };
+  return { team, realDeps };
+}
+
+for (const row of [
+  { label: 'a role + ephemeral parent (ticket hand)', parent: 'clodex-hand-7', lead: 'clodex', record: { ephemeral: true } },
+  { label: 'the team lead', parent: 'clodex', lead: 'clodex', record: {} },
+]) {
+  test(`t1543 F1 a scratch clone of ${row.label} bakes an append prompt byte-equal to its parent's`, async (t) => {
+    const { team, realDeps } = mkPromptParityRig(row.lead);
+    const h = mkStreamSeatManager({ team, persisted: { [row.parent]: row.record }, extraDeps: realDeps });
+    t.after(() => h.stopAll());
+    const { pathFor } = require('../clodex-paths');
+    await h.create(row.parent);
+    const clone = `${row.parent}-scratch-ab12`;
+    h.m._scratchCloneSpawning = new Map([[clone, { parent: row.parent, sid: 'sid-clone', stripBase: null }]]);
+    await h.create(clone);
+    const parentBytes = fs.readFileSync(pathFor(h.root, row.parent, 'appendPrompt'), 'utf8');
+    const cloneBytes = fs.readFileSync(pathFor(h.root, clone, 'appendPrompt'), 'utf8');
+    assert.match(parentBytes, row.parent === row.lead ? /\[agent:team role-add/ : /Your role: hand\.[\s\S]*ROLE PROMPT hand-brief/);
+    assert.strictEqual(cloneBytes, parentBytes);
+  });
+}
+
+test('t1543 F2 a scratch clone registers with the wire under the parent\'s spill owner, a shown seed keyed to the clone sid, and the parent\'s examples', async (t) => {
+  const { team, realDeps } = mkPromptParityRig('clodex');
+  const regs = [];
+  const h = mkStreamSeatManager({ team, persisted: { 'clodex-hand-7': { ephemeral: true } }, extraDeps: { ...realDeps, WIRE_SHADOW: true } });
+  t.after(() => h.stopAll());
+  h.m._ensureWire = async () => ({ registerAgent: (name, opts) => { regs.push([name, opts]); return 'http://127.0.0.1:1/agent/x'; }, unregisterAgent: () => {} });
+  const clone = 'clodex-hand-7-scratch-ab12';
+  h.m._scratchCloneSpawning = new Map([[clone, { parent: 'clodex-hand-7', sid: 'sid-clone', stripBase: null }]]);
+  await h.create(clone);
+  const [name, opts] = regs[0];
+  assert.strictEqual(name, clone);
+  const { turnInjected, verbs, ...spill } = opts.spill;
+  assert.strictEqual(typeof turnInjected, 'function');
+  assert.ok(Array.isArray(verbs) && verbs.length > 0);
+  assert.deepStrictEqual({ ...opts, spill }, {
+    sessionId: null,
+    upstreams: { anthropic: 'http://127.0.0.1:9999/agent/agent-x/anthropic' },
+    spill: { root: h.root, examples: 1, owner: 'clodex-hand-7' },
+    spillShownSeed: { from: 'clodex-hand-7', sessionId: 'sid-clone' },
+  });
+});
+
 test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());

@@ -59,7 +59,10 @@ function createScratchCloneMethods(deps, shared) {
         return;
       }
       parent._scratchClone = cloneName;
-      return this._scratchCloneSpawn(parent, entry, cloneName, brief, reply);
+      return this._scratchCloneSpawn(parent, entry, cloneName, brief, reply).catch((e) => {
+        parent._scratchClone = null;
+        reply(`[agent:scratch] begin failed: ${e.message}. Nothing was forked.`);
+      });
     },
 
     async _scratchCloneSpawn(parent, entry, cloneName, brief, reply) {
@@ -105,6 +108,7 @@ function createScratchCloneMethods(deps, shared) {
       }
       const clone = this.sessions.get(cloneName);
       if (!clone) {
+        if (parent._scratchClone !== cloneName) return;
         parent._scratchClone = null;
         reply(`[agent:scratch] begin failed: the clone ${cloneName} exited as it started. Nothing was forked.`);
         return;

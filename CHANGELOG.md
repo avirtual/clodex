@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Scratch clone: a clone of a team lead or a ticket hand now starts on its parent's prompt cache — the clone's system prompt and spilled-intent expansion match the parent byte for byte, where before any role, lead or spill made the clone rewrite the whole context.
 
 ## 5.109.0 — 2026-10-02
 - Memories: deleting a unit removes just that card and updates the agent's count, keeping your place in the list instead of reloading the overlay to the top.

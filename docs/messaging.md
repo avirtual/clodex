@@ -160,7 +160,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
     `_scratchCloneBegin` (`scratch-clone.js`) forks a clone seat named
     `<parent>-scratch-<4 hex>` with `--resume <parent sid> --fork-session
     --session-id <new uuid>` and the create() arguments the parent's own respawn
-    builds from its record (`_scratchRespawn`), with agents and skills as the parent's effective (`sessions:`-scoped) sets. The parent's strip level (the
+    builds from its record (`_scratchRespawn`), with agents and skills as the parent's effective (`sessions:`-scoped) sets. create() bakes the prompt as the parent's (role line, lead grammar, spill-example count from the parent's name and record), and the wire resolves the clone's spill stubs under `spill/<parent>/` seeded with the parent's live shown set re-keyed to the clone sid, so `system` and the expanded history match the parent's bytes and the clone reads its cache. The parent's strip level (the
     poller's last assertion for the parent sid, else the proxy's configured level, else the record's `stripLevel` clamped to `max_level`; an explicit 0 is mirrored) is
     POSTed for the new sid BEFORE create(): without it the clone's first request
     goes out unstripped and pays a full cache write. The brief is the clone's

@@ -917,6 +917,29 @@ test('t1146 (p1): a body expanded on one request stays expanded on the next — 
   });
 });
 
+test('t1543 F2: a scratch clone registered with the parent as spill owner and a shown seed forwards the parent\'s exact messages — 4 spills, the sticky oldest included', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const CLONE_SID = '0b8f3c1e-1111-4222-8333-944455556666';
+  await withProxy({}, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    proxy.registerAgent('tester-scratch-ab12', {
+      spill: { root, verbs: ['dm'], owner: 'tester' },
+      spillShownSeed: { from: 'tester', sessionId: CLONE_SID },
+    });
+    await request(proxy.port, '/agent/tester-scratch-ab12/v1/messages', bodyOf([A, B, C, D], CLONE_SID));
+    assert.ok(await whenEvent(events, 'turn.completed', 3));
+    const sent = up.seen.requests.map((r) => JSON.parse(r.body.toString('utf8')).messages);
+    assert.strictEqual(JSON.stringify(sent[2]), JSON.stringify(sent[1]));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut).at(-1), { sticky: 3, expanded: 3 });
+  });
+});
+
 test('t1146 (p2): a new session id is a cold boundary — sticky 0, expanded 2', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
