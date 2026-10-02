@@ -14,6 +14,3 @@ locale name on every macOS, and it fixes pbcopy on its own without guessing a
 language. Any operator-set charset wins, including a deliberate non-UTF-8 one
 (`LC_ALL=C`) — that choice is theirs, so the helper returns the env untouched
 when ANY of the three keys is present rather than only when LC_CTYPE is.
-
-## DENY_KEYS
-CLAUDE_CODE_RESUME_INTERRUPTED_TURN is denied so no scope can make every seat auto-continue a turn; session-manager.js sets it itself only on the crash-resume of an exitedAt-stamped claude entry (measured on claude 2.1.286, tasks/resume-interrupted-measure/MEASURE.md).

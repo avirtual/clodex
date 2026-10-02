@@ -645,7 +645,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 |---|---|---|---|
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s) | live tab → dimmed archived row |
 | Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` left | tab removed |
-| CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, with `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` so a turn cut off mid-flight continues, and a tool that was mid-run when the CLI died has no result and may run again; ✕ = forget) |
+| CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, ✕ = forget) |
 | Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
