@@ -6667,8 +6667,7 @@ function createSessionManager(deps) {
       }
       if (session.clone) { this._scratchCloneEnd(session, intent, reply); return; }
       if (intent.sub === 'begin' && typeof intent.body === 'string' && intent.body !== '') {
-        this._scratchCloneBegin(session, intent.body, reply);
-        return;
+        return this._scratchCloneBegin(session, intent.body, reply);
       }
       if (intent.sub === 'cancel' && !intent.label && session._scratchClone) { this._scratchCloneCancel(session, reply); return; }
       if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
