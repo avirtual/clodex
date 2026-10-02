@@ -155,6 +155,34 @@ is minted lazily, so the edge can arrive well after the keystroke.
     the mark left open.
   - a Codex seat: *Claude seats only — a Codex transcript has a different shape
     and no rewind has been proven for it.*
+  - **Clone path.** `begin` WITH a body (`[agent:scratch begin] <brief>`, closed
+    by `[agent:end]`; greedy only when the head line carries text) does not cut:
+    `_scratchCloneBegin` (`scratch-clone.js`) forks a clone seat named
+    `<parent>-scratch-<4 hex>` with `--resume <parent sid> --fork-session
+    --session-id <new uuid>` and the create() arguments the parent's own respawn
+    builds from its record (`_recordCreateArgs`). The parent's strip level (the
+    poller's last assertion for the parent sid, else the record's `stripLevel`) is
+    POSTed for the new sid BEFORE create(): without it the clone's first request
+    goes out unstripped and pays a full cache write. The brief is the clone's
+    first user turn. The clone's `[agent:scratch end] <summary>` reaches the
+    parent as one message from `scratch` (`[scratch] clone summary:`); every
+    other clone intent is refused with one line. The parent's
+    `[agent:scratch cancel]` kills the clone (`[scratch] clone cancelled, no
+    summary`). Refused: Codex seats, a second clone while one lives, an
+    empty brief, and any begin from a clone.
+  - **Clone mute list** (`session.clone`, never persisted, not restorable):
+    `_notifyComposition` and `_maybeInjectComposition` (no roster, no
+    spawned/retired notice), `_teamLiveSeats` and `who` (never listed),
+    `_deliverMessage`, `_deliverPassive` and `_injectTextPassive` (nothing from
+    reminder, memory, team, reboot or the ticket loop), `_gatedDeliver` and the
+    `dm` case (*not addressable*), and `_maybeAutoCompact` plus the poller's
+    strip level, which reads the parent's record. Retire is quiet: no cost
+    stamp, the record dropped, the clone sid's strip override and spawner hint
+    cleared.
+  - **Clone ceiling:** `SCRATCH_CLONE_CEILING_MS` (45 min). On expiry the clone
+    is killed and the parent hears *[scratch] clone <name> ended without a
+    summary (45m ceiling)*. A clone that exits on its own sends *exited without a
+    summary*; a parent that exits or is killed takes its clone with it.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;

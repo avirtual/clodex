@@ -198,7 +198,7 @@ test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () 
 });
 
 test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES — a row missing from both copies keeps the byte-pins green and ships a verb whose `end` CUTS the transcript', () => {
-  for (const ROW of [/^ {2}\[agent:scratch begin\] {12}Claude seats only\. Open a SCRATCH EPISODE/m,
+  for (const ROW of [/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Body to `\[agent:end\]`: forks a clone of you/m,
     /^ {2}\[agent:scratch end\] <summary> {4}Close the episode:/m,
     /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m,
     /^ {2}\[agent:scratch mark <label>\] {5}Set a NAMED rewind point/m,
@@ -218,7 +218,7 @@ test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES �
     assert.ok(/a ~5s respawn; the cached prefix is kept/.test(src),
       'what it COSTS — a seat that fears a cold respawn never opens an episode');
     assert.ok(/A bodyless end is refused/.test(src), 'the refusal a seat meets first');
-    assert.ok(/^ {2}\[agent:scratch begin\] {12}Claude seats only\./m.test(src),
+    assert.ok(/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\./m.test(src),
       'and the one that makes the whole verb inert opens the FIRST row: a Codex seat reads '
       + 'that before it tries, not as the tail of the third row it may never reach');
   }

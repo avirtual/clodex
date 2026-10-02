@@ -84,6 +84,7 @@ function createScratchCloneMethods(deps, shared) {
       clone._scratchCloneStripBase = stripBase;
       if (parent._scratchClone !== cloneName || parent._dead) { this._scratchCloneRetire(clone); return; }
       clone._scratchCloneTimer = setTimeout(() => this._scratchCloneExpire(clone), SCRATCH_CLONE_CEILING_MS);
+      if (typeof clone._scratchCloneTimer.unref === 'function') clone._scratchCloneTimer.unref();
       log.info('intent', `scratch clone ${cloneName} of ${parent.name} sid=${cloneSid} strip=${stripBase ? `${level} (${source})` : 'none'}`);
       this._injectText(clone, scratchCloneBrief(parent.name, brief), { parkable: true });
       reply(`[agent:scratch] clone ${cloneName} forked — it reads, you idle; its summary arrives as a message from scratch.`);

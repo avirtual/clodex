@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Memories: deleting a unit removes just that card and updates the agent's count, keeping your place in the list instead of reloading the overlay to the top.
 - Terminal: `[agent:term exec]` no longer refuses when the seat's terminal tab is closed — the shell is opened on demand in the seat's cwd and the command runs there; open the tab to see it, with its output already in the scrollback.
+- Scratch: `[agent:scratch begin] <what to research>` forks a clone of the seat on a warm copy of its context; the clone does the reading and sends the summary back as a message, so the seat's own transcript is never cut and nothing that arrives mid-episode is lost. A bare `begin` still takes the in-place path.
 
 ## 5.108.0 — 2026-10-02
 - IPC Traffic: a message the seat's hooks pulled from its queue now shows as a `delivered` row the moment it reaches the CLI, and the pending badge drops with it, instead of the message vanishing after its `parked` row.

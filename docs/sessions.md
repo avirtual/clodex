@@ -627,7 +627,8 @@ spawn-failure rollback, the seat-import spawn-failure rollback
 (remote-wiring.js, drops only when the seat is not live), and both ticket-seat
 spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
 createWorktree-failed arm, and the create()-threw catch, which drops only when
-the seat is not live). `destroy()` is on the list separately from `kill()`, not
+the seat is not live), and the scratch-clone retire (`_scratchCloneRetire`,
+scratch-clone.js). `destroy()` is on the list separately from `kill()`, not
 as its caller: `kill()` returns at `if (!s) return;` before its remove, so on an
 already-dead seat only `destroy()`'s own drop runs — without it the tree went
 and the record naming it stayed (a record pointing at nothing rather than
