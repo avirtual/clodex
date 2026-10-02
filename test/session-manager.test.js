@@ -1204,7 +1204,7 @@ test('t222 a seat with no terminal of its own is refused before any exec is atte
 test('t1537 an exec that opened the seat\'s terminal says so in the exec log line', () => {
   const sent = [];
   for (const opened of [true, false]) {
-    const m = mk({ termExec: () => ({ ok: true, command: 'ls', opened }) });
+    const m = mk({ termExec: () => ({ ok: true, command: 'ls', opened }), log: { info() {}, warn() {}, error() {}, debug() {} } });
     m._injectText = () => {};
     m._broadcast = (ch, msg) => sent.push(msg.body);
     m._handleTermIntent({ name: 'x', type: 'claude', agentType: 'claude', workspaceId: 'ws' }, 'exec', 'ls');
