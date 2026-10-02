@@ -847,11 +847,12 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'memory' && i.sub === 'remember')
     || (i.type === 'context' && (i.sub === 'compact' || i.sub === 'reload'))
   );
-  // The ONE deliberate widening since: `context clear` gained an optional
+  // Deliberate widenings since: `context clear` gained an optional
   // continuation body, so it captures where the legacy set did not. Listed
   // explicitly rather than folded into legacyGreedy above, so the legacy record
   // stays a record and a second silent widening still fails here.
-  const deliberatelyWidened = (i) => i.type === 'context' && i.sub === 'clear';
+  const deliberatelyWidened = (i) => (i.type === 'context' && i.sub === 'clear')
+    || (i.type === 'scratch' && i.sub === 'begin' && !!i.body);
   // Verbs that did not EXIST when the legacy chain was frozen. `term exec` was
   // the previous occupant: it shipped greedy, then narrowed to line-scoped, so
   // it now agrees with the legacy oracle's silence by capturing nothing.

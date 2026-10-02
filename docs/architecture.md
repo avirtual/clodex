@@ -383,6 +383,10 @@ bundle), whose packaged form is the Docker image under
   an orphaned `tool_use`, a split text+tool_use pair, arrivals, an unmentioned
   dispatch) returns a reason instead of writing, so the cut in session-manager
   never has to re-derive one. No fs, no session state.
+- **scratch-clone.js** — the clone half of `[agent:scratch begin] <brief>`,
+  grafted onto SessionManager like team-tickets.js: forks a muted clone seat
+  from the parent's record, routes its `scratch end` summary to the parent, and
+  retires it quietly (docs/messaging.md, "Clone path").
 - **exec-schema.js** — the payload validator for `[agent:exec <cmd>] {json}`.
   Deliberately tiny (type/required/maxLength/enum + `array` items/bounds + the
   `filename` token guard + a raw-body size cap) so it stays auditable; a full

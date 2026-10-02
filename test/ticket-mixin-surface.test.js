@@ -91,7 +91,8 @@ function classMethods(src) {
 // what this test measures and what the graft installs. Both destructures
 // tolerate an empty object, so no deps are needed to enumerate the surface.
 const { createTicketMethods } = require('../team-tickets');
-const grafted = new Set(Object.keys(createTicketMethods({}, {})));
+const { createScratchCloneMethods } = require('../scratch-clone');
+const grafted = new Set([...Object.keys(createTicketMethods({}, {})), ...Object.keys(createScratchCloneMethods({}, {}))]);
 
 const smSrc = read('session-manager.js');
 const ttSrc = read('team-tickets.js');

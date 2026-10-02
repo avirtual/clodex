@@ -132,6 +132,7 @@ const { defuseSenderLines } = require('./review-gate');
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
 const SCRATCH_CLOSE_TIMEOUT = 120000;
+const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
 const SCRATCH_BAK_TTL_MS = 7 * 24 * 3600 * 1000;
 const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_PREFIXES.some((p) => text.startsWith(p));
 const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
@@ -298,6 +299,7 @@ const STREAM_SET_MODEL_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // Imported only to re-export: tests import ticketCloseLine and ticketTaskDirLine from this module, so do not drop them as unused.
 const { createTicketMethods, ticketCloseLine, ticketTaskDirLine } = require('./team-tickets');
+const { createScratchCloneMethods, SCRATCH_CLONE_REFUSAL } = require('./scratch-clone');
 
 let incarnationSeq = 0;
 function nextIncarnation() {
@@ -1965,6 +1967,8 @@ function createSessionManager(deps) {
         sessionId: resumeId || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
+        ...(this._scratchCloneSpawning instanceof Map && this._scratchCloneSpawning.has(name)
+          ? { clone: this._scratchCloneSpawning.get(name) } : {}),
         workspaceId,
         proxyAgent, proxyBase,
         // Recorded from the POST actually made, not re-read in kill(): env can change under a live seat, and a clear
@@ -2008,7 +2012,7 @@ function createSessionManager(deps) {
         try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
       }
 
-      getPersistence().upsert({
+      if (!session.clone) getPersistence().upsert({
         name, type, cwd,
         extraArgs,
         createdAt,
@@ -2315,6 +2319,7 @@ function createSessionManager(deps) {
         // Mark dead first: after exit any node-pty write/resize/kill throws an uncaught Napi::Error that aborts the app (SIGABRT),
         // so deferred ops bail on _dead.
         session._dead = true;
+        this._scratchCloneOnExit(session);
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
         const { expected, dropRecord, stampExited } = exitDisposition({
           agentType,
@@ -3224,6 +3229,7 @@ function createSessionManager(deps) {
       if (!s) return;
       log.info('session', `kill ${name} (user-initiated) pid=${this._procPid(s)}`);
       s._userKilled = true;
+      this._scratchCloneOnExit(s);
       this._notifyComposition(s, 'retired');
       if (s.spawnerHintSet && s.proxyBase && s.proxyAgent) {
         try {
@@ -3934,7 +3940,7 @@ function createSessionManager(deps) {
     _teamLiveSeats(teamRoot) {
       const seats = [];
       for (const s of this.sessions.values()) {
-        if (!s.agentType || s._dead) continue;
+        if (!s.agentType || s._dead || s.clone) continue;
         // `_projectRootFor`, not `findProjectRoot`: that answers null for a teamless seat and
         // leaves a solo board with no live seats.
         let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
@@ -3984,6 +3990,7 @@ function createSessionManager(deps) {
     }
 
     _maybeInjectComposition(session, team, existingEntry) {
+      if (session.clone) return;
       if (existingEntry && existingEntry.rosterSentAt) {
         // A resumed seat gets no roster message (a duplicate costs a turn) but its digest must be
         // re-baked: the pre-spawn write ran before the seat existed.
@@ -4085,7 +4092,7 @@ function createSessionManager(deps) {
     }
 
     _notifyComposition(session, verb) {
-      if (!session || !session.agentType) return;
+      if (!session || !session.agentType || session.clone) return;
       let team;
       try { team = resolveTeam(session.cwd); } catch { return; }
       if (!team) return;
@@ -5191,6 +5198,11 @@ function createSessionManager(deps) {
         return;
       }
 
+      if (session && session.clone && !(intent.type === 'scratch' && intent.sub === 'end')) {
+        this._injectText(session, `[agent:${intent.type}] ${SCRATCH_CLONE_REFUSAL}`, { parkable: true });
+        return;
+      }
+
       const spilledNote = spilledBodyOf(intent.body);
       if (spilledNote !== null) {
         this._spillTyped(session, senderName, intent, spilledNote, 'runtime note');
@@ -5261,6 +5273,10 @@ function createSessionManager(deps) {
       switch (intent.type) {
         case 'dm': {
           const localTarget = this.sessions.get(intent.target);
+          if (localTarget && localTarget.clone) {
+            if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
+            break;
+          }
           let sup = null;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
@@ -5387,7 +5403,7 @@ function createSessionManager(deps) {
         }
         case 'who': {
           const localAgents = Array.from(this.sessions.values())
-            .filter(s => s.agentType)
+            .filter(s => s.agentType && !s.clone)
             .map(s => ({ name: s.name, label: peerStatusLabel({
               state: s.activityState || 'idle',
               idleMs: Date.now() - (s.activityTs || Date.now()),
@@ -6649,6 +6665,11 @@ function createSessionManager(deps) {
           + 'has been proven for it.');
         return;
       }
+      if (session.clone) { this._scratchCloneEnd(session, intent, reply); return; }
+      if (intent.sub === 'begin' && typeof intent.body === 'string' && intent.body !== '') {
+        return this._scratchCloneBegin(session, intent.body, reply);
+      }
+      if (intent.sub === 'cancel' && !intent.label && session._scratchClone) { this._scratchCloneCancel(session, reply); return; }
       if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
       if (intent.sub === 'mark') { this._scratchBegin(session, reply, { label: intent.label }); return; }
       if (intent.sub === 'cancel') { this._scratchCancel(session, reply, intent); return; }
@@ -7671,6 +7692,7 @@ function createSessionManager(deps) {
     _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null, opts = {}) {
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
+      if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };
       const key = dmContentKey(senderTag, body);
       const verdict = shouldHoldDm({
         urgent: urgent === true,
@@ -8091,7 +8113,7 @@ function createSessionManager(deps) {
 
     _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null) {
       const target = this.sessions.get(targetName);
-      if (!target) return;
+      if (!target || target.clone) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
       const pics = Array.isArray(images) ? images : [];
       const fire = typeof onWrite === 'function' ? onWrite : null;
@@ -8459,7 +8481,7 @@ function createSessionManager(deps) {
 
     _deliverPassive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
-      if (!target) return;
+      if (!target || (target.clone && senderName !== target.name)) return;
       if (target.agentType !== 'claude' || target._dead) {
         this._deliverMessage(targetName, senderName, body, mtype);
         return;
@@ -8479,7 +8501,7 @@ function createSessionManager(deps) {
     }
 
     _injectTextPassive(session, text) {
-      if (!session || session._dead) return;
+      if (!session || session._dead || session.clone) return;
       if (session.agentType !== 'claude') {
         this._injectText(session, text, { parkable: true });
         return;
@@ -8561,7 +8583,10 @@ function createSessionManager(deps) {
 
   // defineProperty, not Object.assign: class methods are non-enumerable and an enumerable graft changes what for-in sees.
   // Ticket state (_ticketWatch, _stallProbing) stays initialised in the constructor; moving it needs a new init call.
-  const ticketMethods = createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS });
+  const ticketMethods = {
+    ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS }),
+    ...createScratchCloneMethods(deps, { SCRATCH_CLONE_CEILING_MS }),
+  };
   for (const [k, v] of Object.entries(ticketMethods)) {
     Object.defineProperty(SessionManager.prototype, k,
       { value: v, writable: true, configurable: true, enumerable: false });
