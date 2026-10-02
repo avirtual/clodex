@@ -278,6 +278,14 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     }
   }
 
+  function firstPrompt(rec, p) {
+    const ack = () => {
+      if (rec.execPromptAck === ack) rec.execPromptAck = null;
+      if (rec.pending === p) typePending(rec, p);
+    };
+    rec.execPromptAck = ack;
+  }
+
   function armNested(rec, p) {
     handshake(rec, p, 1, () => typePending(rec, p));
   }
@@ -390,6 +398,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
       const key = keyFor(windowId, seat);
       const fresh = !ptys.has(key);
+      if (fresh && !(onCommand && makeMarkParser && shimEnv && shimEnv(seat))) return { ok: false, code: 'no-marks' };
       const rec = fresh ? spawnFor(windowId, seat, {}) : ptys.get(key);
       if (!rec) return { ok: false, code: 'spawn-failed', error: 'drawer terminals are unavailable on this host' };
       if (rec.error) return { ok: false, code: 'spawn-failed', error: rec.error };
@@ -431,6 +440,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
           rec.remote = { seq: rec.marks.outerSeq(), installed: false };
         }
       }
+      if (fresh) {
+        firstPrompt(rec, p);
+        armDeadline(rec, p);
+        return { ok: true, command: vet.command, fresh: true };
+      }
       try {
         // Abandon the line first: `isBusy()` false says nothing about the line editor,
         // which may hold a half-typed line the C mark would then report as ours.
@@ -458,7 +472,6 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       armDeadline(rec, p);
       const answer = { ok: true, command: vet.command };
       if (inside) answer.inside = inside;
-      if (fresh) answer.fresh = true;
       return answer;
     },
 

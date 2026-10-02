@@ -203,17 +203,20 @@ const execTimers = (timers) => timers.filter(
 // first: the gap between a check and the write is a foreground program starting,
 // and the command then lands in that program's stdin.
 
-test('a seat with no terminal open gets one spawned, and the command is typed only after its handshake', () => {
+test('a seat with no terminal open gets one spawned, and the command waits for its first prompt', () => {
   const { w, spawn, results } = mk();
   const r = w.exec('ws-1', 'alice', 'ls');
 
   assert.deepStrictEqual(r, { ok: true, command: 'ls', fresh: true });
   assert.strictEqual(spawn.spawned.length, 1, 'the seat\'s shell was opened for the command');
   assert.strictEqual(spawn.spawned[0].opts.cwd, '/tmp/ws', 'in the seat\'s cwd');
-  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C], 'nothing but the abandon before the handshake');
+  spawn.spawned[0].emit(`starting up${CR}${LF}`);
+  assert.deepStrictEqual(spawn.spawned[0].written, [], 'no ^C into a shell that is still starting');
 
-  ackAbandon(spawn.spawned[0]);
-  assert.deepStrictEqual(spawn.spawned[0].written, [CTRL_C, `ls${CR}`], 'the command follows the handshake');
+  spawn.spawned[0].emit(A);
+  assert.deepStrictEqual(spawn.spawned[0].written, [`ls${CR}`], 'the command follows the first prompt, unabandoned');
+  spawn.spawned[0].emit(A);
+  assert.deepStrictEqual(spawn.spawned[0].written, [`ls${CR}`], 'and is typed once');
   assert.deepStrictEqual(results, []);
   assert.strictEqual(w.exec('ws-1', 'alice', 'pwd').fresh, undefined, 'a second exec reuses the shell');
   assert.strictEqual(spawn.spawned.length, 1);
@@ -225,6 +228,12 @@ test('a bad command opens no shell', () => {
 
   assert.strictEqual(r.code, 'bad-command');
   assert.strictEqual(spawn.spawned.length, 0, 'the vet ran before the spawn');
+});
+
+test('a seat whose shell could not report back opens no shell', () => {
+  const { w, spawn } = mk({ shimEnv: null });
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'), { ok: false, code: 'no-marks' });
+  assert.strictEqual(spawn.spawned.length, 0);
 });
 
 test('a spawn failure is a refusal, not a throw', () => {

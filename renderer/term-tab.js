@@ -369,6 +369,7 @@ function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null,
         // an empty terminal. Without the once-guard, every re-show would paste
         // the whole history again under the output already there.
         if (!drawn && !res.fresh && res.scrollback) terminal.write(res.scrollback);
+        if (!res.fresh && (res.cols !== terminal.cols || res.rows !== terminal.rows)) window.api.wtermResize(seat, terminal.cols, terminal.rows);
         drawn = true;
         flushPending(res.seq);
       })
