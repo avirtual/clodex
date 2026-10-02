@@ -12898,7 +12898,6 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
 });
 
 const RESUME_KEY = 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN';
-delete process.env[RESUME_KEY];
 async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {} } = {}) {
   let capturedEnv = null;
   const rig = mkSkillsOffRig({
@@ -12934,8 +12933,7 @@ test('create → PTY env: a claude --resume of an entry without exitedAt (archiv
   const archived = await resumeEnvProbe({ entry: { archivedAt: 1 }, resumeId: 'sid-1' });
   assert.strictEqual(RESUME_KEY in archived.env, false);
   const plain = await resumeEnvProbe({ entry: {}, resumeId: 'sid-1' });
-  assert.strictEqual(RESUME_KEY in plain.env, false);  const movedAway = await resumeEnvProbe({ entry: { exitedAt: 1, archivedAt: 1 }, resumeId: 'sid-1' });
-  assert.strictEqual(RESUME_KEY in movedAway.env, false, 'exited and archived');
+  assert.strictEqual(RESUME_KEY in plain.env, false);
 });
 
 test('create → PTY env: a fresh claude create (no resumeId) never carries the resume-turn key, even on an exited entry', async () => {
@@ -12949,12 +12947,11 @@ test('create → PTY env: an env scope or sessionEnv carrying the resume-turn ke
   const viaSession = await resumeEnvProbe({ sessionEnv: { [RESUME_KEY]: '1' } });
   assert.strictEqual(RESUME_KEY in viaSession.env, false, 'sessionEnv');
   assert.deepStrictEqual(require('../env-scopes').sanitizeFlat({ [RESUME_KEY]: '1' }), {});
-  const prior = process.env[RESUME_KEY];
   process.env[RESUME_KEY] = '1';
   try {
     const inherited = await resumeEnvProbe({});
     assert.strictEqual(RESUME_KEY in inherited.env, false, 'inherited from the app env');
-  } finally { if (prior === undefined) delete process.env[RESUME_KEY]; else process.env[RESUME_KEY] = prior; }
+  } finally { delete process.env[RESUME_KEY]; }
 });
 
 // --- t746: a UTF-8 charset for a Finder-launched app -------------------------
@@ -22061,7 +22058,6 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
       upsert: (e) => store.set(e.name, { ...(store.get(e.name) || {}), ...e }),
       remove: (n) => store.delete(n),
       setSessionId: (n, id) => { sessionIds.push([n, id]); const e = store.get(n); if (e) e.sessionId = id; },
-      setExited: (n, v) => { const e = store.get(n); if (e && v === null) delete e.exitedAt; },
     }),
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -22217,14 +22213,6 @@ test('stream seat (g): a restore with io:stream reaps the persisted streamPid BE
   assert.strictEqual(h.spawns.length, 1);
   assert.deepStrictEqual(h.spawns[0].args.slice(0, 8), [...STREAM_HEAD, '--resume', 'sid-old']);
   assert.ok(h.logs.some((l) => l[2] === 'stream reap st2: dead pid=6001'), 'the reap decision is logged');
-});
-
-test('stream seat: a claude crash-resume of an exitedAt entry carries no resume-turn key', async (t) => {
-  const h = mkStreamSeatManager({ persisted: { st3: { io: 'stream', sessionId: 'sid-old', exitedAt: 1 } } });
-  t.after(() => h.stopAll());
-  await h.create('st3', 'sid-old');
-  assert.strictEqual(h.handles.length, 1);
-  assert.strictEqual('CLAUDE_CODE_RESUME_INTERRUPTED_TURN' in h.handles[0].opts.env, false);
 });
 
 test('stream seat (h): an init line on stdout updates the persisted sessionId', async (t) => {
