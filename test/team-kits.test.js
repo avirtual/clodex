@@ -244,7 +244,7 @@ test('createTeam with kit:default writes the default hand template, whole', () =
 test('createTeam with kit:default writes the default lead template, whole', () => {
   const home = mkHome();
   const tm = createTeamManifest({ fs, clodexHome: home });
-  tm.createTeam({ name: 'x', root: mkTmpRoot('t1540-proj-'), lead: 'x-lead', kit: 'default' });
+  tm.createTeam({ name: 'x', root: mkTmpRoot('t803-proj-'), lead: 'x-lead', kit: 'default' });
 
   assert.deepStrictEqual(readTeamTpl(home, 'x', 'lead'), readTpl('default', 'lead'));
   assert.ok(readTeamTpl(home, 'x', 'lead').disabledTools.length > 20, 'ENTER: the shipped kit lead carries a real denylist');
