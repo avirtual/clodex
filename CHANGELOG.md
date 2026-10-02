@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.109.0 — 2026-10-02
 - Memories: deleting a unit removes just that card and updates the agent's count, keeping your place in the list instead of reloading the overlay to the top.
 - Terminal: `[agent:term exec]` no longer refuses when the seat's terminal tab is closed — the shell is opened on demand in the seat's cwd and the command runs there; open the tab to see it, with its output already in the scrollback.
 - Teams: a team created on the default kit gets a lead with the stock lead's tool floor (35 planning/scheduling/web tools off, the claude-code-guide and statusline-setup agents denied) instead of every tool on; existing teams are unchanged.
