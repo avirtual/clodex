@@ -22061,6 +22061,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
       upsert: (e) => store.set(e.name, { ...(store.get(e.name) || {}), ...e }),
       remove: (n) => store.delete(n),
       setSessionId: (n, id) => { sessionIds.push([n, id]); const e = store.get(n); if (e) e.sessionId = id; },
+      setExited: (n, v) => { const e = store.get(n); if (e && v === null) delete e.exitedAt; },
     }),
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
