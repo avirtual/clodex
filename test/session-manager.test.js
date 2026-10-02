@@ -12946,6 +12946,12 @@ test('create → PTY env: an env scope or sessionEnv carrying the resume-turn ke
   assert.strictEqual(RESUME_KEY in viaScope.env, false, 'global scope');
   const viaSession = await resumeEnvProbe({ sessionEnv: { [RESUME_KEY]: '1' } });
   assert.strictEqual(RESUME_KEY in viaSession.env, false, 'sessionEnv');
+  assert.deepStrictEqual(require('../env-scopes').sanitizeFlat({ [RESUME_KEY]: '1' }), {});
+  process.env[RESUME_KEY] = '1';
+  try {
+    const inherited = await resumeEnvProbe({});
+    assert.strictEqual(RESUME_KEY in inherited.env, false, 'inherited from the app env');
+  } finally { delete process.env[RESUME_KEY]; }
 });
 
 // --- t746: a UTF-8 charset for a Finder-launched app -------------------------
