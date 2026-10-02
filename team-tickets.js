@@ -1192,6 +1192,7 @@ function createTicketMethods(deps, shared) {
       try {
         const name = session && session.name;
         if (!name) return { ok: false, error: 'no seat' };
+        if (session.clone) return { ok: false, error: 'scratch clone' };
         let team = null;
         try { team = resolveTeam(session.cwd); } catch { team = null; }
         if (!team) return { ok: false, error: 'no team' };

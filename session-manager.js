@@ -3239,7 +3239,7 @@ function createSessionManager(deps) {
           log.warn('session', `spawner-hint(clear) skipped: ${e.message}`);
         }
       }
-      if (!s.clone) { try { this._stampSeatCost(s, 'kill'); } catch {} }
+      try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
@@ -7144,11 +7144,12 @@ function createSessionManager(deps) {
       return true;
     }
 
-    _recordCreateArgs(name, entry, { cwd, extraArgs = entry.extraArgs || [], resumeId = entry.sessionId || null, fork = false } = {}) {
-      return [
-        name, entry.type, cwd, extraArgs, resumeId,
+    async _scratchRespawn(name, entry) {
+      const cwd = this.resumeCwdOf(entry);
+      await this.create(
+        name, entry.type, cwd, entry.extraArgs || [], entry.sessionId || null,
         entry.workspaceId || DEFAULT_WORKSPACE_ID,
-        entry.systemPrompt || null, fork, entry.proxy ?? null, entry.agents || [],
+        entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
         entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
         entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
         Array.isArray(entry.execCommands) ? entry.execCommands : [],
@@ -7161,12 +7162,7 @@ function createSessionManager(deps) {
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
         typeof entry.effort === 'string' ? entry.effort : null,
-      ];
-    }
-
-    async _scratchRespawn(name, entry) {
-      const cwd = this.resumeCwdOf(entry);
-      await this.create(...this._recordCreateArgs(name, entry, { cwd }));
+      );
       const fresh = this.sessions.get(name);
       const lvl = stripLevelOf(entry);
       if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

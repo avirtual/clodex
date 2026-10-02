@@ -644,6 +644,7 @@ rolecwd-lnk-
 rolecwd-out-
 rolecwd-real-
 runner-root-
+scratch-clone-
 scratch-cost-
 scratch-mark-
 shadow-ret-

@@ -10,7 +10,7 @@ function scratchCloneBrief(parentName, brief) {
 }
 
 function createScratchCloneMethods(deps, shared) {
-  const { getPersistence, ProxyClient, log, stripLevelOf, AGENT_NAME_RE } = deps;
+  const { getPersistence, ProxyClient, log, stripLevelOf, AGENT_NAME_RE, DEFAULT_WORKSPACE_ID } = deps;
   const { SCRATCH_CLONE_CEILING_MS } = shared;
 
   return {
@@ -62,12 +62,23 @@ function createScratchCloneMethods(deps, shared) {
       if (!(this._scratchCloneSpawning instanceof Map)) this._scratchCloneSpawning = new Map();
       this._scratchCloneSpawning.set(cloneName, parent.name);
       try {
-        await this.create(...this._recordCreateArgs(cloneName, entry, {
-          cwd: parent.cwd,
-          extraArgs: [...(entry.extraArgs || []), '--session-id', cloneSid],
-          resumeId: parent.sessionId,
-          fork: true,
-        }));
+        await this.create(
+          cloneName, entry.type, parent.cwd, [...(entry.extraArgs || []), '--session-id', cloneSid], parent.sessionId,
+          entry.workspaceId || DEFAULT_WORKSPACE_ID,
+          entry.systemPrompt || null, true, entry.proxy ?? null, entry.agents || [],
+          entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+          entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+          Array.isArray(entry.execCommands) ? entry.execCommands : [],
+          Array.isArray(entry.intents) ? entry.intents : null,
+          (entry.env && typeof entry.env === 'object') ? entry.env : null,
+          false,
+          entry.noWire === true,
+          Array.isArray(entry.plugins) ? entry.plugins : null,
+          Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+          typeof entry.fixFor === 'string' ? entry.fixFor : null,
+          entry.io || 'pty',
+          typeof entry.effort === 'string' ? entry.effort : null,
+        );
       } catch (e) {
         parent._scratchClone = null;
         if (stripBase) ProxyClient.stripThinking(stripBase, cloneSid, 0).catch(() => {});
