@@ -152,7 +152,7 @@ test('the graft installs non-enumerable properties', () => {
   // and change what a for-in or spread over the prototype chain sees. That is a
   // behaviour change inside a move-only split, and it would never show up as a
   // failing ticket test — only as something downstream enumerating differently.
-  const graftSite = stripNonCode(smSrc).match(/for \(const \[k, v\] of Object\.entries\(ticketMethods\)\)[\s\S]{0,400}/);
+  const graftSite = stripNonCode(smSrc).match(/for \(const \[k, v\] of Object\.entries\(graftedMethods\)\)[\s\S]{0,400}/);
   assert.ok(graftSite, 'graft loop not found in session-manager.js');
   assert.ok(/Object\.defineProperty/.test(graftSite[0]),
     'graft must use Object.defineProperty, not Object.assign');
