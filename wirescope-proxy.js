@@ -339,7 +339,7 @@ function createProxyPoller({
             // Box-wide like the quota, and for the same reason it rides an
             // unlinked payload: a dead refresh token is why the seat is unlinked.
             payload.authRefresh = authRefresh || null;
-            const entry = getPersistence().get(s.name);
+            const entry = getPersistence().get(s.clone || s.name);
             const level = stripLevelOf(entry);
             payload.stripLevel = level;
             payload.autoCompact = autoCompactOf(entry);
@@ -403,7 +403,7 @@ function createProxyPoller({
 
     _maybeAutoCompact(s, payload, entry) {
       try {
-        if (s.agentType !== 'claude' || s._dead) return;
+        if (s.agentType !== 'claude' || s._dead || s.clone) return;
         const decision = autoCompactDecision({
           payload,
           enabled: autoCompactOf(entry),

@@ -248,7 +248,7 @@ const CORE_ROWS = [
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
-  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || i.sub === 'rewind' ? 'greedy' : 'none') },
+  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || i.sub === 'rewind' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   // Line-scoped, unlike every other body-carrying row here: the command is
