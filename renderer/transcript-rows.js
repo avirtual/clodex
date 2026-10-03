@@ -349,8 +349,7 @@ function appendSegments(doc, row, segs, ctx) {
       const fold = filedFold(doc, seg.spill, ctx, prose);
       prose.appendChild(fold.head);
       fold.mount();
-    } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
-    else appendMarkdown(doc, prose, seg.text, ctx);
+    } else appendMarkdown(doc, prose, seg.text, ctx);
     row.appendChild(prose);
   }
 }
@@ -783,7 +782,7 @@ function buildRow(doc, rec, ctx, attached, boxed) {
       const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
       if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
-      else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
+      else if (!hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
       else appendProse(doc, row, rec.text, ctx);
       return row;
     }
@@ -1310,20 +1309,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     restore(anchor);
   }
 
-  function setMarkdown(on) {
-    const want = on !== false;
-    if ((deps.markdown !== false) === want) return;
-    deps.markdown = want;
-    const anchor = anchorOf();
-    for (const c of turnCache.values()) {
-      while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
-      c.sub = null;
-    }
-    render(lastRecords);
-    restore(anchor);
-  }
-
-  return { render, setWorking, setMode, setMarkdown };
+  return { render, setWorking, setMode };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };

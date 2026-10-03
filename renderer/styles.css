@@ -6053,7 +6053,6 @@ body.web-frontend #sidebar-header {
 .transcript-bar-views { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
 .transcript-help-btn, .transcript-terminal-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
 .transcript-help-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.transcript-md-btn { border: 1px solid var(--border, rgba(255, 255, 255, 0.08)); border-radius: var(--radius-sm, 4px); font-family: var(--font-mono, monospace); }
 .transcript-pane[data-raw] { height: auto; overflow: hidden; }
 .transcript-pane[data-raw] > :not(.transcript-bar) { display: none; }
 

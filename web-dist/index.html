@@ -8619,11 +8619,6 @@ body.web-frontend #sidebar-header {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
-.transcript-md-btn {
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-sm, 4px);
-  font-family: var(--font-mono, monospace);
-}
 .transcript-pane[data-raw] {
   height: auto;
   overflow: hidden;
@@ -32961,8 +32956,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const fold = filedFold(doc, seg.spill, ctx, prose);
             prose.appendChild(fold.head);
             fold.mount();
-          } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
-          else appendMarkdown(doc, prose, seg.text, ctx);
+          } else appendMarkdown(doc, prose, seg.text, ctx);
           row.appendChild(prose);
         }
       }
@@ -33367,7 +33361,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const row = el(doc, "div", `tr-row tr-prose${rec.segments ? " tr-segs" : ""}`);
             row.dataset.id = rec.id;
             if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
-            else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
+            else if (!hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
             else appendProse(doc, row, rec.text, ctx);
             return row;
           }
@@ -33861,19 +33855,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           render(lastRecords);
           restore(anchor);
         }
-        function setMarkdown(on) {
-          const want = on !== false;
-          if (deps.markdown !== false === want) return;
-          deps.markdown = want;
-          const anchor = anchorOf();
-          for (const c of turnCache.values()) {
-            while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
-            c.sub = null;
-          }
-          render(lastRecords);
-          restore(anchor);
-        }
-        return { render, setWorking, setMode, setMarkdown };
+        return { render, setWorking, setMode };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
     }
@@ -34278,38 +34260,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
-      var MD_KEY = "clodex-transcript-md";
-      var MD_TITLE = "Render the agent's markdown (tables, bold, links) \u2014 off shows the raw text";
-      var mdPanes = /* @__PURE__ */ new Set();
-      var mdButtons = /* @__PURE__ */ new WeakMap();
-      var mdGone = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((ref) => mdPanes.delete(ref)) : null;
-      function markdownOn() {
-        try {
-          return localStorage.getItem(MD_KEY) !== "0";
-        } catch {
-          return true;
-        }
-      }
-      function setMarkdownPref(on) {
-        try {
-          localStorage.setItem(MD_KEY, on ? "1" : "0");
-        } catch {
-        }
-        for (const ref of [...mdPanes]) {
-          const paneEl = ref.deref();
-          if (!paneEl) {
-            mdPanes.delete(ref);
-            continue;
-          }
-          mdButtons.get(paneEl).setAttribute("aria-pressed", on ? "true" : "false");
-          const rows = views.get(paneEl);
-          if (rows) rows.setMarkdown(on);
-        }
-      }
       function transcriptRowsFor(doc, paneEl, ctx = {}) {
         let rows = views.get(paneEl);
         if (!rows) {
-          rows = createTranscriptRows(doc, paneEl, { ...ctx, markdown: markdownOn() });
+          rows = createTranscriptRows(doc, paneEl, ctx);
           views.set(paneEl, rows);
         }
         return rows;
@@ -34352,14 +34306,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           control.appendChild(btn);
           return btn;
         });
-        const mdBtn = barButton(doc, "transcript-mode-btn transcript-md-btn", "md", MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute("aria-pressed") !== "true"));
-        mdBtn.setAttribute("aria-pressed", markdownOn() ? "true" : "false");
-        const ref = new WeakRef(paneEl);
-        mdButtons.set(paneEl, mdBtn);
-        mdPanes.add(ref);
-        if (mdGone) mdGone.register(paneEl, ref);
         views2.appendChild(control);
-        views2.appendChild(mdBtn);
         const help = onHelp ? barButton(doc, "transcript-help-btn", "?", HELP_TITLE, () => onHelp()) : null;
         if (help) views2.appendChild(help);
         const terminalBtn = onTerminal ? barButton(doc, "transcript-mode-btn transcript-terminal-btn", "Screen", TERMINAL_TITLE, () => onTerminal()) : null;
@@ -34380,7 +34327,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         bar.appendChild(chips);
         bar.appendChild(views2);
         paneEl.insertBefore(bar, paneEl.firstChild);
-        return { bar, chips, control, buttons, help, terminal: terminalBtn, markdown: mdBtn, setMode, setRaw };
+        return { bar, chips, control, buttons, help, terminal: terminalBtn, setMode, setRaw };
       }
       function markedText(doc, text, spans) {
         const frag = [];

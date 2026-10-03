@@ -1922,17 +1922,6 @@ test('assistant prose segments render markdown: a pipe table becomes a <table> a
   assert.strictEqual(a.dataset.url, 'https://example.com/pr/1');
 });
 
-test('with markdown off the same segment renders raw text, and setMarkdown re-renders the open transcript', () => {
-  const m = mount({ markdown: false });
-  m.render([said('a1', 0, MD_SEGS)]);
-  assert.strictEqual(findTag(m.pane, 'table').length, 0);
-  assert.strictEqual(findCls(m.pane, 'tr-seg-prose')[0].textContent, MD_TABLE);
-  m.rows.setMarkdown(true);
-  assert.strictEqual(findTag(m.pane, 'table').length, 1);
-  m.rows.setMarkdown(false);
-  assert.strictEqual(findTag(m.pane, 'table').length, 0);
-});
-
 test('a prompt carrying a pipe table stays plain text', () => {
   const m = mount();
   m.render([{ id: 'p1', kind: 'prompt', ts: null, turn: 0, text: MD_TABLE, source: 'typed' }]);
