@@ -178,7 +178,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
     `dm` case (*not addressable*), and `_maybeAutoCompact` plus the poller's
     strip level, which reads the parent's record. Retire is quiet: no cost
     stamp, the record dropped, the clone sid's strip override and spawner hint
-    cleared. The clone has a sidebar row in the parent's window badged "clone" (a background `reattach` from `_scratchCloneSpawn`); the mute list is unchanged.
+    cleared. The clone has a sidebar row in the parent's window badged "clone" (a background `reattach` from `_scratchCloneSpawn`); the mute list is unchanged; the row is read-only for the operator (no rename, no move, no delete), and its one action, Cancel clone, is the parent's `[agent:scratch cancel]`.
   - **Clone ceiling:** `SCRATCH_CLONE_CEILING_MS` (45 min). On expiry the clone
     is killed and the parent hears *[scratch] clone <name> ended without a
     summary (45m ceiling)*. A clone that exits on its own sends *exited without a

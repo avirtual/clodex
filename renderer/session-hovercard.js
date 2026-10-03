@@ -130,7 +130,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
       parts.push(`<div class="hovercard-note">🎫 ticket ${esc(item.dataset.ticket)}</div>`);
     }
     if (item.dataset.clone) {
-      parts.push(`<div class="hovercard-note">clone of ${esc(item.dataset.clone)}</div>`);
+      parts.push(`<div class="hovercard-note">clone of ${esc(item.dataset.clone)} — read-only; right-click to cancel</div>`);
     }
     if (item.dataset.attention) {
       parts.push(`<div class="hovercard-note hc-attn">⚠ ${esc(item.dataset.attentionMsg || 'Needs your attention')}</div>`);
@@ -149,7 +149,7 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     }
 
     if (type === 'remote') parts.push('<div class="hovercard-hint">click to attach</div>');
-    else parts.push('<div class="hovercard-hint">double-click the name to rename</div>');
+    else if (!item.dataset.clone) parts.push('<div class="hovercard-hint">double-click the name to rename</div>');
     return parts.join('');
   }
 

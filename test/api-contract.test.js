@@ -220,6 +220,7 @@ const PINNED_NAMES = [
   'teamActivity',
   'helpIndex', 'helpPage',
   'scratchMark',
+  'scratchCancel',
 ];
 
 test('table is well-formed: every row has name, valid kind, non-empty channel', () => {

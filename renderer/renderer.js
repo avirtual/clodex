@@ -945,6 +945,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   const nameEl = item.querySelector('.session-name');
   nameEl.addEventListener('dblclick', (e) => {
     e.stopPropagation();
+    if (item.dataset.clone) return;
     startRename(item, nameEl, name);
   });
 
@@ -1125,6 +1126,12 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
     case 'moveToWorkspace':
       moveSessionToWorkspace(name, workspaceId, workspaceName);
       break;
+    case 'cancelClone':
+      if (!clone) break;
+      window.api.scratchCancel(clone).then((res) => {
+        if (!res || !res.ok) showToast((res && res.error) || 'Cancel clone failed', { kind: 'error', duration: 10000, name });
+      });
+      break;
     case 'scratchMark':
       promptText(`Scratch mark on "${name}" — label`, '').then((raw) => {
         if (raw == null || !raw.trim()) return;
@@ -1147,8 +1154,8 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = rowSnapshot(name, prior);
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
-        // `background` marks the agent-initiated emitters (ticket seat, spawn
-        // intent, reviewer). The reload respawn sends no flag and keeps focus.
+        // `background` marks the agent-initiated emitters.
+        // The reload respawn sends no flag and keeps focus.
         switchToNewSession(name, { agentInitiated: background === true });
       }
       break;

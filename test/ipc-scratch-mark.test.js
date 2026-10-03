@@ -3,7 +3,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const { registerIpcHandlers } = require('../ipc-handlers');
 
-function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x', workspaceId: 'ws1' }, manager = {}, here = 'ws1', sent = [] } = {}) {
+function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x', workspaceId: 'ws1' }, manager = {}, here = 'ws1', sent = [], popupMenu = () => {} } = {}) {
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
@@ -14,7 +14,7 @@ function mkHandlers({ entry = { name: 'a', type: 'claude', cwd: '/x', workspaceI
       listForWorkspace: (ws) => (ws === entry.workspaceId ? [entry] : []),
     },
     promptLibrary: { list: () => [] },
-    popupMenu: () => {},
+    popupMenu,
     REGISTRY_DIR: null,
     fs,
     showItemInFolder: () => {},
@@ -125,4 +125,34 @@ test('the context menu does NOT carry Scratch mark… for a codex row', () => {
   const { labels } = menuLabels('codex');
   assert.ok(!labels.includes('Scratch mark…'), `codex row got the item: ${labels.join(' | ')}`);
   assert.ok(labels.includes('Move Session…'), 'the menu was built for this agent row');
+});
+
+test('t1547 a scratch clone\'s row menu is the single item Cancel clone, which names the parent', () => {
+  let template = null;
+  const { handlers, e, sent } = mkHandlers({
+    popupMenu: (tpl) => { template = tpl; },
+    manager: { sessions: new Map([['a-scratch-1234', { name: 'a-scratch-1234', clone: 'a' }]]) },
+  });
+  handlers.get('session:context-menu')(e, { name: 'a-scratch-1234', cwd: '/x' });
+  assert.deepStrictEqual(template.map((i) => i.label), ['Cancel clone']);
+  template[0].click();
+  assert.deepStrictEqual(sent, [{ channel: 'session:context-action', payload: { action: 'cancelClone', name: 'a-scratch-1234', clone: 'a' } }]);
+});
+
+test('t1547 session:scratch-cancel cancels the parent\'s clone and replies into the parent', async () => {
+  const parent = { name: 'a', _scratchClone: 'a-scratch-1234' };
+  const calls = [];
+  const injected = [];
+  const { handlers, e } = mkHandlers({
+    manager: {
+      sessions: new Map([['a', parent]]),
+      _scratchCloneCancel: (s, reply) => { calls.push(s.name); reply('[scratch] clone cancelled, no summary'); },
+      _injectText: (s, text) => injected.push([s.name, text]),
+    },
+  });
+  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a' }), { ok: true });
+  assert.deepStrictEqual(calls, ['a']);
+  assert.deepStrictEqual(injected, [['a', '[scratch] clone cancelled, no summary']]);
+  parent._scratchClone = null;
+  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a' }), { ok: false, error: 'a has no scratch clone' });
 });
