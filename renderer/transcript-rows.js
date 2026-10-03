@@ -8,6 +8,7 @@ const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
 const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('./lib/transcript-surface');
+const { parseBlocks, parseInline } = require('./lib/markdown-lite');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
@@ -123,11 +124,75 @@ function appendProse(doc, parent, text, ctx) {
   });
 }
 
+function hasIntentMarks(text) {
+  return classifyRows(String(text).split('\n').map((t) => ({ text: t, isWrapped: false }))).some((m) => m.span);
+}
+
 function appendPlain(doc, parent, text, ctx) {
   String(text).split('\n').forEach((line, k) => {
     if (k) parent.appendChild(doc.createTextNode('\n'));
     appendLinked(doc, parent, line, '', ctx);
   });
+}
+
+function appendInline(doc, parent, text, ctx) {
+  for (const tok of parseInline(text)) {
+    if (tok.kind === 'text') { appendLinked(doc, parent, tok.text, '', ctx); continue; }
+    if (tok.kind === 'link') {
+      const a = linkNode(doc, { kind: 'url', text: tok.href }, '', ctx);
+      a.textContent = tok.text;
+      a.title = tok.href;
+      parent.appendChild(a);
+      continue;
+    }
+    const node = el(doc, tok.kind === 'bold' ? 'b' : tok.kind === 'italic' ? 'i' : 'code', '');
+    appendLinked(doc, node, tok.text, '', ctx);
+    parent.appendChild(node);
+  }
+}
+
+function mdCell(doc, tag, text, align, ctx) {
+  const cell = el(doc, tag, '');
+  if (align) cell.style.textAlign = align;
+  appendInline(doc, cell, text, ctx);
+  return cell;
+}
+
+function mdTable(doc, block, ctx) {
+  const table = el(doc, 'table', 'tr-md-table');
+  const head = el(doc, 'thead', '');
+  const tr = el(doc, 'tr', '');
+  block.header.forEach((c, k) => tr.appendChild(mdCell(doc, 'th', c, block.align && block.align[k], ctx)));
+  head.appendChild(tr);
+  table.appendChild(head);
+  const body = el(doc, 'tbody', '');
+  for (const row of block.rows) {
+    const r = el(doc, 'tr', '');
+    row.forEach((c, k) => r.appendChild(mdCell(doc, 'td', c, block.align && block.align[k], ctx)));
+    body.appendChild(r);
+  }
+  table.appendChild(body);
+  return table;
+}
+
+function appendMarkdown(doc, parent, text, ctx) {
+  for (const block of parseBlocks(text)) {
+    if (block.kind === 'table') parent.appendChild(mdTable(doc, block, ctx));
+    else if (block.kind === 'fence') {
+      const pre = el(doc, 'pre', 'tr-md-fence');
+      appendPlain(doc, pre, block.text, ctx);
+      parent.appendChild(pre);
+    } else if (block.kind === 'heading') {
+      const h = el(doc, 'div', `tr-md-h${block.level}`);
+      appendInline(doc, h, block.text, ctx);
+      parent.appendChild(h);
+    } else {
+      block.text.split('\n').forEach((line, k) => {
+        if (k) parent.appendChild(doc.createTextNode('\n'));
+        appendInline(doc, parent, line, ctx);
+      });
+    }
+  }
 }
 
 function spillPeek(ctx, path) {
@@ -330,7 +395,8 @@ function appendSegments(doc, row, segs, ctx) {
       const fold = filedFold(doc, seg.spill, ctx, prose);
       prose.appendChild(fold.head);
       fold.mount();
-    } else appendPlain(doc, prose, seg.text, ctx);
+    } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
+    else appendMarkdown(doc, prose, seg.text, ctx);
     row.appendChild(prose);
   }
 }
@@ -763,6 +829,7 @@ function buildRow(doc, rec, ctx, attached, boxed) {
       const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
       if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+      else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
       else appendProse(doc, row, rec.text, ctx);
       return row;
     }
@@ -1289,7 +1356,20 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     restore(anchor);
   }
 
-  return { render, setWorking, setMode };
+  function setMarkdown(on) {
+    const want = on !== false;
+    if ((deps.markdown !== false) === want) return;
+    deps.markdown = want;
+    const anchor = anchorOf();
+    for (const c of turnCache.values()) {
+      while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
+      c.sub = null;
+    }
+    render(lastRecords);
+    restore(anchor);
+  }
+
+  return { render, setWorking, setMode, setMarkdown };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };

@@ -108,7 +108,7 @@ test('a start-of-line intent in a prose row or a prompt head is classified, not 
 });
 
 test('an intent inside a fence gets no mark', () => {
-  assert.deepStrictEqual(marked(render([prose('```\n[agent:dm x]\n```')])), []);
+  assert.deepStrictEqual(marked(render([prose('```\n[agent:dm x]\n```')])).filter((n) => /intent-mark/.test(n.cls)), []);
 });
 
 function linkCtx(resolved) {
@@ -1324,6 +1324,7 @@ test('the transcript bar renders the chips slot, then Conversation, Internals, ?
     const views = bar.childNodes[1];
     assert.deepStrictEqual(views.childNodes.map((n) => [n.className, textOf(n), n.title]), [
       ['transcript-mode', 'ConversationInternals', ''],
+      ['transcript-mode-btn transcript-md-btn', 'md', 'Render the agent\'s markdown (tables, bold, links) — off shows the raw text'],
       ['transcript-help-btn', '?', 'Clodex at a glance'],
       ['transcript-mode-btn transcript-terminal-btn', 'Screen', 'Show the CLI\'s own screen (⌘⇧T)'],
     ]);

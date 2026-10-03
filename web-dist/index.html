@@ -8619,6 +8619,11 @@ body.web-frontend #sidebar-header {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+.transcript-md-btn {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono, monospace);
+}
 .transcript-pane[data-raw] {
   height: auto;
   overflow: hidden;
@@ -8858,6 +8863,49 @@ body.web-frontend #sidebar-header {
 }
 .tr-seg-prose {
   white-space: pre-wrap;
+}
+.tr-md-table {
+  white-space: normal;
+  border-collapse: collapse;
+  margin: var(--sp-1, 4px) 0;
+}
+.tr-md-table th,
+.tr-md-table td {
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+  vertical-align: top;
+  text-align: left;
+}
+.tr-md-table th {
+  font-weight: 600;
+  background: var(--surface-raised, transparent);
+}
+.tr-md-fence {
+  white-space: pre;
+  overflow-x: auto;
+  margin: var(--sp-1, 4px) 0;
+  padding: var(--sp-2, 8px);
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-raised, transparent);
+  border-radius: var(--radius-sm, 4px);
+}
+.tr-prose code {
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-raised, transparent);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0 0.2em;
+}
+.tr-md-h1,
+.tr-md-h2,
+.tr-md-h3 {
+  font-weight: 700;
+  margin: var(--sp-2, 8px) 0 var(--sp-1, 4px);
+}
+.tr-md-h1 {
+  font-size: 1.2em;
+}
+.tr-md-h2 {
+  font-size: 1.1em;
 }
 .tr-seg-prose + .intent-stack,
 .intent-stack + .tr-seg-prose {
@@ -32538,6 +32586,199 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // renderer/lib/markdown-lite.js
+  var require_markdown_lite = __commonJS({
+    "renderer/lib/markdown-lite.js"(exports, module) {
+      "use strict";
+      var FENCE_OPEN_RE = /^\s{0,3}```\s*([^\s`]*)\s*$/;
+      var FENCE_CLOSE_RE = /^\s{0,3}```\s*$/;
+      var HEADING_RE = /^(#{1,3})[ \t]+(\S.*?)[ \t]*$/;
+      var SEP_CELL_RE = /^:?-+:?$/;
+      var LINK_RE = /^\[([^\]\n]+)\]\(([^()\s]+)\)/;
+      var SAFE_HREF_RE = /^https?:\/\/\S+$/i;
+      var WORD_RE = /[\p{L}\p{N}_]/u;
+      function pipeAt(line) {
+        const at = [];
+        for (let i = 0; i < line.length; i++) {
+          if (line[i] === "\\") {
+            i++;
+            continue;
+          }
+          if (line[i] === "|") at.push(i);
+        }
+        return at;
+      }
+      function splitRow(line) {
+        const s = line.trim();
+        const pipes = pipeAt(s);
+        if (!pipes.length) return null;
+        const cuts = [-1, ...pipes, s.length];
+        const cells = [];
+        for (let k = 0; k + 1 < cuts.length; k++) cells.push(s.slice(cuts[k] + 1, cuts[k + 1]));
+        if (pipes[0] === 0) cells.shift();
+        if (pipes[pipes.length - 1] === s.length - 1) cells.pop();
+        return cells.map((c) => c.trim().replace(/\\\|/g, "|"));
+      }
+      function alignOf(cell) {
+        const left = cell.startsWith(":");
+        const right = cell.endsWith(":");
+        if (left && right) return "center";
+        if (right) return "right";
+        if (left) return "left";
+        return null;
+      }
+      function separatorFor(line, width) {
+        const cells = splitRow(line);
+        if (!cells || cells.length !== width) return null;
+        if (!cells.every((c) => SEP_CELL_RE.test(c))) return null;
+        return cells.map(alignOf);
+      }
+      function fit(cells, width) {
+        const out = cells.slice(0, width);
+        while (out.length < width) out.push("");
+        return out;
+      }
+      function parseBlocks(text) {
+        const lines = String(text).split("\n");
+        const blocks = [];
+        let buf = null;
+        const flush = () => {
+          if (buf) blocks.push({ kind: "text", text: buf.join("\n") });
+          buf = null;
+        };
+        const literal = (line) => {
+          (buf || (buf = [])).push(line);
+        };
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          const open = FENCE_OPEN_RE.exec(line);
+          if (open) {
+            let j = i + 1;
+            while (j < lines.length && !FENCE_CLOSE_RE.test(lines[j])) j++;
+            if (j < lines.length) {
+              flush();
+              blocks.push({ kind: "fence", lang: open[1], text: lines.slice(i + 1, j).join("\n") });
+              i = j + 1;
+              continue;
+            }
+            literal(line);
+            i++;
+            continue;
+          }
+          const head = HEADING_RE.exec(line);
+          if (head) {
+            flush();
+            blocks.push({ kind: "heading", level: head[1].length, text: head[2] });
+            i++;
+            continue;
+          }
+          const header = splitRow(line);
+          const align = header && i + 1 < lines.length ? separatorFor(lines[i + 1], header.length) : null;
+          if (align) {
+            flush();
+            const rows = [];
+            let j = i + 2;
+            while (j < lines.length && lines[j].trim()) {
+              const cells = splitRow(lines[j]);
+              if (!cells) break;
+              rows.push(fit(cells, header.length));
+              j++;
+            }
+            blocks.push({ kind: "table", header, align, rows });
+            i = j;
+            continue;
+          }
+          literal(line);
+          i++;
+        }
+        flush();
+        return blocks;
+      }
+      var isWord = (ch) => ch != null && WORD_RE.test(ch);
+      var isSpace = (ch) => ch == null || /\s/.test(ch);
+      function closeItalic(text, mark, from) {
+        for (let j = from; j < text.length; j++) {
+          if (text[j] === "\\") {
+            j++;
+            continue;
+          }
+          if (text[j] !== mark) continue;
+          if (mark === "*" && (text[j + 1] === "*" || text[j - 1] === "*")) continue;
+          if (isSpace(text[j - 1]) || isWord(text[j + 1])) continue;
+          return j;
+        }
+        return -1;
+      }
+      function closeBold(text, from) {
+        for (let j = from; j + 1 < text.length; j++) {
+          if (text[j] === "\\") {
+            j++;
+            continue;
+          }
+          if (text[j] === "*" && text[j + 1] === "*" && !isSpace(text[j - 1])) return j;
+        }
+        return -1;
+      }
+      function parseInline(text) {
+        const s = String(text);
+        const out = [];
+        let buf = "";
+        const push = (tok) => {
+          if (buf) out.push({ kind: "text", text: buf });
+          buf = "";
+          out.push(tok);
+        };
+        let i = 0;
+        while (i < s.length) {
+          const ch = s[i];
+          if (ch === "\\" && i + 1 < s.length) {
+            buf += s.slice(i, i + 2);
+            i += 2;
+            continue;
+          }
+          if (ch === "`") {
+            const j = s.indexOf("`", i + 1);
+            if (j > i + 1) {
+              push({ kind: "code", text: s.slice(i + 1, j) });
+              i = j + 1;
+              continue;
+            }
+          } else if (ch === "*" && s[i + 1] === "*") {
+            const j = isSpace(s[i + 2]) ? -1 : closeBold(s, i + 3);
+            if (j > 0) {
+              push({ kind: "bold", text: s.slice(i + 2, j) });
+              i = j + 2;
+              continue;
+            }
+            buf += "**";
+            i += 2;
+            continue;
+          } else if ((ch === "*" || ch === "_") && !isWord(s[i - 1]) && !isSpace(s[i + 1]) && s[i + 1] !== ch) {
+            const j = closeItalic(s, ch, i + 2);
+            if (j > 0) {
+              push({ kind: "italic", text: s.slice(i + 1, j) });
+              i = j + 1;
+              continue;
+            }
+          } else if (ch === "[") {
+            const m = LINK_RE.exec(s.slice(i));
+            if (m && SAFE_HREF_RE.test(m[2])) {
+              push({ kind: "link", text: m[1], href: m[2] });
+              i += m[0].length;
+              continue;
+            }
+          }
+          buf += ch;
+          i++;
+        }
+        if (buf) out.push({ kind: "text", text: buf });
+        return out;
+      }
+      module.exports = { parseBlocks, parseInline };
+    }
+  });
+
   // renderer/transcript-rows.js
   var require_transcript_rows = __commonJS({
     "renderer/transcript-rows.js"(exports, module) {
@@ -32550,6 +32791,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { isExternallyOpenable } = require_external_link();
       var { TURN_KINDS, isInternalRow } = require_transcript_internal();
       var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require_transcript_surface();
+      var { parseBlocks, parseInline } = require_markdown_lite();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
       var CLAMP_CHARS = 240;
@@ -32656,11 +32898,73 @@ ${m[2].replace(/^\r?\n/, "")}`;
           appendLinked(doc, parent, line.slice(end), "", ctx);
         });
       }
+      function hasIntentMarks(text) {
+        return classifyRows(String(text).split("\n").map((t) => ({ text: t, isWrapped: false }))).some((m) => m.span);
+      }
       function appendPlain(doc, parent, text, ctx) {
         String(text).split("\n").forEach((line, k) => {
           if (k) parent.appendChild(doc.createTextNode("\n"));
           appendLinked(doc, parent, line, "", ctx);
         });
+      }
+      function appendInline(doc, parent, text, ctx) {
+        for (const tok of parseInline(text)) {
+          if (tok.kind === "text") {
+            appendLinked(doc, parent, tok.text, "", ctx);
+            continue;
+          }
+          if (tok.kind === "link") {
+            const a = linkNode(doc, { kind: "url", text: tok.href }, "", ctx);
+            a.textContent = tok.text;
+            a.title = tok.href;
+            parent.appendChild(a);
+            continue;
+          }
+          const node = el(doc, tok.kind === "bold" ? "b" : tok.kind === "italic" ? "i" : "code", "");
+          appendLinked(doc, node, tok.text, "", ctx);
+          parent.appendChild(node);
+        }
+      }
+      function mdCell(doc, tag, text, align, ctx) {
+        const cell = el(doc, tag, "");
+        if (align) cell.style.textAlign = align;
+        appendInline(doc, cell, text, ctx);
+        return cell;
+      }
+      function mdTable(doc, block, ctx) {
+        const table = el(doc, "table", "tr-md-table");
+        const head = el(doc, "thead", "");
+        const tr = el(doc, "tr", "");
+        block.header.forEach((c, k) => tr.appendChild(mdCell(doc, "th", c, block.align && block.align[k], ctx)));
+        head.appendChild(tr);
+        table.appendChild(head);
+        const body = el(doc, "tbody", "");
+        for (const row of block.rows) {
+          const r = el(doc, "tr", "");
+          row.forEach((c, k) => r.appendChild(mdCell(doc, "td", c, block.align && block.align[k], ctx)));
+          body.appendChild(r);
+        }
+        table.appendChild(body);
+        return table;
+      }
+      function appendMarkdown(doc, parent, text, ctx) {
+        for (const block of parseBlocks(text)) {
+          if (block.kind === "table") parent.appendChild(mdTable(doc, block, ctx));
+          else if (block.kind === "fence") {
+            const pre = el(doc, "pre", "tr-md-fence");
+            appendPlain(doc, pre, block.text, ctx);
+            parent.appendChild(pre);
+          } else if (block.kind === "heading") {
+            const h = el(doc, "div", `tr-md-h${block.level}`);
+            appendInline(doc, h, block.text, ctx);
+            parent.appendChild(h);
+          } else {
+            block.text.split("\n").forEach((line, k) => {
+              if (k) parent.appendChild(doc.createTextNode("\n"));
+              appendInline(doc, parent, line, ctx);
+            });
+          }
+        }
       }
       function spillPeek(ctx, path) {
         const cached = spillCache.get(path);
@@ -32854,7 +33158,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const fold = filedFold(doc, seg.spill, ctx, prose);
             prose.appendChild(fold.head);
             fold.mount();
-          } else appendPlain(doc, prose, seg.text, ctx);
+          } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
+          else appendMarkdown(doc, prose, seg.text, ctx);
           row.appendChild(prose);
         }
       }
@@ -33259,6 +33564,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const row = el(doc, "div", `tr-row tr-prose${rec.segments ? " tr-segs" : ""}`);
             row.dataset.id = rec.id;
             if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+            else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
             else appendProse(doc, row, rec.text, ctx);
             return row;
           }
@@ -33752,7 +34058,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
           render(lastRecords);
           restore(anchor);
         }
-        return { render, setWorking, setMode };
+        function setMarkdown(on) {
+          const want = on !== false;
+          if (deps.markdown !== false === want) return;
+          deps.markdown = want;
+          const anchor = anchorOf();
+          for (const c of turnCache.values()) {
+            while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
+            c.sub = null;
+          }
+          render(lastRecords);
+          restore(anchor);
+        }
+        return { render, setWorking, setMode, setMarkdown };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
     }
@@ -34157,10 +34475,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
+      var MD_KEY = "clodex-transcript-md";
+      var MD_TITLE = "Render the agent's markdown (tables, bold, links) \u2014 off shows the raw text";
+      var mdBars = /* @__PURE__ */ new Set();
+      function markdownOn() {
+        try {
+          return localStorage.getItem(MD_KEY) !== "0";
+        } catch {
+          return true;
+        }
+      }
+      function setMarkdownPref(on) {
+        try {
+          localStorage.setItem(MD_KEY, on ? "1" : "0");
+        } catch {
+        }
+        for (const bar of [...mdBars]) {
+          if (bar.paneEl.isConnected === false) {
+            mdBars.delete(bar);
+            continue;
+          }
+          bar.btn.setAttribute("aria-pressed", on ? "true" : "false");
+          const rows = views.get(bar.paneEl);
+          if (rows) rows.setMarkdown(on);
+        }
+      }
       function transcriptRowsFor(doc, paneEl, ctx = {}) {
         let rows = views.get(paneEl);
         if (!rows) {
-          rows = createTranscriptRows(doc, paneEl, ctx);
+          rows = createTranscriptRows(doc, paneEl, { ...ctx, markdown: markdownOn() });
           views.set(paneEl, rows);
         }
         return rows;
@@ -34203,7 +34546,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           control.appendChild(btn);
           return btn;
         });
+        const mdBtn = barButton(doc, "transcript-mode-btn transcript-md-btn", "md", MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute("aria-pressed") !== "true"));
+        mdBtn.setAttribute("aria-pressed", markdownOn() ? "true" : "false");
+        mdBars.add({ paneEl, btn: mdBtn });
         views2.appendChild(control);
+        views2.appendChild(mdBtn);
         const help = onHelp ? barButton(doc, "transcript-help-btn", "?", HELP_TITLE, () => onHelp()) : null;
         if (help) views2.appendChild(help);
         const terminalBtn = onTerminal ? barButton(doc, "transcript-mode-btn transcript-terminal-btn", "Screen", TERMINAL_TITLE, () => onTerminal()) : null;
@@ -34224,7 +34571,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         bar.appendChild(chips);
         bar.appendChild(views2);
         paneEl.insertBefore(bar, paneEl.firstChild);
-        return { bar, chips, control, buttons, help, terminal: terminalBtn, setMode, setRaw };
+        return { bar, chips, control, buttons, help, terminal: terminalBtn, markdown: mdBtn, setMode, setRaw };
       }
       function markedText(doc, text, spans) {
         const frag = [];

@@ -1902,3 +1902,48 @@ test('spill fold: an unclosed filed card keeps the fold in its body row with the
   assert.deepStrictEqual(card.childNodes.map(cls), ['intent-card-head', 'intent-card-body', 'tr-spill-body']);
   assert.strictEqual(card.childNodes[2].textContent, 'open');
 });
+
+const MD_TABLE = 'Results:\n| File | State | Ref |\n|---|:-:|--:|\n| a.js | **ok** | [the PR](https://example.com/pr/1) |\n| b.js | fail | x |';
+const findTag = (node, tag) => (node.tag === tag ? [node] : []).concat((node.childNodes || []).flatMap((k) => findTag(k, tag)));
+
+const MD_SEGS = `[agent:dm bob] hi\n[agent:end]\n${MD_TABLE}`;
+
+test('assistant prose segments render markdown: a pipe table becomes a <table> and a link shows its label', () => {
+  const m = mount();
+  m.render([said('a1', 0, MD_SEGS)]);
+  const prose = findCls(m.pane, 'tr-seg-prose')[0];
+  const [table] = findTag(prose, 'table');
+  assert.strictEqual(table.className, 'tr-md-table');
+  assert.strictEqual(findTag(table, 'th').length, 3);
+  assert.strictEqual(findTag(table, 'td').length, 6);
+  assert.strictEqual(findTag(table, 'b')[0].textContent, 'ok');
+  const a = findTag(table, 'a').find((n) => n.dataset.url);
+  assert.strictEqual(a.textContent, 'the PR');
+  assert.strictEqual(a.title, 'https://example.com/pr/1');
+  assert.strictEqual(a.dataset.url, 'https://example.com/pr/1');
+});
+
+test('with markdown off the same segment renders raw text, and setMarkdown re-renders the open transcript', () => {
+  const m = mount({ markdown: false });
+  m.render([said('a1', 0, MD_SEGS)]);
+  assert.strictEqual(findTag(m.pane, 'table').length, 0);
+  assert.strictEqual(findCls(m.pane, 'tr-seg-prose')[0].textContent, MD_TABLE);
+  m.rows.setMarkdown(true);
+  assert.strictEqual(findTag(m.pane, 'table').length, 1);
+  m.rows.setMarkdown(false);
+  assert.strictEqual(findTag(m.pane, 'table').length, 0);
+});
+
+test('a prompt carrying a pipe table stays plain text', () => {
+  const m = mount();
+  m.render([{ id: 'p1', kind: 'prompt', ts: null, turn: 0, text: MD_TABLE, source: 'typed' }]);
+  assert.strictEqual(findTag(m.pane, 'table').length, 0);
+  assert.ok(m.pane.textContent.includes('| a.js | **ok** |'));
+});
+
+test('an assistant reply with no intent segments renders markdown too', () => {
+  const m = mount();
+  m.render([{ id: 'a1', kind: 'assistant', ts: null, turn: 0, text: MD_TABLE }]);
+  assert.strictEqual(findTag(m.pane, 'table').length, 1);
+  assert.strictEqual(findTag(m.pane, 'th').length, 3);
+});
