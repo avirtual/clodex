@@ -234,6 +234,7 @@ clodex-seatimp-home-
 clodex-seatimp-proj-
 clodex-seatlayout-
 clodex-seatlayout-outside-
+clodex-setup-
 clodex-sinfo-
 clodex-sinfo-overlay-
 clodex-sm-
