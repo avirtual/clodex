@@ -72,8 +72,14 @@ On packaged macOS builds, persistent state lives in `~/Library/Application Suppo
 ## Building from source
 
 ```bash
-git clone https://github.com/avirtual/clodex
-cd clodex
+git clone https://github.com/avirtual/clodex && cd clodex && npm run setup && npm start
+```
+
+`npm run setup` checks Xcode CLT, Node 20+ and the `claude`/`codex` CLIs, installs, rebuilds node-pty for Electron and verifies it loads. `npm run dist:mac` builds the arm64 DMG.
+
+By hand:
+
+```bash
 npm install            # postinstall renames dev Electron.app to Clodex
 npx electron-rebuild   # rebuild node-pty against Electron's ABI
 npm start              # dev mode

@@ -21,8 +21,19 @@ headless engine and `clodexctl` also run on Linux. Node 20+ throughout — it is
 not optional: node-pty is native and must match Electron's ABI.
 
 ```sh
-git clone https://github.com/avirtual/clodex
-cd clodex
+git clone https://github.com/avirtual/clodex && cd clodex && npm run setup && npm start
+```
+
+`npm run setup` checks the prerequisites, installs, rebuilds node-pty for
+Electron and verifies it loads; `npm start` and `npm run dev` run its
+`--check` half first and stop with one sentence when something is missing.
+`bash scripts/setup.sh --check` runs only the checks and the load probe,
+installing nothing; its exit code is the answer. After a `git pull` that bumps
+Electron, rerun `npm run setup` — it notices the new version and rebuilds.
+
+By hand:
+
+```sh
 npm install            # postinstall renames dev Electron.app to Clodex
 npx electron-rebuild   # rebuild node-pty against Electron's ABI
 npm start              # dev mode
