@@ -1,12 +1,13 @@
 'use strict';
 
 const { HEAD_RE } = require('./spill');
-const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, pointerMatch, resolveSpill } = require('../intent-spill');
+const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, STAND_INS, pointerMatch, resolveSpill } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
-const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote'];
+const { PLACEHOLDER, PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+
+const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote', 'Clodex keeps it out of the request'];
 const END_LINE = '[agent:end]';
-const PLACEHOLDER = "(This turn's text was delivered in full; Clodex keeps it out of the request.)";
 
 function hasNeedle(msg) {
   if (!Array.isArray(msg.content)) return false;
@@ -30,7 +31,7 @@ function headOf(t) {
 function classifyLine(line) {
   const t = cleanLine(line).trim();
   if (!t) return { kind: 0 };
-  if (t === SPILL_FILLER || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return { kind: 1 };
+  if (t === SPILL_FILLER || STAND_INS.includes(t) || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return { kind: 1 };
   const f = FILED_POINTER_RE.exec(t);
   if (f && !f[1]) return { kind: 1 };
   const head = headOf(t);
@@ -83,6 +84,7 @@ function cutText(text, state) {
     const c = classifyLine(lines[i]);
     if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
+    if (STAND_INS.includes(cleanLine(lines[i]).trim())) state.parroted++;
     if (c.kind === 2) {
       const full = expansionOf(state);
       if (full) kept.push(...full, END_LINE);
@@ -132,13 +134,13 @@ function placeholderOf(r) {
 }
 
 function cutSpillStubs(obj, { root = null, agent = null, examples = 2, sticky = new Set() } = {}) {
-  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, expanded: [] };
+  const report = { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] };
   if (!obj || !Array.isArray(obj.messages)) return report;
   const out = [];
   let changed = false;
   const stubs = collectStubs(obj.messages, examples > 0 ? root : null, agent);
   const total = stubs.filter(Boolean).length;
-  const state = { first: true, stubs, next: 0, resolved: 0, total, examples, sticky, expanded: report.expanded };
+  const state = { first: true, parroted: 0, stubs, next: 0, resolved: 0, total, examples, sticky, expanded: report.expanded };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
     const r = cutMessage(msg, state);
@@ -157,8 +159,9 @@ function cutSpillStubs(obj, { root = null, agent = null, examples = 2, sticky = 
     report.lines += r.lines;
     report.blocks += r.droppedBlocks;
   }
+  report.parroted = state.parroted;
   if (changed) { obj.messages = out; report.cut = true; }
   return report;
 }
 
-module.exports = { cutSpillStubs, classifyLine, hasNeedle, NEEDLES, PLACEHOLDER };
+module.exports = { cutSpillStubs, classifyLine, hasNeedle, NEEDLES, PLACEHOLDER, PLACEHOLDER_LEGACY };
