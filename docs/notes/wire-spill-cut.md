@@ -35,3 +35,12 @@ examples and replaces earlier ones with this note; this body was delivered and
 filed in full. Every new intent still needs its complete body; never write this
 note.]`, every later one `SPILLED_BODY`. Both literals are the `spilled` mimic kind and both
 are refused as a typed body (`spilledBodyOf`), on the same bounce path.
+
+## STAND_INS are cuttable
+On jarvis-lead (sid 1d05af56), 55 minutes after the old `PLACEHOLDER_LEGACY` sentence first stood in
+behind a system row, the model emitted it verbatim as its whole reply (wirescope req 8336, 29 output
+tokens), and the copy rode uncut in every later request. The cut never sees its own output (the CLI
+re-sends its transcript; wirescope's request.json is post-cut, the jsonl carries only the model's copy),
+so any `STAND_INS` line in incoming assistant text is model-authored: it is cut and counted as
+`parroted`. The one exception is a note on the line right under an intent head (`HEAD_RE`): that is
+the cut's own rendering shape, which the mimic guard bounces when the model types it.

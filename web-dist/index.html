@@ -32623,6 +32623,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // spill-stand-ins.js
+  var require_spill_stand_ins = __commonJS({
+    "spill-stand-ins.js"(exports, module) {
+      "use strict";
+      var SPILLED_BODY = "[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]";
+      var SPILLED_BODY_FIRST = "[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]";
+      var SPILLED_BODY_EPHEMERAL = "[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]";
+      var PLACEHOLDER = "[Runtime note: this turn's text was delivered and filed in full; Clodex keeps it out of the request. Never write this note.]";
+      var PLACEHOLDER_LEGACY = "(This turn's text was delivered in full; Clodex keeps it out of the request.)";
+      var STAND_INS = Object.freeze([PLACEHOLDER, PLACEHOLDER_LEGACY, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL]);
+      module.exports = { SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, PLACEHOLDER, PLACEHOLDER_LEGACY, STAND_INS };
+    }
+  });
+
   // renderer/transcript-rows.js
   var require_transcript_rows = __commonJS({
     "renderer/transcript-rows.js"(exports, module) {
@@ -32636,6 +32650,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { TURN_KINDS, isInternalRow } = require_transcript_internal();
       var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require_transcript_surface();
       var { renderMarkdown } = require_render_markdown();
+      var { cleanLine } = require_intent_scanner();
+      var { STAND_INS } = require_spill_stand_ins();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
       var CLAMP_CHARS = 240;
@@ -33181,6 +33197,42 @@ ${m[2].replace(/^\r?\n/, "")}`;
         row.appendChild(text);
         return withTime(doc, row, rec);
       }
+      var ECHO_TEXT = "the model echoed a Clodex runtime note \u2014 nothing was said; it is cut from the next request";
+      function dropEchoes(text) {
+        const lines = text.split("\n");
+        const kept = lines.filter((l) => !STAND_INS.includes(cleanLine(l).trim()));
+        return kept.length === lines.length ? text : kept.join("\n");
+      }
+      function withoutEchoes(rec) {
+        if (rec.segments) {
+          let dropped = false;
+          const segments = [];
+          for (const seg of rec.segments) {
+            if (seg.kind === "intent" || seg.kind === "inert" || seg.spill || typeof seg.text !== "string") {
+              segments.push(seg);
+              continue;
+            }
+            const text2 = dropEchoes(seg.text);
+            if (text2 === seg.text) {
+              segments.push(seg);
+              continue;
+            }
+            dropped = true;
+            if (text2.trim()) segments.push({ ...seg, text: text2 });
+          }
+          return dropped ? { rec: { ...rec, segments }, empty: !segments.length } : { rec, empty: false };
+        }
+        if (typeof rec.text !== "string" || hasIntentMarks(rec.text)) return { rec, empty: false };
+        const text = dropEchoes(rec.text);
+        return text === rec.text ? { rec, empty: false } : { rec: { ...rec, text }, empty: !text.trim() };
+      }
+      function echoRow(doc, rec) {
+        const row = el(doc, "div", "tr-row tr-notice tr-echo");
+        row.dataset.id = rec.id;
+        row.appendChild(el(doc, "span", "tr-mark"));
+        row.appendChild(el(doc, "span", "tr-notice-text", ECHO_TEXT));
+        return row;
+      }
       function noticeRow(doc, rec, level, text, ctx) {
         const row = el(doc, "div", `tr-row tr-notice tr-notice-${level}`);
         row.dataset.id = rec.id;
@@ -33358,6 +33410,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           case "assistant": {
             if (rec.apiError) return noticeRow(doc, rec, "error", rec.text, ctx);
+            const clean = withoutEchoes(rec);
+            if (clean.empty) return echoRow(doc, rec);
+            rec = clean.rec;
             const row = el(doc, "div", `tr-row tr-prose${rec.segments ? " tr-segs" : ""}`);
             row.dataset.id = rec.id;
             if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
