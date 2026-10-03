@@ -763,6 +763,7 @@ function rebuildLiveRow(name, snap, res = {}) {
     (res.noWire ?? snap.noWire) === true, snap.account || null, snap.fixFor || null);
   markSeatEffort(name, snap.effort);
   markSeatPosture(name, snap.posture);
+  if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
   if (snap.createdAt) sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), createdAt: snap.createdAt });
 }
 
@@ -1145,8 +1146,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = rowSnapshot(name, prior);
-        rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
-        applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), clone);
+        rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
         // `background` marks the agent-initiated emitters (ticket seat, spawn
         // intent, reviewer). The reload respawn sends no flag and keeps focus.
         switchToNewSession(name, { agentInitiated: background === true });
