@@ -77,7 +77,9 @@ npx electron-builder --mac dmg --x64  # an Intel build → dist/
 ```
 
 Releases on the repo are cut by the maintainer's `scripts/release.sh` (the
-`npm run release` script), which tags, builds and publishes. That is not a user
+`npm run release` script), which tags, builds and publishes; before tagging it
+mounts the built DMG and runs `scripts/dmg-pty-probe.sh`, which spawns a shell
+through the packaged node-pty under the bundle's own Electron. That is not a user
 step: to run Clodex from source you want `npm start`, and to ship it to a
 server you want a headless node.
 

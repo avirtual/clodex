@@ -74,6 +74,7 @@ clodex-default-mode-
 clodex-depless-root-
 clodex-depless-tree-
 clodex-disc-
+clodex-dmgprobe-
 clodex-empty-
 clodex-envroot-
 clodex-envud-

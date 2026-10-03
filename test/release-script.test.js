@@ -272,3 +272,17 @@ test('release: the publish step retries a flaky asset upload, clobbering an exis
   assert.match(src, /die "gh release create failed/,
     'the last failure must still die with the re-run instructions');
 });
+
+test('release: the DMG pty probe runs after the build and before anything is committed or tagged', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const build = src.indexOf('run npm run dist:mac');
+  const probe = src.indexOf('run bash scripts/dmg-pty-probe.sh "$DMG" || die ');
+  const commit = src.indexOf('git commit');
+  const tag = src.search(/^git tag "\$TAG"/m);
+  assert.ok(build > 0, 'the DMG build step is gone');
+  assert.ok(probe > 0, 'the DMG pty probe step is gone — the shipped DMG is never launched before tagging');
+  assert.ok(src.includes('step "DMG pty probe"'), 'the probe has no step header');
+  assert.ok(probe > build, 'the probe must run on the DMG this release just built');
+  assert.ok(commit > 0 && probe < commit, 'the probe must run before the release commit');
+  assert.ok(tag > 0 && probe < tag, 'the probe must run before the tag');
+});
