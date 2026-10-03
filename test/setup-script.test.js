@@ -19,7 +19,7 @@ function stub(dir, name, body) {
   fs.chmodSync(file, 0o755);
 }
 
-function fixture({ nodeVersion = 'v22.3.0', xcode = true, probeExit = 0 } = {}) {
+function fixture({ nodeVersion = 'v22.12.0', xcode = true, probeExit = 0, os = 'Darwin' } = {}) {
   const root = mkTmpRoot('clodex-setup-');
   roots.push(root);
   const bin = path.join(root, 'stubs');
@@ -31,7 +31,7 @@ function fixture({ nodeVersion = 'v22.3.0', xcode = true, probeExit = 0 } = {}) 
   fs.writeFileSync(path.join(root, 'node_modules', 'electron', 'package.json'),
     '{\n  "name": "electron",\n  "version": "43.0.0"\n}\n');
   stub(path.join(root, 'node_modules', '.bin'), 'electron', `echo "posix_spawnp failed." >&2; exit ${probeExit}`);
-  stub(bin, 'uname', '[ "$1" = "-m" ] && echo arm64 || echo Darwin');
+  stub(bin, 'uname', `[ "$1" = "-m" ] && echo arm64 || echo ${os}`);
   stub(bin, 'xcode-select', xcode ? 'echo /Library/Developer/CommandLineTools' : 'exit 2');
   stub(bin, 'node', `echo ${nodeVersion}`);
   stub(bin, 'npm', 'echo "npm stub must not run in --check" >&2; exit 99');
@@ -58,7 +58,29 @@ test('setup: Xcode Command Line Tools missing stops with the install sentence', 
 test('setup: Node 18 stops with the Node 20+ sentence', () => {
   const r = run(fixture({ nodeVersion: 'v18.19.0' }), ['--check']);
   assert.strictEqual(r.code, 1);
-  assert.match(r.err, /Node v18\.19\.0 is too old — install Node 20\+ with `brew install node` or nvm/);
+  assert.match(r.err, /Node v18\.19\.0 is too old — install Node 22\.12\+ with `brew install node` or nvm/);
+});
+
+test('setup: Node 22.11 is below the Electron floor, 23.0 is above it', () => {
+  const old = run(fixture({ nodeVersion: 'v22.11.0' }), ['--check']);
+  assert.strictEqual(old.code, 1);
+  assert.match(old.err, /Node v22\.11\.0 is too old/);
+  const newer = run(fixture({ nodeVersion: 'v23.0.0' }), ['--check', '--quiet']);
+  assert.strictEqual(newer.code, 0, newer.err);
+});
+
+test('setup: off macOS the prestart check passes silently so `npm start` still runs', () => {
+  const r = run(fixture({ os: 'Linux', xcode: false }), ['--check', '--quiet']);
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.out, '');
+  assert.strictEqual(r.err, '');
+});
+
+test('setup: off macOS a full setup stops with the headless sentence', () => {
+  const r = run(fixture({ os: 'Linux' }), []);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.err.trim(),
+    'setup: the Clodex desktop app needs macOS; on Linux use the headless engine, see docs/how-to.md.');
 });
 
 test('setup: --check with a failing probe names the node-pty fix', () => {
@@ -72,6 +94,12 @@ test('setup: a probe that hits its spawn timeout gets the same sentence', () => 
   const r = run(fixture({ probeExit: 2 }), ['--check']);
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.err.trim(), PROBE_SENTENCE);
+});
+
+test('setup: a failing npm install ends in one setup sentence', () => {
+  const r = run(fixture(), []);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.err, /setup: npm install failed — fix the error above, then rerun `npm run setup -- --force`\.\n?$/);
 });
 
 test('setup: --check --quiet prints nothing and exits 0 when everything is in place', () => {

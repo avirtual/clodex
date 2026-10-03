@@ -16,8 +16,9 @@ xattr -cr /Applications/Clodex.app
 ```
 
 **From source.** The desktop app is macOS (Apple Silicon or Intel); the
-headless engine and `clodexctl` also run on Linux. Node 20+ throughout — it is
-`clodexctl`'s declared floor (`cli/package.json` engines). `electron-rebuild` is
+headless engine and `clodexctl` also run on Linux. Node 20+ for those — it is
+`clodexctl`'s declared floor (`cli/package.json` engines); the desktop app needs
+Node 22.12+, the floor Electron and `@electron/rebuild` declare. `electron-rebuild` is
 not optional: node-pty is native and must match Electron's ABI.
 
 ```sh

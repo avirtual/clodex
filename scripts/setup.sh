@@ -9,6 +9,7 @@ START=0
 CHECK=0
 QUIET=0
 [ "${npm_config_force:-}" = "true" ] && FORCE=1
+unset npm_config_force
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
@@ -27,21 +28,27 @@ die() { echo "setup: $*" >&2; exit 1; }
 step "OS and architecture"
 OS="$(uname -s)"
 ARCH="$(uname -m)"
-[ "$OS" = "Darwin" ] || die "the Clodex desktop app needs macOS; on $OS use the headless engine, see docs/how-to.md."
+if [ "$OS" != "Darwin" ]; then
+  [ "$CHECK" = 1 ] && exit 0
+  die "the Clodex desktop app needs macOS; on $OS use the headless engine, see docs/how-to.md."
+fi
 say "$OS $ARCH"
 
 step "Xcode Command Line Tools"
 command -v xcode-select >/dev/null 2>&1 && xcode-select -p >/dev/null 2>&1 \
   || die "Xcode Command Line Tools are missing — run \`xcode-select --install\`, then rerun setup."
 
-step "Node 20+"
-command -v node >/dev/null 2>&1 || die "Node is not on PATH — install Node 20+ with \`brew install node\` or nvm, then rerun setup."
+step "Node 22.12+"
+command -v node >/dev/null 2>&1 || die "Node is not on PATH — install Node 22.12+ with \`brew install node\` or nvm, then rerun setup."
 NODE_VERSION="$(node -v)"
 NODE_MAJOR="${NODE_VERSION#v}"
+NODE_MINOR="${NODE_MAJOR#*.}"
 NODE_MAJOR="${NODE_MAJOR%%.*}"
-[[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] && [ "$NODE_MAJOR" -ge 20 ] \
-  || die "Node $NODE_VERSION is too old — install Node 20+ with \`brew install node\` or nvm, then rerun setup."
-command -v npm >/dev/null 2>&1 || die "npm is not on PATH — reinstall Node 20+ with \`brew install node\` or nvm, then rerun setup."
+NODE_MINOR="${NODE_MINOR%%.*}"
+[[ "$NODE_MAJOR" =~ ^[0-9]+$ && "$NODE_MINOR" =~ ^[0-9]+$ ]] \
+  && { [ "$NODE_MAJOR" -gt 22 ] || { [ "$NODE_MAJOR" -eq 22 ] && [ "$NODE_MINOR" -ge 12 ]; }; } \
+  || die "Node $NODE_VERSION is too old — install Node 22.12+ with \`brew install node\` or nvm, then rerun setup."
+command -v npm >/dev/null 2>&1 || die "npm is not on PATH — reinstall Node 22.12+ with \`brew install node\` or nvm, then rerun setup."
 say "node $NODE_VERSION"
 
 step "Agent CLIs"
@@ -62,17 +69,18 @@ if [ "$CHECK" = 0 ]; then
   if [ "$FORCE" = 0 ] && [ -f node_modules/.package-lock.json ] && [ node_modules/.package-lock.json -nt package-lock.json ]; then
     say "up to date (skipped; --force reruns it)"
   else
-    npm install
+    npm install || die "npm install failed — fix the error above, then rerun \`npm run setup -- --force\`."
+    rm -f node_modules/.clodex-rebuilt-*
   fi
 
   step "electron-rebuild"
   ELECTRON_VERSION="$(electron_version)"
-  [ -n "$ELECTRON_VERSION" ] || die "Electron is not installed under node_modules — rerun \`npm run setup --force\`."
+  [ -n "$ELECTRON_VERSION" ] || die "Electron is not installed under node_modules — rerun \`npm run setup -- --force\`."
   STAMP="node_modules/.clodex-rebuilt-$ELECTRON_VERSION"
   if [ "$FORCE" = 0 ] && [ -f "$STAMP" ]; then
     say "already rebuilt for Electron $ELECTRON_VERSION (skipped; --force reruns it)"
   else
-    npx electron-rebuild
+    npx electron-rebuild || die "electron-rebuild failed — fix the error above, then rerun \`npm run setup -- --force\`."
     node build/fix-pty-helper.js
     rm -f node_modules/.clodex-rebuilt-*
     touch "$STAMP"
