@@ -585,6 +585,14 @@ body {
   margin-left: 4px;
   color: var(--text-dim);
 }
+.session-clone {
+  font-size: 10px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  margin-left: 4px;
+  color: var(--text-tertiary, #888);
+}
 .session-pr.open {
   color: #2ecc71;
 }
@@ -7500,9 +7508,10 @@ body.web-frontend #sidebar-header {
   opacity: 0.55;
 }
 .session-pr,
-.session-fix {
+.session-fix,
+.session-clone {
   font-size: 10px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-sm, 4px);
 }
 .peer-header {
   padding: 6px var(--sp-2) 6px 10px;
@@ -39128,6 +39137,9 @@ void main() {
           if (item.dataset.ticket) {
             parts.push(`<div class="hovercard-note">\u{1F3AB} ticket ${esc(item.dataset.ticket)}</div>`);
           }
+          if (item.dataset.clone) {
+            parts.push(`<div class="hovercard-note">clone of ${esc(item.dataset.clone)}</div>`);
+          }
           if (item.dataset.attention) {
             parts.push(`<div class="hovercard-note hc-attn">\u26A0 ${esc(item.dataset.attentionMsg || "Needs your attention")}</div>`);
           }
@@ -49057,6 +49069,7 @@ ${detail}` });
         );
         markSeatEffort(name, snap.effort);
         markSeatPosture(name, snap.posture);
+        if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
         if (snap.createdAt) sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, createdAt: snap.createdAt });
       }
       function exitedRowSnapshot(name, code, meta) {
@@ -49380,7 +49393,7 @@ ${detail}` });
         const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
         held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
       });
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, workspaceId, workspaceName }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -49418,7 +49431,7 @@ ${detail}` });
             if (type) {
               const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
               const snap = rowSnapshot(name, prior);
-              rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
+              rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
               switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
@@ -49754,6 +49767,18 @@ ${detail}` });
         chip.title = `ad-hoc fix session for ${host} \u2014 it runs ssh against that box`;
         badges.appendChild(chip);
       }
+      function applyCloneChip(item, clone) {
+        const parent = typeof clone === "string" ? clone.trim() : "";
+        if (!item || !parent) return;
+        const badges = item.querySelector(".session-badges");
+        if (!badges || badges.querySelector(".session-clone")) return;
+        item.dataset.clone = parent;
+        const chip = document.createElement("span");
+        chip.className = "session-clone";
+        chip.textContent = "clone";
+        chip.title = `scratch clone of ${parent} \u2014 muted: it reports only to its parent`;
+        badges.appendChild(chip);
+      }
       function applyPrBadge(item) {
         const badges = item.querySelector(".session-badges");
         if (!badges) return;
@@ -49839,6 +49864,7 @@ ${detail}` });
             markSeatVoice(s.name, s.voice);
             markSeatEffort(s.name, s.effort);
             markSeatPosture(s.name, s.posture);
+            if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone);
           }
         } catch {
         }

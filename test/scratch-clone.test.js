@@ -74,7 +74,8 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false, poller
     effectiveInjectedSkills: effectiveFrom(skillLib),
   });
   m._broadcast = () => {};
-  m._sendToSession = () => {};
+  const sent = [];
+  m._sendToSession = (...args) => sent.push(args);
   m._injectText = (s, text) => injected.push({ to: s.name, text });
   const passive = [];
   const realPassive = m._injectTextPassive.bind(m);
@@ -111,7 +112,7 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false, poller
   const begin = (body = 'read the poller and say where strip levels live') =>
     m._handleScratchIntent(s, { type: 'scratch', sub: 'begin', label: null, replay: false, body });
   return {
-    m, s, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed, passive,
+    m, s, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed, passive, sent,
     replies, cloneName, clone, begin,
   };
 }
@@ -476,4 +477,27 @@ test('t1544 a throw after create() resolved retires the clone and says so instea
   assert.strictEqual(f.clone()._scratchCloneTimer, null);
   assert.deepStrictEqual(f.kills, [name]);
   assert.deepStrictEqual(f.strips.at(-1), { base: f.strips[0].base, sid: f.strips[0].sid, level: 0, explicitZero: false });
+});
+
+test('t1546 a successful begin sends the clone one background reattach naming its parent, and the parent none', async () => {
+  const f = mkClone();
+  await f.begin();
+  const ctx = (n) => f.sent.filter((a) => a[0] === n && a[1] === 'session:context-action');
+  const pushes = ctx(f.cloneName());
+  assert.strictEqual(pushes.length, 1);
+  const p = pushes[0][2];
+  assert.deepStrictEqual({ action: p.action, name: p.name, background: p.background, clone: p.clone },
+    { action: 'reattach', name: f.cloneName(), background: true, clone: 'a' });
+  assert.deepStrictEqual(ctx('a'), []);
+});
+
+test('t1546 list() carries clone on the clone row and no clone key on the parent', async () => {
+  const f = mkClone();
+  await f.begin();
+  f.m.accountFor = () => null;
+  f.m.modelFor = () => null;
+  const rows = f.m.list();
+  const pick = (n) => { const r = rows.find((x) => x.name === n); return 'clone' in r ? { name: n, clone: r.clone } : { name: n }; };
+  assert.deepStrictEqual(pick(f.cloneName()), { name: f.cloneName(), clone: 'a' });
+  assert.deepStrictEqual(pick('a'), { name: 'a' });
 });

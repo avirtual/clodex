@@ -263,6 +263,13 @@ test('every agent-initiated reattach push is marked background', () => {
   }
 });
 
+test('the scratch clone push is background and names its parent', () => {
+  const pushes = reattachPushes(read('scratch-clone.js'));
+  assert.strictEqual(pushes.length, 1, 'ENTER: _scratchCloneSpawn emits exactly one reattach push');
+  assert.match(pushes[0], /background:\s*true/);
+  assert.match(pushes[0], /clone:\s*parent\.name/);
+});
+
 test('the in-place respawns do NOT claim to be background', () => {
   // The operator's own seat coming back under the name they are watching —
   // [agent:context reload] and the [agent:scratch end] cut, never a new session.

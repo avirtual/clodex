@@ -50,6 +50,7 @@ for (const row of [
   // leaves the record-drop half unguarded the day the menu widens.
   { what: 'a MOVING agent seat', in: { agentType: 'claude', moving: true }, expected: true, dropRecord: false, stampExited: false },
   { what: 'a MOVING bash row', in: { agentType: null, moving: true }, expected: true, dropRecord: false, stampExited: false },
+  { what: 'a scratch clone exiting on its own', in: { agentType: 'claude', clone: true }, expected: true, dropRecord: false, stampExited: false },
 ]) {
   test(`exitDisposition: ${row.what} → expected=${row.expected} dropRecord=${row.dropRecord} stampExited=${row.stampExited}`, () => {
     assert.deepStrictEqual(exitDisposition(row.in), { expected: row.expected, dropRecord: row.dropRecord, stampExited: row.stampExited });
@@ -747,6 +748,14 @@ test('onExit without _moving still reports an agent crash as UNEXPECTED', async 
   fire({ exitCode: 1, signal: 15 });
   assert.strictEqual(exitEvent(sent).expected, false,
     'the flag is what flips it — not something that reads expected for every exit');
+});
+
+test('onExit reads clone off the session: a scratch clone exiting on its own with code 1 is EXPECTED', async () => {
+  const { spawn, sent, fire } = mkExitProbe();
+  const s = await spawn('a-scratch-0001');
+  s.clone = 'a';
+  fire({ exitCode: 1, signal: null });
+  assert.strictEqual(exitEvent(sent).expected, true);
 });
 
 test('onExit reads _moving for a BASH row too: its record is not dropped mid-move', async () => {

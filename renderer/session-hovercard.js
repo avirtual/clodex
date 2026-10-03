@@ -129,6 +129,9 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     if (item.dataset.ticket) {
       parts.push(`<div class="hovercard-note">🎫 ticket ${esc(item.dataset.ticket)}</div>`);
     }
+    if (item.dataset.clone) {
+      parts.push(`<div class="hovercard-note">clone of ${esc(item.dataset.clone)}</div>`);
+    }
     if (item.dataset.attention) {
       parts.push(`<div class="hovercard-note hc-attn">⚠ ${esc(item.dataset.attentionMsg || 'Needs your attention')}</div>`);
     }
