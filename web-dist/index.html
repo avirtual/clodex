@@ -33226,8 +33226,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const text = dropEchoes(rec.text);
         return text === rec.text ? { rec, empty: false } : { rec: { ...rec, text }, empty: !text.trim() };
       }
-      function echoRow(doc, rec) {
-        const row = el(doc, "div", "tr-row tr-notice tr-echo");
+      function echoRow(doc, rec, extra = "") {
+        const row = el(doc, "div", `tr-row tr-notice tr-echo${extra}`);
         row.dataset.id = rec.id;
         row.appendChild(el(doc, "span", "tr-mark"));
         row.appendChild(el(doc, "span", "tr-notice-text", ECHO_TEXT));
@@ -33794,8 +33794,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             key: "turn-end-prose",
             sig: `${end.rec.id}|${JSON.stringify(end.segs)}`,
             build: () => {
-              const clean = withoutEchoes({ ...end.rec, segments: end.segs });
-              if (clean.empty) return echoRow(doc, end.rec);
+              const plainMarked = !end.rec.segments && typeof end.rec.text === "string" && hasIntentMarks(end.rec.text);
+              const clean = plainMarked ? { rec: { segments: end.segs }, empty: false } : withoutEchoes({ ...end.rec, segments: end.segs });
+              if (clean.empty) return echoRow(doc, end.rec, " tr-turn-end-prose");
               const row = el(doc, "div", "tr-row tr-prose tr-segs tr-turn-end-prose");
               appendSegments(doc, row, clean.rec.segments, deps);
               return row;
