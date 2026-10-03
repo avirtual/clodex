@@ -986,3 +986,13 @@ test('t1111: the FIRST stub-bearing assistant message renders the long note, eve
   assert.equal(cutSpillStubs(again).cut, false, 'the rendering is not itself a stub');
   assert.deepStrictEqual(again, obj);
 });
+
+test('t1556: a stand-in right after [agent:end] is outside any intent body — cut and counted', () => {
+  for (const note of [PLACEHOLDER_LEGACY, SPILLED_BODY]) {
+    const { obj, i } = echoRequest([`[agent:dm bob] hi\nbody\n[agent:end]\n${note}`]);
+    const r = cutSpillStubs(obj);
+    assert.equal(r.parroted, 1, note);
+    assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] hi\nbody\n[agent:end]');
+  }
+  assert.deepStrictEqual(classifyLine(PLACEHOLDER, '[agent:dm bob] Title'), { kind: 1 }, 'the cut never writes a placeholder under a head');
+});

@@ -28,8 +28,13 @@ function headOf(t) {
   return title ? `${m[0]} ${title}` : m[0];
 }
 
+const RENDERED_NOTES = [SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL];
+
 function isStandIn(t, prev) {
-  return STAND_INS.includes(t) && !(typeof prev === 'string' && HEAD_RE.test(cleanLine(prev).trim()));
+  if (!STAND_INS.includes(t)) return false;
+  if (!RENDERED_NOTES.includes(t) || typeof prev !== 'string') return true;
+  const p = cleanLine(prev).trim();
+  return p === END_LINE || !HEAD_RE.test(p);
 }
 
 function classifyLine(line, prev) {

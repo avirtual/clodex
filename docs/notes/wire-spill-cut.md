@@ -42,5 +42,5 @@ behind a system row, the model emitted it verbatim as its whole reply (wirescope
 tokens), and the copy rode uncut in every later request. The cut never sees its own output (the CLI
 re-sends its transcript; wirescope's request.json is post-cut, the jsonl carries only the model's copy),
 so any `STAND_INS` line in incoming assistant text is model-authored: it is cut and counted as
-`parroted`. The one exception is a note on the line right under an intent head (`HEAD_RE`): that is
-the cut's own rendering shape, which the mimic guard bounces when the model types it.
+`parroted`. The one exception is a `SPILLED_BODY*` note on the line right under an intent head other
+than `[agent:end]`: that is the cut's own head/note/end rendering, left alone so re-cutting is idempotent.
