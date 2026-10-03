@@ -1225,8 +1225,10 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       key: 'turn-end-prose',
       sig: `${end.rec.id}|${JSON.stringify(end.segs)}`,
       build: () => {
+        const clean = withoutEchoes({ ...end.rec, segments: end.segs });
+        if (clean.empty) return echoRow(doc, end.rec);
         const row = el(doc, 'div', 'tr-row tr-prose tr-segs tr-turn-end-prose');
-        appendSegments(doc, row, end.segs, deps);
+        appendSegments(doc, row, clean.rec.segments, deps);
         return row;
       },
     };

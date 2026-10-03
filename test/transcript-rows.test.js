@@ -1965,3 +1965,15 @@ test('t1556: prose beside an echoed stand-in line renders the prose only', () =>
   assert.ok(!m.pane.textContent.includes('Runtime note'));
   assert.ok(!m.pane.textContent.includes('echoed a Clodex runtime note'));
 });
+
+test('t1556: in Conversation mode a folded turn driven by an agent inbound shows an echoed stand-in as the .tr-echo row, not as turn-end prose', () => {
+  const { PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'hand', 'go'), { id: 'e3', kind: 'assistant', ts: null, turn: 1, text: PLACEHOLDER_LEGACY }]);
+  const all = [];
+  const walk = (n) => { all.push(n); (n.childNodes || []).forEach(walk); };
+  walk(m.pane);
+  assert.ok(all.some((n) => /\btr-echo\b/.test(n.className || '')), 'an echo row is rendered');
+  assert.ok(!all.some((n) => /\btr-turn-end-prose\b/.test(n.className || '') && n.textContent.includes(PLACEHOLDER_LEGACY)));
+  assert.ok(!m.pane.textContent.includes(PLACEHOLDER_LEGACY));
+});
