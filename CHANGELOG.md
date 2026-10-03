@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Spill cut: the stand-in Clodex puts in a request where an empty turn must survive behind a system row is now a bracketed runtime note the model is told never to write; any stand-in the model echoes anyway is cut from the next request, counted, and the conversation view shows it as a dim 'echoed a runtime note' row instead of as the agent's prose.
+
 ## 5.111.0 — 2026-10-04
 
 - Scratch clone rows: 'Cancel clone' acts only on the clone the menu was opened on (a clone that ended and was replaced is left alone), and the row no longer shows the archive × button.

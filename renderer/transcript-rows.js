@@ -9,6 +9,8 @@ const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
 const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('./lib/transcript-surface');
 const { renderMarkdown } = require('./lib/render-markdown');
+const { cleanLine } = require('../intent-scanner');
+const { STAND_INS } = require('../spill-stand-ins');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
@@ -590,6 +592,40 @@ function inboundRow(doc, rec, ctx, boxed) {
   return withTime(doc, row, rec);
 }
 
+const ECHO_TEXT = 'the model echoed a Clodex runtime note — nothing was said; it is cut from the next request';
+
+function dropEchoes(text) {
+  const lines = text.split('\n');
+  const kept = lines.filter((l) => !STAND_INS.includes(cleanLine(l).trim()));
+  return kept.length === lines.length ? text : kept.join('\n');
+}
+
+function withoutEchoes(rec) {
+  if (rec.segments) {
+    let dropped = false;
+    const segments = [];
+    for (const seg of rec.segments) {
+      if (seg.kind === 'intent' || seg.kind === 'inert' || seg.spill || typeof seg.text !== 'string') { segments.push(seg); continue; }
+      const text = dropEchoes(seg.text);
+      if (text === seg.text) { segments.push(seg); continue; }
+      dropped = true;
+      if (text.trim()) segments.push({ ...seg, text });
+    }
+    return dropped ? { rec: { ...rec, segments }, empty: !segments.length } : { rec, empty: false };
+  }
+  if (typeof rec.text !== 'string' || hasIntentMarks(rec.text)) return { rec, empty: false };
+  const text = dropEchoes(rec.text);
+  return text === rec.text ? { rec, empty: false } : { rec: { ...rec, text }, empty: !text.trim() };
+}
+
+function echoRow(doc, rec, extra = '') {
+  const row = el(doc, 'div', `tr-row tr-notice tr-echo${extra}`);
+  row.dataset.id = rec.id;
+  row.appendChild(el(doc, 'span', 'tr-mark'));
+  row.appendChild(el(doc, 'span', 'tr-notice-text', ECHO_TEXT));
+  return row;
+}
+
 function noticeRow(doc, rec, level, text, ctx) {
   const row = el(doc, 'div', `tr-row tr-notice tr-notice-${level}`);
   row.dataset.id = rec.id;
@@ -779,6 +815,9 @@ function buildRow(doc, rec, ctx, attached, boxed) {
     }
     case 'assistant': {
       if (rec.apiError) return noticeRow(doc, rec, 'error', rec.text, ctx);
+      const clean = withoutEchoes(rec);
+      if (clean.empty) return echoRow(doc, rec);
+      rec = clean.rec;
       const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
       if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
@@ -1186,8 +1225,11 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       key: 'turn-end-prose',
       sig: `${end.rec.id}|${JSON.stringify(end.segs)}`,
       build: () => {
+        const plainMarked = !end.rec.segments && typeof end.rec.text === 'string' && hasIntentMarks(end.rec.text);
+        const clean = plainMarked ? { rec: { segments: end.segs }, empty: false } : withoutEchoes({ ...end.rec, segments: end.segs });
+        if (clean.empty) return echoRow(doc, end.rec, ' tr-turn-end-prose');
         const row = el(doc, 'div', 'tr-row tr-prose tr-segs tr-turn-end-prose');
-        appendSegments(doc, row, end.segs, deps);
+        appendSegments(doc, row, clean.rec.segments, deps);
         return row;
       },
     };

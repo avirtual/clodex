@@ -1943,3 +1943,40 @@ test('an assistant reply keeps its soft line breaks and indentation under the ma
   assert.strictEqual(one.textContent, 'a\nb');
   assert.strictEqual(two.textContent, 'VERDICT: ok\n  ├── x');
 });
+
+test('t1556: an assistant record that only echoes a Clodex stand-in renders one .tr-echo notice and no prose', () => {
+  const { PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+  const m = mount();
+  m.render([prompt, { id: 'e1', kind: 'assistant', ts: null, turn: 1, text: PLACEHOLDER_LEGACY }]);
+  const rows = m.pane.childNodes[0].childNodes;
+  const echo = rows.find((n) => n.dataset && n.dataset.id === 'e1');
+  assert.strictEqual(echo.className, 'tr-row tr-notice tr-echo');
+  assert.strictEqual(echo.textContent, 'the model echoed a Clodex runtime note — nothing was said; it is cut from the next request');
+  assert.ok(!m.pane.textContent.includes('Clodex keeps it out of the request'));
+});
+
+test('t1556: prose beside an echoed stand-in line renders the prose only', () => {
+  const { PLACEHOLDER } = require('../spill-stand-ins');
+  const m = mount();
+  m.render([prompt, { id: 'e2', kind: 'assistant', ts: null, turn: 1, text: `real words\n${PLACEHOLDER}` }]);
+  const row = m.pane.childNodes[0].childNodes.find((n) => n.dataset && n.dataset.id === 'e2');
+  assert.ok(row.className.includes('tr-prose'));
+  assert.ok(row.textContent.includes('real words'));
+  assert.ok(!m.pane.textContent.includes('Runtime note'));
+  assert.ok(!m.pane.textContent.includes('echoed a Clodex runtime note'));
+});
+
+test('t1556: in Conversation mode a folded turn driven by an agent inbound shows an echoed stand-in as the .tr-echo row, not as turn-end prose', () => {
+  const { PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+  const m = mount({ mode: 'conversation' });
+  m.render([inb('i1', 1, 'hand', 'go'), { id: 'e3', kind: 'assistant', ts: null, turn: 1, text: PLACEHOLDER_LEGACY }]);
+  const all = [];
+  const walk = (n) => { all.push(n); (n.childNodes || []).forEach(walk); };
+  walk(m.pane);
+  const echo = all.find((n) => /\btr-echo\b/.test(n.className || ''));
+  assert.ok(echo, 'an echo row is rendered');
+  assert.ok(/\btr-turn-folded\b/.test(m.pane.childNodes[0].className), 'ENTER: the inbound-driven turn folds');
+  assert.ok(/\btr-turn-end-prose\b/.test(echo.className), 'the echo row survives the folded-turn CSS that shows only end prose');
+  assert.ok(!all.some((n) => /\btr-turn-end-prose\b/.test(n.className || '') && n.textContent.includes(PLACEHOLDER_LEGACY)));
+  assert.ok(!m.pane.textContent.includes(PLACEHOLDER_LEGACY));
+});
