@@ -16,13 +16,25 @@ xattr -cr /Applications/Clodex.app
 ```
 
 **From source.** The desktop app is macOS (Apple Silicon or Intel); the
-headless engine and `clodexctl` also run on Linux. Node 20+ throughout — it is
-`clodexctl`'s declared floor (`cli/package.json` engines). `electron-rebuild` is
+headless engine and `clodexctl` also run on Linux. Node 20+ for those — it is
+`clodexctl`'s declared floor (`cli/package.json` engines); the desktop app needs
+Node 22.12+, the floor Electron and `@electron/rebuild` declare. `electron-rebuild` is
 not optional: node-pty is native and must match Electron's ABI.
 
 ```sh
-git clone https://github.com/avirtual/clodex
-cd clodex
+git clone https://github.com/avirtual/clodex && cd clodex && npm run setup && npm start
+```
+
+`npm run setup` checks the prerequisites, installs, rebuilds node-pty and
+verifies it can spawn a shell under Electron; `npm start` and `npm run dev` run its
+`--check` half first and stop with one sentence when something is missing.
+`bash scripts/setup.sh --check` runs only the checks and the load probe,
+installing nothing; its exit code is the answer. After a `git pull` that bumps
+Electron, rerun `npm run setup` — it notices the new version and rebuilds.
+
+By hand:
+
+```sh
 npm install            # postinstall renames dev Electron.app to Clodex
 npx electron-rebuild   # rebuild node-pty against Electron's ABI
 npm start              # dev mode
