@@ -350,10 +350,8 @@ test('Q4 placeholder: a bare @spill: pointer behind a system row leaves no head 
 });
 
 function echoRequest(texts) {
-  const obj = fixtureRequest();
-  const i = assistantIndex(obj);
-  obj.messages[i].content = texts.map((text) => ({ type: 'text', text }));
-  return { obj, i };
+  const obj = { messages: [{ role: 'user', content: 'go' }, { role: 'assistant', content: texts.map((text) => ({ type: 'text', text })) }, { role: 'user', content: 'next' }] };
+  return { obj, i: 1 };
 }
 
 test('t1556: an incoming assistant message whose only text is the legacy placeholder is model-authored — cut and counted', () => {
