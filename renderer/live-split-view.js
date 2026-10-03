@@ -13,31 +13,11 @@ const PAINT_TAG_MS = 10000;
 const PAINT_PLATFORMS = new Set(['codex', 'muse']);
 const views = new WeakMap();
 const NOOP = () => {};
-const MD_KEY = 'clodex-transcript-md';
-const MD_TITLE = 'Render the agent\'s markdown (tables, bold, links) — off shows the raw text';
-const mdPanes = new Set();
-const mdButtons = new WeakMap();
-const mdGone = typeof FinalizationRegistry === 'function' ? new FinalizationRegistry((ref) => mdPanes.delete(ref)) : null;
-
-function markdownOn() {
-  try { return localStorage.getItem(MD_KEY) !== '0'; } catch { return true; }
-}
-
-function setMarkdownPref(on) {
-  try { localStorage.setItem(MD_KEY, on ? '1' : '0'); } catch {}
-  for (const ref of [...mdPanes]) {
-    const paneEl = ref.deref();
-    if (!paneEl) { mdPanes.delete(ref); continue; }
-    mdButtons.get(paneEl).setAttribute('aria-pressed', on ? 'true' : 'false');
-    const rows = views.get(paneEl);
-    if (rows) rows.setMarkdown(on);
-  }
-}
 
 function transcriptRowsFor(doc, paneEl, ctx = {}) {
   let rows = views.get(paneEl);
   if (!rows) {
-    rows = createTranscriptRows(doc, paneEl, { ...ctx, markdown: markdownOn() });
+    rows = createTranscriptRows(doc, paneEl, ctx);
     views.set(paneEl, rows);
   }
   return rows;
@@ -85,14 +65,7 @@ function modeBar(doc, paneEl, mode, onMode = NOOP, { onHelp = null, onTerminal =
     control.appendChild(btn);
     return btn;
   });
-  const mdBtn = barButton(doc, 'transcript-mode-btn transcript-md-btn', 'md', MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute('aria-pressed') !== 'true'));
-  mdBtn.setAttribute('aria-pressed', markdownOn() ? 'true' : 'false');
-  const ref = new WeakRef(paneEl);
-  mdButtons.set(paneEl, mdBtn);
-  mdPanes.add(ref);
-  if (mdGone) mdGone.register(paneEl, ref);
   views.appendChild(control);
-  views.appendChild(mdBtn);
   const help = onHelp ? barButton(doc, 'transcript-help-btn', '?', HELP_TITLE, () => onHelp()) : null;
   if (help) views.appendChild(help);
   const terminalBtn = onTerminal ? barButton(doc, 'transcript-mode-btn transcript-terminal-btn', 'Screen', TERMINAL_TITLE, () => onTerminal()) : null;
@@ -113,7 +86,7 @@ function modeBar(doc, paneEl, mode, onMode = NOOP, { onHelp = null, onTerminal =
   bar.appendChild(chips);
   bar.appendChild(views);
   paneEl.insertBefore(bar, paneEl.firstChild);
-  return { bar, chips, control, buttons, help, terminal: terminalBtn, markdown: mdBtn, setMode, setRaw };
+  return { bar, chips, control, buttons, help, terminal: terminalBtn, setMode, setRaw };
 }
 
 function markedText(doc, text, spans) {

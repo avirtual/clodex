@@ -14,7 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Scratch clone rows: 'Cancel clone' acts only on the clone the menu was opened on (a clone that ended and was replaced is left alone), and the row no longer shows the archive × button.
-- Conversation view renders assistant markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables; an `md` chip on the transcript bar switches back to the raw text.
+- Conversation view renders assistant markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables.
 
 ## 5.110.0 — 2026-10-03
 - Scratch clone: a clone of a team lead or a ticket hand now starts on its parent's prompt cache — the clone's system prompt and spilled-intent expansion match the parent byte for byte, where before any role, lead or spill made the clone rewrite the whole context.
