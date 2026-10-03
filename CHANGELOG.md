@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.111.0 — 2026-10-04
+
 - Scratch clone rows: 'Cancel clone' acts only on the clone the menu was opened on (a clone that ended and was replaced is left alone), and the row no longer shows the archive × button.
 - Conversation view renders assistant markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables.
 - Running from a clone is one command: `npm run setup` checks Xcode CLT, Node ≥ 22.12 and the CLIs, installs, and verifies node-pty can spawn a shell under Electron; `npm start` now fails with one sentence when that check fails instead of every session dying on open.
