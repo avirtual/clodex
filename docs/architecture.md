@@ -918,6 +918,10 @@ accept teardown removes.
   regex (`FILED_SRC`, `FILED_POINTER_RE`), a pure leaf with no `fs` so the
   renderer's intent marks and the tee's stub parser match ONE source;
   `intent-spill.js` re-exports it.
+- **spill-stand-ins.js** — the runtime-note literals Clodex writes in place of
+  cut text (`SPILLED_BODY*`, the spill-cut `PLACEHOLDER` and its legacy form) and
+  `STAND_INS`, a pure leaf with no `fs` so the wire cut and the transcript rows
+  match ONE source; `intent-spill.js` re-exports the `SPILLED_BODY*` and `STAND_INS`.
 - **intent-spill.js** — the FORMAT of intent-body spill (`SPILL.md` and its
   conformance suite `test_spill.py` live in the upstream wirescope repo and are
   not vendored under `vendor/wirescope/`): constants, verb set,
