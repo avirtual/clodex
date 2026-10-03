@@ -1973,7 +1973,10 @@ test('t1556: in Conversation mode a folded turn driven by an agent inbound shows
   const all = [];
   const walk = (n) => { all.push(n); (n.childNodes || []).forEach(walk); };
   walk(m.pane);
-  assert.ok(all.some((n) => /\btr-echo\b/.test(n.className || '')), 'an echo row is rendered');
+  const echo = all.find((n) => /\btr-echo\b/.test(n.className || ''));
+  assert.ok(echo, 'an echo row is rendered');
+  assert.ok(/\btr-turn-folded\b/.test(m.pane.childNodes[0].className), 'ENTER: the inbound-driven turn folds');
+  assert.ok(/\btr-turn-end-prose\b/.test(echo.className), 'the echo row survives the folded-turn CSS that shows only end prose');
   assert.ok(!all.some((n) => /\btr-turn-end-prose\b/.test(n.className || '') && n.textContent.includes(PLACEHOLDER_LEGACY)));
   assert.ok(!m.pane.textContent.includes(PLACEHOLDER_LEGACY));
 });

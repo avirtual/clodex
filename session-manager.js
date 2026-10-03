@@ -933,9 +933,9 @@ function createSessionManager(deps) {
       wire.on('spill-cut', (ev) => {
         this._shadowLog({ type: 'wire-spill-cut', ...ev });
         const line = `spill-cut ${ev.agent} lines=${ev.lines} blocks=${ev.blocks} messages=${ev.messages} skipped=${ev.skipped} parroted=${ev.parroted || 0}`;
-        const seen = this._spillParroted || (this._spillParroted = new Map());
-        const rose = (ev.parroted || 0) > (seen.get(ev.agent) || 0);
-        seen.set(ev.agent, ev.parroted || 0);
+        const s = this.sessions.get(ev.agent);
+        const rose = (ev.parroted || 0) > ((s && s.spillParroted) || 0);
+        if (s) s.spillParroted = ev.parroted || 0;
         if (rose) log.warn('intent', line);
         else log.info('intent', line);
       });
