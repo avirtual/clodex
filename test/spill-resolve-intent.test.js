@@ -832,7 +832,7 @@ test('t1102/t1108: the prose receipt stays outside the emission grammar — not 
   assert.strictEqual(RECEIPT_RE.test(SPILLED_BODY), false);
   assert.strictEqual(pointerOf(SPILLED_BODY), null);
   assert.strictEqual(trailingPointerOf(SPILLED_BODY), null);
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 0 }, 'typed by the agent, the note reaches the wire uncut so the mimic bounce is what it gets');
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY, '[agent:dm bob] Title'), { kind: 0 }, 'typed by the agent as an intent body, the note reaches the wire uncut so the mimic bounce is what it gets');
   assert.strictEqual(mimicKindOf(SPILLED_BODY), 'spilled');
   assert.strictEqual(mimicKindOf(`  ${SPILLED_BODY}  `), 'spilled');
   assert.strictEqual(mimicKindOf(`${SPILLED_BODY} — sent`), null, 'only the lone line is the copied shape');
@@ -842,7 +842,7 @@ test('t1102/t1108: the prose receipt stays outside the emission grammar — not 
   assert.strictEqual(spilledBodyOf(null), null);
   assert.strictEqual(FILED_POINTER_RE.test(SPILLED_BODY_FIRST), false);
   assert.strictEqual(pointerOf(SPILLED_BODY_FIRST), null);
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST), { kind: 0 });
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST, '[agent:dm bob] Title'), { kind: 0 });
   assert.strictEqual(mimicKindOf(SPILLED_BODY_FIRST), 'spilled', 'the long form is the same mimic kind');
   assert.strictEqual(mimicKindOf(`${SPILLED_BODY_FIRST} — sent`), null);
   assert.strictEqual(spilledBodyOf(SPILLED_BODY_FIRST), SPILLED_BODY_FIRST);

@@ -28,10 +28,14 @@ function headOf(t) {
   return title ? `${m[0]} ${title}` : m[0];
 }
 
-function classifyLine(line) {
+function isStandIn(t, prev) {
+  return STAND_INS.includes(t) && !(typeof prev === 'string' && HEAD_RE.test(cleanLine(prev).trim()));
+}
+
+function classifyLine(line, prev) {
   const t = cleanLine(line).trim();
   if (!t) return { kind: 0 };
-  if (t === SPILL_FILLER || STAND_INS.includes(t) || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return { kind: 1 };
+  if (t === SPILL_FILLER || isStandIn(t, prev) || POINTER_RE.test(t) || RECEIPT_RE.test(t) || TAIL_RECEIPT_RE.test(t)) return { kind: 1 };
   const f = FILED_POINTER_RE.exec(t);
   if (f && !f[1]) return { kind: 1 };
   const head = headOf(t);
@@ -81,10 +85,10 @@ function cutText(text, state) {
   const kept = [];
   let cut = 0;
   for (let i = 0; i < lines.length; i++) {
-    const c = classifyLine(lines[i]);
+    const c = classifyLine(lines[i], lines[i - 1]);
     if (c.kind === 0) { kept.push(lines[i]); continue; }
     cut++;
-    if (STAND_INS.includes(cleanLine(lines[i]).trim())) state.parroted++;
+    if (isStandIn(cleanLine(lines[i]).trim(), lines[i - 1])) state.parroted++;
     if (c.kind === 2) {
       const full = expansionOf(state);
       if (full) kept.push(...full, END_LINE);
