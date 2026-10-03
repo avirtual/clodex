@@ -737,6 +737,8 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
 test('bodyMode for remind: list and cancel take no body, a schedule captures one', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind list]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind cancel abc]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind List]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind CANCEL abc]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind in 20m] x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind every 2h] x')), 'greedy');
 });

@@ -1128,7 +1128,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       break;
     case 'cancelClone':
       if (!clone) break;
-      window.api.scratchCancel(clone).then((res) => {
+      window.api.scratchCancel(clone, name).then((res) => {
         if (!res || !res.ok) showToast((res && res.error) || 'Cancel clone failed', { kind: 'error', duration: 10000, name });
       });
       break;
@@ -1512,6 +1512,7 @@ function applyCloneChip(item, clone) {
   const badges = item.querySelector('.session-badges');
   if (!badges || badges.querySelector('.session-clone')) return;
   item.dataset.clone = parent;
+  item.querySelector('.session-close')?.remove();
   const chip = document.createElement('span');
   chip.className = 'session-clone';
   chip.textContent = 'clone';

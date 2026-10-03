@@ -507,13 +507,14 @@ function registerIpcHandlers(deps) {
     if (res && res.ok === false) return { ok: false, error: res.error || 'scratch mark refused' };
     return { ok: true };
   });
-  handle('session:scratch-cancel', (e, { parent } = {}) => {
+  handle('session:scratch-cancel', (e, { parent, clone } = {}) => {
     const here = workspaceOfSender(e);
     if (!persistence.listForWorkspace(here).some((s) => s.name === parent)) {
       return { ok: false, error: `session ${parent} is not in this workspace` };
     }
     const session = manager.sessions.get(parent);
     if (!session || !session._scratchClone) return { ok: false, error: `${parent} has no scratch clone` };
+    if (session._scratchClone !== clone) return { ok: false, error: `${clone} is no longer ${parent}'s scratch clone` };
     manager._scratchCloneCancel(session, (msg) => manager._injectText(session, msg, { parkable: true }));
     return { ok: true };
   });

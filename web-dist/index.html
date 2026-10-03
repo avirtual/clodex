@@ -11522,7 +11522,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onSessionMovedIn", kind: "on", channel: "session:moved-in" },
         { name: "renameSession", kind: "invoke", channel: "session:rename" },
         { name: "scratchMark", kind: "invoke", channel: "session:scratch-mark", argmap: (name, label) => [{ name, label }] },
-        { name: "scratchCancel", kind: "invoke", channel: "session:scratch-cancel", argmap: (parent) => [{ parent }] },
+        { name: "scratchCancel", kind: "invoke", channel: "session:scratch-cancel", argmap: (parent, clone) => [{ parent, clone }] },
         { name: "setSessionTools", kind: "invoke", channel: "session:setTools" },
         { name: "setSessionSkills", kind: "invoke", channel: "session:setSkills" },
         { name: "setSessionAgents", kind: "invoke", channel: "session:setAgents" },
@@ -26506,7 +26506,7 @@ ${i3.join("\n")}
             return [str(intent.cmd), []];
           case "remind": {
             const spec = str(intent.spec);
-            const rest = spec && spec.replace(/^(list|cancel)\b\s*/, "");
+            const rest = spec && spec.replace(/^(list|cancel)\b\s*/i, "");
             return [rest || null, []];
           }
           case "file":
@@ -30569,7 +30569,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // what makes this row different from dm/memory/task.
         { type: "term", parse: parseTerm, bodyMode: NONE },
         { type: "exec", parse: parseExec, bodyMode: () => "json" },
-        { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/.test(i.spec) ? "none" : "greedy" },
+        { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/i.test(i.spec) ? "none" : "greedy" },
         { type: "shout", parse: parseShout, bodyMode: GREEDY },
         { type: "team-review", parse: parseTeamReview, bodyMode: GREEDY },
         { type: "review-done", parse: parseReviewDone, bodyMode: GREEDY },
@@ -49410,7 +49410,7 @@ ${detail}` });
             break;
           case "cancelClone":
             if (!clone) break;
-            window.api.scratchCancel(clone).then((res) => {
+            window.api.scratchCancel(clone, name).then((res) => {
               if (!res || !res.ok) showToast(res && res.error || "Cancel clone failed", { kind: "error", duration: 1e4, name });
             });
             break;
@@ -49777,6 +49777,7 @@ ${detail}` });
         const badges = item.querySelector(".session-badges");
         if (!badges || badges.querySelector(".session-clone")) return;
         item.dataset.clone = parent;
+        item.querySelector(".session-close")?.remove();
         const chip = document.createElement("span");
         chip.className = "session-clone";
         chip.textContent = "clone";

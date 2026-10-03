@@ -260,7 +260,7 @@ const CORE_ROWS = [
   // what makes this row different from dm/memory/task.
   { type: 'term', parse: parseTerm, bodyMode: NONE },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
-  { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/.test(i.spec) ? 'none' : 'greedy') },
+  { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/i.test(i.spec) ? 'none' : 'greedy') },
   { type: 'shout', parse: parseShout, bodyMode: GREEDY },
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },

@@ -150,9 +150,37 @@ test('t1547 session:scratch-cancel cancels the parent\'s clone and replies into 
       _injectText: (s, text) => injected.push([s.name, text]),
     },
   });
-  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a' }), { ok: true });
+  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a', clone: 'a-scratch-1234' }), { ok: true });
   assert.deepStrictEqual(calls, ['a']);
   assert.deepStrictEqual(injected, [['a', '[scratch] clone cancelled, no summary']]);
   parent._scratchClone = null;
-  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a' }), { ok: false, error: 'a has no scratch clone' });
+  assert.deepStrictEqual(await handlers.get('session:scratch-cancel')(e, { parent: 'a', clone: 'a-scratch-1234' }), { ok: false, error: 'a has no scratch clone' });
+});
+
+test('t1549 session:scratch-cancel refuses when the named clone is no longer the parent\'s, without cancelling', async () => {
+  const calls = [];
+  const { handlers, e } = mkHandlers({
+    manager: {
+      sessions: new Map([['a', { name: 'a', _scratchClone: 'a-scratch-ffff' }]]),
+      _scratchCloneCancel: (s) => calls.push(s.name),
+      _injectText: () => {},
+    },
+  });
+  const res = await handlers.get('session:scratch-cancel')(e, { parent: 'a', clone: 'a-scratch-0000' });
+  assert.deepStrictEqual(res, { ok: false, error: "a-scratch-0000 is no longer a's scratch clone" });
+  assert.deepStrictEqual(calls, [], '_scratchCloneCancel was not reached');
+});
+
+test('t1549 session:scratch-cancel refuses a parent outside the sender window\'s workspace', async () => {
+  const calls = [];
+  const { handlers, e } = mkHandlers({
+    here: 'ws2',
+    manager: {
+      sessions: new Map([['a', { name: 'a', _scratchClone: 'a-scratch-1234' }]]),
+      _scratchCloneCancel: (s) => calls.push(s.name),
+    },
+  });
+  const res = await handlers.get('session:scratch-cancel')(e, { parent: 'a', clone: 'a-scratch-1234' });
+  assert.deepStrictEqual(res, { ok: false, error: 'session a is not in this workspace' });
+  assert.deepStrictEqual(calls, []);
 });
