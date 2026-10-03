@@ -401,8 +401,8 @@ function isStaleRegistration(existingPid, ownPid, isAlive) {
   return !isAlive(existingPid) || existingPid === ownPid;
 }
 
-function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving }) {
-  const expected = !!(userKilled || shuttingDown || archived || moving);
+function exitDisposition({ agentType, userKilled, shuttingDown, archived, moving, clone }) {
+  const expected = !!(userKilled || shuttingDown || archived || moving || clone);
   return { expected, dropRecord: !agentType && !expected, stampExited: !!agentType && !expected };
 }
 
@@ -2331,6 +2331,7 @@ function createSessionManager(deps) {
           shuttingDown: session._shuttingDown,
           archived: session._archived,
           moving: session._moving,
+          clone: !!session.clone,
         });
         const missingTool = missingToolOnExit({
           expected, exitCode, signal,
@@ -4221,6 +4222,7 @@ function createSessionManager(deps) {
         backend: s.backend || null,
         noWire: !!s.noWire,
         ...(s.fixFor ? { fixFor: s.fixFor } : {}),
+        ...(s.clone ? { clone: s.clone } : {}),
         activity: s.activityState || 'idle',
         compacting: s.compacting || null,
         attention: s.needsAttention ? s.needsAttention.kind : null,

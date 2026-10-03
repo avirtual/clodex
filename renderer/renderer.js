@@ -1107,7 +1107,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, peerId, peerLabel, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -1146,6 +1146,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = rowSnapshot(name, prior);
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true });
+        applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), clone);
         // `background` marks the agent-initiated emitters (ticket seat, spawn
         // intent, reviewer). The reload respawn sends no flag and keeps focus.
         switchToNewSession(name, { agentInitiated: background === true });
@@ -1498,6 +1499,19 @@ function applyFixChip(item, fixFor) {
   badges.appendChild(chip);
 }
 
+function applyCloneChip(item, clone) {
+  const parent = typeof clone === 'string' ? clone.trim() : '';
+  if (!item || !parent) return;
+  const badges = item.querySelector('.session-badges');
+  if (!badges || badges.querySelector('.session-clone')) return;
+  item.dataset.clone = parent;
+  const chip = document.createElement('span');
+  chip.className = 'session-clone';
+  chip.textContent = 'clone';
+  chip.title = `scratch clone of ${parent} — muted: it reports only to its parent`;
+  badges.appendChild(chip);
+}
+
 function applyPrBadge(item) {
   const badges = item.querySelector('.session-badges');
   if (!badges) return;
@@ -1569,7 +1583,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   }
   try {
     const live = await window.api.listSessions();
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
