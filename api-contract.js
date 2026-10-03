@@ -14,8 +14,7 @@
 //
 // `argmap` (optional, invoke/send only) maps the caller's positional arguments to
 // the wire arguments array. Absent = passthrough (the caller's args ARE the wire
-// args). Only non-passthrough wrappers need it; today that is exactly one endpoint
-// (showSessionContextMenu, which bundles its two args into a single object).
+// args). Only non-passthrough wrappers need it.
 //
 // This is a pure leaf: no requires, no side effects, no environment assumptions —
 // safe to load in the Electron preload, in a plain Node test, and in the browser
@@ -395,7 +394,7 @@ const API_CONTRACT = [
   { name: 'onSessionMovedIn', kind: 'on', channel: 'session:moved-in' },
   { name: 'renameSession', kind: 'invoke', channel: 'session:rename' },
   { name: 'scratchMark', kind: 'invoke', channel: 'session:scratch-mark', argmap: (name, label) => [{ name, label }] },
-  { name: 'scratchCancel', kind: 'invoke', channel: 'session:scratch-cancel', argmap: (parent) => [{ parent }] },
+  { name: 'scratchCancel', kind: 'invoke', channel: 'session:scratch-cancel', argmap: (parent, clone) => [{ parent, clone }] },
   { name: 'setSessionTools', kind: 'invoke', channel: 'session:setTools' },
   { name: 'setSessionSkills', kind: 'invoke', channel: 'session:setSkills' },
   { name: 'setSessionAgents', kind: 'invoke', channel: 'session:setAgents' },

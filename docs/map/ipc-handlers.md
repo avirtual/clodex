@@ -80,7 +80,7 @@
 | `handle:session:move-to-workspace` | moves a session into another workspace | sessions via manager | manager.moveToWorkspace | unpinned |
 | `handle:session:rename` | renames a session | sessions via manager | manager.rename | unpinned |
 | `handle:session:scratch-mark` | places a labelled scratch mark at the current end of a Claude seat's turn, refused outside the sender's workspace | seat scratch marks via manager | manager.scratchMark | ipc-scratch-mark.test.js |
-| `handle:session:scratch-cancel` | cancels the parent's scratch clone on its behalf, replying into the parent as `[agent:scratch cancel]` does; refused outside the sender's workspace | the parent's clone via manager | manager._scratchCloneCancel | ipc-scratch-mark.test.js |
+| `handle:session:scratch-cancel` | cancels the parent's scratch clone on its behalf, replying into the parent as `[agent:scratch cancel]` does; refused outside the sender's workspace, and refuses when the named clone is no longer the parent's | the parent's clone via manager | manager._scratchCloneCancel | ipc-scratch-mark.test.js |
 | `handle:session:flushPending` | delivers the seat's parked messages now | inject queue via manager | manager.flushPending | unpinned |
 | `handle:session:peekPending` | the seat's parked messages without delivering them | inject queue via manager | manager.peekPendingFor | unpinned |
 | `handle:session:resize` | resizes the seat's PTY | pty via manager | manager.resize | unpinned |

@@ -120,7 +120,7 @@ function targetAndChips(intent) {
     case 'exec': return [str(intent.cmd), []];
     case 'remind': {
       const spec = str(intent.spec);
-      const rest = spec && spec.replace(/^(list|cancel)\b\s*/, '');
+      const rest = spec && spec.replace(/^(list|cancel)\b\s*/i, '');
       return [rest || null, []];
     }
     case 'file': return [str(intent.path), intent.sub && intent.sub !== 'view' ? [intent.sub] : []];
