@@ -55,7 +55,7 @@ test('setup: Xcode Command Line Tools missing stops with the install sentence', 
   assert.match(r.err, /Xcode Command Line Tools are missing — run `xcode-select --install`/);
 });
 
-test('setup: Node 18 stops with the Node 20+ sentence', () => {
+test('setup: Node 18 stops with the Node 22.12+ sentence', () => {
   const r = run(fixture({ nodeVersion: 'v18.19.0' }), ['--check']);
   assert.strictEqual(r.code, 1);
   assert.match(r.err, /Node v18\.19\.0 is too old — install Node 22\.12\+ with `brew install node` or nvm/);
