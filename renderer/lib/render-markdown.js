@@ -180,7 +180,7 @@ function renderList(lines, i, parent, doc) {
       continue;
     }
     if (texts.length && !endsRun(lines, j)) {
-      texts[texts.length - 1] += ` ${lines[j].trim()}`;
+      texts[texts.length - 1] += hooks && hooks.breaks ? `\n${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       j++;
       continue;
     }
@@ -225,14 +225,16 @@ function renderTable(lines, i, parent, doc) {
 }
 
 function renderParagraph(lines, i, parent, doc) {
-  const body = [lines[i].trim()];
+  const keep = Boolean(hooks && hooks.breaks);
+  const cut = (line) => (keep ? line.trimEnd() : line.trim());
+  const body = [cut(lines[i])];
   let j = i + 1;
   while (j < lines.length && !endsRun(lines, j)) {
-    body.push(lines[j].trim());
+    body.push(cut(lines[j]));
     j++;
   }
   const p = doc.createElement('p');
-  appendInline(p, body.join(' '), doc);
+  appendInline(p, body.join(keep ? '\n' : ' '), doc);
   parent.appendChild(p);
   return j;
 }

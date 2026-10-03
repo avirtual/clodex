@@ -6137,7 +6137,7 @@ body.web-frontend #sidebar-header {
 .tr-seg-prose { white-space: pre-wrap; }
 .tr-prose p, .tr-prose ul, .tr-prose ol, .tr-prose blockquote { margin: 0 0 var(--sp-2, 8px); }
 .tr-prose p:last-child, .tr-prose ul:last-child, .tr-prose ol:last-child { margin-bottom: 0; }
-.tr-prose ul, .tr-prose ol { padding-left: 1.5em; white-space: normal; }
+.tr-prose ul, .tr-prose ol { padding-left: 1.5em; }
 .tr-prose blockquote { padding-left: var(--sp-2, 8px); border-left: 2px solid var(--border-strong, rgba(255, 255, 255, 0.14)); color: var(--text-secondary, inherit); }
 .tr-prose table { white-space: normal; border-collapse: collapse; margin: var(--sp-1, 4px) 0 var(--sp-2, 8px); }
 .tr-prose th, .tr-prose td { border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14)); padding: var(--sp-1, 4px) var(--sp-2, 8px); vertical-align: top; text-align: left; }

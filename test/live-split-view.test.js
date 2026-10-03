@@ -1346,6 +1346,25 @@ test('the transcript bar renders the chips slot, then Conversation, Internals, ?
   } finally { m.view.dispose(); m.restore(); }
 });
 
+test('the md chip flips its pressed state and re-renders the open transcript between a table and raw text', async () => {
+  const table = '| a | b |\n|---|---|\n| 1 | 2 |';
+  const m = await mountSplit(undefined, { pullTranscript: () => ({ ok: true, rev: 1, records: [HEAD, { id: 'a1', kind: 'assistant', ts: null, turn: 1, text: table }] }) });
+  try {
+    const btn = m.pane.childNodes.find((n) => n.className === 'transcript-bar').childNodes[1].childNodes.find((n) => n.textContent === 'md');
+    const tables = () => findAllTag(m.pane, 'table').length;
+    assert.strictEqual(btn.getAttribute('aria-pressed'), 'true');
+    assert.strictEqual(tables(), 1);
+    btn.listeners.click();
+    assert.strictEqual(btn.getAttribute('aria-pressed'), 'false');
+    assert.strictEqual(tables(), 0);
+    btn.listeners.click();
+    assert.strictEqual(btn.getAttribute('aria-pressed'), 'true');
+    assert.strictEqual(tables(), 1);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+const findAllTag = (node, tag) => (node.tag === tag ? [node] : []).concat((node.childNodes || []).flatMap((k) => findAllTag(k, tag)));
+
 const STATUS_DIR = path.join(__dirname, 'fixtures', 'status-states');
 const STATUS_CURSOR = { 'claude-bypass@100': 6, 'claude-shell@100': 16, 'codex-plan@100': 13, 'codex-default@100': 13, 'muse-auto-review@100': 7 };
 const statusRowsOf = (name) => fs.readFileSync(path.join(STATUS_DIR, `${name}.screen.txt`), 'utf8').replace(/\n$/, '').split('\n');

@@ -138,6 +138,7 @@ function appendPlain(doc, parent, text, ctx) {
 function appendMarkdown(doc, parent, text, ctx) {
   parent.appendChild(renderMarkdown(text, {
     doc,
+    breaks: true,
     text: (into, s) => appendLinked(doc, into, s, '', ctx),
     link: (into, label, href) => {
       const a = linkNode(doc, { kind: 'url', text: href }, '', ctx);

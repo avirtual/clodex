@@ -8878,7 +8878,6 @@ body.web-frontend #sidebar-header {
 .tr-prose ul,
 .tr-prose ol {
   padding-left: 1.5em;
-  white-space: normal;
 }
 .tr-prose blockquote {
   padding-left: var(--sp-2, 8px);
@@ -26282,7 +26281,8 @@ ${i3.join("\n")}
             continue;
           }
           if (texts.length && !endsRun(lines, j)) {
-            texts[texts.length - 1] += ` ${lines[j].trim()}`;
+            texts[texts.length - 1] += hooks && hooks.breaks ? `
+${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
             j++;
             continue;
           }
@@ -26324,14 +26324,16 @@ ${i3.join("\n")}
         return j;
       }
       function renderParagraph(lines, i, parent, doc) {
-        const body = [lines[i].trim()];
+        const keep = Boolean(hooks && hooks.breaks);
+        const cut = (line) => keep ? line.trimEnd() : line.trim();
+        const body = [cut(lines[i])];
         let j = i + 1;
         while (j < lines.length && !endsRun(lines, j)) {
-          body.push(lines[j].trim());
+          body.push(cut(lines[j]));
           j++;
         }
         const p = doc.createElement("p");
-        appendInline(p, body.join(" "), doc);
+        appendInline(p, body.join(keep ? "\n" : " "), doc);
         parent.appendChild(p);
         return j;
       }
@@ -32757,6 +32759,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function appendMarkdown(doc, parent, text, ctx) {
         parent.appendChild(renderMarkdown(text, {
           doc,
+          breaks: true,
           text: (into, s) => appendLinked(doc, into, s, "", ctx),
           link: (into, label, href) => {
             const a = linkNode(doc, { kind: "url", text: href }, "", ctx);
@@ -34277,7 +34280,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       };
       var MD_KEY = "clodex-transcript-md";
       var MD_TITLE = "Render the agent's markdown (tables, bold, links) \u2014 off shows the raw text";
-      var mdBars = /* @__PURE__ */ new Set();
+      var mdPanes = /* @__PURE__ */ new Set();
+      var mdButtons = /* @__PURE__ */ new WeakMap();
+      var mdGone = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((ref) => mdPanes.delete(ref)) : null;
       function markdownOn() {
         try {
           return localStorage.getItem(MD_KEY) !== "0";
@@ -34290,13 +34295,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           localStorage.setItem(MD_KEY, on ? "1" : "0");
         } catch {
         }
-        for (const bar of [...mdBars]) {
-          if (bar.paneEl.isConnected === false) {
-            mdBars.delete(bar);
+        for (const ref of [...mdPanes]) {
+          const paneEl = ref.deref();
+          if (!paneEl) {
+            mdPanes.delete(ref);
             continue;
           }
-          bar.btn.setAttribute("aria-pressed", on ? "true" : "false");
-          const rows = views.get(bar.paneEl);
+          mdButtons.get(paneEl).setAttribute("aria-pressed", on ? "true" : "false");
+          const rows = views.get(paneEl);
           if (rows) rows.setMarkdown(on);
         }
       }
@@ -34348,7 +34354,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         });
         const mdBtn = barButton(doc, "transcript-mode-btn transcript-md-btn", "md", MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute("aria-pressed") !== "true"));
         mdBtn.setAttribute("aria-pressed", markdownOn() ? "true" : "false");
-        mdBars.add({ paneEl, btn: mdBtn });
+        const ref = new WeakRef(paneEl);
+        mdButtons.set(paneEl, mdBtn);
+        mdPanes.add(ref);
+        if (mdGone) mdGone.register(paneEl, ref);
         views2.appendChild(control);
         views2.appendChild(mdBtn);
         const help = onHelp ? barButton(doc, "transcript-help-btn", "?", HELP_TITLE, () => onHelp()) : null;

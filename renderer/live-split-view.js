@@ -15,7 +15,9 @@ const views = new WeakMap();
 const NOOP = () => {};
 const MD_KEY = 'clodex-transcript-md';
 const MD_TITLE = 'Render the agent\'s markdown (tables, bold, links) — off shows the raw text';
-const mdBars = new Set();
+const mdPanes = new Set();
+const mdButtons = new WeakMap();
+const mdGone = typeof FinalizationRegistry === 'function' ? new FinalizationRegistry((ref) => mdPanes.delete(ref)) : null;
 
 function markdownOn() {
   try { return localStorage.getItem(MD_KEY) !== '0'; } catch { return true; }
@@ -23,10 +25,11 @@ function markdownOn() {
 
 function setMarkdownPref(on) {
   try { localStorage.setItem(MD_KEY, on ? '1' : '0'); } catch {}
-  for (const bar of [...mdBars]) {
-    if (bar.paneEl.isConnected === false) { mdBars.delete(bar); continue; }
-    bar.btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    const rows = views.get(bar.paneEl);
+  for (const ref of [...mdPanes]) {
+    const paneEl = ref.deref();
+    if (!paneEl) { mdPanes.delete(ref); continue; }
+    mdButtons.get(paneEl).setAttribute('aria-pressed', on ? 'true' : 'false');
+    const rows = views.get(paneEl);
     if (rows) rows.setMarkdown(on);
   }
 }
@@ -84,7 +87,10 @@ function modeBar(doc, paneEl, mode, onMode = NOOP, { onHelp = null, onTerminal =
   });
   const mdBtn = barButton(doc, 'transcript-mode-btn transcript-md-btn', 'md', MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute('aria-pressed') !== 'true'));
   mdBtn.setAttribute('aria-pressed', markdownOn() ? 'true' : 'false');
-  mdBars.add({ paneEl, btn: mdBtn });
+  const ref = new WeakRef(paneEl);
+  mdButtons.set(paneEl, mdBtn);
+  mdPanes.add(ref);
+  if (mdGone) mdGone.register(paneEl, ref);
   views.appendChild(control);
   views.appendChild(mdBtn);
   const help = onHelp ? barButton(doc, 'transcript-help-btn', '?', HELP_TITLE, () => onHelp()) : null;

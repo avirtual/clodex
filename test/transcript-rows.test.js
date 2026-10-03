@@ -1946,3 +1946,11 @@ test('an assistant reply with no intent segments renders markdown too', () => {
   assert.strictEqual(findTag(m.pane, 'table').length, 1);
   assert.strictEqual(findTag(m.pane, 'th').length, 3);
 });
+
+test('an assistant reply keeps its soft line breaks and indentation under the markdown pass', () => {
+  const m = mount();
+  m.render([{ id: 'a1', kind: 'assistant', ts: null, turn: 0, text: 'a\nb' }, { id: 'a2', kind: 'assistant', ts: null, turn: 0, text: '**VERDICT**: ok\n  ├── x' }]);
+  const [one, two] = findCls(m.pane, 'tr-prose');
+  assert.strictEqual(one.textContent, 'a\nb');
+  assert.strictEqual(two.textContent, 'VERDICT: ok\n  ├── x');
+});
