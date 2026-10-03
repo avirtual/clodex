@@ -15,7 +15,7 @@ blocks a release.
 
 - Scratch clone rows: 'Cancel clone' acts only on the clone the menu was opened on (a clone that ended and was replaced is left alone), and the row no longer shows the archive × button.
 - Conversation view renders assistant markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables.
-- Running from a clone is one command: `npm run setup` checks Xcode CLT, Node ≥ 20 and the CLIs, installs, rebuilds node-pty for Electron and verifies it loads; `npm start` now fails with one sentence when that rebuild is missing instead of every session dying on open.
+- Running from a clone is one command: `npm run setup` checks Xcode CLT, Node ≥ 20 and the CLIs, installs, and verifies node-pty can spawn a shell under Electron; `npm start` now fails with one sentence when that check fails instead of every session dying on open.
 
 ## 5.110.0 — 2026-10-03
 - Scratch clone: a clone of a team lead or a ticket hand now starts on its parent's prompt cache — the clone's system prompt and spilled-intent expansion match the parent byte for byte, where before any role, lead or spill made the clone rewrite the whole context.

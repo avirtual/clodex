@@ -7,6 +7,8 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts', 'setup.sh');
+const PROBE_SENTENCE = 'setup: node-pty cannot spawn a shell under Electron — run `npm run setup -- --force` '
+  + '(reinstalls and re-marks spawn-helper executable); if it persists, `xattr -cr node_modules/node-pty`.';
 
 const roots = [];
 after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
@@ -17,7 +19,7 @@ function stub(dir, name, body) {
   fs.chmodSync(file, 0o755);
 }
 
-function fixture({ nodeVersion = 'v22.3.0', xcode = true, probe = true } = {}) {
+function fixture({ nodeVersion = 'v22.3.0', xcode = true, probeExit = 0 } = {}) {
   const root = mkTmpRoot('clodex-setup-');
   roots.push(root);
   const bin = path.join(root, 'stubs');
@@ -28,7 +30,7 @@ function fixture({ nodeVersion = 'v22.3.0', xcode = true, probe = true } = {}) {
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'setup.sh'));
   fs.writeFileSync(path.join(root, 'node_modules', 'electron', 'package.json'),
     '{\n  "name": "electron",\n  "version": "43.0.0"\n}\n');
-  stub(path.join(root, 'node_modules', '.bin'), 'electron', probe ? 'exit 0' : 'echo "NODE_MODULE_VERSION mismatch" >&2; exit 1');
+  stub(path.join(root, 'node_modules', '.bin'), 'electron', `echo "posix_spawnp failed." >&2; exit ${probeExit}`);
   stub(bin, 'uname', '[ "$1" = "-m" ] && echo arm64 || echo Darwin');
   stub(bin, 'xcode-select', xcode ? 'echo /Library/Developer/CommandLineTools' : 'exit 2');
   stub(bin, 'node', `echo ${nodeVersion}`);
@@ -60,11 +62,16 @@ test('setup: Node 18 stops with the Node 20+ sentence', () => {
 });
 
 test('setup: --check with a failing probe names the node-pty fix', () => {
-  const r = run(fixture({ probe: false }), ['--check']);
+  const r = run(fixture({ probeExit: 1 }), ['--check']);
   assert.strictEqual(r.code, 1);
-  assert.strictEqual(r.err.trim(),
-    'setup: node-pty does not load under Electron — rerun `npm run setup --force`.');
+  assert.strictEqual(r.err.trim(), PROBE_SENTENCE);
   assert.doesNotMatch(r.err, /stub must not run/);
+});
+
+test('setup: a probe that hits its spawn timeout gets the same sentence', () => {
+  const r = run(fixture({ probeExit: 2 }), ['--check']);
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.err.trim(), PROBE_SENTENCE);
 });
 
 test('setup: --check --quiet prints nothing and exits 0 when everything is in place', () => {
@@ -75,7 +82,7 @@ test('setup: --check --quiet prints nothing and exits 0 when everything is in pl
 });
 
 test('setup: --check --quiet prints only the failing sentence', () => {
-  const r = run(fixture({ probe: false }), ['--check', '--quiet']);
+  const r = run(fixture({ probeExit: 1 }), ['--check', '--quiet']);
   assert.strictEqual(r.code, 1);
   assert.strictEqual(r.out, '');
   assert.strictEqual(r.err.trim().split('\n').length, 1);

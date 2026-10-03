@@ -24,8 +24,8 @@ not optional: node-pty is native and must match Electron's ABI.
 git clone https://github.com/avirtual/clodex && cd clodex && npm run setup && npm start
 ```
 
-`npm run setup` checks the prerequisites, installs, rebuilds node-pty for
-Electron and verifies it loads; `npm start` and `npm run dev` run its
+`npm run setup` checks the prerequisites, installs, rebuilds node-pty and
+verifies it can spawn a shell under Electron; `npm start` and `npm run dev` run its
 `--check` half first and stop with one sentence when something is missing.
 `bash scripts/setup.sh --check` runs only the checks and the load probe,
 installing nothing; its exit code is the answer. After a `git pull` that bumps

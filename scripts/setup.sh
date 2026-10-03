@@ -73,15 +73,16 @@ if [ "$CHECK" = 0 ]; then
     say "already rebuilt for Electron $ELECTRON_VERSION (skipped; --force reruns it)"
   else
     npx electron-rebuild
+    node build/fix-pty-helper.js
     rm -f node_modules/.clodex-rebuilt-*
     touch "$STAMP"
   fi
 fi
 
-step "node-pty under Electron"
+step "node-pty spawns a shell under Electron"
 [ -x node_modules/.bin/electron ] || die "Electron is not installed — run \`npm run setup\`."
-ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron -e "require('node-pty'); process.exit(0)" >/dev/null 2>&1 \
-  || die "node-pty does not load under Electron — rerun \`npm run setup --force\`."
+ELECTRON_RUN_AS_NODE=1 ./node_modules/.bin/electron -e "const p=require('node-pty').spawn('/bin/sh',['-c','exit 0'],{cols:1,rows:1}); p.onExit(({exitCode})=>process.exit(exitCode===0?0:1)); setTimeout(()=>process.exit(2),3000)" >/dev/null 2>&1 \
+  || die "node-pty cannot spawn a shell under Electron — run \`npm run setup -- --force\` (reinstalls and re-marks spawn-helper executable); if it persists, \`xattr -cr node_modules/node-pty\`."
 ELECTRON_VERSION="$(electron_version)"
 
 [ "$QUIET" = 1 ] && exit 0
