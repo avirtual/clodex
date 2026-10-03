@@ -8864,30 +8864,42 @@ body.web-frontend #sidebar-header {
 .tr-seg-prose {
   white-space: pre-wrap;
 }
-.tr-md-table {
+.tr-prose p,
+.tr-prose ul,
+.tr-prose ol,
+.tr-prose blockquote {
+  margin: 0 0 var(--sp-2, 8px);
+}
+.tr-prose p:last-child,
+.tr-prose ul:last-child,
+.tr-prose ol:last-child {
+  margin-bottom: 0;
+}
+.tr-prose ul,
+.tr-prose ol {
+  padding-left: 1.5em;
+  white-space: normal;
+}
+.tr-prose blockquote {
+  padding-left: var(--sp-2, 8px);
+  border-left: 2px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  color: var(--text-secondary, inherit);
+}
+.tr-prose table {
   white-space: normal;
   border-collapse: collapse;
-  margin: var(--sp-1, 4px) 0;
+  margin: var(--sp-1, 4px) 0 var(--sp-2, 8px);
 }
-.tr-md-table th,
-.tr-md-table td {
+.tr-prose th,
+.tr-prose td {
   border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
   padding: var(--sp-1, 4px) var(--sp-2, 8px);
   vertical-align: top;
   text-align: left;
 }
-.tr-md-table th {
+.tr-prose th {
   font-weight: 600;
   background: var(--surface-raised, transparent);
-}
-.tr-md-fence {
-  white-space: pre;
-  overflow-x: auto;
-  margin: var(--sp-1, 4px) 0;
-  padding: var(--sp-2, 8px);
-  font-family: var(--font-mono, monospace);
-  background: var(--surface-raised, transparent);
-  border-radius: var(--radius-sm, 4px);
 }
 .tr-prose code {
   font-family: var(--font-mono, monospace);
@@ -8895,16 +8907,33 @@ body.web-frontend #sidebar-header {
   border-radius: var(--radius-sm, 4px);
   padding: 0 0.2em;
 }
-.tr-md-h1,
-.tr-md-h2,
-.tr-md-h3 {
+.tr-prose pre {
+  white-space: pre;
+  overflow-x: auto;
+  margin: var(--sp-1, 4px) 0 var(--sp-2, 8px);
+  padding: var(--sp-2, 8px);
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-raised, transparent);
+  border-radius: var(--radius-sm, 4px);
+}
+.tr-prose pre code {
+  background: none;
+  padding: 0;
+}
+.tr-prose h1,
+.tr-prose h2,
+.tr-prose h3,
+.tr-prose h4,
+.tr-prose h5,
+.tr-prose h6 {
+  font-size: 1em;
   font-weight: 700;
   margin: var(--sp-2, 8px) 0 var(--sp-1, 4px);
 }
-.tr-md-h1 {
+.tr-prose h1 {
   font-size: 1.2em;
 }
-.tr-md-h2 {
+.tr-prose h2 {
   font-size: 1.1em;
 }
 .tr-seg-prose + .intent-stack,
@@ -26135,6 +26164,11 @@ ${i3.join("\n")}
       function intraword(s, m) {
         return (m[6] !== void 0 || m[8] !== void 0) && (WORD_CHAR.test(s.charAt(m.index - 1)) || WORD_CHAR.test(s.charAt(INLINE.lastIndex)));
       }
+      var hooks = null;
+      function appendText(parent, s, doc) {
+        if (hooks && hooks.text) hooks.text(parent, s);
+        else parent.appendChild(doc.createTextNode(s));
+      }
       function appendInline(parent, text, doc) {
         const s = String(text == null ? "" : text);
         INLINE.lastIndex = 0;
@@ -26146,16 +26180,17 @@ ${i3.join("\n")}
             m = INLINE.exec(s);
             continue;
           }
-          if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
+          if (m.index > at) appendText(parent, s.slice(at, m.index), doc);
           if (m[1] !== void 0) {
             const code = doc.createElement("code");
             code.textContent = m[1];
             parent.appendChild(code);
           } else if (m[2] !== void 0) {
-            parent.appendChild(doc.createTextNode(m[2]));
+            appendText(parent, m[2], doc);
           } else if (m[3] !== void 0) {
             const href = safeHref(m[4]);
-            if (href) {
+            if (href && hooks && hooks.link) hooks.link(parent, m[3], href);
+            else if (href) {
               const a = doc.createElement("a");
               a.setAttribute("href", href);
               a.setAttribute("rel", "noreferrer noopener");
@@ -26163,7 +26198,7 @@ ${i3.join("\n")}
               a.textContent = m[3];
               parent.appendChild(a);
             } else {
-              parent.appendChild(doc.createTextNode(m[0]));
+              appendText(parent, m[0], doc);
             }
           } else if (m[5] !== void 0 || m[6] !== void 0) {
             const strong = doc.createElement("strong");
@@ -26177,7 +26212,7 @@ ${i3.join("\n")}
           at = INLINE.lastIndex;
           m = INLINE.exec(s);
         }
-        if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
+        if (at < s.length) appendText(parent, s.slice(at), doc);
         return parent;
       }
       function trimClosingHashes(text) {
@@ -26336,11 +26371,16 @@ ${i3.join("\n")}
         }
         return parent;
       }
-      function renderMarkdown(text) {
-        const doc = document;
+      function renderMarkdown(text, opts = null) {
+        const doc = opts && opts.doc || document;
         const frag = doc.createDocumentFragment();
         const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
-        return renderBlocks(lines, frag, doc);
+        hooks = opts;
+        try {
+          return renderBlocks(lines, frag, doc);
+        } finally {
+          hooks = null;
+        }
       }
       module.exports = { renderMarkdown };
     }
@@ -32586,199 +32626,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
-  // renderer/lib/markdown-lite.js
-  var require_markdown_lite = __commonJS({
-    "renderer/lib/markdown-lite.js"(exports, module) {
-      "use strict";
-      var FENCE_OPEN_RE = /^\s{0,3}```\s*([^\s`]*)\s*$/;
-      var FENCE_CLOSE_RE = /^\s{0,3}```\s*$/;
-      var HEADING_RE = /^(#{1,3})[ \t]+(\S.*?)[ \t]*$/;
-      var SEP_CELL_RE = /^:?-+:?$/;
-      var LINK_RE = /^\[([^\]\n]+)\]\(([^()\s]+)\)/;
-      var SAFE_HREF_RE = /^https?:\/\/\S+$/i;
-      var WORD_RE = /[\p{L}\p{N}_]/u;
-      function pipeAt(line) {
-        const at = [];
-        for (let i = 0; i < line.length; i++) {
-          if (line[i] === "\\") {
-            i++;
-            continue;
-          }
-          if (line[i] === "|") at.push(i);
-        }
-        return at;
-      }
-      function splitRow(line) {
-        const s = line.trim();
-        const pipes = pipeAt(s);
-        if (!pipes.length) return null;
-        const cuts = [-1, ...pipes, s.length];
-        const cells = [];
-        for (let k = 0; k + 1 < cuts.length; k++) cells.push(s.slice(cuts[k] + 1, cuts[k + 1]));
-        if (pipes[0] === 0) cells.shift();
-        if (pipes[pipes.length - 1] === s.length - 1) cells.pop();
-        return cells.map((c) => c.trim().replace(/\\\|/g, "|"));
-      }
-      function alignOf(cell) {
-        const left = cell.startsWith(":");
-        const right = cell.endsWith(":");
-        if (left && right) return "center";
-        if (right) return "right";
-        if (left) return "left";
-        return null;
-      }
-      function separatorFor(line, width) {
-        const cells = splitRow(line);
-        if (!cells || cells.length !== width) return null;
-        if (!cells.every((c) => SEP_CELL_RE.test(c))) return null;
-        return cells.map(alignOf);
-      }
-      function fit(cells, width) {
-        const out = cells.slice(0, width);
-        while (out.length < width) out.push("");
-        return out;
-      }
-      function parseBlocks(text) {
-        const lines = String(text).split("\n");
-        const blocks = [];
-        let buf = null;
-        const flush = () => {
-          if (buf) blocks.push({ kind: "text", text: buf.join("\n") });
-          buf = null;
-        };
-        const literal = (line) => {
-          (buf || (buf = [])).push(line);
-        };
-        let i = 0;
-        while (i < lines.length) {
-          const line = lines[i];
-          const open = FENCE_OPEN_RE.exec(line);
-          if (open) {
-            let j = i + 1;
-            while (j < lines.length && !FENCE_CLOSE_RE.test(lines[j])) j++;
-            if (j < lines.length) {
-              flush();
-              blocks.push({ kind: "fence", lang: open[1], text: lines.slice(i + 1, j).join("\n") });
-              i = j + 1;
-              continue;
-            }
-            literal(line);
-            i++;
-            continue;
-          }
-          const head = HEADING_RE.exec(line);
-          if (head) {
-            flush();
-            blocks.push({ kind: "heading", level: head[1].length, text: head[2] });
-            i++;
-            continue;
-          }
-          const header = splitRow(line);
-          const align = header && i + 1 < lines.length ? separatorFor(lines[i + 1], header.length) : null;
-          if (align) {
-            flush();
-            const rows = [];
-            let j = i + 2;
-            while (j < lines.length && lines[j].trim()) {
-              const cells = splitRow(lines[j]);
-              if (!cells) break;
-              rows.push(fit(cells, header.length));
-              j++;
-            }
-            blocks.push({ kind: "table", header, align, rows });
-            i = j;
-            continue;
-          }
-          literal(line);
-          i++;
-        }
-        flush();
-        return blocks;
-      }
-      var isWord = (ch) => ch != null && WORD_RE.test(ch);
-      var isSpace = (ch) => ch == null || /\s/.test(ch);
-      function closeItalic(text, mark, from) {
-        for (let j = from; j < text.length; j++) {
-          if (text[j] === "\\") {
-            j++;
-            continue;
-          }
-          if (text[j] !== mark) continue;
-          if (mark === "*" && (text[j + 1] === "*" || text[j - 1] === "*")) continue;
-          if (isSpace(text[j - 1]) || isWord(text[j + 1])) continue;
-          return j;
-        }
-        return -1;
-      }
-      function closeBold(text, from) {
-        for (let j = from; j + 1 < text.length; j++) {
-          if (text[j] === "\\") {
-            j++;
-            continue;
-          }
-          if (text[j] === "*" && text[j + 1] === "*" && !isSpace(text[j - 1])) return j;
-        }
-        return -1;
-      }
-      function parseInline(text) {
-        const s = String(text);
-        const out = [];
-        let buf = "";
-        const push = (tok) => {
-          if (buf) out.push({ kind: "text", text: buf });
-          buf = "";
-          out.push(tok);
-        };
-        let i = 0;
-        while (i < s.length) {
-          const ch = s[i];
-          if (ch === "\\" && i + 1 < s.length) {
-            buf += s.slice(i, i + 2);
-            i += 2;
-            continue;
-          }
-          if (ch === "`") {
-            const j = s.indexOf("`", i + 1);
-            if (j > i + 1) {
-              push({ kind: "code", text: s.slice(i + 1, j) });
-              i = j + 1;
-              continue;
-            }
-          } else if (ch === "*" && s[i + 1] === "*") {
-            const j = isSpace(s[i + 2]) ? -1 : closeBold(s, i + 3);
-            if (j > 0) {
-              push({ kind: "bold", text: s.slice(i + 2, j) });
-              i = j + 2;
-              continue;
-            }
-            buf += "**";
-            i += 2;
-            continue;
-          } else if ((ch === "*" || ch === "_") && !isWord(s[i - 1]) && !isSpace(s[i + 1]) && s[i + 1] !== ch) {
-            const j = closeItalic(s, ch, i + 2);
-            if (j > 0) {
-              push({ kind: "italic", text: s.slice(i + 1, j) });
-              i = j + 1;
-              continue;
-            }
-          } else if (ch === "[") {
-            const m = LINK_RE.exec(s.slice(i));
-            if (m && SAFE_HREF_RE.test(m[2])) {
-              push({ kind: "link", text: m[1], href: m[2] });
-              i += m[0].length;
-              continue;
-            }
-          }
-          buf += ch;
-          i++;
-        }
-        if (buf) out.push({ kind: "text", text: buf });
-        return out;
-      }
-      module.exports = { parseBlocks, parseInline };
-    }
-  });
-
   // renderer/transcript-rows.js
   var require_transcript_rows = __commonJS({
     "renderer/transcript-rows.js"(exports, module) {
@@ -32791,7 +32638,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { isExternallyOpenable } = require_external_link();
       var { TURN_KINDS, isInternalRow } = require_transcript_internal();
       var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require_transcript_surface();
-      var { parseBlocks, parseInline } = require_markdown_lite();
+      var { renderMarkdown } = require_render_markdown();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
       var CLAMP_CHARS = 240;
@@ -32907,64 +32754,17 @@ ${m[2].replace(/^\r?\n/, "")}`;
           appendLinked(doc, parent, line, "", ctx);
         });
       }
-      function appendInline(doc, parent, text, ctx) {
-        for (const tok of parseInline(text)) {
-          if (tok.kind === "text") {
-            appendLinked(doc, parent, tok.text, "", ctx);
-            continue;
-          }
-          if (tok.kind === "link") {
-            const a = linkNode(doc, { kind: "url", text: tok.href }, "", ctx);
-            a.textContent = tok.text;
-            a.title = tok.href;
-            parent.appendChild(a);
-            continue;
-          }
-          const node = el(doc, tok.kind === "bold" ? "b" : tok.kind === "italic" ? "i" : "code", "");
-          appendLinked(doc, node, tok.text, "", ctx);
-          parent.appendChild(node);
-        }
-      }
-      function mdCell(doc, tag, text, align, ctx) {
-        const cell = el(doc, tag, "");
-        if (align) cell.style.textAlign = align;
-        appendInline(doc, cell, text, ctx);
-        return cell;
-      }
-      function mdTable(doc, block, ctx) {
-        const table = el(doc, "table", "tr-md-table");
-        const head = el(doc, "thead", "");
-        const tr = el(doc, "tr", "");
-        block.header.forEach((c, k) => tr.appendChild(mdCell(doc, "th", c, block.align && block.align[k], ctx)));
-        head.appendChild(tr);
-        table.appendChild(head);
-        const body = el(doc, "tbody", "");
-        for (const row of block.rows) {
-          const r = el(doc, "tr", "");
-          row.forEach((c, k) => r.appendChild(mdCell(doc, "td", c, block.align && block.align[k], ctx)));
-          body.appendChild(r);
-        }
-        table.appendChild(body);
-        return table;
-      }
       function appendMarkdown(doc, parent, text, ctx) {
-        for (const block of parseBlocks(text)) {
-          if (block.kind === "table") parent.appendChild(mdTable(doc, block, ctx));
-          else if (block.kind === "fence") {
-            const pre = el(doc, "pre", "tr-md-fence");
-            appendPlain(doc, pre, block.text, ctx);
-            parent.appendChild(pre);
-          } else if (block.kind === "heading") {
-            const h = el(doc, "div", `tr-md-h${block.level}`);
-            appendInline(doc, h, block.text, ctx);
-            parent.appendChild(h);
-          } else {
-            block.text.split("\n").forEach((line, k) => {
-              if (k) parent.appendChild(doc.createTextNode("\n"));
-              appendInline(doc, parent, line, ctx);
-            });
+        parent.appendChild(renderMarkdown(text, {
+          doc,
+          text: (into, s) => appendLinked(doc, into, s, "", ctx),
+          link: (into, label, href) => {
+            const a = linkNode(doc, { kind: "url", text: href }, "", ctx);
+            a.textContent = label;
+            a.title = href;
+            into.appendChild(a);
           }
-        }
+        }));
       }
       function spillPeek(ctx, path) {
         const cached = spillCache.get(path);

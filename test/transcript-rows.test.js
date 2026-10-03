@@ -62,7 +62,7 @@ test('markup in prompt, prose and tool arguments lands as text, never as element
   const all = [];
   const walk = (n) => { all.push(n); (n.childNodes || []).forEach(walk); };
   walk(m.pane);
-  assert.deepStrictEqual([...new Set(all.filter((n) => n.nodeType === 1).map((n) => n.tag))].sort(), ['div', 'span']);
+  assert.deepStrictEqual([...new Set(all.filter((n) => n.nodeType === 1).map((n) => n.tag))].sort(), ['div', 'p', 'span']);
   const turn = m.pane.childNodes[0];
   assert.strictEqual(turn.childNodes[0].textContent, `●you${evil}`);
   assert.strictEqual(turn.childNodes[1].textContent, evil);
@@ -1913,10 +1913,9 @@ test('assistant prose segments render markdown: a pipe table becomes a <table> a
   m.render([said('a1', 0, MD_SEGS)]);
   const prose = findCls(m.pane, 'tr-seg-prose')[0];
   const [table] = findTag(prose, 'table');
-  assert.strictEqual(table.className, 'tr-md-table');
   assert.strictEqual(findTag(table, 'th').length, 3);
   assert.strictEqual(findTag(table, 'td').length, 6);
-  assert.strictEqual(findTag(table, 'b')[0].textContent, 'ok');
+  assert.strictEqual(findTag(table, 'strong')[0].textContent, 'ok');
   const a = findTag(table, 'a').find((n) => n.dataset.url);
   assert.strictEqual(a.textContent, 'the PR');
   assert.strictEqual(a.title, 'https://example.com/pr/1');

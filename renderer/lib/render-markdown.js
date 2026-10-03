@@ -56,6 +56,13 @@ function intraword(s, m) {
     && (WORD_CHAR.test(s.charAt(m.index - 1)) || WORD_CHAR.test(s.charAt(INLINE.lastIndex)));
 }
 
+let hooks = null;
+
+function appendText(parent, s, doc) {
+  if (hooks && hooks.text) hooks.text(parent, s);
+  else parent.appendChild(doc.createTextNode(s));
+}
+
 function appendInline(parent, text, doc) {
   const s = String(text == null ? '' : text);
   INLINE.lastIndex = 0;
@@ -67,16 +74,17 @@ function appendInline(parent, text, doc) {
       m = INLINE.exec(s);
       continue;
     }
-    if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
+    if (m.index > at) appendText(parent, s.slice(at, m.index), doc);
     if (m[1] !== undefined) {
       const code = doc.createElement('code');
       code.textContent = m[1];
       parent.appendChild(code);
     } else if (m[2] !== undefined) {
-      parent.appendChild(doc.createTextNode(m[2]));
+      appendText(parent, m[2], doc);
     } else if (m[3] !== undefined) {
       const href = safeHref(m[4]);
-      if (href) {
+      if (href && hooks && hooks.link) hooks.link(parent, m[3], href);
+      else if (href) {
         const a = doc.createElement('a');
         a.setAttribute('href', href);
         a.setAttribute('rel', 'noreferrer noopener');
@@ -84,7 +92,7 @@ function appendInline(parent, text, doc) {
         a.textContent = m[3];
         parent.appendChild(a);
       } else {
-        parent.appendChild(doc.createTextNode(m[0]));
+        appendText(parent, m[0], doc);
       }
     } else if (m[5] !== undefined || m[6] !== undefined) {
       const strong = doc.createElement('strong');
@@ -98,7 +106,7 @@ function appendInline(parent, text, doc) {
     at = INLINE.lastIndex;
     m = INLINE.exec(s);
   }
-  if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
+  if (at < s.length) appendText(parent, s.slice(at), doc);
   return parent;
 }
 
@@ -251,14 +259,19 @@ function renderBlocks(lines, parent, doc, depth = 0) {
   return parent;
 }
 
-function renderMarkdown(text) {
-  const doc = document;
+function renderMarkdown(text, opts = null) {
+  const doc = (opts && opts.doc) || document;
   const frag = doc.createDocumentFragment();
   const lines = String(text == null ? '' : text)
     .replace(/\r\n?/g, '\n')
     .replace(/\u0000/g, '')
     .split('\n');
-  return renderBlocks(lines, frag, doc);
+  hooks = opts;
+  try {
+    return renderBlocks(lines, frag, doc);
+  } finally {
+    hooks = null;
+  }
 }
 
 module.exports = { renderMarkdown };

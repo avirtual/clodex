@@ -1400,9 +1400,6 @@ and are not, which is why the judgement worth testing is pushed down here.
   blockquote depth cap so hostile nesting cannot overflow the stack. Frozen into
   `rhost.lib` beside `renderDiffHtml`, which is why widening it is a published
   API change rather than a local edit.
-- **markdown-lite.js** — `parseBlocks`/`parseInline`, a DOM-free parser for the
-  conversation view's assistant prose (tables, fences, headings, bold, italic,
-  code, http links); anything it cannot parse stays literal text.
 - **render-doc.js** — the same idea for the Help window's docs, over
   `doc-parse.js`'s tree instead of raw text: `renderDoc(parsed, { resolveHref })`
   → a `DocumentFragment`, every leaf through `textContent`/`setAttribute`, the

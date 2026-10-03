@@ -6135,14 +6135,19 @@ body.web-frontend #sidebar-header {
 
 .tr-segs { white-space: normal; }
 .tr-seg-prose { white-space: pre-wrap; }
-.tr-md-table { white-space: normal; border-collapse: collapse; margin: var(--sp-1, 4px) 0; }
-.tr-md-table th, .tr-md-table td { border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14)); padding: var(--sp-1, 4px) var(--sp-2, 8px); vertical-align: top; text-align: left; }
-.tr-md-table th { font-weight: 600; background: var(--surface-raised, transparent); }
-.tr-md-fence { white-space: pre; overflow-x: auto; margin: var(--sp-1, 4px) 0; padding: var(--sp-2, 8px); font-family: var(--font-mono, monospace); background: var(--surface-raised, transparent); border-radius: var(--radius-sm, 4px); }
+.tr-prose p, .tr-prose ul, .tr-prose ol, .tr-prose blockquote { margin: 0 0 var(--sp-2, 8px); }
+.tr-prose p:last-child, .tr-prose ul:last-child, .tr-prose ol:last-child { margin-bottom: 0; }
+.tr-prose ul, .tr-prose ol { padding-left: 1.5em; white-space: normal; }
+.tr-prose blockquote { padding-left: var(--sp-2, 8px); border-left: 2px solid var(--border-strong, rgba(255, 255, 255, 0.14)); color: var(--text-secondary, inherit); }
+.tr-prose table { white-space: normal; border-collapse: collapse; margin: var(--sp-1, 4px) 0 var(--sp-2, 8px); }
+.tr-prose th, .tr-prose td { border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14)); padding: var(--sp-1, 4px) var(--sp-2, 8px); vertical-align: top; text-align: left; }
+.tr-prose th { font-weight: 600; background: var(--surface-raised, transparent); }
 .tr-prose code { font-family: var(--font-mono, monospace); background: var(--surface-raised, transparent); border-radius: var(--radius-sm, 4px); padding: 0 0.2em; }
-.tr-md-h1, .tr-md-h2, .tr-md-h3 { font-weight: 700; margin: var(--sp-2, 8px) 0 var(--sp-1, 4px); }
-.tr-md-h1 { font-size: 1.2em; }
-.tr-md-h2 { font-size: 1.1em; }
+.tr-prose pre { white-space: pre; overflow-x: auto; margin: var(--sp-1, 4px) 0 var(--sp-2, 8px); padding: var(--sp-2, 8px); font-family: var(--font-mono, monospace); background: var(--surface-raised, transparent); border-radius: var(--radius-sm, 4px); }
+.tr-prose pre code { background: none; padding: 0; }
+.tr-prose h1, .tr-prose h2, .tr-prose h3, .tr-prose h4, .tr-prose h5, .tr-prose h6 { font-size: 1em; font-weight: 700; margin: var(--sp-2, 8px) 0 var(--sp-1, 4px); }
+.tr-prose h1 { font-size: 1.2em; }
+.tr-prose h2 { font-size: 1.1em; }
 .tr-seg-prose + .intent-stack, .intent-stack + .tr-seg-prose { margin-top: var(--sp-2); }
 .intent-stack {
   background: var(--surface-raised);

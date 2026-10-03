@@ -46,7 +46,7 @@ function rowNodes(records, ctx) {
 function renderNodes(records, ctx) {
   const rows = rowNodes(records, ctx);
   const body = (row) => (row.className.includes('tr-head') ? row.childNodes.find((k) => k.className === 'tr-head-text') : row);
-  return rows.flatMap((row) => body(row).childNodes);
+  return rows.flatMap((row) => body(row).childNodes).flatMap((n) => (n.tag === 'p' ? n.childNodes : [n]));
 }
 
 function render(records, ctx) {
@@ -108,7 +108,7 @@ test('a start-of-line intent in a prose row or a prompt head is classified, not 
 });
 
 test('an intent inside a fence gets no mark', () => {
-  assert.deepStrictEqual(marked(render([prose('```\n[agent:dm x]\n```')])).filter((n) => /intent-mark/.test(n.cls)), []);
+  assert.deepStrictEqual(marked(render([prose('```\n[agent:dm x]\n```')])), []);
 });
 
 function linkCtx(resolved) {
