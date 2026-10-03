@@ -8619,6 +8619,11 @@ body.web-frontend #sidebar-header {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
 }
+.transcript-md-btn {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono, monospace);
+}
 .transcript-pane[data-raw] {
   height: auto;
   overflow: hidden;
@@ -8858,6 +8863,77 @@ body.web-frontend #sidebar-header {
 }
 .tr-seg-prose {
   white-space: pre-wrap;
+}
+.tr-prose p,
+.tr-prose ul,
+.tr-prose ol,
+.tr-prose blockquote {
+  margin: 0 0 var(--sp-2, 8px);
+}
+.tr-prose p:last-child,
+.tr-prose ul:last-child,
+.tr-prose ol:last-child {
+  margin-bottom: 0;
+}
+.tr-prose ul,
+.tr-prose ol {
+  padding-left: 1.5em;
+}
+.tr-prose blockquote {
+  padding-left: var(--sp-2, 8px);
+  border-left: 2px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  color: var(--text-secondary, inherit);
+}
+.tr-prose table {
+  white-space: normal;
+  border-collapse: collapse;
+  margin: var(--sp-1, 4px) 0 var(--sp-2, 8px);
+}
+.tr-prose th,
+.tr-prose td {
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.14));
+  padding: var(--sp-1, 4px) var(--sp-2, 8px);
+  vertical-align: top;
+  text-align: left;
+}
+.tr-prose th {
+  font-weight: 600;
+  background: var(--surface-raised, transparent);
+}
+.tr-prose code {
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-raised, transparent);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0 0.2em;
+}
+.tr-prose pre {
+  white-space: pre;
+  overflow-x: auto;
+  margin: var(--sp-1, 4px) 0 var(--sp-2, 8px);
+  padding: var(--sp-2, 8px);
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-raised, transparent);
+  border-radius: var(--radius-sm, 4px);
+}
+.tr-prose pre code {
+  background: none;
+  padding: 0;
+}
+.tr-prose h1,
+.tr-prose h2,
+.tr-prose h3,
+.tr-prose h4,
+.tr-prose h5,
+.tr-prose h6 {
+  font-size: 1em;
+  font-weight: 700;
+  margin: var(--sp-2, 8px) 0 var(--sp-1, 4px);
+}
+.tr-prose h1 {
+  font-size: 1.2em;
+}
+.tr-prose h2 {
+  font-size: 1.1em;
 }
 .tr-seg-prose + .intent-stack,
 .intent-stack + .tr-seg-prose {
@@ -26087,6 +26163,11 @@ ${i3.join("\n")}
       function intraword(s, m) {
         return (m[6] !== void 0 || m[8] !== void 0) && (WORD_CHAR.test(s.charAt(m.index - 1)) || WORD_CHAR.test(s.charAt(INLINE.lastIndex)));
       }
+      var hooks = null;
+      function appendText(parent, s, doc) {
+        if (hooks && hooks.text) hooks.text(parent, s);
+        else parent.appendChild(doc.createTextNode(s));
+      }
       function appendInline(parent, text, doc) {
         const s = String(text == null ? "" : text);
         INLINE.lastIndex = 0;
@@ -26098,16 +26179,17 @@ ${i3.join("\n")}
             m = INLINE.exec(s);
             continue;
           }
-          if (m.index > at) parent.appendChild(doc.createTextNode(s.slice(at, m.index)));
+          if (m.index > at) appendText(parent, s.slice(at, m.index), doc);
           if (m[1] !== void 0) {
             const code = doc.createElement("code");
             code.textContent = m[1];
             parent.appendChild(code);
           } else if (m[2] !== void 0) {
-            parent.appendChild(doc.createTextNode(m[2]));
+            appendText(parent, m[2], doc);
           } else if (m[3] !== void 0) {
             const href = safeHref(m[4]);
-            if (href) {
+            if (href && hooks && hooks.link) hooks.link(parent, m[3], href);
+            else if (href) {
               const a = doc.createElement("a");
               a.setAttribute("href", href);
               a.setAttribute("rel", "noreferrer noopener");
@@ -26115,7 +26197,7 @@ ${i3.join("\n")}
               a.textContent = m[3];
               parent.appendChild(a);
             } else {
-              parent.appendChild(doc.createTextNode(m[0]));
+              appendText(parent, m[0], doc);
             }
           } else if (m[5] !== void 0 || m[6] !== void 0) {
             const strong = doc.createElement("strong");
@@ -26129,7 +26211,7 @@ ${i3.join("\n")}
           at = INLINE.lastIndex;
           m = INLINE.exec(s);
         }
-        if (at < s.length) parent.appendChild(doc.createTextNode(s.slice(at)));
+        if (at < s.length) appendText(parent, s.slice(at), doc);
         return parent;
       }
       function trimClosingHashes(text) {
@@ -26199,7 +26281,8 @@ ${i3.join("\n")}
             continue;
           }
           if (texts.length && !endsRun(lines, j)) {
-            texts[texts.length - 1] += ` ${lines[j].trim()}`;
+            texts[texts.length - 1] += hooks && hooks.breaks ? `
+${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
             j++;
             continue;
           }
@@ -26241,14 +26324,16 @@ ${i3.join("\n")}
         return j;
       }
       function renderParagraph(lines, i, parent, doc) {
-        const body = [lines[i].trim()];
+        const keep = Boolean(hooks && hooks.breaks);
+        const cut = (line) => keep ? line.trimEnd() : line.trim();
+        const body = [cut(lines[i])];
         let j = i + 1;
         while (j < lines.length && !endsRun(lines, j)) {
-          body.push(lines[j].trim());
+          body.push(cut(lines[j]));
           j++;
         }
         const p = doc.createElement("p");
-        appendInline(p, body.join(" "), doc);
+        appendInline(p, body.join(keep ? "\n" : " "), doc);
         parent.appendChild(p);
         return j;
       }
@@ -26288,11 +26373,16 @@ ${i3.join("\n")}
         }
         return parent;
       }
-      function renderMarkdown(text) {
-        const doc = document;
+      function renderMarkdown(text, opts = null) {
+        const doc = opts && opts.doc || document;
         const frag = doc.createDocumentFragment();
         const lines = String(text == null ? "" : text).replace(/\r\n?/g, "\n").replace(/\u0000/g, "").split("\n");
-        return renderBlocks(lines, frag, doc);
+        hooks = opts;
+        try {
+          return renderBlocks(lines, frag, doc);
+        } finally {
+          hooks = null;
+        }
       }
       module.exports = { renderMarkdown };
     }
@@ -32550,6 +32640,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { isExternallyOpenable } = require_external_link();
       var { TURN_KINDS, isInternalRow } = require_transcript_internal();
       var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require_transcript_surface();
+      var { renderMarkdown } = require_render_markdown();
       var OUTPUT_LINE_CAP = 400;
       var CLAMP_LINES = 2;
       var CLAMP_CHARS = 240;
@@ -32656,11 +32747,27 @@ ${m[2].replace(/^\r?\n/, "")}`;
           appendLinked(doc, parent, line.slice(end), "", ctx);
         });
       }
+      function hasIntentMarks(text) {
+        return classifyRows(String(text).split("\n").map((t) => ({ text: t, isWrapped: false }))).some((m) => m.span);
+      }
       function appendPlain(doc, parent, text, ctx) {
         String(text).split("\n").forEach((line, k) => {
           if (k) parent.appendChild(doc.createTextNode("\n"));
           appendLinked(doc, parent, line, "", ctx);
         });
+      }
+      function appendMarkdown(doc, parent, text, ctx) {
+        parent.appendChild(renderMarkdown(text, {
+          doc,
+          breaks: true,
+          text: (into, s) => appendLinked(doc, into, s, "", ctx),
+          link: (into, label, href) => {
+            const a = linkNode(doc, { kind: "url", text: href }, "", ctx);
+            a.textContent = label;
+            a.title = href;
+            into.appendChild(a);
+          }
+        }));
       }
       function spillPeek(ctx, path) {
         const cached = spillCache.get(path);
@@ -32854,7 +32961,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const fold = filedFold(doc, seg.spill, ctx, prose);
             prose.appendChild(fold.head);
             fold.mount();
-          } else appendPlain(doc, prose, seg.text, ctx);
+          } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
+          else appendMarkdown(doc, prose, seg.text, ctx);
           row.appendChild(prose);
         }
       }
@@ -33259,6 +33367,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const row = el(doc, "div", `tr-row tr-prose${rec.segments ? " tr-segs" : ""}`);
             row.dataset.id = rec.id;
             if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+            else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
             else appendProse(doc, row, rec.text, ctx);
             return row;
           }
@@ -33752,7 +33861,19 @@ ${m[2].replace(/^\r?\n/, "")}`;
           render(lastRecords);
           restore(anchor);
         }
-        return { render, setWorking, setMode };
+        function setMarkdown(on) {
+          const want = on !== false;
+          if (deps.markdown !== false === want) return;
+          deps.markdown = want;
+          const anchor = anchorOf();
+          for (const c of turnCache.values()) {
+            while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
+            c.sub = null;
+          }
+          render(lastRecords);
+          restore(anchor);
+        }
+        return { render, setWorking, setMode, setMarkdown };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
     }
@@ -34157,10 +34278,38 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
+      var MD_KEY = "clodex-transcript-md";
+      var MD_TITLE = "Render the agent's markdown (tables, bold, links) \u2014 off shows the raw text";
+      var mdPanes = /* @__PURE__ */ new Set();
+      var mdButtons = /* @__PURE__ */ new WeakMap();
+      var mdGone = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((ref) => mdPanes.delete(ref)) : null;
+      function markdownOn() {
+        try {
+          return localStorage.getItem(MD_KEY) !== "0";
+        } catch {
+          return true;
+        }
+      }
+      function setMarkdownPref(on) {
+        try {
+          localStorage.setItem(MD_KEY, on ? "1" : "0");
+        } catch {
+        }
+        for (const ref of [...mdPanes]) {
+          const paneEl = ref.deref();
+          if (!paneEl) {
+            mdPanes.delete(ref);
+            continue;
+          }
+          mdButtons.get(paneEl).setAttribute("aria-pressed", on ? "true" : "false");
+          const rows = views.get(paneEl);
+          if (rows) rows.setMarkdown(on);
+        }
+      }
       function transcriptRowsFor(doc, paneEl, ctx = {}) {
         let rows = views.get(paneEl);
         if (!rows) {
-          rows = createTranscriptRows(doc, paneEl, ctx);
+          rows = createTranscriptRows(doc, paneEl, { ...ctx, markdown: markdownOn() });
           views.set(paneEl, rows);
         }
         return rows;
@@ -34203,7 +34352,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           control.appendChild(btn);
           return btn;
         });
+        const mdBtn = barButton(doc, "transcript-mode-btn transcript-md-btn", "md", MD_TITLE, () => setMarkdownPref(mdBtn.getAttribute("aria-pressed") !== "true"));
+        mdBtn.setAttribute("aria-pressed", markdownOn() ? "true" : "false");
+        const ref = new WeakRef(paneEl);
+        mdButtons.set(paneEl, mdBtn);
+        mdPanes.add(ref);
+        if (mdGone) mdGone.register(paneEl, ref);
         views2.appendChild(control);
+        views2.appendChild(mdBtn);
         const help = onHelp ? barButton(doc, "transcript-help-btn", "?", HELP_TITLE, () => onHelp()) : null;
         if (help) views2.appendChild(help);
         const terminalBtn = onTerminal ? barButton(doc, "transcript-mode-btn transcript-terminal-btn", "Screen", TERMINAL_TITLE, () => onTerminal()) : null;
@@ -34224,7 +34380,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         bar.appendChild(chips);
         bar.appendChild(views2);
         paneEl.insertBefore(bar, paneEl.firstChild);
-        return { bar, chips, control, buttons, help, terminal: terminalBtn, setMode, setRaw };
+        return { bar, chips, control, buttons, help, terminal: terminalBtn, markdown: mdBtn, setMode, setRaw };
       }
       function markedText(doc, text, spans) {
         const frag = [];

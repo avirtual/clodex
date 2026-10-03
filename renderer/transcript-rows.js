@@ -8,6 +8,7 @@ const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
 const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('./lib/transcript-surface');
+const { renderMarkdown } = require('./lib/render-markdown');
 
 const OUTPUT_LINE_CAP = 400;
 const CLAMP_LINES = 2;
@@ -123,11 +124,29 @@ function appendProse(doc, parent, text, ctx) {
   });
 }
 
+function hasIntentMarks(text) {
+  return classifyRows(String(text).split('\n').map((t) => ({ text: t, isWrapped: false }))).some((m) => m.span);
+}
+
 function appendPlain(doc, parent, text, ctx) {
   String(text).split('\n').forEach((line, k) => {
     if (k) parent.appendChild(doc.createTextNode('\n'));
     appendLinked(doc, parent, line, '', ctx);
   });
+}
+
+function appendMarkdown(doc, parent, text, ctx) {
+  parent.appendChild(renderMarkdown(text, {
+    doc,
+    breaks: true,
+    text: (into, s) => appendLinked(doc, into, s, '', ctx),
+    link: (into, label, href) => {
+      const a = linkNode(doc, { kind: 'url', text: href }, '', ctx);
+      a.textContent = label;
+      a.title = href;
+      into.appendChild(a);
+    },
+  }));
 }
 
 function spillPeek(ctx, path) {
@@ -330,7 +349,8 @@ function appendSegments(doc, row, segs, ctx) {
       const fold = filedFold(doc, seg.spill, ctx, prose);
       prose.appendChild(fold.head);
       fold.mount();
-    } else appendPlain(doc, prose, seg.text, ctx);
+    } else if (ctx.markdown === false) appendPlain(doc, prose, seg.text, ctx);
+    else appendMarkdown(doc, prose, seg.text, ctx);
     row.appendChild(prose);
   }
 }
@@ -763,6 +783,7 @@ function buildRow(doc, rec, ctx, attached, boxed) {
       const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
       if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+      else if (ctx.markdown !== false && !hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
       else appendProse(doc, row, rec.text, ctx);
       return row;
     }
@@ -1289,7 +1310,20 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     restore(anchor);
   }
 
-  return { render, setWorking, setMode };
+  function setMarkdown(on) {
+    const want = on !== false;
+    if ((deps.markdown !== false) === want) return;
+    deps.markdown = want;
+    const anchor = anchorOf();
+    for (const c of turnCache.values()) {
+      while (c.el.firstChild) c.el.removeChild(c.el.firstChild);
+      c.sub = null;
+    }
+    render(lastRecords);
+    restore(anchor);
+  }
+
+  return { render, setWorking, setMode, setMarkdown };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };

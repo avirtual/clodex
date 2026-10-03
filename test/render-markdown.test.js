@@ -488,6 +488,22 @@ test('a fence never becomes markup, however it is fed', () => {
   assert.ok(!/<script/i.test(html), `fenced script leaked: ${html}`);
 });
 
+test('the text and link hooks receive the plain runs and safe links, never code, bold or link labels as text', () => {
+  const restore = installDom();
+  try {
+    const runs = [];
+    const links = [];
+    load()('a `code` **b** [l](https://x.io) c\n\n| h |\n|---|\n| d |', {
+      text: (parent, s) => runs.push(s),
+      link: (parent, label, href) => links.push([label, href]),
+    });
+    assert.deepStrictEqual(runs, ['a ', ' ', ' ', ' c', 'h', 'd']);
+    assert.deepStrictEqual(links, [['l', 'https://x.io']]);
+  } finally {
+    restore();
+  }
+});
+
 // ── The frozen surface ──────────────────────────────────────────────────────
 
 test('rhost.lib is frozen and lends exactly these two leaves', () => {

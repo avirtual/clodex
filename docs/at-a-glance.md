@@ -15,6 +15,7 @@ An agent seat shows one of three views:
 - **Screen** — the CLI's own screen. The Screen button on the seat's bar switches to it and back (⌘⇧T does the same).
 
 A stream seat has Conversation and Internals only; there is no terminal to fall back to.
+The agent's replies render their markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables; the **md** chip on the bar switches every seat back to the raw text (prompts and tool output are always raw).
 When the CLI shows a menu, a picker or a dialog, its terminal opens under the conversation;
 answer it there. Preferences ▸ Appearance ▸ "Agent seats open in" sets where new seats start.
 
