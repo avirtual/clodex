@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.111.1 — 2026-10-04
+
 - Spill cut: the stand-in Clodex puts in a request where an empty turn must survive behind a system row is now a bracketed runtime note the model is told never to write; any stand-in the model echoes anyway is cut from the next request, counted, and the conversation view shows it as a dim 'echoed a runtime note' row instead of as the agent's prose.
 
 ## 5.111.0 — 2026-10-04
