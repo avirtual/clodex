@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.110.0 — 2026-10-03
 - Scratch clone: a clone of a team lead or a ticket hand now starts on its parent's prompt cache — the clone's system prompt and spilled-intent expansion match the parent byte for byte, where before any role, lead or spill made the clone rewrite the whole context.
 - Scratch clone: a clone no longer makes the wire proxy forget its parent's role on the clone's first request, and a fork that fails after the clone started retires the clone instead of leaving it running.
 - Scratch clones now appear in the sidebar of the parent's window, badged `clone` with a 'clone of <parent>' hovercard note; a clone that exits on its own no longer leaves an 'exited' ghost row or an 'exited unexpectedly' toast.
