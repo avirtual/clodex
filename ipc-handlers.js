@@ -507,6 +507,16 @@ function registerIpcHandlers(deps) {
     if (res && res.ok === false) return { ok: false, error: res.error || 'scratch mark refused' };
     return { ok: true };
   });
+  handle('session:scratch-cancel', (e, { parent } = {}) => {
+    const here = workspaceOfSender(e);
+    if (!persistence.listForWorkspace(here).some((s) => s.name === parent)) {
+      return { ok: false, error: `session ${parent} is not in this workspace` };
+    }
+    const session = manager.sessions.get(parent);
+    if (!session || !session._scratchClone) return { ok: false, error: `${parent} has no scratch clone` };
+    manager._scratchCloneCancel(session, (msg) => manager._injectText(session, msg, { parkable: true }));
+    return { ok: true };
+  });
   handle('session:flushPending', (_e, name) => manager.flushPending(name));
   handle('session:peekPending', (_e, name) => manager.peekPendingFor(name));
   handle('session:resize', (_e, name, cols, rows) => manager.resize(name, cols, rows));
@@ -1843,6 +1853,14 @@ function registerIpcHandlers(deps) {
   });
 
   on('session:context-menu', (e, { name, cwd }) => {
+    const live = manager?.sessions?.get(name);
+    if (live && live.clone) {
+      popupMenu([{
+        label: 'Cancel clone',
+        click: () => e.sender.send('session:context-action', { action: 'cancelClone', name, clone: live.clone }),
+      }], e);
+      return;
+    }
     const entry = persistence.get(name) || {};
     const isAgent = isAgentType(entry.type);
     let seatDir = null;

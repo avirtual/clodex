@@ -80,6 +80,7 @@
 | `handle:session:move-to-workspace` | moves a session into another workspace | sessions via manager | manager.moveToWorkspace | unpinned |
 | `handle:session:rename` | renames a session | sessions via manager | manager.rename | unpinned |
 | `handle:session:scratch-mark` | places a labelled scratch mark at the current end of a Claude seat's turn, refused outside the sender's workspace | seat scratch marks via manager | manager.scratchMark | ipc-scratch-mark.test.js |
+| `handle:session:scratch-cancel` | cancels the parent's scratch clone on its behalf, replying into the parent as `[agent:scratch cancel]` does; refused outside the sender's workspace | the parent's clone via manager | manager._scratchCloneCancel | ipc-scratch-mark.test.js |
 | `handle:session:flushPending` | delivers the seat's parked messages now | inject queue via manager | manager.flushPending | unpinned |
 | `handle:session:peekPending` | the seat's parked messages without delivering them | inject queue via manager | manager.peekPendingFor | unpinned |
 | `handle:session:resize` | resizes the seat's PTY | pty via manager | manager.resize | unpinned |
@@ -455,7 +456,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `handle:session:exportMarkdown` | writes an agent seat's transcript as markdown to a path chosen in a save dialog | file on disk | showSaveDialog, jsonlToMarkdown | unpinned |
-| `on:session:context-menu` | pops the session row menu; items answer on session:context-action or edit prompt refs in place | sessions.json prompt refs | popupMenu, persistence.setPromptRefs, movePeerItem, moveWorkspaceItem | session-move.test.js api-shim.test.js ipc-scratch-mark.test.js ipc-workspace-trio.test.js |
+| `on:session:context-menu` | pops the session row menu (a scratch clone's row gets only Cancel clone); items answer on session:context-action or edit prompt refs in place | sessions.json prompt refs | popupMenu, persistence.setPromptRefs, movePeerItem, moveWorkspaceItem | session-move.test.js api-shim.test.js ipc-scratch-mark.test.js ipc-workspace-trio.test.js |
 | `on:peer:context-menu` | pops a far seat's menu; each item answers on peer:context-action | none | popupMenu | session-move.test.js |
 | `deployTargetFor` | the ssh host, port and deploy folder for a peer, or null without an ssh host | ui-settings peers (read) | resolveDeployFolder, getPeerManager | unpinned |
 | `handle:peer:deployConfig` | a peer's deploy target for the update flow | none | deployTargetFor | unpinned |

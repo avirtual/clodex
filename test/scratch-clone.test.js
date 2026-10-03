@@ -486,8 +486,8 @@ test('t1546 a successful begin sends the clone one background reattach naming it
   const pushes = ctx(f.cloneName());
   assert.strictEqual(pushes.length, 1);
   const p = pushes[0][2];
-  assert.deepStrictEqual({ action: p.action, name: p.name, background: p.background, clone: p.clone },
-    { action: 'reattach', name: f.cloneName(), background: true, clone: 'a' });
+  assert.deepStrictEqual({ action: p.action, name: p.name, type: p.type, io: p.io, background: p.background, clone: p.clone },
+    { action: 'reattach', name: f.cloneName(), type: 'claude', io: 'pty', background: true, clone: 'a' });
   assert.deepStrictEqual(ctx('a'), []);
 });
 
@@ -501,3 +501,25 @@ test('t1546 list() carries clone on the clone row and no clone key on the parent
   assert.deepStrictEqual(pick(f.cloneName()), { name: f.cloneName(), clone: 'a' });
   assert.deepStrictEqual(pick('a'), { name: 'a' });
 });
+
+test('t1547 a clone retired in the same tick as its spawn (parent dead) gets no reattach push, so no row flashes', async () => {
+  const f = mkClone();
+  const realCreate = f.m.create;
+  f.m.create = async (...args) => { const r = await realCreate(...args); f.s._dead = true; return r; };
+  await f.begin();
+  assert.deepStrictEqual(f.sent.filter((a) => a[1] === 'session:context-action'), []);
+  assert.strictEqual(f.clone()._scratchCloneRetired, true);
+});
+
+for (const row of [
+  { verb: 'rename', call: (m, n) => m.rename(n, 'renamed-clone') },
+  { verb: 'moveToWorkspace', call: (m, n) => m.moveToWorkspace(n, 'ws2') },
+  { verb: 'moveToPeer', call: (m, n) => m.moveToPeer(n, 'peer1') },
+]) {
+  test(`t1547 ${row.verb} on a scratch clone is refused in the main process`, async () => {
+    const f = mkClone();
+    await f.begin();
+    const res = await row.call(f.m, f.cloneName());
+    assert.deepStrictEqual(res, { ok: false, error: `${f.cloneName()} is a scratch clone — cancel it from its parent instead` });
+  });
+}

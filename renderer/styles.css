@@ -393,7 +393,7 @@ html, body {
   border: 1px solid currentColor;
   margin-left: 4px;
 }
-.session-fix {
+.session-fix, .session-clone {
   font-size: 10px;
   padding: 0 4px;
   border-radius: 4px;
@@ -401,14 +401,7 @@ html, body {
   margin-left: 4px;
   color: var(--text-dim);
 }
-.session-clone {
-  font-size: 10px;
-  padding: 0 4px;
-  border-radius: 4px;
-  border: 1px solid currentColor;
-  margin-left: 4px;
-  color: var(--text-tertiary, #888);
-}
+.session-clone { color: var(--text-tertiary, #888); }
 .session-pr.open { color: #2ecc71; }
 .session-pr.merged { color: #a371f7; }
 .session-pr.closed { color: #e5534b; }

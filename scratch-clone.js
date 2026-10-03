@@ -113,13 +113,13 @@ function createScratchCloneMethods(deps, shared) {
         reply(`[agent:scratch] begin failed: the clone ${cloneName} exited as it started. Nothing was forked.`);
         return;
       }
-      this._sendToSession(cloneName, 'session:context-action', {
-        action: 'reattach', name: cloneName, type: clone.type, cwd: clone.cwd, backend: clone.backend || null, noWire: !!clone.noWire, io: clone.io || 'pty',
-        background: true, clone: parent.name,
-      });
       const ours = parent._scratchClone === cloneName;
       try {
         if (!ours || parent._dead) { this._scratchCloneRetire(clone); return; }
+        this._sendToSession(cloneName, 'session:context-action', {
+          action: 'reattach', name: cloneName, type: clone.type, cwd: clone.cwd, backend: clone.backend || null, noWire: !!clone.noWire, io: clone.io || 'pty',
+          background: true, clone: parent.name,
+        });
         clone._scratchCloneTimer = setTimeout(() => this._scratchCloneExpire(clone), SCRATCH_CLONE_CEILING_MS);
         if (typeof clone._scratchCloneTimer.unref === 'function') clone._scratchCloneTimer.unref();
         log.info('intent', `scratch clone ${cloneName} of ${parent.name} sid=${cloneSid} strip=${stripBase ? `${level} (${source})` : 'none'}`);

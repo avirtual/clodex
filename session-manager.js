@@ -3344,6 +3344,7 @@ function createSessionManager(deps) {
     }
 
     async rename(name, newName) {
+      if (this.sessions.get(name)?.clone) return { ok: false, error: `${name} is a scratch clone — cancel it from its parent instead` };
       if (typeof newName !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(newName)) {
         return { ok: false, error: 'Name must be 1–64 chars: letters, digits, . _ - (and not only dots)' };
       }
@@ -3555,6 +3556,7 @@ function createSessionManager(deps) {
     }
 
     moveToWorkspace(name, workspaceId) {
+      if (this.sessions.get(name)?.clone) return { ok: false, error: `${name} is a scratch clone — cancel it from its parent instead` };
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
       const ws = getWorkspaces ? getWorkspaces().get(workspaceId) : null;
@@ -3640,6 +3642,7 @@ function createSessionManager(deps) {
     }
 
     async moveToPeer(name, peerId, { farCwd = null } = {}) {
+      if (this.sessions.get(name)?.clone) return { ok: false, error: `${name} is a scratch clone — cancel it from its parent instead` };
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
       if (entry.worktree && entry.worktree.path) {

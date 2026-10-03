@@ -395,6 +395,7 @@ const API_CONTRACT = [
   { name: 'onSessionMovedIn', kind: 'on', channel: 'session:moved-in' },
   { name: 'renameSession', kind: 'invoke', channel: 'session:rename' },
   { name: 'scratchMark', kind: 'invoke', channel: 'session:scratch-mark', argmap: (name, label) => [{ name, label }] },
+  { name: 'scratchCancel', kind: 'invoke', channel: 'session:scratch-cancel', argmap: (parent) => [{ parent }] },
   { name: 'setSessionTools', kind: 'invoke', channel: 'session:setTools' },
   { name: 'setSessionSkills', kind: 'invoke', channel: 'session:setSkills' },
   { name: 'setSessionAgents', kind: 'invoke', channel: 'session:setAgents' },

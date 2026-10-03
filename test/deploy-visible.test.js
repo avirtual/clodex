@@ -294,7 +294,7 @@ test('a session without fixFor renders no chip at all', () => {
 
 test('the .session-fix chip has a stylesheet rule beside .session-pr', () => {
   const css = fs.readFileSync(path.join(REPO, 'renderer', 'styles.css'), 'utf8');
-  assert.match(css, /\.session-fix\s*\{/, 'styles.css defines .session-fix');
+  assert.match(css, /\.session-fix\s*[,{]/, 'styles.css defines .session-fix');
 });
 
 
