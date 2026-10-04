@@ -15,7 +15,7 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 const DESIGN_PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
   '  [agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
-  '  [agent:browser click [service] <n>]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
+  '  [agent:browser click [service] <n>|--text=<visible text>]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
   '  [agent:browser select [service] <n>] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',
   '  [agent:browser screenshot [service]]  [agent:browser wait [service] [--ms=N] [--for=<text>]]  [agent:browser services]  [agent:browser release [service]]',
   '  Each reply arrives as your next input — end your turn after emitting. Numbers come from your latest read of that page; read again after it navigates.',

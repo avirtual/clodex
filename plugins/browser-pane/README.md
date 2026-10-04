@@ -66,6 +66,8 @@ service's cookies.
   appear after an ad-hoc re-sign; it guards the browser's cookie encryption.
 - **Two "Clodex" Dock icons** while a browser window is open: the browser is the
   same app bundle. Its icon is hidden whenever no browser window is open.
+- **Script-only rows**: rows that open through a script are numbered as
+  `clickable`; when nothing is numbered, `click --text=` targets visible text.
 - **The verb is privileged**: until `browser` is ticked in a seat's intent
   checklist, that seat's `[agent:browser …]` lines are silently inert, with no
   error reply.
@@ -75,7 +77,7 @@ service's cookies.
 ```
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N] [--max=<tokens>]]
-[agent:browser click [service] <n>]
+[agent:browser click [service] <n>|--text=<visible text>]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser select [service] <n>] <option text or value>
