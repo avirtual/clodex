@@ -3,9 +3,10 @@
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const driver = require('../plugins/browser-pane/driver');
-const lock = require('../plugins/browser-pane/lock');
-const scripts = require('../plugins/browser-pane/page-scripts');
+const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
+const driver = require(path.join(PLUGIN_DIR, 'driver'));
+const lock = require(path.join(PLUGIN_DIR, 'lock'));
+const scripts = require(path.join(PLUGIN_DIR, 'page-scripts'));
 
 const PAGES = {
   '/act': () => `<title>Act</title><input id=a style="position:absolute;left:20px;top:20px;width:200px">
