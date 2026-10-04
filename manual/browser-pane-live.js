@@ -29,6 +29,7 @@ const PAGES = {
 <label>Password <input type="password" name="pw"></label><button>Sign in</button></form></main>`,
   '/form': () => `<title>Form</title><main><label>Find <input id=q></label><button onclick="document.title='clicked'">Go</button>
 <select id=m><option>July 2026</option><option>August 2026</option></select><a href="/shadow">Shadow page</a></main>`,
+  '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
 
@@ -41,6 +42,10 @@ function server() {
       if (url.pathname === '/stall') {
         res.writeHead(200, headers);
         res.end('<title>Stall</title><main><p>waiting</p><img src="/hang"></main>');
+        return;
+      }
+      if (url.pathname === '/slow') {
+        setTimeout(() => { res.writeHead(200, headers); res.end('<title>Slow done</title><main><p>Slow done</p></main>'); }, 17000);
         return;
       }
       if (url.pathname === '/stall-login') {
@@ -160,6 +165,12 @@ async function main() {
   console.log(`< ${await back}`);
   show(fileOf(await emit('[agent:browser read signin]')), (l) => /input:password/.test(l));
   await emit('[agent:browser type signin 2] hunter2');
+
+  console.log('== 3f. a click whose navigation answers after 17 s is not cancelled');
+  await emit(`[agent:browser open slow] ${base}/slowlink`);
+  await emit('[agent:browser read slow]');
+  await emit('[agent:browser click slow 1]');
+  await emit('[agent:browser wait slow --ms=10000 --for="Slow done"]');
 
   console.log('== 4. persistence across a restart');
   await emit(`[agent:browser open jar] ${base}/set`);

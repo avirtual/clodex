@@ -124,3 +124,8 @@ test('replies: the sign-in reply and notification, password and Google, verbatim
     body: 'Google refuses sign-in inside embedded browsers ("This browser or app may not be secure"). If the portal has its own email/password login, use it in the window and press Hand back; otherwise this service cannot be automated yet.',
   });
 });
+
+test('replies: a stopped stalled load says so instead of still busy', () => {
+  assert.strictEqual(R.openReply('stall', { status: 200, title: 'Stall', url: 'http://x/stall', login: {}, idle: { ok: false, stopped: true, ms: 15200, inflight: ['http://x/hang'] } }),
+    '[agent:browser] opened stall · 200 · "Stall" · http://x/stall · login: none · stopped a stalled load after 15s · next: read');
+});

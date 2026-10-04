@@ -92,9 +92,17 @@ the prototype setter from the isolated world, which bypasses a main-world
 instance value tracker (React's), so the page's `change` handler sees a changed
 value and fires `onChange`.
 
-## child.js — opOpen
+## child.js — mutating
 
 When the idle wait times out and the page is still loading (a subresource that
 never finishes), the load is stopped before the login probe runs:
 `executeJavaScript` waits for load in both worlds, so without the stop every later
-`read` times out and the probe sees nothing.
+`read` times out and the probe sees nothing. For an act the stop runs only if the
+main frame committed during the act: stopping an uncommitted navigation would
+cancel a slow form POST the server may already have processed.
+
+## client.js — OP_DEADLINE_MS
+
+Deviation from DESIGN §3.4 (50 s / 90 s), which predates `open` being gated.
+`open` worst case: gate 60 s + load 25 s + idle 15 s + probe 8 s ≈ 108 s → 110 s.
+Acts: gate 60 s + FIND 8 s + idle 15 s (+≈3.5 s overrun) + probe 8 s ≈ 95 s → 100 s.

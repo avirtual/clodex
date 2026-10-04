@@ -249,6 +249,18 @@ test('scheduler: a wait queued behind a command becomes a held waiter when the s
   assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
 });
 
+test('scheduler: a sign-in failure keeps the seat\'s queued wait and drops the rest', async () => {
+  const h = harness({ read: () => ({ ...PAGE, held: { reason: 'login', login: { password: true }, url: 'https://portal.example.com/login' } }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const replies = h.run([['hand-a', '[agent:browser read utility]'], ['hand-a', '[agent:browser key] Tab'], ['hand-a', '[agent:browser wait utility]']]);
+  h.sched.onState(HELD_STATE);
+  const got = await replies;
+  assert.strictEqual(got.length, 1);
+  assert.match(got[0][1], /^\[agent:browser\] sign-in needed on utility .* — dropped 1 queued command after it: key Tab$/);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+});
+
 test('scheduler: a closed window forgets the seats\' numbers for it', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
