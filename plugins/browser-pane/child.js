@@ -137,7 +137,7 @@ function run(electron, ctx) {
     layout();
     win.on('resize', layout);
     const wc = view.webContents;
-    const svc = { name, win, view, wc, ses, doc: 0, busy: 0 };
+    const svc = { name, win, view, wc, ses, doc: 0, busy: 0, blank: wc.loadURL('about:blank').catch(() => {}) };
     wc.on('did-navigate', () => { svc.doc += 1; render(svc); });
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
@@ -186,6 +186,7 @@ function run(electron, ctx) {
     const onNav = (_e, _url, code) => { status = code; };
     svc.wc.on('did-navigate', onNav);
     try {
+      await svc.blank;
       ensureCdp(svc);
       let navErr = null;
       const { idle } = await driver.act(svc.wc, () => svc.wc.loadURL(url).catch((e) => { navErr = e; }), { timeoutMs: OPEN_IDLE_MS });
