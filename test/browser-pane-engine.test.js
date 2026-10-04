@@ -25,7 +25,9 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
   const sessions = new Map([
     ['clodex-hand', { name: 'clodex-hand', type, cwd: dir, workspaceId: 'w1' }],
     ['clodex-two', { name: 'clodex-two', type, cwd: dir, workspaceId: 'w1' }],
+    ['clodex-far', { name: 'clodex-far', type, cwd: dir, workspaceId: 'w2' }],
   ]);
+  const frameLog = path.join(dir, 'frames.log');
   const notes = [];
   const engine = createPluginHostEngine({
     manager: {
@@ -45,7 +47,7 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
     fs, path,
     gitWorktree: {},
     electronChild: headless ? undefined
-      : (script, extraArgs) => ({ command: process.execPath, args: [FAKE, ...extraArgs, '--mode=normal'], env: process.env }),
+      : (script, extraArgs) => ({ command: process.execPath, args: [FAKE, ...extraArgs, '--mode=normal', `--log=${frameLog}`], env: process.env }),
   });
   const host = engine.register('browser-pane', engineMod, { hostApi: HOST_API_VERSION }, { dir: PLUGIN_DIR });
   const emitAs = (seat, line) => {
@@ -63,7 +65,9 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
     if (prevTmp === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = prevTmp;
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  return { emit, emitAs, nextReply, injected, dir, tmp, host, engine, notes };
+  const frames = () => (fs.existsSync(frameLog) ? fs.readFileSync(frameLog, 'utf8').split('\n').filter(Boolean) : []);
+  const clearFrames = () => { if (fs.existsSync(frameLog)) fs.truncateSync(frameLog, 0); };
+  return { emit, emitAs, nextReply, injected, dir, tmp, host, engine, notes, frames, clearFrames };
 }
 
 test('engine: open replies with one line and records the service in storage', async (t) => {
@@ -171,4 +175,84 @@ test('engine: an act after a read goes to the child and replies in one line', as
   await emit('[agent:browser open utility] https://portal.example.com/bills');
   await emit('[agent:browser read]');
   assert.strictEqual(await emit('[agent:browser click 2]'), '[agent:browser] clicked utility [2] button "View" · same page · idle 1.2s');
+});
+
+test('engine: download lands in --to inside the cwd and replies with the exact PDF line', async (t) => {
+  const { emit, dir } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  const reply = await emit('[agent:browser download utility --to=bills --as=2026-08.pdf] https://portal.example.com/files/aug.pdf');
+  const file = path.join(fs.realpathSync(dir), 'bills', '2026-08.pdf');
+  assert.strictEqual(reply,
+    `[agent:browser] downloaded utility https://portal.example.com/files/aug.pdf → ${file} · 13 B · application/pdf · %PDF ok · 0.8s`);
+  assert.strictEqual(fs.readFileSync(file, 'utf8').slice(0, 5), '%PDF-');
+});
+
+test('engine: a web page where a PDF was expected gives the WARNING line', async (t) => {
+  const { emit, host } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  const reply = await emit('[agent:browser download utility] https://portal.example.com/files/expired.pdf');
+  const file = path.join(host.paths.dataDir, 'downloads', 'utility', 'bill.pdf');
+  const shown = /\s/.test(file) ? `"${file}"` : file;
+  assert.strictEqual(reply,
+    `[agent:browser] downloaded utility https://portal.example.com/files/expired.pdf → ${shown} · 37 B · text/html · WARNING: not a PDF — looks like a web page (session expired?) — read utility`);
+});
+
+test('engine: --to outside the cwd is refused before any frame reaches the child', async (t) => {
+  const { emit, dir, frames, clearFrames } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  assert.deepStrictEqual(frames(), ['open']);
+  clearFrames();
+  assert.strictEqual(await emit('[agent:browser download utility --to=../elsewhere] https://portal.example.com/files/aug.pdf'),
+    `[agent:browser] error: --to must name a folder inside your working directory (${dir})`);
+  assert.deepStrictEqual(frames(), []);
+  assert.ok(!fs.existsSync(path.join(path.dirname(dir), 'elsewhere')));
+});
+
+test('engine: a file that landed outside the --to folder is deleted and the reply is an error', async (t) => {
+  const { emit, dir } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  const reply = await emit('[agent:browser download utility --to=.] https://portal.example.com/files/escape.pdf');
+  assert.strictEqual(reply,
+    `[agent:browser] error: the download left your working directory (${dir}) and was deleted — download it again`);
+  assert.ok(!fs.existsSync(path.join(path.dirname(dir), 'escaped.pdf')));
+});
+
+test('engine: screenshot writes s-<seq>.jpg and replies with its size and @path', async (t) => {
+  const { emit, tmp } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  const reply = await emit('[agent:browser screenshot]');
+  const m = /^\[agent:browser\] screenshot utility 1280×900 → @(\S+) $/.exec(reply);
+  assert.ok(m, reply);
+  assert.strictEqual(m[1], path.join(tmp, 'clodex-browser-pane', 'clodex-hand', 's-0001.jpg'));
+  assert.strictEqual(fs.readFileSync(m[1], 'utf8'), 'fake-jpeg');
+});
+
+test('engine: forget with the child stopped removes only chromium/Partitions/<service> and keeps downloads', async (t) => {
+  const { engine, host } = boot(t);
+  const data = host.paths.dataDir;
+  const parts = path.join(data, 'chromium', 'Partitions');
+  for (const d of [path.join(parts, 'utility', 'Cookies-dir'), path.join(parts, 'other'), path.join(data, 'downloads', 'utility')]) {
+    fs.mkdirSync(d, { recursive: true });
+  }
+  fs.writeFileSync(path.join(data, 'downloads', 'utility', 'aug.pdf'), '%PDF-');
+  host.storage.set({ v: 1, services: { utility: { createdAt: 1 }, other: { createdAt: 2 } } });
+  const r = await engine.dispatch('browser-pane', 'services.forget', ['utility'], 'desktop');
+  assert.deepStrictEqual(r, { ok: true, service: 'utility' });
+  assert.ok(!fs.existsSync(path.join(parts, 'utility')), 'the partition is gone');
+  assert.ok(fs.existsSync(path.join(parts, 'other')), 'the sibling partition survives');
+  assert.ok(fs.existsSync(path.join(data, 'downloads', 'utility', 'aug.pdf')), 'downloads are kept');
+  assert.deepStrictEqual(Object.keys(host.storage.get().services), ['other']);
+});
+
+test('engine: status redacts a seat from another workspace', async (t) => {
+  const { emitAs, engine } = boot(t);
+  await emitAs('clodex-far', '[agent:browser open utility] https://portal.example.com/drive');
+  const mine = await engine.dispatch('browser-pane', 'status', ['w2'], 'desktop');
+  const theirs = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
+  assert.deepStrictEqual(mine.services.map((s) => s.seat), ['clodex-far']);
+  assert.deepStrictEqual(theirs, {
+    ok: true,
+    child: 'running',
+    services: [{ name: 'utility', state: 'driving', reason: null, seat: 'another workspace', login: 'unknown' }],
+  });
 });

@@ -1,5 +1,7 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const readline = require('node:readline');
 
 const arg = (k) => {
@@ -7,6 +9,7 @@ const arg = (k) => {
   return hit ? hit.slice(k.length + 3) : null;
 };
 const mode = arg('mode') || 'normal';
+const frameLog = arg('log');
 if (mode === 'ignore-term') process.on('SIGTERM', () => process.stderr.write('ignoring SIGTERM\n'));
 const send = (f) => process.stdout.write(JSON.stringify({ cxb: 1, ...f }) + '\n');
 
@@ -59,10 +62,26 @@ function answer(f) {
   }
   if (f.op === 'open') {
     doc += 1;
+    if (/drive/.test(f.args.url)) send({ event: 'state', service: f.service, state: 'driving', reason: null, seat: f.seat, url: f.args.url, title: '' });
     return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Fixture ' + f.service, doc,
       idle: { ok: true, ms: 1200 }, login: { password: /login/.test(f.args.url), logoutLink: /home/.test(f.args.url) } } });
   }
   if (f.op === 'read') return send({ id: f.id, ok: true, result: { ...READ, doc } });
+  if (f.op === 'download') {
+    const url = String(f.args.url || '');
+    const html = /expired/.test(url);
+    const name = f.args.as || (html ? 'bill.pdf' : 'statement.pdf');
+    const file = /escape/.test(url) ? path.join(f.args.dir, '..', 'escaped.pdf') : path.join(f.args.dir, name);
+    const body = html ? '<!DOCTYPE html><title>Sign in</title>' : '%PDF-1.4 fake';
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, body);
+    return send({ id: f.id, ok: true, result: { file, bytes: body.length, mime: html ? 'text/html' : 'application/pdf',
+      magic: html ? 'html' : 'pdf', ms: 800, url: READ.url, title: READ.title, doc, login: {}, takeover: false } });
+  }
+  if (f.op === 'screenshot') {
+    return send({ id: f.id, ok: true, result: { jpeg: Buffer.from('fake-jpeg').toString('base64'), width: 1280, height: 900, fallback: false } });
+  }
+  if (f.op === 'forget') return send({ id: f.id, ok: true, result: { forgotten: f.service } });
   if (f.op === 'echo') return send({ id: f.id, ok: true, result: { echo: f.args.v, pid: process.pid } });
   return send({ id: f.id, ok: false, code: 'INTERNAL', error: `unknown op ${f.op}` });
 }
@@ -71,6 +90,7 @@ const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let f;
   try { f = JSON.parse(line); } catch { return; }
+  if (frameLog) fs.appendFileSync(frameLog, `${f.op}\n`);
   if (mode === 'out-of-order' && f.op === 'echo' && f.args.hold) { held = f; return; }
   answer(f);
   if (held && held !== f) { const h = held; held = null; answer(h); }
