@@ -64,10 +64,37 @@ function tokLabel(n) {
 
 function readReply(service, info, file, sessionType) {
   const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`;
-  const tail = sessionType === 'claude'
-    ? ` → @${showPath(file)} `
-    : ` → saved to ${showPath(file)} — read it with your Read tool.`;
-  return withPath(head, tail);
+  return withPath(head, fileTail(file, sessionType));
+}
+
+function fileTail(file, sessionType) {
+  return sessionType === 'claude' ? ` → @${showPath(file)} ` : ` → saved to ${showPath(file)} — read it with your Read tool.`;
+}
+
+function looksPdf(r) {
+  return /\.pdf$/i.test(String(r.file || '')) || /^application\/pdf\b/i.test(String(r.mime || ''));
+}
+
+function downloadTarget(cmd) {
+  if (cmd.n != null) return `[${cmd.n}]`;
+  if (cmd.url) return clipUrl(cmd.url);
+  return 'current page';
+}
+
+function downloadReply(service, cmd, r) {
+  const head = `${PREFIX} downloaded ${service} ${downloadTarget(cmd)}`;
+  const parts = [`${Number(r.bytes || 0).toLocaleString('en-US')} B`, String(r.mime || 'unknown type')];
+  if (r.magic === 'html' && looksPdf(r)) {
+    parts.push(`WARNING: not a PDF — looks like a web page (session expired?) — read ${service}`);
+  } else {
+    if (r.magic === 'pdf') parts.push('%PDF ok');
+    parts.push(`${(Number(r.ms || 0) / 1000).toFixed(1)}s`);
+  }
+  return withPath(head, ` → ${showPath(String(r.file || ''))} · ${parts.join(' · ')}`);
+}
+
+function screenshotReply(service, r, file, sessionType) {
+  return withPath(`${PREFIX} screenshot ${service} ${r.width}×${r.height}`, fileTail(file, sessionType));
 }
 
 function stamp(ms) {
@@ -243,5 +270,6 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 
 module.exports = {
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
+  downloadReply, screenshotReply,
   PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
 };

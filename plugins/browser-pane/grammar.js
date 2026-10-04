@@ -2,7 +2,7 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'wait', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'download', 'screenshot', 'wait', 'services', 'release'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
 const WAIT_MS_MAX = 1800000;
 const N_MAX = 1000000;
@@ -18,6 +18,8 @@ const FLAGS = {
   type: { enter: 'bool' },
   key: {},
   select: {},
+  download: { to: 'value', as: 'value' },
+  screenshot: {},
   wait: { ms: 'value', for: 'value' },
   services: {},
   release: {},
@@ -113,6 +115,26 @@ function checkUrl(text) {
   return text;
 }
 
+function downloadCommand(positional, flags, body) {
+  if (positional.length > 2) throw new Error(`unexpected '${positional[2]}' for download`);
+  let service = null;
+  let n = null;
+  const last = positional[positional.length - 1];
+  if (last != null && /^[0-9]+$/.test(last)) {
+    n = Number(last);
+    if (n < 1 || n > N_MAX) throw new Error(`element number out of range: ${last}`);
+    if (positional.length === 2) service = serviceArg('download', positional.slice(0, 1), false);
+  } else {
+    if (positional.length === 2) throw new Error(`unexpected '${positional[1]}' for download`);
+    service = serviceArg('download', positional, false);
+  }
+  if (flags.to === '') throw new Error('--to needs a folder, e.g. --to=bills');
+  if (flags.as === '') throw new Error('--as needs a file name, e.g. --as=2026-08.pdf');
+  if (body.length > URL_MAX) throw new Error('URL too long (max 4,096 chars)');
+  if (n != null && body) throw new Error('download takes an element number or a URL, not both');
+  return { sub: 'download', service, n, url: body || null, to: flags.to == null ? null : flags.to, as: flags.as == null ? null : flags.as };
+}
+
 function intArg(name, v, min) {
   if (!/^[0-9]+$/.test(v) || Number(v) < min) throw new Error(`--${name} must be an integer ≥ ${min}`);
   return Number(v);
@@ -162,6 +184,8 @@ function toCommand(intent) {
     if (!KEY_NAMES.includes(body)) throw new Error(`key needs one of ${KEY_NAMES.join(' ')} after the bracket`);
     return { sub, service, key: body };
   }
+  if (sub === 'download') return downloadCommand(positional, flags, body);
+  if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false) };
   if (sub === 'wait') {
     const service = serviceArg(sub, positional, false);
     if (flags.for === '') throw new Error('--for needs a value, e.g. --for="Showing 1"');

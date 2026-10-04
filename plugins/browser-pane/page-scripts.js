@@ -131,6 +131,8 @@ function find(n) {
     password: tag === 'input' && type === 'password',
     otp: el.getAttribute('autocomplete') === 'one-time-code',
     editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
+    href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
+    download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
   };
 })()`;
 }
