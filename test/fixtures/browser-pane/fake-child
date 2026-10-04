@@ -67,6 +67,22 @@ function answer(f) {
     return send({ id: f.id, ok: true, result: { kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 1200 },
       url: READ.url, title: READ.title, doc, login: {}, takeover: false } });
   }
+  if (f.op === 'open' && /policy-echo/.test(f.args.url)) {
+    return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: JSON.stringify(f.args.policy), doc,
+      idle: { ok: true, ms: 1 }, login: {} } });
+  }
+  if (f.op === 'open' && /opnav/.test(f.args.url)) {
+    send({ event: 'state', service: f.service, state: 'idle', reason: null, url: f.args.url, title: 'Nav' });
+    send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Nav', doc, idle: { ok: true, ms: 1 }, login: {} } });
+    for (const u of ['https://portal.example.com/typed', 'https://portal.example.com/second']) {
+      send({ event: 'operator-nav', service: f.service, url: u, title: 'Typed page' });
+    }
+    return send({ event: 'denied', service: f.service, url: 'https://bad.example.com/', pattern: 'bad.example.com', list: 'global', by: 'page' });
+  }
+  if (f.op === 'policy') {
+    send({ event: 'operator-nav', service: f.service, url: 'https://portal.example.com/after-release', title: JSON.stringify(f.args.policy) });
+    return send({ id: f.id, ok: true, result: { open: true } });
+  }
   if (f.op === 'open') {
     doc += 1;
     if (/drive/.test(f.args.url)) send({ event: 'state', service: f.service, state: 'driving', reason: null, seat: f.seat, url: f.args.url, title: '' });

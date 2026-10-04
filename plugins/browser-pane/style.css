@@ -53,3 +53,26 @@
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
+
+.bp-denylist {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.bp-deny-title {
+  font-weight: 600;
+}
+
+.bp-deny-text {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+}
+
+.bp-deny-error {
+  margin-left: 8px;
+  opacity: 0.8;
+}

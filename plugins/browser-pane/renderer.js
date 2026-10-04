@@ -233,6 +233,36 @@ function activate(rhost) {
     return r;
   }
 
+  function denyBlock(label, scope, patterns) {
+    const box = el('div', 'bp-deny');
+    box.appendChild(el('div', 'bp-deny-label', label));
+    const area = el('textarea', 'bp-deny-text');
+    area.value = (patterns || []).join('\n');
+    area.rows = 3;
+    area.placeholder = 'one pattern per line: example.com, *.example.com, example.com/path/*, http://…, !exception';
+    box.appendChild(area);
+    const save = el('button', 'bp-deny-save', 'Save');
+    const err = el('span', 'bp-deny-error', '');
+    save.addEventListener('click', async () => {
+      if (save.disabled) return;
+      save.disabled = true;
+      try {
+        const res = await call('denylist.set', { scope, patterns: String(area.value || '').split('\n') });
+        if (res && res.ok) {
+          area.value = (res.patterns || []).join('\n');
+          err.textContent = 'Saved';
+        } else {
+          err.textContent = `${res && res.line ? `line ${res.line}: ` : ''}${(res && res.error) || 'unknown error'}`;
+        }
+      } finally {
+        save.disabled = false;
+      }
+    });
+    box.appendChild(save);
+    box.appendChild(err);
+    return box;
+  }
+
   function openRow(refill) {
     const r = el('div', 'bp-row bp-open');
     r.appendChild(el('span', 'bp-open-label', 'Open a window:'));
@@ -274,6 +304,8 @@ function activate(rhost) {
         else toast(`Could not open the downloads folder: ${(res && res.error) || 'unknown error'}`);
       });
       bodyEl.appendChild(reveal);
+      const deny = el('div', 'bp-denylist');
+      bodyEl.appendChild(deny);
       const fill = async () => {
         const res = await call('services.list');
         if (refused(res)) {
@@ -285,8 +317,19 @@ function activate(rhost) {
         const services = (res && res.ok && Array.isArray(res.services)) ? res.services : [];
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
         for (const s of services) list.appendChild(row(s, fill));
+        return services;
       };
-      return fill();
+      const fillDeny = async (services) => {
+        if (!services) return;
+        const d = await call('denylist.get');
+        deny.textContent = '';
+        if (!d || !d.ok) return;
+        deny.appendChild(el('div', 'bp-deny-title', 'Denylist — URLs the browser windows refuse to visit'));
+        deny.appendChild(denyBlock('All services', 'global', d.global));
+        const named = [...new Set([...services.map((s) => s.name), ...Object.keys(d.services || {})])].sort();
+        for (const name of named) deny.appendChild(denyBlock(name, name, (d.services || {})[name]));
+      };
+      return fill().then(fillDeny);
     },
     collect: () => null,
   });
