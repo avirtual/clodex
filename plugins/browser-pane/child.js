@@ -263,6 +263,11 @@ function consequentialRefusal(n, el, confirm) {
   return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential));
 }
 
+function rowChanged(lastRead, n, row) {
+  const before = lastRead && lastRead.rows ? lastRead.rows[n] : null;
+  return before != null && row != null && before !== row;
+}
+
 function changedOf(prevSigs, curSigs) {
   if (!prevSigs || !curSigs) return [];
   return Object.keys(curSigs).filter((n) => prevSigs[n] != null && prevSigs[n] !== curSigs[n])
@@ -784,7 +789,7 @@ function run(electron, ctx) {
       if (op === 'click') {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
-        if (svc.num && svc.num.changed && svc.num.changed.has(Number(n))) out.textChanged = true;
+        if (rowChanged(svc.num && svc.num.lastRead, n, el.row)) out.textChanged = true;
         return withChange(svc, pre, out, lateMsFor(op));
       }
       if (op === 'type') {
@@ -1205,8 +1210,7 @@ function run(electron, ctx) {
     } : {};
     if (el) {
       for (const n of el.fresh || []) ent.listed.add(Number(n));
-      ent.changed = new Set(numbers.changed);
-      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {} };
+      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const login = await probe(svc);
@@ -1318,5 +1322,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, changedOf, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

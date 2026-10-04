@@ -215,9 +215,9 @@ function createScheduler({
     }
     const samePage = !!last && last.page === pageKey(raw && raw.url);
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
-      : !samePage ? { elements: last.elements, keys: last.keys, page: last.page } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
+      : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
     if (elBase) {
-      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome, sameUrl: elBase.page === pageKey(raw.url) });
+      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base };

@@ -302,8 +302,8 @@ image-only cell keeps its slot as a trailing `|` (innerText trims the space).
 
 Compares the stored keys the read carries (`keys: n → storedKey`): a line is
 hidden when the previous read listed the same stored key and the element sits
-inside a chrome landmark (`chrome`, from `READ_INTERACTIVE`) or the base is the
-same document URL (`sameUrl`). Without keys it
+inside a chrome landmark (`chrome`, from `READ_INTERACTIVE`); body elements are
+never hidden. Without keys it
 falls back to the line text minus the number, `t=`/`_=`/`ts=` digits blanked,
 under the same number. Form controls are never hidden, and at least one line always stays.
 
@@ -413,10 +413,12 @@ month select.
 
 Labels are folded (NFD, combining marks dropped, lower case) so plată/plata,
 ş (cedilla) and ș (comma) match one term list. Terms must stand as whole words:
-the e-bloc nav "Carduri" must not read as "card". Label, value and aria-label
-count only up to `CQ_LABEL_MAX` (40) chars, so a long document title that names
-a payment ("Lista de plată pentru Bloc M4 …") is not a pay button; short ones
-("Lista de plată 08/2026") still are. Text inputs and textareas are never
+the e-bloc nav "Carduri" must not read as "card"; so "payment" is its own term.
+On links and plain clickables, label, value and aria-label count only up to
+`CQ_LABEL_MAX` (40) chars, so a long document title that names a payment
+("Lista de plată pentru Bloc M4 …") is not tagged; buttons and submits are never
+capped. id/class match only the verbs in `ID_TERMS`: Bootstrap's `card`,
+`order-*` and `transfer-list` classes are layout. Text inputs and textareas are never
 tagged. A submit's `formaction` or form `action` containing pay, checkout,
 order or delete tags it too.
 

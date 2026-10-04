@@ -18,7 +18,7 @@ const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[rol
 const CHROME_MARK = '\u0001';
 
 const CONSEQUENTIAL = [
-  ['payment', ['pay', 'plata', 'plati', 'plateste', 'checkout', 'card', 'confirm payment']],
+  ['payment', ['pay', 'payment', 'payments', 'plata', 'plati', 'platire', 'plateste', 'checkout', 'card', 'confirm payment']],
   ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda']],
   ['deletion', ['delete', 'sterge', 'remove', 'elimina']],
   ['sign-out', ['sign out', 'log out', 'iesire', 'deconectare']],
@@ -26,19 +26,29 @@ const CONSEQUENTIAL = [
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription']],
   ['transfer', ['transfer', 'send money', 'wire']],
 ];
+const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
+const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
 
-function consequentialOf(d) {
+function cqCompile(table, idTerms) {
+  const out = [];
+  for (const [cat, terms] of table) {
+    for (const t of terms) {
+      out.push({ cat, id: idTerms.includes(t), re: new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])') });
+    }
+  }
+  return out;
+}
+
+function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-  const short = (x) => { const f = fold(x); return f.length > CQ_LABEL_MAX ? '' : f; };
-  const hay = [short(d.label), short(d.value), short(d.aria), fold(d.idClass), fold(d.formaction)].filter(Boolean);
-  for (const [cat, terms] of CONSEQUENTIAL) {
-    for (const t of terms) {
-      const re = new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])');
-      if (hay.some((h) => re.test(h))) return cat;
-    }
+  const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
+  const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
+  const idClass = fold(d.idClass);
+  for (const r of res) {
+    if (hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass))) return r.cat;
   }
   const action = fold(d.action);
   if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
@@ -47,9 +57,12 @@ function consequentialOf(d) {
 
 const CQ = `
   const CONSEQUENTIAL = ${JSON.stringify(CONSEQUENTIAL)};
+  const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  ${cqCompile.toString()}
   ${consequentialOf.toString()}
+  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS);
   const cqOf = e => {
     const tg = e.tagName.toLowerCase();
     const ty = String(e.type || '').toLowerCase();
@@ -59,13 +72,23 @@ const CQ = `
     const form = e.form || null;
     return consequentialOf({
       textual,
+      capped: tg === 'a' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
       value: tg === 'input' && ty !== 'password' ? e.value : '',
       aria: e.getAttribute('aria-label'),
       idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
-    });
+    }, CQ_RES);
+  };`;
+
+const ROW = `
+  const rowText = new Map();
+  const rowOf = el => {
+    const r = el.closest('tr,[role=row]');
+    if (!r) return '';
+    if (!rowText.has(r)) rowText.set(r, String(r.innerText || r.textContent || '').replace(/\\s+/g, ' ').trim().replace(${HMS_RE}, '#:##:##').slice(0, 200));
+    return rowText.get(r);
   };`;
 
 const DEEP = `
@@ -357,14 +380,7 @@ function readInteractive(main, state) {
   }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = [];
-  const rowText = new Map();
-  const rowOf = el => {
-    const r = el.closest('tr,[role=row]');
-    if (!r) return '';
-    if (!rowText.has(r)) rowText.set(r, clip(r.innerText || r.textContent || '', 200));
-    return rowText.get(r);
-  };
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
@@ -372,11 +388,12 @@ function readInteractive(main, state) {
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
-      sigs[n] = (it.sig == null ? it.line : it.sig) + '\u0000' + rowOf(it.el);
+      rowsOut[n] = rowOf(it.el);
+      sigs[n] = (it.sig == null ? it.line : it.sig) + '\u0000' + rowsOut[n];
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, chrome, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, url: location.href };
 })()`;
 }
 
@@ -414,7 +431,7 @@ function find(n) {
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  ${KIND_LABEL}${CQ}
+  ${KIND_LABEL}${CQ}${ROW}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   return {
     x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
@@ -424,6 +441,7 @@ function find(n) {
     href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
     download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
     consequential: cqOf(el),
+    row: rowOf(el),
   };
 })()`;
 }

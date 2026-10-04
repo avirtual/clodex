@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, consequentialRefusal, signinHold, lateMsFor,
+  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -438,7 +438,18 @@ test('changedOf: kept numbers whose line or row text differs since the last read
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.ok(ri.includes("sig = label + (el.hasAttribute('download') ? ' [download]' : '');"), 'a link signature leaves out its raw href (volatile t= is not a change)');
   assert.match(ri, /sigs\[n\] = \(it\.sig == null \? it\.line : it\.sig\) \+ '.' \+ rowOf\(it\.el\);/);
-  assert.match(CHILD_SRC, /if \(svc\.num && svc\.num\.changed && svc\.num\.changed\.has\(Number\(n\)\)\) out\.textChanged = true;/);
+  assert.match(CHILD_SRC, /if \(rowChanged\(svc\.num && svc\.num\.lastRead, n, el\.row\)\) out\.textChanged = true;/);
+  assert.match(CHILD_SRC, /ent\.lastRead = \{ [^}]*rows: el\.rows \|\| \{\} \};/);
+  assert.match(scripts.FIND(1), /row: rowOf\(el\),/);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /rowsOut\[n\] = rowOf\(it\.el\);/);
+});
+
+test('rowChanged: a click whose row text differs from the last read is flagged at click time; the same row is not', () => {
+  const lastRead = { rows: { 10: 'Iulie 2026 | Lista de plată | 98 lei' } };
+  assert.strictEqual(rowChanged(lastRead, 10, 'August 2026 | Lista de plată | 120 lei'), true);
+  assert.strictEqual(rowChanged(lastRead, 10, 'Iulie 2026 | Lista de plată | 98 lei'), false);
+  assert.strictEqual(rowChanged(lastRead, 11, 'x'), false);
+  assert.strictEqual(rowChanged(null, 10, 'x'), false);
 });
 
 test('consequentialRefusal: a tagged element is refused without --confirm, naming the category; with it the act proceeds', () => {
@@ -492,7 +503,10 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Send money' }, 'transfer'], [{ formaction: '/transfer' }, 'transfer'],
     [{ label: 'Trimite', action: '/plata/pay' }, 'payment'], [{ label: 'Go', action: '/orders/new' }, 'purchase'],
     [{ label: 'Carduri' }, null], [{ label: 'Avizier' }, null], [{ label: 'Armată' }, null], [{ label: 'Wireless' }, null],
-    [{ label: 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna august' }, null],
+    [{ label: 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna august', capped: true }, null],
+    [{ label: 'Make payment' }, 'payment'], [{ label: 'Submit payment' }, 'payment'],
+    [{ label: 'Plătește acum 335,90 Lei prin card bancar online', action: '/plata' }, 'payment'],
+    [{ idClass: 'card card-body' }, null], [{ idClass: 'sort-order' }, null], [{ idClass: 'transfer-list' }, null],
     [{ label: 'Card bancar', textual: true }, null],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));

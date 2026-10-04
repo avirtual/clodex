@@ -240,9 +240,8 @@ test('read-format: elementStrip hides lines whose number and key the previous re
   const cur = ['[1] link Acasa → /?t=222', '[2] link Avizier → /avizier', '[3] input:text Cauta', '[4] select Luna = "Mai" {Mai}',
     '[5] input:checkbox Tot [ ]', '[6] textarea Mesaj', '[7] combobox Oras', '[8] checkbox Accept [ ]', '[10] link Plati → /plati', '[11] link Nou → /n'];
   assert.deepStrictEqual(elementStrip(prev, cur, null, null, { chrome: ['1', '2'] }), { lines: cur.slice(2), hidden: 2 });
-  assert.deepStrictEqual(elementStrip(prev, cur, null, null, { sameUrl: true }), { lines: cur.slice(2), hidden: 2 });
   assert.deepStrictEqual(elementStrip(prev, cur), { lines: cur, hidden: 0 });
-  assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2), null, null, { sameUrl: true }), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
+  assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2), null, null, { chrome: ['1', '2'] }), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
   assert.deepStrictEqual(elementStrip(null, cur), { lines: cur, hidden: 0 });
   assert.deepStrictEqual(elementStrip([], cur), { lines: cur, hidden: 0 });
 });
@@ -278,10 +277,10 @@ test('read-format: elementStrip hides two same-label row links only when both re
   const base = K.keyOf({ kind: 'link', label: 'hide', href: '/hide' });
   const prev = ['[1] link hide → /hide', '[2] link hide → /hide', '[3] link x → /x'];
   const prevKeys = { 1: K.storedKey(base, 1, 'Story A'), 2: K.storedKey(base, 2, 'Story B'), 3: 'link\u0000x\u0000/x' };
-  assert.strictEqual(elementStrip(prev, prev, prevKeys, { ...prevKeys }, { sameUrl: true }).hidden, 2);
+  assert.strictEqual(elementStrip(prev, prev, prevKeys, { ...prevKeys }, { chrome: ['1', '2', '3'] }).hidden, 2);
   const cur = ['[1] link hide → /hide', '[4] link hide → /hide', '[3] link x → /x'];
   const curKeys = { 1: prevKeys[1], 4: K.storedKey(base, 2, 'Story C'), 3: prevKeys[3] };
-  assert.deepStrictEqual(elementStrip(prev, cur, prevKeys, curKeys, { sameUrl: true }), { lines: ['[4] link hide → /hide'], hidden: 2 });
+  assert.deepStrictEqual(elementStrip(prev, cur, prevKeys, curKeys, { chrome: ['1', '3', '4'] }), { lines: ['[4] link hide → /hide'], hidden: 2 });
 });
 
 test('read-format: the elements header lists up to 10 new numbers then +N, and retired ones when any', () => {

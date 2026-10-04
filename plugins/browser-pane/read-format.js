@@ -204,7 +204,7 @@ function elementKey(line) {
   return String(line).replace(/^\[\d+\] /, '').replace(/([?&](?:t|_|ts)=)\d+/g, '$1');
 }
 
-function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null, sameUrl = false } = {}) {
+function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null } = {}) {
   const lines = Array.isArray(elements) ? elements.map(String) : [];
   if (!Array.isArray(prevElements) || !prevElements.length) return { lines, hidden: 0 };
   const byKey = !!(prevKeys && curKeys);
@@ -218,7 +218,7 @@ function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null
   const hide = lines.map((l) => {
     const m = ELEMENT_RE.exec(l);
     if (!m || m[2].startsWith('input') || FORM_KINDS.has(m[2])) return false;
-    if (!sameUrl && !inChrome.has(m[1])) return false;
+    if (!inChrome.has(m[1])) return false;
     if (byKey) return curKeys[m[1]] != null && keys.parseStored(curKeys[m[1]]).kind === m[2] && prev.has(curKeys[m[1]]);
     return prev.get(elementKey(l)) === m[1];
   });
