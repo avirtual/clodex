@@ -59,6 +59,9 @@ clodex-2team-
 clodex-arch-
 clodex-atomic-
 clodex-bash-marks-
+clodex-bp-client-
+clodex-bp-engine-
+clodex-bp-replies-
 clodex-bundles-
 clodex-candidate-
 clodex-changelog-
@@ -568,6 +571,8 @@ cwdreal-
 cx-commit-
 cx-commit-other-
 cx-commit-wt-
+cxb-live-
+cxb-live-tmp-
 ensure-node-arch-
 ensure-node-badsum-
 ensure-node-fresh-

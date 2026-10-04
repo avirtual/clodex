@@ -550,7 +550,12 @@ function createPluginHostEngine(deps) {
     } catch {
       return { error: 'script not found' };
     }
-    if (!real.startsWith(root + path.sep)) return { error: 'script outside the plugin directory' };
+    if (!real.startsWith(root + path.sep) || !real.endsWith('.js')) return { error: 'script outside the plugin directory' };
+    try {
+      if (!fs.statSync(real).isFile()) return { error: 'script outside the plugin directory' };
+    } catch {
+      return { error: 'script not found' };
+    }
     const argsOk = Array.isArray(extraArgs)
       && extraArgs.length <= EXTRA_ARGS_MAX
       && extraArgs.every((a) => typeof a === 'string'
