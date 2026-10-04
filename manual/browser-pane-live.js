@@ -15,6 +15,11 @@ const ELECTRON = require(path.join(ROOT, 'node_modules', 'electron'));
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n');
 
+const chromePage = (title, mid) => `<title>${title}</title><main>
+${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map((m) => `<div>${m}</div>`).join('')}
+${mid}
+${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m) => `<div>${m}</div>`).join('')}</main>`;
+
 const PAGES = {
   '/dl': () => `<title>Downloads</title><main><a href="/att">Attachment</a> <a href="/inline.pdf">Inline PDF</a>
 <a href="/named-src" download="named-by-page.pdf">Named</a> <a href="/gated.pdf">Gated</a>
@@ -62,6 +67,12 @@ const PAGES = {
 <a href="/att">Factura PDF</a>
 <div id=ondiv onclick="document.title='div'">Lista onclick</div></main>`;
   },
+  '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
+  '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p>'),
+  '/busy': () => `<title>Busy</title><main><div class="loading">INCARCA...</div><p id=st>Asteptam datele</p></main>
+<script>setTimeout(() => fetch('/delay4').then(r => r.text()).then(t => {
+  document.querySelector('.loading').style.display = 'none'; document.getElementById('st').textContent = t;
+}), 2000);</script>`,
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
@@ -83,6 +94,10 @@ function server() {
       if (url.pathname === '/slow-post') {
         req.resume();
         setTimeout(() => { res.writeHead(200, headers); res.end('<title>Payment done</title><main><p>Payment done</p></main>'); }, 17000);
+        return;
+      }
+      if (url.pathname === '/delay4') {
+        setTimeout(() => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('Gata: 3 facturi'); }, 4000);
         return;
       }
       if (url.pathname === '/stall') {
@@ -212,6 +227,40 @@ async function effectsStep(emit, base, cwd) {
   check('inspect shows the onclick attribute and the html', /attrs: onclick=/.test(insp) && /\n {2}html: <div id="ondiv"/.test(insp));
 }
 
+async function chromeStep(emit, base) {
+  console.log('== 9. repeated menu and footer are stripped across reads; a page still loading says so');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const rows = (content) => content.split('\n').filter((l) => /^(stripped|loading):/.test(l));
+  await emit(`[agent:browser open chrome] ${base}/chrome-a`);
+  await emit('[agent:browser read chrome]');
+  await emit(`[agent:browser open chrome] ${base}/chrome-b`);
+  const second = await emit('[agent:browser read chrome]');
+  const f2 = fileOf(second);
+  for (const l of f2.split('\n').slice(0, 12)) console.log(`    ${l}`);
+  check('second read header says 6 lines at top, 4 at bottom', rows(f2).includes('stripped: 6 lines at top, 4 at bottom (same as your last read of chrome)'));
+  check('second read reply says chrome stripped', / · chrome stripped → /.test(second));
+  check('second read text keeps the middle and drops the menu', /Factura mai/.test(f2) && !/Plati online|Confidentialitate/.test(f2.split('== elements ==')[0]));
+  const all = await emit('[agent:browser read chrome --all]');
+  const fa = fileOf(all);
+  check('read --all has no stripped: row and keeps the menu', !rows(fa).length && /Plati online/.test(fa) && !/chrome stripped/.test(all));
+  await emit(`[agent:browser open busy] ${base}/busy`);
+  const t0 = Date.now();
+  const r1 = await emit('[agent:browser read busy]');
+  const f1 = fileOf(r1);
+  console.log(`    read ${Date.now() - t0} ms after open: ${JSON.stringify(rows(f1))}`);
+  check('read within 1 s shows the visible loading element', rows(f1).includes('loading: page shows "INCARCA..." (1 busy element(s))'));
+  check('read within 1 s reply says still loading', / · still loading → /.test(r1));
+  await sleep(2000);
+  const fm = fileOf(await emit('[agent:browser read busy]'));
+  console.log(`    read during the fetch: ${JSON.stringify(rows(fm))}`);
+  check('read during the delayed fetch shows requests in flight', rows(fm).some((l) => /^loading: yes \(1 requests in flight\)/.test(l)));
+  await emit('[agent:browser wait busy --ms=15000 --for="Gata"]');
+  const r3 = await emit('[agent:browser read busy]');
+  const f3 = fileOf(r3);
+  console.log(`    after wait: ${JSON.stringify(rows(f3))}`);
+  check('read after wait shows no loading row and no still loading', !rows(f3).some((l) => /^loading:/.test(l)) && !/still loading/.test(r3));
+}
+
 async function payStep(emit, base) {
   console.log('== 6. a click that commits an interstitial which auto-POSTs to a 17 s endpoint');
   await emit(`[agent:browser open pay] ${base}/pay`);
@@ -239,8 +288,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host } = bootEngine(userData, tmp);
-  if (process.env.CXB_ONLY === 'pay' || process.env.CXB_ONLY === 'clickables' || process.env.CXB_ONLY === 'effects') {
-    if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
+  if (['pay', 'clickables', 'effects', 'chrome'].includes(process.env.CXB_ONLY)) {
+    if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
+    else if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
     else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
     await sleep(3000);
@@ -334,6 +384,7 @@ async function main() {
   await payStep(emit, base);
   await clickablesStep(emit, base);
   await effectsStep(emit, base, tmp);
+  await chromeStep(emit, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);

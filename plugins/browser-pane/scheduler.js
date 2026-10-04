@@ -20,6 +20,11 @@ function originOf(url) {
   try { return new URL(url).origin; } catch { return ''; }
 }
 
+function splitTitle(text, title) {
+  const t = String(title || '');
+  return t && text.startsWith(`${t}\n`) ? [t, text.slice(t.length + 1)] : ['', text];
+}
+
 function originPath(url) {
   try { const u = new URL(url); return u.origin + u.pathname; } catch { return ''; }
 }
@@ -140,15 +145,16 @@ function createScheduler({
     const last = st.lastText[service];
     const hasText = !!raw && typeof raw.text === 'string';
     const origin = hasText ? originOf(raw.url) : '';
-    const base = last && last.origin === origin ? (last.text === raw.text ? last.base : last.text) : null;
+    const base = last && last.origin === origin ? (last.text === raw.text ? last.base : { text: last.text, title: last.title }) : null;
     let page = raw;
     let strip = null;
-    if (hasText && base != null && !cmd.all && cmd.mode !== 'links') {
-      const r = chromeStrip(base, raw.text);
-      page = { ...raw, text: r.text };
+    if (hasText && base && !cmd.all && cmd.mode !== 'links') {
+      const [title, body] = splitTitle(raw.text, raw.title);
+      const r = chromeStrip(splitTitle(base.text, base.title)[1], body);
+      if (r.top || r.bottom) page = { ...raw, text: title ? `${title}\n\n${r.text}` : r.text };
       strip = { top: r.top, bottom: r.bottom };
     }
-    if (hasText) st.lastText[service] = { text: raw.text, origin, base };
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, base };
     const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip });
     if (raw && raw.doc != null) seatState(handle.name).lastDoc[service] = raw.doc;
     if (out.pdf) return replies.reply(out.line);
