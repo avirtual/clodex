@@ -11,6 +11,7 @@ const urlpolicy = require('./urlpolicy');
 const PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
   '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
+  '  A read hides menu/footer text and elements repeated from your previous read of that site (header says how many; numbers stay valid); a re-read of the same page shows everything; --all lists all.',
   '  [agent:browser click [service] <n> [--to=<dir in your cwd>]]  [agent:browser click [service] --text=<visible text>]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
   '  [agent:browser select [service] <n>] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',
   '  [agent:browser screenshot [service]]  [agent:browser inspect [service] <n>|--text=<s>]  [agent:browser wait [service] [--ms=N] [--for=<text>]]  [agent:browser services]  [agent:browser release [service]]',

@@ -287,7 +287,7 @@ test('scheduler: handback records the login as logged-in via handback', async ()
   assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
 });
 
-test('scheduler: click --text needs a read like a numbered click, passes the text and carries the doc for the stale-doc check', async () => {
+test('scheduler: click --text needs a read like a numbered click, passes the text and no doc for the stale-doc check', async () => {
   const h = harness({ click: () => ({ n: 31, kind: 'clickable', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE }) });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.calls.length = 0;
@@ -299,8 +299,8 @@ test('scheduler: click --text needs a read like a numbered click, passes the tex
     ['hand-a', '[agent:browser] clicked utility [31] clickable "Lista de plată" · same page · idle 0.5s'],
   ]);
   assert.deepStrictEqual(h.calls.filter((c) => c[1] === 'click'), [
-    ['hand-a', 'click', { expectDoc: 1, byText: 'Lista de plată' }],
-    ['hand-a', 'click', { expectDoc: 1, byText: 'Lista' }],
+    ['hand-a', 'click', { byText: 'Lista de plată' }],
+    ['hand-a', 'click', { byText: 'Lista' }],
   ]);
 });
 
@@ -334,7 +334,7 @@ test('scheduler click --to: a download that lands outside the cwd is deleted and
   assert.strictEqual(fs.existsSync(away), false);
 });
 
-test('scheduler inspect: needs a read first, then asks the child with the read doc and replies in six lines', async () => {
+test('scheduler inspect: needs a read first, then asks the child by text without the read doc and replies in six lines', async () => {
   const h = harness({
     inspect: () => ({
       n: 4, tag: 'div', id: 'go', classes: ['btn'], kind: 'clickable', label: 'Go', attrs: [], listeners: null,
@@ -345,7 +345,7 @@ test('scheduler inspect: needs a read first, then asks the child with the read d
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
   await h.run([['hand-a', '[agent:browser read utility]']]);
   const out = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);
-  assert.deepStrictEqual(h.calls[1], ['hand-a', 'inspect', { expectDoc: 1, byText: 'Go' }]);
+  assert.deepStrictEqual(h.calls[1], ['hand-a', 'inspect', { byText: 'Go' }]);
   assert.strictEqual(out[0][1].split('\n').length, 6);
 });
 
@@ -376,6 +376,105 @@ test('scheduler: a second read of the same site drops the repeated chrome; --all
   await h.run([['hand-a', '[agent:browser read]']]);
   assert.ok(!files[4].includes('stripped:'));
   assert.ok(files[4].includes('Acasa'));
+});
+
+test('scheduler: after a navigation --text targets go through without a doc; a numbered click is still refused as stale', async () => {
+  let doc = 1;
+  const stale = (a) => { if (a.expectDoc != null && a.expectDoc !== doc) throw coded('STALE_DOC', 'utility navigated since your last read — read again.'); };
+  const h = harness({
+    click: (a) => { stale(a); return { n: 7, kind: 'link', label: 'Avizier', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE, doc }; },
+    inspect: (a) => {
+      stale(a);
+      return { n: 7, tag: 'a', id: '', classes: [], kind: 'link', label: 'Avizier', attrs: [], listeners: null,
+        cursor: 'pointer', rect: { x: 1, y: 2, w: 30, h: 10 }, visible: true, ancestors: ['body'], html: '<a>Avizier</a>' };
+    },
+  });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  doc = 2;
+  h.calls.length = 0;
+  const out = await h.run([['hand-a', '[agent:browser click --text=Avizier]'], ['hand-a', '[agent:browser inspect --text=Avizier]'], ['hand-a', '[agent:browser click 7]']]);
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ byText: 'Avizier' }, { byText: 'Avizier' }, { expectDoc: 1, n: 7 }]);
+  assert.match(out[0][1], /^\[agent:browser\] clicked utility \[7\] link "Avizier"/);
+  assert.match(out[1][1], /^\[agent:browser\] inspect utility \[7\]/);
+  assert.deepStrictEqual(out[2], ['hand-a', '[agent:browser] error: utility navigated since your last read — read again.']);
+});
+
+function siteHarness() {
+  let cur = null;
+  const h = harness({ read: () => ({ ...DEFAULTS.read(), ...cur }) });
+  const files = [];
+  const hd = h.seat('hand-a');
+  const inject = hd.inject;
+  hd.inject = (text) => { const m = / → @(\S+) $/.exec(text); if (m) files.push(fs.readFileSync(m[1], 'utf8')); inject(text); };
+  const read = async (page, line = '[agent:browser read]') => {
+    if (page) cur = page;
+    const [[, reply]] = await h.run([['hand-a', line]]);
+    return { reply, file: files[files.length - 1] };
+  };
+  return { h, read };
+}
+
+const NAV = ['[1] link Acasa → /', '[2] link Avizier → /avizier?t=1700000001', '[3] link Plati → /plati', '[4] link Termeni → /termeni'];
+
+test('scheduler: elements repeated from the previous read of the site are hidden with their numbers; form controls stay', async () => {
+  const { h, read } = siteHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  const first = await read({ url: 'https://portal.example.com/a', text: 'A\nFactura aprilie', elements: [...NAV, '[5] input:text Cauta', '[6] link Factura aprilie → /f/4'] });
+  assert.ok(!/elements hidden/.test(first.reply));
+  const navB = NAV.map((l) => l.replace('t=1700000001', 't=1700000999'));
+  const second = await read({ url: 'https://portal.example.com/b', text: 'B\nFactura mai', elements: [...navB, '[5] input:text Cauta', '[6] link Factura mai → /f/5', '[7] link Plati → /plati'] });
+  assert.match(second.reply, / · 4 elements hidden → @FILE$/);
+  assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; this page: \[5\]–\[7\]; numbers can skip\)/);
+  assert.ok(second.file.includes('\n== elements ==\n[5] input:text Cauta\n[6] link Factura mai → /f/5\n[7] link Plati → /plati\n'));
+  const again = await read(null);
+  assert.ok(!/elements hidden/.test(again.reply));
+  assert.ok(again.file.includes('[1] link Acasa → /\n'));
+  const all = await read({ url: 'https://portal.example.com/c', text: 'C', elements: [...NAV, '[9] link Altceva → /x'] }, '[agent:browser read --all]');
+  assert.ok(!/elements hidden/.test(all.reply) && all.file.includes('[1] link Acasa'));
+  const links = await read({ url: 'https://portal.example.com/d', text: 'D', elements: [...NAV, '[9] link Altceva → /x'] }, '[agent:browser read --links]');
+  assert.ok(!/elements hidden/.test(links.reply) && links.file.includes('[1] link Acasa'));
+});
+
+test('scheduler: page 2 of a read hides the same repeated elements as page 1', async () => {
+  const { h, read } = siteHarness();
+  const many = (from, n, tag) => Array.from({ length: n }, (_, i) => `[${from + i}] link ${tag} ${i} ${'x'.repeat(150)} → /${tag}/${i}`);
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  await read({ url: 'https://portal.example.com/a', text: 'A', elements: many(1, 30, 'nav') });
+  const b = { url: 'https://portal.example.com/b', text: 'B', elements: [...many(1, 30, 'nav'), ...many(31, 40, 'body')] };
+  const p1 = await read(b, '[agent:browser read --max=1000]');
+  assert.match(p1.reply, /page 1\/2 · 70 elements · .* · 30 elements hidden/);
+  const p2 = await read(b, '[agent:browser read --max=1000 --page=2]');
+  assert.match(p2.reply, /page 2\/2 · 70 elements · .* · 30 elements hidden/);
+  assert.ok(!p2.file.includes('link nav '));
+});
+
+test('scheduler: a one-line in-place change on the same path is not chrome-stripped; a --links read still updates the base', async () => {
+  const chrome = (menu, mid) => ['T', '', ...menu, ...mid, 'Termeni', 'Ajutor', 'v1.2'].join('\n');
+  const M1 = ['Acasa', 'Avizier', 'Plati'];
+  const M2 = ['Index', 'Mesaje', 'Cont'];
+  const { h, read } = siteHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  await read({ url: 'https://portal.example.com/a', title: 'T', text: chrome(M1, ['Factura aprilie']) });
+  const b = await read({ url: 'https://portal.example.com/b', title: 'T', text: chrome(M1, ['Factura mai', 'Sold: 0 lei']) });
+  assert.match(b.reply, /chrome stripped/);
+  const inPlace = await read({ url: 'https://portal.example.com/b', title: 'T', text: chrome(M1, ['Factura mai', 'Sold: 120 lei']) });
+  assert.ok(!/chrome stripped/.test(inPlace.reply));
+  assert.ok(!inPlace.file.includes('stripped:') && inPlace.file.includes('Acasa'));
+  await read({ url: 'https://portal.example.com/x', title: 'T', text: chrome(M2, ['Mesaje noi']) }, '[agent:browser read --links]');
+  const y = await read({ url: 'https://portal.example.com/y', title: 'T', text: chrome(M2, ['Contul meu', 'Email']) });
+  assert.match(y.file, /\nstripped: 3 lines at top, 3 at bottom/);
+});
+
+test('scheduler: a --text read hides no elements, and a closed window forgets the previous read', async () => {
+  const { h, read } = siteHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  await read({ url: 'https://portal.example.com/a', text: 'A', elements: [...NAV, '[5] link A → /a'] });
+  const t = await read({ url: 'https://portal.example.com/b', text: 'B', elements: [...NAV, '[5] link B → /b'] }, '[agent:browser read --text]');
+  assert.ok(!/elements hidden/.test(t.reply) && !t.file.includes('repeated'));
+  h.sched.onClosed('utility');
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  const fresh = await read({ url: 'https://portal.example.com/c', text: 'C', elements: [...NAV, '[5] link C → /c'] });
+  assert.ok(!/elements hidden/.test(fresh.reply) && fresh.file.includes('[1] link Acasa'));
 });
 
 test('scheduler grant: a free service is granted, the lease runs from the grant, and the first read needs no read', async () => {

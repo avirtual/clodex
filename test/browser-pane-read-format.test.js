@@ -205,3 +205,34 @@ test('read-format: stripped and loading header rows appear only when set, after 
   assert.strictEqual(b.content.split('\n')[3], 'loading: page shows "INCARCA..." (2 busy element(s))');
   assert.strictEqual(b.loading, true);
 });
+
+const { elementStrip, elementKey } = require('../plugins/browser-pane/read-format');
+
+test('read-format: elementStrip hides lines whose number and key the previous read had, keeping form controls and one line', () => {
+  assert.strictEqual(elementKey('[12] link Avizier → /avizier?t=1700000001&_=5&ts=9&id=3'), 'link Avizier → /avizier?t=&_=&ts=&id=3');
+  const prev = ['[1] link Acasa → /?t=111', '[2] link Avizier → /avizier', '[3] input:text Cauta', '[4] select Luna = "Mai" {Mai}',
+    '[5] input:checkbox Tot [ ]', '[6] textarea Mesaj', '[7] combobox Oras', '[8] checkbox Accept [ ]', '[9] link Plati → /plati'];
+  const cur = ['[1] link Acasa → /?t=222', '[2] link Avizier → /avizier', '[3] input:text Cauta', '[4] select Luna = "Mai" {Mai}',
+    '[5] input:checkbox Tot [ ]', '[6] textarea Mesaj', '[7] combobox Oras', '[8] checkbox Accept [ ]', '[10] link Plati → /plati', '[11] link Nou → /n'];
+  assert.deepStrictEqual(elementStrip(prev, cur), { lines: cur.slice(2), hidden: 2 });
+  assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2)), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
+  assert.deepStrictEqual(elementStrip(null, cur), { lines: cur, hidden: 0 });
+  assert.deepStrictEqual(elementStrip([], cur), { lines: cur, hidden: 0 });
+});
+
+test('read-format: a hidden count rides in the elements header and the result', () => {
+  const r = formatRead({ ...RAW, elements: RAW.elements.slice(2) }, { service: 'utility', hidden: 2 });
+  assert.strictEqual(r.hidden, 2);
+  assert.strictEqual(r.elements, 5);
+  assert.ok(r.content.includes('\ndoc: 4 · elements: 5 (2 repeated, hidden — still clickable by number; read --all lists them; this page: [3]–[6]; numbers can skip) · mode: default'));
+  assert.strictEqual(fmt({}).hidden, 0);
+  assert.ok(!fmt({}).content.includes('repeated'));
+});
+
+test('read-format: changedRegion inside a table prepends the header row once', () => {
+  const t = (cur, gaz = '1,200') => ['Index contoare', 'Nume | Index precedent | Index curent', `APA | 0,000 | ${cur}`, `GAZ | 0,000 | ${gaz}`, 'RECE | 1,000 | 2,000', 'Trimite'].join('\n');
+  assert.strictEqual(changedRegion(t('0,000'), t('6,834')), 'Nume | Index precedent | Index curent ⏎ APA | 0,000 | 6,834');
+  assert.strictEqual(changedRegion(t('0,000'), t('6,834', '9,9')),
+    'Nume | Index precedent | Index curent ⏎ APA | 0,000 | 6,834 / GAZ | 0,000 | 9,9');
+  assert.strictEqual(changedRegion('a\nb\nc', 'a\nB\nc'), 'B');
+});
