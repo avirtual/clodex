@@ -135,7 +135,16 @@ ipc handlers (step 12).
   `clickable`; when nothing is numbered, `click --text=` targets visible text.
   `--text="…"` quotes the text; unquoted, the rest of the bracket is the text.
 - **Stable numbers**: an element keeps its number across pages of one site;
-  `screenshot --numbers` draws each visible number on the image.
+  `screenshot --numbers` draws each visible number on the image. A number is
+  keyed on the element's full label, so two documents whose names differ only
+  past the shown 60 characters never share one.
+- **Consequential controls**: a button, link or option that looks like a
+  payment, purchase, deletion, sign-out, alarm arming, unsubscribe or transfer
+  is listed with `⚠ ` before its label (a red badge in `screenshot --numbers`);
+  `click` or `select` on it is refused unless the agent adds `--confirm`.
+- **Repeated text**: a read strips only navigation, header, footer and sidebar
+  lines repeated from the last read of the site; page body text is never
+  hidden. `read --all` shows everything, the full text included.
 - **The verb is privileged**: until `browser` is ticked in a seat's intent
   checklist, that seat's `[agent:browser …]` lines are silently inert, with no
   error reply.
@@ -145,10 +154,10 @@ ipc handlers (step 12).
 ```
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>]]
-[agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>]]
+[agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
-[agent:browser select [service] <n>] <option text or value>
+[agent:browser select [service] <n> [--confirm]] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service] [--numbers]]
 [agent:browser inspect [service] <n>|--text="<visible text>"]
