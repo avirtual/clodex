@@ -1,0 +1,58 @@
+'use strict';
+
+const readline = require('node:readline');
+
+const arg = (k) => {
+  const hit = process.argv.find((a) => a.startsWith(`--${k}=`));
+  return hit ? hit.slice(k.length + 3) : null;
+};
+const mode = arg('mode') || 'normal';
+const send = (f) => process.stdout.write(JSON.stringify({ cxb: 1, ...f }) + '\n');
+
+const READ = {
+  url: 'https://portal.example.com/bills',
+  title: 'My Bills',
+  doc: 2,
+  contentType: 'text/html',
+  text: 'My Bills\nAccount ending 5678',
+  elements: ['[1] link Home → /', '[2] button View'],
+  truncated: false,
+  frames: [],
+  login: { password: false },
+};
+
+let held = null;
+let doc = 1;
+
+function answer(f) {
+  if (f.op === 'ping') return send({ id: f.id, ok: true, result: { uptimeMs: 1 } });
+  if (f.op === 'shutdown') {
+    process.stderr.write('got shutdown\n');
+    if (mode === 'ignore-shutdown') return undefined;
+    send({ id: f.id, ok: true, result: {} });
+    return setImmediate(() => process.exit(0));
+  }
+  if (mode === 'crash-on-op') { process.stderr.write('dying\n'); process.exit(3); }
+  if (f.op === 'open') {
+    doc += 1;
+    return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Fixture ' + f.service, doc,
+      idle: { ok: true, ms: 1200 }, login: { password: /login/.test(f.args.url), logoutLink: /home/.test(f.args.url) } } });
+  }
+  if (f.op === 'read') return send({ id: f.id, ok: true, result: { ...READ, doc } });
+  if (f.op === 'echo') return send({ id: f.id, ok: true, result: { echo: f.args.v, pid: process.pid } });
+  return send({ id: f.id, ok: false, code: 'INTERNAL', error: `unknown op ${f.op}` });
+}
+
+const rl = readline.createInterface({ input: process.stdin });
+rl.on('line', (line) => {
+  let f;
+  try { f = JSON.parse(line); } catch { return; }
+  if (mode === 'out-of-order' && f.op === 'echo' && f.args.hold) { held = f; return; }
+  answer(f);
+  if (held && held !== f) { const h = held; held = null; answer(h); }
+});
+rl.on('close', () => { if (mode !== 'ignore-shutdown') process.exit(0); });
+
+
+if (mode === 'noisy') process.stdout.write('hello from a library\n{"not":"a frame"}\n');
+if (mode !== 'no-ready') send({ event: 'ready', proto: 1, electron: 'fake', pid: process.pid });
