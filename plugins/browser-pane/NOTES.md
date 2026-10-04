@@ -256,8 +256,8 @@ gate waits while the operator types a URL.
 
 ## child.js — policyDenies
 
-The one denylist check, called from every navigation path: agent `open`, the
-address bar, `block` (`will-navigate`, `will-frame-navigate`, `will-redirect`,
+The one denylist check, called from every navigation path: agent `open`,
+`opOperatorOpen`, the address bar, `block` (`will-navigate`, `will-frame-navigate`, `will-redirect`,
 also attached to every allowed popup via `guardPopup`), both
 `setWindowOpenHandler`s, `viaUrl`, and the per-partition `will-download`
 router. The child gets the lists with every `open` (`args.policy`) and with the
