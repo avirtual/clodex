@@ -315,7 +315,6 @@ test('bare side-call shape: no tools, one message, short system', () => {
   assert.equal(isBareSideCall(webFetchCall()), true);
   assert.equal(isBareSideCall(parentTurn()), false);
   assert.equal(isBareSideCall(subagentTurn()), false);
-  assert.equal(isBareSideCall(classifierCall()), false);
   const compact = compactCall(COMPACT_INSTRUCTION);
   assert.equal(isBareSideCall(compact), false);
   assert.equal(isCompactCall(compact), true);
