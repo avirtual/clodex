@@ -204,7 +204,8 @@ function actReply(sub, service, cmd, r) {
   if (idle) parts.push(idle);
   let text = parts.join(' · ');
   if (r.download) {
-    const size = r.download.bytes == null ? 'still downloading' : `${Number(r.download.bytes).toLocaleString('en-US')} B`;
+    const size = r.download.failed ? `failed: ${r.download.failed}`
+      : r.download.bytes == null ? 'still downloading' : `${Number(r.download.bytes).toLocaleString('en-US')} B`;
     text += ` · → download ${r.download.name} ${size}${r.popupUrl ? ` (PDF popup ${clipUrl(r.popupUrl)})` : ''}`;
   } else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
   else if (r.popup) text += TEXT.popup;

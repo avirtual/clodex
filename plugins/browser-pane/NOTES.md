@@ -56,7 +56,8 @@ costs a `getComputedStyle` per element, so it is capped at `POINTER_SCAN_MAX`
 are found. A pointer element whose parent is also pointer inherited the cursor
 and is skipped. A clickable with no standard control inside suppresses
 clickables below it (a row is numbered once, not per cell); one that contains a
-standard control is a page wrapper (`<div onclick=closeMenus()>`) and does not.
+standard control is a page wrapper (`<div onclick=closeMenus()>`) and does not,
+unless it is a `tr` or `[role=row]`.
 
 ## page-scripts.js — FIND_TEXT
 
@@ -161,4 +162,6 @@ so a download it starts is named in the reply. A `window.open` that shows a PDF
 is saved through the router and the view goes back. The idle wait stops as
 soon as either happens (the PDF viewer never reports idle). Waiting on the
 file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 100 s click
-deadline; past it the reply says `still downloading`.
+deadline; past it the reply says `still downloading`. The PDF popup's load and
+the way back bump `svc.doc` twice, so the reply says `navigated · numbers reset`
+even though the view ends on the same page: the old numbers really are void.

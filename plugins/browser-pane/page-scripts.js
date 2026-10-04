@@ -121,7 +121,7 @@ function readInteractive(main) {
       if (underRow(el)) continue;
       const label = clip(labelOf(el) || el.getAttribute('alt') || '', 60);
       if (tag === 'a' && !label) continue;
-      if (!el.querySelector(sel)) rows.add(el);
+      if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
       line = JSON.stringify(label);
     } else if (tag === 'a') {
       let h = el.getAttribute('href') || '';

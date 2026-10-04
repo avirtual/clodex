@@ -42,7 +42,7 @@ function cmdLabel(cmd) {
 }
 
 function needsRead(cmd) {
-  return (N_ACTS.has(cmd.sub) && cmd.n != null) || (cmd.sub === 'download' && cmd.n != null);
+  return N_ACTS.has(cmd.sub) || (cmd.sub === 'download' && cmd.n != null);
 }
 
 function createScheduler({

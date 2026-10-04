@@ -149,6 +149,8 @@ test('replies: a click names the element the text resolved to and what the click
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download lista-08.pdf 48,213 B');
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'big.pdf', bytes: null } }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download big.pdf still downloading');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'big.pdf', bytes: null, failed: 'larger than 500 MB' } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download big.pdf failed: larger than 500 MB');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/x.pdf', download: { name: 'x.pdf', bytes: 120 } }),
     '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → download x.pdf 120 B (PDF popup https://www.e-bloc.ro/x.pdf)');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/print' }),

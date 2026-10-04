@@ -496,8 +496,13 @@ function run(electron, ctx) {
     };
     const item = await within(w.started);
     if (!item) return null;
-    const out = await within(w.done);
-    return { name: path.basename(out ? out.file : item.getSavePath()), bytes: out ? out.bytes : null };
+    const name = path.basename(item.getSavePath());
+    try {
+      const out = await within(w.done);
+      return { name: out ? path.basename(out.file) : name, bytes: out ? out.bytes : null };
+    } catch (e) {
+      return { name, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
+    }
   }
 
   async function clickWatched(svc, n, el, docBefore) {
@@ -527,7 +532,7 @@ function run(electron, ctx) {
         wc.downloadURL(wc.getURL());
         out.download = await settleDownload(pw, deadline);
         pw.cancel();
-        if (out.download && wc.navigationHistory && wc.navigationHistory.canGoBack()) {
+        if (wc.navigationHistory && wc.navigationHistory.canGoBack()) {
           await driver.act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
         }
       }
