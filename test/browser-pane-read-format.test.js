@@ -138,7 +138,7 @@ test('read-format: clickable element lines and one-line table rows pass through,
     '== elements ==', ...raw.elements]);
   assert.match(out.content.split('\n')[3], /elements: 4 \(this page: \[1\]–\[24\]; numbers can skip\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
-    ['== text ==', '(no text)', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+    ['== text ==', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
 });
 
 test('read-format: changedRegion strips the common line prefix and suffix and returns what is new', () => {

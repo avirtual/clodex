@@ -305,7 +305,7 @@ test('scheduler: click --text needs a read like a numbered click, passes the tex
 });
 
 test('scheduler click --to: resolves inside the seat cwd, passes dir to the child, and names the landed file', async () => {
-  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-clickto-'));
+  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-sched-'));
   const file = path.join(cwd, 'bills', 'lista.pdf');
   const h = harness({
     click: (a) => {
@@ -324,8 +324,8 @@ test('scheduler click --to: resolves inside the seat cwd, passes dir to the chil
 });
 
 test('scheduler click --to: a download that lands outside the cwd is deleted and refused', async () => {
-  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-clickto-'));
-  const away = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-away-')), 'x.pdf');
+  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-sched-'));
+  const away = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-sched-')), 'x.pdf');
   fs.writeFileSync(away, '%PDF');
   const h = harness({ click: () => ({ ...DEFAULTS.click(), download: { file: away, bytes: 4, mime: 'application/pdf' } }) }, { fsScope: () => ({ cwd }) });
   await h.run([['hand-a', '[agent:browser read utility]']]);

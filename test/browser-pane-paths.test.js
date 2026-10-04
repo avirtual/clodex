@@ -106,7 +106,7 @@ test('directHref: download strategy 1 only for a link that leaves the page', () 
 });
 
 test('sameFileIn: a landed file whose bytes match a same-size sibling names that sibling; anything else is new', () => {
-  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-dedupe-'));
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-paths-'));
   const put = (name, body) => { const p = path.join(dir, name); fs.writeFileSync(p, body); return p; };
   const first = put('lista.pdf', '%PDF-1.4 august');
   put('other.pdf', '%PDF-1.4 iulie!');
