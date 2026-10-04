@@ -95,10 +95,10 @@ function activate(rhost) {
   const later = (fn, ms) => (typeof rhost.setTimeout === 'function' ? rhost.setTimeout(fn, ms) : setTimeout(fn, ms));
 
   async function agentSeats() {
-    const api = rhost.sessions;
-    if (!api || typeof api.listWorkspace !== 'function') return [];
+    const sess = rhost.sessions;
+    if (!sess || typeof sess.listWorkspace !== 'function') return [];
     let all = [];
-    try { all = await api.listWorkspace(rhost.workspaceId); } catch { all = []; }
+    try { all = await sess.listWorkspace(rhost.workspaceId); } catch { all = []; }
     return (Array.isArray(all) ? all : []).filter((x) => x && (x.type === 'claude' || x.type === 'codex'));
   }
 
