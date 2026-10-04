@@ -15,10 +15,11 @@ const ELECTRON = require(path.join(ROOT, 'node_modules', 'electron'));
 
 const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n');
 
+const navLink = (m, i) => `<div><a href="/chrome-a?m=${i}&t=${Date.now()}">${m}</a></div>`;
 const chromePage = (title, mid) => `<title>${title}</title><main>
-${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map((m) => `<div>${m}</div>`).join('')}
+${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map(navLink).join('')}
 ${mid}<p>${title} al asociatiei de proprietari: cheltuieli comune, consumuri individuale, fond de rulment si fond de reparatii, defalcate pe apartament.</p>
-${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m) => `<div>${m}</div>`).join('')}</main>`;
+${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m, i) => navLink(m, 10 + i)).join('')}</main>`;
 
 const PAGES = {
   '/dl': () => `<title>Downloads</title><main><a href="/att">Attachment</a> <a href="/inline.pdf">Inline PDF</a>
@@ -68,7 +69,18 @@ const PAGES = {
 <div id=ondiv onclick="document.title='div'">Lista onclick</div></main>`;
   },
   '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
-  '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p>'),
+  '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p><p><a href="/chrome-a?pdf=5">Factura mai PDF</a></p>'),
+  '/offscreen': () => `<title>Offscreen</title><main><h1>Ascunse</h1>
+<a href="/x" class="highslide-loading" style="position:absolute; top:-9999px; opacity:0.75">INCARCA...</a>
+<div class="loading" style="position:absolute; left:-9999px">Se incarca</div>
+<button style="opacity:0">Invizibil</button>
+<span onclick="document.title='clip'" style="position:absolute; clip:rect(0,0,0,0)">Taiat</span>
+<span onclick="document.title='mic'" style="display:inline-block; width:1px; height:1px; overflow:hidden">Minuscul</span>
+<a href="/form">Pagina vizibila</a>
+<p><a onclick="document.title='lock'"><img src="/img/lock.png?v=3" width=16 height=16></a></p>
+<table><tr><th>Data</th><th>Suma</th><th>Platit</th></tr><tr><td>01.08</td><td>120 lei</td><td><img src="/img/tick.png" width=16 height=16></td></tr></table>
+<table id=idx><tr><th>Nume</th><th>Index precedent</th><th>Index curent</th></tr><tr><td>APA</td><td>0,000</td><td id=cur>0,000</td></tr><tr><td>GAZ</td><td>1,000</td><td>2,000</td></tr></table>
+<button onclick="document.getElementById('cur').textContent='6,834'">Salveaza index</button></main>`,
   '/busy': () => `<title>Busy</title><main><div class="loading">INCARCA...</div><p id=st>Asteptam datele</p></main>
 <script>setTimeout(() => fetch('/delay4').then(r => r.text()).then(t => {
   document.querySelector('.loading').style.display = 'none'; document.getElementById('st').textContent = t;
@@ -83,6 +95,11 @@ function server() {
       const url = new URL(req.url, 'http://x');
       const headers = { 'content-type': 'text/html; charset=utf-8' };
       if (url.pathname === '/hang') return;
+      if (url.pathname.startsWith('/img/')) {
+        res.writeHead(200, { 'content-type': 'image/gif' });
+        res.end(Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'));
+        return;
+      }
       const pdf = (extra = {}) => { res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': PDF.length, ...extra }); res.end(PDF); };
       if (url.pathname === '/att' || url.pathname === '/post-att') return pdf({ 'content-disposition': 'attachment; filename="statement-att.pdf"' });
       if (url.pathname === '/inline.pdf') return pdf({ 'content-disposition': 'inline' });
@@ -232,7 +249,7 @@ async function chromeStep(emit, base) {
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
   const rows = (content) => content.split('\n').filter((l) => /^(stripped|loading):/.test(l));
   await emit(`[agent:browser open chrome] ${base}/chrome-a`);
-  await emit('[agent:browser read chrome]');
+  const firstRead = await emit('[agent:browser read chrome]');
   await emit(`[agent:browser open chrome] ${base}/chrome-b`);
   const second = await emit('[agent:browser read chrome]');
   const f2 = fileOf(second);
@@ -240,6 +257,18 @@ async function chromeStep(emit, base) {
   check('second read header says 6 lines at top, 4 at bottom', rows(f2).includes('stripped: 6 lines at top, 4 at bottom (same as your last read of chrome)'));
   check('second read reply says chrome stripped', / · chrome stripped → /.test(second));
   check('second read text keeps the middle and drops the menu', /Factura mai/.test(f2) && !/Plati online|Confidentialitate/.test(f2.split('== elements ==')[0]));
+  const hid = /elements: (\d+) \((\d+) repeated, hidden — still clickable by number; read --all lists them;/.exec(f2);
+  console.log(`    ${f2.split('\n').find((l) => /^doc:/.test(l))}`);
+  check('second read header counts the repeated nav links as hidden', !!hid && Number(hid[2]) >= 6);
+  check('second read reply says N elements hidden', !!hid && second.includes(` · ${hid[2]} elements hidden`));
+  check('the hidden nav links are absent from the element list and the new link is listed',
+    !/\] link Avizier/.test(f2) && /\] link Factura mai PDF/.test(f2));
+  const firstEls = fileOf(firstRead).split('\n').filter((l) => /^\[\d+\] link Avizier/.test(l));
+  const avizier = firstEls.length ? /^\[(\d+)\]/.exec(firstEls[0])[1] : '0';
+  check(`a hidden number [${avizier}] still clicks the same link`,
+    new RegExp(`clicked chrome \\[${avizier}\\] link "Avizier"`).test(await emit(`[agent:browser click chrome ${avizier}]`)));
+  await emit(`[agent:browser open chrome] ${base}/chrome-b`);
+  await emit('[agent:browser read chrome]');
   const all = await emit('[agent:browser read chrome --all]');
   const fa = fileOf(all);
   check('read --all has no stripped: row and keeps the menu', !rows(fa).length && /Plati online/.test(fa) && !/chrome stripped/.test(all));
@@ -259,6 +288,31 @@ async function chromeStep(emit, base) {
   const f3 = fileOf(r3);
   console.log(`    after wait: ${JSON.stringify(rows(f3))}`);
   check('read after wait shows no loading row and no still loading', !rows(f3).some((l) => /^loading:/.test(l)) && !/still loading/.test(r3));
+}
+
+async function offscreenStep(emit, base) {
+  console.log('== 10. elements parked off-screen or clipped away are not visible; icon file names; table rows in act changes');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open offscreen] ${base}/offscreen`);
+  const reply = await emit('[agent:browser read offscreen]');
+  const content = fileOf(reply);
+  const lines = content.split('\n');
+  const els = lines.filter((l) => /^\[\d+\]/.test(l));
+  for (const l of els) console.log(`    ${l}`);
+  for (const l of lines.filter((x) => / \| |\|$/.test(x))) console.log(`    ${JSON.stringify(l)}`);
+  check('no loading: row and no still loading', !lines.some((l) => /^loading:/.test(l)) && !/still loading/.test(reply));
+  check('the off-screen link, off-screen div, transparent button, clipped span and 1×1 span are not listed',
+    !els.some((l) => /INCARCA|Se incarca|Invizibil|Taiat|Minuscul/.test(l)));
+  check('the ordinary link is listed', els.some((l) => /\] link Pagina vizibila → \/form$/.test(l)));
+  check('an icon link without alt is labelled by its img file name', els.some((l) => /\] clickable "lock\.png"$/.test(l)));
+  check('the remaining elements are the ordinary link, the icon and the save button', els.length === 3);
+  check('a trailing image-only cell keeps its slot', lines.some((l) => /^01\.08 \| 120 lei \|\s?$/.test(l)));
+  const save = /^\[(\d+)\] button Salveaza/.exec(els.find((l) => /Salveaza/.test(l)) || '');
+  const act = await emit(`[agent:browser click offscreen ${save ? save[1] : 0}]`);
+  check('a changed table cell reports the header row and the changed row',
+    / · changed: "Nume \| Index precedent \| Index curent ⏎ APA \| 0,000 \| 6,834"$/.test(act));
+  const ins = await emit('[agent:browser inspect offscreen --text="INCARCA"]');
+  check('click/inspect --text finds no visible off-screen spinner', /no visible element with the text "INCARCA"/.test(ins));
 }
 
 async function payStep(emit, base) {
@@ -288,8 +342,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'chrome'].includes(process.env.CXB_ONLY)) {
-    if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
+  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen'].includes(process.env.CXB_ONLY)) {
+    if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
+    else if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
     else if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
     else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
@@ -385,6 +440,7 @@ async function main() {
   await clickablesStep(emit, base);
   await effectsStep(emit, base, tmp);
   await chromeStep(emit, base);
+  await offscreenStep(emit, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);
