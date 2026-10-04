@@ -226,3 +226,28 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, [{ n: 1, text: 'PDF' }, { n: 2, text: 'PDF' }], 'inspect'),
     '"PDF" matches 2 visible elements on ebloc: [1] "PDF", [2] "PDF" — inspect one by number');
 });
+
+test('replies handover: one line naming service, page and instruction, ending in the read to start with', () => {
+  const rows = [
+    [['utility', 'https://portal.example.com/bills', 'My Bills', 'pay it'],
+      '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — pay it — start with [agent:browser read utility]'],
+    [['utility', 'https://portal.example.com/bills', 'My Bills', ''],
+      '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — read it and report what you see — start with [agent:browser read utility]'],
+    [['utility', 'https://portal.example.com/bills', 'My Bills', '  \n '],
+      '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — read it and report what you see — start with [agent:browser read utility]'],
+    [['utility', 'https://portal.example.com/bills', 'My\nBills', 'first line\nsecond\tline\r\nthird'],
+      '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — first line second line third — start with [agent:browser read utility]'],
+  ];
+  for (const [args, want] of rows) assert.strictEqual(R.handover(...args), want);
+});
+
+test('replies handover: the instruction clips at 400 chars with …, and the worst case stays under 800 with no newline', () => {
+  const long = 'x'.repeat(1000);
+  const line = R.handover('utility', 'https://portal.example.com/bills', 'My Bills', long);
+  assert.ok(line.includes(` — ${'x'.repeat(399)}… — start with [agent:browser read utility]`));
+  assert.ok(!line.includes('x'.repeat(400)));
+  const worst = R.handover('s'.repeat(32), `https://e.com/${'u'.repeat(400)}`, 't'.repeat(300), `${'y\n'.repeat(600)}`);
+  assert.ok(worst.length <= 800, String(worst.length));
+  assert.ok(!/[\r\n]/.test(worst));
+  assert.ok(worst.endsWith(`start with [agent:browser read ${'s'.repeat(32)}]`));
+});

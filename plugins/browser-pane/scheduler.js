@@ -78,12 +78,28 @@ function createScheduler({
     return service;
   }
 
-  function holderBusy(s) {
+  function holderActive(s) {
     const seat = s.lease.seat;
-    return s.state === 'held'
-      || s.waiters.some((w) => w.seat === seat)
+    return s.waiters.some((w) => w.seat === seat)
       || (s.inflight && s.inflight.handle.name === seat)
       || s.queue.some((j) => j.handle.name === seat);
+  }
+
+  function holderBusy(s) {
+    return s.state === 'held' || holderActive(s);
+  }
+
+  function activeSeat(service) {
+    const s = services.get(service);
+    return s && s.lease && holderActive(s) ? s.lease.seat : null;
+  }
+
+  function grant(service, seat) {
+    const s = svcState(service);
+    if (s.lease && s.lease.seat !== seat && holderActive(s)) throw new Error(replies.TEXT.driving(s.lease.seat, service));
+    s.lease = { seat, lastCmdAt: now() };
+    seatState(seat).current = service;
+    return { service, seat };
   }
 
   function leaseFree(s, seat) {
@@ -115,6 +131,10 @@ function createScheduler({
       lastTitle: String(r.title || '').slice(0, 200),
       login: storedLogin(r.login, t),
     }));
+  }
+
+  function operatorOpened(service, r) {
+    recordOpen(service, 'operator', r);
   }
 
   function recordLogin(service, login) {
@@ -368,7 +388,7 @@ function createScheduler({
   }
 
   return {
-    submit, onState, onClosed, onChildExit, onSessionExit, seatState, NO_SERVICE,
+    submit, onState, onClosed, onChildExit, onSessionExit, seatState, grant, activeSeat, operatorOpened, NO_SERVICE,
   };
 }
 

@@ -52,6 +52,29 @@ The login persists: the next run, even after a restart, starts signed in until
 the portal's own session timeout. **Forget login** in Manage Plugins deletes a
 service's cookies.
 
+## Opening a window yourself and handing it to an agent
+
+In Manage Plugins → Browser Pane, **Open a window:** takes a service name and a
+URL and opens that service's window under your control (the status bar shows
+**browser: <service> operator**; agents are refused until you hand it over).
+Navigate or sign in as you like. Every open window's row has **Hand to agent…**:
+pick a claude or codex seat of this workspace, type what it should do, press
+**Hand over**. The seat gets one line naming the service and page, your
+instruction, and `[agent:browser read <service>]` to start with; the row shows
+"handed to <seat>" for 5 s. With two or more windows open, clicking the status
+segment lists them, each with **Show** and the same **Hand to agent…** control.
+
+Operator checks (by hand, in the app):
+
+1. Open from Settings → the window appears, and the segment reads `browser: <service> operator`.
+2. Navigate or sign in by hand in the window — no agent act gets through.
+3. Hand to agent with an instruction → the seat receives the one-line handover.
+4. The seat's first `read` works, and a numbered `click` after it works.
+5. With two windows open, clicking the segment lists both; Escape closes the list.
+
+`CXB_ONLY=handover node manual/browser-pane-live.js` drives the same through the
+ipc handlers (step 12).
+
 ## Limits
 
 - **Google sign-in does not work.** Google refuses sign-in inside embedded
