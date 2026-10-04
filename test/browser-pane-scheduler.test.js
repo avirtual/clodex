@@ -140,9 +140,9 @@ test('scheduler: commands from the holder run one at a time in arrival order', a
     ['hand-a', '[agent:browser] pressed Tab on utility · same page · idle 0.4s'],
   ]);
   assert.deepStrictEqual(h.calls, [
-    ['hand-a', 'click', { expectDoc: 1, n: 1 }],
-    ['hand-a', 'type', { expectDoc: 1, n: 2, text: '1040', enter: true }],
-    ['hand-a', 'select', { expectDoc: 1, n: 3, option: 'August 2026' }],
+    ['hand-a', 'click', { n: 1 }],
+    ['hand-a', 'type', { n: 2, text: '1040', enter: true }],
+    ['hand-a', 'select', { n: 3, option: 'August 2026' }],
     ['hand-a', 'key', { key: 'Tab' }],
   ]);
 });
@@ -160,9 +160,9 @@ test('scheduler: a failure drops the same seat\'s queued commands and names them
   assert.deepStrictEqual(h.calls.map((c) => c[1]), ['select']);
 });
 
-test('scheduler: STALE_DOC from the child drops one queued command, singular', async () => {
-  const msg = 'utility navigated since your last read (now https://portal.example.com/x) — numbers from that read are void; read again.';
-  const h = harness({ click: () => { throw coded('STALE_DOC', msg); } });
+test('scheduler: a number absent after navigation reads no element [n] on <svc> on this page and drops one queued command, singular', async () => {
+  const msg = 'no element [4] on utility on this page (hidden or gone) — read again or use --text';
+  const h = harness({ click: () => { throw coded('NO_ELEMENT', msg); } });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 4]'], ['hand-a', '[agent:browser click 5]']]),
     [['hand-a', `[agent:browser] error: ${msg} — dropped 1 queued command after it: click 5`]]);
@@ -378,9 +378,9 @@ test('scheduler: a second read of the same site drops the repeated chrome; --all
   assert.ok(files[4].includes('Acasa'));
 });
 
-test('scheduler: after a navigation --text targets go through without a doc; a numbered click is still refused as stale', async () => {
+test('scheduler: after a navigation --text and numbered acts carry no doc; a number absent from the new page reads no element', async () => {
   let doc = 1;
-  const stale = (a) => { if (a.expectDoc != null && a.expectDoc !== doc) throw coded('STALE_DOC', 'utility navigated since your last read — read again.'); };
+  const stale = (a) => { if (a.n === 7 && doc !== 1 && a.byText == null) throw coded('NO_ELEMENT', 'no element [7] on utility on this page (hidden or gone) — read again or use --text'); };
   const h = harness({
     click: (a) => { stale(a); return { n: 7, kind: 'link', label: 'Avizier', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE, doc }; },
     inspect: (a) => {
@@ -393,10 +393,10 @@ test('scheduler: after a navigation --text targets go through without a doc; a n
   doc = 2;
   h.calls.length = 0;
   const out = await h.run([['hand-a', '[agent:browser click --text=Avizier]'], ['hand-a', '[agent:browser inspect --text=Avizier]'], ['hand-a', '[agent:browser click 7]']]);
-  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ byText: 'Avizier' }, { byText: 'Avizier' }, { expectDoc: 1, n: 7 }]);
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ byText: 'Avizier' }, { byText: 'Avizier' }, { n: 7 }]);
   assert.match(out[0][1], /^\[agent:browser\] clicked utility \[7\] link "Avizier"/);
   assert.match(out[1][1], /^\[agent:browser\] inspect utility \[7\]/);
-  assert.deepStrictEqual(out[2], ['hand-a', '[agent:browser] error: utility navigated since your last read — read again.']);
+  assert.deepStrictEqual(out[2], ['hand-a', '[agent:browser] error: no element [7] on utility on this page (hidden or gone) — read again or use --text']);
 });
 
 function siteHarness() {

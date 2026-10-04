@@ -9,6 +9,7 @@ const lock = require('./lock');
 const { TEXT } = require('./replies');
 const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
+const keys = require('./keys');
 const { changedRegion, CHANGE_MAX } = require('./read-format');
 
 const BAR_HEIGHT = 40;
@@ -31,7 +32,7 @@ const BAR_MSG_MS = 5000;
 const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
-const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
+const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
   'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED']);
 const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
@@ -123,6 +124,47 @@ async function settleDownload(w, deadline) {
   }
 }
 
+function originOf(url) {
+  try { return new URL(url).origin; } catch { return ''; }
+}
+
+function numberVerdict(verdict, stored, pageKeys) {
+  if (verdict === 'ok' || verdict === 'ambiguous') return verdict;
+  if (!pageKeys) return 'gone';
+  const base = keys.parseStored(stored).base;
+  return Object.values(pageKeys).some((k) => keys.parseStored(k).base === base) ? 'ambiguous' : 'gone';
+}
+
+function inspectKind(r, listeners) {
+  if (!r || r.kind !== 'clickable' || r.marked || r.cursor === 'pointer' || !listeners) return r && r.kind;
+  if ((listeners.types || []).some((t) => CLICKISH.includes(t)) || listeners.ancestorAt) return r.kind;
+  return 'element';
+}
+
+function retiredOf(prevKeys, curKeys, sameDoc) {
+  if (!prevKeys || !curKeys) return [];
+  const cur = new Set(Object.values(curKeys));
+  const bases = new Set([...cur].map((k) => keys.parseStored(k).base));
+  return Object.entries(prevKeys)
+    .filter(([, k]) => !cur.has(k) && (sameDoc || bases.has(keys.parseStored(k).base)))
+    .map(([n]) => Number(n)).sort((a, b) => a - b);
+}
+
+function wireHost({ stdin, stdout, shutdown }) {
+  let broken = false;
+  stdout.on('error', () => {
+    if (broken) return;
+    broken = true;
+    shutdown();
+  });
+  stdin.on('end', () => shutdown());
+  stdin.on('close', () => shutdown());
+  return (frame) => {
+    if (broken) return;
+    try { stdout.write(JSON.stringify({ cxb: 1, ...frame }) + '\n'); } catch { broken = true; }
+  };
+}
+
 function run(electron, ctx) {
   console.log = console.error;
   const argv = (ctx && ctx.argv) || process.argv;
@@ -150,9 +192,7 @@ function run(electron, ctx) {
   let blockerId = null;
   let shuttingDown = false;
 
-  const send = (frame) => {
-    try { process.stdout.write(JSON.stringify({ cxb: 1, ...frame }) + '\n'); } catch {}
-  };
+  const send = wireHost({ stdin: process.stdin, stdout: process.stdout, shutdown: () => shutdown() });
 
   const dockSync = () => {
     if (!app.dock) return;
@@ -349,7 +389,8 @@ function run(electron, ctx) {
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
-      policy: null, barMsg: null, lastDenied: null,
+      policy: null, barMsg: null, lastDenied: null, blockedNav: null,
+      numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), numOrigin: null, lastRead: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
@@ -366,7 +407,9 @@ function run(electron, ctx) {
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
       const target = (e && e.url) || url;
-      if (!allowedNav(target) || policyDenies(svc, target, 'page')) e.preventDefault();
+      if (!allowedNav(target)) { e.preventDefault(); return; }
+      const hit = policyDenies(svc, target, 'page');
+      if (hit) { svc.blockedNav = { url: target, hit }; e.preventDefault(); }
     };
     const popupOpts = { webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false } };
     const guardPopup = (pwc) => {
@@ -424,13 +467,49 @@ function run(electron, ctx) {
   const heldError = (svc) => codedError('HELD', TEXT.held(svc.name, svc.lock.reason));
   const closedError = (name) => codedError('CLOSED', `the operator closed the ${name} window — open it again`);
 
-  const checkDoc = (svc, args) => {
-    if (args.expectDoc != null && Number(args.expectDoc) !== svc.doc) {
-      throw codedError('STALE_DOC', TEXT.staleDoc(svc.name, svc.wc.getURL()));
+  const numState = (svc) => {
+    const origin = originOf(svc.wc.getURL());
+    if (origin !== svc.numOrigin) {
+      svc.numOrigin = origin;
+      svc.numbers = new Map();
+      svc.byN = new Map();
+      svc.nextN = 1;
+      svc.volatile = new Set();
+      svc.lastRead = null;
     }
+    return { known: Object.fromEntries(svc.numbers), next: svc.nextN, volatile: [...svc.volatile] };
   };
 
+  const mergeNumbers = (svc, out) => {
+    if (!out || !out.assigned) return;
+    for (const [k, n] of Object.entries(out.assigned)) { svc.numbers.set(k, Number(n)); svc.byN.set(Number(n), k); }
+    if (Number(out.next) > svc.nextN) svc.nextN = Number(out.next);
+  };
+
+  async function stampPage(svc) {
+    const out = await inIsolated(svc.wc, scripts.READ_INTERACTIVE(false, numState(svc)));
+    mergeNumbers(svc, out);
+    return out;
+  }
+
+  async function checkNumber(svc, n) {
+    const stored = svc.byN.get(Number(n));
+    if (stored == null) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+    let verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored));
+    let page = null;
+    if (verdict == null) {
+      page = await stampPage(svc);
+      verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored));
+    }
+    const v = numberVerdict(verdict, stored, page && page.keys);
+    if (v === 'ok') return;
+    const p = keys.parseStored(stored);
+    if (v === 'ambiguous') throw codedError('AMBIGUOUS', TEXT.ambiguousN(svc.name, n, p.label, p.context));
+    throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+  }
+
   async function resolve(svc, n) {
+    await checkNumber(svc, n);
     const el = await inIsolated(svc.wc, scripts.FIND(n));
     if (!el) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
     return el;
@@ -506,9 +585,12 @@ function run(electron, ctx) {
         ensureCdp(svc);
         if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
         let navErr = null;
+        svc.blockedNav = null;
         const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
         const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
         if (svc.wc.isDestroyed()) throw closedError(name);
+        const blocked = svc.blockedNav;
+        if (navErr && blocked) throw deniedError(svc, blocked.url, blocked.hit, 'open');
         if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
         return { status, idle: idleOf(idle) };
       } finally {
@@ -527,7 +609,7 @@ function run(electron, ctx) {
     const svc = openService(name);
     svc.policy = policy;
     await svc.blank;
-    if (svc.lock.state !== 'held') takeover(svc);
+    if (svc.lock.state !== 'held' || svc.lock.reason !== 'takeover') takeover(svc);
     if (svc.lock.state !== 'held') throw codedError('OPERATOR_BUSY', TEXT.operatorBusy(name));
     ensureCdp(svc);
     if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
@@ -537,6 +619,7 @@ function run(electron, ctx) {
     if (navErr && svc.wc.getURL() === 'about:blank') throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
     svc.win.show();
     svc.win.focus();
+    app.focus({ steal: true });
     return { ...pageInfo(svc), doc: svc.doc, state: svc.lock.state, reason: svc.lock.reason };
   }
 
@@ -547,7 +630,6 @@ function run(electron, ctx) {
     let n = Number(args.n);
     const dir = args.dir == null ? path.join(downloadsRoot, svc.name) : String(args.dir);
     if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'click needs an absolute dir');
-    if (byText == null) checkDoc(svc, args);
     const what = op === 'key' ? `press ${args.key}` : byText != null ? `click --text=${JSON.stringify(byText)}` : `${op} [${n}]`;
     return mutating(svc, frame, what, async () => {
       ensureCdp(svc);
@@ -560,7 +642,6 @@ function run(electron, ctx) {
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
         return withChange(svc, before, { navigated: svc.doc !== docBefore, idle: idleOf(idle) });
       }
-      if (byText == null) checkDoc(svc, args);
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
@@ -619,7 +700,12 @@ function run(electron, ctx) {
   }
 
   async function textTarget(svc, text, verb = 'click') {
-    const found = await inIsolated(svc.wc, scripts.FIND_TEXT(text));
+    let found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numState(svc)));
+    if (found && found.unstamped) {
+      await stampPage(svc);
+      found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numState(svc)));
+    }
+    mergeNumbers(svc, found);
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
     return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
@@ -701,7 +787,7 @@ function run(electron, ctx) {
     try {
       await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
       for (;;) {
-        const got = await Promise.race([w.started.then(() => true), driver.sleep(250).then(() => false)]);
+        const got = await Promise.race([w.started.then(() => true), w.done.then(() => true), driver.sleep(250).then(() => false)]);
         if (got) return await w.done;
         if (svc.popupUrl || Date.now() - t0 >= DOWNLOAD_START_MS) break;
         if (await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') break;
@@ -725,7 +811,6 @@ function run(electron, ctx) {
     const dir = String(args.dir || '');
     if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'download needs an absolute dir');
     const n = args.n == null ? null : Number(args.n);
-    if (n != null) checkDoc(svc, args);
     const what = n != null ? `download [${n}]` : 'download';
     const t0 = Date.now();
     return mutating(svc, frame, what, async () => {
@@ -735,7 +820,6 @@ function run(electron, ctx) {
       try {
         let out;
         if (n != null) {
-          checkDoc(svc, args);
           const el = await resolve(svc, n);
           dispatch(svc, { type: 'describe', what: `download [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
           const hint = args.as || el.download || null;
@@ -752,8 +836,23 @@ function run(electron, ctx) {
     });
   }
 
-  async function opScreenshot(name) {
+  async function opScreenshot(name, args) {
     const svc = need(name);
+    const wc = svc.wc;
+    let drawn = null;
+    if (args && args.numbers) {
+      await stampPage(svc);
+      drawn = Number(await inIsolated(wc, scripts.OVERLAY)) || 0;
+    }
+    try {
+      return { ...(await capture(svc)), ...(drawn == null ? {} : { numbers: drawn }) };
+    } finally {
+      if (drawn != null && !wc.isDestroyed()) await inIsolated(wc, scripts.OVERLAY_OFF);
+    }
+  }
+
+  async function capture(svc) {
+    const name = svc.name;
     const wc = svc.wc;
     let img = await wc.capturePage();
     const empty = !img || img.isEmpty();
@@ -812,16 +911,17 @@ function run(electron, ctx) {
   async function opInspect(name, frame, args) {
     const svc = need(name);
     if (svc.lock.state === 'held') throw heldError(svc);
-    if (args.byText == null) checkDoc(svc, args);
     svc.reading += 1;
     blockerSync();
     try {
       const { n, fresh } = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : { n: Number(args.n), fresh: false };
+      await checkNumber(svc, n);
       const r = await inIsolated(svc.wc, scripts.INSPECT(n));
       if (!r) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
       const listeners = await driver.withTimeout(listenersOf(svc, n).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
       if (listeners && listeners.ancestorAt) listeners.ancestor = r.ancestors[listeners.ancestorAt - 1] || '?';
-      return { n, ...r, listeners, ...(fresh ? { fresh: true } : {}) };
+      const { marked, ...shown } = r;
+      return { n, ...shown, kind: inspectKind(r, listeners), listeners, ...(fresh ? { fresh: true } : {}) };
     } finally {
       svc.reading -= 1;
       blockerSync();
@@ -925,8 +1025,25 @@ function run(electron, ctx) {
     if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
-    let el = await inIsolated(wc, scripts.READ_INTERACTIVE(main));
-    if (el == null) el = await inIsolated(wc, scripts.READ_INTERACTIVE(main));
+    const state = numState(svc);
+    let el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
+    if (el == null) el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
+    const prev = svc.lastRead;
+    if (el && prev) {
+      const learned = keys.learnVolatile(prev.descs, el.descs, prev.url, el.url, state.volatile);
+      if (learned.length) {
+        for (const name of learned) svc.volatile.add(name);
+        const again = await inIsolated(wc, scripts.READ_INTERACTIVE(main, { ...state, volatile: [...svc.volatile] }));
+        if (again) el = again;
+      }
+    }
+    mergeNumbers(svc, el);
+    const numbers = el ? {
+      fresh: (el.fresh || []).slice().sort((a, b) => a - b),
+      retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...svc.volatile])),
+      keys: el.keys || {},
+    } : {};
+    if (el) svc.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {} };
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const login = await probe(svc);
     const frames = wc.mainFrame.framesInSubtree
@@ -940,6 +1057,7 @@ function run(electron, ctx) {
       elements,
       counts: { elements: elements.length, textChars: (text || '').length },
       truncated: !!(el && el.truncated) || (text || '').length >= scripts.TEXT_MAX,
+      ...numbers,
       frames,
       login,
       loading: loadingOf(svc),
@@ -998,7 +1116,7 @@ function run(electron, ctx) {
             if (op === 'inspect') return opInspect(name, frame, args);
             if (op === 'idle') return opIdle(name, args);
             if (op === 'download') return opDownload(name, frame, args);
-            if (op === 'screenshot') return opScreenshot(name);
+            if (op === 'screenshot') return opScreenshot(name, args);
             return opAct(name, frame, args);
           });
         }
@@ -1034,4 +1152,4 @@ function run(electron, ctx) {
   });
 }
 
-module.exports = { run, keepOrFold, settleDownload, checkOpenUrl };
+module.exports = { run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf };

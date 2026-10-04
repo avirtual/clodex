@@ -6,7 +6,10 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { keepOrFold, settleDownload } = require('../plugins/browser-pane/child');
+const { EventEmitter } = require('node:events');
+const vm = require('node:vm');
+const { keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf } = require('../plugins/browser-pane/child');
+const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
 const scripts = require('../plugins/browser-pane/page-scripts');
 
@@ -66,10 +69,131 @@ test('settleDownload: a click download that outruns its wait is abandoned and it
   assert.ok(fs.existsSync(planned));
 });
 
-test('page scripts: FIND_TEXT hits say whether this find assigned the number', () => {
+test('page scripts: FIND_TEXT hits say whether this find assigned the number, and ask for a stamp on an unread page', () => {
   const src = scripts.FIND_TEXT('PDF');
-  assert.match(src, /const fresh = !n;/);
-  assert.match(src, /return \{ n, fresh, text: /);
+  assert.match(src, /return \{ n, fresh: fresh\.includes\(n\), text: /);
+  assert.match(src, /if \(!window\.__cxEls \|\| !window\.__cxKeys\) return \{ unstamped: true \};/);
+});
+
+function page(state) {
+  const ctx = { Node: { DOCUMENT_POSITION_FOLLOWING: 4 }, document: { querySelectorAll: () => [] }, WeakRef, URL, URLSearchParams, location: { origin: 'https://x.test' } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  return vm.runInContext(`(() => {${scripts.numbering(state)}
+  resetTable();
+  return { storedKeysOf, place, verify, assigned, fresh, next: () => next };
+})()`, ctx);
+}
+
+function button(label, row) {
+  const attrs = {};
+  return {
+    tagName: 'BUTTON', isConnected: true, innerText: label, labels: null, value: '', row,
+    matches: (sel) => sel.split(',').includes('button'),
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [],
+    closest() { return this.row == null ? null : { innerText: this.row }; },
+  };
+}
+
+function stampAll(state, els) {
+  const p = page(state);
+  const stored = p.storedKeysOf(els);
+  const ns = els.map((el, i) => p.place(el, stored[i]));
+  const known = { ...state.known, ...p.assigned };
+  return { p, ns, stored, state: { known, next: p.next() } };
+}
+
+test('numbering: an element keeps its number when new elements appear before it on a later page', () => {
+  const first = stampAll({ known: {}, next: 1 }, [button('Acasa'), button('Mobil')]);
+  assert.deepStrictEqual(first.ns, [1, 2]);
+  const second = stampAll(first.state, [button('Factura nouă'), button('Altceva'), button('Mobil'), button('Acasa')]);
+  assert.deepStrictEqual(second.ns, [3, 4, 2, 1]);
+  assert.deepStrictEqual([...second.p.fresh], [3, 4]);
+});
+
+test('numbering: two same-label buttons in different rows get ordinal+context keys; reordered rows get fresh numbers', () => {
+  const a = button('Delete', 'Factura A 120 lei');
+  const b = button('Delete', 'Factura B 80 lei');
+  const first = stampAll({ known: {}, next: 1 }, [a, b]);
+  assert.deepStrictEqual(first.stored.map((k) => K.parseStored(k).context), ['Factura A 120 lei', 'Factura B 80 lei']);
+  const second = stampAll(first.state, [button('Delete', 'Factura B 80 lei'), button('Delete', 'Factura A 120 lei')]);
+  assert.deepStrictEqual(second.ns, [3, 4]);
+  const same = stampAll(first.state, [button('Delete', 'Factura A 120 lei'), button('Delete', 'Factura B 80 lei')]);
+  assert.deepStrictEqual(same.ns, [1, 2]);
+});
+
+test('numbering: verify refuses a number whose element no longer yields its stored key', () => {
+  const a = button('Delete', 'Factura A 120 lei');
+  const b = button('Delete', 'Factura B 80 lei');
+  const { p, ns, stored } = stampAll({ known: {}, next: 1 }, [a, b]);
+  assert.strictEqual(p.verify(ns[0], stored[0]), 'ok');
+  a.row = 'Factura B 80 lei';
+  b.row = 'Factura A 120 lei';
+  assert.strictEqual(p.verify(ns[0], stored[0]), 'ambiguous');
+  assert.strictEqual(p.verify(ns[1], stored[0]), 'ambiguous');
+  a.isConnected = false;
+  assert.strictEqual(p.verify(ns[0], stored[0]), null);
+});
+
+test('numberVerdict: an unresolved number is ambiguous when its base key is on the page under another key, else gone', () => {
+  const base = K.keyOf({ kind: 'button', label: 'Delete', href: '' });
+  const stored = K.storedKey(base, 1, 'Factura A');
+  assert.strictEqual(numberVerdict(null, stored, { 5: K.storedKey(base, 1, 'Factura B') }), 'ambiguous');
+  assert.strictEqual(numberVerdict(null, stored, { 5: K.keyOf({ kind: 'link', label: 'Acasa', href: '/' }) }), 'gone');
+  assert.strictEqual(numberVerdict(null, stored, null), 'gone');
+  assert.strictEqual(numberVerdict('ok', stored, null), 'ok');
+});
+
+test('retiredOf: numbers whose key changed on this page; on the same document also numbers that vanished', () => {
+  const base = K.keyOf({ kind: 'button', label: 'Delete', href: '' });
+  const prev = { 1: K.storedKey(base, 1, 'A'), 2: 'link\u0000Acasa\u0000/', 3: 'link\u0000Gone\u0000/g' };
+  const cur = { 4: K.storedKey(base, 1, 'B'), 2: 'link\u0000Acasa\u0000/' };
+  assert.deepStrictEqual(retiredOf(prev, cur, false), [1]);
+  assert.deepStrictEqual(retiredOf(prev, cur, true), [1, 3]);
+});
+
+test('inspectKind: a non-standard element with no click listener here or above and no pointer cursor is an element', () => {
+  const r = { kind: 'clickable', cursor: 'auto', marked: false };
+  assert.strictEqual(inspectKind(r, { types: ['mouseover'] }), 'element');
+  assert.strictEqual(inspectKind(r, { types: ['click'] }), 'clickable');
+  assert.strictEqual(inspectKind(r, { types: [], ancestorAt: 2 }), 'clickable');
+  assert.strictEqual(inspectKind({ ...r, cursor: 'pointer' }, { types: [] }), 'clickable');
+  assert.strictEqual(inspectKind({ ...r, marked: true }, { types: [] }), 'clickable');
+  assert.strictEqual(inspectKind(r, null), 'clickable');
+  assert.strictEqual(inspectKind({ kind: 'link' }, { types: [] }), 'link');
+});
+
+test('wireHost: an async stdout error makes later sends write nothing and shuts down once; stdin end shuts down', () => {
+  const stdout = new EventEmitter();
+  const writes = [];
+  stdout.write = (s) => { writes.push(s); return true; };
+  const stdin = new EventEmitter();
+  const calls = [];
+  const send = wireHost({ stdin, stdout, shutdown: () => calls.push('shutdown') });
+  send({ event: 'ready' });
+  assert.doesNotThrow(() => stdout.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })));
+  stdout.emit('error', new Error('again'));
+  send({ event: 'window-closed', service: 'x' });
+  assert.deepStrictEqual(writes, ['{"cxb":1,"event":"ready"}\n']);
+  assert.deepStrictEqual(calls, ['shutdown']);
+  stdin.emit('end');
+  assert.deepStrictEqual(calls, ['shutdown', 'shutdown']);
+});
+
+test('page scripts: the numbers overlay creates one container with a fixed id and OVERLAY_OFF removes it', () => {
+  const id = JSON.stringify(scripts.OVERLAY_ID);
+  assert.strictEqual(scripts.OVERLAY.split(`layer.id = ${id};`).length, 2);
+  assert.strictEqual((scripts.OVERLAY.match(/document\.createElement\('div'\)/g) || []).length, 1);
+  assert.match(scripts.OVERLAY, new RegExp(`const old = document\\.getElementById\\(${id.replace(/[$]/g, '\\$')}\\);\\n {2}if \\(old\\) old\\.remove\\(\\);`));
+  assert.match(scripts.OVERLAY_OFF, new RegExp(`document\\.getElementById\\(${id}\\);\\n {2}if \\(layer\\) layer\\.remove\\(\\);`));
+  assert.match(scripts.OVERLAY, /z-index:2147483647/);
+});
+
+test('page scripts: VALUE clips at the source to 200 chars', () => {
+  const run = (v) => new Function('window', `return ${scripts.VALUE(1)}`)({ __cxEls: { 1: { deref: () => ({ isConnected: true, value: v }) } } });
+  assert.strictEqual(run('x'.repeat(500)).length, 200);
+  assert.strictEqual(run('abc'), 'abc');
 });
 
 function visOf(view = {}) {
@@ -129,6 +253,13 @@ test('page scripts: vis drops the children of a scrolling drawer parked off-scre
   assert.strictEqual(vis(box(10, 10, 200, 20, { position: 'fixed' }, panel)), true);
   assert.strictEqual(vis(box(10, 10, 200, 20, {}, panel)), false);
   assert.strictEqual(vis(box(10, -500, 200, 20, { position: 'fixed' }, scroller(0))), false);
+});
+
+test('page scripts: vis tests a non-fixed child of a position:fixed container against the viewport', () => {
+  const vis = visOf();
+  const fixed = box(0, 0, 300, 800, { position: 'fixed' });
+  assert.strictEqual(vis(box(10, 900, 80, 20, {}, fixed)), false);
+  assert.strictEqual(vis(box(10, 700, 80, 20, {}, fixed)), true);
 });
 
 test('page scripts: the busy scan, the element list, FIND_TEXT and INSPECT all use vis', () => {

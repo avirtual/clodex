@@ -96,7 +96,8 @@ function downloadReply(service, cmd, r) {
 }
 
 function screenshotReply(service, r, file, sessionType) {
-  return withPath(`${PREFIX} screenshot ${service} ${r.width}×${r.height}`, fileTail(file, sessionType));
+  const drawn = r.numbers == null ? '' : ` · ${r.numbers} numbers drawn`;
+  return withPath(`${PREFIX} screenshot ${service} ${r.width}×${r.height}${drawn}`, fileTail(file, sessionType));
 }
 
 function stamp(ms) {
@@ -136,8 +137,8 @@ function clipUrl(url) {
 
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
-  staleDoc: (service, url) => `${service} navigated since your last read (now ${url}) — numbers from that read are void; read again.`,
-  noElement: (service, n) => `no element [${n}] on ${service} any more (the page changed) — read again.`,
+  noElement: (service, n) => `no element [${n}] on ${service} on this page (hidden or gone) — read again or use --text`,
+  ambiguousN: (service, n, label, context) => `[${n}] on ${service} no longer points at one element (was ${JSON.stringify(String(label || ''))}${context ? ` in ${JSON.stringify(String(context))}` : ''}) — read again and use the new number`,
   held: (service, reason) => `the operator has control of ${service} (${reason === 'takeover' ? 'takeover' : 'sign-in'}). Emit [agent:browser wait ${service}] and end your turn.`,
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
@@ -146,7 +147,7 @@ const TEXT = {
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
-  driving: (seat, service) => `agent ${seat} is driving ${service} — wait or ask it to release`,
+  driving: (seat, service, waiting) => `agent ${seat} ${waiting ? 'is waiting on' : 'is driving'} ${service} — wait or ask it to release`,
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
@@ -199,7 +200,7 @@ function dropSuffix(labels) {
 
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
-  return `navigated → ${r.url} (${JSON.stringify(String(r.title || ''))}) · numbers reset, read again`;
+  return `navigated → ${r.url} (${JSON.stringify(String(r.title || ''))}) · numbers kept where the page repeats`;
 }
 
 function actReply(sub, service, cmd, r) {
@@ -264,7 +265,7 @@ function inspectReply(service, r) {
   const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
   const rect = r.rect || {};
   const lines = [
-    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${JSON.stringify(String(r.label || ''))}`,
+    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label ? JSON.stringify(String(r.label)) : '(icon)'}`,
     `  attrs: ${attrs || 'none'}`,
     `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
     `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,
@@ -295,9 +296,12 @@ const INSTRUCTION_MAX = 400;
 function handover(service, url, title, instruction) {
   let ask = oneLine(instruction == null ? '' : instruction);
   if (ask.length > INSTRUCTION_MAX) ask = ask.slice(0, INSTRUCTION_MAX - 1) + '…';
-  const what = ask || 'read it and report what you see';
-  const head = `${PREFIX} the operator opened ${service} at ${clipUrl(url)} (${JSON.stringify(oneLine(title || '', 60))}) and handed it to you — ${what}`;
-  return oneLine(`${head} — start with [agent:browser read ${service}]`, HANDOVER_MAX);
+  const pre = oneLine(`${PREFIX} the operator opened ${service} at ${clipUrl(url)} (${JSON.stringify(oneLine(title || '', 60))}) and handed it to you —`, HANDOVER_MAX) + ' ';
+  const tail = ` — start with [agent:browser read ${service}]`;
+  const room = Math.max(1, HANDOVER_MAX - pre.length - tail.length);
+  let what = ask || 'read it and report what you see';
+  if (what.length > room) what = what.slice(0, room - 1) + '…';
+  return `${pre}${what}${tail}`;
 }
 
 function heldTimeout(service, ms) {

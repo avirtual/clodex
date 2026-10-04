@@ -178,7 +178,9 @@ function activate(rhost) {
       node.style.left = `${Math.max(4, rect.left)}px`;
       node.style.bottom = `${Math.max(4, (typeof window === 'undefined' ? 0 : window.innerHeight || 0) - rect.top + 4)}px`;
     }
-    const onDown = (e) => { if (picker && !picker.node.contains(e.target) && e.target !== anchorEl) closePicker(); };
+    const act = anchorEl && typeof anchorEl.getAttribute === 'function' ? anchorEl.getAttribute('data-act') : null;
+    const onAnchor = (t) => (act && t && typeof t.closest === 'function' ? !!t.closest(`[data-act="${act}"]`) : t === anchorEl);
+    const onDown = (e) => { if (picker && !picker.node.contains(e.target) && !onAnchor(e.target)) closePicker(); };
     const onKey = (e) => { if (e.key === 'Escape') closePicker(); };
     picker = { node, onDown, onKey };
     document.body.appendChild(node);
@@ -295,7 +297,7 @@ function activate(rhost) {
     render(bodyEl) {
       bodyEl.textContent = '';
       const list = el('div', 'bp-services');
-      bodyEl.appendChild(openRow(() => fill()));
+      bodyEl.appendChild(openRow(() => fill().then(fillDeny)));
       bodyEl.appendChild(list);
       const reveal = el('button', 'bp-reveal', 'Reveal downloads');
       reveal.addEventListener('click', async () => {

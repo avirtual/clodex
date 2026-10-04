@@ -19,7 +19,7 @@ const FLAGS = {
   key: {},
   select: {},
   download: { to: 'value', as: 'value' },
-  screenshot: {},
+  screenshot: { numbers: 'bool' },
   inspect: { text: 'value' },
   wait: { ms: 'value', for: 'value' },
   services: {},
@@ -34,24 +34,47 @@ function parseLine(line) {
   return { raw: inner, body: m[2].trim() };
 }
 
-function tokenize(inner) {
+function tokenizeQ(inner) {
   const out = [];
   let cur = '';
   let has = false;
   let quoted = false;
+  let q = false;
   for (const ch of inner) {
-    if (ch === '"') { quoted = !quoted; has = true; continue; }
+    if (ch === '"') { quoted = !quoted; has = true; q = true; continue; }
     if (!quoted && /\s/.test(ch)) {
-      if (has) out.push(cur);
+      if (has) out.push({ t: cur, q });
       cur = '';
       has = false;
+      q = false;
       continue;
     }
     cur += ch;
     has = true;
   }
   if (quoted) throw new Error('unbalanced double quote in the bracket');
-  if (has) out.push(cur);
+  if (has) out.push({ t: cur, q });
+  return out;
+}
+
+function tokenize(inner) {
+  return tokenizeQ(inner).map((x) => x.t);
+}
+
+function joinText(sub, toks) {
+  const out = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i].q || !toks[i].t.startsWith('--text=')) { out.push(toks[i].t); continue; }
+    let text = toks[i].t;
+    let j = i + 1;
+    for (; j < toks.length && !toks[j].t.startsWith('--'); j++) text += ' ' + toks[j].t;
+    out.push(text);
+    for (; j < toks.length; j++) {
+      if (!toks[j].t.startsWith('--')) throw new Error(`unexpected '${toks[j].t}' for ${sub} — quote the text or put it last`);
+      out.push(toks[j].t);
+    }
+    return out;
+  }
   return out;
 }
 
@@ -107,6 +130,7 @@ function byText(sub, positional, text) {
   if (!text.trim()) throw new Error('--text needs the visible text, e.g. --text="Lista de plată"');
   const last = positional[positional.length - 1];
   if (last != null && /^[0-9]+$/.test(last)) throw new Error(`${sub} takes an element number or --text, not both`);
+  if (positional.length > 1) throw new Error(`unexpected '${positional[1]}' for ${sub} — quote the text or put it last`);
   return { sub, service: serviceArg(sub, positional, false), n: null, text };
 }
 
@@ -156,8 +180,9 @@ function intArg(name, v, min) {
 }
 
 function toCommand(intent) {
-  const toks = tokenize(String((intent && intent.raw) || ''));
-  const sub = toks.shift();
+  const qt = tokenizeQ(String((intent && intent.raw) || ''));
+  const sub = qt.length ? qt[0].t : undefined;
+  const toks = sub === 'click' || sub === 'inspect' ? joinText(sub, qt.slice(1)) : qt.slice(1).map((x) => x.t);
   if (!SUBCOMMANDS.includes(sub)) {
     throw new Error(`unknown subcommand '${sub}' — use ${SUBCOMMANDS.join(', ')}`);
   }
@@ -202,7 +227,7 @@ function toCommand(intent) {
     return { sub, service, key: body };
   }
   if (sub === 'download') return downloadCommand(positional, flags, body);
-  if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false) };
+  if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false), ...(flags.numbers ? { numbers: true } : {}) };
   if (sub === 'wait') {
     const service = serviceArg(sub, positional, false);
     if (flags.for === '') throw new Error('--for needs a value, e.g. --for="Showing 1"');
