@@ -135,6 +135,13 @@ function server() {
         res.end('<title>Stalled sign-in</title><main><form><input type="password"></form><img src="/hang"></main>');
         return;
       }
+      if (url.pathname === '/quirks') {
+        res.writeHead(200, headers);
+        res.end(`<html><head><title>Quirks</title><style>body{overflow-x:hidden;margin:0}</style></head><body><main><h1>Fara doctype</h1>
+<p>${'Pagina veche fara doctype, randata in quirks mode, cu body overflow-x hidden si continut mai inalt decat fereastra. '.repeat(3)}</p>
+<div style="height:1500px"></div><a href="/form">Mijloc pagina</a><button>Jos pagina</button><div style="height:1500px"></div></main></body></html>`);
+        return;
+      }
       if (url.pathname === '/set') {
         headers['set-cookie'] = 'sid=live-check-123; Path=/; HttpOnly';
         res.writeHead(200, headers);
@@ -325,6 +332,13 @@ async function offscreenStep(emit, base) {
   check('the button 3000 px down the inner scroller inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${jos}]`)));
   await emit(`[agent:browser click appscroll ${jos}]`);
   check('after a click scrolled the inner scroller down, the link above inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${sus}]`)));
+  await emit(`[agent:browser open quirks] ${base}/quirks`);
+  const q1 = fileOf(await emit('[agent:browser read quirks]')).split('\n').filter((l) => /^\[\d+\]/.test(l));
+  const qb = /^\[(\d+)\]/.exec(q1.find((l) => /Jos pagina/.test(l)) || '[0]')[1];
+  await emit(`[agent:browser click quirks ${qb}]`);
+  const q2 = fileOf(await emit('[agent:browser read quirks]')).split('\n').filter((l) => /^\[\d+\]/.test(l));
+  for (const l of q2) console.log(`    ${l}`);
+  check('a quirks-mode page with body overflow-x hidden still lists the scrolled-to elements', q2.some((l) => /Jos pagina/.test(l)) && q2.some((l) => /Mijloc pagina/.test(l)));
 }
 
 async function payStep(emit, base) {

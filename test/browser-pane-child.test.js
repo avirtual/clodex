@@ -74,7 +74,7 @@ test('page scripts: FIND_TEXT hits say whether this find assigned the number', (
 
 function visOf(view = {}) {
   const make = new Function('getComputedStyle', 'document', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `${scripts.DEEP}\nreturn vis;`);
-  const doc = { documentElement: { scrollWidth: view.docW || 1200, scrollHeight: view.docH || 3000 } };
+  const doc = { documentElement: { scrollWidth: view.docW || 1200, scrollHeight: view.docH || 3000 }, scrollingElement: view.se };
   return make((el) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', ...el.style }),
     doc, view.scrollX || 0, view.scrollY || 0, 1200, 800);
 }
@@ -112,6 +112,23 @@ test('page scripts: vis measures an element inside a scrolling ancestor against 
   assert.strictEqual(vis(box(10, 5100, 80, 20, {}, scroller(0))), false);
   assert.strictEqual(vis(box(10, -9999, 80, 20, {}, box(0, 0, 1200, 800))), false);
   assert.strictEqual(vis(box(10, 3000, 80, 20)), false);
+});
+
+test('page scripts: vis never takes the scrolling element for an inner scroller and measures the document by it', () => {
+  const body = { ...box(0, -2000, 1200, 3000, { overflowY: 'auto' }), scrollTop: 2000, scrollLeft: 0, scrollHeight: 3000, clientHeight: 800, scrollWidth: 1200, clientWidth: 1200 };
+  const vis = visOf({ se: body, scrollY: 2000, docH: 800 });
+  assert.strictEqual(vis(box(10, 700, 80, 20, {}, body)), true);
+  assert.strictEqual(vis(box(10, -9999, 80, 20, {}, body)), false);
+});
+
+test('page scripts: vis drops the children of a scrolling drawer parked off-screen and tests fixed elements against the viewport', () => {
+  const vis = visOf();
+  const drawer = { ...box(-280, 0, 280, 800, { overflowY: 'auto', position: 'fixed' }), scrollTop: 0, scrollLeft: 0, scrollHeight: 4000, clientHeight: 800, scrollWidth: 280, clientWidth: 280 };
+  assert.strictEqual(vis(box(-270, 10, 200, 20, {}, drawer)), false);
+  const panel = { ...scroller(0), getBoundingClientRect: () => ({ left: 0, top: 500, width: 1200, height: 300, right: 1200, bottom: 800 }) };
+  assert.strictEqual(vis(box(10, 10, 200, 20, { position: 'fixed' }, panel)), true);
+  assert.strictEqual(vis(box(10, 10, 200, 20, {}, panel)), false);
+  assert.strictEqual(vis(box(10, -500, 200, 20, { position: 'fixed' }, scroller(0))), false);
 });
 
 test('page scripts: the busy scan, the element list, FIND_TEXT and INSPECT all use vis', () => {

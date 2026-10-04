@@ -18,26 +18,45 @@ const DEEP = `
     }
     return out;
   };
+  const upOf = (e) => e.parentElement || (e.parentNode && e.parentNode.host) || null;
+  const scrollers = new Map();
+  const scrollerOf = (start) => {
+    const d = document.documentElement;
+    const se = document.scrollingElement || d;
+    const seen = [];
+    let found = null;
+    for (let p = start; p && p !== d && p !== se; p = upOf(p)) {
+      if (scrollers.has(p)) { found = scrollers.get(p); break; }
+      seen.push(p);
+      const ps = getComputedStyle(p);
+      if (/auto|scroll/.test(ps.overflowX + ' ' + ps.overflowY) && (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth)) { found = p; break; }
+    }
+    for (const q of seen) scrollers.set(q, found);
+    return found;
+  };
+  const placedScroller = new Map();
+  const placed = (e, r, st) => {
+    if (st.position === 'fixed') return r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
+    const sc = scrollerOf(upOf(e));
+    if (!sc) {
+      const se = document.scrollingElement || document.documentElement;
+      return r.right + scrollX > 0 && r.bottom + scrollY > 0
+        && r.left + scrollX < Math.max(se.scrollWidth, innerWidth) && r.top + scrollY < Math.max(se.scrollHeight, innerHeight);
+    }
+    const pr = sc.getBoundingClientRect();
+    const top = pr.top - sc.scrollTop;
+    const left = pr.left - sc.scrollLeft;
+    if (!(r.bottom > top && r.top < top + sc.scrollHeight && r.right > left && r.left < left + sc.scrollWidth)) return false;
+    if (!placedScroller.has(sc)) placedScroller.set(sc, placed(sc, pr, getComputedStyle(sc)));
+    return placedScroller.get(sc);
+  };
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const s = getComputedStyle(el);
     if (s.visibility === 'hidden' || s.display === 'none') return false;
     if (s.opacity === '0') return false;
-    const d = document.documentElement;
-    const up = (e) => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-    let sc = null;
-    for (let p = up(el); p && p !== d; p = up(p)) {
-      const ps = getComputedStyle(p);
-      if (/auto|scroll/.test(ps.overflowX + ' ' + ps.overflowY) && (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth)) { sc = p; break; }
-    }
-    if (sc) {
-      const pr = sc.getBoundingClientRect();
-      const top = pr.top - sc.scrollTop;
-      const left = pr.left - sc.scrollLeft;
-      if (!(r.bottom > top && r.top < top + sc.scrollHeight && r.right > left && r.left < left + sc.scrollWidth)) return false;
-    } else if (!(r.right + scrollX > 0 && r.bottom + scrollY > 0
-      && r.left + scrollX < Math.max(d.scrollWidth, innerWidth) && r.top + scrollY < Math.max(d.scrollHeight, innerHeight))) return false;
+    if (!placed(el, r, s)) return false;
     if (s.clip === 'rect(0px, 0px, 0px, 0px)' || s.clip === 'rect(1px, 1px, 1px, 1px)') return false;
     if (s.clipPath === 'inset(50%)' || s.clipPath === 'inset(100%)') return false;
     if (r.width <= 1 && r.height <= 1 && (s.overflow === 'hidden' || s.overflowX === 'hidden')) return false;
