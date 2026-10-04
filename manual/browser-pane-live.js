@@ -115,7 +115,7 @@ async function main() {
   show(fileOf(await emit('[agent:browser read signin]')), (l) => /input:password/.test(l));
 
   console.log('== 3b. unroutable URL on a fresh service');
-  await emit('[agent:browser open dead] http://127.0.0.1:1/');
+  await emit('[agent:browser open dead] http://127.0.0.1:59321/');
 
   console.log('== 4. persistence across a restart');
   await emit(`[agent:browser open jar] ${base}/set`);
