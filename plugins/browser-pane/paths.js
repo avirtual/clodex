@@ -100,4 +100,16 @@ function uniquePath(dir, name, taken = () => false) {
   return p;
 }
 
-module.exports = { resolveTo, scopeCwd, landedInside, sanitizeName, uniquePath, refusal, inside, REMOTE, NAME_MAX };
+function directHref(href, pageUrl) {
+  let u;
+  try { u = new URL(String(href || '')); } catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (/^#/.test(String(href).trim())) return false;
+  let page;
+  try { page = new URL(String(pageUrl || '')); } catch { return true; }
+  u.hash = '';
+  page.hash = '';
+  return u.href !== page.href;
+}
+
+module.exports = { resolveTo, scopeCwd, landedInside, sanitizeName, uniquePath, refusal, inside, directHref, REMOTE, NAME_MAX };

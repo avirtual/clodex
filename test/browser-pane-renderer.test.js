@@ -65,6 +65,7 @@ test('segment text for each state: literal rows', async () => {
   const rows = [
     [status('off'), null],
     [status('running'), 'browser: idle'],
+    [status('starting'), 'browser: starting'],
     [status('running', [svc('utility', 'idle')]), 'browser: idle'],
     [status('running', [svc('utility', 'driving', 'clodex-hand')]), 'browser: driving clodex-hand'],
     [status('running', [svc('utility', 'driving', 'another workspace')]), 'browser: driving another workspace'],

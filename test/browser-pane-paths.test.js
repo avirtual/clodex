@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { resolveTo, scopeCwd, sanitizeName, landedInside, NAME_MAX } = require('../plugins/browser-pane/paths');
+const { resolveTo, scopeCwd, sanitizeName, landedInside, directHref, NAME_MAX } = require('../plugins/browser-pane/paths');
 
 function fixture() {
   const top = fs.realpathSync(mkTmpRoot('clodex-bp-paths-'));
@@ -86,4 +86,19 @@ test('sanitizeName: literal cases', () => {
   const long = sanitizeName('x'.repeat(500) + '.pdf', null);
   assert.strictEqual(long.length, NAME_MAX);
   assert.ok(long.endsWith('.pdf'));
+});
+
+test('directHref: download strategy 1 only for a link that leaves the page', () => {
+  const page = 'https://portal.example.com/bills?m=2026-08';
+  const rows = [
+    ['https://portal.example.com/bills/2026-08.pdf', true],
+    ['https://cdn.example.com/x.pdf', true],
+    ['https://portal.example.com/bills?m=2026-08#', false],
+    ['https://portal.example.com/bills?m=2026-08#row-3', false],
+    ['https://portal.example.com/bills?m=2026-08', false],
+    ['#', false],
+    ['javascript:void(0)', false],
+    ['', false],
+  ];
+  for (const [href, want] of rows) assert.strictEqual(directHref(href, page), want, href);
 });
