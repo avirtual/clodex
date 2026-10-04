@@ -62,6 +62,7 @@ clodex-bash-marks-
 clodex-bp-client-
 clodex-bp-engine-
 clodex-bp-paths-
+clodex-bp-prompt-
 clodex-bp-replies-
 clodex-bp-sched-
 clodex-bundles-
@@ -575,6 +576,10 @@ cx-commit-other-
 cx-commit-wt-
 cxb-live-
 cxb-live-tmp-
+cxb-e2e-
+cxb-e2e-alpha-
+cxb-e2e-beta-
+cxb-e2e-tmp-
 ensure-node-arch-
 ensure-node-badsum-
 ensure-node-fresh-
