@@ -144,6 +144,7 @@ const TEXT = {
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
+  driving: (seat, service) => `agent ${seat} is driving ${service} — wait or ask it to release`,
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
@@ -282,6 +283,17 @@ function handbackReply(service, frame) {
   return reply(`the operator handed ${service} back · now ${frame.url || ''} (${JSON.stringify(String(frame.title || ''))}) · ${signed} · read to continue`);
 }
 
+const HANDOVER_MAX = 800;
+const INSTRUCTION_MAX = 400;
+
+function handover(service, url, title, instruction) {
+  let ask = oneLine(instruction == null ? '' : instruction);
+  if (ask.length > INSTRUCTION_MAX) ask = ask.slice(0, INSTRUCTION_MAX - 1) + '…';
+  const what = ask || 'read it and report what you see';
+  const head = `${PREFIX} the operator opened ${service} at ${clipUrl(url)} (${JSON.stringify(oneLine(title || '', 60))}) and handed it to you — ${what}`;
+  return oneLine(`${head} — start with [agent:browser read ${service}]`, HANDOVER_MAX);
+}
+
 function heldTimeout(service, ms) {
   return reply(`the operator still has control of ${service} after ${ago(ms)} — emit [agent:browser wait ${service}] again, or end your turn`);
 }
@@ -334,4 +346,5 @@ module.exports = {
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  handover, INSTRUCTION_MAX,
 };

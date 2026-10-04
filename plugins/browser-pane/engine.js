@@ -45,7 +45,9 @@ function activate(host) {
   const changed = () => { try { host.events.emit('changed', null, 'all'); } catch {} };
   const onState = (frame) => {
     const service = frame.service;
-    live.set(service, { state: frame.state, reason: frame.state === 'held' ? (frame.reason || 'login') : null, seat: frame.seat || null });
+    live.set(service, {
+      state: frame.state, reason: frame.state === 'held' ? (frame.reason || 'login') : null, seat: frame.seat || null, url: frame.url || '', title: frame.title || '',
+    });
     scheduler.onState(frame);
     if (frame.state !== 'held') { notified.delete(service); return; }
     if (frame.reason === 'takeover' || notified.has(service)) return;
@@ -138,6 +140,33 @@ function activate(host) {
     await operatorOp('show')(name);
     return { ok: true, service: name };
   });
+  const checkService = (service) => {
+    if (!grammar.SERVICE_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
+    return String(service);
+  };
+  host.ipc.handle('operator.open', async (req) => {
+    const { service, url } = req || {};
+    const name = checkService(service);
+    const driver = scheduler.activeSeat(name);
+    if (driver) throw new Error(replies.TEXT.driving(driver, name));
+    const r = await watched.request('open', { url: String(url || ''), operator: true }, { service: name });
+    scheduler.operatorOpened(name, r || {});
+    changed();
+    return { ok: true, service: name, url: (r && r.url) || '', title: (r && r.title) || '' };
+  });
+  host.ipc.handle('operator.handover', async (req) => {
+    const { service, seat, instruction } = req || {};
+    const name = checkService(service);
+    const h = host.sessions.get(String(seat || ''));
+    if (!h || !h.isAlive() || (h.type !== 'claude' && h.type !== 'codex')) throw new Error(`no live claude or codex seat named ${seat}`);
+    const v = live.get(name);
+    if (!v || v.state === 'closed') throw new Error(`${name} has no open window — open it first`);
+    scheduler.grant(name, h.name);
+    const r = (await watched.request('handback', {}, { service: name })) || {};
+    const now = live.get(name) || v;
+    h.inject(replies.handover(name, r.url || now.url, r.title || now.title, instruction));
+    return { ok: true, service: name, seat: h.name };
+  });
   host.ipc.handle('status', (workspaceId) => {
     const saved = stored();
     const services = [...live.entries()].filter(([, v]) => v.state !== 'closed').map(([name, v]) => {
@@ -147,7 +176,9 @@ function activate(host) {
         if (!h || h.workspaceId !== workspaceId) seat = 'another workspace';
       }
       const login = saved[name] && saved[name].login;
-      return { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown' };
+      const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown' };
+      if (v.state === 'held' && v.reason === 'takeover') entry.operator = true;
+      return entry;
     });
     return { ok: true, child: childState(), services };
   });
@@ -163,6 +194,7 @@ function activate(host) {
         lastUrl: s.lastUrl || '',
         windowOpen: !!(v && v.state !== 'closed'),
         state: v ? v.state : 'closed',
+        ...(v && v.state === 'held' && v.reason === 'takeover' ? { operator: true } : {}),
       };
     });
     return { ok: true, services };
