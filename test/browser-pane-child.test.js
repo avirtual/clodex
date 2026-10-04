@@ -435,6 +435,9 @@ test('numbering: two Lista labels differing only past char 60 get different keys
 test('changedOf: kept numbers whose line or row text differs since the last read', () => {
   assert.deepStrictEqual(changedOf({ 10: 'link Lista\u0000aug', 11: 'x\u0000', 12: 'y\u0000' }, { 10: 'link Lista\u0000iul', 11: 'x\u0000', 13: 'z\u0000' }), [10]);
   assert.deepStrictEqual(changedOf(null, { 1: 'a' }), []);
+  const ri = scripts.READ_INTERACTIVE(false, {});
+  assert.ok(ri.includes("sig = label + (el.hasAttribute('download') ? ' [download]' : '');"), 'a link signature leaves out its raw href (volatile t= is not a change)');
+  assert.ok(ri.includes("sigs[n] = (it.sig == null ? it.line : it.sig) + '\\u0000' + rowOf(it.el);"));
   assert.match(CHILD_SRC, /if \(svc\.num && svc\.num\.changed && svc\.num\.changed\.has\(Number\(n\)\)\) out\.textChanged = true;/);
 });
 

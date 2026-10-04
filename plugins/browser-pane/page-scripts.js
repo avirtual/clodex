@@ -316,6 +316,7 @@ function readInteractive(main, state) {
     const kind = plain ? 'clickable' : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
     const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
     let line = '';
+    let sig = null;
     if (plain) {
       if (underRow(el)) continue;
       const inner = el.querySelectorAll(sel);
@@ -334,6 +335,7 @@ function readInteractive(main, state) {
       seen.add(key);
       if (!label.trim() && !h) continue;
       line = label + (h ? ' → ' + clip(h, 80) : '') + (el.hasAttribute('download') ? ' [download]' : '');
+      sig = label + (el.hasAttribute('download') ? ' [download]' : '');
     } else if (tag === 'select') {
       const opts = [...el.options].map(o => o.text.trim());
       const cur = el.selectedOptions[0] ? el.selectedOptions[0].text : '';
@@ -351,7 +353,7 @@ function readInteractive(main, state) {
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
-    items.push({ el, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : '') });
+    items.push({ el, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
   }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
@@ -370,7 +372,7 @@ function readInteractive(main, state) {
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
-      sigs[n] = it.line + '\u0000' + rowOf(it.el);
+      sigs[n] = (it.sig == null ? it.line : it.sig) + '\u0000' + rowOf(it.el);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });

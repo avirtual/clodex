@@ -361,8 +361,10 @@ async function chromeStep(emit, base) {
   await emit(`[agent:browser open chrome] ${base}/chrome-body-b`);
   const fb = fileOf(await emit('[agent:browser read chrome]'));
   const tb = fb.split('== elements ==')[0];
+  for (const l of tb.split('\n').slice(0, 16)) console.log(`    ${l}`);
   check('repeated body lines (the amount owed) are kept; only the marked nav is stripped',
-    /Suma de plată\n335,90 Lei/.test(tb) && /Factura august/.test(tb) && !/Plati online/.test(tb) && rows(fb).some((l) => /^stripped: 3 lines at top, 0 at bottom/.test(l)));
+    /Suma de plată\n+335,90 Lei/.test(tb) && /Factura august/.test(tb) && !/Plati online/.test(tb) && rows(fb).some((l) => /^stripped: 3 lines at top, 0 at bottom/.test(l)));
+  check('nav links whose t= changes are not listed as changed', !/; changed: /.test(fb));
   await emit(`[agent:browser open busy] ${base}/busy`);
   const t0 = Date.now();
   const r1 = await emit('[agent:browser read busy]');
@@ -429,7 +431,7 @@ async function rowsStep(emit, base) {
   await emit(`[agent:browser open rows] ${base}/rows-a`);
   const a = els(fileOf(await emit('[agent:browser read rows]')));
   for (const l of a) console.log(`    ${l}`);
-  const del = a.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
+  const del = a.filter((l) => /\] button (⚠ )?Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
   check('two Delete buttons carry two numbers', del.length === 2 && del[0] !== del[1]);
   await emit(`[agent:browser open rows] ${base}/rows-b`);
   const refused = await emit(`[agent:browser click rows ${del[0]}]`);
@@ -438,7 +440,7 @@ async function rowsStep(emit, base) {
   const bFile = fileOf(await emit('[agent:browser read rows]'));
   const b = els(bFile);
   for (const l of b) console.log(`    ${l}`);
-  const delB = b.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
+  const delB = b.filter((l) => /\] button (⚠ )?Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
   check('the reordered rows get new numbers', delB.length === 2 && !delB.some((n) => del.includes(n)));
   check('nothing was deleted', /\ntitle: Rows\n/.test(bFile));
   await emit(`[agent:browser open rows] ${base}/lista`);
