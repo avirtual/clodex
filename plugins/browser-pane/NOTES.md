@@ -408,6 +408,13 @@ The label part is the whole whitespace-collapsed label up to `LABEL_KEY_MAX`
 line keeps its 60-char clip. With the clip in the key, e-bloc's July and August
 "Lista de plată … [Document generat 03.0x.2026]" shared one number after a
 month select.
+Counts are masked in the key label (`counterMask`): a number next to like,
+repost, reply, view, bookmark, posts or followers/following reads `#`. X
+renumbered those buttons as counts ticked (248→250 likes read as new [150],
+retired [98]). A bare amount ("19,486") is not a counter. A button or link in an
+`article` whose label is only counter words and counts is keyed by its action
+word and the post's permalink (`a[href*="/status/"]`, else the `time` link), so
+"Like" and "1 Like. Like" share a number. `changed:` signatures are masked the same way.
 
 ## page-scripts.js — consequentialOf
 
@@ -421,6 +428,23 @@ capped. id/class match only the verbs in `ID_TERMS`: Bootstrap's `card`,
 `order-*` and `transfer-list` classes are layout. Text inputs and textareas are never
 tagged. A submit's `formaction` or form `action` containing pay, checkout,
 order or delete tags it too.
+Each category splits into verbs (pay, plătește, delete, ieşire, …), which tag any
+element, and nouns (payment, plată, plăți, card), which tag only a button, an
+input submit/button/image or a `[role=button]` inside a `form` or carrying
+`formaction`, never a document link (.pdf/.xls/.doc or `download`). On e-bloc
+the "Lista de plată" links, the "Plati online" nav and the "Suma de plată
+335,90 Lei" row were refused without `--confirm`, and agents learned to pass it
+reflexively; "Card bancar" is an input submit in the Datorii form and stays tagged.
+The sign-out verbs (`SIGN_OUT`) also drive `LOGIN_PROBE`'s `logoutLink`, matched on
+text, aria-label and href path, so e-bloc's `<a href="index.php?page=5">Ieşire</a>` reads signed in.
+
+## read-format.js — filterLines
+
+With `blocks` (the text section only), a matched `cell | cell` row brings the
+first row of its run of row lines (the header); any other match brings its
+blank-line-delimited block, or ±1 line when the block is over `BLOCK_MAX` (8)
+lines: X's sidebar has no blank lines, so "Trending in Romania" brings its topic
+line. Element lines are filtered one by one.
 
 ## child.js — operatorNav
 

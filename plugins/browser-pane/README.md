@@ -138,10 +138,16 @@ ipc handlers (step 12).
   `screenshot --numbers` draws each visible number on the image. A number is
   keyed on the element's full label, so two documents whose names differ only
   past the shown 60 characters never share one.
-- **Consequential controls**: a button, link or option that looks like a
-  payment, purchase, deletion, sign-out, alarm arming, unsubscribe or transfer
-  is listed with `⚠ ` before its label (a red badge in `screenshot --numbers`);
-  `click` or `select` on it is refused unless the agent adds `--confirm`.
+- **Consequential controls**: an element whose label is an action verb (pay,
+  buy, delete, sign out, arm, unsubscribe, transfer, and their Romanian forms),
+  or a form's button or submit named by a payment noun (payment, plată, card),
+  is listed with `⚠ ` before its label (a solid red badge in `screenshot
+  --numbers`); `click` or `select` on it is refused unless the agent adds
+  `--confirm`. A link, a display row or a document that only names a payment
+  ("Lista de plată …", "Suma de plată 335,90 Lei") is not marked.
+- **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
+  a matching table row with its table's header row, or a matching line with its
+  paragraph (or the line before and after it when the paragraph is long).
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
   hidden. `read --all` shows everything, the full text included.
