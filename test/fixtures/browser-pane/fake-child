@@ -90,7 +90,7 @@ const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let f;
   try { f = JSON.parse(line); } catch { return; }
-  if (frameLog) fs.appendFileSync(frameLog, `${f.op}\n`);
+  if (frameLog && f.op !== 'shutdown' && f.op !== 'ping') fs.appendFileSync(frameLog, `${f.op}\n`);
   if (mode === 'out-of-order' && f.op === 'echo' && f.args.hold) { held = f; return; }
   answer(f);
   if (held && held !== f) { const h = held; held = null; answer(h); }

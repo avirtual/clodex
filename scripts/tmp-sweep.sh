@@ -61,6 +61,7 @@ clodex-atomic-
 clodex-bash-marks-
 clodex-bp-client-
 clodex-bp-engine-
+clodex-bp-paths-
 clodex-bp-replies-
 clodex-bp-sched-
 clodex-bundles-
