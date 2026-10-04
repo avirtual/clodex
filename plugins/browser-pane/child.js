@@ -756,7 +756,7 @@ function run(electron, ctx) {
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
-      const pre = await preAct(svc, op === 'type' ? null : n);
+      const pre = await preAct(svc, op === 'click' ? n : null);
       if (op === 'click') {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;

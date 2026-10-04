@@ -205,7 +205,7 @@ click's effect. 300 ms misses most ticks of a 1 s clock, so `H:MM:SS` tokens are
 masked in every comparison as well. When the first after-snapshot shows nothing,
 `settleChange` re-snapshots every 500 ms for up to `LATE_CHANGE_MS` (3 s): a cloud
 round-trip flipped the SmartThings AC tile ≈1 s after the idle wait returned.
-A click or select also diffs the target's and its tile's (`TILE_SEL`) aria-label,
+A click also diffs the target's and its tile's (`TILE_SEL`) aria-label,
 aria-pressed, aria-checked, aria-expanded, class and value; class tokens matching
 focus/hover/ripple are focus noise from the click itself, and a class-only diff
 does not end the watch early.
