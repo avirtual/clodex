@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const {
   RoleClassifier, isSubagentRole, billingIsSubagent, billingFingerprint,
-  isTitleCall, isProbeCall, isClassifierCall, isCompactCall,
+  isTitleCall, isProbeCall, isClassifierCall, isCompactCall, isWebFetchCall, isBareSideCall, sideCallKind,
 } = require('../wire/role');
 
 const SID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
@@ -269,4 +269,59 @@ test('compact-summarization detection: side-calls are not compacts', () => {
   }), false);
   assert.equal(isCompactCall({ max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] }), false);
   assert.equal(isCompactCall(classifierCall()), false);
+});
+
+function webFetchCall(extra = {}, text = '\nWeb page content:\n---\n<html>page</html>\n---\n\nSummarise.') {
+  return {
+    model: 'claude-haiku',
+    max_tokens: 64000,
+    system: [
+      { type: 'text', text: billing('a1b2c3.1.0.53', 'false') },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+    ],
+    messages: [{ role: 'user', content: [{ type: 'text', text }] }],
+    ...extra,
+  };
+}
+
+test('WebFetch summariser side-call detection', () => {
+  assert.equal(isWebFetchCall(webFetchCall()), true);
+  assert.equal(isWebFetchCall(webFetchCall({}, 'Web page content:\n---\nbody')), true);
+  assert.equal(isWebFetchCall(webFetchCall({
+    messages: [{ role: 'user', content: '  \nWeb page content:\n---\nbody' }],
+  })), true);
+  assert.equal(isWebFetchCall(webFetchCall({
+    system: [{ type: 'text', text: 'x'.repeat(3 * 1024) }],
+  })), false);
+  assert.equal(isWebFetchCall(webFetchCall({ tools: [{ name: 'Bash' }] })), false);
+  assert.equal(isWebFetchCall(webFetchCall({
+    messages: [
+      { role: 'user', content: '\nWeb page content:\n---\nbody' },
+      { role: 'assistant', content: 'ok' },
+    ],
+  })), false);
+  assert.equal(isWebFetchCall(webFetchCall({}, 'Please read: Web page content:\n---\n')), false);
+  assert.equal(sideCallKind(webFetchCall()), 'webfetch');
+});
+
+test('bare side-call shape: no tools, one message, short system', () => {
+  const title = {
+    system: 'Generate a concise, sentence-case title for this conversation.',
+    messages: [{ role: 'user', content: 'hi' }],
+  };
+  const probe = { max_tokens: 1, messages: [{ role: 'user', content: 'quota' }] };
+  assert.equal(isBareSideCall(title), true);
+  assert.equal(isBareSideCall(probe), true);
+  assert.equal(isBareSideCall(webFetchCall()), true);
+  assert.equal(isBareSideCall(parentTurn()), false);
+  assert.equal(isBareSideCall(subagentTurn()), false);
+  assert.equal(isBareSideCall(classifierCall()), false);
+  const compact = compactCall(COMPACT_INSTRUCTION);
+  assert.equal(isBareSideCall(compact), false);
+  assert.equal(isCompactCall(compact), true);
+  assert.equal(sideCallKind(title), 'title');
+  assert.equal(sideCallKind(probe), 'probe');
+  assert.equal(sideCallKind(classifierCall()), 'classifier');
+  assert.equal(sideCallKind({ system: 'Summarise this.', messages: [{ role: 'user', content: 'x' }] }), 'bare');
+  assert.equal(sideCallKind(parentTurn()), null);
 });

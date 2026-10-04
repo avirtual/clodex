@@ -95,6 +95,46 @@ function isProbeCall(obj) {
   return Array.isArray(obj.messages) && obj.messages.length <= 1;
 }
 
+const WEBFETCH_PREFIX = 'Web page content:\n---\n';
+const BARE_SYS_MAX = 200;
+
+function sysBlocksShort(obj) {
+  const sys = obj.system;
+  if (sys == null) return true;
+  const texts = Array.isArray(sys)
+    ? sys.map((b) => (b && typeof b === 'object' ? (b.text || '') : ''))
+    : [typeof sys === 'string' ? sys : ''];
+  return texts.every((t) => typeof t === 'string' && t.length <= BARE_SYS_MAX);
+}
+
+function isBareSideCall(obj) {
+  if (!obj || (Array.isArray(obj.tools) && obj.tools.length)) return false;
+  return Array.isArray(obj.messages) && obj.messages.length === 1 && sysBlocksShort(obj);
+}
+
+function userText(msg) {
+  const c = msg && msg.content;
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c.filter((b) => b && typeof b === 'object' && b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text).join('');
+}
+
+function isWebFetchCall(obj) {
+  if (!isBareSideCall(obj)) return false;
+  const m = obj.messages[0];
+  return !!m && m.role === 'user' && userText(m).trimStart().startsWith(WEBFETCH_PREFIX);
+}
+
+function sideCallKind(obj) {
+  if (isTitleCall(obj)) return 'title';
+  if (isProbeCall(obj)) return 'probe';
+  if (isClassifierCall(obj)) return 'classifier';
+  if (isWebFetchCall(obj)) return 'webfetch';
+  if (isBareSideCall(obj)) return 'bare';
+  return null;
+}
+
 const COMPACT_NEEDLE = 'Your task is to create a detailed summary of the conversation so far';
 
 function isCompactCall(obj) {
@@ -158,5 +198,5 @@ class RoleClassifier {
 module.exports = {
   RoleClassifier, SUBAGENT_ROLES, isSubagentRole,
   sysText, billingText, billingIsSubagent, billingFingerprint, isTitleCall, isProbeCall, isClassifierCall,
-  isCompactCall,
+  isCompactCall, isBareSideCall, isWebFetchCall, sideCallKind,
 };
