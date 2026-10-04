@@ -35,6 +35,21 @@ function removePartition(dataDir, name) {
   return true;
 }
 
+async function handOver({ scheduler, live, request, session }, req) {
+  const { service, seat, instruction } = req || {};
+  if (!grammar.SERVICE_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
+  const name = String(service);
+  const h = session(String(seat || ''));
+  if (!h || !h.isAlive() || (h.type !== 'claude' && h.type !== 'codex')) throw new Error(`no live claude or codex seat named ${seat}`);
+  const v = live.get(name);
+  if (!v || v.state === 'closed') throw new Error(`${name} has no open window — open it first`);
+  scheduler.grant(name, h.name);
+  const r = (await request('handback', {}, { service: name })) || {};
+  const now = live.get(name) || v;
+  h.inject(replies.handover(name, r.url || now.url, r.title || now.title, instruction));
+  return { ok: true, service: name, seat: h.name };
+}
+
 let active = null;
 
 function activate(host) {
@@ -154,19 +169,9 @@ function activate(host) {
     changed();
     return { ok: true, service: name, url: (r && r.url) || '', title: (r && r.title) || '' };
   });
-  host.ipc.handle('operator.handover', async (req) => {
-    const { service, seat, instruction } = req || {};
-    const name = checkService(service);
-    const h = host.sessions.get(String(seat || ''));
-    if (!h || !h.isAlive() || (h.type !== 'claude' && h.type !== 'codex')) throw new Error(`no live claude or codex seat named ${seat}`);
-    const v = live.get(name);
-    if (!v || v.state === 'closed') throw new Error(`${name} has no open window — open it first`);
-    scheduler.grant(name, h.name);
-    const r = (await watched.request('handback', {}, { service: name })) || {};
-    const now = live.get(name) || v;
-    h.inject(replies.handover(name, r.url || now.url, r.title || now.title, instruction));
-    return { ok: true, service: name, seat: h.name };
-  });
+  host.ipc.handle('operator.handover', (req) => handOver({
+    scheduler, live, request: (...a) => watched.request(...a), session: (name) => host.sessions.get(name),
+  }, req));
   host.ipc.handle('status', (workspaceId) => {
     const saved = stored();
     const services = [...live.entries()].filter(([, v]) => v.state !== 'closed').map(([name, v]) => {
@@ -226,4 +231,4 @@ function deactivate() {
   client.dispose();
 }
 
-module.exports = { activate, deactivate, PROMPT_LINES, removePartition };
+module.exports = { activate, deactivate, handOver, PROMPT_LINES, removePartition };

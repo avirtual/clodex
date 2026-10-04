@@ -176,7 +176,7 @@ function activate(rhost) {
     const rect = anchorEl && typeof anchorEl.getBoundingClientRect === 'function' ? anchorEl.getBoundingClientRect() : null;
     if (rect) {
       node.style.left = `${Math.max(4, rect.left)}px`;
-      node.style.bottom = `${Math.max(4, (window.innerHeight || 0) - rect.top + 4)}px`;
+      node.style.bottom = `${Math.max(4, (typeof window === 'undefined' ? 0 : window.innerHeight || 0) - rect.top + 4)}px`;
     }
     const onDown = (e) => { if (picker && !picker.node.contains(e.target) && e.target !== anchorEl) closePicker(); };
     const onKey = (e) => { if (e.key === 'Escape') closePicker(); };

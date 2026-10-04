@@ -10,17 +10,26 @@ const tick = () => new Promise((r) => setImmediate(r));
 
 function fakeDom() {
   const make = (tag) => ({
-    tag, className: '', children: [], listeners: {}, disabled: false, _text: '',
+    tag, className: '', children: [], listeners: {}, disabled: false, _text: '', style: {}, parentNode: null,
     set textContent(v) { this._text = String(v); this.children.length = 0; },
     get textContent() { return this._text; },
     set innerHTML(_v) { throw new Error('innerHTML used'); },
-    appendChild(c) { this.children.push(c); return c; },
+    appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
+    removeChild(c) { this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; return c; },
+    contains(c) { return walk(this).includes(c); },
     addEventListener(ev, fn) { (this.listeners[ev] ||= []).push(fn); },
     click() { return Promise.all((this.listeners.click || []).map((fn) => fn())); },
   });
   const prev = global.document;
-  global.document = { createElement: make };
-  return { root: make('div'), restore: () => { global.document = prev; } };
+  const docListeners = {};
+  global.document = {
+    createElement: make,
+    body: make('body'),
+    addEventListener(ev, fn) { (docListeners[ev] ||= []).push(fn); },
+    removeEventListener(ev, fn) { docListeners[ev] = (docListeners[ev] || []).filter((f) => f !== fn); },
+  };
+  const fire = (ev, e) => (docListeners[ev] || []).slice().forEach((fn) => fn(e));
+  return { root: make('div'), body: global.document.body, fire, restore: () => { global.document = prev; } };
 }
 
 function walk(node, out = []) {
@@ -60,6 +69,7 @@ function makeRhost(answers) {
 
 const status = (child, services = []) => ({ ok: true, child, services });
 const svc = (name, state, seat = null) => ({ name, state, reason: state === 'held' ? 'login' : null, seat, login: 'unknown' });
+const op = (name) => ({ name, state: 'held', reason: 'takeover', seat: null, login: 'unknown', operator: true });
 
 test('segment text for each state: literal rows', async () => {
   const rows = [
@@ -70,7 +80,14 @@ test('segment text for each state: literal rows', async () => {
     [status('running', [svc('utility', 'driving', 'clodex-hand')]), 'browser: driving clodex-hand'],
     [status('running', [svc('utility', 'driving', 'another workspace')]), 'browser: driving another workspace'],
     [status('running', [svc('utility', 'gating', 'clodex-hand')]), 'browser: waiting for you'],
-    [status('running', [svc('irs', 'driving', 'clodex-hand'), svc('utility', 'held')]), 'browser: needs you (utility)'],
+    [status('running', [svc('irs', 'driving', 'clodex-hand'), svc('utility', 'held')]), 'browser: needs you (utility) +1'],
+    [status('running', [op('utility')]), 'browser: utility operator'],
+    [status('running', [op('utility'), svc('irs', 'held')]), 'browser: needs you (irs) +1'],
+    [status('running', [svc('irs', 'driving', 'clodex-hand'), op('utility'), svc('gas', 'idle')]), 'browser: utility operator +2'],
+    [status('running', [svc('irs', 'idle'), svc('utility', 'driving', 'clodex-hand')]), 'browser: driving clodex-hand +1'],
+    [status('running', [svc('irs', 'idle'), svc('utility', 'gating', 'clodex-hand')]), 'browser: waiting for you +1'],
+    [status('running', [svc('irs', 'idle'), svc('utility', 'idle')]), 'browser: 2 windows'],
+    [status('running', [svc('irs', 'idle'), svc('utility', 'idle'), svc('gas', 'idle')]), 'browser: 3 windows'],
     [REFUSED, 'browser: desktop only'],
   ];
   for (const [answer, want] of rows) {
@@ -160,5 +177,81 @@ test('service data renders as text: an <img onerror> name is never parsed as HTM
     assert.strictEqual(name.children.length, 0);
     assert.ok(walk(root).every((n) => n.tag !== 'img'));
     assert.ok(walk(root).some((n) => n.className === 'bp-handback'), 'a held service offers Hand back');
+  } finally { restore(); }
+});
+
+test('segment click rule: 0 windows none, 1 show, 2+ pick', () => {
+  const rows = [
+    [null, 'none'],
+    [{ desktopOnly: true }, 'none'],
+    [status('running'), 'none'],
+    [status('running', [svc('utility', 'idle')]), 'show'],
+    [status('running', [svc('utility', 'idle'), svc('irs', 'held')]), 'pick'],
+    [status('running', [svc('utility', 'idle'), svc('irs', 'idle'), svc('gas', 'idle')]), 'pick'],
+  ];
+  for (const [st, want] of rows) assert.strictEqual(bp.clickActionFor(st), want, JSON.stringify(st));
+  assert.strictEqual(bp.pickerLabel(op('utility')), 'utility · held (operator)');
+  assert.strictEqual(bp.pickerLabel(svc('irs', 'driving', 'clodex-hand')), 'irs · driving · clodex-hand');
+});
+
+function withSeats(f, seats) {
+  f.rhost.sessions = { listWorkspace: async (id) => { assert.strictEqual(id, 'w1'); return seats; } };
+  f.timers = [];
+  f.rhost.setTimeout = (fn, ms) => { f.timers.push([fn, ms]); };
+  return f;
+}
+
+const SEATS = [{ name: 'clodex-hand', type: 'claude' }, { name: 'sh', type: 'bash' }, { name: 'cx', type: 'codex' }];
+
+test('segment click with two windows opens a picker listing both, Escape closes it, and no show is invoked', async () => {
+  const { body, fire, restore } = fakeDom();
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({ getBoundingClientRect: () => ({ left: 10, top: 500 }) });
+    await tick();
+    assert.ok(!f.invokes.some((i) => i.method === 'show'));
+    const names = walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent);
+    assert.deepStrictEqual(names, ['utility · held (operator)', 'irs · driving · clodex-hand']);
+    const options = walk(body).filter((n) => n.tag === 'option').map((n) => n.textContent);
+    assert.deepStrictEqual(options, ['clodex-hand', 'cx', 'clodex-hand', 'cx']);
+    await walk(body).find((n) => n.className === 'bp-show').click();
+    assert.deepStrictEqual(f.invokes.filter((i) => i.method === 'show'), [{ method: 'show', args: ['utility'] }]);
+    fire('keydown', { key: 'Escape' });
+    assert.strictEqual(body.children.length, 0);
+    f.segment().onClick({});
+    assert.strictEqual(body.children.length, 1);
+    fire('mousedown', { target: {} });
+    assert.strictEqual(body.children.length, 0);
+  } finally { restore(); }
+});
+
+test('Settings: the open row invokes operator.open, and an open window row hands over with seat and instruction', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const list = { ok: true, services: [{ name: 'utility', login: 'logged-in', loginAt: 0, lastUrl: '', windowOpen: true, state: 'held', operator: true }] };
+    const f = withSeats(makeRhost({
+      status: status('off'), 'services.list': list, 'operator.open': { ok: true, service: 'gas' }, 'operator.handover': { ok: true, service: 'utility', seat: 'cx' },
+    }), SEATS);
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const find = (cls) => walk(root).find((n) => n.className === cls);
+    find('bp-open-service').value = ' gas ';
+    find('bp-open-url').value = 'https://gas.example.com/';
+    await find('bp-open-go').click();
+    assert.deepStrictEqual(f.invokes.find((i) => i.method === 'operator.open').args, [{ service: 'gas', url: 'https://gas.example.com/' }]);
+    assert.strictEqual(find('bp-window').textContent, 'window open · held (operator)');
+    assert.strictEqual(find('bp-hand-text').placeholder, 'what should it do?');
+    await tick();
+    find('bp-hand-seat').value = 'cx';
+    find('bp-hand-text').value = 'pay it';
+    await find('bp-hand-go').click();
+    assert.deepStrictEqual(f.invokes.find((i) => i.method === 'operator.handover').args, [{ service: 'utility', seat: 'cx', instruction: 'pay it' }]);
+    assert.strictEqual(find('bp-handed').textContent, 'handed to cx');
+    assert.deepStrictEqual(f.timers.map((x) => x[1]), [5000]);
+    const lists = f.invokes.filter((i) => i.method === 'services.list').length;
+    await f.timers[0][0]();
+    assert.strictEqual(f.invokes.filter((i) => i.method === 'services.list').length, lists + 1);
   } finally { restore(); }
 });
