@@ -10,7 +10,7 @@ const { createClient, CRASHED } = require('../plugins/browser-pane/client');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
-const FAKE = path.join(__dirname, 'fixtures', 'browser-pane-fake-child.js');
+const FAKE = path.join(__dirname, 'fixtures', 'browser-pane', 'fake-child');
 
 function fakeClock() {
   let t = 1000000;
@@ -163,4 +163,11 @@ test('client: dispose sends shutdown, then SIGTERM after 3 s', async (t) => {
   assert.strictEqual(e.signal, 'SIGTERM');
   assert.strictEqual(e.expected, true);
   await assert.rejects(client.request('echo', {}), { message: 'browser pane is disabled' });
+});
+
+test('fixtures: no .js, .cjs or .mjs file under test/fixtures (node --test would load it as a test)', () => {
+  const found = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(c|m)?js$/.test(e.name)) found.push(p); } };
+  walk(path.join(__dirname, 'fixtures'));
+  assert.deepStrictEqual(found, []);
 });

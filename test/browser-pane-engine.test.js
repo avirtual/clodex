@@ -10,7 +10,7 @@ const { parseWithRegistry, pluginRowFor, unregisterSource } = require('../intent
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
-const FAKE = path.join(__dirname, 'fixtures', 'browser-pane-fake-child.js');
+const FAKE = path.join(__dirname, 'fixtures', 'browser-pane', 'fake-child');
 const engineMod = require('../plugins/browser-pane/engine');
 
 function boot(t, { headless = false, type = 'claude' } = {}) {
