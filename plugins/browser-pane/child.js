@@ -194,7 +194,7 @@ function run(electron, ctx) {
       const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS });
       if (svc.wc.isDestroyed()) throw codedError('CLOSED', `the operator closed the ${name} window — open it again`);
       if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
-      const login = await probe(svc);
+      const login = svc.wc.isLoading() ? {} : await probe(svc);
       return {
         status, url: svc.wc.getURL(), title: svc.wc.getTitle(), doc: svc.doc,
         idle: { ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [] }, login,

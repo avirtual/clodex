@@ -162,14 +162,39 @@ test('client: a request during the idle shutdown waits for the exit and respawns
   assert.notStrictEqual(r.pid, first);
 });
 
+test('client: a child that ignores the idle shutdown is SIGTERMed after 3 s, and a waiting request respawns', { timeout: 5000 }, async (t) => {
+  const { client, clock, exits } = boot(t, { mode: 'ignore-shutdown' });
+  const first = (await client.request('echo', { v: 1 })).pid;
+  clock.advance(15 * 60 * 1000);
+  assert.strictEqual(client.state(), 'stopping');
+  const pending = client.request('echo', { v: 2 });
+  clock.advance(3000);
+  const r = await pending;
+  assert.strictEqual(r.echo, 2);
+  assert.notStrictEqual(r.pid, first);
+  assert.strictEqual(exits[0].signal, 'SIGTERM');
+  assert.strictEqual(exits[0].expected, true);
+});
+
+test('client: a request waiting on the stop does not respawn after dispose', { timeout: 5000 }, async (t) => {
+  const { client, clock } = boot(t);
+  await client.request('echo', { v: 1 });
+  clock.advance(15 * 60 * 1000);
+  const pending = client.request('echo', { v: 2 });
+  client.dispose();
+  await assert.rejects(pending, { message: 'browser pane is disabled' });
+  assert.strictEqual(client.pid(), null);
+});
+
 test('client: a missed heartbeat kills the child and counts as a crash', async (t) => {
-  const { client, clock, exits, nextExit } = boot(t, { mode: 'ignore-ping', timeouts: { heartbeatMs: 30000 } });
+  const { client, clock, exits, logs, nextExit } = boot(t, { mode: 'ignore-ping', timeouts: { heartbeatMs: 30000 } });
   await client.request('echo', { v: 1 });
   const exited = nextExit();
   clock.advance(30000);
   await new Promise((r) => setImmediate(r));
   clock.advance(9999);
-  assert.strictEqual(client.state(), 'running');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(!logs.includes('browser child missed a heartbeat; killing it'));
   clock.advance(1);
   await exited;
   assert.strictEqual(exits[0].signal, 'SIGKILL');

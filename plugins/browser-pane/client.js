@@ -196,7 +196,8 @@ function createClient(opts) {
   }
 
   function start() {
-    if (proc && state === 'stopping') return new Promise((r) => exitWaiters.push(r)).then(() => start());
+    if (proc && state === 'stopping') return new Promise((r) => exitWaiters.push(r))
+      .then(() => (disposed ? Promise.reject(codedError('browser pane is disabled', 'CLOSED')) : start()));
     if (proc && state === 'running') return Promise.resolve();
     if (startP) return startP.promise;
     const spec = opts.spawnSpec();
@@ -287,9 +288,15 @@ function createClient(opts) {
 
   function stop() {
     if (!proc) return;
+    const p = proc;
     state = 'stopping';
     expectExit = true;
     send({ id: nextId++, op: 'shutdown', args: {} });
+    clock.setTimeout(() => {
+      if (p !== proc) return;
+      kill('SIGTERM');
+      clock.setTimeout(() => { if (p === proc) kill('SIGKILL'); }, o.killMs);
+    }, o.termMs);
   }
 
   function dispose() {
