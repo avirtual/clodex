@@ -43,9 +43,19 @@ is layout and keeps its normal rendering.
 
 ## page-scripts.js — READ_INTERACTIVE
 
-Numbers are monotonic per document: an element keeps the number it was first
-given, new elements get higher ones. The number table lives in isolated world
-4242, so the page cannot reset or forge it; `data-cx` is only a mirror. Open
+Numbers are stable per service and site: the child keeps `svc.numbers`
+(stored key → number), `svc.nextN` and `svc.volatile`, passes them into the
+script, and merges back the keys the script assigned. They reset on `forget`,
+window close and an origin change. Every read rebuilds `window.__cxEls`
+(n → WeakRef) and `window.__cxKeys` (n → stored key) in isolated world 4242, so
+the page cannot reset or forge them; `data-cx` is only a mirror, cleared from
+the previous elements first. Several live elements with one key get
+`key#<ordinal>|<context>` (row/section text or the preceding heading, 40
+chars); a reordered row yields a new key, so its old number is retired rather
+than reused. An act runs `CHECK(n, storedKey)` first: on a fresh document the
+child restamps once; an element that no longer yields its stored key, or a
+vanished number whose base key is still on the page, is refused `AMBIGUOUS`.
+A clickable wrapping exactly one input/button/select/link is not listed. Open
 shadow roots are walked. Identical link repeats (nav duplicated in mobile menus)
 are listed once.
 
@@ -58,6 +68,16 @@ and is skipped. A clickable with no standard control inside suppresses
 clickables below it (a row is numbered once, not per cell); one that contains a
 standard control is a page wrapper (`<div onclick=closeMenus()>`) and does not,
 unless it is a `tr` or `[role=row]`.
+
+## keys.js — learnVolatile
+
+Key = `kind \0 label \0 href`, href origin-relative, hash dropped, volatile
+params removed, the rest sorted. Well-known volatile names, plus `t`/`ts`/
+`time`/`timestamp`/`rand`/`r`/`v` with a 9+ digit or 16+ alnum value. A param
+is learned only from two reads of the same document URL (equal after dropping
+already-volatile params, the candidate included), so HN's `p=` and `id=`,
+which change only between pages, are never learned. The functions are inlined
+into the page scripts with `toString()` (`PAGE_SOURCE`), one implementation.
 
 ## page-scripts.js — FIND_TEXT
 
@@ -164,8 +184,8 @@ is saved through the router and the view goes back. The idle wait stops as
 soon as either happens (the PDF viewer never reports idle). Waiting on the
 file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 100 s click
 deadline; past it the reply says `still downloading`. The PDF popup's load and
-the way back bump `svc.doc` twice, so the reply says `navigated · numbers reset`
-even though the view ends on the same page: the old numbers really are void.
+the way back bump `svc.doc` twice, so the reply says `navigated` even though the view ends
+on the same page.
 
 ## child.js — withChange
 
@@ -234,8 +254,16 @@ and the document is one screen tall. The walk stops at `document.scrollingElemen
 inner scroller and would count the window scroll twice); the document range is
 measured by that element. A scroller must itself be placed, so the children of a
 scrolling drawer parked off-screen stay hidden. A `position:fixed` element is
-tested against the viewport, since no scroller moves it. Scroller lookups are
+tested against the viewport, since no scroller moves it; so is a descendant
+of a fixed container that is not inside a nearer scroller. Scroller lookups are
 memoised per script run.
+
+## page-scripts.js — OVERLAY
+
+`screenshot --numbers` restamps the page, draws one fixed container
+(`OVERLAY_ID`) with a badge per numbered element visible in the viewport,
+captures, then removes it (`OVERLAY_OFF`). It waits two animation frames,
+capped at 150 ms since a minimised window may never paint.
 
 ## page-scripts.js — TABLES
 
@@ -247,11 +275,10 @@ image-only cell keeps its slot as a trailing `|` (innerText trims the space).
 
 ## read-format.js — elementStrip
 
-Key = the line without `[n] `, with `t=`/`_=`/`ts=` digit query values
-blanked. A line is hidden only when the previous read had the same key under
-the same number, so a number the agent saw on the previous page still clicks
-the same element; a footer whose numbers shifted (more content above it) stays
-listed. Form controls are never hidden, and at least one line always stays.
+Compares the stored keys the read carries (`keys: n → storedKey`): a line is
+hidden when the previous read listed the same stored key. Without keys it
+falls back to the line text minus the number, `t=`/`_=`/`ts=` digits blanked,
+under the same number. Form controls are never hidden, and at least one line always stays.
 
 ## scheduler.js — runRead (element strip)
 
@@ -315,8 +342,9 @@ also attached to every allowed popup via `guardPopup`), both
 `setWindowOpenHandler`s, `viaUrl`, and the per-partition `will-download`
 router. The child gets the lists with every `open` (`args.policy`) and with the
 `policy` op the engine sends on a Settings save. Repeats of one URL within
-1 s send one `denied` event. A `will-redirect` refusal during an agent open
-reads as `NAV_FAILED`, not the refusal text.
+1 s send one `denied` event. `block` records the refused URL in
+`svc.blockedNav`, so a redirect refused during an agent open reads as the
+refusal text, and `viaClick` races `w.done` so a refused download does too.
 
 ## urlpolicy.js — compilePolicy
 
@@ -326,5 +354,7 @@ subdomains only; `host/path/*` a path prefix, `host/path` the exact path;
 across both lists before any deny. Host compare is case-insensitive (WHATWG
 host parsing), path compare exact-case. Ports, IPv6, `@`, `\`, `?`, `#` and inner `*`
 are rejected. A trailing dot on the URL host is dropped before matching, and
-the path is compared both raw and percent-decoded, so `example.com./` and
-`/%61dmin/` cannot slip past a rule. 200 patterns per list, 512 chars each; blank lines are dropped.
+the path is compared raw, percent-decoded and dot-segment-normalised, so
+`example.com./` and `/%61dmin/` cannot slip past a rule. An allow exception
+matches only the normalised decoded path, so `/ok/..%2Fadmin/` is not inside
+`!host/ok/*`. A pattern host may end in a dot. 200 patterns per list, 512 chars each; blank lines are dropped.
