@@ -35,6 +35,12 @@ function server() {
     const srv = http.createServer((req, res) => {
       const url = new URL(req.url, 'http://x');
       const headers = { 'content-type': 'text/html; charset=utf-8' };
+      if (url.pathname === '/hang') return;
+      if (url.pathname === '/stall') {
+        res.writeHead(200, headers);
+        res.end('<title>Stall</title><main><p>waiting</p><img src="/hang"></main>');
+        return;
+      }
       if (url.pathname === '/set') {
         headers['set-cookie'] = 'sid=live-check-123; Path=/; HttpOnly';
         res.writeHead(200, headers);
@@ -117,6 +123,10 @@ async function main() {
   console.log('== 3b. unroutable URL on a fresh service');
   await emit('[agent:browser open dead] http://127.0.0.1:59321/');
 
+  console.log('== 3c. a subresource that never finishes');
+  await emit(`[agent:browser open stall] ${base}/stall`);
+  await emit('[agent:browser read stall]');
+
   console.log('== 4. persistence across a restart');
   await emit(`[agent:browser open jar] ${base}/set`);
   engine.deactivate('browser-pane');
@@ -128,6 +138,7 @@ async function main() {
 
   engine.deactivate('browser-pane');
   await sleep(3000);
+  srv.closeAllConnections();
   srv.close();
   fs.rmSync(userData, { recursive: true, force: true });
   console.log(`reply files kept under ${tmp}`);
