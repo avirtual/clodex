@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { createScheduler } = require('../plugins/browser-pane/scheduler');
 const { parseLine, toCommand } = require('../plugins/browser-pane/grammar');
@@ -24,7 +26,7 @@ function coded(code, message) {
   return Object.assign(new Error(message), { code });
 }
 
-function harness(script = {}) {
+function harness(script = {}, extra = {}) {
   let t = 1000000;
   let seq = 0;
   const pending = [];
@@ -42,7 +44,7 @@ function harness(script = {}) {
   };
   let stored = null;
   const storage = { get: () => stored, set: (v) => { stored = JSON.parse(JSON.stringify(v)); } };
-  const sched = createScheduler({ client, storage, mirror: new Map(), now: () => t, timers });
+  const sched = createScheduler({ client, storage, mirror: new Map(), now: () => t, timers, ...extra });
   const out = [];
   const handles = new Map();
   const seat = (name) => {
@@ -300,4 +302,49 @@ test('scheduler: click --text needs a read like a numbered click, passes the tex
     ['hand-a', 'click', { expectDoc: 1, byText: 'Lista de plată' }],
     ['hand-a', 'click', { expectDoc: 1, byText: 'Lista' }],
   ]);
+});
+
+test('scheduler click --to: resolves inside the seat cwd, passes dir to the child, and names the landed file', async () => {
+  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-clickto-'));
+  const file = path.join(cwd, 'bills', 'lista.pdf');
+  const h = harness({
+    click: (a) => {
+      fs.writeFileSync(path.join(a.dir, 'lista.pdf'), '%PDF-1.4');
+      return { ...DEFAULTS.click(), download: { file: path.join(a.dir, 'lista.pdf'), bytes: 8, mime: 'application/pdf', url: 'https://x/l.pdf' } };
+    },
+  }, { fsScope: () => ({ cwd }) });
+  await h.run([['hand-a', '[agent:browser read utility]']]);
+  const out = await h.run([['hand-a', '[agent:browser click utility 1 --to=bills]']]);
+  assert.strictEqual(h.calls[1][2].dir, path.join(cwd, 'bills'));
+  assert.deepStrictEqual(out, [['hand-a',
+    `[agent:browser] clicked utility [1] button "View" · same page · idle 1.2s · → download ${file} · 8 B · application/pdf · from https://x/l.pdf`]]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 1 --to=../escape]']]),
+    [['hand-a', `[agent:browser] error: --to must name a folder inside your working directory (${cwd})`]]);
+  assert.strictEqual(h.calls.length, 2);
+});
+
+test('scheduler click --to: a download that lands outside the cwd is deleted and refused', async () => {
+  const cwd = fs.realpathSync(mkTmpRoot('clodex-bp-clickto-'));
+  const away = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-away-')), 'x.pdf');
+  fs.writeFileSync(away, '%PDF');
+  const h = harness({ click: () => ({ ...DEFAULTS.click(), download: { file: away, bytes: 4, mime: 'application/pdf' } }) }, { fsScope: () => ({ cwd }) });
+  await h.run([['hand-a', '[agent:browser read utility]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 1 --to=bills]']]),
+    [['hand-a', `[agent:browser] error: the download left your working directory (${cwd}) and was deleted — download it again`]]);
+  assert.strictEqual(fs.existsSync(away), false);
+});
+
+test('scheduler inspect: needs a read first, then asks the child with the read doc and replies in six lines', async () => {
+  const h = harness({
+    inspect: () => ({
+      n: 4, tag: 'div', id: 'go', classes: ['btn'], kind: 'clickable', label: 'Go', attrs: [], listeners: null,
+      cursor: 'pointer', rect: { x: 1, y: 2, w: 30, h: 10 }, visible: true, ancestors: ['body'], html: '<div id="go">Go</div>',
+    }),
+  });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser inspect utility 4]']]),
+    [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
+  await h.run([['hand-a', '[agent:browser read utility]']]);
+  const out = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);
+  assert.deepStrictEqual(h.calls[1], ['hand-a', 'inspect', { expectDoc: 1, byText: 'Go' }]);
+  assert.strictEqual(out[0][1].split('\n').length, 6);
 });

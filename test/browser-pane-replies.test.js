@@ -145,14 +145,61 @@ test('replies: a click names the element the text resolved to and what the click
   const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31 }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s');
-  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'lista-08.pdf', bytes: 48213 } }),
-    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download lista-08.pdf 48,213 B');
-  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'big.pdf', bytes: null } }),
-    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download big.pdf still downloading');
-  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'big.pdf', bytes: null, failed: 'larger than 500 MB' } }),
-    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download big.pdf failed: larger than 500 MB');
-  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/x.pdf', download: { name: 'x.pdf', bytes: 120 } }),
-    '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → download x.pdf 120 B (PDF popup https://www.e-bloc.ro/x.pdf)');
+  const dl = { file: '/Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf', bytes: 48213, mime: 'application/pdf', url: 'https://www.e-bloc.ro/lista?id=8' };
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: dl }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download /Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf · 48,213 B · application/pdf · from https://www.e-bloc.ro/lista?id=8');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { ...dl, file: '/tmp/my bills/big.pdf', bytes: null } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download "/tmp/my bills/big.pdf" still downloading');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { file: '/tmp/big.pdf', bytes: null, failed: 'larger than 500 MB' } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download /tmp/big.pdf failed: larger than 500 MB');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { ...dl, same: true } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download same as /Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf · 48,213 B');
+  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 },
+    { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/x.pdf', download: { file: '/tmp/x.pdf', bytes: 120, mime: 'application/pdf', url: 'https://www.e-bloc.ro/x.pdf' } }),
+  '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → download /tmp/x.pdf · 120 B · application/pdf · from https://www.e-bloc.ro/x.pdf (PDF popup)');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/print' }),
     '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → popup https://www.e-bloc.ro/print');
+});
+
+test('replies: an act that stays on the page says what text changed, or that nothing visible changed', () => {
+  const idle = { ok: true, ms: 800 };
+  assert.strictEqual(R.actReply('select', 'ebloc', { sub: 'select', n: 3, option: 'iulie' }, { text: 'Iulie 2026', navigated: false, idle, changed: 'Apă rece | | 19,486 / Total | 120 lei' }),
+    '[agent:browser] selected ebloc [3] = "Iulie 2026" · same page · idle 0.8s · changed: "Apă rece | | 19,486 / Total | 120 lei"');
+  assert.strictEqual(R.actReply('key', 'ebloc', { sub: 'key', key: 'Tab' }, { navigated: false, idle, changed: '' }),
+    '[agent:browser] pressed Tab on ebloc · same page · idle 0.8s · no visible change');
+  assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'ab' }, { navigated: false, idle, changed: 'text removed' }),
+    '[agent:browser] typed ebloc [2] (2 chars) · same page · idle 0.8s · changed: "text removed"');
+  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
+    '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers reset, read again · idle 0.8s');
+  const long = 'x'.repeat(599) + '…';
+  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'More', navigated: false, idle, changed: long }).endsWith(`changed: "${long}"`));
+});
+
+test('replies: the download verb names a repeat as the same as an existing file', () => {
+  assert.strictEqual(R.downloadReply('ebloc', { n: 4 }, { file: '/w/bills/lista.pdf', bytes: 120, mime: 'application/pdf', magic: 'pdf', ms: 400, same: true }),
+    '[agent:browser] downloaded ebloc [4] → /w/bills/lista.pdf · same as an existing file · 120 B · application/pdf · %PDF ok · 0.4s');
+});
+
+test('replies: inspect is six lines with the prefix on the first, attrs none and listeners unknown when missing', () => {
+  const base = {
+    n: 12, tag: 'div', id: 'prow', classes: ['row', 'pay'], kind: 'clickable', label: 'Factura iulie', attrs: [], listeners: null,
+    cursor: 'pointer', rect: { x: 10, y: 220, w: 300, h: 24 }, visible: true, ancestors: ['td', 'tr#r1.odd', 'tbody', 'table.list', 'main'],
+    html: '<div id="prow" class="row pay">Factura iulie</div>',
+  };
+  assert.strictEqual(R.inspectReply('ebloc', base), [
+    '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie"',
+    '  attrs: none',
+    '  listeners: unknown',
+    '  cursor: pointer · at 10,220 size 300×24 · visible',
+    '  in: main > table.list > tbody > tr#r1.odd > td',
+    '  html: <div id="prow" class="row pay">Factura iulie</div>',
+  ].join('\n'));
+  const lines = (r) => R.inspectReply('ebloc', { ...base, ...r }).split('\n');
+  assert.strictEqual(lines({ attrs: [['onclick', 'go(1)'], ['title', 'Plată lunară']] })[1], '  attrs: onclick=go(1) title="Plată lunară"');
+  assert.strictEqual(lines({ listeners: { types: [] } })[2], '  listeners: none');
+  assert.strictEqual(lines({ listeners: { types: ['click', 'mouseover'] } })[2], '  listeners: click, mouseover');
+  assert.strictEqual(lines({ listeners: { types: [], ancestor: 'tr#r1.odd', ancestorType: 'click' } })[2], '  listeners: none here · click on ancestor tr#r1.odd');
+  assert.strictEqual(lines({ visible: false })[3], '  cursor: pointer · at 10,220 size 300×24 · hidden');
+  assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, [{ n: 1, text: 'PDF' }, { n: 2, text: 'PDF' }], 'inspect'),
+    '"PDF" matches 2 visible elements on ebloc: [1] "PDF", [2] "PDF" — inspect one by number');
 });
