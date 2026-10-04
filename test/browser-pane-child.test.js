@@ -404,6 +404,13 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
 });
 
+const svcOf = () => ({ origins: new Map(), num: null });
+const stampOn = (svc, url, labels) => {
+  const st = stampAll(numState(svc, url), labels.map((l) => button(l)));
+  mergeNumbers(svc, { assigned: Object.fromEntries(st.stored.map((k, i) => [k, st.ns[i]])), next: st.state.next });
+  return st;
+};
+
 test('numState: each origin keeps its own numbers; a detour to another site and back resolves the same element', () => {
   const svc = svcOf();
   const a = stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa', 'Contoare', 'Plati']);

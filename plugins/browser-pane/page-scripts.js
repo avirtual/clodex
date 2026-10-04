@@ -473,7 +473,7 @@ function labelFrom(d) {
     const s = segs(d.href);
     return pick([tid(d.svgTestid), flat(d.svgTitle), s.length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(s[0]) ? '@' + s[0] : '', () => last(d.href)]);
   }
-  const src = flat(d.src).split(/[?#]/)[0].split('/').pop() || '';
+  const src = /^data:/i.test(flat(d.src)) ? '' : flat(d.src).split(/[?#]/)[0].split('/').pop() || '';
   const icon = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid), cls(d.classes), src]);
   return icon && icon === src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src) ? 'video' : icon;
 }
