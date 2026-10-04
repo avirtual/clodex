@@ -256,7 +256,7 @@ async function chromeStep(emit, base) {
   const f2 = fileOf(second);
   for (const l of f2.split('\n').slice(0, 12)) console.log(`    ${l}`);
   check('second read header says 6 lines at top, 4 at bottom', rows(f2).includes('stripped: 6 lines at top, 4 at bottom (same as your last read of chrome)'));
-  check('second read reply says chrome stripped', / · chrome stripped → /.test(second));
+  check('second read reply says chrome stripped', / · chrome stripped( → | · )/.test(second));
   check('second read text keeps the middle and drops the menu', /Factura mai/.test(f2) && !/Plati online|Confidentialitate/.test(f2.split('== elements ==')[0]));
   const hid = /elements: (\d+) \((\d+) repeated, hidden — still clickable by number; read --all lists them;/.exec(f2);
   console.log(`    ${f2.split('\n').find((l) => /^doc:/.test(l))}`);
