@@ -129,3 +129,28 @@ test('replies: a stopped stalled load says so instead of still busy', () => {
   assert.strictEqual(R.openReply('stall', { status: 200, title: 'Stall', url: 'http://x/stall', login: {}, idle: { ok: false, stopped: true, ms: 15200, inflight: ['http://x/hang'] } }),
     '[agent:browser] opened stall · 200 · "Stall" · http://x/stall · login: none · stopped a stalled load after 15s · next: read');
 });
+
+test('replies: click --text with no match or several matches names the text and up to five numbered candidates', () => {
+  assert.strictEqual(R.TEXT.noText('ebloc', 'Lista de plată'),
+    'no visible element with the text "Lista de plată" on ebloc — read ebloc, or try a shorter part of the text');
+  const hits = [31, 32, 33, 34, 35].map((n) => ({ n, text: `Lista de plată 0${n - 30}/2026` }));
+  assert.strictEqual(R.TEXT.manyText('ebloc', 'lista', 7, hits),
+    '"lista" matches 7 visible elements on ebloc: [31] "Lista de plată 01/2026", [32] "Lista de plată 02/2026", [33] "Lista de plată 03/2026", [34] "Lista de plată 04/2026", [35] "Lista de plată 05/2026", …(+2 more) — click one by number');
+  assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, hits.slice(0, 2)),
+    '"PDF" matches 2 visible elements on ebloc: [31] "Lista de plată 01/2026", [32] "Lista de plată 02/2026" — click one by number');
+});
+
+test('replies: a click names the element the text resolved to and what the click opened', () => {
+  const base = { kind: 'clickable', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 800 } };
+  const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31 }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'lista-08.pdf', bytes: 48213 } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download lista-08.pdf 48,213 B');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: { name: 'big.pdf', bytes: null } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download big.pdf still downloading');
+  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/x.pdf', download: { name: 'x.pdf', bytes: 120 } }),
+    '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → download x.pdf 120 B (PDF popup https://www.e-bloc.ro/x.pdf)');
+  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 4 }, { ...base, popup: true, popupUrl: 'https://www.e-bloc.ro/print' }),
+    '[agent:browser] clicked ebloc [4] clickable "Lista de plată" · same page · idle 0.8s · → popup https://www.e-bloc.ro/print');
+});

@@ -284,3 +284,18 @@ test('scheduler: handback records the login as logged-in via handback', async ()
   const { state, via } = h.storage.get().services.utility.login;
   assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
 });
+
+test('scheduler: click --text needs no prior read, passes the text and keeps the stale-doc check', async () => {
+  const h = harness({ click: () => ({ n: 31, kind: 'clickable', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click --text="Lista de plată"]']]),
+    [['hand-a', '[agent:browser] clicked utility [31] clickable "Lista de plată" · same page · idle 0.5s']]);
+  await h.run([['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click --text=Lista]']]),
+    [['hand-a', '[agent:browser] clicked utility [31] clickable "Lista de plată" · same page · idle 0.5s']]);
+  assert.deepStrictEqual(h.calls.filter((c) => c[1] === 'click'), [
+    ['hand-a', 'click', { expectDoc: undefined, byText: 'Lista de plată' }],
+    ['hand-a', 'click', { expectDoc: 1, byText: 'Lista' }],
+  ]);
+});

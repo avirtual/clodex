@@ -4,6 +4,10 @@ const ISOLATED_WORLD = 4242;
 const TEXT_MAX = 400000;
 const ELEMENTS_MAX = 6000;
 const MAIN_SEL = 'main, article, [role=main]';
+const STD_SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=combobox],summary,[contenteditable=true]';
+const X_SEL = 'a:not([href]),[onclick],[tabindex]:not([tabindex="-1"])';
+const POINTER_SCAN_MAX = 3000;
+const LAYOUT_CELL_CHARS = 400;
 
 const DEEP = `
   const deepAll = (root, test, out = []) => {
@@ -22,7 +26,7 @@ const DEEP = `
 
 function readText(main) {
   return `(() => {
-  const DROP = 'script,style,noscript,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  const DROP = 'script,style,noscript,select,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
     const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
@@ -43,6 +47,18 @@ function readText(main) {
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
+  const cellText = c => c.getClientRects().length ? (c.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+  const tables = [...clone.querySelectorAll('table')];
+  const layout = new Set(tables.filter(t => t.querySelector('table')
+    || [...t.rows].some(r => [...r.cells].some(c => (c.innerText || '').length > ${LAYOUT_CELL_CHARS}))));
+  for (const t of tables.reverse()) {
+    if (layout.has(t)) continue;
+    const box = document.createElement('div');
+    const line = (s) => { const d = document.createElement('div'); d.textContent = s; box.appendChild(d); };
+    if (t.caption) line(cellText(t.caption));
+    for (const tr of t.rows) if (tr.getClientRects().length) line([...tr.cells].map(cellText).join(' | '));
+    t.replaceWith(box);
+  }
   const txt = clone.innerText; host.remove();
   return (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
 })()`;
@@ -50,7 +66,8 @@ function readText(main) {
 
 function readInteractive(main) {
   return `(() => {${DEEP}
-  const sel = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=combobox],summary,[contenteditable=true]';
+  const sel = ${JSON.stringify(STD_SEL)};
+  const xsel = ${JSON.stringify(X_SEL)};
   if (!window.__cxEls) { window.__cxEls = [null]; window.__cxOf = new WeakMap(); }
   const clip = (s, n) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const labelOf = el => {
@@ -71,14 +88,42 @@ function readInteractive(main) {
     el.setAttribute('data-cx', String(n));
     return n;
   };
+  const SKIP = new Set(['HTML', 'BODY', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'OPTION', 'OPTGROUP', 'BR', 'META', 'LINK', 'TITLE']);
+  let scans = 0;
+  const cursorOf = e => e && e.nodeType === 1 ? getComputedStyle(e).cursor : '';
+  const pointer = el => {
+    if (scans >= ${POINTER_SCAN_MAX}) return false;
+    scans += 1;
+    if (cursorOf(el) !== 'pointer') return false;
+    const up = el.parentNode && el.parentNode.nodeType === 1 ? el.parentNode : el.parentNode && el.parentNode.host;
+    return cursorOf(up) !== 'pointer';
+  };
+  const std = new Set();
+  const cands = deepAll(document, e => {
+    if (e.matches(sel)) { std.add(e); return true; }
+    if (SKIP.has(e.tagName)) return false;
+    return e.matches(xsel) || pointer(e);
+  });
+  const rows = new Set();
+  const underRow = el => {
+    for (let p = el.parentNode || el.host; p; p = p.parentNode || p.host) if (rows.has(p)) return true;
+    return false;
+  };
   const out = []; const seen = new Set(); let truncated = false;
-  for (const el of deepAll(document, e => e.matches(sel))) {
+  for (const el of cands) {
     if (!vis(el)) continue;
     const tag = el.tagName.toLowerCase();
-    const kind = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
+    const plain = !std.has(el);
+    const kind = plain ? 'clickable' : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
     const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
     let line = '';
-    if (tag === 'a') {
+    if (plain) {
+      if (underRow(el)) continue;
+      const label = clip(labelOf(el) || el.getAttribute('alt') || '', 60);
+      if (tag === 'a' && !label) continue;
+      if (!el.querySelector(sel)) rows.add(el);
+      line = JSON.stringify(label);
+    } else if (tag === 'a') {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
       if (h.startsWith('#') || h.startsWith('javascript:')) h = '';
@@ -121,7 +166,8 @@ function find(n) {
   const r = el.getBoundingClientRect();
   const tag = el.tagName.toLowerCase();
   const type = (el.type || '').toLowerCase();
-  const kind = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
+  const kind = !el.matches(${JSON.stringify(STD_SEL)}) ? 'clickable'
+    : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
   const raw = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.innerText
     || el.getAttribute('title') || el.getAttribute('placeholder') || (tag === 'input' && type !== 'password' ? el.value : '') || el.getAttribute('name') || '';
   const label = String(raw).replace(/\\s+/g, ' ').trim().slice(0, 60);
@@ -134,6 +180,32 @@ function find(n) {
     href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
     download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
   };
+})()`;
+}
+
+function findText(text) {
+  const want = String(text).replace(/\s+/g, ' ').trim().toLowerCase();
+  return `(() => {${DEEP}
+  if (!window.__cxEls) { window.__cxEls = [null]; window.__cxOf = new WeakMap(); }
+  const want = ${JSON.stringify(want)};
+  const SKIP = new Set(['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'OPTION', 'OPTGROUP', 'SELECT', 'TEXTAREA']);
+  const BUTTONS = new Set(['button', 'submit', 'reset']);
+  const own = el => {
+    let t = el.tagName === 'INPUT' && BUTTONS.has(el.type) ? el.value || '' : '';
+    for (const c of el.childNodes) if (c.nodeType === 3) t += c.nodeValue;
+    return t.replace(/\\s+/g, ' ').trim();
+  };
+  const hits = deepAll(document, el => !SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
+  const stamp = el => {
+    let n = window.__cxOf.get(el);
+    if (!n) { n = window.__cxEls.length; window.__cxEls.push(new WeakRef(el)); window.__cxOf.set(el, n); }
+    el.setAttribute('data-cx', String(n));
+    return n;
+  };
+  return { count: hits.length, hits: hits.slice(0, 5).map(el => {
+    const t = own(el);
+    return { n: stamp(el), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+  }) };
 })()`;
 }
 
@@ -186,6 +258,6 @@ const LOGIN_PROBE = `(() => {${DEEP}
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE,
-  READ_TEXT: readText, READ_INTERACTIVE: readInteractive, FIND: find, CLEAR: clear, SELECT: select,
+  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX,
+  READ_TEXT: readText, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select,
 };
