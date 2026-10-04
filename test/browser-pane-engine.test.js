@@ -257,15 +257,21 @@ test('engine: status redacts a seat from another workspace', async (t) => {
   });
 });
 
+async function refuses(p, want, label) {
+  const r = await p;
+  assert.strictEqual(r && r.ok, false, label);
+  if (want instanceof RegExp) assert.match(r.error, want, label); else assert.strictEqual(r.error, want, label);
+}
+
 test('engine operator.open: bad service names and bad URLs are refused, a good one sends {url, operator:true} and shows held (operator)', async (t) => {
   const { engine, frames } = boot(t);
   const open = (req) => engine.dispatch('browser-pane', 'operator.open', [req], 'desktop');
   for (const service of ['', 'Utility', '../x', 'a b']) {
-    await assert.rejects(open({ service, url: 'https://portal.example.com/' }), /bad service name/, JSON.stringify(service));
+    await refuses(open({ service, url: 'https://portal.example.com/' }), /bad service name/, JSON.stringify(service));
   }
   for (const [url, re] of [['ftp://portal.example.com/', /only http: and https:/], ['javascript:alert(1)', /only http: and https:/],
     ['https://u:p@portal.example.com/', /user:pass@/], ['not a url', /not a URL/]]) {
-    await assert.rejects(open({ service: 'utility', url }), re, url);
+    await refuses(open({ service: 'utility', url }), re, url);
   }
   assert.deepStrictEqual(await open({ service: 'utility', url: 'https://portal.example.com/home' }),
     { ok: true, service: 'utility', url: 'https://portal.example.com/home', title: 'Operator utility' });
@@ -279,8 +285,8 @@ test('engine operator.open: bad service names and bad URLs are refused, a good o
 test('engine operator.open: a service an agent is driving is refused with the seat named', async (t) => {
   const { emit, engine } = boot(t);
   const opening = emit('[agent:browser open utility] https://portal.example.com/bills');
-  await assert.rejects(engine.dispatch('browser-pane', 'operator.open', [{ service: 'utility', url: 'https://portal.example.com/' }], 'desktop'),
-    { message: 'agent clodex-hand is driving utility — wait or ask it to release' });
+  await refuses(engine.dispatch('browser-pane', 'operator.open', [{ service: 'utility', url: 'https://portal.example.com/' }], 'desktop'),
+    'agent clodex-hand is driving utility — wait or ask it to release');
   await opening;
 });
 
@@ -302,9 +308,9 @@ test('engine operator.handover: the seat gets one line, its first read works, an
 test('engine operator.handover: refuses an unknown or shell seat and a service with no window', async (t) => {
   const { engine } = boot(t);
   const hand = (req) => engine.dispatch('browser-pane', 'operator.handover', [req], 'desktop');
-  await assert.rejects(hand({ service: 'utility', seat: 'nobody' }), /no live claude or codex seat named nobody/);
-  await assert.rejects(hand({ service: 'utility', seat: 'clodex-hand' }), /utility has no open window — open it first/);
-  await assert.rejects(hand({ service: 'Bad', seat: 'clodex-hand' }), /bad service name/);
+  await refuses(hand({ service: 'utility', seat: 'nobody' }), /no live claude or codex seat named nobody/);
+  await refuses(hand({ service: 'utility', seat: 'clodex-hand' }), /utility has no open window — open it first/);
+  await refuses(hand({ service: 'Bad', seat: 'clodex-hand' }), /bad service name/);
 });
 
 function handHarness({ grantThrows = null } = {}) {

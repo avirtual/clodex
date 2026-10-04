@@ -224,6 +224,7 @@ test('segment click with two windows opens a picker listing both, Escape closes 
     assert.strictEqual(body.children.length, 1);
     fire('mousedown', { target: {} });
     assert.strictEqual(body.children.length, 0);
+    await tick();
   } finally { restore(); }
 });
 
@@ -253,5 +254,7 @@ test('Settings: the open row invokes operator.open, and an open window row hands
     const lists = f.invokes.filter((i) => i.method === 'services.list').length;
     await f.timers[0][0]();
     assert.strictEqual(f.invokes.filter((i) => i.method === 'services.list').length, lists + 1);
+    await tick();
+    await tick();
   } finally { restore(); }
 });
