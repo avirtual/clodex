@@ -157,5 +157,5 @@ test('read-format: changedRegion strips the common line prefix and suffix and re
   const clipped = changedRegion('top', `top\n${'x'.repeat(700)}`, CHANGE_MAX);
   assert.strictEqual(clipped.length, 600);
   assert.strictEqual(clipped, `${'x'.repeat(599)}…`);
-  assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b / …');
+  assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b /…');
 });
