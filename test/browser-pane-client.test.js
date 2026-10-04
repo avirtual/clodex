@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
-const { createClient, CRASHED } = require('../plugins/browser-pane/client');
+const { createClient, CRASHED, OP_DEADLINE_MS } = require('../plugins/browser-pane/client');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
@@ -238,4 +238,8 @@ test('fixtures: no .js, .cjs or .mjs file under test/fixtures (node --test would
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(c|m)?js$/.test(e.name)) found.push(p); } };
   walk(path.join(__dirname, 'fixtures'));
   assert.deepStrictEqual(found, []);
+});
+
+test('client: inspect waits 30 s, room for the child\'s three capped page waits', () => {
+  assert.strictEqual(OP_DEADLINE_MS.inspect, 30000);
 });

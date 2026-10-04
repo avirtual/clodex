@@ -196,7 +196,7 @@ function pageLabel(r) {
 
 function actReply(sub, service, cmd, r) {
   let head;
-  if (sub === 'click') head = `clicked ${service} [${r.n != null ? r.n : cmd.n}] ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
+  if (sub === 'click') head = `clicked ${service} [${r.n != null ? r.n : cmd.n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
   else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
   else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;
   else head = `pressed ${cmd.key} on ${service}`;
@@ -207,9 +207,18 @@ function actReply(sub, service, cmd, r) {
   if (r.download) text += downloadTail(r.download, r.popupUrl);
   else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
   else if (r.popup) text += TEXT.popup;
-  else if (!r.navigated && typeof r.changed === 'string') text += r.changed ? ` · changed: ${JSON.stringify(r.changed)}` : ' · no visible change';
+  else if (!r.navigated && typeof r.changed === 'string') text += changeTail(sub, r);
   if (r.takeover) text += TEXT.takeover;
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
+}
+
+function changeTail(sub, r) {
+  if (r.changed) return ` · changed: ${JSON.stringify(r.changed)}`;
+  if (sub === 'type' && typeof r.value === 'string') {
+    const v = [...r.value];
+    return ` · value now ${JSON.stringify(v.length > 60 ? v.slice(0, 59).join('') + '…' : r.value)}`;
+  }
+  return ' · no visible change';
 }
 
 function bytesLabel(n) {
@@ -247,9 +256,9 @@ function inspectReply(service, r) {
   const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
   const rect = r.rect || {};
   const lines = [
-    `${PREFIX} inspect ${service} [${r.n}]: ${oneLine(shortEl(r, 5))} · ${r.kind} ${JSON.stringify(String(r.label || ''))}`,
+    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${JSON.stringify(String(r.label || ''))}`,
     `  attrs: ${attrs || 'none'}`,
-    `  listeners: ${listenersLabel(r.listeners)}`,
+    `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
     `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,
     `  in: ${(r.ancestors || []).slice().reverse().map((a) => oneLine(a)).join(' > ') || '(none)'}`,
     `  html: ${oneLine(r.html || '')}`,

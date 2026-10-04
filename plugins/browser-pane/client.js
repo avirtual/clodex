@@ -17,7 +17,7 @@ const DEFAULTS = {
 };
 
 const OP_DEADLINE_MS = {
-  ping: 10000, open: 110000, read: 20000, inspect: 20000, shutdown: 5000,
+  ping: 10000, open: 110000, read: 20000, inspect: 30000, shutdown: 5000,
   click: 100000, type: 100000, key: 100000, select: 100000, handback: 15000, show: 5000,
 };
 const STDERR_KEEP = 20;

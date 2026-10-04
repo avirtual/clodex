@@ -90,6 +90,35 @@ function sameUrl(a, b) {
   try { return new URL(a).href === new URL(b).href; } catch { return a === b; }
 }
 
+function keepOrFold(out, w, isReserved) {
+  if (w.nameHint || w.abandoned) return out;
+  const dup = paths.sameFileIn(out.file, isReserved);
+  if (!dup) return out;
+  try { fs.unlinkSync(out.file); } catch {}
+  return { ...out, file: dup, magic: magicOf(dup), same: true };
+}
+
+async function settleDownload(w, deadline) {
+  const within = (p) => {
+    let t;
+    return Promise.race([p, new Promise((r) => { t = setTimeout(() => r(undefined), Math.max(0, deadline - Date.now())); })])
+      .finally(() => clearTimeout(t));
+  };
+  const item = await within(w.started);
+  if (!item) return null;
+  const head = { file: item.getSavePath(), mime: item.getMimeType(), url: (item.getURLChain() || [])[0] || '' };
+  try {
+    const out = await within(w.done);
+    if (!out) {
+      w.abandoned = true;
+      return { ...head, bytes: null };
+    }
+    return { file: out.file, bytes: out.bytes, mime: out.mime, url: out.url || head.url, ...(out.same ? { same: true } : {}) };
+  } catch (e) {
+    return { ...head, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
+  }
+}
+
 function run(electron, ctx) {
   console.log = console.error;
   const argv = (ctx && ctx.argv) || process.argv;
@@ -222,13 +251,7 @@ function run(electron, ctx) {
         try { bytes = fs.statSync(file).size; } catch {}
         const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0, url };
         if (w) {
-          const dup = paths.sameFileIn(file, (p) => reserved.has(p));
-          if (dup) {
-            try { fs.unlinkSync(file); } catch {}
-            w.resolve({ ...out, file: dup, magic: magicOf(dup), same: true });
-            return;
-          }
-          w.resolve(out);
+          w.resolve(keepOrFold(out, w, (p) => reserved.has(p)));
           return;
         }
         send({ event: 'operator-download', service: name, file, bytes, mime });
@@ -462,11 +485,16 @@ function run(electron, ctx) {
         return withChange(svc, before, { navigated: svc.doc !== docBefore, idle: idleOf(idle) });
       }
       checkDoc(svc, args);
-      if (byText != null) n = await textTarget(svc, byText);
+      let fresh = false;
+      if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
       const before = await snapText(wc);
-      if (op === 'click') return withChange(svc, before, await clickWatched(svc, n, el, docBefore, dir));
+      if (op === 'click') {
+        const out = await clickWatched(svc, n, el, docBefore, dir);
+        if (fresh) out.fresh = true;
+        return withChange(svc, before, out);
+      }
       if (op === 'type') {
         if (el.password || el.otp) {
           const e = codedError('PASSWORD_FIELD', TEXT.passwordField(svc.name, n));
@@ -481,7 +509,12 @@ function run(electron, ctx) {
           await driver.typeText(wc, text);
           if (args.enter) driver.pressKey(wc, 'Enter');
         }, actOpts(svc));
-        return withChange(svc, before, { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) });
+        const out = await withChange(svc, before, { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) });
+        if (out.changed === '' && !wc.isDestroyed()) {
+          const value = await inIsolated(wc, scripts.VALUE(n));
+          if (typeof value === 'string') out.value = value;
+        }
+        return out;
       }
       let picked = null;
       const { idle } = await driver.act(wc, async () => {
@@ -513,25 +546,7 @@ function run(electron, ctx) {
     const found = await inIsolated(svc.wc, scripts.FIND_TEXT(text));
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
-    return found.hits[0].n;
-  }
-
-  async function settleDownload(w, deadline) {
-    const within = (p) => {
-      let t;
-      return Promise.race([p, new Promise((r) => { t = setTimeout(() => r(undefined), Math.max(0, deadline - Date.now())); })])
-        .finally(() => clearTimeout(t));
-    };
-    const item = await within(w.started);
-    if (!item) return null;
-    const head = { file: item.getSavePath(), mime: item.getMimeType(), url: (item.getURLChain() || [])[0] || '' };
-    try {
-      const out = await within(w.done);
-      if (!out) return { ...head, bytes: null };
-      return { file: out.file, bytes: out.bytes, mime: out.mime, url: out.url || head.url, ...(out.same ? { same: true } : {}) };
-    } catch (e) {
-      return { ...head, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
-    }
+    return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
   }
 
   async function clickWatched(svc, n, el, docBefore, dir) {
@@ -569,6 +584,7 @@ function run(electron, ctx) {
       out.navigated = svc.doc !== docBefore;
       return out;
     } finally {
+      w.abandoned = true;
       w.cancel();
     }
   }
@@ -722,12 +738,12 @@ function run(electron, ctx) {
     svc.reading += 1;
     blockerSync();
     try {
-      const n = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : Number(args.n);
+      const { n, fresh } = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : { n: Number(args.n), fresh: false };
       const r = await inIsolated(svc.wc, scripts.INSPECT(n));
       if (!r) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
       const listeners = await driver.withTimeout(listenersOf(svc, n).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
       if (listeners && listeners.ancestorAt) listeners.ancestor = r.ancestors[listeners.ancestorAt - 1] || '?';
-      return { n, ...r, listeners };
+      return { n, ...r, listeners, ...(fresh ? { fresh: true } : {}) };
     } finally {
       svc.reading -= 1;
       blockerSync();
@@ -896,4 +912,4 @@ function run(electron, ctx) {
   });
 }
 
-module.exports = { run };
+module.exports = { run, keepOrFold, settleDownload };

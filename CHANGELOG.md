@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Browser pane: every act reply now says what it caused — the changed text for an in-place update (`changed: "…"`), `no visible change`, or the saved file's full path, size and type for a download, with repeat downloads reported as `same as <file>` instead of a numbered copy; `click` takes `--to=<dir in your cwd>`; new `inspect <n>` / `inspect --text=` shows an element's tag, attributes, listeners, cursor, position and HTML so an agent can see why something will not click; icon-only clickables take the image's alt as their label and image-only table cells keep their slot.
+- Browser pane: a download saved under an explicit `--as` name is never folded into an identical sibling, a click download that outran its wait keeps the file at the path the reply named, `type` reports the field's value when the page text did not change, and a `--text` match reports when its number was assigned just now.
 
 ## 5.112.1 — 2026-10-04
 
