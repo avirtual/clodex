@@ -387,10 +387,10 @@ const fakeWatch = (snaps, targets = []) => {
   };
 };
 
-test('settleChange: a ticking clock seen between the two baselines is not a change; a tile text landing a second later is', async () => {
-  const before = 'Living room\n7:56:11 PM\nAC · On';
-  const tickers = tickersOf('Living room\n7:56:10 PM\nAC · On', before);
-  const w = fakeWatch(['Living room\n7:56:12 PM\nAC · On', 'Living room\n7:56:12 PM\nAC · On', 'Living room\n7:56:13 PM\nAC · Off']);
+test('settleChange: a ticking line seen between the two baselines is not a change; a tile text landing a second later is', async () => {
+  const before = 'Living room\nUpdated 3s ago\nAC · On';
+  const tickers = tickersOf('Living room\nUpdated 2s ago\nAC · On', before);
+  const w = fakeWatch(['Living room\nUpdated 4s ago\nAC · On', 'Living room\nUpdated 5s ago\nAC · On', 'Living room\nUpdated 6s ago\nAC · Off']);
   const r = await settleChange({ before, tickers, ...w.opts });
   assert.deepStrictEqual(r, { changed: 'AC · Off', target: null });
   assert.deepStrictEqual(w.sleeps, [500, 500]);
