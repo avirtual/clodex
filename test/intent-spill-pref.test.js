@@ -28,9 +28,9 @@ const BOXES = [
 ];
 
 function saveExpr(b, checkbox) {
-  const m = rendererSrc.match(new RegExp(`\\n\\s*${b.key}: (.*),\\n`));
-  assert.ok(m, `ENTER: the save payload names ${b.key} in renderer.js`);
-  return new Function(b.v, `return ${m[1]};`)(checkbox);
+  const m = rendererSrc.match(new RegExp(`\\n\\s*\\.\\.\\.\\((${b.v} \\? \\{ ${b.key}: .*\\} : \\{\\})\\),\\n`));
+  assert.ok(m, `ENTER: the save payload spreads ${b.key} in renderer.js`);
+  return new Function(b.v, `return ${m[1]};`)(checkbox)[b.key];
 }
 
 function populate(b, settings) {
@@ -69,8 +69,14 @@ test('a ticked box saves true and an unticked one saves false', () => {
   }
 });
 
-test('a missing control saves the default rather than undefined', () => {
-  for (const b of BOXES) assert.strictEqual(saveExpr(b, null), true, b.key);
+test('a missing control omits its key, so a stored false is never overwritten', () => {
+  for (const b of BOXES) assert.strictEqual(saveExpr(b, null), undefined, b.key);
+  const { uiSettings } = openStores();
+  for (const b of BOXES) {
+    uiSettings.set({ [b.key]: false });
+    uiSettings.set({ [b.key]: saveExpr(b, null) });
+    assert.strictEqual(uiSettings.get()[b.key], false, b.key);
+  }
 });
 
 test('each box round-trips through a real settings store, independently', () => {
