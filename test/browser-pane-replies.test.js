@@ -37,6 +37,10 @@ test('replies: a read reply says chrome stripped and still loading', () => {
     '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · still loading → @/t/r-1.txt ');
   assert.strictEqual(R.readReply('utility', { ...info, stripped: true, loading: true }, '/t/r-1.txt', 'claude'),
     '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · chrome stripped · still loading → @/t/r-1.txt ');
+  assert.strictEqual(R.readReply('utility', { ...info, hidden: 2 }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · 2 elements hidden → @/t/r-1.txt ');
+  assert.strictEqual(R.readReply('utility', { ...info, stripped: true, hidden: 2 }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · chrome stripped · 2 elements hidden → @/t/r-1.txt ');
 });
 
 test('replies: a long reply is capped at 600 chars but the path is never cut', () => {

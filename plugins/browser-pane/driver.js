@@ -2,6 +2,7 @@
 
 const SCRIPT_TIMEOUT_MS = 8000;
 const SKIP_TYPES = ['WebSocket', 'EventSource', 'Ping'];
+const LIFECYCLE_MAX = 64;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -32,7 +33,10 @@ async function armIdle(wc, { network = true } = {}) {
   const inflight = new Map();
   let lastNet = Date.now();
   const onMsg = (_e, method, params) => {
-    if (method === 'Page.lifecycleEvent') fired.lifecycle.push(params.name);
+    if (method === 'Page.lifecycleEvent') {
+      fired.lifecycle.push(params.name);
+      if (fired.lifecycle.length > LIFECYCLE_MAX) fired.lifecycle.shift();
+    }
     else if (method === 'Network.requestWillBeSent' && !SKIP_TYPES.includes(params.type)) {
       inflight.set(params.requestId, { url: params.request.url, at: Date.now() });
       fired.requests++;
@@ -83,7 +87,7 @@ async function armIdle(wc, { network = true } = {}) {
     for (const v of inflight.values()) if (v.at <= cut) n++;
     return n;
   };
-  return { wait, fired, detach, size, lastNet: () => lastNet };
+  return { wait, fired, detach, size, reset: () => inflight.clear(), lastNet: () => lastNet };
 }
 
 async function waitIdle(wc, opts = {}) {
@@ -202,6 +206,6 @@ async function pinSessionCookies(ses, days = 30) {
 }
 
 module.exports = {
-  withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS,
+  withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS, LIFECYCLE_MAX,
   S, installFilters, quietGate, click, typeText, pressKey, KEYS,
 };

@@ -112,7 +112,13 @@ function changedRegion(before, after, max = CHANGE_MAX) {
   while (j < b.length - i && j < a.length - i && b[b.length - 1 - j] === a[a.length - 1 - j]) j++;
   const mid = a.slice(i, a.length - j);
   if (!mid.length) return b.length - j > i ? 'text removed' : '';
-  const s = mid.join(' / ');
+  const row = (l) => l.includes(' | ');
+  let s = mid.join(' / ');
+  if (mid.some(row)) {
+    let h = i - 1;
+    while (h >= 0 && !row(a[h])) h--;
+    if (h >= 0) s = `${a[h]} ⏎ ${s}`;
+  }
   return s.length > max ? s.slice(0, Math.max(0, max - 1)) + '…' : s;
 }
 
@@ -140,6 +146,31 @@ function chromeStrip(prev, text, { minLines = CHROME_MIN_LINES, maxLines = CHROM
   while (body.length && !body[0].trim()) body.shift();
   while (body.length && !body[body.length - 1].trim()) body.pop();
   return { text: body.join('\n'), top, bottom };
+}
+
+const FORM_KINDS = new Set(['select', 'textarea', 'combobox', 'checkbox']);
+const ELEMENT_RE = /^\[(\d+)\] (\S+)/;
+
+function elementKey(line) {
+  return String(line).replace(/^\[\d+\] /, '').replace(/([?&](?:t|_|ts)=)\d+/g, '$1');
+}
+
+function elementStrip(prevElements, elements) {
+  const lines = Array.isArray(elements) ? elements.map(String) : [];
+  if (!Array.isArray(prevElements) || !prevElements.length) return { lines, hidden: 0 };
+  const prev = new Map();
+  for (const l of prevElements.map(String)) {
+    const m = ELEMENT_RE.exec(l);
+    if (m) prev.set(elementKey(l), m[1]);
+  }
+  const hide = lines.map((l) => {
+    const m = ELEMENT_RE.exec(l);
+    if (!m || m[2].startsWith('input') || FORM_KINDS.has(m[2])) return false;
+    return prev.get(elementKey(l)) === m[1];
+  });
+  let hidden = hide.filter(Boolean).length;
+  if (hidden && hidden >= lines.length) { hide[0] = false; hidden -= 1; }
+  return { lines: lines.filter((_l, i) => !hide[i]), hidden };
 }
 
 function loadingRows(raw, service) {
@@ -173,10 +204,11 @@ function formatRead(raw, opts) {
   if (o.page > total) throw new Error(`page ${o.page} of ${total}`);
   const body = pages[o.page - 1];
   const nums = body.map((l) => NUM_RE.exec(l)).filter(Boolean).map((m) => Number(m[1]));
-  const elementsTotal = Array.isArray(raw.elements) ? raw.elements.length : 0;
-  const range = nums.length
+  const hidden = opts.hidden > 0 ? opts.hidden : 0;
+  const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.length : 0) + hidden;
+  const range = (hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '') + (nums.length
     ? `this page: [${Math.min(...nums)}]–[${Math.max(...nums)}]; numbers can skip`
-    : 'this page: none';
+    : 'this page: none');
   const mode = o.mode + (o.main ? ' --main' : '');
   const filter = o.filter ? `"${o.filter}"` : 'none';
   const head = (tok) => [
@@ -195,9 +227,9 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, loading: loading.length > 0 };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: loading.length > 0 };
 }
 
 module.exports = {
-  formatRead, paginate, loginLabel, changedRegion, chromeStrip, TEXT_HEAD, CHANGE_MAX, CHROME_MIN_LINES, CHROME_MAX_LINES,
+  formatRead, paginate, loginLabel, changedRegion, chromeStrip, elementStrip, elementKey, TEXT_HEAD, CHANGE_MAX, CHROME_MIN_LINES, CHROME_MAX_LINES,
 };

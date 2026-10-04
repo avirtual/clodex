@@ -320,7 +320,7 @@ function run(electron, ctx) {
       const same = e && e.isSameDocument != null ? e.isSameDocument : a[1];
       if (main && !same) svc.pendingNav = true;
     });
-    wc.on('did-navigate', () => { svc.pendingNav = false; svc.doc += 1; svc.navAt = Date.now(); dispatch(svc, { type: 'navigate' }); });
+    wc.on('did-navigate', () => { svc.pendingNav = false; if (svc.watch) svc.watch.reset(); svc.doc += 1; svc.navAt = Date.now(); dispatch(svc, { type: 'navigate' }); });
     const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) svc.pendingNav = false; };
     wc.on('did-fail-load', failed);
     wc.on('did-fail-provisional-load', failed);
@@ -474,7 +474,7 @@ function run(electron, ctx) {
     let n = Number(args.n);
     const dir = args.dir == null ? path.join(downloadsRoot, svc.name) : String(args.dir);
     if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'click needs an absolute dir');
-    checkDoc(svc, args);
+    if (byText == null) checkDoc(svc, args);
     const what = op === 'key' ? `press ${args.key}` : byText != null ? `click --text=${JSON.stringify(byText)}` : `${op} [${n}]`;
     return mutating(svc, frame, what, async () => {
       ensureCdp(svc);
@@ -487,7 +487,7 @@ function run(electron, ctx) {
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
         return withChange(svc, before, { navigated: svc.doc !== docBefore, idle: idleOf(idle) });
       }
-      checkDoc(svc, args);
+      if (byText == null) checkDoc(svc, args);
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
@@ -737,7 +737,7 @@ function run(electron, ctx) {
   async function opInspect(name, frame, args) {
     const svc = need(name);
     if (svc.lock.state === 'held') throw heldError(svc);
-    checkDoc(svc, args);
+    if (args.byText == null) checkDoc(svc, args);
     svc.reading += 1;
     blockerSync();
     try {

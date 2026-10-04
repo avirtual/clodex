@@ -22,34 +22,18 @@ const DEEP = `
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const s = getComputedStyle(el);
-    return s.visibility !== 'hidden' && s.display !== 'none';
+    if (s.visibility === 'hidden' || s.display === 'none') return false;
+    if (s.opacity === '0') return false;
+    const d = document.documentElement;
+    if (!(r.right + scrollX > 0 && r.bottom + scrollY > 0
+      && r.left + scrollX < Math.max(d.scrollWidth, innerWidth) && r.top + scrollY < Math.max(d.scrollHeight, innerHeight))) return false;
+    if (s.clip === 'rect(0px, 0px, 0px, 0px)' || s.clip === 'rect(1px, 1px, 1px, 1px)') return false;
+    if (s.clipPath === 'inset(50%)' || s.clipPath === 'inset(100%)') return false;
+    if (r.width <= 1 && r.height <= 1 && (s.overflow === 'hidden' || s.overflowX === 'hidden')) return false;
+    return true;
   };`;
 
-function readText(main) {
-  return `(() => {
-  const DROP = 'script,style,noscript,select,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
-  const score = el => {
-    const t = (el.innerText || '').length;
-    let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
-    return t - 2 * l;
-  };
-  const forced = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
-  let root = forced || document.querySelector('main article, article, [role=main], main, #mw-content-text, #content');
-  if (!forced && (!root || (root.innerText || '').length < 200)) {
-    let best = document.body, bs = -1;
-    document.querySelectorAll('div,section,td').forEach(el => {
-      const s = score(el); if (s > bs) { bs = s; best = el; }
-    });
-    root = best;
-  }
-  const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(e => e.getClientRects().length);
-  const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
-  if (!root) return { text: '', busy };
-  const clone = root.cloneNode(true);
-  clone.querySelectorAll(DROP).forEach(n => n.remove());
-  const host = document.createElement('div');
-  host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
-  host.appendChild(clone); document.body.appendChild(host);
+const TABLES = `
   const cellText = c => {
     if (!c.getClientRects().length) return '';
     const t = (c.innerText || '').replace(/\\s+/g, ' ').trim();
@@ -66,7 +50,34 @@ function readText(main) {
     if (t.caption) line(cellText(t.caption));
     for (const tr of t.rows) if (tr.getClientRects().length) line([...tr.cells].map(cellText).join(' | '));
     t.replaceWith(box);
+  }`;
+
+function readText(main) {
+  return `(() => {${DEEP}
+  const DROP = 'script,style,noscript,select,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  const score = el => {
+    const t = (el.innerText || '').length;
+    let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
+    return t - 2 * l;
+  };
+  const forced = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
+  let root = forced || document.querySelector('main article, article, [role=main], main, #mw-content-text, #content');
+  if (!forced && (!root || (root.innerText || '').length < 200)) {
+    let best = document.body, bs = -1;
+    document.querySelectorAll('div,section,td').forEach(el => {
+      const s = score(el); if (s > bs) { bs = s; best = el; }
+    });
+    root = best;
   }
+  const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
+  const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
+  if (!root) return { text: '', busy };
+  const clone = root.cloneNode(true);
+  clone.querySelectorAll(DROP).forEach(n => n.remove());
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
+  host.appendChild(clone); document.body.appendChild(host);
+  ${TABLES}
   const txt = clone.innerText; host.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
   return { text, busy };
@@ -168,7 +179,9 @@ const ICON = `
   const iconLabel = e => {
     const img = [...e.querySelectorAll('img')].find(i => (i.getAttribute('alt') || '').trim());
     const t = e.querySelector('svg > title');
-    return (img && img.getAttribute('alt')) || e.getAttribute('title') || e.getAttribute('aria-label') || (t && t.textContent) || '';
+    const src = [...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src')).find(u => !/^data:/i.test(u)) || '';
+    return (img && img.getAttribute('alt')) || e.getAttribute('title') || e.getAttribute('aria-label') || (t && t.textContent)
+      || src.split(/[?#]/)[0].split('/').pop() || '';
   };`;
 
 const KIND_LABEL = `${ICON}
@@ -235,7 +248,14 @@ function inspect(n) {
 }
 
 const PAGE_TEXT = `(() => {
-  const t = (document.body && document.body.innerText) || '';
+  if (!document.body) return '';
+  const clone = document.body.cloneNode(true);
+  clone.querySelectorAll('script,style,noscript,template').forEach(n => n.remove());
+  const host = document.createElement('div');
+  host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
+  host.appendChild(clone); document.body.appendChild(host);
+  ${TABLES}
+  const t = clone.innerText || ''; host.remove();
   return t.replace(/[ \\t]+/g, ' ').split('\\n').map(l => l.trim()).filter(Boolean).join('\\n').slice(0, ${TEXT_MAX});
 })()`;
 
@@ -323,6 +343,6 @@ const LOGIN_PROBE = `(() => {${DEEP}
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT,
+  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
 };

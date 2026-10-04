@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const replies = require('./replies');
 const paths = require('./paths');
-const { formatRead, chromeStrip } = require('./read-format');
+const { formatRead, chromeStrip, elementStrip } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -25,11 +25,26 @@ function splitTitle(text, title) {
   return t && text.startsWith(`${t}\n`) ? [t, text.slice(t.length + 1)] : ['', text];
 }
 
+function pageKey(url) {
+  try { const u = new URL(url); u.hash = ''; return u.href; } catch { return String(url || ''); }
+}
+
+function linesApart(a, b) {
+  const x = String(a).split('\n');
+  const y = String(b).split('\n');
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  let j = 0;
+  while (j < x.length - i && j < y.length - i && x[x.length - 1 - j] === y[y.length - 1 - j]) j++;
+  return Math.max(x.length - i - j, y.length - i - j);
+}
+
 function originPath(url) {
   try { const u = new URL(url); return u.origin + u.pathname; } catch { return ''; }
 }
 
 const LEASE_MS = 5 * 60 * 1000;
+const IN_PLACE_LINES = 2;
 const WAIT_DEFAULT_MS = 15000;
 const WAIT_MAX_MS = 120000;
 const HELD_WAIT_MAX_MS = 1800000;
@@ -145,17 +160,28 @@ function createScheduler({
     const last = st.lastText[service];
     const hasText = !!raw && typeof raw.text === 'string';
     const origin = hasText ? originOf(raw.url) : '';
-    const base = last && last.origin === origin ? (last.text === raw.text ? last.base : { text: last.text, title: last.title }) : null;
+    const where = hasText ? originPath(raw.url) : '';
+    const base = last && last.origin === origin
+      ? (last.text === raw.text ? last.base : { text: last.text, title: last.title, where: last.where }) : null;
     let page = raw;
     let strip = null;
-    if (hasText && base && !cmd.all && cmd.mode !== 'links') {
+    let hidden = 0;
+    const stripping = hasText && !cmd.all && cmd.mode !== 'links';
+    if (stripping && base && (base.where !== where || linesApart(base.text, raw.text) > IN_PLACE_LINES)) {
       const [title, body] = splitTitle(raw.text, raw.title);
       const r = chromeStrip(splitTitle(base.text, base.title)[1], body);
       if (r.top || r.bottom) page = { ...raw, text: title ? `${title}\n\n${r.text}` : r.text };
       strip = { top: r.top, bottom: r.bottom };
     }
-    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, base };
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip });
+    const samePage = !!last && last.page === pageKey(raw && raw.url);
+    const elBase = !stripping || !last || last.origin !== origin ? null
+      : !samePage ? last.elements : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
+    if (elBase) {
+      const e = elementStrip(elBase, raw.elements);
+      if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
+    }
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, elBase, base };
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden });
     if (raw && raw.doc != null) seatState(handle.name).lastDoc[service] = raw.doc;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);
@@ -178,7 +204,7 @@ function createScheduler({
   }
 
   async function runAct(handle, service, cmd) {
-    const args = { expectDoc: seatState(handle.name).lastDoc[service] };
+    const args = cmd.sub === 'click' && cmd.text != null ? {} : { expectDoc: seatState(handle.name).lastDoc[service] };
     let root = null;
     if (cmd.sub === 'click' && cmd.to != null) ({ root, dir: args.dir } = downloadDir(handle, service, cmd.to));
     if (cmd.n != null) args.n = cmd.n;
@@ -194,7 +220,7 @@ function createScheduler({
   }
 
   async function runInspect(handle, service, cmd) {
-    const args = { expectDoc: seatState(handle.name).lastDoc[service] };
+    const args = cmd.text != null ? {} : { expectDoc: seatState(handle.name).lastDoc[service] };
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.text != null) args.byText = cmd.text;
     const r = await client.request('inspect', args, { service, seat: handle.name });
