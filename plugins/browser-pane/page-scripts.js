@@ -250,13 +250,15 @@ function findText(text) {
   const hits = deepAll(document, el => !SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
   const stamp = el => {
     let n = window.__cxOf.get(el);
+    const fresh = !n;
     if (!n) { n = window.__cxEls.length; window.__cxEls.push(new WeakRef(el)); window.__cxOf.set(el, n); }
     el.setAttribute('data-cx', String(n));
-    return n;
+    return { n, fresh };
   };
   return { count: hits.length, hits: hits.slice(0, 5).map(el => {
     const t = own(el);
-    return { n: stamp(el), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+    const { n, fresh } = stamp(el);
+    return { n, fresh, text: t.length > 60 ? t.slice(0, 59) + '…' : t };
   }) };
 })()`;
 }
@@ -268,6 +270,13 @@ function clear(n) {
   if (el.isContentEditable) document.execCommand('selectAll');
   else if (typeof el.select === 'function') el.select();
   return true;
+})()`;
+}
+
+function value(n) {
+  return `(() => {
+  ${REF(n)}
+  return el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
 })()`;
 }
 
@@ -311,5 +320,5 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
 };

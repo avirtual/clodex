@@ -181,6 +181,9 @@ After an agent waiter's download lands, it is hashed (sha256) only when a
 same-size regular file already sits in its folder; on a match the new file is
 deleted and the reply names the existing one (`same as`). Operator downloads
 are never deduped. Hashing is synchronous in the child's main process.
+`keepOrFold` never folds a waiter with a `nameHint` (`download --as=<name>`
+asks for that path) or one marked `abandoned` (`settleDownload` gave up and
+the reply already named the planned path, or `clickWatched` returned).
 
 ## child.js — listenersOf
 

@@ -171,6 +171,14 @@ test('replies: an act that stays on the page says what text changed, or that not
     '[agent:browser] typed ebloc [2] (2 chars) · same page · idle 0.8s · changed: "text removed"');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
     '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers reset, read again · idle 0.8s');
+  assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),
+    '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · value now "abc"');
+  assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: 'x', value: 'abc' }),
+    '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · changed: "x"');
+  assert.ok(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'y' }, { navigated: false, idle, changed: '', value: 'y'.repeat(80) })
+    .endsWith(`value now "${'y'.repeat(59)}…"`));
+  assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', text: 'PDF' }, { n: 9, fresh: true, kind: 'clickable', label: 'PDF', navigated: false, idle, changed: '' }),
+    '[agent:browser] clicked ebloc [9] (numbered now) clickable "PDF" · same page · idle 0.8s · no visible change');
   const long = 'x'.repeat(599) + '…';
   assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'More', navigated: false, idle, changed: long }).endsWith(`changed: "${long}"`));
 });
@@ -200,6 +208,11 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(lines({ listeners: { types: ['click', 'mouseover'] } })[2], '  listeners: click, mouseover');
   assert.strictEqual(lines({ listeners: { types: [], ancestor: 'tr#r1.odd', ancestorType: 'click' } })[2], '  listeners: none here · click on ancestor tr#r1.odd');
   assert.strictEqual(lines({ visible: false })[3], '  cursor: pointer · at 10,220 size 300×24 · hidden');
+  const evil = lines({ kind: 'clickable"\nhtml: <evil>' });
+  assert.strictEqual(evil.length, 6);
+  assert.strictEqual(evil[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable" html: <evil> "Factura iulie"');
+  assert.strictEqual(lines({ listeners: { types: ['x\nhtml: <evil>'] } }).length, 6);
+  assert.strictEqual(lines({ fresh: true })[0], '[agent:browser] inspect ebloc [12] (numbered now): div#prow.row.pay · clickable "Factura iulie"');
   assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, [{ n: 1, text: 'PDF' }, { n: 2, text: 'PDF' }], 'inspect'),
     '"PDF" matches 2 visible elements on ebloc: [1] "PDF", [2] "PDF" — inspect one by number');
 });
