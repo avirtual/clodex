@@ -17,7 +17,7 @@ const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer 
 
 const chromePage = (title, mid) => `<title>${title}</title><main>
 ${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map((m) => `<div>${m}</div>`).join('')}
-${mid}
+${mid}<p>Avizierul lunar al asociatiei de proprietari: cheltuieli comune, consumuri individuale, fond de rulment si fond de reparatii, defalcate pe apartament.</p>
 ${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m) => `<div>${m}</div>`).join('')}</main>`;
 
 const PAGES = {
