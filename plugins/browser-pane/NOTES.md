@@ -215,3 +215,27 @@ on. A read is loading when `wc.isLoading()` or a non-skipped request has been in
 flight over `LOADING_INFLIGHT_MS` (300 ms). `READ_TEXT` also counts visible
 `BUSY_SEL` elements (`.loading`, spinners, `aria-busy`); either signal marks the
 reply `still loading`.
+
+## child.js — opOperatorOpen
+
+An `open` with `operator: true` has no seat and takes no lease: it opens or
+reuses the window, dispatches `takeover` before loading so the service is
+`held` (reason `takeover`) the whole time, and the input filters stay off. The
+engine reports a held/takeover service as `operator: true` in `status` and
+`services.list`. An agent seat with queued, in-flight or waiting work on the
+service (`activeSeat`) refuses the open.
+
+## engine.js — handOver
+
+Order is grant, then child `handback`, then one `inject`. The lease goes to the
+seat before the hold ends so no other seat's queued command takes the window in
+between; the inject is last so the seat's first `read` finds the window idle.
+`lastCmdAt` is the grant time, so the usual 5-minute expiry applies if the seat
+never acts. plugin-api.md offers no `host.intents.granted` query, so the
+missing-grant suffix is not sent.
+
+## renderer.js — clickActionFor
+
+Segment click: no windows does nothing, one calls `show` (the engine's
+`pickShown`), two or more open the plugin's own fixed `<div>` picker (no
+popover primitive in `rhost.ui`), closed on Escape or an outside mousedown.

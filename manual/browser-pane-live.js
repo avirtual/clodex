@@ -164,7 +164,8 @@ function bootEngine(userData, tmp) {
     pluginRowFor('browser').handler(handle, parseWithRegistry(line));
     return p.then((reply) => { console.log(`> ${line}\n< ${reply}`); return reply; });
   };
-  return { engine, emit, host };
+  const nextInject = () => new Promise((r) => { waiter = r; });
+  return { engine, emit, host, nextInject };
 }
 
 function landed(reply) {
@@ -261,6 +262,28 @@ async function chromeStep(emit, base) {
   check('read after wait shows no loading row and no still loading', !rows(f3).some((l) => /^loading:/.test(l)) && !/still loading/.test(r3));
 }
 
+async function handoverStep(engine, emit, nextInject, base) {
+  console.log('== 12. the operator opens a window and hands it to a seat with an instruction');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const call = (method, req) => engine.dispatch('browser-pane', method, [req], 'desktop');
+  const opened = await call('operator.open', { service: 'desk', url: `${base}/form` });
+  console.log(`    operator.open → ${JSON.stringify(opened)}`);
+  const st = await call('status', 'w');
+  const desk = (st.services || []).find((x) => x.name === 'desk') || {};
+  console.log(`    status desk → ${JSON.stringify(desk)}`);
+  check('the window is held by the operator', desk.state === 'held' && desk.operator === true);
+  check('an agent act is refused while operator-held', /operator has control of desk \(takeover\)/.test(await emit('[agent:browser read desk]')));
+  const injected = nextInject();
+  const r = await call('operator.handover', { service: 'desk', seat: 'live-seat', instruction: 'find the search box\nand search for Form 1040' });
+  const line = await injected;
+  console.log(`    operator.handover → ${JSON.stringify(r)}`);
+  console.log(`    inject < ${line}`);
+  const want = `[agent:browser] the operator opened desk at ${base}/form ("Form") and handed it to you — find the search box and search for Form 1040 — start with [agent:browser read desk]`;
+  check('the handover is one line with the shape', !/\n/.test(line) && line === want);
+  check('the first read by that seat succeeds', /^\[agent:browser\] read desk · /.test(await emit('[agent:browser read desk]')));
+  check('click works after it', /^\[agent:browser\] clicked desk \[\d+\]/.test(await emit('[agent:browser click desk 2]')));
+}
+
 async function payStep(emit, base) {
   console.log('== 6. a click that commits an interstitial which auto-POSTs to a 17 s endpoint');
   await emit(`[agent:browser open pay] ${base}/pay`);
@@ -287,9 +310,10 @@ async function main() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
-  let { engine, emit, host } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'chrome'].includes(process.env.CXB_ONLY)) {
-    if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
+  let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
+  if (['pay', 'clickables', 'effects', 'chrome', 'handover'].includes(process.env.CXB_ONLY)) {
+    if (process.env.CXB_ONLY === 'handover') await handoverStep(engine, emit, nextInject, base);
+    else if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
     else if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
     else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
@@ -349,7 +373,7 @@ async function main() {
   await emit(`[agent:browser open jar] ${base}/set`);
   engine.deactivate('browser-pane');
   await sleep(4000);
-  ({ engine, emit, host } = bootEngine(userData, tmp));
+  ({ engine, emit, host, nextInject } = bootEngine(userData, tmp));
   await emit(`[agent:browser open jar] ${base}/echo`);
   show(fileOf(await emit('[agent:browser read jar --text]')), (l) => /cookie header/.test(l));
   await emit('[agent:browser services]');
@@ -385,6 +409,7 @@ async function main() {
   await clickablesStep(emit, base);
   await effectsStep(emit, base, tmp);
   await chromeStep(emit, base);
+  await handoverStep(engine, emit, nextInject, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);
