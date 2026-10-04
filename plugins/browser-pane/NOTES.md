@@ -229,7 +229,13 @@ opacity or clip on an ancestor is not seen. When an ancestor scrolls
 (`overflow` auto/scroll with overflowing content — app layouts with
 `html,body{overflow:hidden}` and a scrolling `#app`), the box is tested against
 that scroller's content range instead of the document: there `scrollY` stays 0
-and the document is one screen tall.
+and the document is one screen tall. The walk stops at `document.scrollingElement`
+(the body in quirks mode, where `body{overflow-x:hidden}` makes it look like an
+inner scroller and would count the window scroll twice); the document range is
+measured by that element. A scroller must itself be placed, so the children of a
+scrolling drawer parked off-screen stay hidden. A `position:fixed` element is
+tested against the viewport, since no scroller moves it. Scroller lookups are
+memoised per script run.
 
 ## page-scripts.js — TABLES
 
