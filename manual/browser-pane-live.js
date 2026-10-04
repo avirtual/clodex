@@ -71,6 +71,7 @@ const PAGES = {
   '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
   '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p><p><a href="/chrome-a?pdf=5">Factura mai PDF</a></p>'),
   '/offscreen': () => `<title>Offscreen</title><main><h1>Ascunse</h1>
+<p>${'Indexurile contoarelor de apa se trimit lunar, pana la data de 25, din pagina asociatiei de proprietari. '.repeat(3)}</p>
 <a href="/x" class="highslide-loading" style="position:absolute; top:-9999px; opacity:0.75">INCARCA...</a>
 <div class="loading" style="position:absolute; left:-9999px">Se incarca</div>
 <button style="opacity:0">Invizibil</button>
