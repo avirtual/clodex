@@ -569,6 +569,7 @@ function run(electron, ctx) {
     let img = await wc.capturePage();
     const empty = !img || img.isEmpty();
     if (empty) {
+      process.stderr.write(`screenshot ${name}: capturePage was empty, using CDP\n`);
       ensureCdp(svc);
       const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: SHOT_QUALITY });
       img = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));

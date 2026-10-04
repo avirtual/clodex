@@ -13,7 +13,16 @@ const { parseWithRegistry, pluginRowFor } = require(path.join(ROOT, 'intent-regi
 const PLUGIN_DIR = path.join(ROOT, 'plugins', 'browser-pane');
 const ELECTRON = require(path.join(ROOT, 'node_modules', 'electron'));
 
+const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n');
+
 const PAGES = {
+  '/dl': () => `<title>Downloads</title><main><a href="/att">Attachment</a> <a href="/inline.pdf">Inline PDF</a>
+<a href="/named-src" download="named-by-page.pdf">Named</a> <a href="/gated.pdf">Gated</a>
+<form method="post" action="/post-att"><button>Post for PDF</button></form>
+<button onclick="window.open('/inline.pdf', '_blank')">Popup PDF</button></main>`,
+  '/pay': () => '<title>Pay</title><main><a href="/interstitial">Pay now</a></main>',
+  '/interstitial': () => `<title>Processing payment</title><main><p>Processing…</p><form method="post" action="/slow-post"></form>
+<script>setTimeout(() => document.forms[0].submit(), 300)</script></main>`,
   '/links': () => {
     const rows = [];
     for (let i = 1; i <= 700; i++) {
@@ -39,6 +48,19 @@ function server() {
       const url = new URL(req.url, 'http://x');
       const headers = { 'content-type': 'text/html; charset=utf-8' };
       if (url.pathname === '/hang') return;
+      const pdf = (extra = {}) => { res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': PDF.length, ...extra }); res.end(PDF); };
+      if (url.pathname === '/att' || url.pathname === '/post-att') return pdf({ 'content-disposition': 'attachment; filename="statement-att.pdf"' });
+      if (url.pathname === '/inline.pdf') return pdf({ 'content-disposition': 'inline' });
+      if (url.pathname === '/named-src') return pdf();
+      if (url.pathname === '/gated.pdf') {
+        if (!/sid=live-check-123/.test(String(req.headers.cookie || ''))) { res.writeHead(403, headers); res.end('forbidden'); return; }
+        return pdf();
+      }
+      if (url.pathname === '/slow-post') {
+        req.resume();
+        setTimeout(() => { res.writeHead(200, headers); res.end('<title>Payment done</title><main><p>Payment done</p></main>'); }, 17000);
+        return;
+      }
       if (url.pathname === '/stall') {
         res.writeHead(200, headers);
         res.end('<title>Stall</title><main><p>waiting</p><img src="/hang"></main>');
@@ -103,7 +125,22 @@ function bootEngine(userData, tmp) {
     pluginRowFor('browser').handler(handle, parseWithRegistry(line));
     return p.then((reply) => { console.log(`> ${line}\n< ${reply}`); return reply; });
   };
-  return { engine, emit };
+  return { engine, emit, host };
+}
+
+function landed(reply) {
+  const m = / → "?(\/[^"]+?\.pdf)"? · /.exec(reply);
+  if (!m) return '    (no file)';
+  const head = fs.readFileSync(m[1]).subarray(0, 5).toString('latin1');
+  return `    ${m[1]} · ${fs.statSync(m[1]).size} B · starts ${JSON.stringify(head)} · same bytes: ${fs.readFileSync(m[1]).equals(PDF)}`;
+}
+
+async function payStep(emit, base) {
+  console.log('== 6. a click that commits an interstitial which auto-POSTs to a 17 s endpoint');
+  await emit(`[agent:browser open pay] ${base}/pay`);
+  await emit('[agent:browser read pay]');
+  await emit('[agent:browser click pay 1]');
+  await emit('[agent:browser wait pay --ms=15000 --for="Payment done"]');
 }
 
 function fileOf(reply) {
@@ -124,7 +161,15 @@ async function main() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
-  let { engine, emit } = bootEngine(userData, tmp);
+  let { engine, emit, host } = bootEngine(userData, tmp);
+  if (process.env.CXB_ONLY === 'pay') {
+    await payStep(emit, base);
+    engine.deactivate('browser-pane');
+    await sleep(3000);
+    srv.closeAllConnections();
+    srv.close();
+    return;
+  }
 
   console.log('== 1. 700 links');
   await emit(`[agent:browser open fixture] ${base}/links`);
@@ -176,10 +221,39 @@ async function main() {
   await emit(`[agent:browser open jar] ${base}/set`);
   engine.deactivate('browser-pane');
   await sleep(4000);
-  ({ engine, emit } = bootEngine(userData, tmp));
+  ({ engine, emit, host } = bootEngine(userData, tmp));
   await emit(`[agent:browser open jar] ${base}/echo`);
   show(fileOf(await emit('[agent:browser read jar --text]')), (l) => /cookie header/.test(l));
   await emit('[agent:browser services]');
+
+  console.log('== 5. downloads');
+  await emit(`[agent:browser open docs] ${base}/set`);
+  await emit(`[agent:browser open docs] ${base}/dl`);
+  show(fileOf(await emit('[agent:browser read docs]')), (l) => /^\[\d+\]/.test(l));
+  console.log(landed(await emit('[agent:browser download docs 1 --to=bills]')));
+  console.log(landed(await emit('[agent:browser download docs 2 --to=bills]')));
+  console.log(landed(await emit('[agent:browser download docs 3 --to=bills]')));
+  console.log(landed(await emit('[agent:browser download docs 4 --to=bills --as=gated]')));
+  console.log(`    gated without the session: ${(await fetch(`${base}/gated.pdf`)).status}`);
+  console.log(landed(await emit('[agent:browser download docs 5 --to=bills --as=posted.pdf]')));
+  console.log(landed(await emit('[agent:browser download docs 6 --to=bills --as=popup.pdf]')));
+  await emit('[agent:browser download docs --to=../escape]');
+  const part = path.join(host.paths.dataDir, 'chromium', 'Partitions', 'docs');
+  console.log(`    ${part} exists: ${fs.existsSync(part)}`);
+
+  console.log('== 5b. screenshots');
+  await emit('[agent:browser screenshot docs]');
+  const pid = host && engine && require('node:child_process').execSync('pgrep -f "cxb-data=' + path.join(host.paths.dataDir, 'chromium') + '" | head -1').toString().trim();
+  try {
+    require('node:child_process').execSync(`osascript -e 'tell application "System Events" to set value of attribute "AXMinimized" of (first window whose name starts with "docs") of (first process whose unix id is ${pid}) to true'`, { stdio: 'pipe' });
+    console.log('    minimized the docs window');
+  } catch (e) { console.log(`    could not minimize: ${String(e.stderr || e.message).trim().slice(0, 200)}`); }
+  await sleep(1500);
+  const shot = await emit('[agent:browser screenshot docs]');
+  const sm = / → @(\S+) $/.exec(shot);
+  if (sm) console.log(`    ${sm[1]} · ${fs.statSync(sm[1]).size} B`);
+
+  await payStep(emit, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);
