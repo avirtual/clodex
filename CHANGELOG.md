@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.111.3 — 2026-10-04
+
 - Settings: the single 'spill long intent bodies' switch is now three — ticket bodies, messages between seats and to the operator, and end-of-turn prose — so an operator can file long specs and dms while keeping the agent's closing prose in the transcript as written; an existing 'off' reads as all three off.
 
 ## 5.111.2 — 2026-10-04
