@@ -350,8 +350,10 @@ test('scheduler inspect: needs a read first, then asks the child by text without
   assert.strictEqual(out[0][1].split('\n').length, 6);
 });
 
+const MARK = (l) => `\u0001${l}`;
+
 test('scheduler: a second read of the same site drops the repeated chrome; --all and another origin keep it', async () => {
-  const chrome = (mid, title = 'Avizier') => [title, '', 'Acasa', 'Avizier', 'Plati', ...mid, 'Termeni', 'Ajutor', 'v1.2'].join('\n');
+  const chrome = (mid, title = 'Avizier') => [title, '', ...['Acasa', 'Avizier', 'Plati'].map(MARK), ...mid, ...['Termeni', 'Ajutor', 'v1.2'].map(MARK)].join('\n');
   let cur = { url: 'https://portal.example.com/a', title: 'Aprilie', text: chrome(['Factura aprilie'], 'Aprilie') };
   const h = harness({ read: () => ({ ...DEFAULTS.read(), url: cur.url, title: cur.title, text: cur.text }) });
   const hd = h.seat('hand-a');
@@ -363,7 +365,7 @@ test('scheduler: a second read of the same site drops the repeated chrome; --all
   cur = { url: 'https://portal.example.com/b', title: 'Mai', text: chrome(['Factura mai', '120 lei'], 'Mai') };
   const [[, second]] = await h.run([['hand-a', '[agent:browser read]']]);
   assert.match(second, / · chrome stripped → @FILE$/);
-  assert.ok(files[1].includes('\nstripped: 3 lines at top, 3 at bottom (same as your last read of utility)\n'));
+  assert.ok(files[1].includes('\nstripped: 3 lines at top, 3 at bottom (repeated from your last read of utility)\n'));
   assert.ok(files[1].includes('\n== text ==\nMai\n\nFactura mai\n120 lei\n== elements =='));
   assert.ok(!/Acasa|Termeni/.test(files[1]));
   const [[, again]] = await h.run([['hand-a', '[agent:browser read --page=1]']]);
@@ -415,6 +417,7 @@ function siteHarness() {
   return { h, read };
 }
 
+const NAV_N = ['1', '2', '3', '4'];
 const NAV = ['[1] link Acasa → /', '[2] link Avizier → /avizier?t=1700000001', '[3] link Plati → /plati', '[4] link Termeni → /termeni'];
 
 test('scheduler: elements repeated from the previous read of the site are hidden with their numbers; form controls stay', async () => {
@@ -423,7 +426,7 @@ test('scheduler: elements repeated from the previous read of the site are hidden
   const first = await read({ url: 'https://portal.example.com/a', text: 'A\nFactura aprilie', elements: [...NAV, '[5] input:text Cauta', '[6] link Factura aprilie → /f/4'] });
   assert.ok(!/elements hidden/.test(first.reply));
   const navB = NAV.map((l) => l.replace('t=1700000001', 't=1700000999'));
-  const second = await read({ url: 'https://portal.example.com/b', text: 'B\nFactura mai', elements: [...navB, '[5] input:text Cauta', '[6] link Factura mai → /f/5', '[7] link Plati → /plati'] });
+  const second = await read({ url: 'https://portal.example.com/b', text: 'B\nFactura mai', elements: [...navB, '[5] input:text Cauta', '[6] link Factura mai → /f/5', '[7] link Plati → /plati'], chrome: NAV_N });
   assert.match(second.reply, / · 4 elements hidden → @FILE$/);
   assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; numbers: stable per site; new since your last read: none\)/);
   assert.ok(second.file.includes('\n== elements ==\n[5] input:text Cauta\n[6] link Factura mai → /f/5\n[7] link Plati → /plati\n'));
@@ -441,7 +444,7 @@ test('scheduler: page 2 of a read hides the same repeated elements as page 1', a
   const many = (from, n, tag) => Array.from({ length: n }, (_, i) => `[${from + i}] link ${tag} ${i} ${'x'.repeat(150)} → /${tag}/${i}`);
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
   await read({ url: 'https://portal.example.com/a', text: 'A', elements: many(1, 30, 'nav') });
-  const b = { url: 'https://portal.example.com/b', text: 'B', elements: [...many(1, 30, 'nav'), ...many(31, 40, 'body')] };
+  const b = { url: 'https://portal.example.com/b', text: 'B', elements: [...many(1, 30, 'nav'), ...many(31, 40, 'body')], chrome: Array.from({ length: 30 }, (_, i) => i + 1) };
   const p1 = await read(b, '[agent:browser read --max=1000]');
   assert.match(p1.reply, /page 1\/2 · 70 elements · .* · 30 elements hidden/);
   const p2 = await read(b, '[agent:browser read --max=1000 --page=2]');
@@ -450,7 +453,7 @@ test('scheduler: page 2 of a read hides the same repeated elements as page 1', a
 });
 
 test('scheduler: a one-line in-place change on the same path is not chrome-stripped; a --links read still updates the base', async () => {
-  const chrome = (menu, mid) => ['T', '', ...menu, ...mid, 'Termeni', 'Ajutor', 'v1.2'].join('\n');
+  const chrome = (menu, mid) => ['T', '', ...menu.map(MARK), ...mid, ...['Termeni', 'Ajutor', 'v1.2'].map(MARK)].join('\n');
   const M1 = ['Acasa', 'Avizier', 'Plati'];
   const M2 = ['Index', 'Mesaje', 'Cont'];
   const { h, read } = siteHarness();

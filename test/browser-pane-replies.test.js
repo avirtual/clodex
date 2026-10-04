@@ -314,3 +314,17 @@ test('replies: services names the host each window is on and the host it was ope
   assert.strictEqual(R.servicesReply(services, new Map([['ebloc', 'closed']]), (n) => urls[n]).split(' │ ')[0],
     '[agent:browser] services: ebloc — e-bloc.ro · signed in (10-04 15:40) · closed');
 });
+
+test('replies: denied and still-busy replies redact token-shaped URL parameters', () => {
+  const tok = 'a'.repeat(32);
+  const busy = R.openReply('utility', { status: 200, title: 'L', url: 'https://x/', login: {}, idle: { ok: false, ms: 15000, inflight: [`https://api.x/poll?access_token=${tok}`] } });
+  assert.ok(busy.includes('https://api.x/poll?access_token=<redacted>') && !busy.includes(tok));
+  const denied = R.TEXT.denied('https://idp.x/cb?code=4/0AbC&state=1', 'idp.x', null);
+  assert.ok(denied.startsWith('open refused: https://idp.x/cb?code=<redacted>&state=1 matches'));
+});
+
+test('replies: a click on a number whose text changed since the read says so', () => {
+  const r = { n: 10, kind: 'link', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 100 }, textChanged: true, changed: '' };
+  assert.match(R.actReply('click', 'ebloc', { n: 10 }, r), /^\[agent:browser\] clicked ebloc \[10\] link "Lista de plată" \(text under \[10\] changed since your read\) · same page/);
+  assert.ok(!R.actReply('click', 'ebloc', { n: 10 }, { ...r, textChanged: false }).includes('changed since your read'));
+});

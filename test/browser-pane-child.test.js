@@ -10,6 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  changedOf, consequentialRefusal, signinHold, lateMsFor,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -413,4 +414,85 @@ test('settleChange: a target aria flip after the click is reported and ends the 
   assert.deepStrictEqual(w.sleeps, [500, 500]);
   assert.strictEqual(targetDiff(off, focused), null);
   assert.deepStrictEqual(targetDiff(off, { el: { 'aria-label': 'AC Off', class: 'btn sel' }, tile: off.tile }), { text: 'class +sel', strong: false });
+});
+
+const CHILD_SRC = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+
+test('numbering: two Lista labels differing only past char 60 get different keys and numbers', () => {
+  const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna';
+  const aug = button(`${head} [Document generat 03.08.2026]`);
+  const jul = button(`${head} [Document generat 03.07.2026]`);
+  const first = stampAll({ known: {}, next: 1 }, [aug]);
+  const second = stampAll(first.state, [jul]);
+  assert.notStrictEqual(second.stored[0], first.stored[0]);
+  assert.deepStrictEqual(second.ns, [2]);
+  const long = (tail) => button(`${'x'.repeat(K.LABEL_KEY_MAX)} ${tail}`);
+  const both = stampAll({ known: {}, next: 1 }, [long('august'), long('iulie')]);
+  assert.deepStrictEqual(both.ns, [1, 2]);
+  assert.ok(both.stored.every((k) => K.parseStored(k).label.length < K.LABEL_KEY_MAX + 10));
+});
+
+test('changedOf: kept numbers whose line or row text differs since the last read', () => {
+  assert.deepStrictEqual(changedOf({ 10: 'link Lista\u0000aug', 11: 'x\u0000', 12: 'y\u0000' }, { 10: 'link Lista\u0000iul', 11: 'x\u0000', 13: 'z\u0000' }), [10]);
+  assert.deepStrictEqual(changedOf(null, { 1: 'a' }), []);
+  assert.match(CHILD_SRC, /if \(svc\.num && svc\.num\.changed && svc\.num\.changed\.has\(Number\(n\)\)\) out\.textChanged = true;/);
+});
+
+test('consequentialRefusal: a tagged element is refused without --confirm, naming the category; with it the act proceeds', () => {
+  const e = consequentialRefusal(27, { label: 'Card bancar', consequential: 'payment' }, false);
+  assert.strictEqual(e.code, 'CONSEQUENTIAL');
+  assert.strictEqual(e.message, '[27] "Card bancar" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(consequentialRefusal(27, { label: 'Card bancar', consequential: 'payment' }, true), null);
+  assert.strictEqual(consequentialRefusal(3, { label: 'Avizier', consequential: null }, false), null);
+  const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
+  assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
+  assert.match(scripts.FIND(1), /consequential: cqOf\(el\),/);
+});
+
+test('signinHold: operator-nav stays quiet while a sign-in hold is up, not during a takeover or when idle', () => {
+  assert.strictEqual(signinHold({ lock: { state: 'held', reason: 'login' } }), true);
+  assert.strictEqual(signinHold({ lock: { state: 'held', reason: 'otp' } }), true);
+  assert.strictEqual(signinHold({ lock: { state: 'held', reason: 'takeover' } }), false);
+  assert.strictEqual(signinHold({ lock: { state: 'idle', reason: null } }), false);
+  assert.match(CHILD_SRC, /const operatorNav = \(svc, inPage\) => \{\n\s*const info = pageInfo\(svc\);\n\s*if \(!info\.url \|\| info\.url === 'about:blank' \|\| signinHold\(svc\)\) return;/);
+});
+
+test('settleChange: a type or key act takes no late watch; click and select keep it', async () => {
+  assert.strictEqual(lateMsFor('type'), 0);
+  assert.strictEqual(lateMsFor('key'), 0);
+  assert.strictEqual(lateMsFor('click'), LATE_CHANGE_MS);
+  assert.strictEqual(lateMsFor('select'), LATE_CHANGE_MS);
+  const w = fakeWatch(['same', 'same', 'same']);
+  await settleChange({ before: 'same', ...w.opts, lateMs: lateMsFor('type') });
+  assert.strictEqual(w.sleeps.length, 0);
+  const c = fakeWatch(['same', 'same', 'same']);
+  await settleChange({ before: 'same', ...c.opts, lateMs: lateMsFor('click') });
+  assert.ok(c.sleeps.length > 0);
+  assert.strictEqual((CHILD_SRC.match(/lateMsFor\(op\)\)/g) || []).length, 4, 'every withChange call passes lateMsFor(op)');
+});
+
+test('page scripts: TILE_SEL shares BOX_SEL with contextOf and no longer matches [class*=tile]', () => {
+  assert.ok(scripts.TILE_SEL.includes(scripts.BOX_SEL) && !scripts.TILE_SEL.includes('tile'));
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`el.closest(${JSON.stringify(scripts.BOX_SEL)})`));
+});
+
+test('page scripts: consequentialOf tags one label per category, diacritic- and case-insensitive; Carduri nav does not match', () => {
+  const c = scripts.consequentialOf;
+  const rows = [
+    [{ label: 'Card bancar' }, 'payment'], [{ label: 'Plătește' }, 'payment'], [{ label: 'Pay now' }, 'payment'],
+    [{ value: 'Checkout' }, 'payment'], [{ aria: 'Confirm payment' }, 'payment'],
+    [{ label: 'Cumpără acum' }, 'purchase'], [{ label: 'Place order' }, 'purchase'],
+    [{ label: 'ȘTERGE' }, 'deletion'], [{ idClass: 'btn-delete' }, 'deletion'],
+    [{ label: 'Ieşire' }, 'sign-out'], [{ label: 'Ieșire' }, 'sign-out'], [{ label: 'Log out' }, 'sign-out'], [{ idClass: 'logout ' }, 'sign-out'],
+    [{ label: 'Arm' }, 'alarm'], [{ label: 'Disarm' }, 'alarm'],
+    [{ label: 'Dezabonare' }, 'unsubscribe'], [{ label: 'Cancel subscription' }, 'unsubscribe'],
+    [{ label: 'Send money' }, 'transfer'], [{ formaction: '/transfer' }, 'transfer'],
+    [{ label: 'Trimite', action: '/plata/pay' }, 'payment'], [{ label: 'Go', action: '/orders/new' }, 'purchase'],
+    [{ label: 'Carduri' }, null], [{ label: 'Avizier' }, null], [{ label: 'Armată' }, null], [{ label: 'Wireless' }, null],
+    [{ label: 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna august' }, null],
+    [{ label: 'Card bancar', textual: true }, null],
+  ];
+  for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /line: kind \+ ' ' \+ \(cqOf\(el\) \? '⚠ ' : ''\) \+ line/);
+  assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';border:2px solid #e00'/);
 });
