@@ -35,7 +35,7 @@ function runElectron(args) {
 }
 
 test('a valid child flag boots the binary straight into the script with electron handed in', { skip: SKIP }, async () => {
-  const dir = mkTmpRoot('clodex-electron-dispatch-');
+  const dir = fs.realpathSync(mkTmpRoot('clodex-electron-dispatch-'));
   const fixture = path.join(dir, 'fixture.js');
   fs.writeFileSync(fixture, `exports.run = (e, ctx) => {
   process.stdout.write(JSON.stringify({ whenReady: typeof e.app.whenReady, hasFlag: ctx.argv.includes('--clodex-electron-child=' + __filename) }) + '\\n');

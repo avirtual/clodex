@@ -135,7 +135,7 @@ bundle), whose packaged form is the Docker image under
 ### Host lifecycle and upgrade
 
 - **electron-child.js** — boots the Electron binary straight into a plugin's
-  child script (`--clodex-electron-child=<abs.js>`) instead of a second Clodex:
+  child script (`--clodex-electron-child=<script>`) instead of a second Clodex:
   `main.js` dispatches on it before anything else, and `childSpawnSpec` builds
   the launch spec behind `host.runtime.electronChild`.
 - **host-stamp.js** — is the RUNNING main process older than the code on disk?
