@@ -37,6 +37,7 @@
 // the enabled set in at build time, would freeze a user setting into an artifact.
 const MODULES = {
   // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
+  "browser-pane": require("../../plugins/browser-pane/renderer.js"),
   "git-branches": require("../../plugins/git-branches/renderer.js"),
   "memory-viewer": require("../../plugins/memory-viewer/renderer.js"),
   "tickets-viewer": require("../../plugins/tickets-viewer/renderer.js"),

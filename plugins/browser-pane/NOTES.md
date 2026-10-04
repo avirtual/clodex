@@ -106,3 +106,30 @@ cancel a slow form POST the server may already have processed.
 Deviation from DESIGN §3.4 (50 s / 90 s), which predates `open` being gated.
 `open` worst case: gate 60 s + load 25 s + idle 15 s + probe 8 s ≈ 108 s → 110 s.
 Acts: gate 60 s + FIND 8 s + idle 15 s (+≈3.5 s overrun) + probe 8 s ≈ 95 s → 100 s.
+
+## child.js — mutating (pendingNav)
+
+`svc.doc !== docAt` proves a main-frame commit, not that no main-frame
+navigation is still pending: an interstitial that auto-POSTs after committing
+(3-D Secure, SAML, "processing payment") would be cancelled by the stall stop.
+`svc.pendingNav` is set on a cross-document main-frame `did-start-navigation`
+and cleared on `did-navigate`, a main-frame `did-fail-load` /
+`did-fail-provisional-load`, or `did-stop-loading`; no `wc.stop()` while it is set.
+
+## child.js — routerFor
+
+One `will-download` handler per partition. Waiters match by URL against
+`getURLChain()` (redirects included), else the oldest URL-less waiter (a click).
+A download with no waiter is the operator's: it lands in the service's default
+folder with no dialog. `setSavePath` must be called synchronously in the handler
+or Electron shows a save dialog.
+
+## child.js — opScreenshot
+
+`capturePage` can return an empty image when the window is hidden or minimized;
+CDP `Page.captureScreenshot` is the fallback.
+
+## engine.js — removePartition
+
+`persist:<service>` lives at `chromium/Partitions/<service>`: service names are
+`[a-z0-9-]`, so Electron uses the name verbatim.

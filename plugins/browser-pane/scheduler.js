@@ -1,6 +1,9 @@
 'use strict';
 
+const fs = require('node:fs');
+const path = require('node:path');
 const replies = require('./replies');
+const paths = require('./paths');
 const { formatRead } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
@@ -21,6 +24,8 @@ const LEASE_MS = 5 * 60 * 1000;
 const WAIT_DEFAULT_MS = 15000;
 const WAIT_MAX_MS = 120000;
 const HELD_WAIT_MAX_MS = 1800000;
+const DOWNLOAD_OP_MS = 450000;
+const SCREENSHOT_OP_MS = 30000;
 const N_ACTS = new Set(['click', 'type', 'select']);
 const HELD_OK = new Set(['wait', 'release']);
 const realTimers = {
@@ -31,10 +36,17 @@ const realTimers = {
 function cmdLabel(cmd) {
   if (N_ACTS.has(cmd.sub)) return `${cmd.sub} ${cmd.n}`;
   if (cmd.sub === 'key') return `key ${cmd.key}`;
+  if (cmd.sub === 'download' && cmd.n != null) return `download ${cmd.n}`;
   return cmd.sub;
 }
 
-function createScheduler({ client, storage, mirror, now = () => Date.now(), log, timers = realTimers }) {
+function needsRead(cmd) {
+  return N_ACTS.has(cmd.sub) || (cmd.sub === 'download' && cmd.n != null);
+}
+
+function createScheduler({
+  client, storage, mirror, now = () => Date.now(), log, timers = realTimers, fsScope = () => ({ error: 'Session not found' }), downloadsDir = null,
+}) {
   const services = new Map();
   const seats = new Map();
 
@@ -142,7 +154,36 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
     return replies.waitReply(service, r, cmd.forText);
   }
 
-  const RUN = { open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait };
+  async function runDownload(handle, service, cmd) {
+    let root = null;
+    let dir;
+    if (cmd.to != null) {
+      root = paths.scopeCwd(fsScope(handle.name));
+      dir = paths.resolveTo(root, cmd.to);
+    } else {
+      if (!downloadsDir) throw new Error('no downloads folder');
+      dir = path.join(downloadsDir, service);
+    }
+    const args = { dir, as: cmd.as, n: cmd.n, url: cmd.url };
+    if (cmd.n != null) args.expectDoc = seatState(handle.name).lastDoc[service];
+    const r = await client.request('download', args, { service, seat: handle.name, timeoutMs: DOWNLOAD_OP_MS });
+    if (root && !paths.landedInside(root, r.file)) {
+      try { fs.unlinkSync(r.file); } catch {}
+      throw new Error(`the download left your working directory (${root}) and was deleted — download it again`);
+    }
+    if (r.held && !r.takeover) signin(service, r);
+    return replies.downloadReply(service, cmd, r);
+  }
+
+  async function runScreenshot(handle, service) {
+    const r = await client.request('screenshot', {}, { service, seat: handle.name, timeoutMs: SCREENSHOT_OP_MS });
+    const file = replies.writeReplyFile(handle.name, Buffer.from(String(r.jpeg || ''), 'base64'), { kind: 's', ext: 'jpg' });
+    return replies.screenshotReply(service, r, file, handle.type);
+  }
+
+  const RUN = {
+    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait, download: runDownload, screenshot: runScreenshot,
+  };
 
   function fail(handle, s, text, keepWaits) {
     const seat = handle.name;
@@ -234,7 +275,7 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
       return;
     }
-    if (N_ACTS.has(cmd.sub) && seatState(handle.name).lastDoc[service] == null) {
+    if (needsRead(cmd) && seatState(handle.name).lastDoc[service] == null) {
       handle.inject(replies.errorReply(replies.TEXT.readFirst(service)));
       return;
     }

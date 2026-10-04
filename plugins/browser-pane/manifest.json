@@ -3,7 +3,8 @@
   "name": "Browser Pane",
   "version": "0.1.0",
   "hostApi": "1",
-  "entry": { "engine": "engine.js" },
+  "entry": { "engine": "engine.js", "renderer": "renderer.js" },
+  "style": "style.css",
   "enabledByDefault": false,
   "announce": "Gives agents granted the [agent:browser] verb a logged-in browser window per service that you can watch and take over; you sign in yourself."
 }

@@ -7,6 +7,7 @@ const driver = require('./driver');
 const scripts = require('./page-scripts');
 const lock = require('./lock');
 const { TEXT } = require('./replies');
+const paths = require('./paths');
 
 const BAR_HEIGHT = 40;
 const MAX_WINDOWS = 8;
@@ -16,9 +17,15 @@ const OPEN_IDLE_MS = 15000;
 const LOAD_TIMEOUT_MS = 25000;
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const ACT_IDLE_MS = 15000;
+const DOWNLOAD_START_MS = 30000;
+const DOWNLOAD_DONE_MS = 300000;
+const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
+const FLASH_MS = 4000;
+const SHOT_WIDTH = 1280;
+const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -58,17 +65,39 @@ function checkOpenUrl(url) {
   return url;
 }
 
+function magicOf(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(5);
+    const n = fs.readSync(fd, buf, 0, 5, 0);
+    const head = buf.slice(0, n).toString('latin1');
+    if (head === '%PDF-') return 'pdf';
+    if (/^(<!doc|<html)/i.test(head)) return 'html';
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd != null) try { fs.closeSync(fd); } catch {}
+  }
+}
+
+function sameUrl(a, b) {
+  try { return new URL(a).href === new URL(b).href; } catch { return a === b; }
+}
+
 function run(electron, ctx) {
   console.log = console.error;
   const argv = (ctx && ctx.argv) || process.argv;
   const data = argValue(argv, 'cxb-data');
   const proto = Number(argValue(argv, 'cxb-proto') || 1);
+  const downloadsRoot = argValue(argv, 'cxb-downloads') || path.join(path.dirname(data || '.'), 'downloads');
   if (!data || !path.isAbsolute(data)) {
     process.stderr.write('browser child: --cxb-data=<absolute dir> is required\n');
     process.exit(2);
     return;
   }
-  const { app, BrowserWindow, WebContentsView, session, Menu, powerSaveBlocker } = electron;
+  const { app, BrowserWindow, WebContentsView, session, Menu, powerSaveBlocker, nativeImage } = electron;
   fs.mkdirSync(data, { recursive: true });
   app.setPath('userData', data);
   app.setPath('sessionData', data);
@@ -80,6 +109,7 @@ function run(electron, ctx) {
   const services = new Map();
   const chains = new Map();
   const partitions = new Set();
+  const routers = new Map();
   let blockerId = null;
   let shuttingDown = false;
 
@@ -103,6 +133,7 @@ function run(electron, ctx) {
   const render = (svc) => {
     if (svc.win.isDestroyed()) return;
     const vm = lock.barView(svc.lock, { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL() });
+    if (svc.flash && Date.now() < svc.flash.until) vm.text = svc.flash.text;
     svc.win.webContents.executeJavaScript(`window.cxbRender && window.cxbRender(${JSON.stringify(vm)})`).catch(() => {});
   };
 
@@ -134,6 +165,71 @@ function run(electron, ctx) {
     });
   };
 
+  function routerFor(name, ses) {
+    if (routers.has(name)) return routers.get(name);
+    const waiters = [];
+    const reserved = new Set();
+    const r = { waiters };
+    const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
+    r.expect = ({ url = null, dir, nameHint = null }) => {
+      const w = { url, dir, nameHint, item: null };
+      w.started = new Promise((res) => { w.onStart = res; });
+      w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
+      w.done.catch(() => {});
+      w.cancel = () => drop(w);
+      waiters.push(w);
+      return w;
+    };
+    ses.on('will-download', (_e, item) => {
+      const chain = item.getURLChain();
+      let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
+      if (!w) w = waiters.find((x) => !x.url);
+      if (w) drop(w);
+      const mime = item.getMimeType();
+      const dir = w ? w.dir : path.join(downloadsRoot, name);
+      const t0 = Date.now();
+      let file;
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        file = paths.uniquePath(dir, paths.sanitizeName((w && w.nameHint) || item.getFilename(), mime), (p) => reserved.has(p));
+      } catch (e) {
+        item.cancel();
+        if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: cannot write to ${dir} (${e.code || e.message})`));
+        return;
+      }
+      item.setSavePath(file);
+      reserved.add(file);
+      let why = null;
+      const stopWith = (reason) => { if (!why) { why = reason; item.cancel(); } };
+      if (item.getTotalBytes() > DOWNLOAD_MAX_BYTES) stopWith('larger than 500 MB');
+      const timer = setTimeout(() => stopWith('not finished after 300s'), DOWNLOAD_DONE_MS);
+      item.on('updated', () => { if (item.getReceivedBytes() > DOWNLOAD_MAX_BYTES) stopWith('larger than 500 MB'); });
+      if (w) w.onStart(item);
+      item.once('done', (_ev, state) => {
+        clearTimeout(timer);
+        reserved.delete(file);
+        if (state !== 'completed') {
+          try { fs.unlinkSync(file); } catch {}
+          if (w) w.reject(codedError('DOWNLOAD_FAILED', `DOWNLOAD_FAILED: ${why || state}`));
+          return;
+        }
+        let bytes = 0;
+        try { bytes = fs.statSync(file).size; } catch {}
+        const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0 };
+        if (w) { w.resolve(out); return; }
+        send({ event: 'operator-download', service: name, file, bytes, mime });
+        const svc = services.get(name);
+        if (svc) {
+          svc.flash = { text: `Downloaded ${path.basename(file)} → ${dir}`, until: Date.now() + FLASH_MS };
+          render(svc);
+          setTimeout(() => render(svc), FLASH_MS + 50);
+        }
+      });
+    });
+    routers.set(name, r);
+    return r;
+  }
+
   function openService(name) {
     const have = services.get(name);
     if (have && !have.win.isDestroyed()) return have;
@@ -145,6 +241,7 @@ function run(electron, ctx) {
     ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     ses.setPermissionCheckHandler(() => false);
     watchCookies(name, ses);
+    routerFor(name, ses);
     const slot = services.size;
     const win = new BrowserWindow({
       width: 1280, height: 940, x: 80 + slot * 28, y: 60 + slot * 28, show: false,
@@ -176,10 +273,20 @@ function run(electron, ctx) {
     const wc = view.webContents;
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
-      lastInput: 0, popup: false, blank: wc.loadURL('about:blank').catch(() => {}),
+      lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null,
+      blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
-    wc.on('did-navigate', () => { svc.doc += 1; dispatch(svc, { type: 'navigate' }); });
+    wc.on('did-start-navigation', (e, ...a) => {
+      const main = e && e.isMainFrame != null ? e.isMainFrame : a[2];
+      const same = e && e.isSameDocument != null ? e.isSameDocument : a[1];
+      if (main && !same) svc.pendingNav = true;
+    });
+    wc.on('did-navigate', () => { svc.pendingNav = false; svc.doc += 1; dispatch(svc, { type: 'navigate' }); });
+    const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) svc.pendingNav = false; };
+    wc.on('did-fail-load', failed);
+    wc.on('did-fail-provisional-load', failed);
+    wc.on('did-stop-loading', () => { svc.pendingNav = false; });
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
       const target = (e && e.url) || url;
@@ -189,6 +296,7 @@ function run(electron, ctx) {
     wc.on('will-frame-navigate', block);
     wc.setWindowOpenHandler(({ url }) => {
       if (svc.lock.state === 'driving') {
+        if (svc.downloading) { if (allowedNav(url)) svc.popupUrl = url; return { action: 'deny' }; }
         if (allowedNav(url)) { svc.popup = true; wc.loadURL(url).catch(() => {}); }
         return { action: 'deny' };
       }
@@ -273,7 +381,7 @@ function run(electron, ctx) {
         throw e;
       }
       if (svc.win.isDestroyed() || svc.wc.isDestroyed()) throw closedError(svc.name);
-      if (out && out.idle && !out.idle.ok && svc.wc.isLoading() && (frame.op === 'open' || svc.doc !== docAt)) {
+      if (out && out.idle && !out.idle.ok && svc.wc.isLoading() && !svc.pendingNav && (frame.op === 'open' || svc.doc !== docAt)) {
         svc.wc.stop();
         out.idle.stopped = true;
       }
@@ -369,6 +477,117 @@ function run(electron, ctx) {
       }
       return { kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
     });
+  }
+
+  function downloadUrlOf(svc, raw) {
+    let u;
+    try { u = new URL(String(raw), svc.wc.getURL() || undefined); } catch { throw codedError('BAD_URL', `not a URL: ${raw}`); }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') throw codedError('BAD_URL', `only http: and https: URLs can be downloaded, not ${u.protocol}`);
+    if (u.username || u.password) throw codedError('BAD_URL', 'a URL with user:pass@ is refused');
+    return u.href;
+  }
+
+  async function landed(w, startMs) {
+    let t;
+    const started = await Promise.race([w.started.then(() => true), w.done.then(() => true, () => true),
+      new Promise((r) => { t = setTimeout(() => r(false), startMs); })]);
+    clearTimeout(t);
+    if (!started) {
+      w.cancel();
+      throw codedError('DOWNLOAD_FAILED', 'DOWNLOAD_FAILED: the download did not start within 30s');
+    }
+    return w.done;
+  }
+
+  async function viaUrl(svc, url, dir, nameHint) {
+    const w = routerFor(svc.name, svc.ses).expect({ url, dir, nameHint });
+    svc.wc.downloadURL(url);
+    return landed(w, DOWNLOAD_START_MS);
+  }
+
+  async function viaClick(svc, n, el, dir, nameHint) {
+    const wc = svc.wc;
+    const w = routerFor(svc.name, svc.ses).expect({ dir, nameHint });
+    const t0 = Date.now();
+    svc.popupUrl = null;
+    try {
+      await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
+      for (;;) {
+        const got = await Promise.race([w.started.then(() => true), driver.sleep(250).then(() => false)]);
+        if (got) return await w.done;
+        if (svc.popupUrl || Date.now() - t0 >= DOWNLOAD_START_MS) break;
+        if (await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') break;
+      }
+      w.cancel();
+      if (await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
+        const out = await viaUrl(svc, wc.getURL(), dir, nameHint);
+        if (wc.navigationHistory && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+        return out;
+      }
+      if (svc.popupUrl) return await viaUrl(svc, svc.popupUrl, dir, nameHint);
+      throw codedError('DOWNLOAD_TIMEOUT',
+        `nothing downloaded within 30s after clicking [${n}] — read ${svc.name} to see what happened, or download its URL`);
+    } finally {
+      w.cancel();
+    }
+  }
+
+  async function opDownload(name, frame, args) {
+    const svc = need(name);
+    const dir = String(args.dir || '');
+    if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'download needs an absolute dir');
+    const n = args.n == null ? null : Number(args.n);
+    if (n != null) checkDoc(svc, args);
+    const what = n != null ? `download [${n}]` : 'download';
+    return mutating(svc, frame, what, async () => {
+      ensureCdp(svc);
+      await driver.emulateFocus(svc.wc);
+      svc.downloading = true;
+      try {
+        let out;
+        if (n != null) {
+          checkDoc(svc, args);
+          const el = await resolve(svc, n);
+          dispatch(svc, { type: 'describe', what: `download [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
+          const hint = args.as || el.download || null;
+          if (el.href && /^https?:/i.test(el.href)) out = await viaUrl(svc, downloadUrlOf(svc, el.href), dir, hint);
+          else out = await viaClick(svc, n, el, dir, hint);
+        } else {
+          const url = downloadUrlOf(svc, args.url || svc.wc.getURL());
+          out = await viaUrl(svc, url, dir, args.as || null);
+        }
+        return out;
+      } finally {
+        svc.downloading = false;
+      }
+    });
+  }
+
+  async function opScreenshot(name) {
+    const svc = need(name);
+    const wc = svc.wc;
+    let img = await wc.capturePage();
+    const empty = !img || img.isEmpty();
+    if (empty) {
+      process.stderr.write(`screenshot ${name}: capturePage was empty, using CDP\n`);
+      ensureCdp(svc);
+      const shot = await wc.debugger.sendCommand('Page.captureScreenshot', { format: 'jpeg', quality: SHOT_QUALITY });
+      img = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'));
+    }
+    if (img.isEmpty()) throw codedError('INTERNAL', `the ${name} window gave an empty screenshot`);
+    if (img.getSize().width > SHOT_WIDTH) img = img.resize({ width: SHOT_WIDTH, quality: 'good' });
+    const { width, height } = img.getSize();
+    return { jpeg: img.toJPEG(SHOT_QUALITY).toString('base64'), width, height, fallback: empty };
+  }
+
+  async function opForget(name) {
+    const svc = services.get(name);
+    if (svc && !svc.win.isDestroyed()) svc.win.destroy();
+    const ses = session.fromPartition('persist:' + name);
+    await ses.clearStorageData();
+    await ses.clearCache();
+    await ses.clearAuthCache().catch(() => {});
+    return { forgotten: name };
   }
 
   async function opRead(name, frame, args) {
@@ -489,11 +708,14 @@ function run(electron, ctx) {
         const name = String(frame.service || '');
         if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
         if (op === 'hold' || op === 'handback' || op === 'show') result = await operatorOp(op, name);
+        else if (op === 'forget') result = await serial(name, () => opForget(name));
         else {
           result = await serial(name, () => {
             if (op === 'open') return opOpen(name, frame, args);
             if (op === 'read') return opRead(name, frame, args);
             if (op === 'idle') return opIdle(name, args);
+            if (op === 'download') return opDownload(name, frame, args);
+            if (op === 'screenshot') return opScreenshot(name);
             return opAct(name, frame, args);
           });
         }
