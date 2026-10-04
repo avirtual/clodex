@@ -124,6 +124,7 @@ function createIntentSocketServer({
         server.removeListener('error', reject);
         server.on('error', (e) => { if (log) log.warn('intent-socket', `${sockPath}: ${e.message}`); });
         try { fs.chmodSync(sockPath, 0o600); } catch {}
+        if (typeof server.unref === 'function') server.unref();
         resolve();
       });
     });
