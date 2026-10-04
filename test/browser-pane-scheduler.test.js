@@ -464,3 +464,15 @@ test('scheduler: a one-line in-place change on the same path is not chrome-strip
   const y = await read({ url: 'https://portal.example.com/y', title: 'T', text: chrome(M2, ['Contul meu', 'Email']) });
   assert.match(y.file, /\nstripped: 3 lines at top, 3 at bottom/);
 });
+
+test('scheduler: a --text read hides no elements, and a closed window forgets the previous read', async () => {
+  const { h, read } = siteHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  await read({ url: 'https://portal.example.com/a', text: 'A', elements: [...NAV, '[5] link A → /a'] });
+  const t = await read({ url: 'https://portal.example.com/b', text: 'B', elements: [...NAV, '[5] link B → /b'] }, '[agent:browser read --text]');
+  assert.ok(!/elements hidden/.test(t.reply) && !t.file.includes('repeated'));
+  h.sched.onClosed('utility');
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  const fresh = await read({ url: 'https://portal.example.com/c', text: 'C', elements: [...NAV, '[5] link C → /c'] });
+  assert.ok(!/elements hidden/.test(fresh.reply) && fresh.file.includes('[1] link Acasa'));
+});

@@ -79,8 +79,12 @@ function visOf(view = {}) {
     doc, view.scrollX || 0, view.scrollY || 0, 1200, 800);
 }
 
-function box(left, top, width, height, style = {}) {
-  return { style, getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }) };
+function box(left, top, width, height, style = {}, parentElement = null) {
+  return { style, parentElement, getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }) };
+}
+
+function scroller(scrollTop) {
+  return { ...box(0, 0, 1200, 800, { overflowY: 'auto' }), scrollTop, scrollLeft: 0, scrollHeight: 5000, clientHeight: 800, scrollWidth: 1200, clientWidth: 1200 };
 }
 
 test('page scripts: vis drops elements parked off the document, transparent, clipped away or 1×1 hidden', () => {
@@ -99,6 +103,15 @@ test('page scripts: vis drops elements parked off the document, transparent, cli
   assert.strictEqual(vis(box(10, 10, 1, 1)), true);
   assert.strictEqual(vis(box(10, 10, 80, 20, { display: 'none' })), false);
   assert.strictEqual(visOf({ scrollY: 2000 })(box(10, -100, 80, 20)), true);
+});
+
+test('page scripts: vis measures an element inside a scrolling ancestor against that scroller, not the document', () => {
+  const vis = visOf({ docH: 800 });
+  assert.strictEqual(vis(box(10, -3000, 80, 20, {}, scroller(3200))), true);
+  assert.strictEqual(vis(box(10, 3000, 80, 20, {}, box(0, 0, 1200, 3000, {}, scroller(0)))), true);
+  assert.strictEqual(vis(box(10, 5100, 80, 20, {}, scroller(0))), false);
+  assert.strictEqual(vis(box(10, -9999, 80, 20, {}, box(0, 0, 1200, 800))), false);
+  assert.strictEqual(vis(box(10, 3000, 80, 20)), false);
 });
 
 test('page scripts: the busy scan, the element list, FIND_TEXT and INSPECT all use vis', () => {

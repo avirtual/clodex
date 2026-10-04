@@ -25,7 +25,18 @@ const DEEP = `
     if (s.visibility === 'hidden' || s.display === 'none') return false;
     if (s.opacity === '0') return false;
     const d = document.documentElement;
-    if (!(r.right + scrollX > 0 && r.bottom + scrollY > 0
+    const up = (e) => e.parentElement || (e.parentNode && e.parentNode.host) || null;
+    let sc = null;
+    for (let p = up(el); p && p !== d; p = up(p)) {
+      const ps = getComputedStyle(p);
+      if (/auto|scroll/.test(ps.overflowX + ' ' + ps.overflowY) && (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth)) { sc = p; break; }
+    }
+    if (sc) {
+      const pr = sc.getBoundingClientRect();
+      const top = pr.top - sc.scrollTop;
+      const left = pr.left - sc.scrollLeft;
+      if (!(r.bottom > top && r.top < top + sc.scrollHeight && r.right > left && r.left < left + sc.scrollWidth)) return false;
+    } else if (!(r.right + scrollX > 0 && r.bottom + scrollY > 0
       && r.left + scrollX < Math.max(d.scrollWidth, innerWidth) && r.top + scrollY < Math.max(d.scrollHeight, innerHeight))) return false;
     if (s.clip === 'rect(0px, 0px, 0px, 0px)' || s.clip === 'rect(1px, 1px, 1px, 1px)') return false;
     if (s.clipPath === 'inset(50%)' || s.clipPath === 'inset(100%)') return false;
@@ -250,7 +261,7 @@ function inspect(n) {
 const PAGE_TEXT = `(() => {
   if (!document.body) return '';
   const clone = document.body.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,template').forEach(n => n.remove());
+  clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);

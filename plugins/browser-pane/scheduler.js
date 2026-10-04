@@ -174,7 +174,7 @@ function createScheduler({
       strip = { top: r.top, bottom: r.bottom };
     }
     const samePage = !!last && last.page === pageKey(raw && raw.url);
-    const elBase = !stripping || !last || last.origin !== origin ? null
+    const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
       : !samePage ? last.elements : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
     if (elBase) {
       const e = elementStrip(elBase, raw.elements);
@@ -374,7 +374,7 @@ function createScheduler({
   }
 
   function onClosed(service) {
-    for (const st of seats.values()) delete st.lastDoc[service];
+    for (const st of seats.values()) { delete st.lastDoc[service]; delete st.lastText[service]; }
     onState({ service, state: 'closed' });
   }
 

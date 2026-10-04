@@ -70,6 +70,9 @@ const PAGES = {
   },
   '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
   '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p><p><a href="/chrome-a?pdf=5">Factura mai PDF</a></p>'),
+  '/app-scroll': () => `<title>App scroll</title><style>html,body{height:100%;margin:0;overflow:hidden} #app{height:100%;overflow:auto}</style>
+<div id=app><main><h1>Aplicatie</h1><p>${'Panoul aplicatiei derulează în propriul container, nu în fereastră, ca la majoritatea aplicațiilor web. '.repeat(3)}</p>
+<a href="/form">Sus in panou</a><div style="height:3000px"></div><button>Jos in panou</button></main></div>`,
   '/offscreen': () => `<title>Offscreen</title><main><h1>Ascunse</h1>
 <p>${'Indexurile contoarelor de apa se trimit lunar, pana la data de 25, din pagina asociatiei de proprietari. '.repeat(3)}</p>
 <a href="/x" class="highslide-loading" style="position:absolute; top:-9999px; opacity:0.75">INCARCA...</a>
@@ -264,15 +267,14 @@ async function chromeStep(emit, base) {
   check('second read reply says N elements hidden', !!hid && second.includes(` · ${hid[2]} elements hidden`));
   check('the hidden nav links are absent from the element list and the new link is listed',
     !/\] link Avizier/.test(f2) && /\] link Factura mai PDF/.test(f2));
+  const all = await emit('[agent:browser read chrome --all]');
+  const fa = fileOf(all);
+  check('read --all has no stripped: row and keeps the menu and the nav links', !rows(fa).length && /Plati online/.test(fa) && /\] link Avizier/.test(fa)
+    && !/chrome stripped|elements hidden/.test(all));
   const firstEls = fileOf(firstRead).split('\n').filter((l) => /^\[\d+\] link Avizier/.test(l));
   const avizier = firstEls.length ? /^\[(\d+)\]/.exec(firstEls[0])[1] : '0';
   check(`a hidden number [${avizier}] still clicks the same link`,
     new RegExp(`clicked chrome \\[${avizier}\\] link "Avizier"`).test(await emit(`[agent:browser click chrome ${avizier}]`)));
-  await emit(`[agent:browser open chrome] ${base}/chrome-b`);
-  await emit('[agent:browser read chrome]');
-  const all = await emit('[agent:browser read chrome --all]');
-  const fa = fileOf(all);
-  check('read --all has no stripped: row and keeps the menu', !rows(fa).length && /Plati online/.test(fa) && !/chrome stripped/.test(all));
   await emit(`[agent:browser open busy] ${base}/busy`);
   const t0 = Date.now();
   const r1 = await emit('[agent:browser read busy]');
@@ -314,6 +316,15 @@ async function offscreenStep(emit, base) {
     / · changed: "Nume \| Index precedent \| Index curent ⏎ APA \| 0,000 \| 6,834"$/.test(act));
   const ins = await emit('[agent:browser inspect offscreen --text="INCARCA"]');
   check('click/inspect --text finds no visible off-screen spinner', /no visible element with the text "INCARCA"/.test(ins));
+  await emit(`[agent:browser open appscroll] ${base}/app-scroll`);
+  const app = fileOf(await emit('[agent:browser read appscroll]')).split('\n').filter((l) => /^\[\d+\]/.test(l));
+  for (const l of app) console.log(`    ${l}`);
+  check('a button 3000 px down an inner scroller is listed', app.some((l) => /\] button Jos in panou$/.test(l)) && app.some((l) => /link Sus in panou/.test(l)));
+  const jos = /^\[(\d+)\]/.exec(app.find((l) => /Jos in panou/.test(l)) || '[0]')[1];
+  const sus = /^\[(\d+)\]/.exec(app.find((l) => /Sus in panou/.test(l)) || '[0]')[1];
+  check('the button 3000 px down the inner scroller inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${jos}]`)));
+  await emit(`[agent:browser click appscroll ${jos}]`);
+  check('after a click scrolled the inner scroller down, the link above inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${sus}]`)));
 }
 
 async function payStep(emit, base) {

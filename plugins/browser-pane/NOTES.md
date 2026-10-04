@@ -225,12 +225,18 @@ inset(50%|100%)`, and not a ≤1×1 box with overflow hidden. e-bloc parks its
 Highslide spinner (`a.highslide-loading`, "INCARCA...") at `top:-9999px`; before
 this rule every read said `still loading`. The busy scan, the element list,
 `FIND_TEXT`, `INSPECT` and `LOGIN_PROBE` share it. The rule is per element:
-opacity or clip on an ancestor is not seen.
+opacity or clip on an ancestor is not seen. When an ancestor scrolls
+(`overflow` auto/scroll with overflowing content — app layouts with
+`html,body{overflow:hidden}` and a scrolling `#app`), the box is tested against
+that scroller's content range instead of the document: there `scrollY` stays 0
+and the document is one screen tall.
 
 ## page-scripts.js — TABLES
 
 One snippet renders data tables as `cell | cell` rows for both `READ_TEXT` and
-`PAGE_TEXT`, so an act's changed region reads like the read. A trailing
+`PAGE_TEXT`, so an act's changed region reads like the read. `PAGE_TEXT` inserts
+its body clone into the live document, so iframes, objects, embeds and media are
+removed from the clone first: a cloned iframe would re-request its `src`. A trailing
 image-only cell keeps its slot as a trailing `|` (innerText trims the space).
 
 ## read-format.js — elementStrip
