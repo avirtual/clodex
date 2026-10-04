@@ -34,6 +34,7 @@ const realTimers = {
 };
 
 function cmdLabel(cmd) {
+  if (cmd.sub === 'click' && cmd.text != null) return `click --text=${JSON.stringify(cmd.text)}`;
   if (N_ACTS.has(cmd.sub)) return `${cmd.sub} ${cmd.n}`;
   if (cmd.sub === 'key') return `key ${cmd.key}`;
   if (cmd.sub === 'download' && cmd.n != null) return `download ${cmd.n}`;
@@ -140,6 +141,7 @@ function createScheduler({
   async function runAct(handle, service, cmd) {
     const args = { expectDoc: seatState(handle.name).lastDoc[service] };
     if (cmd.n != null) args.n = cmd.n;
+    if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
     if (cmd.sub === 'key') { args.key = cmd.key; delete args.expectDoc; }

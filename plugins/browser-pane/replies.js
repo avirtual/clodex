@@ -144,6 +144,9 @@ const TEXT = {
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
+  noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
+  manyText: (service, text, count, hits) => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
+    hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — click one by number`,
 };
 
 function isGoogle(login) {
@@ -192,7 +195,7 @@ function pageLabel(r) {
 
 function actReply(sub, service, cmd, r) {
   let head;
-  if (sub === 'click') head = `clicked ${service} [${cmd.n}] ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
+  if (sub === 'click') head = `clicked ${service} [${r.n != null ? r.n : cmd.n}] ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
   else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
   else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;
   else head = `pressed ${cmd.key} on ${service}`;
@@ -200,7 +203,12 @@ function actReply(sub, service, cmd, r) {
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   let text = parts.join(' · ');
-  if (r.popup) text += TEXT.popup;
+  if (r.download) {
+    const size = r.download.failed ? `failed: ${r.download.failed}`
+      : r.download.bytes == null ? 'still downloading' : `${Number(r.download.bytes).toLocaleString('en-US')} B`;
+    text += ` · → download ${r.download.name} ${size}${r.popupUrl ? ` (PDF popup ${clipUrl(r.popupUrl)})` : ''}`;
+  } else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
+  else if (r.popup) text += TEXT.popup;
   if (r.takeover) text += TEXT.takeover;
   return reply(text);
 }

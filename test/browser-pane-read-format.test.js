@@ -126,3 +126,17 @@ test('read-format: a PDF view is the single download line', () => {
   const out = formatRead({ ...RAW, contentType: 'application/pdf', url: 'https://x.example/a.pdf' }, { service: 'utility' });
   assert.deepStrictEqual(out, { pdf: true, line: 'this tab shows a PDF (https://x.example/a.pdf) — save it with [agent:browser download utility]' });
 });
+
+test('read-format: clickable element lines and one-line table rows pass through, and --filter keeps them', () => {
+  const raw = {
+    ...RAW,
+    text: 'Avizier\nContor | Index precedent | Index curent\nApă rece | | 19,486',
+    elements: ['[1] link Home → /', '[22] clickable "Lista de plată 08/2026"', '[23] clickable ""', '[24] button Pay now'],
+  };
+  const out = formatRead(raw, { service: 'ebloc' });
+  assert.deepStrictEqual(bodyOf(out.content), ['== text ==', 'Avizier', 'Contor | Index precedent | Index curent', 'Apă rece | | 19,486',
+    '== elements ==', ...raw.elements]);
+  assert.match(out.content.split('\n')[3], /elements: 4 \(this page: \[1\]–\[24\]; numbers can skip\)/);
+  assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
+    ['== text ==', '(no text)', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+});

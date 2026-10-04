@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: elements that only open through a script (rows with a click handler, links without an href, pointer-cursor cells) are now numbered as `clickable`, and `click --text=` targets visible text when nothing is numbered; `read` no longer floods its text head with a dropdown's options, and table rows keep their empty cells so a value can be attributed to its column.
+
 ## 5.112.0 — 2026-10-04
 
 - Plugins: an engine half can now launch its own Electron child process through `host.runtime.electronChild` (desktop app only — a headless host refuses), the foundation for the browser pane.

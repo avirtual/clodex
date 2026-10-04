@@ -35,6 +35,11 @@ carry an expiry, so they stop being session cookies and do not retrigger the
 Readability-style heuristic, no library: prefer `main`/`article`/`[role=main]`,
 else the block with the most non-link text. `innerText` on a detached clone has
 no layout, so the clone is attached off-screen to keep line breaks.
+`select` is dropped from the text: its options are listed with the element, and a
+month dropdown's ~80 options filled the 1,200-char text head. Data tables become
+one line per `tr`, cells joined by ` | `, empty cells kept so a value keeps its
+column. A table holding another table or a cell over `LAYOUT_CELL_CHARS` (400)
+is layout and keeps its normal rendering.
 
 ## page-scripts.js — READ_INTERACTIVE
 
@@ -43,6 +48,22 @@ given, new elements get higher ones. The number table lives in isolated world
 4242, so the page cannot reset or forge it; `data-cx` is only a mirror. Open
 shadow roots are walked. Identical link repeats (nav duplicated in mobile menus)
 are listed once.
+
+Beyond the standard controls, `a` without href, `[onclick]`, `[tabindex]` not
+-1 and pointer-cursor elements are numbered as `clickable`. The pointer test
+costs a `getComputedStyle` per element, so it is capped at `POINTER_SCAN_MAX`
+(3,000) elements in document order; past that only attribute-marked clickables
+are found. A pointer element whose parent is also pointer inherited the cursor
+and is skipped. A clickable with no standard control inside suppresses
+clickables below it (a row is numbered once, not per cell); one that contains a
+standard control is a page wrapper (`<div onclick=closeMenus()>`) and does not,
+unless it is a `tr` or `[role=row]`.
+
+## page-scripts.js — FIND_TEXT
+
+Own text only (direct text nodes, plus the value of input buttons), so the
+match is the innermost element holding the text. Every listed candidate is
+stamped, so its number clicks the text itself, not a wrapper.
 
 ## child.js — run
 
@@ -133,3 +154,14 @@ CDP `Page.captureScreenshot` is the fallback.
 
 `persist:<service>` lives at `chromium/Partitions/<service>`: service names are
 `[a-z0-9-]`, so Electron uses the name verbatim.
+
+## child.js — clickWatched
+
+A click carries a URL-less download waiter into the service's downloads folder,
+so a download it starts is named in the reply. A `window.open` that shows a PDF
+is saved through the router and the view goes back. The idle wait stops as
+soon as either happens (the PDF viewer never reports idle). Waiting on the
+file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 100 s click
+deadline; past it the reply says `still downloading`. The PDF popup's load and
+the way back bump `svc.doc` twice, so the reply says `navigated · numbers reset`
+even though the view ends on the same page: the old numbers really are void.

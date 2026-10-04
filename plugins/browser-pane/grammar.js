@@ -14,7 +14,7 @@ const DEFAULT_MAX = 2500;
 const FLAGS = {
   open: {},
   read: { text: 'bool', links: 'bool', main: 'bool', filter: 'value', page: 'value', max: 'value' },
-  click: {},
+  click: { text: 'value' },
   type: { enter: 'bool' },
   key: {},
   select: {},
@@ -101,6 +101,13 @@ function serviceAndN(sub, positional) {
   return { service, n };
 }
 
+function clickText(positional, text) {
+  if (!text.trim()) throw new Error('--text needs the visible text, e.g. --text="Lista de plată"');
+  const last = positional[positional.length - 1];
+  if (last != null && /^[0-9]+$/.test(last)) throw new Error('click takes an element number or --text, not both');
+  return { sub: 'click', service: serviceArg('click', positional, false), n: null, text };
+}
+
 function checkUrl(text) {
   if (!text) throw new Error('open needs a URL after the bracket — [agent:browser open <service>] <url>');
   if (text.length > URL_MAX) throw new Error('URL too long (max 4,096 chars)');
@@ -168,7 +175,7 @@ function toCommand(intent) {
     };
   }
   const body = String((intent && intent.body) || '').trim();
-  if (sub === 'click') return { sub, ...serviceAndN(sub, positional) };
+  if (sub === 'click') return flags.text == null ? { sub, ...serviceAndN(sub, positional) } : clickText(positional, flags.text);
   if (sub === 'type') {
     const sn = serviceAndN(sub, positional);
     if (!body && !flags.enter) throw new Error('type needs text after the bracket — [agent:browser type [service] <n> [--enter]] <text>');

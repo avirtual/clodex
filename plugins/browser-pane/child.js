@@ -19,12 +19,13 @@ const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const ACT_IDLE_MS = 15000;
 const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
+const CLICK_DOWNLOAD_MS = 5000;
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FLASH_MS = 4000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS']);
 const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget']);
 
 function codedError(code, message) {
@@ -297,7 +298,7 @@ function run(electron, ctx) {
     wc.setWindowOpenHandler(({ url }) => {
       if (svc.lock.state === 'driving') {
         if (svc.downloading) { if (allowedNav(url)) svc.popupUrl = url; return { action: 'deny' }; }
-        if (allowedNav(url)) { svc.popup = true; wc.loadURL(url).catch(() => {}); }
+        if (allowedNav(url)) { svc.popup = true; svc.popupUrl = url; wc.loadURL(url).catch(() => {}); }
         return { action: 'deny' };
       }
       return {
@@ -357,6 +358,7 @@ function run(electron, ctx) {
     svc.busy += 1;
     blockerSync();
     svc.popup = false;
+    svc.popupUrl = null;
     try {
       dispatch(svc, { type: 'gate', seat, what }, { seat });
       const gate = await driver.quietGate({
@@ -390,6 +392,7 @@ function run(electron, ctx) {
       dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });
       const result = { ...out, ...pageInfo(svc), doc: svc.doc, login, takeover };
       if (svc.popup) result.popup = true;
+      if (svc.popup && svc.popupUrl) result.popupUrl = svc.popupUrl;
       if (!takeover && svc.lock.state === 'held') result.held = { reason: svc.lock.reason, login, url: result.url };
       return result;
     } finally {
@@ -426,9 +429,10 @@ function run(electron, ctx) {
   async function opAct(name, frame, args) {
     const svc = need(name);
     const op = frame.op;
-    const n = Number(args.n);
+    const byText = op === 'click' && args.byText != null ? String(args.byText) : null;
+    let n = Number(args.n);
     checkDoc(svc, args);
-    const what = op === 'key' ? `press ${args.key}` : `${op} [${n}]`;
+    const what = op === 'key' ? `press ${args.key}` : byText != null ? `click --text=${JSON.stringify(byText)}` : `${op} [${n}]`;
     return mutating(svc, frame, what, async () => {
       ensureCdp(svc);
       const wc = svc.wc;
@@ -440,12 +444,10 @@ function run(electron, ctx) {
         return { navigated: svc.doc !== docBefore, idle: idleOf(idle) };
       }
       checkDoc(svc, args);
+      if (byText != null) n = await textTarget(svc, byText);
       const el = await resolve(svc, n);
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
-      if (op === 'click') {
-        const { idle } = await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
-        return { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
-      }
+      if (op === 'click') return clickWatched(svc, n, el, docBefore);
       if (op === 'type') {
         if (el.password || el.otp) {
           const e = codedError('PASSWORD_FIELD', TEXT.passwordField(svc.name, n));
@@ -477,6 +479,69 @@ function run(electron, ctx) {
       }
       return { kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
     });
+  }
+
+  async function textTarget(svc, text) {
+    const found = await inIsolated(svc.wc, scripts.FIND_TEXT(text));
+    if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
+    if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits));
+    return found.hits[0].n;
+  }
+
+  async function settleDownload(w, deadline) {
+    const within = (p) => {
+      let t;
+      return Promise.race([p, new Promise((r) => { t = setTimeout(() => r(undefined), Math.max(0, deadline - Date.now())); })])
+        .finally(() => clearTimeout(t));
+    };
+    const item = await within(w.started);
+    if (!item) return null;
+    const name = path.basename(item.getSavePath());
+    try {
+      const out = await within(w.done);
+      return { name: out ? path.basename(out.file) : name, bytes: out ? out.bytes : null };
+    } catch (e) {
+      return { name, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
+    }
+  }
+
+  async function clickWatched(svc, n, el, docBefore) {
+    const wc = svc.wc;
+    const dir = path.join(downloadsRoot, svc.name);
+    const w = routerFor(svc.name, svc.ses).expect({ dir });
+    let began = false;
+    let pdf = false;
+    let acting = true;
+    w.started.then(() => { began = true; });
+    const watchPdf = (async () => {
+      while (acting && !pdf) {
+        await driver.sleep(250);
+        if (acting && svc.popupUrl && !wc.isDestroyed()) pdf = await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf';
+      }
+    })();
+    try {
+      const { idle } = await driver.act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
+        .finally(() => { acting = false; });
+      await watchPdf;
+      const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle) };
+      const deadline = Date.now() + CLICK_DOWNLOAD_MS;
+      if (began) out.download = await settleDownload(w, deadline);
+      else if (svc.popupUrl && await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
+        w.cancel();
+        const pw = routerFor(svc.name, svc.ses).expect({ url: wc.getURL(), dir });
+        wc.downloadURL(wc.getURL());
+        out.download = await settleDownload(pw, deadline);
+        pw.cancel();
+        if (wc.navigationHistory && wc.navigationHistory.canGoBack()) {
+          await driver.act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
+        }
+      }
+      if (!out.download) delete out.download;
+      out.navigated = svc.doc !== docBefore;
+      return out;
+    } finally {
+      w.cancel();
+    }
   }
 
   function downloadUrlOf(svc, raw) {
