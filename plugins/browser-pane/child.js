@@ -493,7 +493,7 @@ function run(electron, ctx) {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
       policy: null, barMsg: null, lastDenied: null, blockedNav: null,
-      origins: new Map(), num: null, agentNav: false, lastHref: '',
+      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '',
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
@@ -511,12 +511,18 @@ function run(electron, ctx) {
       svc.navAt = Date.now();
       svc.lastHref = wc.getURL();
       dispatch(svc, { type: 'navigate' });
-      if (!agent) operatorNav(svc, false);
+      if (!agent) svc.opNav = true;
     });
     const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) { svc.pendingNav = false; svc.agentNav = false; } };
     wc.on('did-fail-load', failed);
     wc.on('did-fail-provisional-load', failed);
-    wc.on('did-stop-loading', () => { svc.pendingNav = false; svc.agentNav = false; });
+    wc.on('did-stop-loading', () => {
+      svc.pendingNav = false;
+      svc.agentNav = false;
+      if (!svc.opNav) return;
+      svc.opNav = false;
+      operatorNav(svc, false);
+    });
     wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => {
       render(svc);
       if (isMainFrame === false || wc.isDestroyed()) return;

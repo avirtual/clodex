@@ -395,7 +395,9 @@ Sent on every main-frame `did-navigate` the agent did not cause, and on a
 `did-navigate-in-page` that changes the URL. Agent-caused means `svc.busy` at
 commit, or a navigation started while busy (`svc.agentNav`, cleared like
 `pendingNav`); a navigation the page starts after the agent's op returned is
-reported as the operator's. `about:blank` is never reported. The engine's
+reported as the operator's. The cross-document event is sent at
+`did-stop-loading`, not at commit: at `did-navigate` the title is still the URL.
+`about:blank` is never reported. The engine's
 `createNavNotifier` holds the first event `OPERATOR_NAV_MS` (5 s) and tells the
 lease holder once, naming the last URL of the burst.
 
