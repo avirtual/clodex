@@ -156,6 +156,16 @@ test('engine: handback answers the waiting seat, and a second seat gets the leas
   assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
 });
 
+test('engine: type into a password field is refused and starts the handoff with one notification', async (t) => {
+  const { emit, notes } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/bills');
+  await emit('[agent:browser read]');
+  assert.strictEqual(await emit('[agent:browser type 7] hunter2'),
+    '[agent:browser] error: [7] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait utility] and end your turn. Do not ask anyone for the password.');
+  assert.deepStrictEqual(notes, [NOTE]);
+  assert.strictEqual(await emit('[agent:browser click 2]'), HELD);
+});
+
 test('engine: an act after a read goes to the child and replies in one line', async (t) => {
   const { emit } = boot(t);
   await emit('[agent:browser open utility] https://portal.example.com/bills');

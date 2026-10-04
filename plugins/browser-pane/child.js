@@ -272,6 +272,7 @@ function run(electron, ctx) {
         throw e;
       }
       if (svc.win.isDestroyed() || svc.wc.isDestroyed()) throw closedError(svc.name);
+      if (out && out.idle && !out.idle.ok && svc.wc.isLoading()) svc.wc.stop();
       const login = await probe(svc);
       const takeover = svc.lock.takeover;
       dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });
@@ -303,7 +304,6 @@ function run(electron, ctx) {
         const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
         if (svc.wc.isDestroyed()) throw closedError(name);
         if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
-        if (!idle.ok && svc.wc.isLoading()) svc.wc.stop();
         return { status, idle: idleOf(idle) };
       } finally {
         if (!svc.wc.isDestroyed()) svc.wc.removeListener('did-navigate', onNav);

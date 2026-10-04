@@ -64,4 +64,4 @@ function barView(s, { service = '', url = '' } = {}) {
   return { ...base, tone: 'blue', handback: true, text: `You have control (${label}) — Hand back to agent ▸` };
 }
 
-module.exports = { initial, reduce, barView, REASON_LABEL };
+module.exports = { initial, reduce, barView };

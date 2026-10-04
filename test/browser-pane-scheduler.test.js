@@ -239,6 +239,30 @@ test('scheduler: a takeover during the command adds the suffix', async () => {
     '[agent:browser] clicked utility [1] button "View" · same page · idle 0.3s · the operator took over during this command']]);
 });
 
+test('scheduler: a wait queued behind a command becomes a held waiter when the service is held meanwhile', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const read = h.run([['hand-a', '[agent:browser read utility]'], ['hand-a', '[agent:browser wait utility]']]);
+  h.sched.onState({ ...HELD_STATE, reason: 'takeover' });
+  assert.deepStrictEqual(await read, [['hand-a', READ_REPLY]]);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+});
+
+test('scheduler: a closed window forgets the seats\' numbers for it', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  h.sched.onClosed('utility');
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]),
+    [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
+});
+
+test('scheduler: a takeover during open adds the suffix', async () => {
+  const h = harness({ open: (a) => ({ status: 200, url: a.url, title: 'Bills', doc: 1, idle: { ok: true, ms: 1000 }, login: {}, takeover: true, held: { reason: 'takeover' } }) });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]),
+    [['hand-a', `${OPENED} · the operator took over during this command`]]);
+});
+
 test('scheduler: handback records the login as logged-in via handback', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);

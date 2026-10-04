@@ -94,3 +94,33 @@ test('replies: writing 55 keeps the 50 newest, and a file older than 24 h is pru
   assert.strictEqual(fs.readdirSync(dir).length, 50);
   assert.ok(fs.existsSync(path.join(dir, 'r-0006.txt')), 'the age prune made room, so the oldest young file stays');
 }));
+
+test('replies: the T3 refusal texts, verbatim', () => {
+  assert.strictEqual(R.TEXT.staleDoc('utility', 'https://portal.example.com/x'),
+    'utility navigated since your last read (now https://portal.example.com/x) — numbers from that read are void; read again.');
+  assert.strictEqual(R.TEXT.noElement('utility', 12), 'no element [12] on utility any more (the page changed) — read again.');
+  assert.strictEqual(R.TEXT.held('utility', 'login'),
+    'the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.');
+  assert.strictEqual(R.TEXT.operatorBusy('utility'),
+    'the operator has been using the utility window for the last 60s; try again in a minute or emit [agent:browser wait utility].');
+  assert.strictEqual(R.TEXT.passwordField('utility', 7),
+    '[7] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait utility] and end your turn. Do not ask anyone for the password.');
+  assert.strictEqual(R.TEXT.lease('utility', 'clodex-hand', 40000),
+    'utility is in use by clodex-hand (last command 40s ago). It frees after 5 min without commands, when they emit [agent:browser release utility], or when their session ends.');
+  assert.strictEqual(R.dropSuffix(['click 4', 'download 5']), ' — dropped 2 queued commands after it: click 4, download 5');
+});
+
+test('replies: the sign-in reply and notification, password and Google, verbatim', () => {
+  assert.strictEqual(R.signinReply('utility', { password: true }, 'https://portal.example.com/login'),
+    '[agent:browser] sign-in needed on utility (password field at https://portal.example.com/login). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait utility] and end your turn; the reply comes when the operator hands the window back.');
+  assert.strictEqual(R.signinReply('utility', { idp: 'google' }, 'https://accounts.google.com/v3/signin'),
+    "[agent:browser] sign-in on utility goes through Google (accounts.google.com), which refuses sign-in inside embedded browsers, so the operator probably cannot log in here. Tell the operator in one line and stop: they can try the portal's own email/password login, or download the files by hand. Do not ask for credentials.");
+  assert.deepStrictEqual(R.signinNotice('utility', 'clodex-hand', 'https://portal.example.com/login', { password: true }), {
+    title: 'Browser: sign in to utility',
+    body: 'clodex-hand opened https://portal.example.com/login and hit a sign-in page. Click "browser: needs you" in the status bar (or find the "utility — Clodex Browser" window), sign in, then press "Hand back to agent". The agent never sees what you type.',
+  });
+  assert.deepStrictEqual(R.signinNotice('utility', 'clodex-hand', 'https://accounts.google.com/v3/signin/rejected', { googleRejected: true }), {
+    title: 'Browser: utility uses Google sign-in',
+    body: 'Google refuses sign-in inside embedded browsers ("This browser or app may not be secure"). If the portal has its own email/password login, use it in the window and press Hand back; otherwise this service cannot be automated yet.',
+  });
+});

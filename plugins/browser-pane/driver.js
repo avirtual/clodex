@@ -91,8 +91,6 @@ function S(wc, ev) {
   try { wc.sendInputEvent(ev); } finally { synth = false; }
 }
 
-const isSynth = () => synth;
-
 const KEYS = {
   Enter: { code: 'Return', char: '\r' },
   Tab: { code: 'Tab' },
@@ -199,5 +197,5 @@ async function pinSessionCookies(ses, days = 30) {
 
 module.exports = {
   withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS,
-  S, isSynth, installFilters, quietGate, click, typeText, pressKey, KEYS,
+  S, installFilters, quietGate, click, typeText, pressKey, KEYS,
 };

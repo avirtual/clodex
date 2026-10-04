@@ -111,8 +111,8 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
     const r = await client.request('open', { url: cmd.url }, { service, seat: handle.name });
     recordOpen(service, handle.name, r);
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });
-    if (r.held) signin(service, r);
-    return replies.openReply(service, r);
+    if (r.held && !r.takeover) signin(service, r);
+    return replies.openReply(service, r) + (r.takeover ? replies.TEXT.takeover : '');
   }
 
   async function runRead(handle, service, cmd) {
@@ -162,9 +162,15 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
     const job = s.queue.shift();
     s.inflight = job;
     let p;
+    if (s.state === 'held' && job.cmd.sub === 'wait') {
+      s.inflight = null;
+      addWaiter(job.handle, service, job.cmd);
+      pump(service);
+      return;
+    }
     if (s.state === 'held') p = Promise.reject(new Error(replies.TEXT.held(service, s.reason)));
     else p = Promise.resolve().then(() => RUN[job.cmd.sub](job.handle, service, job.cmd));
-    job.done = p
+    p
       .then((text) => job.handle.inject(text))
       .catch((e) => fail(job.handle, s, errText(service, e)))
       .finally(() => {
@@ -258,6 +264,7 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
   }
 
   function onClosed(service) {
+    for (const st of seats.values()) delete st.lastDoc[service];
     onState({ service, state: 'closed' });
   }
 
@@ -276,20 +283,9 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
     seats.delete(name);
   }
 
-  const stateOf = (service) => {
-    const s = services.get(service);
-    return s ? { state: s.state, reason: s.reason } : { state: 'closed', reason: null };
-  };
-
-  const idle = (service) => {
-    const s = services.get(service);
-    return !s || (!s.inflight && !s.queue.length) ? Promise.resolve() : s.inflight.done.then(() => idle(service));
-  };
-
   return {
-    submit, onState, onClosed, onChildExit, onSessionExit, forgetSeat: (name) => onSessionExit({ name }),
-    seatState, stateOf, idle, NO_SERVICE,
+    submit, onState, onClosed, onChildExit, onSessionExit, seatState, NO_SERVICE,
   };
 }
 
-module.exports = { createScheduler, storedLogin, cmdLabel, NO_SERVICE, LEASE_MS };
+module.exports = { createScheduler, storedLogin, NO_SERVICE };
