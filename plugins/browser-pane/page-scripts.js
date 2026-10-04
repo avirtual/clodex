@@ -13,6 +13,8 @@ const POINTER_SCAN_MAX = 3000;
 const LAYOUT_CELL_CHARS = 400;
 const VALUE_MAX = 200;
 const OVERLAY_ID = '__cx_numbers';
+const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
+const CHROME_MARK = '\u0001';
 
 const DEEP = `
   const deepAll = (root, test, out = []) => {
@@ -112,6 +114,11 @@ function readText(main) {
   if (!root) return { text: '', busy };
   const clone = root.cloneNode(true);
   clone.querySelectorAll(DROP).forEach(n => n.remove());
+  const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
+  for (const c of chrome) {
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim()) t.data = ${JSON.stringify(CHROME_MARK)} + t.data;
+  }
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
@@ -135,7 +142,8 @@ const numbering = (state) => {
   let next = ${next};
   const assigned = {};
   const fresh = [];
-  const clip = (s, n) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const flat = s => String(s || '').replace(/\\s+/g, ' ').trim();
+  const clip = (s, n) => { s = flat(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const labelOf = el => {
     if (el.labels && el.labels[0]) return el.labels[0].innerText;
     return el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder')
@@ -152,9 +160,9 @@ const numbering = (state) => {
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       const btn = tag === 'input' && /^(button|submit|reset)$/.test(el.type);
       const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || (btn ? el.value : '') || '';
-      return { kind, label: clip(label, 60), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
+      return { kind, label: flat(label), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
     }
-    const label = clip(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''), 60);
+    const label = flat(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''));
     if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
     let raw = '';
     try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
@@ -295,15 +303,26 @@ function readInteractive(main, state) {
   }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = [];
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = [];
+  const rowText = new Map();
+  const rowOf = el => {
+    const r = el.closest('tr,[role=row]');
+    if (!r) return '';
+    if (!rowText.has(r)) rowText.set(r, clip(r.innerText || r.textContent || '', 200));
+    return rowText.get(r);
+  };
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
     const p = parts[i];
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
-    if (it.line != null) out.push('[' + n + '] ' + it.line);
+    if (it.line != null) {
+      out.push('[' + n + '] ' + it.line);
+      sigs[n] = it.line + '\u0000' + rowOf(it.el);
+      if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
+    }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, chrome, url: location.href };
 })()`;
 }
 
@@ -549,7 +568,7 @@ function targetState(n) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS,
 };

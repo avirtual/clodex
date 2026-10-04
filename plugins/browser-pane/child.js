@@ -10,7 +10,7 @@ const { TEXT } = require('./replies');
 const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
-const { changedRegion, CHANGE_MAX } = require('./read-format');
+const { changedRegion, CHANGE_MAX, hostOf } = require('./read-format');
 
 const BAR_HEIGHT = 40;
 const MAX_WINDOWS = 8;
@@ -245,6 +245,12 @@ function retiredOf(prevKeys, curKeys, sameDoc) {
   return Object.entries(prevKeys)
     .filter(([, k]) => !cur.has(k) && (sameDoc || bases.has(keys.parseStored(k).base)))
     .map(([n]) => Number(n)).sort((a, b) => a - b);
+}
+
+function changedOf(prevSigs, curSigs) {
+  if (!prevSigs || !curSigs) return [];
+  return Object.keys(curSigs).filter((n) => prevSigs[n] != null && prevSigs[n] !== curSigs[n])
+    .map(Number).sort((a, b) => a - b);
 }
 
 function wireHost({ stdin, stdout, shutdown }) {
@@ -1152,9 +1158,10 @@ function run(electron, ctx) {
     if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
-    const first = ![...svc.origins.values()].some((e) => e.lastRead);
     const state = numOf(svc);
     const ent = svc.num;
+    const first = !ent.lastRead;
+    const firstHost = first && [...svc.origins.values()].some((e) => e.lastRead) ? hostOf(wc.getURL()) : null;
     state.listed = [...ent.listed];
     let el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
     if (el == null) el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
@@ -1171,12 +1178,15 @@ function run(electron, ctx) {
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),
       retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...ent.volatile])),
+      changed: changedOf(prev && prev.sigs, el.sigs),
+      chrome: el.chrome || [],
       keys: el.keys || {},
-      ...(first ? { first: true } : {}),
+      ...(first ? { first: firstHost || true } : {}),
     } : {};
     if (el) {
       for (const n of el.fresh || []) ent.listed.add(Number(n));
-      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {} };
+      ent.changed = new Set(numbers.changed);
+      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const login = await probe(svc);
@@ -1288,5 +1298,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, changedOf, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };
