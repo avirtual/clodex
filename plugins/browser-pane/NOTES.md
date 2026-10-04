@@ -268,3 +268,63 @@ is not reported as a stripped header.
 `did-navigate`, so a request of the previous document that never finishes is
 not counted as loading forever. `fired.lifecycle` keeps the last
 `LIFECYCLE_MAX` (64) events, since `svc.watch` is never detached.
+
+## child.js — opOperatorOpen
+
+An `open` with `operator: true` has no seat and takes no lease: it opens or
+reuses the window, dispatches `takeover` before loading so the service is
+`held` (reason `takeover`) the whole time, and the input filters stay off. The
+engine reports a held/takeover service as `operator: true` in `status` and
+`services.list`. An agent seat with queued, in-flight or waiting work on the
+service (`activeSeat`) refuses the open.
+
+## engine.js — handOver
+
+Order is grant, then child `handback`, then one `inject`. The lease goes to the
+seat before the hold ends so no other seat's queued command takes the window in
+between; the inject is last so the seat's first `read` finds the window idle.
+`lastCmdAt` is the grant time, so the usual 5-minute expiry applies if the seat
+never acts. plugin-api.md offers no `host.intents.granted` query, so the
+missing-grant suffix is not sent.
+
+## renderer.js — clickActionFor
+
+Segment click: no windows does nothing, one calls `show` (the engine's
+`pickShown`), two or more open the plugin's own fixed `<div>` picker (no
+popover primitive in `rhost.ui`), closed on Escape or an outside mousedown.
+
+## child.js — barNav
+
+The bar (`bar.html`, the window's own webContents) talks to the child only by
+`console.log`: `cxb:takeover`, `cxb:handback`, `cxb:back`, `cxb:reload` and
+`cxb:go <typed text>`. Typed text gets `https://` unless it carries a scheme
+(`urlpolicy.typedUrl`), then `checkOpenUrl` and the policy. Bar actions run
+only while the service is `idle` or `held`, through `serial` so they never
+overlap an agent op, and stamp `svc.lastInput` so an agent's quiet gate waits.
+A committed navigation sends `operator-nav`; the engine tells the lease holder
+once per 5 s per service. `driver.installFilters` sits on the page view's
+webContents, not the bar's, so typing in the address bar is never filtered.
+The bar's own `before-input-event` stamps `svc.lastInput`, so an agent's quiet
+gate waits while the operator types a URL.
+
+## child.js — policyDenies
+
+The one denylist check, called from every navigation path: agent `open`,
+`opOperatorOpen`, the address bar, `block` (`will-navigate`, `will-frame-navigate`, `will-redirect`,
+also attached to every allowed popup via `guardPopup`), both
+`setWindowOpenHandler`s, `viaUrl`, and the per-partition `will-download`
+router. The child gets the lists with every `open` (`args.policy`) and with the
+`policy` op the engine sends on a Settings save. Repeats of one URL within
+1 s send one `denied` event. A `will-redirect` refusal during an agent open
+reads as `NAV_FAILED`, not the refusal text.
+
+## urlpolicy.js — compilePolicy
+
+`host` matches the host and its subdomains on any scheme and port; `*.host`
+subdomains only; `host/path/*` a path prefix, `host/path` the exact path;
+`http://` or `https://` pins the scheme; `!` makes an allow exception, checked
+across both lists before any deny. Host compare is case-insensitive (WHATWG
+host parsing), path compare exact-case. Ports, IPv6, `@`, `\`, `?`, `#` and inner `*`
+are rejected. A trailing dot on the URL host is dropped before matching, and
+the path is compared both raw and percent-decoded, so `example.com./` and
+`/%61dmin/` cannot slip past a rule. 200 patterns per list, 512 chars each; blank lines are dropped.

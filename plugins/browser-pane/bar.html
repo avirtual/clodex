@@ -7,7 +7,10 @@
   html, body { margin: 0; height: 40px; overflow: hidden; font: 12px -apple-system, system-ui, sans-serif; background: #f2f2f2; color: #222; }
   .bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; box-sizing: border-box; border-bottom: 1px solid #ccc; }
   .svc { font-weight: 600; }
-  .url { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #555; }
+  .url { flex: 1; min-width: 120px; font: inherit; padding: 3px 6px; border: 1px solid #bbb; border-radius: 4px; background: #fff; color: #222; }
+  .url[readonly] { background: #e8e8e8; color: #666; }
+  .msg { color: #b00020; max-width: 40%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .msg:empty { display: none; }
   .pill { padding: 2px 8px; border-radius: 10px; background: #ddd; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .pill.wait { background: #f3e3b5; }
   .pill.amber { background: #f5a623; color: #000; }
@@ -19,15 +22,29 @@
 <body>
 <div class="bar">
   <span class="svc" id="svc"></span>
-  <span class="url" id="url"></span>
+  <button id="back" title="Back" disabled>◀</button>
+  <button id="reload" title="Reload" disabled>↻</button>
+  <input class="url" id="url" spellcheck="false" autocomplete="off" readonly>
+  <span class="msg" id="msg"></span>
   <span class="pill" id="state">idle</span>
   <button id="takeover" hidden>Take over</button>
   <button id="handback" hidden>Hand back to agent</button>
 </div>
 <script>
+  var shown = null;
+  var dirty = false;
+  var input = document.getElementById('url');
   window.cxbRender = function (vm) {
     document.getElementById('svc').textContent = String((vm && vm.service) || '');
-    document.getElementById('url').textContent = String((vm && vm.url) || '');
+    var url = String((vm && vm.url) || '');
+    if (url !== shown || !dirty) { input.value = url; dirty = false; }
+    shown = url;
+    var editable = !!(vm && vm.editable);
+    input.readOnly = !editable;
+    input.title = editable ? '' : 'agent driving';
+    document.getElementById('back').disabled = !(editable && vm.canBack);
+    document.getElementById('reload').disabled = !editable;
+    document.getElementById('msg').textContent = String((vm && vm.msg) || '');
     const pill = document.getElementById('state');
     pill.textContent = String((vm && vm.text) || (vm && vm.state) || 'idle');
     pill.className = 'pill ' + (['wait', 'amber', 'blue'].includes(vm && vm.tone) ? vm.tone : '');
@@ -36,6 +53,13 @@
   };
   document.getElementById('takeover').addEventListener('click', function () { console.log('cxb:takeover'); });
   document.getElementById('handback').addEventListener('click', function () { console.log('cxb:handback'); });
+  document.getElementById('back').addEventListener('click', function () { console.log('cxb:back'); });
+  document.getElementById('reload').addEventListener('click', function () { console.log('cxb:reload'); });
+  input.addEventListener('input', function () { dirty = true; });
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !input.readOnly && input.value.trim()) { dirty = true; console.log('cxb:go ' + input.value.trim()); }
+    else if (e.key === 'Escape') { input.value = shown || ''; dirty = false; input.blur(); }
+  });
 </script>
 </body>
 </html>

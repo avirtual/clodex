@@ -18,6 +18,48 @@ you the window (it lands when the current action finishes); **Hand back to
 agent** returns it. On a sign-in page the window is handed to you with one
 notification; agents are refused password and one-time-code fields.
 
+## Steering the window yourself
+
+The bar at the top of each window has an address field with back and reload.
+Type a URL and press Enter (a bare host gets `https://`), Escape puts the
+current URL back. The field is read-only while an agent drives. When you
+navigate while an agent holds the window, that agent is told on its next turn
+that the page changed and to read before using numbers.
+
+## Denylist
+
+Settings ▸ Browser Pane has a **Denylist**: one list for all services and one
+per saved service, one pattern per line, then **Save**. A matching URL is
+refused whoever asks — the agent's `open` (the reply names the pattern), your
+address bar (the refusal shows in the bar for 5 s), a link or redirect in the
+page, a popup, a download. Patterns:
+
+```
+example.com            example.com and every subdomain, any scheme
+*.example.com          subdomains only
+example.com/admin/*    paths under /admin/
+https://example.com    only that scheme
+!example.com/admin/ok  an exception: allowed even though a pattern matches
+```
+
+A path without `/*` matches that exact path only (`example.com/` is the root
+page alone). Hosts match on any port; IPv6 literals cannot be listed, so to
+block loopback list `localhost` and `127.0.0.1`.
+
+Saving applies to open windows at once. An invalid line is refused with its
+line number and reason.
+
+## Operator checks (by hand)
+
+The address bar is UI-driven and not covered by `manual/browser-pane-live.js`:
+
+1. With a window idle, type a URL and press Enter: the page changes, and the
+   agent holding the window gets `the operator navigated <service> to <url>`.
+2. While an agent drives (amber bar), the address field is read-only and back
+   and reload are disabled.
+3. Type a denylisted URL: the bar shows `Refused: matches denylist pattern …`
+   for 5 s and keeps what you typed; Escape restores the current URL.
+
 ## Turning it on
 
 1. Enable **Browser Pane** in Plugins. It is off by default.
@@ -51,6 +93,29 @@ is a PDF; a web page saved instead (an expired session) is flagged.
 The login persists: the next run, even after a restart, starts signed in until
 the portal's own session timeout. **Forget login** in Manage Plugins deletes a
 service's cookies.
+
+## Opening a window yourself and handing it to an agent
+
+In Manage Plugins → Browser Pane, **Open a window:** takes a service name and a
+URL and opens that service's window under your control (the status bar shows
+**browser: <service> operator**; agents are refused until you hand it over).
+Navigate or sign in as you like. Every open window's row has **Hand to agent…**:
+pick a claude or codex seat of this workspace, type what it should do, press
+**Hand over**. The seat gets one line naming the service and page, your
+instruction, and `[agent:browser read <service>]` to start with; the row shows
+"handed to <seat>" for 5 s. With two or more windows open, clicking the status
+segment lists them, each with **Show** and the same **Hand to agent…** control.
+
+Operator checks (by hand, in the app):
+
+1. Open from Settings → the window appears, and the segment reads `browser: <service> operator`.
+2. Navigate or sign in by hand in the window — no agent act gets through.
+3. Hand to agent with an instruction → the seat receives the one-line handover.
+4. The seat's first `read` works, and a numbered `click` after it works.
+5. With two windows open, clicking the segment lists both; Escape closes the list.
+
+`CXB_ONLY=handover node manual/browser-pane-live.js` drives the same through the
+ipc handlers (step 12).
 
 ## Limits
 

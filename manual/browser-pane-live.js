@@ -90,6 +90,8 @@ const PAGES = {
   document.querySelector('.loading').style.display = 'none'; document.getElementById('st').textContent = t;
 }), 2000);</script>`,
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
+  '/policy': () => `<title>Policy</title><main><a href="/blocked/x">Blocked link</a>
+<button onclick="window.open('/blocked/p', '_blank')">Blocked popup</button></main>`,
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
 
@@ -148,6 +150,11 @@ function server() {
         res.end('<title>Set</title><main><p>cookie set</p></main>');
         return;
       }
+      if (/^\/(svc-)?blocked\//.test(url.pathname)) {
+        res.writeHead(200, headers);
+        res.end(`<title>Reached ${url.pathname}</title><main><p>reached</p></main>`);
+        return;
+      }
       const page = PAGES[url.pathname];
       res.writeHead(page ? 200 : 404, headers);
       res.end(page ? `<!doctype html><html><body>${page(req)}</body></html>` : 'nope');
@@ -192,7 +199,8 @@ function bootEngine(userData, tmp) {
     pluginRowFor('browser').handler(handle, parseWithRegistry(line));
     return p.then((reply) => { console.log(`> ${line}\n< ${reply}`); return reply; });
   };
-  return { engine, emit, host };
+  const nextInject = () => new Promise((r) => { waiter = r; });
+  return { engine, emit, host, nextInject };
 }
 
 function landed(reply) {
@@ -341,6 +349,58 @@ async function offscreenStep(emit, base) {
   check('a quirks-mode page with body overflow-x hidden still lists the scrolled-to elements', q2.some((l) => /Jos pagina/.test(l)) && q2.some((l) => /Mijloc pagina/.test(l)));
 }
 
+async function policyStep(emit, base, engine) {
+  console.log('== 11. a global and a per-service denylist refuse open, page links and popups; an allow exception lets open through');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const set = (scope, patterns) => engine.dispatch('browser-pane', 'denylist.set', [{ scope, patterns }], 'desktop');
+  const denied = async () => ((await engine.dispatch('browser-pane', 'status', ['w'], 'desktop')).services.find((s) => s.name === 'policy') || {}).denied;
+  console.log(`    ${JSON.stringify(await set('global', ['127.0.0.1/blocked/*', '!127.0.0.1/blocked/ok']))}`);
+  console.log(`    ${JSON.stringify(await set('policy', ['127.0.0.1/svc-blocked/*']))}`);
+  console.log(`    ${JSON.stringify(await set('global', ['127.0.0.1/blocked/*', 'bad*pattern']))}`);
+  await emit(`[agent:browser open policy] ${base}/policy`);
+  check('open to a globally denied path is refused naming the pattern',
+    / error: open refused: \S+\/blocked\/x matches denylist pattern "127\.0\.0\.1\/blocked\/\*" \(global\) — ask the operator/.test(await emit(`[agent:browser open policy] ${base}/blocked/x`)));
+  check('open to a per-service denied path is refused naming the service',
+    / error: open refused: \S+\/svc-blocked\/y matches denylist pattern "127\.0\.0\.1\/svc-blocked\/\*" \(service policy\)/.test(await emit(`[agent:browser open policy] ${base}/svc-blocked/y`)));
+  await emit(`[agent:browser open policy] ${base}/policy`);
+  const before = await denied();
+  const read1 = fileOf(await emit('[agent:browser read policy]'));
+  const num = (re) => { const l = read1.split('\n').find((x) => /^\[\d+\]/.test(x) && re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
+  await emit(`[agent:browser click policy ${num(/Blocked link/)}]`);
+  const read2 = fileOf(await emit('[agent:browser read policy]'));
+  check('a page link to /blocked/x does nothing: the read shows the same page', /Blocked link/.test(read2) && !/Reached/.test(read2));
+  await emit(`[agent:browser click policy ${num(/Blocked popup/)}]`);
+  const read3 = fileOf(await emit('[agent:browser read policy]'));
+  check('a popup to /blocked/p is denied: the view stays on the page', /Blocked popup/.test(read3) && !/Reached/.test(read3));
+  const after = await denied();
+  console.log(`    denials counted for policy: ${before} → ${after}`);
+  check('the link and the popup were counted as denials', after - before >= 2);
+  check('an allow exception lets open through',
+    /opened policy · 200 · "Reached \/blocked\/ok"/.test(await emit(`[agent:browser open policy] ${base}/blocked/ok`)));
+}
+
+async function handoverStep(engine, emit, nextInject, base) {
+  console.log('== 12. the operator opens a window and hands it to a seat with an instruction');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const call = (method, req) => engine.dispatch('browser-pane', method, [req], 'desktop');
+  const opened = await call('operator.open', { service: 'desk', url: `${base}/form` });
+  console.log(`    operator.open → ${JSON.stringify(opened)}`);
+  const st = await call('status', 'w');
+  const desk = (st.services || []).find((x) => x.name === 'desk') || {};
+  console.log(`    status desk → ${JSON.stringify(desk)}`);
+  check('the window is held by the operator', desk.state === 'held' && desk.operator === true);
+  check('an agent act is refused while operator-held', /operator has control of desk \(takeover\)/.test(await emit('[agent:browser read desk]')));
+  const injected = nextInject();
+  const r = await call('operator.handover', { service: 'desk', seat: 'live-seat', instruction: 'find the search box\nand search for Form 1040' });
+  const line = await injected;
+  console.log(`    operator.handover → ${JSON.stringify(r)}`);
+  console.log(`    inject < ${line}`);
+  const want = `[agent:browser] the operator opened desk at ${base}/form ("Form") and handed it to you — find the search box and search for Form 1040 — start with [agent:browser read desk]`;
+  check('the handover is one line with the shape', !/\n/.test(line) && line === want);
+  check('the first read by that seat succeeds', /^\[agent:browser\] read desk · /.test(await emit('[agent:browser read desk]')));
+  check('click works after it', /^\[agent:browser\] clicked desk \[\d+\]/.test(await emit('[agent:browser click desk 2]')));
+}
+
 async function payStep(emit, base) {
   console.log('== 6. a click that commits an interstitial which auto-POSTs to a 17 s endpoint');
   await emit(`[agent:browser open pay] ${base}/pay`);
@@ -367,9 +427,11 @@ async function main() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
-  let { engine, emit, host } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen'].includes(process.env.CXB_ONLY)) {
+  let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
+  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen', 'handover', 'policy'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
+    else if (process.env.CXB_ONLY === 'handover') await handoverStep(engine, emit, nextInject, base);
+    else if (process.env.CXB_ONLY === 'policy') await policyStep(emit, base, engine);
     else if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
     else if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
     else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
@@ -430,7 +492,7 @@ async function main() {
   await emit(`[agent:browser open jar] ${base}/set`);
   engine.deactivate('browser-pane');
   await sleep(4000);
-  ({ engine, emit, host } = bootEngine(userData, tmp));
+  ({ engine, emit, host, nextInject } = bootEngine(userData, tmp));
   await emit(`[agent:browser open jar] ${base}/echo`);
   show(fileOf(await emit('[agent:browser read jar --text]')), (l) => /cookie header/.test(l));
   await emit('[agent:browser services]');
@@ -467,6 +529,7 @@ async function main() {
   await effectsStep(emit, base, tmp);
   await chromeStep(emit, base);
   await offscreenStep(emit, base);
+  await handoverStep(engine, emit, nextInject, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);
