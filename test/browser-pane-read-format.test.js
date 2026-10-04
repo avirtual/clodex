@@ -70,7 +70,7 @@ test('read-format: login and frames lines report the raw probe', () => {
     { service: 'utility' });
   const lines = out.content.split('\n');
   assert.strictEqual(lines[4], 'login: password field');
-  assert.strictEqual(lines[5], 'frames: 2 not read (https://billing.example/f, …)');
+  assert.strictEqual(lines[5], 'frames: 2 not read (billing.example/f, …)');
 });
 
 test('read-format: a text longer than 1,200 chars shows only its head on page 1', () => {
@@ -276,4 +276,51 @@ test('read-format: changedRegion inside a table prepends the header row once', (
   assert.strictEqual(changedRegion(t('0,000'), t('6,834', '9,9')),
     'Nume | Index precedent | Index curent ⏎ APA | 0,000 | 6,834 / GAZ | 0,000 | 9,9');
   assert.strictEqual(changedRegion('a\nb\nc', 'a\nB\nc'), 'B');
+});
+
+const RF = require('../plugins/browser-pane/read-format');
+const HOSTILE = 'https://accounts.google.com/gsi/button?theme=outline&client_id=1234-abc.apps.googleusercontent.com&cas=vCbHEkB9xQ2mLr7TzKp4Wn8dYs3Fh6Ju&iframe_id=gsi_1';
+
+test('read-format: an unread frame shows host and path only, never its query or fragment', () => {
+  const out = formatRead({ ...RAW, frames: [`${HOSTILE}#frag=1`] }, { service: 'utility' });
+  const line = out.content.split('\n').find((l) => l.startsWith('frames:'));
+  assert.strictEqual(line, 'frames: 1 not read (accounts.google.com/gsi/button)');
+  assert.ok(!out.content.includes('vCbHEkB'));
+});
+
+test('read-format: redactUrl blanks token-shaped values and secret-named params, keeps page and short timestamps', () => {
+  assert.strictEqual(RF.redactUrl(HOSTILE),
+    'https://accounts.google.com/gsi/button?theme=outline&client_id=1234-abc.apps.googleusercontent.com&cas=<redacted>&iframe_id=gsi_1');
+  assert.strictEqual(RF.redactUrl('https://www.e-bloc.ro/index.php?page=4&t=1791145507'), 'https://www.e-bloc.ro/index.php?page=4&t=1791145507');
+  assert.strictEqual(RF.redactUrl('https://x.test/cb?code=abc&state=1&session_id=9#access_token=zz&id_token=yy'),
+    'https://x.test/cb?code=<redacted>&state=1&session_id=<redacted>#access_token=<redacted>&id_token=<redacted>');
+  assert.strictEqual(RF.redactUrl('https://x.test/a?authuser=0&side=left&zipcode=12345'), 'https://x.test/a?authuser=0&side=left&zipcode=12345');
+});
+
+test('read-format: the url header line is redacted and names the site when it differs from the opened host', () => {
+  const lines = formatRead({ ...RAW, url: 'https://my.smartthings.com/devices?sid=QWERTYUIOPASDFGHJKLZX' }, { service: 'ebloc', openedHost: 'e-bloc.ro' })
+    .content.split('\n');
+  assert.strictEqual(lines[1], 'url: https://my.smartthings.com/devices?sid=<redacted> · site: my.smartthings.com (opened as e-bloc.ro)');
+  assert.strictEqual(formatRead({ ...RAW, url: 'https://www.e-bloc.ro/x' }, { service: 'ebloc', openedHost: 'e-bloc.ro' }).content.split('\n')[1],
+    'url: https://www.e-bloc.ro/x');
+});
+
+test('read-format: the first read of a service says so instead of listing every number as new', () => {
+  const head = (raw) => formatRead({ ...RAW, ...raw }, { service: 'ebloc' }).content.split('\n').find((l) => l.startsWith('doc:'));
+  assert.match(head({ first: true, fresh: [1, 2, 3] }), /\(numbers: stable per site; first read of ebloc\)/);
+  assert.match(head({ fresh: [23, 24, 25] }), /new since your last read: \[23\], \[24\], \[25\]\)/);
+});
+
+test('read-format: background requests show only under --all', () => {
+  const rows = (opts, loading) => formatRead({ ...RAW, loading }, { service: 'x', ...opts }).content.split('\n').filter((l) => l.startsWith('loading:'));
+  assert.deepStrictEqual(rows({}, { active: false, inflight: 0, background: 4 }), []);
+  assert.deepStrictEqual(rows({ all: true }, { active: false, inflight: 0, background: 4 }), ['loading: no (+4 background)']);
+  assert.match(rows({ all: true }, { active: true, inflight: 1, background: 2 })[0], /^loading: yes \(1 requests in flight\) \(\+2 background\) — /);
+  assert.match(rows({}, { active: true, inflight: 1, background: 2 })[0], /^loading: yes \(1 requests in flight\) — /);
+});
+
+test('read-format: changedRegion compares through a line normaliser but reports the raw lines', () => {
+  const norm = (l) => l.replace(/\d/g, '#');
+  assert.strictEqual(changedRegion('a\n7:56:11\nb', 'a\n7:56:14\nb', CHANGE_MAX, norm), '');
+  assert.strictEqual(changedRegion('a\n7:56:11\nAC On', 'a\n7:56:14\nAC Off', CHANGE_MAX, norm), 'AC Off');
 });

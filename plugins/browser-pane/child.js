@@ -24,6 +24,12 @@ const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
 const CLICK_DOWNLOAD_MS = 5000;
 const SNAP_MS = 2000;
+const LATE_CHANGE_MS = 3000;
+const LATE_STEP_MS = 500;
+const BASELINE_GAP_MS = 300;
+const ORIGINS_MAX = 8;
+const HMS = /\b\d{1,2}:\d{2}:\d{2}\b/g;
+const CLASS_NOISE = /focus|hover|ripple/i;
 const LOADING_INFLIGHT_MS = 300;
 const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
@@ -128,6 +134,97 @@ function originOf(url) {
   try { return new URL(url).origin; } catch { return ''; }
 }
 
+function numState(svc, url) {
+  const origin = originOf(url);
+  let e = svc.origins.get(origin);
+  if (e) svc.origins.delete(origin);
+  else e = { numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), lastRead: null, listed: new Set() };
+  svc.origins.set(origin, e);
+  while (svc.origins.size > ORIGINS_MAX) svc.origins.delete(svc.origins.keys().next().value);
+  svc.num = e;
+  return { known: Object.fromEntries(e.numbers), next: e.nextN, volatile: [...e.volatile] };
+}
+
+function mergeNumbers(svc, out) {
+  const e = svc.num;
+  if (!e || !out || !out.assigned) return;
+  for (const [k, n] of Object.entries(out.assigned)) { e.numbers.set(k, Number(n)); e.byN.set(Number(n), k); }
+  if (Number(out.next) > e.nextN) e.nextN = Number(out.next);
+}
+
+function numberRefusal(service, n, stored, verdict) {
+  if (stored == null) return codedError('NO_ELEMENT', TEXT.noElement(service, n));
+  if (verdict === 'ok') return null;
+  const p = keys.parseStored(stored);
+  if (verdict === 'ambiguous') return codedError('AMBIGUOUS', TEXT.ambiguousN(service, n, p.label, p.context));
+  return codedError('NO_ELEMENT', TEXT.noElement(service, n));
+}
+
+function navOf({ docBefore, docAfter, hrefBefore, hrefAfter, download = false }) {
+  const moved = !sameUrl(hrefBefore, hrefAfter);
+  if (docAfter === docBefore) return moved ? { navigated: true, inPage: true } : { navigated: false };
+  if (download && !moved) return { navigated: false };
+  return { navigated: true };
+}
+
+const digitMask = (l) => l.replace(/\d/g, '#');
+
+function tickersOf(a, b) {
+  const out = new Set();
+  if (a == null || b == null) return out;
+  const x = String(a).split('\n');
+  const y = String(b).split('\n');
+  let i = 0;
+  while (i < x.length && i < y.length && x[i] === y[i]) i++;
+  let j = 0;
+  while (j < x.length - i && j < y.length - i && x[x.length - 1 - j] === y[y.length - 1 - j]) j++;
+  for (const l of [...x.slice(i, x.length - j), ...y.slice(i, y.length - j)]) out.add(digitMask(l));
+  return out;
+}
+
+const normOf = (tickers) => (l) => (tickers.has(digitMask(l)) ? `\u0001${digitMask(l)}` : l.replace(HMS, '#:##:##'));
+
+function targetDiff(before, after) {
+  if (!before || !after) return null;
+  const parts = [];
+  let strong = false;
+  for (const [where, b, a] of [['', before.el, after.el], ['tile ', before.tile, after.tile]]) {
+    if (!b || !a) continue;
+    for (const k of [...new Set([...Object.keys(b), ...Object.keys(a)])]) {
+      if (b[k] === a[k]) continue;
+      if (k === 'class') {
+        const bs = new Set(String(b[k] || '').split(/\s+/).filter(Boolean));
+        const as = new Set(String(a[k] || '').split(/\s+/).filter(Boolean));
+        const d = [...[...as].filter((c) => !bs.has(c)).map((c) => `+${c}`), ...[...bs].filter((c) => !as.has(c)).map((c) => `-${c}`)]
+          .filter((c) => !CLASS_NOISE.test(c));
+        if (d.length) parts.push(`${where}class ${d.join(' ')}`);
+        continue;
+      }
+      strong = true;
+      const q = (v) => (v == null ? 'none' : JSON.stringify(String(v).length > 60 ? `${String(v).slice(0, 59)}…` : String(v)));
+      parts.push(`${where}${k} ${q(b[k])} → ${q(a[k])}`);
+    }
+  }
+  return parts.length ? { text: parts.join(', '), strong } : null;
+}
+
+async function settleChange({
+  before, tickers = new Set(), snap, target = null, targetBefore = null, sleepFn = driver.sleep, now = Date.now, lateMs = LATE_CHANGE_MS, stepMs = LATE_STEP_MS,
+}) {
+  const norm = normOf(tickers);
+  const t0 = now();
+  let changed = null;
+  let tgt = null;
+  for (;;) {
+    const after = await snap();
+    if (after != null) changed = changedRegion(before, after, CHANGE_MAX, norm);
+    if (target && targetBefore) tgt = targetDiff(targetBefore, await target());
+    if (changed || (tgt && tgt.strong) || now() - t0 >= lateMs) break;
+    await sleepFn(stepMs);
+  }
+  return { changed, target: tgt ? tgt.text : null };
+}
+
 function numberVerdict(verdict, stored, pageKeys) {
   if (verdict === 'ok' || verdict === 'ambiguous') return verdict;
   if (!pageKeys) return 'gone';
@@ -225,6 +322,12 @@ function run(electron, ctx) {
     svc.lastDenied = { url, at: now };
     if (!seen) send({ event: 'denied', service: svc.name, url, pattern: hit.pattern, list: hit.list, by });
     return hit;
+  };
+
+  const operatorNav = (svc, inPage) => {
+    const info = pageInfo(svc);
+    if (!info.url || info.url === 'about:blank') return;
+    send({ event: 'operator-nav', service: svc.name, ...info, ...(inPage ? { inPage: true } : {}) });
   };
 
   const deniedError = (svc, url, hit, verb) => codedError('DENIED', TEXT.denied(url, hit.pattern, hit.list === 'service' ? svc.name : null, verb));
@@ -390,21 +493,44 @@ function run(electron, ctx) {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
       policy: null, barMsg: null, lastDenied: null, blockedNav: null,
-      numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), numOrigin: null, lastRead: null,
+      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '',
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
     wc.on('did-start-navigation', (e, ...a) => {
       const main = e && e.isMainFrame != null ? e.isMainFrame : a[2];
       const same = e && e.isSameDocument != null ? e.isSameDocument : a[1];
-      if (main && !same) svc.pendingNav = true;
+      if (main && !same) { svc.pendingNav = true; if (svc.busy > 0) svc.agentNav = true; }
     });
-    wc.on('did-navigate', () => { svc.pendingNav = false; if (svc.watch) svc.watch.reset(); svc.doc += 1; svc.navAt = Date.now(); dispatch(svc, { type: 'navigate' }); });
-    const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) svc.pendingNav = false; };
+    wc.on('did-navigate', () => {
+      const agent = svc.busy > 0 || svc.agentNav;
+      svc.pendingNav = false;
+      svc.agentNav = false;
+      if (svc.watch) svc.watch.reset();
+      svc.doc += 1;
+      svc.navAt = Date.now();
+      svc.lastHref = wc.getURL();
+      dispatch(svc, { type: 'navigate' });
+      if (!agent) svc.opNav = true;
+    });
+    const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) { svc.pendingNav = false; svc.agentNav = false; } };
     wc.on('did-fail-load', failed);
     wc.on('did-fail-provisional-load', failed);
-    wc.on('did-stop-loading', () => { svc.pendingNav = false; });
-    wc.on('did-navigate-in-page', () => render(svc));
+    wc.on('did-stop-loading', () => {
+      svc.pendingNav = false;
+      svc.agentNav = false;
+      if (!svc.opNav) return;
+      svc.opNav = false;
+      operatorNav(svc, false);
+    });
+    wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => {
+      render(svc);
+      if (isMainFrame === false || wc.isDestroyed()) return;
+      const href = wc.getURL();
+      if (href === svc.lastHref) return;
+      svc.lastHref = href;
+      if (svc.busy === 0) operatorNav(svc, true);
+    });
     const block = (e, url) => {
       const target = (e && e.url) || url;
       if (!allowedNav(target)) { e.preventDefault(); return; }
@@ -467,46 +593,27 @@ function run(electron, ctx) {
   const heldError = (svc) => codedError('HELD', TEXT.held(svc.name, svc.lock.reason));
   const closedError = (name) => codedError('CLOSED', `the operator closed the ${name} window — open it again`);
 
-  const numState = (svc) => {
-    const origin = originOf(svc.wc.getURL());
-    if (origin !== svc.numOrigin) {
-      svc.numOrigin = origin;
-      svc.numbers = new Map();
-      svc.byN = new Map();
-      svc.nextN = 1;
-      svc.volatile = new Set();
-      svc.lastRead = null;
-    }
-    return { known: Object.fromEntries(svc.numbers), next: svc.nextN, volatile: [...svc.volatile] };
-  };
-
-  const mergeNumbers = (svc, out) => {
-    if (!out || !out.assigned) return;
-    for (const [k, n] of Object.entries(out.assigned)) { svc.numbers.set(k, Number(n)); svc.byN.set(Number(n), k); }
-    if (Number(out.next) > svc.nextN) svc.nextN = Number(out.next);
-  };
+  const numOf = (svc) => numState(svc, svc.wc.getURL());
 
   async function stampPage(svc) {
-    const out = await inIsolated(svc.wc, scripts.READ_INTERACTIVE(false, numState(svc)));
+    const out = await inIsolated(svc.wc, scripts.READ_INTERACTIVE(false, numOf(svc)));
     mergeNumbers(svc, out);
     return out;
   }
 
   async function checkNumber(svc, n) {
-    const state = numState(svc);
-    const stored = svc.byN.get(Number(n));
-    if (stored == null) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+    const state = numOf(svc);
+    const stored = svc.num.byN.get(Number(n));
+    const missing = numberRefusal(svc.name, n, stored, 'ok');
+    if (missing) throw missing;
     let verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, state));
     let page = null;
     if (verdict == null) {
       page = await stampPage(svc);
-      verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, numState(svc)));
+      verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, numOf(svc)));
     }
-    const v = numberVerdict(verdict, stored, page && page.keys);
-    if (v === 'ok') return;
-    const p = keys.parseStored(stored);
-    if (v === 'ambiguous') throw codedError('AMBIGUOUS', TEXT.ambiguousN(svc.name, n, p.label, p.context));
-    throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+    const refused = numberRefusal(svc.name, n, stored, numberVerdict(verdict, stored, page && page.keys));
+    if (refused) throw refused;
   }
 
   async function resolve(svc, n) {
@@ -637,21 +744,23 @@ function run(electron, ctx) {
       const wc = svc.wc;
       await driver.emulateFocus(wc);
       const docBefore = svc.doc;
+      const hrefBefore = wc.getURL();
+      const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download });
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
-        const before = await snapText(wc);
+        const pre = await preAct(svc, null);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
-        return withChange(svc, before, { navigated: svc.doc !== docBefore, idle: idleOf(idle) });
+        return withChange(svc, pre, { ...nav(), idle: idleOf(idle) });
       }
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
-      const before = await snapText(wc);
+      const pre = await preAct(svc, op === 'click' ? n : null);
       if (op === 'click') {
-        const out = await clickWatched(svc, n, el, docBefore, dir);
+        const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
-        return withChange(svc, before, out);
+        return withChange(svc, pre, out);
       }
       if (op === 'type') {
         if (el.password || el.otp) {
@@ -667,7 +776,7 @@ function run(electron, ctx) {
           await driver.typeText(wc, text);
           if (args.enter) driver.pressKey(wc, 'Enter');
         }, actOpts(svc));
-        const out = await withChange(svc, before, { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) });
+        const out = await withChange(svc, pre, { kind: el.kind, label: el.label, ...nav(), idle: idleOf(idle) });
         if (out.changed === '' && !wc.isDestroyed()) {
           const value = await inIsolated(wc, scripts.VALUE(n));
           if (typeof value === 'string') out.value = value;
@@ -687,24 +796,43 @@ function run(electron, ctx) {
           ? `${JSON.stringify(String(args.option))} matches ${picked.options.length} options of [${n}]: ${list} — use the exact text`
           : `no option ${JSON.stringify(String(args.option))} in [${n}] — options: ${list}`);
       }
-      return withChange(svc, before, {
-        kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle),
+      return withChange(svc, pre, {
+        kind: el.kind, label: el.label, value: picked.value, text: picked.text, ...nav(), idle: idleOf(idle),
       });
     });
   }
 
-  async function withChange(svc, before, out) {
-    if (before == null || out.navigated || out.download || svc.popup || svc.popupUrl || svc.wc.isDestroyed()) return out;
-    const after = await snapText(svc.wc);
-    if (after != null) out.changed = changedRegion(before, after, CHANGE_MAX);
+  const targetOf = (svc, n) => driver.withTimeout(
+    svc.wc.executeJavaScriptInIsolatedWorld(scripts.ISOLATED_WORLD, [{ code: scripts.TARGET_STATE(n) }]).catch(() => null), SNAP_MS, null);
+
+  async function preAct(svc, n) {
+    const first = await snapText(svc.wc);
+    await driver.sleep(BASELINE_GAP_MS);
+    const before = await snapText(svc.wc);
+    const target = n != null && !svc.wc.isDestroyed() ? await targetOf(svc, n) : null;
+    return { before, tickers: tickersOf(first, before), n, target };
+  }
+
+  async function withChange(svc, pre, out) {
+    if (pre.before == null || (out.navigated && !out.inPage) || out.download || svc.popup || svc.popupUrl || svc.wc.isDestroyed()) return out;
+    const r = await settleChange({
+      before: pre.before,
+      tickers: pre.tickers,
+      snap: () => (svc.wc.isDestroyed() ? null : snapText(svc.wc)),
+      target: pre.target ? () => (svc.wc.isDestroyed() ? null : targetOf(svc, pre.n)) : null,
+      targetBefore: pre.target,
+    });
+    if (r.changed != null) out.changed = r.changed;
+    if (r.target) out.target = r.target;
+    if (pre.target && !r.changed && !r.target) out.watched = LATE_CHANGE_MS;
     return out;
   }
 
   async function textTarget(svc, text, verb = 'click') {
-    let found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numState(svc)));
+    let found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numOf(svc)));
     if (found && found.unstamped) {
       await stampPage(svc);
-      found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numState(svc)));
+      found = await inIsolated(svc.wc, scripts.FIND_TEXT(text, numOf(svc)));
     }
     mergeNumbers(svc, found);
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
@@ -712,7 +840,7 @@ function run(electron, ctx) {
     return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
   }
 
-  async function clickWatched(svc, n, el, docBefore, dir) {
+  async function clickWatched(svc, n, el, nav, dir) {
     const wc = svc.wc;
     const w = routerFor(svc.name, svc.ses).expect({ dir });
     let began = false;
@@ -744,8 +872,7 @@ function run(electron, ctx) {
         }
       }
       if (!out.download) delete out.download;
-      out.navigated = svc.doc !== docBefore;
-      return out;
+      return Object.assign(out, nav(!!out.download));
     } finally {
       w.abandoned = true;
       w.cancel();
@@ -989,7 +1116,6 @@ function run(electron, ctx) {
       const { idle } = await driver.act(wc, go, { timeoutMs: OPEN_IDLE_MS });
       if (wc.isDestroyed()) return;
       if (!idle.ok && wc.isLoading() && !svc.pendingNav && (kind === 'go' || svc.doc !== docAt)) wc.stop();
-      if (svc.doc !== docAt) send({ event: 'operator-nav', service: svc.name, ...pageInfo(svc) });
     });
   }
 
@@ -1026,25 +1152,32 @@ function run(electron, ctx) {
     if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
-    const state = numState(svc);
+    const first = ![...svc.origins.values()].some((e) => e.lastRead);
+    const state = numOf(svc);
+    const ent = svc.num;
+    state.listed = [...ent.listed];
     let el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
     if (el == null) el = await inIsolated(wc, scripts.READ_INTERACTIVE(main, state));
-    const prev = svc.lastRead;
+    const prev = ent.lastRead;
     if (el && prev) {
       const learned = keys.learnVolatile(prev.descs, el.descs, prev.url, el.url, state.volatile);
       if (learned.length) {
-        for (const name of learned) svc.volatile.add(name);
-        const again = await inIsolated(wc, scripts.READ_INTERACTIVE(main, { ...state, volatile: [...svc.volatile] }));
+        for (const name of learned) ent.volatile.add(name);
+        const again = await inIsolated(wc, scripts.READ_INTERACTIVE(main, { ...state, volatile: [...ent.volatile] }));
         if (again) el = again;
       }
     }
     mergeNumbers(svc, el);
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),
-      retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...svc.volatile])),
+      retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...ent.volatile])),
       keys: el.keys || {},
+      ...(first ? { first: true } : {}),
     } : {};
-    if (el) svc.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {} };
+    if (el) {
+      for (const n of el.fresh || []) ent.listed.add(Number(n));
+      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {} };
+    }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const login = await probe(svc);
     const frames = wc.mainFrame.framesInSubtree
@@ -1070,7 +1203,7 @@ function run(electron, ctx) {
     const w = svc.watch;
     const inflight = w ? w.size(LOADING_INFLIGHT_MS) : 0;
     const since = Math.max(svc.navAt || 0, w ? w.lastNet() : 0);
-    return { active: svc.wc.isLoading() || inflight > 0, inflight, ms: Date.now() - since };
+    return { active: svc.wc.isLoading() || inflight > 0, inflight, background: w && w.background ? w.background() : 0, ms: Date.now() - since };
   }
 
   function serial(name, fn) {
@@ -1153,4 +1286,7 @@ function run(electron, ctx) {
   });
 }
 
-module.exports = { run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf };
+module.exports = {
+  run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
+  numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+};

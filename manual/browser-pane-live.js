@@ -73,6 +73,14 @@ const PAGES = {
 <a href="/att">Factura PDF</a>
 <div id=ondiv onclick="document.title='div'">Lista onclick</div></main>`;
   },
+  '/late': () => `<title>Late</title><main><h1>Living room</h1><p id=clock>0:00:00</p>
+<div class=card><button id=ac aria-pressed="false" aria-label="AC Off" onclick="setTimeout(() => { this.setAttribute('aria-pressed', 'true'); this.setAttribute('aria-label', 'AC On'); }, 1200)">AC</button></div>
+<button>Nimic</button></main>
+<script>setInterval(() => { document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8); }, 1000);</script>`,
+  '/opnav-src': () => `<title>Opnav source</title><main><a id=go href="/opnav-dst">Mai departe</a></main>
+<script>setTimeout(() => document.getElementById('go').click(), 2500);</script>`,
+  '/opnav-dst': () => `<title>Opnav destination</title><main><p>Ajuns</p></main>
+<script>setTimeout(() => history.pushState({}, '', '/opnav-dst/route'), 7000);</script>`,
   '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
   '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p><p><a href="/chrome-a?pdf=5">Factura mai PDF</a></p>'),
   '/app-scroll': () => `<title>App scroll</title><style>html,body{height:100%;margin:0;overflow:hidden} #app{height:100%;overflow:auto}</style>
@@ -277,6 +285,27 @@ async function effectsStep(emit, base, cwd) {
   const insp = await emit(`[agent:browser inspect effects --text="Lista onclick"]`);
   check('inspect on the onclick div lists its click listener', /\n {2}listeners: click(\n|,| ·)/.test(insp));
   check('inspect shows the onclick attribute and the html', /attrs: onclick=/.test(insp) && /\n {2}html: <div id="ondiv"/.test(insp));
+  await emit(`[agent:browser open late] ${base}/late`);
+  const late = fileOf(await emit('[agent:browser read late]')).split('\n').filter((l) => /^\[\d+\]/.test(l));
+  const lateN = (re) => { const l = late.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
+  check('a button whose aria flips 1.2 s after the click reports the target change, not the clock',
+    / · target: aria-label "AC Off" → "AC On"/.test(await emit(`[agent:browser click late ${lateN(/AC/)}]`)));
+  check('a button with no effect beside a 1 s clock says no change on the target within 3s',
+    / · no change on the target within 3s$/.test(await emit(`[agent:browser click late ${lateN(/Nimic/)}]`)));
+}
+
+async function opnavStep(emit, nextInject, base) {
+  console.log('== 11b. a page link click and a pushState the agent did not cause each tell the lease holder once');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open opnav] ${base}/opnav-src`);
+  const line = await nextInject();
+  console.log(`    inject < ${line}`);
+  check('a scripted link click while live-seat holds the lease injects one operator-nav line',
+    line === `[agent:browser] the operator navigated opnav to ${base}/opnav-dst ("Opnav destination") — read before using numbers`);
+  const route = await nextInject();
+  console.log(`    inject < ${route}`);
+  check('a pushState route change injects one (in-page) line', route.startsWith(`[agent:browser] the operator navigated opnav to ${base}/opnav-dst/route (in-page)`));
+  check('services names the current host', /services: opnav — 127\.0\.0\.1 · /.test(await emit('[agent:browser services]')));
 }
 
 async function chromeStep(emit, base) {
@@ -493,7 +522,7 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable'].includes(process.env.CXB_ONLY)) {
+  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'stable') {
       for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
@@ -503,6 +532,7 @@ async function main() {
     else if (process.env.CXB_ONLY === 'policy') await policyStep(emit, base, engine);
     else if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
     else if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
+    else if (process.env.CXB_ONLY === 'opnav') await opnavStep(emit, nextInject, base);
     else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
     await sleep(3000);
@@ -599,6 +629,7 @@ async function main() {
   await chromeStep(emit, base);
   await offscreenStep(emit, base);
   await rowsStep(emit, base);
+  await opnavStep(emit, nextInject, base);
   await handoverStep(engine, emit, nextInject, base);
   await overlayStep(emit, base);
 

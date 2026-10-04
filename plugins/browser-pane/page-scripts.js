@@ -126,10 +126,12 @@ const numbering = (state) => {
   const known = state && state.known && typeof state.known === 'object' ? state.known : {};
   const next = Math.max(1, Number(state && state.next) | 0);
   const learned = state && Array.isArray(state.volatile) ? state.volatile.map(String) : [];
+  const listedBefore = state && Array.isArray(state.listed) ? state.listed.map(Number) : null;
   return `${ICON}
   ${keys.PAGE_SOURCE}
   const known = ${JSON.stringify(known)};
   const learned = ${JSON.stringify(learned)};
+  const listedBefore = ${listedBefore ? `new Set(${JSON.stringify(listedBefore)})` : 'null'};
   let next = ${next};
   const assigned = {};
   const fresh = [];
@@ -188,7 +190,9 @@ const numbering = (state) => {
   };
   const place = (el, s, listed = true) => {
     let n = known[s];
-    if (n == null) { n = next++; known[s] = n; assigned[s] = n; if (listed) fresh.push(n); }
+    const isNew = n == null;
+    if (isNew) { n = next++; known[s] = n; assigned[s] = n; }
+    if (listed && (listedBefore ? !listedBefore.has(n) : isNew)) { fresh.push(n); if (listedBefore) listedBefore.add(n); }
     window.__cxEls[n] = new WeakRef(el);
     window.__cxKeys[n] = s;
     window.__cxOf.set(el, n);
@@ -464,6 +468,8 @@ function select(n, option) {
 })()`;
 }
 
+const PROFILE_SEL = 'a[href$="/profile"], a[aria-label*="Profile" i], [data-testid*="AppTabBar_Profile" i], [aria-label*="Account menu" i]';
+
 const LOGIN_PROBE = `(() => {${DEEP}
   const any = (test) => deepAll(document, test).some(vis);
   const host = location.hostname;
@@ -472,6 +478,16 @@ const LOGIN_PROBE = `(() => {${DEEP}
     : /(^|\\.)appleid\\.apple\\.com$/.test(host) ? 'apple'
     : /(^|\\.)okta\\.com$/.test(host) ? 'okta' : null;
   const body = (document.body && document.body.innerText) || '';
+  const has = (test) => deepAll(document, test).length > 0;
+  const loggedInHint = () => {
+    if (has(el => el.tagName === 'INPUT' && el.type === 'password')) return null;
+    const exit = /log ?out|sign ?out|deconectare|ieșire/i;
+    if (has(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
+      && exit.test((el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '')))) return 'logout';
+    if (has(el => el.matches(${JSON.stringify(PROFILE_SEL)}))) return 'profile';
+    if (has(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
+    return null;
+  };
   return {
     password: any(el => el.tagName === 'INPUT' && el.type === 'password'),
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
@@ -479,6 +495,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
     logoutLink: any(el => (el.tagName === 'A' || el.tagName === 'BUTTON') && /\\b(log|sign)\\s?out\\b/i.test(el.innerText || '')),
+    loggedInHint: loggedInHint(),
   };
 })()`;
 
@@ -510,10 +527,29 @@ const OVERLAY_OFF = `(() => {
   if (layer) layer.remove();
   return !!layer;
 })()`;
+const TILE_SEL = '[role=button],article,li,tr,[role=row],section,[class*=card],[class*=tile]';
+const STATE_ATTRS = ['aria-label', 'aria-pressed', 'aria-checked', 'aria-expanded', 'class'];
+
+function targetState(n) {
+  return `(() => {
+  ${REF(n)}
+  const of = e => {
+    if (!e) return null;
+    const o = {};
+    for (const a of ${JSON.stringify(STATE_ATTRS)}) { const v = e.getAttribute(a); if (v != null) o[a] = v; }
+    if (typeof e.value === 'string' && e.type !== 'password') o.value = e.value.slice(0, ${VALUE_MAX});
+    return o;
+  };
+  const up = el.parentElement || (el.parentNode && el.parentNode.host) || null;
+  return { el: of(el), tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})) };
+})()`;
+}
+
 
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS,
 };

@@ -271,3 +271,46 @@ test('replies: inspect renders an empty label as (icon), like read; a waiting ho
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility', true), 'agent hand-b is waiting on utility — wait or ask it to release');
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility'), 'agent hand-b is driving utility — wait or ask it to release');
 });
+
+const TOKEN_URL = 'https://accounts.google.com/o/oauth2?client_id=abc.apps&cas=vCbHEkB9xQ2mLr7TzKp4Wn8dYs3Fh6Ju&page=4&t=1791145507';
+
+test('replies: operator-nav, navigated →, download from and handback lines redact token params and keep the rest', () => {
+  const red = 'https://accounts.google.com/o/oauth2?client_id=abc.apps&cas=<redacted>&page=4&t=1791145507';
+  assert.strictEqual(R.operatorNav('ebloc', TOKEN_URL, 'G'), `[agent:browser] the operator navigated ebloc to ${red} ("G") — read before using numbers`);
+  assert.strictEqual(R.operatorNav('x', 'https://x.com/home', 'Home', true), '[agent:browser] the operator navigated x to https://x.com/home (in-page) ("Home") — read before using numbers');
+  const idle = { ok: true, ms: 800 };
+  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'G', navigated: true, url: TOKEN_URL, title: 'G', idle }).includes(`navigated → ${red} ("G")`));
+  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'G', navigated: false, idle,
+    download: { file: '/tmp/a.pdf', bytes: 1, mime: 'application/pdf', url: TOKEN_URL } }).endsWith(`from ${red}`));
+  assert.ok(R.handbackReply('ebloc', { url: TOKEN_URL, title: 'G', login: {} }).includes(`now ${red} (`));
+  assert.ok(!R.openReply('ebloc', { status: 200, url: TOKEN_URL, title: 'G', login: {} }).includes('vCbHEkB'));
+});
+
+test('replies: an in-page navigation names the url and still reports the change', () => {
+  const idle = { ok: true, ms: 800 };
+  assert.strictEqual(R.actReply('click', 'x', { sub: 'click', n: 7 }, { kind: 'link', label: 'Post', navigated: true, inPage: true, url: 'https://x.com/DanKornas/status/1', title: 'X', idle, changed: 'Post / Reply' }),
+    '[agent:browser] clicked x [7] link "Post" · navigated → https://x.com/DanKornas/status/1 (in-page) · numbers kept where the page repeats · idle 0.8s · changed: "Post / Reply"');
+});
+
+test('replies: a target attribute flip is reported, and a watched target with nothing changed says so', () => {
+  const idle = { ok: true, ms: 800 };
+  const base = { kind: 'button', label: 'AC', navigated: false, idle };
+  assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: '', target: 'aria-label "AC Off" → "AC On"' }),
+    '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · target: aria-label "AC Off" → "AC On"');
+  assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: 'AC On', target: 'tile aria-pressed "false" → "true"' }),
+    '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · changed: "AC On" · target: tile aria-pressed "false" → "true"');
+  assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: '', watched: 3000 }),
+    '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · no change on the target within 3s');
+});
+
+test('replies: services names the host each window is on and the host it was opened as when they differ', () => {
+  const services = {
+    ebloc: { lastUsedAt: 2, login: { state: 'logged-in', at: new Date(2026, 9, 4, 15, 40).getTime() }, lastUrl: 'https://www.e-bloc.ro/index.php', openedHost: 'e-bloc.ro' },
+    hn: { lastUsedAt: 1, login: { state: 'unknown' }, lastUrl: 'https://news.ycombinator.com/news' },
+  };
+  const urls = { ebloc: 'https://my.smartthings.com/devices?sid=x', hn: 'https://news.ycombinator.com/item?id=1' };
+  assert.strictEqual(R.servicesReply(services, new Map([['ebloc', 'idle'], ['hn', 'idle']]), (n) => urls[n]),
+    '[agent:browser] services: ebloc — my.smartthings.com (was e-bloc.ro) · signed in (10-04 15:40) · window open · idle │ hn — news.ycombinator.com · unknown · window open · idle');
+  assert.strictEqual(R.servicesReply(services, new Map([['ebloc', 'closed']]), (n) => urls[n]).split(' │ ')[0],
+    '[agent:browser] services: ebloc — e-bloc.ro · signed in (10-04 15:40) · closed');
+});

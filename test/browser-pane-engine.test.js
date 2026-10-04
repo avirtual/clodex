@@ -1,6 +1,7 @@
 'use strict';
 
 const test = require('node:test');
+const { mock } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -74,7 +75,7 @@ test('engine: open replies with one line and records the service in storage', as
   const { emit, injected, host } = boot(t);
   const reply = await emit('[agent:browser open utility] https://portal.example.com/home?acct=123');
   assert.strictEqual(reply,
-    '[agent:browser] opened utility · 200 · "Fixture utility" · https://portal.example.com/home?acct=123 · login: none · idle 1.2s · next: read');
+    '[agent:browser] opened utility · 200 · "Fixture utility" · https://portal.example.com/home?acct=123 · login: signed in · idle 1.2s · next: read');
   assert.deepStrictEqual(injected[0].opts, { parkable: true });
   const s = host.storage.get().services.utility;
   assert.strictEqual(s.lastUrl, 'https://portal.example.com/home');
@@ -113,7 +114,7 @@ test('engine: services after open is the storage-backed line', async (t) => {
   assert.strictEqual(await emit('[agent:browser services]'), '[agent:browser] no services yet — [agent:browser open <service>] <url>');
   await emit('[agent:browser open utility] https://portal.example.com/home');
   assert.match(await emit('[agent:browser services]'),
-    /^\[agent:browser\] services: utility — signed in \(\d\d-\d\d \d\d:\d\d\) · window open · idle$/);
+    /^\[agent:browser\] services: utility — portal.example.com · signed in \(\d\d-\d\d \d\d:\d\d\) · window open · idle$/);
 });
 
 test('engine: a bad form throws from the handler, and no service yet is refused', (t) => {
@@ -379,14 +380,19 @@ test('engine: open carries the global and the service denylist to the child', as
   assert.ok(reply.includes(JSON.stringify(JSON.stringify({ global: ['bad.example.com'], service: ['portal.example.com/x/*'] }))), reply);
 });
 
-test('engine: an operator navigation tells the lease holder once per 5 s, and nobody once the lease is released', async (t) => {
+test('engine: a burst of operator navigations within 5 s tells the lease holder once, naming the last url, and nobody once the lease is released', async (t) => {
   const { emit, engine, injected } = boot(t);
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
   await emit('[agent:browser open utility] https://portal.example.com/opnav');
   const denied = async () => ((await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop')).services[0] || {}).denied;
   for (let i = 0; i < 500 && await denied() !== 1; i += 1) await new Promise((r) => setImmediate(r));
   assert.strictEqual(await denied(), 1, 'the denied event is counted per service');
-  assert.deepStrictEqual(injected.filter((i) => /operator navigated/.test(i.text)).map((i) => [i.name, i.text]), [['clodex-hand',
-    '[agent:browser] the operator navigated utility to https://portal.example.com/typed ("Typed page") — read before using numbers']]);
+  const told = () => injected.filter((i) => /operator navigated/.test(i.text)).map((i) => [i.name, i.text]);
+  assert.deepStrictEqual(told(), []);
+  mock.timers.tick(engineMod.OPERATOR_NAV_MS);
+  assert.deepStrictEqual(told(), [['clodex-hand',
+    '[agent:browser] the operator navigated utility to https://portal.example.com/second ("Typed page") — read before using numbers']]);
   await emit('[agent:browser open other] https://portal.example.com/drive');
   await emit('[agent:browser release other]');
   const before = injected.length;

@@ -3,6 +3,8 @@
 const SCRIPT_TIMEOUT_MS = 8000;
 const SKIP_TYPES = ['WebSocket', 'EventSource', 'Ping'];
 const LIFECYCLE_MAX = 64;
+const STREAM_MS = 8000;
+const SKIP_SCHEMES = /^(blob|data):/i;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,25 +26,25 @@ async function emulateFocus(wc) {
   await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
 }
 
-async function armIdle(wc, { network = true } = {}) {
+async function armIdle(wc, { network = true, now = Date.now } = {}) {
   const dbg = attachCdp(wc);
   await dbg.sendCommand('Page.enable');
   await dbg.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true });
   if (network) await dbg.sendCommand('Network.enable');
   const fired = { lifecycle: [], didStopLoading: false, inPage: false, requests: 0 };
   const inflight = new Map();
-  let lastNet = Date.now();
+  let lastNet = now();
   const onMsg = (_e, method, params) => {
     if (method === 'Page.lifecycleEvent') {
       fired.lifecycle.push(params.name);
       if (fired.lifecycle.length > LIFECYCLE_MAX) fired.lifecycle.shift();
     }
-    else if (method === 'Network.requestWillBeSent' && !SKIP_TYPES.includes(params.type)) {
-      inflight.set(params.requestId, { url: params.request.url, at: Date.now() });
+    else if (method === 'Network.requestWillBeSent' && !SKIP_TYPES.includes(params.type) && !SKIP_SCHEMES.test(String((params.request || {}).url || ''))) {
+      inflight.set(params.requestId, { url: params.request.url, at: now() });
       fired.requests++;
-      lastNet = Date.now();
+      lastNet = now();
     } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
-      if (inflight.delete(params.requestId)) lastNet = Date.now();
+      if (inflight.delete(params.requestId)) lastNet = now();
     }
   };
   const onStop = () => { fired.didStopLoading = true; };
@@ -55,24 +57,28 @@ async function armIdle(wc, { network = true } = {}) {
     wc.removeListener('did-stop-loading', onStop);
     wc.removeListener('did-navigate-in-page', onInPage);
   };
+  const active = () => {
+    const cut = now() - STREAM_MS;
+    return [...inflight.values()].filter((v) => v.at > cut);
+  };
   const wait = async ({ quietMs = 500, graceMs = 0, timeoutMs = 15000, shouldStop = null } = {}) => {
-    const t0 = Date.now();
+    const t0 = now();
     if (graceMs) await sleep(graceMs);
     try {
       for (;;) {
-        if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: Date.now() - t0, fired, inflight: [] };
-        if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: Date.now() - t0, fired };
-        if (Date.now() - t0 > timeoutMs) {
-          return { ok: false, reason: 'timeout', ms: Date.now() - t0, fired, inflight: [...inflight.values()].slice(0, 5).map((v) => v.url) };
+        if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: now() - t0, fired, inflight: [] };
+        if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: now() - t0, fired };
+        if (now() - t0 > timeoutMs) {
+          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url) };
         }
-        if (!wc.isLoading() && inflight.size === 0) {
+        if (!wc.isLoading() && active().length === 0) {
           const q = await withTimeout(wc.executeJavaScript(`new Promise(res => {
             let last = performance.now(); const mo = new MutationObserver(() => last = performance.now());
             mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
             const tick = () => { if (performance.now() - last >= ${quietMs}) { mo.disconnect(); res(document.readyState); } else setTimeout(tick, 100); };
             setTimeout(tick, 100); })`).catch(() => null), quietMs + 3000);
-          if (q === 'complete' && !wc.isLoading() && inflight.size === 0 && Date.now() - lastNet >= quietMs) {
-            return { ok: true, ms: Date.now() - t0, fired };
+          if (q === 'complete' && !wc.isLoading() && active().length === 0 && now() - lastNet >= quietMs) {
+            return { ok: true, ms: now() - t0, fired };
           }
         }
         await sleep(100);
@@ -82,12 +88,11 @@ async function armIdle(wc, { network = true } = {}) {
     }
   };
   const size = (minAgeMs = 0) => {
-    const cut = Date.now() - minAgeMs;
-    let n = 0;
-    for (const v of inflight.values()) if (v.at <= cut) n++;
-    return n;
+    const cut = now() - minAgeMs;
+    return active().filter((v) => v.at <= cut).length;
   };
-  return { wait, fired, detach, size, reset: () => inflight.clear(), lastNet: () => lastNet };
+  const background = () => inflight.size - active().length;
+  return { wait, fired, detach, size, background, reset: () => inflight.clear(), lastNet: () => lastNet };
 }
 
 async function waitIdle(wc, opts = {}) {
@@ -206,6 +211,6 @@ async function pinSessionCookies(ses, days = 30) {
 }
 
 module.exports = {
-  withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS, LIFECYCLE_MAX,
+  withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS, LIFECYCLE_MAX, STREAM_MS,
   S, installFilters, quietGate, click, typeText, pressKey, KEYS,
 };

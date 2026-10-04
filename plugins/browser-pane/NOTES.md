@@ -44,9 +44,9 @@ is layout and keeps its normal rendering.
 ## page-scripts.js — READ_INTERACTIVE
 
 Numbers are stable per service and site: the child keeps `svc.numbers`
-(stored key → number), `svc.nextN` and `svc.volatile`, passes them into the
-script, and merges back the keys the script assigned. They reset on `forget`,
-window close and an origin change. Every read rebuilds `window.__cxEls`
+(stored key → number), `nextN` and `volatile` per origin (see `numState`), passes them into the
+script, and merges back the keys the script assigned. They reset on `forget` and
+window close. Every read rebuilds `window.__cxEls`
 (n → WeakRef) and `window.__cxKeys` (n → stored key) in isolated world 4242, so
 the page cannot reset or forge them; `data-cx` is only a mirror, cleared from
 the previous elements first. Several live elements with one key get
@@ -146,7 +146,9 @@ cancel a slow form POST the server may already have processed.
 
 Deviation from DESIGN §3.4 (50 s / 90 s), which predates `open` being gated.
 `open` worst case: gate 60 s + load 25 s + idle 15 s + probe 8 s ≈ 108 s → 110 s.
-Acts: gate 60 s + FIND 8 s + idle 15 s (+≈3.5 s overrun) + probe 8 s ≈ 95 s → 100 s.
+Acts: gate 60 s + FIND 8 s + idle 15 s (+≈3.5 s overrun) + probe 8 s ≈ 95 s, plus
+`withChange`'s baselines (2 × 2 s + 0.3 s), target state (2 s) and late watch
+(3 s + a last 2 s snapshot and 2 s target read) ≈ 106 s → 110 s.
 
 ## child.js — mutating (pendingNav)
 
@@ -182,18 +184,31 @@ A click carries a URL-less download waiter into the service's downloads folder
 it starts is named in the reply with its full path, size, type and source URL. A `window.open` that shows a PDF
 is saved through the router and the view goes back. The idle wait stops as
 soon as either happens (the PDF viewer never reports idle). Waiting on the
-file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 100 s click
+file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 110 s click
 deadline; past it the reply says `still downloading`. The PDF popup's load and
-the way back bump `svc.doc` twice, so the reply says `navigated` even though the view ends
-on the same page.
+the way back bump `svc.doc` twice; `navOf` reads that as the same page when a
+download landed and the URL is unchanged (e-bloc `click --to` said
+`navigated → page=4…` for the page it was already on).
 
 ## child.js — withChange
 
 Every act snapshots `document.body.innerText` (`PAGE_TEXT`, main world) before
 acting and again after the idle wait; `changedRegion` reports the lines between
 the common prefix and suffix. Each snapshot is capped at `SNAP_MS` (2 s), not
-the 8 s script timeout, so the two snapshots stay inside the 100 s act deadline.
-A navigated act, a download or a popup skips the second snapshot.
+the 8 s script timeout, so the snapshots stay inside the 110 s act deadline.
+A cross-document navigation, a download or a popup skips the after snapshot; an
+in-page (pushState) navigation keeps it, since no new document replaces the text.
+Two baselines `BASELINE_GAP_MS` (300 ms) apart: lines that differ between them
+change with no action (clocks, "updated 3s ago") and are compared by their
+digit mask (`tickersOf`), so a SmartThings tile clock no longer passes for the
+click's effect. 300 ms misses most ticks of a 1 s clock, so `H:MM:SS` tokens are
+masked in every comparison as well. When the first after-snapshot shows nothing,
+`settleChange` re-snapshots every 500 ms for up to `LATE_CHANGE_MS` (3 s): a cloud
+round-trip flipped the SmartThings AC tile ≈1 s after the idle wait returned.
+A click also diffs the target's and its tile's (`TILE_SEL`) aria-label,
+aria-pressed, aria-checked, aria-expanded, class and value; class tokens matching
+focus/hover/ripple are focus noise from the click itself, and a class-only diff
+does not end the watch early.
 
 ## child.js — routerFor (dedupe)
 
@@ -289,6 +304,13 @@ line up. The chrome strip skips a read on the same path whose text is within
 `IN_PLACE_LINES` (2) changed lines of its base, so a one-line in-place change
 is not reported as a stripped header.
 
+## driver.js — armIdle (age rule)
+
+`blob:` and `data:` requests are never counted: X keeps four `blob:` fetches
+open and idle never settled. A request still open after `STREAM_MS` (8 s) is a
+stream or long poll: it leaves `size()`, the idle wait and the `loading:` count,
+and is counted by `background()` (shown in `read --all` only).
+
 ## driver.js — armIdle (watch reset)
 
 `reset()` clears the in-flight map; `child.js` calls it on every main-frame
@@ -328,8 +350,7 @@ The bar (`bar.html`, the window's own webContents) talks to the child only by
 (`urlpolicy.typedUrl`), then `checkOpenUrl` and the policy. Bar actions run
 only while the service is `idle` or `held`, through `serial` so they never
 overlap an agent op, and stamp `svc.lastInput` so an agent's quiet gate waits.
-A committed navigation sends `operator-nav`; the engine tells the lease holder
-once per 5 s per service. `driver.installFilters` sits on the page view's
+The bar sends no `operator-nav` itself: see `operatorNav`. `driver.installFilters` sits on the page view's
 webContents, not the bar's, so typing in the address bar is never filtered.
 The bar's own `before-input-event` stamps `svc.lastInput`, so an agent's quiet
 gate waits while the operator types a URL.
@@ -358,3 +379,38 @@ the path is compared raw, percent-decoded and dot-segment-normalised, so
 `example.com./` and `/%61dmin/` cannot slip past a rule. An allow exception
 matches only the normalised decoded path, so `/ok/..%2Fadmin/` is not inside
 `!host/ok/*`. A pattern host may end in a dot. 200 patterns per list, 512 chars each; blank lines are dropped.
+
+## child.js — numState
+
+Numbers are kept per origin in `svc.origins` (`ORIGINS_MAX` = 8, least recently
+used dropped first); `svc.num` is the active entry. A SmartThings sign-in detour
+used to wipe e-bloc's numbers. A number the active origin never assigned is
+`NO_ELEMENT`, never another site's element. `listed` holds the numbers a read
+has shown, so a number first assigned unlisted (out of `--main` scope, past the
+cap) is new when a read first lists it.
+
+## child.js — operatorNav
+
+Sent on every main-frame `did-navigate` the agent did not cause, and on a
+`did-navigate-in-page` that changes the URL. Agent-caused means `svc.busy` at
+commit, or a navigation started while busy (`svc.agentNav`, cleared like
+`pendingNav`); a navigation the page starts after the agent's op returned is
+reported as the operator's. The cross-document event is sent at
+`did-stop-loading`, not at commit: at `did-navigate` the title is still the URL.
+`about:blank` is never reported. The engine's
+`createNavNotifier` holds the first event `OPERATOR_NAV_MS` (5 s) and tells the
+lease holder once, naming the last URL of the burst.
+
+## read-format.js — redactUrl
+
+A Google sign-in button frame carried `cas=<token>` into a read header. Frame
+URLs are host + path only (`frameLabel`). URLs the agent acts on (read `url:`,
+`navigated →`, operator-nav, download `from`, open, handback) keep the query
+but values of 20+ `[A-Za-z0-9_-]` and params named token/session/sid/auth/code/cas
+read `<redacted>`, the fragment too when it is `k=v` pairs.
+
+## page-scripts.js — LOGIN_PROBE
+
+`loggedInHint` scans without the visibility test, so a logout item inside a
+closed account menu counts. X `/home` has no visible logout link; its profile
+tab and composer are the signal. Any password field on the page suppresses it.

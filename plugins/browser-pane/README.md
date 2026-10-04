@@ -157,13 +157,25 @@ ipc handlers (step 12).
 [agent:browser release [service]]
 ```
 
-Every act reply says what it caused: `navigated → …` (read again), `changed:
-"…"` with the text that changed in place, `no visible change`, or `→ download
+Every act reply says what it caused: `navigated → …` (read again),
+`navigated → <url> (in-page)` for a single-page-app route change (pushState),
+still followed by what changed, `changed: "…"` with the text that changed in place
+(waiting up to 3 s for a late effect; ticking clocks are ignored), `target: aria-label
+"… Off" → "… On"` when the clicked element or its tile flipped state, `no change on
+the target within 3s` / `no visible change`, or `→ download
 <full path> · <size> · <type>`; `type` says `value now "…"` when the page text did
 not change; a file identical to one already in the folder is not saved twice and
 is reported as `same as <file>`, unless it was named with `--as`. `inspect` shows an element's
 tag, attributes, event listeners, cursor, position and HTML, to see why a click
 does nothing.
+
+`services` lists each service with the host its window is on now, `(was <host>)`
+when that differs from the host it was opened as, its sign-in state and window
+state: `ebloc — my.smartthings.com (was e-bloc.ro) · signed in (…) · window open · idle`.
+The agent holding a service is told when the operator moves its window anywhere
+(link clicks and in-page routes included, one line per 5 s naming the last URL).
+Token-like query values in URLs shown to agents read `<redacted>`; unread frames
+show host and path only.
 
 `<n>` comes from the seat's latest `read` of that page. One seat holds a service
 at a time; it frees after 5 min without commands, on `release`, or when the
