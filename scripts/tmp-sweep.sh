@@ -59,6 +59,7 @@ clodex-2team-
 clodex-arch-
 clodex-atomic-
 clodex-bash-marks-
+clodex-bp-child-
 clodex-bp-client-
 clodex-bp-engine-
 clodex-bp-paths-
