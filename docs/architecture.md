@@ -297,7 +297,8 @@ bundle), whose packaged form is the Docker image under
   and classifying whether that env routes the CLI to a TEE-BLIND backend
   (Bedrock / Vertex) the wire tee cannot see.
 - **voice-settings.js** — the per-seat voice flag, which lives in sessions.json
-  (`entry.voice`, off|tap); every seat's own CLI recorder is disabled by its
+  (`entry.voice`, off|tap), with ephemeral (loop-minted) seats defaulting to
+  off; every seat's own CLI recorder is disabled by its
   generated settings, so the hidden voice engine is the only recorder, and
   recording starts from the external tap or from space on an empty prompt.
 - **voice-capability.js** — whether the Claude CLI on THIS machine could capture
