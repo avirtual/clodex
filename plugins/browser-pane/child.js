@@ -505,9 +505,19 @@ function run(electron, ctx) {
     const dir = path.join(downloadsRoot, svc.name);
     const w = routerFor(svc.name, svc.ses).expect({ dir });
     let began = false;
+    let pdf = false;
+    let acting = true;
     w.started.then(() => { began = true; });
+    const watchPdf = (async () => {
+      while (acting && !pdf) {
+        await driver.sleep(250);
+        if (acting && svc.popupUrl && !wc.isDestroyed()) pdf = await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf';
+      }
+    })();
     try {
-      const { idle } = await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
+      const { idle } = await driver.act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
+        .finally(() => { acting = false; });
+      await watchPdf;
       const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle) };
       const deadline = Date.now() + CLICK_DOWNLOAD_MS;
       if (began) out.download = await settleDownload(w, deadline);
@@ -517,7 +527,9 @@ function run(electron, ctx) {
         wc.downloadURL(wc.getURL());
         out.download = await settleDownload(pw, deadline);
         pw.cancel();
-        if (out.download && wc.navigationHistory && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
+        if (out.download && wc.navigationHistory && wc.navigationHistory.canGoBack()) {
+          await driver.act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
+        }
       }
       if (!out.download) delete out.download;
       out.navigated = svc.doc !== docBefore;
