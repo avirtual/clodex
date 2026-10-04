@@ -19,6 +19,15 @@ const SPILL_VERBS = new Set([
   'shout', 'dm',
 ]);
 
+const SPILL_CATEGORY_OF = Object.freeze({
+  'task.add': 'tickets',
+  'task.respec': 'tickets',
+  'task.reject': 'tickets',
+  'task.done': 'tickets',
+  shout: 'messages',
+  dm: 'messages',
+});
+
 const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
@@ -226,6 +235,7 @@ function spillMimicBounce(intent, typed) {
 }
 
 module.exports = {
+  SPILL_CATEGORY_OF,
   SPILL_MIN_BYTES,
   SPILL_MAX_BYTES,
   SNAPSHOT_MAX_BYTES,

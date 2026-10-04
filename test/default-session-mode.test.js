@@ -92,5 +92,8 @@ test('settings:get names the key, or the renderer reads undefined', () => {
   const body = src.slice(at, src.indexOf("handle('settings:set'", at));
   assert.match(body, /defaultSessionMode: s\.defaultSessionMode,/);
   assert.match(body, /terminalRemote: s\.terminalRemote,/);
-  assert.match(body, /intentSpill: s\.intentSpill,/);
+  assert.match(body, /spillTickets: s\.spillTickets,/);
+  assert.match(body, /spillMessages: s\.spillMessages,/);
+  assert.match(body, /spillProse: s\.spillProse,/);
+  assert.doesNotMatch(body, /intentSpill/);
 });

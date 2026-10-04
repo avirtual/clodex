@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Settings: the single 'spill long intent bodies' switch is now three — ticket bodies, messages between seats and to the operator, and end-of-turn prose — so an operator can file long specs and dms while keeping the agent's closing prose in the transcript as written; an existing 'off' reads as all three off.
+
 ## 5.111.2 — 2026-10-04
 
 - Spill: the model side-calls Claude Code makes on the agent's behalf (WebFetch's page summariser, and any other no-tools single-message helper call) are no longer treated as the agent's own turn, so their answers are never spilled to a file — WebFetch had been returning a 'filed at' pointer instead of the summary during injected turns.

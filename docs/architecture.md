@@ -977,12 +977,12 @@ accept teardown removes.
   state machine and SSE rewriter that hold a listed verb's body and strip the
   block), `session-manager._handleIntent`, `_handoffText`, and engine's
   `resolveFilePath`. Notes: `docs/notes/intent-spill.md`, `docs/notes/wire-spill.md`.
-  The `intentSpill` Settings switch (on by default) is NOT copied onto a seat at
+  The three Settings switches `spillTickets`, `spillMessages` and `spillProse` (all on by default) are NOT copied onto a seat at
   spawn: every capable Claude seat registers `spill: {root, verbs}` on the wire
   and carries the grammar line, and `WireProxy`'s injected `spillEnabled()` gate
   is consulted ONCE PER REQUEST. So a flip reaches every running seat at its next
   turn without a restart, an in-flight response finishes under the decision it
-  started with, and the baked prompt's bytes never move when the switch does.
+  started with, and the baked prompt's bytes never move when a switch does.
   S-G2 extends the same tee one level up: on a turn Clodex INJECTED (the seat's
   `lastSubmitInjected`, read once per request through `registerAgent`'s
   `turnInjected`), the seat's trailing prose after its last intent — or a whole

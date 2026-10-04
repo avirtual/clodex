@@ -21,6 +21,7 @@ const { Decompressor } = require('./decompress');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall, isBareSideCall, sideCallKind } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
 const { SpillTee } = require('./spill');
+const { SPILL_CATEGORY_OF } = require('../intent-spill');
 const { cutSpillStubs } = require('./spill-cut');
 const { answerVoiceSink } = require('./voice-sink');
 
@@ -117,6 +118,12 @@ function sessionIdFrom(obj) {
   }
 }
 
+
+function spillFlagsOf(v) {
+  if (v === true) return { tickets: true, messages: true, prose: true };
+  if (!v || typeof v !== 'object') return { tickets: false, messages: false, prose: false };
+  return { tickets: v.tickets === true, messages: v.messages === true, prose: v.prose === true };
+}
 
 class WireProxy extends EventEmitter {
   constructor(opts = {}) {
@@ -437,10 +444,15 @@ class WireProxy extends EventEmitter {
     }
 
     const spillCfg = this._agentSpill.get(agent) || null;
-    const spillEligible = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
-      && isMessages && !sideCall && !compactCall && !isSubagentRole(role) && this.spillEnabled();
+    const spillBase = !!spillCfg && provider === 'anthropic' && req.method === 'POST'
+      && isMessages && !sideCall && !compactCall && !isSubagentRole(role);
+    const spillFlags = spillBase ? spillFlagsOf(this.spillEnabled()) : spillFlagsOf(false);
+    const spillEligible = spillBase && (spillFlags.tickets || spillFlags.messages || spillFlags.prose);
+    const spillVerbs = spillEligible
+      ? (spillCfg.verbs || []).filter((k) => spillFlags[SPILL_CATEGORY_OF[k]] === true)
+      : [];
     let proseSpill = false;
-    if (spillEligible && typeof spillCfg.turnInjected === 'function') {
+    if (spillEligible && spillFlags.prose && typeof spillCfg.turnInjected === 'function') {
       try { proseSpill = spillCfg.turnInjected() === true; } catch { proseSpill = false; }
     }
 
@@ -537,6 +549,7 @@ class WireProxy extends EventEmitter {
           spill = new SpillTee({
             agent,
             ...spillCfg,
+            verbs: spillVerbs,
             proseSpill,
             onSpill: (i) => this.emit('spill', { agent, reqId, ...i }),
             onBail: (i) => this.emit('spill-bail', { agent, reqId, ...i }),

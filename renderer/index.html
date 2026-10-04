@@ -1155,10 +1155,18 @@
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
         <h5>Long intent bodies</h5>
-        <p class="hint-text">Ticket specs and reports, messages between seats, operator notes and context handoffs over 800 bytes that an agent emits: every long body is filed, and each request carries the two newest in full as examples; every earlier one appears in the transcript as the intent head, a bracketed runtime note and <code>[agent:end]</code>, the model sees only the ordinary confirmation, and the terminal shows the filed path (clickable), so later turns stop re-reading them. Those later bodies are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>. Prose after the last intent still gets a <code>[clodex] … filed at …</code> note. The recipient still gets the whole text. Claude seats only; on by default, and a change applies to every running seat from its next turn.</p>
+        <p class="hint-text">Long bodies over 800 bytes that an agent emits fall into three kinds, each with its own switch: ticket bodies (specs, reports, rejects), messages (dms between seats, shouts to the operator), and the prose an agent writes after its last intent on a turn Clodex typed in. A spilled body is filed, and each request carries the two newest in full as examples; every earlier one appears in the transcript as the intent head, a bracketed runtime note and <code>[agent:end]</code>, the model sees only the ordinary confirmation, and the terminal shows the filed path (clickable), so later turns stop re-reading them. Those later bodies are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>. Spilled prose gets a <code>[clodex] … filed at …</code> note; prose left unspilled stays in the transcript as written. The recipient still gets the whole text. Claude seats only; all three are on by default, and each applies to every running seat from its next turn.</p>
         <label class="prefs-check">
-          <input type="checkbox" id="prefs-intent-spill">
-          <span>Spill long intent bodies to files</span>
+          <input type="checkbox" id="prefs-spill-tickets">
+          <span>Spill ticket bodies (specs, reports, rejects)</span>
+        </label>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-spill-messages">
+          <span>Spill messages (dms, shouts)</span>
+        </label>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-spill-prose">
+          <span>Spill end-of-turn prose</span>
         </label>
         <h5>Context pressure reminders</h5>
         <p class="hint-text">Clodex tells an agent its context is heavy once it passes the first threshold, and switches to sterner wording past the second &mdash; a note attached to its next prompt, never an interruption. The agent picks its own moment to run <code>[agent:context compact]</code>. Thresholds are absolute input tokens, not a share of the window: every turn re-sends the whole conversation, so a 250k conversation is expensive even on a 1M-window model. One-ticket seats are never nudged.</p>

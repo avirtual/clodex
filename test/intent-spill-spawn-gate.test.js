@@ -13,7 +13,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const GRAMMAR = 'A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under';
 
-function mkManager({ intentSpill = 'off', backend = null } = {}) {
+function mkManager({ spill = false, backend = null } = {}) {
   const root = mkTmpRoot('clx-spillgate-');
   const store = new Map();
   const persistence = {
@@ -34,7 +34,7 @@ function mkManager({ intentSpill = 'off', backend = null } = {}) {
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
     getPersistence: () => persistence,
     getRemoteServer: () => null,
-    getUiSettings: () => ({ get: () => ({ intentSpill }) }),
+    getUiSettings: () => ({ get: () => ({ spillTickets: spill, spillMessages: spill, spillProse: spill }) }),
     resolveProxyBase: () => null,
     normalizeProxyBase: (v) => v,
     resolveProxyAgentId: () => null,
@@ -107,7 +107,7 @@ function spawn(m, name, intents = null) {
 }
 
 test('a Claude seat spawned with the setting OFF still registers spill on the wire', async () => {
-  const h = mkManager({ intentSpill: 'off' });
+  const h = mkManager({ spill: false });
   try {
     await spawn(h.m, 'seat');
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
@@ -120,8 +120,8 @@ test('a Claude seat spawned with the setting OFF still registers spill on the wi
 });
 
 test('the grammar line is in the prompt with the setting OFF, so a flip changes no bytes', async () => {
-  const off = mkManager({ intentSpill: 'off' });
-  const on = mkManager({ intentSpill: 'on' });
+  const off = mkManager({ spill: false });
+  const on = mkManager({ spill: true });
   try {
     await spawn(off.m, 'seat');
     await spawn(on.m, 'seat');
@@ -147,7 +147,7 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
 });
 
 test('a Bedrock seat registers spill: null and carries no grammar line', async () => {
-  const h = mkManager({ intentSpill: 'on', backend: 'bedrock' });
+  const h = mkManager({ spill: true, backend: 'bedrock' });
   try {
     await spawn(h.m, 'seat');
     assert.equal(h.registered.length, 1);
@@ -158,7 +158,7 @@ test('a Bedrock seat registers spill: null and carries no grammar line', async (
 });
 
 test('a seat whose stored allowlist still says notify-user is armed and prompted for shout', async () => {
-  const h = mkManager({ intentSpill: 'on' });
+  const h = mkManager({ spill: true });
   try {
     await spawn(h.m, 'seat', ['dm', 'who', 'notify-user', 'context', 'exec', 'remind', 'file', 'spawn', 'memory', 'resend']);
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
@@ -172,7 +172,7 @@ test('a seat whose stored allowlist still says notify-user is armed and prompted
 });
 
 test('a seat that really gated the inbox note off keeps it off', async () => {
-  const h = mkManager({ intentSpill: 'on' });
+  const h = mkManager({ spill: true });
   try {
     await spawn(h.m, 'seat', ['dm', 'who']);
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
@@ -188,7 +188,7 @@ function spillShape(spill) {
 }
 
 test('a loop-minted seat (persisted ephemeral: true) registers spill with examples: 1', async () => {
-  const h = mkManager({ intentSpill: 'on' });
+  const h = mkManager({ spill: true });
   try {
     h.persistence.upsert({ name: 'seat', ephemeral: true });
     await spawn(h.m, 'seat');
@@ -203,7 +203,7 @@ test('a loop-minted seat (persisted ephemeral: true) registers spill with exampl
 });
 
 test('a standing seat (no ephemeral record) registers spill with examples: 2', async () => {
-  const h = mkManager({ intentSpill: 'on' });
+  const h = mkManager({ spill: true });
   try {
     await spawn(h.m, 'seat');
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');

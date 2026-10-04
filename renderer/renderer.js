@@ -6005,7 +6005,9 @@ const prefsCtxEscalate = document.getElementById('prefs-ctx-escalate');
 const prefsCtxModels = document.getElementById('prefs-ctx-models');
 const prefsTerminalReports = document.getElementById('prefs-terminal-reports');
 const prefsTerminalRemote = document.getElementById('prefs-terminal-remote');
-const prefsIntentSpill = document.getElementById('prefs-intent-spill');
+const prefsSpillTickets = document.getElementById('prefs-spill-tickets');
+const prefsSpillMessages = document.getElementById('prefs-spill-messages');
+const prefsSpillProse = document.getElementById('prefs-spill-prose');
 const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
@@ -8507,7 +8509,9 @@ async function openPrefs() {
   setCtxThresholds(s);
   setTerminalReports(s.terminalReports);
   if (prefsTerminalRemote) prefsTerminalRemote.checked = s.terminalRemote === 'on';
-  if (prefsIntentSpill) prefsIntentSpill.checked = s.intentSpill === 'on';
+  if (prefsSpillTickets) prefsSpillTickets.checked = s.spillTickets !== false;
+  if (prefsSpillMessages) prefsSpillMessages.checked = s.spillMessages !== false;
+  if (prefsSpillProse) prefsSpillProse.checked = s.spillProse !== false;
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
@@ -8619,7 +8623,9 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     ...(prefsCtxNudge && prefsCtxEscalate ? { ctxReminderThresholds: { default: readCtxThresholdPair() } } : {}),
     terminalReports: readTerminalReports(),
     terminalRemote: (prefsTerminalRemote && prefsTerminalRemote.checked) ? 'on' : 'off',
-    intentSpill: (prefsIntentSpill && prefsIntentSpill.checked) ? 'on' : 'off',
+    ...(prefsSpillTickets ? { spillTickets: prefsSpillTickets.checked } : {}),
+    ...(prefsSpillMessages ? { spillMessages: prefsSpillMessages.checked } : {}),
+    ...(prefsSpillProse ? { spillProse: prefsSpillProse.checked } : {}),
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     remoteEnabled: prefsRemoteEnabled.checked,
