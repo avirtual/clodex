@@ -50,13 +50,15 @@ function boot(t, { mode = 'normal', timeouts = {} } = {}) {
   const host = engine.register('browser-pane', { activate() {} }, { hostApi: HOST_API_VERSION }, { dir: PLUGIN_DIR });
   const clock = fakeClock();
   const logs = [];
+  let logWaiter = null;
+  const waitLog = (text) => (logs.includes(text) ? Promise.resolve() : new Promise((resolve) => { logWaiter = { text, resolve }; }));
   const exits = [];
   let exitWaiter = null;
   const client = createClient({
     spawnSpec: () => host.runtime.electronChild(path.join(PLUGIN_DIR, 'child.js'), ['--cxb-data=' + path.join(dir, 'chromium'), '--cxb-proto=1']),
     clock,
     timeouts: { heartbeatMs: 1e12, ...timeouts },
-    log: { info: (m) => logs.push(m), error: (m) => logs.push(m) },
+    log: { info: (m) => { logs.push(m); if (logWaiter && m === logWaiter.text) logWaiter.resolve(); }, error: (m) => logs.push(m) },
     onExit: (e) => { exits.push(e); if (exitWaiter) { const w = exitWaiter; exitWaiter = null; w(e); } },
   });
   const nextExit = () => new Promise((r) => { exitWaiter = r; });
@@ -65,7 +67,7 @@ function boot(t, { mode = 'normal', timeouts = {} } = {}) {
     clock.advance(10000);
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  return { client, clock, logs, exits, nextExit, state };
+  return { client, clock, logs, exits, nextExit, state, waitLog };
 }
 
 test('client: handshake, then a request round-trips', async (t) => {
@@ -175,18 +177,17 @@ test('client: a missed heartbeat kills the child and counts as a crash', async (
 });
 
 test('client: dispose sends shutdown, then SIGTERM after 3 s', async (t) => {
-  const { client, clock, logs, nextExit } = boot(t, { mode: 'ignore-shutdown' });
+  const { client, clock, nextExit, waitLog } = boot(t, { mode: 'ignore-shutdown' });
   await client.request('echo', { v: 1 });
   const exited = nextExit();
   client.dispose();
-  await new Promise((r) => setImmediate(r));
+  await waitLog('child: got shutdown');
   clock.advance(2999);
   assert.strictEqual(client.state(), 'running');
   clock.advance(1);
   const e = await exited;
   assert.strictEqual(e.signal, 'SIGTERM');
   assert.strictEqual(e.expected, true);
-  assert.ok(logs.includes('child: got shutdown'));
   await assert.rejects(client.request('echo', {}), { message: 'browser pane is disabled' });
 });
 

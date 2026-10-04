@@ -114,6 +114,9 @@ async function main() {
   await emit(`[agent:browser open signin] ${base}/login`);
   show(fileOf(await emit('[agent:browser read signin]')), (l) => /input:password/.test(l));
 
+  console.log('== 3b. unroutable URL on a fresh service');
+  await emit('[agent:browser open dead] http://127.0.0.1:1/');
+
   console.log('== 4. persistence across a restart');
   await emit(`[agent:browser open jar] ${base}/set`);
   engine.deactivate('browser-pane');
