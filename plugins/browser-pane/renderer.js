@@ -34,6 +34,7 @@ function segmentFor(status) {
   const driving = list.find((s) => s.state === 'driving');
   if (driving) return { text: `browser: driving ${driving.seat || 'an agent'}`, tip };
   if (list.some((s) => s.state === 'gating')) return { text: 'browser: waiting for you', tip };
+  if (status.child === 'starting' && !list.length) return { text: 'browser: starting', tip };
   return { text: 'browser: idle', tip };
 }
 

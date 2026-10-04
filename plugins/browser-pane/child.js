@@ -539,6 +539,7 @@ function run(electron, ctx) {
     const n = args.n == null ? null : Number(args.n);
     if (n != null) checkDoc(svc, args);
     const what = n != null ? `download [${n}]` : 'download';
+    const t0 = Date.now();
     return mutating(svc, frame, what, async () => {
       ensureCdp(svc);
       await driver.emulateFocus(svc.wc);
@@ -550,13 +551,13 @@ function run(electron, ctx) {
           const el = await resolve(svc, n);
           dispatch(svc, { type: 'describe', what: `download [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
           const hint = args.as || el.download || null;
-          if (el.href && /^https?:/i.test(el.href)) out = await viaUrl(svc, downloadUrlOf(svc, el.href), dir, hint);
+          if (paths.directHref(el.href, svc.wc.getURL())) out = await viaUrl(svc, downloadUrlOf(svc, el.href), dir, hint);
           else out = await viaClick(svc, n, el, dir, hint);
         } else {
           const url = downloadUrlOf(svc, args.url || svc.wc.getURL());
           out = await viaUrl(svc, url, dir, args.as || null);
         }
-        return out;
+        return { ...out, ms: Date.now() - t0 };
       } finally {
         svc.downloading = false;
       }
