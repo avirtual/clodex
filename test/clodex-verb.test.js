@@ -1,0 +1,115 @@
+'use strict';
+
+const { test } = require('node:test');
+const assert = require('node:assert');
+const fs = require('node:fs');
+const net = require('node:net');
+const path = require('node:path');
+const { Readable } = require('node:stream');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+const verb = require('../cli/bin/clodex.js');
+const { materializeSeatVerb } = require('../bin-materialize');
+
+const ROOT = path.join(__dirname, '..');
+
+function sink() {
+  const s = { buf: '', write: (t) => { s.buf += t; } };
+  return s;
+}
+
+async function fakeSeat(answer) {
+  const root = mkTmpRoot('verb-');
+  const sockPath = path.join(root, 'i.sock');
+  const got = [];
+  const srv = net.createServer((c) => {
+    let buf = '';
+    c.on('data', (d) => {
+      buf += d;
+      if (!buf.includes('\n')) return;
+      const r = JSON.parse(buf.split('\n')[0]);
+      got.push(r);
+      c.end(JSON.stringify(answer(r)) + '\n');
+    });
+  });
+  await new Promise((r) => srv.listen(sockPath, r));
+  return { sockPath, got, close: () => new Promise((r) => srv.close(r)) };
+}
+
+async function run(seat, argv, { env = {}, stdin } = {}) {
+  const out = sink();
+  const err = sink();
+  const code = await verb.main(argv, {
+    env: { CLODEX_INTENT_SOCK: seat && seat.sockPath, CLODEX_INTENT_CRED: 'k1', CLODEX_SEAT: 'a', ...env },
+    out, err, stdin,
+  });
+  return { code, out: out.buf, err: err.buf };
+}
+
+test('argv joins into one intent line and an open body gets [agent:end] appended', () => {
+  assert.strictEqual(verb.buildIntentText(['[agent:dm', 'b]', 'hello', 'there']), '[agent:dm b] hello there\n[agent:end]');
+  assert.strictEqual(verb.buildIntentText(['[agent:dm b] x\n[agent:end]']), '[agent:dm b] x\n[agent:end]');
+  assert.strictEqual(verb.buildIntentText(['-'], '[agent:dm b] line1\nline2\n'), '[agent:dm b] line1\nline2\n[agent:end]');
+  assert.strictEqual(verb.buildIntentText(['  ']), null);
+});
+
+test('the request carries the cred, the joined intent and the forwarded agent id', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, reply: '[agent:peers] b' }));
+  try {
+    const r = await run(seat, ['[agent:who]'], { env: { CODEX_THREAD_ID: 'th-1' } });
+    assert.deepStrictEqual(r, { code: 0, out: '[agent:peers] b\n', err: '' });
+    assert.deepStrictEqual(seat.got[0], { cred: 'k1', intent: '[agent:who]\n[agent:end]', agentId: 'th-1' });
+    await run(seat, ['[agent:who]'], { env: { CLODEX_AGENT_ID: 'ag-2', CODEX_THREAD_ID: 'th-1' } });
+    assert.strictEqual(seat.got[1].agentId, 'ag-2');
+    await run(seat, ['[agent:who]']);
+    assert.ok(!('agentId' in seat.got[2]), 'no id in env: the main agent');
+  } finally { await seat.close(); }
+});
+
+test('stdin mode reads a multi-line body when - is the only arg', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, reply: 'sent' }));
+  try {
+    const r = await run(seat, ['-'], { stdin: Readable.from(['[agent:dm b] one\n', 'two\n']) });
+    assert.strictEqual(r.code, 0);
+    assert.strictEqual(seat.got[0].intent, '[agent:dm b] one\ntwo\n[agent:end]');
+  } finally { await seat.close(); }
+});
+
+test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', async () => {
+  for (const [answer, code] of [
+    [{ ok: false, error: 'unauthorized' }, 3],
+    [{ ok: false, error: 'not available to a subagent: shout' }, 3],
+    [{ ok: false, error: 'timeout' }, 5],
+    [{ ok: false, error: 'busy' }, 1],
+  ]) {
+    const seat = await fakeSeat(() => answer);
+    try {
+      const r = await run(seat, ['[agent:shout] x']);
+      assert.strictEqual(r.code, code, answer.error);
+      assert.strictEqual(r.err, `clodex: ${answer.error}\n`);
+      assert.strictEqual(r.out, '');
+    } finally { await seat.close(); }
+  }
+  assert.strictEqual((await run(null, [])).code, 2);
+  assert.strictEqual((await run(null, ['   '])).code, 2);
+  assert.strictEqual((await run(null, ['[agent:who]'])).code, 4);
+  const gone = path.join(mkTmpRoot('verb-gone-'), 'none.sock');
+  assert.strictEqual((await run({ sockPath: gone }, ['[agent:who]'])).code, 4);
+});
+
+test('--help lists the subagent catalog', async () => {
+  const r = await run(null, ['--help']);
+  assert.strictEqual(r.code, 0);
+  for (const v of ['[agent:dm', '[agent:who]', '[agent:name]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:memory list]']) {
+    assert.ok(r.out.includes(v), v);
+  }
+});
+
+test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
+  const root = mkTmpRoot('verb-bin-');
+  const r = materializeSeatVerb({ root, srcDir: ROOT });
+  assert.strictEqual(r.path, path.join(root, 'bin', 'clodex'));
+  assert.strictEqual(fs.statSync(r.path).mode & 0o111, 0o111);
+  assert.strictEqual(fs.readFileSync(r.path, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'));
+  const src = fs.readFileSync(r.path, 'utf8');
+  assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net'], 'zero local requires: it runs flat from bin/');
+});

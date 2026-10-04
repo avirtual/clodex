@@ -6,7 +6,8 @@
   "author": "avirtual <bogdan.ionescu@gmail.com>",
   "type": "commonjs",
   "bin": {
-    "clodexctl": "bin/clodexctl.js"
+    "clodexctl": "bin/clodexctl.js",
+    "clodex": "bin/clodex.js"
   },
   "engines": {
     "node": ">=20"

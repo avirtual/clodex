@@ -483,6 +483,13 @@ const { speakable } = require('./speakable');
 const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
 const { expandSkillsOff } = require('./skills-off');
 const { randomUUID } = require('crypto');
+const nodeCrypto = require('crypto');
+const nodeNet = require('net');
+const { AsyncLocalStorage } = require('async_hooks');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
+const { subagentAllows } = require('./intent-registry');
+
+const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
 const streamReap = require('./stream-reap');
 
@@ -1856,6 +1863,13 @@ function createSessionManager(deps) {
       // and FORCE_HYPERLINK removes inheritance of how Clodex was launched (terminal vs Finder); link clicks scan rendered text.
       const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
+      const intentChannel = (agentType === 'claude' || agentType === 'codex')
+        ? { sockPath: pathFor(REGISTRY_DIR, name, 'intentSocket'), cred: mintIntentCredential(nodeCrypto) }
+        : null;
+      if (intentChannel) {
+        Object.assign(env, seatChannelEnv({ name, sockPath: intentChannel.sockPath, cred: intentChannel.cred }));
+        env.PATH = [path.join(REGISTRY_DIR, 'bin'), env.PATH].filter(Boolean).join(path.delimiter);
+      }
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
       if (type === 'claude' && !streamIo && resumeId && !fork && !mint && existingEntry && existingEntry.exitedAt && !existingEntry.archivedAt) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';
       else delete env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN;
@@ -2017,6 +2031,7 @@ function createSessionManager(deps) {
         digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
+      if (intentChannel) await this._startIntentSocket(session, intentChannel);
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
       // recording it would claim FULL for units the model never saw, hence a resume records nothing.
@@ -4540,6 +4555,7 @@ function createSessionManager(deps) {
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       this._scratchDropPendingBegin(s);
       if (s.transport) s.transport.stop();
+      if (s.intentSocket) { try { s.intentSocket.stop(); } catch {} s.intentSocket = null; }
       if (s.agentType) registry.unregister(name);
       if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
@@ -5191,7 +5207,13 @@ function createSessionManager(deps) {
     }
 
 
-    async _handleIntent(senderName, intent) {
+    async _handleIntent(senderName, intent, opts = {}) {
+      if (!opts || typeof opts.replyTo !== 'function') return this._handleIntentBody(senderName, intent);
+      const scope = { session: this.sessions.get(senderName) || null, replyTo: opts.replyTo, fromLabel: opts.fromLabel || null };
+      return intentReplyScope.run(scope, () => this._handleIntentBody(senderName, intent));
+    }
+
+    async _handleIntentBody(senderName, intent) {
       const session = this.sessions.get(senderName);
 
       if (intent.type === 'end') return;
@@ -5291,15 +5313,18 @@ function createSessionManager(deps) {
 
       switch (intent.type) {
         case 'dm': {
+          intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.clone) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
             break;
           }
           let sup = null;
+          const replyScope = intentReplyScope.getStore();
+          const fromTag = (replyScope && replyScope.fromLabel) || senderName;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
-            const r = this._gatedDeliver(intent.target, senderName, intent.body, intent.urgent === true, '',
+            const r = this._gatedDeliver(intent.target, fromTag, intent.body, intent.urgent === true, '',
               (disposition) => this._armDmConfirm(intent.target, senderName, disposition));
             if (r.parked || r.held) {
               const parkId = r.parked || null;
@@ -5334,7 +5359,7 @@ function createSessionManager(deps) {
             const peer = await registry.getPeer(intent.target);
             if (peer) {
               await Transport.send(peer.socket, {
-                type: 'dm', from: senderName, body: intent.body,
+                type: 'dm', from: fromTag, body: intent.body,
               });
             } else {
               if (session) {
@@ -5548,6 +5573,27 @@ function createSessionManager(deps) {
       }
 
       if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
+    }
+
+    _startIntentSocket(session, channel) {
+      const name = session.name;
+      Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
+      const handle = createIntentRequestHandler({
+        seat: name,
+        parse: (text) => this._extractIntents(text, { receiptsFor: name }),
+        entryOf: () => getPersistence().get(name),
+        sessionIdOf: () => session.sessionId || null,
+        allows: subagentAllows,
+        dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+      });
+      const server = createIntentSocketServer({
+        net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred, handle, log,
+      });
+      session.intentSocket = server;
+      return server.start().catch((e) => {
+        log.warn('intent-socket', `${name}: socket not bound (${e.message})`);
+        if (session.intentSocket === server) session.intentSocket = null;
+      });
     }
 
     _dispatchPluginIntent(session, intent) {
@@ -8099,7 +8145,7 @@ function createSessionManager(deps) {
         if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) return true;
         return this._relayViaForOrigin(origin) != null;
       }
-      const s = this.sessions.get(senderName);
+      const s = this.sessions.get(seatOfAgentTag(senderName));
       return !!(s && s.agentType && !s._dead);
     }
 
@@ -8339,6 +8385,8 @@ function createSessionManager(deps) {
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
+      const replyScope = produce ? null : intentReplyScope.getStore();
+      if (replyScope && replyScope.session === session && replyScope.replyTo(text) !== false) return;
       if (session.io === 'stream') {
         this._streamEnqueueSystem(session, text, produce, 'inject', null, opts.parkKey || null);
         return;

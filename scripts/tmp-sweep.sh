@@ -154,6 +154,9 @@ clodex-meta-turns-
 clx-diag-dir-
 clx-policy-linux-
 clx-spill-bytes-
+isock-
+isock-sm-
+isock-sweep-
 rb-f5-
 clodex-mig-
 clodex-mon-
@@ -741,6 +744,9 @@ tl-home-
 tl-none-
 tl-outer-
 tmp-roots-pin-
+verb-
+verb-bin-
+verb-gone-
 voice-engine-
 warmth-
 wh-exports-

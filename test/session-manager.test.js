@@ -12934,11 +12934,20 @@ test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries
   const crashed = await resumeEnvProbe({ entry: { exitedAt: 1, exitCode: 1 }, resumeId: 'sid-1' });
   const plain = await resumeEnvProbe({ entry: {}, resumeId: 'sid-1' });
   assert.ok(crashed.env && plain.env, 'ENTER: both creates reached pty.spawn');
-  const { CLODEX_HOME: _a, ...crashedRest } = crashed.env;
-  const { CLODEX_HOME: _b, ...plainRest } = plain.env;
+  const { CLODEX_HOME: _a, PATH: _pa, CLODEX_INTENT_SOCK: _sa, CLODEX_INTENT_CRED: _ca, ...crashedRest } = crashed.env;
+  const { CLODEX_HOME: _b, PATH: _pb, CLODEX_INTENT_SOCK: _sb, CLODEX_INTENT_CRED: _cb, ...plainRest } = plain.env;
   assert.deepStrictEqual(crashedRest, { ...plainRest, [RESUME_KEY]: '1' });
   assert.deepStrictEqual(crashed.exitedCalls, [['rs', null]], 'the exitedAt stamp is cleared after the env is built');
   assert.strictEqual('exitedAt' in crashed.entryAfter, false);
+});
+
+test('create → PTY env: a claude seat carries its intent channel and the clodex verb dir on PATH', async () => {
+  const probe = await resumeEnvProbe({ entry: {}, resumeId: null });
+  const env = probe.env;
+  assert.strictEqual(env.CLODEX_SEAT, 'rs');
+  assert.match(env.CLODEX_INTENT_CRED, /^[0-9a-f]{64}$/);
+  assert.strictEqual(env.CLODEX_INTENT_SOCK, path.join(env.CLODEX_HOME, 'run', 'rs', 'intent.sock'));
+  assert.strictEqual(env.PATH.split(path.delimiter)[0], path.join(env.CLODEX_HOME, 'bin'));
 });
 
 test('create → PTY env: a claude --resume of an entry without exitedAt (archived / plain resume) has no resume-turn key', async () => {

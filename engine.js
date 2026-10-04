@@ -27,7 +27,7 @@ const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
-const { materializeExecScripts } = require('./bin-materialize');
+const { materializeExecScripts, materializeSeatVerb } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
 // Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
 // closure require would not be in scope there.
@@ -2068,6 +2068,7 @@ const toolCache = createToolCache({ whichBin });
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
+  try { materializeSeatVerb({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
   manager.startPendingPoll();

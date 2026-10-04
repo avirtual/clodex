@@ -443,6 +443,17 @@ function intentEnabledForSeat(type, entry) {
     && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
 }
 
+const SUBAGENT_SUBS = { task: ['list'], memory: ['recall', 'list'] };
+const SUBAGENT_TYPES = ['dm', 'who', 'name', 'exec', ...Object.keys(SUBAGENT_SUBS)];
+
+function subagentAllows(intent, entry) {
+  if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return false;
+  if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub);
+  if (intent.type !== 'exec') return true;
+  const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
+  return grants.includes(intent.cmd);
+}
+
 // The write-time half: drop from a seat's allowlist and grants everything owned
 // by a plugin the seat does not have. A null `intents` needs no prune — a plugin
 // row is enabled only by explicit inclusion in an array, never by the
@@ -544,6 +555,9 @@ module.exports = {
   bodyModeFor,
   intentEnabledFor,
   intentEnabledForSeat,
+  subagentAllows,
+  SUBAGENT_SUBS,
+  SUBAGENT_TYPES,
   pruneForPlugins,
   withoutPrivilegedIntentsFor,
   catalogRows,
