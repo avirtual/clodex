@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- Browser pane: a read drops menu and footer text that repeated from the previous read of the same site (header says how many lines; `read --all` keeps them), and says when the page is still loading — requests in flight or a visible loading element — so an agent waits instead of acting on a half-filled page.
+- Browser pane: a read drops menu and footer text and hides elements that repeated from the previous read of the same site (header says how many; hidden numbers still click; `read --all` shows everything), says when the page is still loading, ignores elements parked off-screen or clipped away (the usual hidden-spinner trick), lets `--text` targets through after a navigation without a re-read, and reports a change inside a table as its header row plus the changed row.
 
 ## 5.112.2 — 2026-10-04
 

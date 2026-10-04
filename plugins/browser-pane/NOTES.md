@@ -215,3 +215,44 @@ on. A read is loading when `wc.isLoading()` or a non-skipped request has been in
 flight over `LOADING_INFLIGHT_MS` (300 ms). `READ_TEXT` also counts visible
 `BUSY_SEL` elements (`.loading`, spinners, `aria-busy`); either signal marks the
 reply `still loading`.
+
+## page-scripts.js — DEEP (vis)
+
+Visible means a non-zero box that intersects the document (scroll offsets
+added, against `max(scrollWidth, innerWidth)` × `max(scrollHeight, innerHeight)`),
+computed opacity not `0`, no `clip: rect(0…)`/`rect(1px…)` or `clip-path:
+inset(50%|100%)`, and not a ≤1×1 box with overflow hidden. e-bloc parks its
+Highslide spinner (`a.highslide-loading`, "INCARCA...") at `top:-9999px`; before
+this rule every read said `still loading`. The busy scan, the element list,
+`FIND_TEXT`, `INSPECT` and `LOGIN_PROBE` share it. The rule is per element:
+opacity or clip on an ancestor is not seen.
+
+## page-scripts.js — TABLES
+
+One snippet renders data tables as `cell | cell` rows for both `READ_TEXT` and
+`PAGE_TEXT`, so an act's changed region reads like the read. A trailing
+image-only cell keeps its slot as a trailing `|` (innerText trims the space).
+
+## read-format.js — elementStrip
+
+Key = the line without `[n] `, with `t=`/`_=`/`ts=` digit query values
+blanked. A line is hidden only when the previous read had the same key under
+the same number, so a number the agent saw on the previous page still clicks
+the same element; a footer whose numbers shifted (more content above it) stays
+listed. Form controls are never hidden, and at least one line always stays.
+
+## scheduler.js — runRead (element strip)
+
+The element base is the previous read of the service on the same origin and a
+different URL (hash ignored); a re-read of the same URL shows every element,
+except `--page>1` of an unchanged page, which reuses page 1's base so the pages
+line up. The chrome strip skips a read on the same path whose text is within
+`IN_PLACE_LINES` (2) changed lines of its base, so a one-line in-place change
+is not reported as a stripped header.
+
+## driver.js — armIdle (watch reset)
+
+`reset()` clears the in-flight map; `child.js` calls it on every main-frame
+`did-navigate`, so a request of the previous document that never finishes is
+not counted as loading forever. `fired.lifecycle` keeps the last
+`LIFECYCLE_MAX` (64) events, since `svc.watch` is never detached.
