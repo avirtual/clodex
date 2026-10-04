@@ -18,6 +18,44 @@ you the window (it lands when the current action finishes); **Hand back to
 agent** returns it. On a sign-in page the window is handed to you with one
 notification; agents are refused password and one-time-code fields.
 
+## Steering the window yourself
+
+The bar at the top of each window has an address field with back and reload.
+Type a URL and press Enter (a bare host gets `https://`), Escape puts the
+current URL back. The field is read-only while an agent drives. When you
+navigate while an agent holds the window, that agent is told on its next turn
+that the page changed and to read before using numbers.
+
+## Denylist
+
+Settings ▸ Browser Pane has a **Denylist**: one list for all services and one
+per saved service, one pattern per line, then **Save**. A matching URL is
+refused whoever asks — the agent's `open` (the reply names the pattern), your
+address bar (the refusal shows in the bar for 5 s), a link or redirect in the
+page, a popup, a download. Patterns:
+
+```
+example.com            example.com and every subdomain, any scheme
+*.example.com          subdomains only
+example.com/admin/*    paths under /admin/
+https://example.com    only that scheme
+!example.com/admin/ok  an exception: allowed even though a pattern matches
+```
+
+Saving applies to open windows at once. An invalid line is refused with its
+line number and reason.
+
+## Operator checks (by hand)
+
+The address bar is UI-driven and not covered by `manual/browser-pane-live.js`:
+
+1. With a window idle, type a URL and press Enter: the page changes, and the
+   agent holding the window gets `the operator navigated <service> to <url>`.
+2. While an agent drives (amber bar), the address field is read-only and back
+   and reload are disabled.
+3. Type a denylisted URL: the bar shows `Refused: matches denylist pattern …`
+   for 5 s and keeps what you typed; Escape restores the current URL.
+
 ## Turning it on
 
 1. Enable **Browser Pane** in Plugins. It is off by default.

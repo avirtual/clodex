@@ -215,3 +215,35 @@ on. A read is loading when `wc.isLoading()` or a non-skipped request has been in
 flight over `LOADING_INFLIGHT_MS` (300 ms). `READ_TEXT` also counts visible
 `BUSY_SEL` elements (`.loading`, spinners, `aria-busy`); either signal marks the
 reply `still loading`.
+
+## child.js — barNav
+
+The bar (`bar.html`, the window's own webContents) talks to the child only by
+`console.log`: `cxb:takeover`, `cxb:handback`, `cxb:back`, `cxb:reload` and
+`cxb:go <typed text>`. Typed text gets `https://` unless it carries a scheme
+(`urlpolicy.typedUrl`), then `checkOpenUrl` and the policy. Bar actions run
+only while the service is `idle` or `held`, through `serial` so they never
+overlap an agent op, and stamp `svc.lastInput` so an agent's quiet gate waits.
+A committed navigation sends `operator-nav`; the engine tells the lease holder
+once per 5 s per service. `driver.installFilters` sits on the page view's
+webContents, not the bar's, so typing in the address bar is never filtered.
+
+## child.js — policyDenies
+
+The one denylist check, called from every navigation path: agent `open`, the
+address bar, `block` (`will-navigate`, `will-frame-navigate`, `will-redirect`,
+also attached to every allowed popup via `guardPopup`), both
+`setWindowOpenHandler`s, `viaUrl`, and the per-partition `will-download`
+router. The child gets the lists with every `open` (`args.policy`) and with the
+`policy` op the engine sends on a Settings save. Repeats of one URL within
+1 s send one `denied` event. A `will-redirect` refusal during an agent open
+reads as `NAV_FAILED`, not the refusal text.
+
+## urlpolicy.js — compilePolicy
+
+`host` matches the host and its subdomains on any scheme and port; `*.host`
+subdomains only; `host/path/*` a path prefix, `host/path` the exact path;
+`http://` or `https://` pins the scheme; `!` makes an allow exception, checked
+across both lists before any deny. Host compare is case-insensitive (WHATWG
+host parsing), path compare exact-case. Ports, IPv6, `?`, `#` and inner `*` are
+rejected. 200 patterns per list, 512 chars each; blank lines are dropped.
