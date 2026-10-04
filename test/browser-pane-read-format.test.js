@@ -56,10 +56,10 @@ test('read-format: --text keeps only text', () => {
     ['== text ==', 'My Bills', 'Account ending 5678', 'Statements for Sep 2026']);
 });
 
-test('read-format: --filter is case-insensitive on text and elements and keeps numbers and markers', () => {
+test('read-format: --filter is case-insensitive on text and elements, keeps numbers and markers and a text match\'s block', () => {
   const out = fmt({ filter: 'SEP' });
   assert.deepStrictEqual(bodyOf(out.content), [
-    '== text ==', 'Statements for Sep 2026',
+    '== text ==', 'My Bills', 'Account ending 5678', 'Statements for Sep 2026',
     '== elements ==', '[3] select Statement month = "September 2026" {September 2026|August 2026}',
   ]);
   assert.match(out.content.split('\n')[3], /elements: 5 \(numbers: stable per site; new since your last read: none\) · mode: default · filter: "SEP"$/);
@@ -138,7 +138,7 @@ test('read-format: clickable element lines and one-line table rows pass through,
     '== elements ==', ...raw.elements]);
   assert.match(out.content.split('\n')[3], /elements: 4 \(numbers: stable per site; new since your last read: none\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
-    ['== text ==', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+    ['== text ==', 'Contor | Index precedent | Index curent', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
 });
 
 test('read-format: changedRegion strips the common line prefix and suffix and returns what is new', () => {
@@ -353,4 +353,33 @@ test('read-format: changedRegion compares through a line normaliser but reports 
   const norm = (l) => l.replace(/\d/g, '#');
   assert.strictEqual(changedRegion('a\n7:56:11\nb', 'a\n7:56:14\nb', CHANGE_MAX, norm), '');
   assert.strictEqual(changedRegion('a\n7:56:11\nAC On', 'a\n7:56:14\nAC Off', CHANGE_MAX, norm), 'AC Off');
+});
+
+const { filterLines, textHead, TEXT_HEAD } = require('../plugins/browser-pane/read-format');
+
+test('read-format: --filter on a table row keeps the table header; on a text line keeps its block, or ±1 line in a long block', () => {
+  const wiki = ['Population by country', '', 'Country | Population | Year', 'Poland | 36,620,970 | 2025', 'Romania | 19,036,031 | 2025', 'Hungary | 9,539,502 | 2025', '', 'See also'];
+  assert.deepStrictEqual(filterLines(wiki, 'Romania', { blocks: true }), ['Country | Population | Year', 'Romania | 19,036,031 | 2025']);
+  const x = ['What’s happening', '', 'Sports · Trending', '#Ronaldo', '14.2K posts', 'Trending in Romania', '#Simona', '3,104 posts',
+    'Politics · Trending', '#Bucharest', '2,200 posts', 'Show more'];
+  assert.deepStrictEqual(filterLines(x, 'in romania', { blocks: true }), ['14.2K posts', 'Trending in Romania', '#Simona']);
+  assert.deepStrictEqual(filterLines(['Factura', 'Suma 120', '', 'Altceva'], 'suma', { blocks: true }), ['Factura', 'Suma 120']);
+  assert.deepStrictEqual(filterLines(x, 'in romania'), ['Trending in Romania']);
+});
+
+test('read-format: the text head is cut on a word boundary and marked chrome lines do not count against it', () => {
+  const words = 'Data: 28 August 2026, scadenta lista de plata '.repeat(40);
+  const head = textHead([words]);
+  assert.strictEqual(head.cut, true);
+  assert.ok(head.lines[0].length <= TEXT_HEAD && head.lines[0].length > TEXT_HEAD - 40);
+  assert.ok(words.startsWith(head.lines[0]) && words[head.lines[0].length] === ' ', 'ends at a whole word');
+  const chrome = Array.from({ length: 30 }, (_, i) => `${CHROME_MARK}Meniu principal al asociatiei, intrarea ${i}`);
+  const body = ['x'.repeat(1000)];
+  const mixed = textHead([...chrome, ...body]);
+  assert.strictEqual(mixed.cut, false);
+  assert.strictEqual(mixed.lines.length, 31);
+  assert.ok(!mixed.lines.some((l) => l.includes(CHROME_MARK)));
+  const out = formatRead({ ...RAW, text: words }, { service: 'ebloc', mode: 'default' }).content;
+  assert.match(out, /== text \(first 1,200 of [\d,]+ chars; read --text for all\) ==\nData: 28 August/);
+  assert.doesNotMatch(out, /Augu\n/);
 });

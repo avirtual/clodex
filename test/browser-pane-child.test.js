@@ -107,6 +107,37 @@ function stampAll(state, els) {
   return { p, ns, stored, state: { known, next: p.next() } };
 }
 
+function xbutton(label, permalink, text = '') {
+  const art = permalink == null ? null : { querySelector: (sel) => (sel === 'a[href*="/status/"]' ? { getAttribute: () => permalink } : null) };
+  const attrs = label == null ? {} : { 'aria-label': label };
+  return {
+    tagName: 'BUTTON', isConnected: true, innerText: text, labels: null, value: '', id: '',
+    matches: (sel) => sel.split(',').includes('button'),
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    closest: (sel) => (sel === 'article' ? art : null),
+  };
+}
+
+test('numbering: feed buttons keep their numbers when only their counts move; amounts are not counters', () => {
+  const keysOf = (r) => Object.fromEntries(r.ns.map((n, i) => [n, r.stored[i]]));
+  const first = stampAll({ known: {}, next: 1 }, [
+    xbutton('248 Likes. Like', '/karolzdeb/status/1'), xbutton('Like', '/ana/status/2'), xbutton('1.2K views. View post analytics', '/ana/status/2'),
+    xbutton(null, null, '19,486'), xbutton('3 Following', null),
+  ]);
+  const second = stampAll(first.state, [
+    xbutton('250 Likes. Like', '/karolzdeb/status/1'), xbutton('1 Like. Like', '/ana/status/2'), xbutton('1.3K views. View post analytics', '/ana/status/2'),
+    xbutton(null, null, '19,486'), xbutton('4 Following', null),
+  ]);
+  assert.deepStrictEqual(second.ns, first.ns);
+  assert.deepStrictEqual([...second.p.fresh], []);
+  assert.deepStrictEqual(retiredOf(keysOf(first), keysOf(second), true), []);
+  assert.notStrictEqual(first.stored[0], first.stored[1], 'two posts keep two like buttons');
+  const amount = stampAll(first.state, [xbutton(null, null, '19,500')]);
+  assert.deepStrictEqual(amount.ns, [6]);
+  assert.deepStrictEqual([...amount.p.fresh], [6]);
+});
+
 test('numbering: an element keeps its number when new elements appear before it on a later page', () => {
   const first = stampAll({ known: {}, next: 1 }, [button('Acasa'), button('Mobil')]);
   assert.deepStrictEqual(first.ns, [1, 2]);
@@ -155,6 +186,56 @@ test('numbering: CHECK verifies a link with a learned volatile param under the s
   assert.strictEqual(stored[0], 'link\u0000Mobil\u0000/x?a=1');
   assert.strictEqual(p.verify(ns[0], stored[0]), 'ok');
   assert.match(scripts.CHECK(1, stored[0], state), /const learned = \["sess"\];/);
+});
+
+test('numberVerdict: a stale number whose label head is listed is retired naming its successor; absent is gone; present in chrome is hidden', () => {
+  const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna ';
+  const stored = K.keyOf({ kind: 'link', label: head + '[Document generat 03.07.2026]', href: '/l.pdf' });
+  const now = K.keyOf({ kind: 'link', label: head + '[Document generat 03.08.2026]', href: '/l.pdf' });
+  const retired = numberVerdict(null, stored, { 3: K.keyOf({ kind: 'link', label: 'Acasa', href: '/' }), 23: now });
+  assert.deepStrictEqual(retired, { verdict: 'retired', now: 23 });
+  assert.strictEqual(numberRefusal('ebloc', 10, stored, retired).message, '[10] retired: its text changed since your read (now [23]?) — read again');
+  const gone = numberVerdict(null, stored, { 3: K.keyOf({ kind: 'link', label: 'Acasa', href: '/' }) });
+  assert.strictEqual(gone, 'gone');
+  assert.strictEqual(numberRefusal('ebloc', 10, stored, gone).message, '[10] is no longer on this page of ebloc — read again');
+  const nav = K.keyOf({ kind: 'link', label: 'Avizier', href: '/avizier' });
+  const hidden = numberVerdict(null, nav, { 4: nav }, [4]);
+  assert.strictEqual(hidden, 'hidden');
+  assert.match(numberRefusal('ebloc', 4, nav, hidden).message, /hidden as a repeated header element/);
+  assert.strictEqual(numberVerdict(null, stored, { 23: K.keyOf({ kind: 'button', label: head + 'x', href: '' }) }), 'gone', 'another kind is not a successor');
+  assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys, page && page\.chrome\)/);
+});
+
+test('page scripts: overlay badges sit left of (or above) a text-sized box, inside media boxes; ⚠ badges are solid red', () => {
+  const o = scripts.OVERLAY;
+  assert.match(o, /if \(!media && r\.height <= 2 \* lh \+ 2\) \{\n\s*if \(r\.left - bw - 2 >= 0\) x = r\.left - bw - 2;\n\s*else if \(r\.top - 16 >= 0\) y = r\.top - 16;/);
+  assert.match(o, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
+});
+
+test('page scripts: look-alike long labels show a head and their distinguishing tail; unique ones keep the clip', () => {
+  const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna ';
+  const out = scripts.distinctClips([head + '[Document generat 04 Septembrie 2026]', head + '[Document generat 03 August 2026]', 'Acasa', 'x'.repeat(80)]);
+  assert.deepStrictEqual(out, ['Lista de plată pentru Bloc M4 … generat 04 Septembrie 2026]', 'Lista de plată pentru Bloc M4 … generat 03 August 2026]', null, null]);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /const tails = distinctClips\(items\.map/);
+});
+
+test('page scripts: LOGIN_PROBE reads a localized sign-out link (Ieşire → index.php?page=5) as signed in', () => {
+  const { loginLabel } = require('../plugins/browser-pane/read-format');
+  const link = (text, href) => ({
+    tagName: 'A', innerText: text, textContent: text, parentElement: null, type: '',
+    getAttribute: (k) => (k === 'href' ? href : null), matches: () => false,
+    getBoundingClientRect: () => ({ left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 }),
+  });
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: '' } },
+    { hostname: 'www.e-bloc.ro', pathname: '/index.php' }, 0, 0, 1200, 800);
+  const ebloc = run([link('Avizier', 'index.php?page=1'), link('Ieşire', 'index.php?page=5')]);
+  assert.strictEqual(ebloc.logoutLink, true);
+  assert.strictEqual(loginLabel(ebloc), 'signed in');
+  assert.strictEqual(run([link('', '/account/logout')]).logoutLink, true);
+  assert.strictEqual(run([link('Avizier', 'index.php?page=1'), link('Ieşirea blocului', '/x')]).logoutLink, false);
+  assert.strictEqual(loginLabel(run([link('Avizier', 'index.php?page=1')])), 'none');
 });
 
 test('numberVerdict: an unresolved number is ambiguous when its base key is on the page under another key, else gone', () => {
@@ -297,23 +378,31 @@ test('page scripts: PAGE_TEXT renders tables as cell | cell rows with the same c
   assert.strictEqual(a[0], rows.exec(scripts.READ_TEXT(false))[0]);
 });
 
-test('page scripts: an icon clickable falls back to its img file name after alt, title, aria-label and svg title', () => {
-  const src = scripts.READ_INTERACTIVE(false);
-  assert.match(src, /\(t && t\.textContent\)\n\s*\|\| src\.split\(\/\[\?#\]\/\)\[0\]\.split\('\/'\)\.pop\(\)/);
-  const iconLabel = new Function(`${src.slice(src.indexOf('  const iconLabel'), src.indexOf('  const sel ='))}\nreturn iconLabel;`)();
-  const img = (s, alt) => ({ getAttribute: (k) => (k === 'src' ? s : k === 'alt' ? alt : null) });
-  const el = (imgs) => ({ querySelectorAll: () => imgs, querySelector: () => null, getAttribute: () => null });
-  assert.strictEqual(iconLabel(el([img('/img/lock.png?v=3')])), 'lock.png');
-  assert.strictEqual(iconLabel(el([img('/img/lock.png', 'padlock')])), 'padlock');
-  assert.strictEqual(iconLabel(el([img('data:image/gif;base64,R0l')])), '');
+test('page scripts: labelFrom skips placeholder alts and falls back to test id, class, handle, href segment, src; posters read video', () => {
+  const L = scripts.labelFrom;
+  const rows = [
+    [{ tag: 'div', alts: ['icon'], src: '/img/lock.png?v=3' }, 'lock.png'],
+    [{ tag: 'div', alts: [null, 'padlock'], src: '/img/lock.png' }, 'padlock'],
+    [{ tag: 'div', alts: ['image'], testid: 'power-icon-container' }, 'power-icon'],
+    [{ tag: 'div', alts: ['Logo'] }, 'Logo'],
+    [{ tag: 'div', alts: ['photo'], classes: 'css-1dbjc4n wrapper device-tile' }, 'device-tile'],
+    [{ tag: 'div', src: 'data:image/gif;base64,R0l' }, ''],
+    [{ tag: 'a', href: '/karolzdeb', alts: [''] }, '@karolzdeb'],
+    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, 'Karol avatar'],
+    [{ tag: 'a', href: '/i/bookmarks', svgTestid: 'bookmark-icon' }, 'bookmark-icon'],
+    [{ tag: 'a', href: '/i/bookmarks', svgTitle: 'Bookmarks' }, 'Bookmarks'],
+    [{ tag: 'a', href: '/settings/account/security' }, 'security'],
+    [{ tag: 'div', src: 'https://pbs.example/media/poster_1.jpg', video: true }, 'video'],
+    [{ tag: 'div', src: 'https://pbs.example/media/poster_1.jpg' }, 'poster_1.jpg'],
+    [{ tag: 'button', text: '\n ', name: 'info', id: 'b1' }, 'info'],
+    [{ tag: 'button', text: ' ', id: 'b1' }, 'b1'],
+    [{ tag: 'button', aria: 'Informatii', text: 'x', name: 'info' }, 'Informatii'],
+    [{ tag: 'input', value: 'Card bancar', title: 'Plata', name: 'card' }, 'Card bancar'],
+    [{ tag: 'input', title: 'Plata', name: 'card' }, 'Plata'],
+    [{ tag: 'div', text: ' ', id: 'ondiv' }, ''],
+  ];
+  for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
 });
-
-const svcOf = () => ({ origins: new Map(), num: null });
-const stampOn = (svc, url, labels) => {
-  const st = stampAll(numState(svc, url), labels.map((l) => button(l)));
-  mergeNumbers(svc, { assigned: Object.fromEntries(st.stored.map((k, i) => [k, st.ns[i]])), next: st.state.next });
-  return st;
-};
 
 test('numState: each origin keeps its own numbers; a detour to another site and back resolves the same element', () => {
   const svc = svcOf();
@@ -437,7 +526,7 @@ test('changedOf: kept numbers whose line or row text differs since the last read
   assert.deepStrictEqual(changedOf(null, { 1: 'a' }), []);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.ok(ri.includes("sig = label + (el.hasAttribute('download') ? ' [download]' : '');"), 'a link signature leaves out its raw href (volatile t= is not a change)');
-  assert.match(ri, /sigs\[n\] = \(it\.sig == null \? it\.line : it\.sig\) \+ '.' \+ rowsOut\[n\];/);
+  assert.match(ri, /sigs\[n\] = counterMask\(it\.sig == null \? it\.line : it\.sig\) \+ '.' \+ counterMask\(rowsOut\[n\]\);/);
   assert.match(CHILD_SRC, /if \(rowChanged\(svc\.num && svc\.num\.lastRead, n, el\.row\)\) out\.textChanged = true;/);
   assert.ok(/ent\.lastRead = \{ .*, rows: el\.rows \|\| \{\} \};/.test(CHILD_SRC));
   assert.match(scripts.FIND(1), /row: rowOf\(el\),/);
@@ -493,25 +582,61 @@ test('page scripts: TILE_SEL shares BOX_SEL with contextOf and no longer matches
 test('page scripts: consequentialOf tags one label per category, diacritic- and case-insensitive; Carduri nav does not match', () => {
   const c = scripts.consequentialOf;
   const rows = [
-    [{ label: 'Card bancar' }, 'payment'], [{ label: 'Plătește' }, 'payment'], [{ label: 'Pay now' }, 'payment'],
+    [{ label: 'Card bancar', control: true }, 'payment'], [{ label: 'Plătește' }, 'payment'], [{ label: 'Pay now' }, 'payment'],
     [{ value: 'Checkout' }, 'payment'], [{ aria: 'Confirm payment' }, 'payment'],
     [{ label: 'Cumpără acum' }, 'purchase'], [{ label: 'Place order' }, 'purchase'],
     [{ label: 'ȘTERGE' }, 'deletion'], [{ idClass: 'btn-delete' }, 'deletion'],
     [{ label: 'Ieşire' }, 'sign-out'], [{ label: 'Ieșire' }, 'sign-out'], [{ label: 'Log out' }, 'sign-out'], [{ idClass: 'logout ' }, 'sign-out'],
+    [{ label: 'Abmelden' }, 'sign-out'],
     [{ label: 'Arm' }, 'alarm'], [{ label: 'Disarm' }, 'alarm'],
     [{ label: 'Dezabonare' }, 'unsubscribe'], [{ label: 'Cancel subscription' }, 'unsubscribe'],
     [{ label: 'Send money' }, 'transfer'], [{ formaction: '/transfer' }, 'transfer'],
     [{ label: 'Trimite', action: '/plata/pay' }, 'payment'], [{ label: 'Go', action: '/orders/new' }, 'purchase'],
     [{ label: 'Carduri' }, null], [{ label: 'Avizier' }, null], [{ label: 'Armată' }, null], [{ label: 'Wireless' }, null],
     [{ label: 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna august', capped: true }, null],
-    [{ label: 'Make payment' }, 'payment'], [{ label: 'Submit payment' }, 'payment'],
+    [{ label: 'Make payment', control: true }, 'payment'], [{ label: 'Submit payment', control: true }, 'payment'],
     [{ label: 'Plătește acum 335,90 Lei prin card bancar online', action: '/plata' }, 'payment'],
     [{ idClass: 'card card-body' }, null], [{ idClass: 'sort-order' }, null], [{ idClass: 'transfer-list' }, null],
-    [{ label: 'Card bancar', textual: true }, null],
+    [{ label: 'Card bancar', textual: true, control: true }, null],
+    [{ label: 'Card bancar' }, null], [{ label: 'Make payment' }, null],
+    [{ label: 'Lista de plată', capped: true }, null], [{ label: 'Plati online', capped: true }, null],
+    [{ label: 'Ordin de plată 12/2026', capped: true }, null], [{ label: 'Suma de plată 335,90 Lei', capped: true }, null],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
-  assert.match(scripts.READ_INTERACTIVE(false, {}), /line: kind \+ ' ' \+ \(cqOf\(el\) \? '⚠ ' : ''\) \+ line/);
-  assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';border:2px solid #e00'/);
+  const ri = scripts.READ_INTERACTIVE(false, {});
+  assert.match(ri, /line: kind \+ ' ' \+ \(cqOf\(el\) \? '⚠ ' : ''\) \+ line/);
+  assert.match(ri, /control: button && !doc && \(!!\(form \|\| e\.closest\('form'\)\) \|\| e\.hasAttribute\('formaction'\)\),/);
+});
+
+test('page scripts: cqOf tags payment nouns only on a button or submit inside a form; links, display rows and documents never by a noun', () => {
+  const src = scripts.FIND(1);
+  const cqOf = new Function(`${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqOf;`)();
+  const el = (tag, text, o = {}) => {
+    const attrs = { ...(o.attrs || {}) };
+    return {
+      tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs,
+      closest: (sel) => (sel === 'form' && o.inForm ? {} : null),
+      matches: (sel) => !o.plain && sel.split(',').some((x) => x === tag || x.startsWith(tag + '[') || x.startsWith(tag + ':')),
+    };
+  };
+  const form = { getAttribute: () => '/index.php?page=10' };
+  const rows = [
+    ['input:submit Card bancar in the Datorii form', el('input', '', { type: 'submit', value: 'Card bancar', form }), 'payment'],
+    ['button Plata in a form', el('button', 'Plata', { form }), 'payment'],
+    ['role=button Plata inside a form', el('div', 'Plata', { attrs: { role: 'button' }, inForm: true, plain: true }), 'payment'],
+    ['button Plata with formaction', el('button', 'Plata', { attrs: { formaction: '/x' } }), 'payment'],
+    ['button Plata outside any form', el('button', 'Plata'), null],
+    ['nav link Plati online', el('a', 'Plati online', { attrs: { href: '/plati' } }), null],
+    ['link Lista de plată', el('a', 'Lista de plată', { attrs: { href: '/lista' } }), null],
+    ['clickable row Suma de plată 335,90 Lei', el('div', 'Suma de plată 335,90 Lei', { plain: true }), null],
+    ['clickable row Ordin de plată', el('tr', 'Ordin de plată 12', { plain: true }), null],
+    ['document link role=button in a form', el('a', 'Plata', { attrs: { href: '/f/plata.pdf', role: 'button' }, inForm: true }), null],
+    ['download link in a form', el('a', 'Plata', { attrs: { href: '/f', download: '' }, inForm: true }), null],
+    ['link Ieşire (a verb) anywhere', el('a', 'Ieşire', { attrs: { href: 'index.php?page=5' } }), 'sign-out'],
+    ['clickable Plătește (a verb)', el('div', 'Plătește', { plain: true }), 'payment'],
+  ];
+  for (const [name, e, want] of rows) assert.strictEqual(cqOf(e), want, name);
 });
 
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
