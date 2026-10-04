@@ -60,6 +60,28 @@ async function handOver({ scheduler, live, request, session }, req) {
   return { ok: true, service: name, seat: h.name };
 }
 
+const realTimers = {
+  setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t && t.unref) t.unref(); return t; },
+};
+
+function createNavNotifier({ holder, session, timers = realTimers, windowMs = OPERATOR_NAV_MS }) {
+  const pending = new Map();
+  const flush = (service) => {
+    const frame = pending.get(service);
+    pending.delete(service);
+    const seat = holder(service);
+    const h = seat && session(seat);
+    if (!h) return;
+    h.inject(replies.operatorNav(service, String(frame.url || ''), String(frame.title || ''), !!frame.inPage));
+  };
+  return (frame) => {
+    if (!holder(frame.service)) return;
+    const had = pending.has(frame.service);
+    pending.set(frame.service, frame);
+    if (!had) timers.setTimeout(() => flush(frame.service), windowMs);
+  };
+}
+
 let active = null;
 
 function activate(host) {
@@ -67,8 +89,11 @@ function activate(host) {
   const live = new Map();
   const notified = new Set();
   const denials = new Map();
-  const navTold = new Map();
   let scheduler = null;
+  const navNotifier = createNavNotifier({
+    holder: (service) => scheduler.leaseHolder(service),
+    session: (seat) => host.sessions.get(seat),
+  });
   const changed = () => { try { host.events.emit('changed', null, 'all'); } catch {} };
   const onState = (frame) => {
     const service = frame.service;
@@ -124,14 +149,8 @@ function activate(host) {
     return { global: d.global, service: Array.isArray(d.services[service]) ? d.services[service] : [] };
   };
   const onOperatorNav = (frame) => {
-    const seat = scheduler.leaseHolder(frame.service);
-    if (!seat) return;
-    const at = navTold.get(frame.service) || 0;
-    if (Date.now() - at < OPERATOR_NAV_MS) return;
-    const h = host.sessions.get(seat);
-    if (!h) return;
-    navTold.set(frame.service, Date.now());
-    h.inject(replies.operatorNav(frame.service, String(frame.url || ''), String(frame.title || '')));
+    scheduler.noteUrl(frame.service, String(frame.url || ''));
+    navNotifier(frame);
   };
   const watched = {
     request(op, args, opts) {
@@ -291,4 +310,4 @@ function deactivate() {
   client.dispose();
 }
 
-module.exports = { activate, deactivate, handOver, PROMPT_LINES, removePartition };
+module.exports = { activate, deactivate, handOver, PROMPT_LINES, removePartition, createNavNotifier, OPERATOR_NAV_MS };

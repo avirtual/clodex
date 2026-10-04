@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const replies = require('./replies');
 const paths = require('./paths');
-const { formatRead, chromeStrip, elementStrip } = require('./read-format');
+const { formatRead, chromeStrip, elementStrip, hostOf } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -13,6 +13,7 @@ function storedLogin(login, now) {
   if (login.idp === 'google' || login.googleRejected) return { state: 'idp-refused', at: now, via: 'google' };
   if (login.password || login.otp || login.captcha || login.idp) return { state: 'login-page', at: now, via: 'password-field' };
   if (login.logoutLink) return { state: 'logged-in', at: now, via: 'logout-link' };
+  if (login.loggedInHint) return { state: 'logged-in', at: now, via: 'account-ui' };
   return { state: 'unknown', at: now };
 }
 
@@ -82,7 +83,7 @@ function createScheduler({
   };
 
   const svcState = (name) => {
-    if (!services.has(name)) services.set(name, { lease: null, queue: [], inflight: null, state: 'closed', reason: null, waiters: [] });
+    if (!services.has(name)) services.set(name, { lease: null, queue: [], inflight: null, state: 'closed', reason: null, waiters: [], url: '' });
     return services.get(name);
   };
 
@@ -147,10 +148,16 @@ function createScheduler({
     }
   }
 
-  function recordOpen(service, seat, r) {
+  function noteUrl(service, url) {
+    if (url) svcState(service).url = String(url);
+  }
+
+  function recordOpen(service, seat, r, asked) {
     const t = now();
+    noteUrl(service, r.url);
     updateStorage(service, (prev) => ({
       ...prev,
+      openedHost: prev.openedHost || hostOf(prev.lastUrl) || hostOf(asked || r.url),
       createdAt: prev.createdAt || t,
       lastUsedAt: t,
       lastSeat: seat,
@@ -179,7 +186,7 @@ function createScheduler({
 
   async function runOpen(handle, service, cmd) {
     const r = await client.request('open', { url: cmd.url }, { service, seat: handle.name });
-    recordOpen(service, handle.name, r);
+    recordOpen(service, handle.name, r, cmd.url);
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });
     if (r.held && !r.takeover) signin(service, r);
     return replies.openReply(service, r) + (r.takeover ? replies.TEXT.takeover : '');
@@ -188,6 +195,7 @@ function createScheduler({
   async function runRead(handle, service, cmd) {
     const raw = await client.request('read', { scope: cmd.main ? 'main' : 'all' }, { service, seat: handle.name });
     if (raw && raw.held) signin(service, raw);
+    if (raw) noteUrl(service, raw.url);
     const st = seatState(handle.name);
     const last = st.lastText[service];
     const hasText = !!raw && typeof raw.text === 'string';
@@ -213,7 +221,9 @@ function createScheduler({
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base };
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden });
+    const rec = ((storage.get() || {}).services || {})[service] || {};
+    const openedHost = rec.openedHost || hostOf(rec.lastUrl);
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost });
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);
@@ -245,6 +255,7 @@ function createScheduler({
     if (cmd.sub === 'select') args.option = cmd.option;
     if (cmd.sub === 'key') args.key = cmd.key;
     const r = await client.request(cmd.sub, args, { service, seat: handle.name });
+    noteUrl(service, r.url);
     const d = r.download;
     if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
     if (r.held && !r.takeover) signin(service, r);
@@ -342,7 +353,7 @@ function createScheduler({
 
   function servicesLine() {
     const data = storage.get() || {};
-    return replies.servicesReply((data && data.services) || {}, mirror);
+    return replies.servicesReply((data && data.services) || {}, mirror, (name) => (services.get(name) || {}).url || '');
   }
 
   function release(handle, service) {
@@ -389,6 +400,7 @@ function createScheduler({
     const was = s.state;
     s.state = frame.state;
     s.reason = frame.state === 'held' ? (frame.reason || 'login') : null;
+    noteUrl(service, frame.url);
     if (mirror) mirror.set(service, frame.state);
     if (frame.state === 'held' && was !== 'held' && frame.reason !== 'takeover') {
       const login = storedLogin(frame.login, now());
@@ -441,6 +453,7 @@ function createScheduler({
     operatorOpened,
     restoreLease,
     leaseHolder,
+    noteUrl,
     NO_SERVICE,
   };
 }

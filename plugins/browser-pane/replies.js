@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loginLabel, CHANGE_MAX } = require('./read-format');
+const { loginLabel, CHANGE_MAX, redactUrl, hostOf } = require('./read-format');
 
 const ANSI = new RegExp('\\u001B\\[[0-9;?]*[a-zA-Z]|\\u001B\\][^\\u0007]*\\u0007', 'g');
 const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
@@ -50,7 +50,7 @@ function idleLabel(idle) {
 }
 
 function openReply(service, r) {
-  const parts = [`opened ${service}`, String(r.status == null ? '?' : r.status), JSON.stringify(String(r.title || '')), String(r.url || ''),
+  const parts = [`opened ${service}`, String(r.status == null ? '?' : r.status), JSON.stringify(String(r.title || '')), redactUrl(r.url || ''),
     `login: ${loginLabel(r.login)}`];
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
@@ -114,13 +114,18 @@ function loginState(login) {
   return 'unknown';
 }
 
-function servicesReply(services, mirror) {
+function servicesReply(services, mirror, urlOf = () => '') {
   const names = Object.keys(services || {}).sort((a, b) => (services[b].lastUsedAt || 0) - (services[a].lastUsedAt || 0));
   if (!names.length) return reply('no services yet — [agent:browser open <service>] <url>');
   const items = names.map((n) => {
     const state = mirror && mirror.get(n);
-    const win = state && state !== 'closed' ? `window open · ${state}` : 'closed';
-    return `${n} — ${loginState(services[n].login)} · ${win}`;
+    const open = !!state && state !== 'closed';
+    const win = open ? `window open · ${state}` : 'closed';
+    const rec = services[n] || {};
+    const host = hostOf((open && urlOf(n)) || rec.lastUrl);
+    const opened = rec.openedHost || hostOf(rec.lastUrl);
+    const site = host ? `${host}${opened && opened !== host ? ` (was ${opened})` : ''} · ` : '';
+    return `${n} — ${site}${loginState(rec.login)} · ${win}`;
   });
   return reply(`services: ${items.join(' │ ')}`);
 }
@@ -131,7 +136,7 @@ function ago(ms) {
 }
 
 function clipUrl(url) {
-  const u = String(url || '');
+  const u = redactUrl(url || '');
   return u.length > 160 ? u.slice(0, 159) + '…' : u;
 }
 
@@ -155,8 +160,8 @@ const TEXT = {
     hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
 };
 
-function operatorNav(service, url, title) {
-  return reply(`the operator navigated ${service} to ${url} (${JSON.stringify(oneLine(title || '', 120))}) — read before using numbers`);
+function operatorNav(service, url, title, inPage = false) {
+  return reply(`the operator navigated ${service} to ${redactUrl(url)}${inPage ? ' (in-page)' : ''} (${JSON.stringify(oneLine(title || '', 120))}) — read before using numbers`);
 }
 
 function isGoogle(login) {
@@ -200,7 +205,8 @@ function dropSuffix(labels) {
 
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
-  return `navigated → ${r.url} (${JSON.stringify(String(r.title || ''))}) · numbers kept where the page repeats`;
+  if (r.inPage) return `navigated → ${redactUrl(r.url)} (in-page) · numbers kept where the page repeats`;
+  return `navigated → ${redactUrl(r.url)} (${JSON.stringify(String(r.title || ''))}) · numbers kept where the page repeats`;
 }
 
 function actReply(sub, service, cmd, r) {
@@ -216,18 +222,20 @@ function actReply(sub, service, cmd, r) {
   if (r.download) text += downloadTail(r.download, r.popupUrl);
   else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
   else if (r.popup) text += TEXT.popup;
-  else if (!r.navigated && typeof r.changed === 'string') text += changeTail(sub, r);
+  else if ((!r.navigated || r.inPage) && typeof r.changed === 'string') text += changeTail(sub, r);
   if (r.takeover) text += TEXT.takeover;
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
 }
 
 function changeTail(sub, r) {
-  if (r.changed) return ` · changed: ${JSON.stringify(r.changed)}`;
+  const target = r.target ? ` · target: ${r.target}` : '';
+  if (r.changed) return ` · changed: ${JSON.stringify(r.changed)}${target}`;
+  if (target) return target;
   if (sub === 'type' && typeof r.value === 'string') {
     const v = [...r.value];
     return ` · value now ${JSON.stringify(v.length > 60 ? v.slice(0, 59).join('') + '…' : r.value)}`;
   }
-  return ' · no visible change';
+  return r.watched ? ` · no change on the target within ${Math.round((r.watched || 0) / 1000)}s` : ' · no visible change';
 }
 
 function bytesLabel(n) {
@@ -287,7 +295,7 @@ function waitReply(service, r, forText) {
 
 function handbackReply(service, frame) {
   const signed = frame.login && frame.login.password ? 'still on a sign-in page' : 'signed in';
-  return reply(`the operator handed ${service} back · now ${frame.url || ''} (${JSON.stringify(String(frame.title || ''))}) · ${signed} · read to continue`);
+  return reply(`the operator handed ${service} back · now ${redactUrl(frame.url || '')} (${JSON.stringify(String(frame.title || ''))}) · ${signed} · read to continue`);
 }
 
 const HANDOVER_MAX = 800;
