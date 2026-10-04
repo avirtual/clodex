@@ -257,6 +257,90 @@ test('engine: status redacts a seat from another workspace', async (t) => {
   });
 });
 
+async function refuses(p, want, label) {
+  const r = await p;
+  assert.strictEqual(r && r.ok, false, label);
+  if (want instanceof RegExp) assert.match(r.error, want, label); else assert.strictEqual(r.error, want, label);
+}
+
+test('engine operator.open: bad service names and bad URLs are refused, a good one sends {url, operator:true} and shows held (operator)', async (t) => {
+  const { engine, frames } = boot(t);
+  const open = (req) => engine.dispatch('browser-pane', 'operator.open', [req], 'desktop');
+  for (const service of ['', 'Utility', '../x', 'a b']) {
+    await refuses(open({ service, url: 'https://portal.example.com/' }), /bad service name/, JSON.stringify(service));
+  }
+  for (const [url, re] of [['ftp://portal.example.com/', /only http: and https:/], ['javascript:alert(1)', /only http: and https:/],
+    ['https://u:p@portal.example.com/', /user:pass@/], ['not a url', /not a URL/]]) {
+    await refuses(open({ service: 'utility', url }), re, url);
+  }
+  assert.deepStrictEqual(await open({ service: 'utility', url: 'https://portal.example.com/home' }),
+    { ok: true, service: 'utility', url: 'https://portal.example.com/home', title: 'Operator utility' });
+  assert.strictEqual(frames().filter((l) => l.startsWith('open')).pop(), 'open {"url":"https://portal.example.com/home","operator":true,"policy":{"global":[],"service":[]}}');
+  const st = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
+  assert.deepStrictEqual(st.services, [{ name: 'utility', state: 'held', reason: 'takeover', seat: null, login: 'unknown', denied: 0, operator: true }]);
+  const list = await engine.dispatch('browser-pane', 'services.list', [], 'desktop');
+  assert.deepStrictEqual(list.services.map((s) => [s.name, s.state, s.operator]), [['utility', 'held', true]]);
+});
+
+test('engine operator.open: a service an agent is driving is refused with the seat named', async (t) => {
+  const { emit, engine } = boot(t);
+  const opening = emit('[agent:browser open utility] https://portal.example.com/bills');
+  await refuses(engine.dispatch('browser-pane', 'operator.open', [{ service: 'utility', url: 'https://portal.example.com/' }], 'desktop'),
+    'agent clodex-hand is driving utility — wait or ask it to release');
+  await opening;
+});
+
+test('engine operator.handover: the seat gets one line, its first read works, and its numbers work after it', async (t) => {
+  const { engine, injected, emit, emitAs } = boot(t);
+  await engine.dispatch('browser-pane', 'operator.open', [{ service: 'utility', url: 'https://portal.example.com/home' }], 'desktop');
+  assert.match(await emitAs('clodex-two', '[agent:browser read utility]'), /operator has control of utility \(takeover\)/);
+  const r = await engine.dispatch('browser-pane', 'operator.handover', [{ service: 'utility', seat: 'clodex-hand', instruction: 'pay the\nAugust bill' }], 'desktop');
+  assert.deepStrictEqual(r, { ok: true, service: 'utility', seat: 'clodex-hand' });
+  const line = injected.filter((i) => i.name === 'clodex-hand').pop().text;
+  assert.strictEqual(line,
+    '[agent:browser] the operator opened utility at https://portal.example.com/account ("Account overview") and handed it to you — pay the August bill — start with [agent:browser read utility]');
+  assert.ok(!line.includes('\n'));
+  assert.match(await emit('[agent:browser read utility]'), /^\[agent:browser\] read utility · /);
+  assert.match(await emit('[agent:browser click 2]'), /^\[agent:browser\] clicked/);
+  assert.match(await emitAs('clodex-two', '[agent:browser read utility]'), /in use by clodex-hand/);
+});
+
+test('engine operator.handover: refuses an unknown or shell seat and a service with no window', async (t) => {
+  const { engine } = boot(t);
+  const hand = (req) => engine.dispatch('browser-pane', 'operator.handover', [req], 'desktop');
+  await refuses(hand({ service: 'utility', seat: 'nobody' }), /no live claude or codex seat named nobody/);
+  await refuses(hand({ service: 'utility', seat: 'clodex-hand' }), /utility has no open window — open it first/);
+  await refuses(hand({ service: 'Bad', seat: 'clodex-hand' }), /bad service name/);
+});
+
+function handHarness({ grantThrows = null } = {}) {
+  const log = [];
+  const live = new Map([['utility', { state: 'held', reason: 'takeover', url: 'about:blank', title: '' }]]);
+  const deps = {
+    live,
+    scheduler: { grant: (svc, seat) => { log.push(['grant', svc, seat]); if (grantThrows) throw new Error(grantThrows); } },
+    request: async (op, args, meta) => { log.push([op, meta.service]); return { state: 'idle', url: 'https://portal.example.com/bills', title: 'My Bills' }; },
+    session: (name) => (name === 'hand-a' ? { name, type: 'codex', isAlive: () => true, inject: (text) => log.push(['inject', text]) } : null),
+  };
+  return { log, deps };
+}
+
+test('engine handOver: grant, then handback, then one inject — in that order', async () => {
+  const { log, deps } = handHarness();
+  await engineMod.handOver(deps, { service: 'utility', seat: 'hand-a', instruction: 'check\r\nthe   total\n' });
+  assert.deepStrictEqual(log, [
+    ['grant', 'utility', 'hand-a'],
+    ['handback', 'utility'],
+    ['inject', '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — check the total — start with [agent:browser read utility]'],
+  ]);
+});
+
+test('engine handOver: a busy holder refuses at grant, before any handback or inject', async () => {
+  const { log, deps } = handHarness({ grantThrows: 'agent hand-b is driving utility — wait or ask it to release' });
+  await assert.rejects(engineMod.handOver(deps, { service: 'utility', seat: 'hand-a' }), { message: 'agent hand-b is driving utility — wait or ask it to release' });
+  assert.deepStrictEqual(log, [['grant', 'utility', 'hand-a']]);
+});
+
 test('engine: denylist.set validates, stores per scope and denylist.get returns the record', async (t) => {
   const { engine, host } = boot(t);
   const set = (scope, patterns) => engine.dispatch('browser-pane', 'denylist.set', [{ scope, patterns }], 'desktop');

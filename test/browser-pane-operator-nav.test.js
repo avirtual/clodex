@@ -25,9 +25,9 @@ test('replies: denylist refusals name the url, the pattern and the list', () => 
   assert.strictEqual(R.TEXT.deniedBar('x.com', null), 'Refused: matches denylist pattern "x.com" (global)');
 });
 
-test('child: policyDenies is the one check referenced from every navigation site (7 call sites)', () => {
-  assert.strictEqual(count(/policyDenies\(/g), 7, 'open, address bar, block, main popup handler, guarded popup handler, viaUrl, will-download');
-  assert.strictEqual(count(/(?<!down)loadURL\(/g), 4, 'a new loadURL site must run policyDenies first; then bump this count');
+test('child: policyDenies is the one check referenced from every navigation site (8 call sites)', () => {
+  assert.strictEqual(count(/policyDenies\(/g), 8, 'open, operator open, address bar, block, main popup handler, guarded popup handler, viaUrl, will-download');
+  assert.strictEqual(count(/(?<!down)loadURL\(/g), 5, 'a new loadURL site must run policyDenies first; then bump this count');
   assert.strictEqual(count(/downloadURL\(/g), 2, 'a new downloadURL site must run policyDenies first; then bump this count');
   assert.strictEqual(count(/'will-download'/g), 1);
   const block = /const block = \(e, url\) => \{[\s\S]*?\n {4}\};/.exec(CHILD);

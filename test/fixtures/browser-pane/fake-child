@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const readline = require('node:readline');
+const { checkOpenUrl } = require('../../../plugins/browser-pane/child');
 
 const arg = (k) => {
   const hit = process.argv.find((a) => a.startsWith(`--${k}=`));
@@ -38,6 +39,12 @@ function answer(f) {
     return setImmediate(() => process.exit(0));
   }
   if (mode === 'crash-on-op') { process.stderr.write('dying\n'); process.exit(3); }
+  if (f.op === 'open' && f.args.operator) {
+    try { checkOpenUrl(String(f.args.url || '')); } catch (e) { return send({ id: f.id, ok: false, code: e.code, error: e.message }); }
+    doc += 1;
+    send({ event: 'state', service: f.service, state: 'held', reason: 'takeover', url: 'about:blank', title: '' });
+    return send({ id: f.id, ok: true, result: { url: f.args.url, title: 'Operator ' + f.service, doc, state: 'held', reason: 'takeover' } });
+  }
   if (f.op === 'open' && /login/.test(f.args.url)) {
     doc += 1;
     const login = { password: true };
@@ -106,7 +113,7 @@ const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line) => {
   let f;
   try { f = JSON.parse(line); } catch { return; }
-  if (frameLog && f.op !== 'shutdown' && f.op !== 'ping') fs.appendFileSync(frameLog, `${f.op}\n`);
+  if (frameLog && f.op !== 'shutdown' && f.op !== 'ping') fs.appendFileSync(frameLog, `${f.op}${f.args && f.args.operator ? ` ${JSON.stringify(f.args)}` : ''}\n`);
   if (mode === 'out-of-order' && f.op === 'echo' && f.args.hold) { held = f; return; }
   answer(f);
   if (held && held !== f) { const h = held; held = null; answer(h); }

@@ -517,6 +517,29 @@ function run(electron, ctx) {
     });
   }
 
+  async function opOperatorOpen(name, args) {
+    const url = checkOpenUrl(String(args.url || ''));
+    const policy = urlpolicy.compilePolicy(args.policy);
+    const have = services.get(name);
+    if (have) have.policy = policy;
+    const hit = policyDenies(have || { name, policy }, url, 'operator');
+    if (hit) throw deniedError({ name }, url, hit, 'open');
+    const svc = openService(name);
+    svc.policy = policy;
+    await svc.blank;
+    if (svc.lock.state !== 'held') takeover(svc);
+    if (svc.lock.state !== 'held') throw codedError('OPERATOR_BUSY', TEXT.operatorBusy(name));
+    ensureCdp(svc);
+    if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
+    let navErr = null;
+    await driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
+    if (svc.wc.isDestroyed()) throw closedError(name);
+    if (navErr && svc.wc.getURL() === 'about:blank') throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
+    svc.win.show();
+    svc.win.focus();
+    return { ...pageInfo(svc), doc: svc.doc, state: svc.lock.state, reason: svc.lock.reason };
+  }
+
   async function opAct(name, frame, args) {
     const svc = need(name);
     const op = frame.op;
@@ -875,11 +898,11 @@ function run(electron, ctx) {
   }
 
   async function handback(svc) {
-    if (svc.lock.state !== 'held') return { state: svc.lock.state };
+    if (svc.lock.state !== 'held') return { state: svc.lock.state, ...pageInfo(svc) };
     await driver.pinSessionCookies(svc.ses).catch(() => 0);
     const login = svc.wc.isDestroyed() ? {} : await probe(svc);
     if (svc.lock.state === 'held') dispatch(svc, { type: 'handback' }, { handback: true, login });
-    return { state: svc.lock.state };
+    return { state: svc.lock.state, ...pageInfo(svc) };
   }
 
   function operatorOp(op, name) {
@@ -970,7 +993,7 @@ function run(electron, ctx) {
         else if (op === 'forget') result = await serial(name, () => opForget(name));
         else {
           result = await serial(name, () => {
-            if (op === 'open') return opOpen(name, frame, args);
+            if (op === 'open') return args.operator ? opOperatorOpen(name, args) : opOpen(name, frame, args);
             if (op === 'read') return opRead(name, frame, args);
             if (op === 'inspect') return opInspect(name, frame, args);
             if (op === 'idle') return opIdle(name, args);
@@ -1011,4 +1034,4 @@ function run(electron, ctx) {
   });
 }
 
-module.exports = { run, keepOrFold, settleDownload };
+module.exports = { run, keepOrFold, settleDownload, checkOpenUrl };
