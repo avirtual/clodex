@@ -38,6 +38,17 @@ const PAGES = {
 <label>Password <input type="password" name="pw"></label><button>Sign in</button></form></main>`,
   '/form': () => `<title>Form</title><main><label>Find <input id=q></label><button onclick="document.title='clicked'">Go</button>
 <select id=m><option>July 2026</option><option>August 2026</option></select><a href="/shadow">Shadow page</a></main>`,
+  '/clickables': () => {
+    const months = [];
+    for (let i = 1; i <= 80; i++) months.push(`<option>Luna ${i} din arhivă</option>`);
+    return `<title>Avizier</title><main><h1>Avizier</h1><select id=luna>${months.join('')}</select>
+<table><tr><th>Contor</th><th>Valoare</th><th>Total</th></tr><tr><td>Index precedent</td><td></td><td>19,486</td></tr></table>
+<div onclick="document.title='div clicked'">Lista de plată 08/2026</div>
+<p><a onclick="window.open('/inline.pdf')">Lista de plată 07/2026 PDF</a></p>
+<table><tr id=prow style="cursor:pointer"><td>Factura iulie</td><td><b>120 lei</b></td></tr></table>
+<p><span>Duplicat</span> <span>Duplicat</span></p></main>
+<script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
+  },
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
@@ -135,6 +146,29 @@ function landed(reply) {
   return `    ${m[1]} · ${fs.statSync(m[1]).size} B · starts ${JSON.stringify(head)} · same bytes: ${fs.readFileSync(m[1]).equals(PDF)}`;
 }
 
+async function clickablesStep(emit, base) {
+  console.log('== 7. script-only clickables, click --text, select options and table rows in the text');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open avizier] ${base}/clickables`);
+  const content = fileOf(await emit('[agent:browser read avizier]'));
+  const lines = content.split('\n');
+  const cut = lines.indexOf('== elements ==');
+  const text = lines.slice(0, cut).join('\n');
+  const els = lines.slice(cut + 1).filter((l) => /^\[\d+\]/.test(l));
+  for (const l of els) console.log(`    ${l.slice(0, 120)}`);
+  for (const l of lines.slice(0, cut).filter((x) => / \| /.test(x))) console.log(`    ${l}`);
+  check('a div with onclick is numbered as clickable', els.some((l) => /\] clickable "Lista de plată 08\/2026"$/.test(l)));
+  check('an <a> without href is numbered', els.some((l) => /\] clickable "Lista de plată 07\/2026 PDF"$/.test(l)));
+  check('a pointer-cursor row is numbered once', els.filter((l) => /Factura/.test(l)).length === 1 && !els.some((l) => /"120 lei"/.test(l)));
+  check('select options are absent from the text', !/Luna 1 din arhivă/.test(text));
+  check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
+  check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
+  check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
+  check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[\d+\] "Duplicat", \[\d+\] "Duplicat"/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
+  await emit('[agent:browser read avizier]');
+  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf \d+ B \(PDF popup /.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
+}
+
 async function payStep(emit, base) {
   console.log('== 6. a click that commits an interstitial which auto-POSTs to a 17 s endpoint');
   await emit(`[agent:browser open pay] ${base}/pay`);
@@ -162,8 +196,8 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host } = bootEngine(userData, tmp);
-  if (process.env.CXB_ONLY === 'pay') {
-    await payStep(emit, base);
+  if (process.env.CXB_ONLY === 'pay' || process.env.CXB_ONLY === 'clickables') {
+    await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
     await sleep(3000);
     srv.closeAllConnections();
@@ -254,6 +288,7 @@ async function main() {
   if (sm) console.log(`    ${sm[1]} · ${fs.statSync(sm[1]).size} B`);
 
   await payStep(emit, base);
+  await clickablesStep(emit, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);
