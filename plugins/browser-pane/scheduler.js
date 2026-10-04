@@ -117,14 +117,16 @@ function createScheduler({
       throw new Error(replies.TEXT.driving(holder, service, waiting));
     }
     const prev = s.lease;
+    const prevCurrent = seatState(seat).current;
     s.lease = { seat, lastCmdAt: now() };
     seatState(seat).current = service;
-    return { service, seat, prev };
+    return { service, seat, prev, prevCurrent };
   }
 
-  function restoreLease(service, seat, prev) {
+  function restoreLease(service, seat, prev, prevCurrent = null) {
     const s = svcState(service);
     if (s.lease && s.lease.seat === seat) s.lease = prev || null;
+    if (seatState(seat).current === service) seatState(seat).current = prevCurrent;
   }
 
   function leaseFree(s, seat) {

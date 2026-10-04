@@ -52,7 +52,7 @@ async function handOver({ scheduler, live, request, session }, req) {
   try {
     r = (await request('handback', {}, { service: name })) || {};
   } catch (e) {
-    scheduler.restoreLease(name, h.name, granted && granted.prev);
+    scheduler.restoreLease(name, h.name, granted && granted.prev, granted && granted.prevCurrent);
     return { ok: false, error: String((e && e.message) || e) };
   }
   const now = live.get(name) || v;

@@ -493,13 +493,14 @@ function run(electron, ctx) {
   }
 
   async function checkNumber(svc, n) {
+    const state = numState(svc);
     const stored = svc.byN.get(Number(n));
     if (stored == null) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
-    let verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored));
+    let verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, state));
     let page = null;
     if (verdict == null) {
       page = await stampPage(svc);
-      verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored));
+      verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, numState(svc)));
     }
     const v = numberVerdict(verdict, stored, page && page.keys);
     if (v === 'ok') return;

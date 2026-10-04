@@ -160,9 +160,13 @@ const numbering = (state) => {
   };
   const baseKeyOf = el => keyOf(partsOf(el));
   let headings = null;
+  const boxText = new Map();
   const contextOf = el => {
     const box = el.closest('tr,li,article,[role=row],section');
-    if (box) return box.innerText || box.textContent || '';
+    if (box) {
+      if (!boxText.has(box)) boxText.set(box, box.innerText || box.textContent || '');
+      return boxText.get(box);
+    }
     if (!headings) headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')];
     let h = null;
     for (const x of headings) {
@@ -182,9 +186,9 @@ const numbering = (state) => {
       return storedKey(b, o, contextOf(els[i]));
     });
   };
-  const place = (el, s) => {
+  const place = (el, s, listed = true) => {
     let n = known[s];
-    if (n == null) { n = next++; known[s] = n; assigned[s] = n; fresh.push(n); }
+    if (n == null) { n = next++; known[s] = n; assigned[s] = n; if (listed) fresh.push(n); }
     window.__cxEls[n] = new WeakRef(el);
     window.__cxKeys[n] = s;
     window.__cxOf.set(el, n);
@@ -251,7 +255,7 @@ function readInteractive(main, state) {
     if (plain) {
       if (underRow(el)) continue;
       const inner = el.querySelectorAll(sel);
-      if (inner.length === 1 && inner[0].matches('input,button,select,a[href]')) continue;
+      if (inner.length === 1 && inner[0].matches('input,button,select,a[href]') && vis(inner[0])) continue;
       const label = clip(labelOf(el) || el.getAttribute('alt') || iconLabel(el), 60);
       if (tag === 'a' && !label) continue;
       if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
@@ -289,7 +293,7 @@ function readInteractive(main, state) {
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
   const out = []; const keys = {}; const descs = [];
   items.forEach((it, i) => {
-    const n = place(it.el, stored[i]);
+    const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
     const p = parts[i];
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
@@ -322,8 +326,8 @@ const REF = (n) => `const ref = window.__cxEls && window.__cxEls[${Number(n) | 0
   const el = ref && ref.deref();
   if (!el || !el.isConnected) return null;`;
 
-function check(n, expect) {
-  return `(() => {${numbering({})}
+function check(n, expect, state) {
+  return `(() => {${numbering(state)}
   return verify(${Number(n) | 0}, ${JSON.stringify(expect == null ? null : String(expect))});
 })()`;
 }

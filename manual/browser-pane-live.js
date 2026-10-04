@@ -54,7 +54,10 @@ const PAGES = {
 <div onclick="document.title='div clicked'">Lista de plată 08/2026</div>
 <p><a onclick="window.open('/inline.pdf')">Lista de plată 07/2026 PDF</a></p>
 <table><tr id=prow style="cursor:pointer"><td>Factura iulie</td><td><b>120 lei</b></td></tr></table>
-<p><span>Duplicat</span> <span>Duplicat</span></p></main>
+<p><span>Duplicat</span> <span>Duplicat</span></p>
+<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style>
+<label style="cursor:pointer"><input type="checkbox" class="sr-only">Tine-ma minte</label>
+<label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label></main>
 <script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
   },
   '/effects': () => {
@@ -234,6 +237,10 @@ async function clickablesStep(emit, base) {
   check('an <a> without href is numbered', els.some((l) => /\] clickable "Lista de plată 07\/2026 PDF"$/.test(l)));
   check('a pointer-cursor row is numbered once', els.filter((l) => /Factura/.test(l)).length === 1 && !els.some((l) => /"120 lei"/.test(l)));
   check('select options are absent from the text', !/Luna 1 din arhivă/.test(text));
+  check('a pointer label around an sr-only checkbox is listed once, as the label', els.filter((l) => /Tine-ma minte/.test(l)).length === 1
+    && els.some((l) => /\] clickable "Tine-ma minte"$/.test(l)));
+  check('a label around a visible input button lists only the input', els.filter((l) => /Trimite index/.test(l)).length === 1
+    && els.some((l) => /\] input:button .*Trimite index/.test(l)));
   check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
   check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));

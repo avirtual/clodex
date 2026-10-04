@@ -136,6 +136,24 @@ test('numbering: verify refuses a number whose element no longer yields its stor
   assert.strictEqual(p.verify(ns[0], stored[0]), null);
 });
 
+function link(label, href) {
+  const attrs = { href };
+  return {
+    tagName: 'A', isConnected: true, innerText: label, labels: null, value: '', href: `https://x.test${href}`,
+    matches: (sel) => sel.split(',').includes('a[href]'),
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+  };
+}
+
+test('numbering: CHECK verifies a link with a learned volatile param under the same learned list as the read', () => {
+  const state = { known: {}, next: 1, volatile: ['sess'] };
+  const { p, ns, stored } = stampAll(state, [link('Mobil', '/x?sess=1&a=1')]);
+  assert.strictEqual(stored[0], 'link\u0000Mobil\u0000/x?a=1');
+  assert.strictEqual(p.verify(ns[0], stored[0]), 'ok');
+  assert.match(scripts.CHECK(1, stored[0], state), /const learned = \["sess"\];/);
+});
+
 test('numberVerdict: an unresolved number is ambiguous when its base key is on the page under another key, else gone', () => {
   const base = K.keyOf({ kind: 'button', label: 'Delete', href: '' });
   const stored = K.storedKey(base, 1, 'Factura A');
