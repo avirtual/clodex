@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Spill: the model side-calls Claude Code makes on the agent's behalf (WebFetch's page summariser, and any other no-tools single-message helper call) are no longer treated as the agent's own turn, so their answers are never spilled to a file — WebFetch had been returning a 'filed at' pointer instead of the summary during injected turns.
+
 ## 5.111.1 — 2026-10-04
 
 - Spill cut: the stand-in Clodex puts in a request where an empty turn must survive behind a system row is now a bracketed runtime note the model is told never to write; any stand-in the model echoes anyway is cut from the next request, counted, and the conversation view shows it as a dim 'echoed a runtime note' row instead of as the agent's prose.

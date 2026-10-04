@@ -467,6 +467,64 @@ test('an INJECTED turn: a reply with no intent leaves as exactly the bare pointe
   });
 });
 
+const SUMMARY_TEXT = `The page documents the WebFetch tool.\n${'s'.repeat(1500)}\n`;
+
+const SUMMARY_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_webfetch', usage: { input_tokens: 10, cache_read_input_tokens: 0 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, SUMMARY_TEXT.slice(0, 700)),
+  td(0, SUMMARY_TEXT.slice(700)),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_delta', {
+    type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 42 },
+  }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+function webFetchBody() {
+  return JSON.stringify({
+    model: 'claude-test',
+    stream: true,
+    max_tokens: 64000,
+    system: [
+      { type: 'text', text: billing('false') },
+      { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+    ],
+    metadata: { user_id: JSON.stringify({ session_id: SESSION_ID }) },
+    messages: [{ role: 'user', content: [
+      { type: 'text', text: '\nWeb page content:\n---\n<html>docs</html>\n---\n\nSummarise the page.' },
+    ] }],
+  });
+}
+
+test('an INJECTED turn: the WebFetch summariser side-call passes the tee untouched while the same prose on the main line spills', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: SUMMARY_SSE }, async (proxy) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], turnInjected: () => true } });
+    const events = collect(proxy, ['turn.started', 'turn.completed', 'spill', 'spill-skip', 'stream-end']);
+
+    const side = await request(proxy.port, '/agent/tester/v1/messages', webFetchBody());
+    assert.ok(await whenEvent(events, 'stream-end'), 'side-call stream finished');
+    assert.equal(side.body.toString('utf8'), SUMMARY_SSE, 'the tool receives every byte of the summary');
+    assert.equal(events.spill.length, 0, 'nothing spilled');
+    assert.equal(events['spill-skip'].length, 0, 'not even considered');
+    assert.ok(!fs.existsSync(path.join(root, 'spill')), 'nothing reached disk');
+    assert.equal(events['turn.started'][0].sideCall, true);
+    assert.equal(events['turn.started'][0].sideKind, 'webfetch');
+    assert.equal(events['turn.completed'][0].sideCall, true);
+
+    const main = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end', 2), 'main-line stream finished');
+    assert.equal(events.spill.length, 1, 'the main line still spills the same prose');
+    assert.equal(textOf(main.body), `${filed(root, events.spill[0])}\n`);
+    assert.equal(events['turn.started'][1].sideCall, false);
+    assert.ok(!('sideKind' in events['turn.started'][1]), 'sideKind is set only on a side-call');
+  });
+});
+
 const COMPACT_TEXT = `Summary:\n1. Primary Request and Intent:\n${'y'.repeat(20 * 1024)}\n`;
 
 const COMPACT_SSE = [

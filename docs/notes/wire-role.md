@@ -16,3 +16,8 @@ The proxy passes `x-claude-code-request-class: subagent` to `genuineSubagent` as
 ## billingText
 
 The billing flag and fingerprint are read from the billing block (`system[0]`, starting `x-anthropic-billing-header:`) only, because appended system prose (a review scope) once carried the flag literal and muted a reviewer seat as a subagent for its whole life.
+
+## isBareSideCall
+
+WebFetch's page summariser, measured on CLI 2.1.288: no tools, system = billing block (70 chars) + `You are Claude Code, Anthropic's official CLI for Claude.` (57 chars), one user message whose text starts `\nWeb page content:\n---\n`, `max_tokens` 64000, no thinking, the parent's session_id.
+The proxy keys on "no tools + one message + every system block ≤ 200 chars" rather than the WebFetch prefix alone because every CLI helper call shares that shape and no agent turn has it (an agent turn carries tools and a kilobytes-long system), so a future summariser is excluded without a new needle; `isWebFetchCall` only names the kind (`sideKind`).

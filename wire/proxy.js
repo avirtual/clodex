@@ -18,7 +18,7 @@ const { URL } = require('url');
 const { parseAgentPath, inferProvider } = require('./route');
 const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
-const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall } = require('./role');
+const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall, isBareSideCall, sideCallKind } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
 const { SpillTee } = require('./spill');
 const { cutSpillStubs } = require('./spill-cut');
@@ -374,6 +374,7 @@ class WireProxy extends EventEmitter {
     let sessionId = null;
     let role = null;
     let sideCall = false;
+    let sideKind = null;
     let compactCall = false;
     let model = null;
     let bodyObj = null; // held for the warmth stamp at tee close
@@ -416,7 +417,8 @@ class WireProxy extends EventEmitter {
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
           const rawRequestClass = req.headers['x-claude-code-request-class'];
           const requestClass = typeof rawRequestClass === 'string' && rawRequestClass ? rawRequestClass : null;
-          sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj);
+          sideCall = isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj) || isBareSideCall(obj);
+          if (sideCall) sideKind = sideCallKind(obj);
           compactCall = isCompactCall(obj) || requestClass === 'compaction';
           role = this._roles.classify(obj, sessionId, agentId, requestClass);
           if (!sideCall && !isSubagentRole(role)) {
@@ -431,7 +433,7 @@ class WireProxy extends EventEmitter {
     // started/completed stay 1:1 and an in-flight counter can't leak.
     const isMessages = upstreamPath.replace(/\/+$/, '').endsWith('/v1/messages');
     if (provider === 'anthropic' && req.method === 'POST' && isMessages) {
-      this.emit('turn.started', { agent, provider, reqId, sessionId, role, sideCall, model });
+      this.emit('turn.started', { agent, provider, reqId, sessionId, role, sideCall, ...(sideKind ? { sideKind } : {}), model });
     }
 
     const spillCfg = this._agentSpill.get(agent) || null;
