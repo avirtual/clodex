@@ -17,6 +17,7 @@ blocks a release.
 - Browser pane (new plugin, off by default): agents granted the `[agent:browser]` verb can open a site in a persistent per-service browser window and read it as text plus a numbered list of links and controls, about 2,500 tokens per page.
 - Browser pane: agents can click, type, press keys and pick options by number; while an agent drives, the window says who is driving and ignores your input, and a sign-in page hands the window to you with a notification — agents are refused password fields and told never to ask for credentials.
 - Browser pane: agents can download by number or URL — attachments, inline PDFs and cookie-protected links — into the pane's downloads folder or a folder inside their own working directory, and take screenshots; the status bar shows what the browser is doing, and Manage Plugins lists each signed-in service with Forget login.
+- Browser pane: an agent can now fetch a run of monthly statements on its own — you sign in once in the pane's window, hand it back, and the files land where the agent asked; see the plugin's README for granting the verb and the sign-in limits (Google sign-in is not supported).
 
 ## 5.111.3 — 2026-10-04
 
