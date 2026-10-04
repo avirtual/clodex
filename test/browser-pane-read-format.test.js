@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatRead } = require('../plugins/browser-pane/read-format');
+const { formatRead, changedRegion, CHANGE_MAX } = require('../plugins/browser-pane/read-format');
 
 const RAW = {
   url: 'https://portal.example.com/bills',
@@ -130,13 +130,32 @@ test('read-format: a PDF view is the single download line', () => {
 test('read-format: clickable element lines and one-line table rows pass through, and --filter keeps them', () => {
   const raw = {
     ...RAW,
-    text: 'Avizier\nContor | Index precedent | Index curent\nApă rece | | 19,486',
+    text: 'Avizier\nContor | Index precedent | Index curent\nApă rece | | 19,486\n| | Lista de plată 08/2026 11:09:38',
     elements: ['[1] link Home → /', '[22] clickable "Lista de plată 08/2026"', '[23] clickable ""', '[24] button Pay now'],
   };
   const out = formatRead(raw, { service: 'ebloc' });
-  assert.deepStrictEqual(bodyOf(out.content), ['== text ==', 'Avizier', 'Contor | Index precedent | Index curent', 'Apă rece | | 19,486',
+  assert.deepStrictEqual(bodyOf(out.content), ['== text ==', 'Avizier', 'Contor | Index precedent | Index curent', 'Apă rece | | 19,486', '| | Lista de plată 08/2026 11:09:38',
     '== elements ==', ...raw.elements]);
   assert.match(out.content.split('\n')[3], /elements: 4 \(this page: \[1\]–\[24\]; numbers can skip\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
-    ['== text ==', '(no text)', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+    ['== text ==', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+});
+
+test('read-format: changedRegion strips the common line prefix and suffix and returns what is new', () => {
+  const rows = [
+    ['one line rewritten in place', 'Avizier\nSold: 0 lei\nSubsol', 'Avizier\nSold: 120 lei\nSubsol', 'Sold: 120 lei'],
+    ['a table swapped for another', 'Luna\nIulie | 10\nIulie | 20\nSubsol', 'Luna\nAugust | 11\nAugust | 21\nSubsol', 'August | 11 / August | 21'],
+    ['lines appended at the end', 'A\nB', 'A\nB\nC\nD', 'C / D'],
+    ['lines removed only', 'A\nB\nC', 'A\nC', 'text removed'],
+    ['identical', 'A\nB', 'A\nB', ''],
+    ['both empty', '', '', ''],
+    ['from nothing', '', 'Gata', 'Gata'],
+    ['a repeated line is not double-counted', 'A\nA', 'A\nA\nA', 'A'],
+  ];
+  for (const [name, before, after, want] of rows) assert.strictEqual(changedRegion(before, after, CHANGE_MAX), want, name);
+  assert.strictEqual(CHANGE_MAX, 600);
+  const clipped = changedRegion('top', `top\n${'x'.repeat(700)}`, CHANGE_MAX);
+  assert.strictEqual(clipped.length, 600);
+  assert.strictEqual(clipped, `${'x'.repeat(599)}…`);
+  assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b /…');
 });

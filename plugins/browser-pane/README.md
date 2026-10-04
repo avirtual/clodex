@@ -8,7 +8,7 @@ page, delivered as a file the agent reads. You watch the window, and you sign in
 yourself; the agent never types a password.
 
 This release covers `open`, `read`, `click`, `type`, `key`, `select`,
-`download`, `screenshot`, `wait`, `services` and `release`, and the take-over
+`download`, `screenshot`, `inspect`, `wait`, `services` and `release`, and the take-over
 controls.
 
 While an agent acts, the bar at the top of the window turns amber, names the
@@ -77,16 +77,24 @@ service's cookies.
 ```
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N] [--max=<tokens>]]
-[agent:browser click [service] <n>|--text=<visible text>]
+[agent:browser click [service] <n>|--text=<visible text> [--to=<dir in your cwd>]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser select [service] <n>] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service]]
+[agent:browser inspect [service] <n>|--text=<visible text>]
 [agent:browser wait [service] [--ms=N] [--for=<text>]]
 [agent:browser services]
 [agent:browser release [service]]
 ```
+
+Every act reply says what it caused: `navigated → …` (read again), `changed:
+"…"` with the text that changed in place, `no visible change`, or `→ download
+<full path> · <size> · <type>`; a file identical to one already in the folder is
+not saved twice and is reported as `same as <file>`. `inspect` shows an element's
+tag, attributes, event listeners, cursor, position and HTML, to see why a click
+does nothing.
 
 `<n>` comes from the seat's latest `read` of that page. One seat holds a service
 at a time; it frees after 5 min without commands, on `release`, or when the

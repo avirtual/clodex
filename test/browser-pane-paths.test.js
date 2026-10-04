@@ -5,7 +5,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { resolveTo, scopeCwd, sanitizeName, landedInside, directHref, NAME_MAX } = require('../plugins/browser-pane/paths');
+const {
+  resolveTo, scopeCwd, sanitizeName, landedInside, directHref, sameFileIn, leftCwd, NAME_MAX,
+} = require('../plugins/browser-pane/paths');
 
 function fixture() {
   const top = fs.realpathSync(mkTmpRoot('clodex-bp-paths-'));
@@ -101,4 +103,20 @@ test('directHref: download strategy 1 only for a link that leaves the page', () 
     ['', false],
   ];
   for (const [href, want] of rows) assert.strictEqual(directHref(href, page), want, href);
+});
+
+test('sameFileIn: a landed file whose bytes match a same-size sibling names that sibling; anything else is new', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-paths-'));
+  const put = (name, body) => { const p = path.join(dir, name); fs.writeFileSync(p, body); return p; };
+  const first = put('lista.pdf', '%PDF-1.4 august');
+  put('other.pdf', '%PDF-1.4 iulie!');
+  put('big.pdf', '%PDF-1.4 august and more');
+  fs.mkdirSync(path.join(dir, 'sub'));
+  const again = put('lista-1.pdf', '%PDF-1.4 august');
+  assert.strictEqual(sameFileIn(again), first);
+  assert.strictEqual(sameFileIn(again, (p) => p === first), null);
+  const differs = put('lista-2.pdf', '%PDF-1.4 augusT');
+  assert.strictEqual(sameFileIn(differs), null);
+  assert.strictEqual(sameFileIn(path.join(dir, 'gone.pdf')), null);
+  assert.strictEqual(leftCwd('/w'), 'the download left your working directory (/w) and was deleted — download it again');
 });

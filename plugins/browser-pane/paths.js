@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -26,6 +27,35 @@ const MIME_EXT = {
 
 function refusal(cwd) {
   return `--to must name a folder inside your working directory (${cwd})`;
+}
+
+function leftCwd(cwd) {
+  return `the download left your working directory (${cwd}) and was deleted — download it again`;
+}
+
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function sameFileIn(file, skip = () => false) {
+  const dir = path.dirname(file);
+  let size;
+  try { size = fs.statSync(file).size; } catch { return null; }
+  let names;
+  try { names = fs.readdirSync(dir).sort(); } catch { return null; }
+  let mine = null;
+  for (const name of names) {
+    const p = path.join(dir, name);
+    if (p === file || skip(p)) continue;
+    let st;
+    try { st = fs.lstatSync(p); } catch { continue; }
+    if (!st.isFile() || st.size !== size) continue;
+    try {
+      if (mine == null) mine = sha256(file);
+      if (sha256(p) === mine) return p;
+    } catch {}
+  }
+  return null;
 }
 
 function scopeCwd(scope) {
@@ -112,4 +142,6 @@ function directHref(href, pageUrl) {
   return u.href !== page.href;
 }
 
-module.exports = { resolveTo, scopeCwd, landedInside, sanitizeName, uniquePath, refusal, inside, directHref, REMOTE, NAME_MAX };
+module.exports = {
+  resolveTo, scopeCwd, landedInside, sanitizeName, uniquePath, refusal, leftCwd, sameFileIn, inside, directHref, REMOTE, NAME_MAX,
+};

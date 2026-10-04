@@ -157,11 +157,36 @@ CDP `Page.captureScreenshot` is the fallback.
 
 ## child.js — clickWatched
 
-A click carries a URL-less download waiter into the service's downloads folder,
-so a download it starts is named in the reply. A `window.open` that shows a PDF
+A click carries a URL-less download waiter into the service's downloads folder
+(or the `--to` folder the scheduler resolved inside the seat's cwd), so a download
+it starts is named in the reply with its full path, size, type and source URL. A `window.open` that shows a PDF
 is saved through the router and the view goes back. The idle wait stops as
 soon as either happens (the PDF viewer never reports idle). Waiting on the
 file is capped at `CLICK_DOWNLOAD_MS` (5 s) to stay inside the 100 s click
 deadline; past it the reply says `still downloading`. The PDF popup's load and
 the way back bump `svc.doc` twice, so the reply says `navigated · numbers reset`
 even though the view ends on the same page: the old numbers really are void.
+
+## child.js — withChange
+
+Every act snapshots `document.body.innerText` (`PAGE_TEXT`, main world) before
+acting and again after the idle wait; `changedRegion` reports the lines between
+the common prefix and suffix. Each snapshot is capped at `SNAP_MS` (2 s), not
+the 8 s script timeout, so the two snapshots stay inside the 100 s act deadline.
+A navigated act, a download or a popup skips the second snapshot.
+
+## child.js — routerFor (dedupe)
+
+After an agent waiter's download lands, it is hashed (sha256) only when a
+same-size regular file already sits in its folder; on a match the new file is
+deleted and the reply names the existing one (`same as`). Operator downloads
+are never deduped. Hashing is synchronous in the child's main process.
+
+## child.js — listenersOf
+
+`inspect` reads listeners through the attached debugger: a main-world
+`Runtime.evaluate` of the element's `data-cx` mirror gives an objectId for
+`DOMDebugger.getEventListeners` (depth 0). Elements inside shadow roots are not
+reachable by `querySelector` from the document, so they read `unknown`. Up to
+four ancestors are probed for a click/mousedown/pointerdown/mouseup listener
+when the element has none of its own.

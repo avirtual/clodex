@@ -2,7 +2,7 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'download', 'screenshot', 'wait', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
 const WAIT_MS_MAX = 1800000;
 const N_MAX = 1000000;
@@ -14,12 +14,13 @@ const DEFAULT_MAX = 2500;
 const FLAGS = {
   open: {},
   read: { text: 'bool', links: 'bool', main: 'bool', filter: 'value', page: 'value', max: 'value' },
-  click: { text: 'value' },
+  click: { text: 'value', to: 'value' },
   type: { enter: 'bool' },
   key: {},
   select: {},
   download: { to: 'value', as: 'value' },
   screenshot: {},
+  inspect: { text: 'value' },
   wait: { ms: 'value', for: 'value' },
   services: {},
   release: {},
@@ -91,7 +92,8 @@ function serviceArg(sub, positional, required) {
 
 function serviceAndN(sub, positional) {
   const usage = sub === 'type' ? '[agent:browser type [service] <n> [--enter]] <text>'
-    : sub === 'select' ? '[agent:browser select [service] <n>] <option>' : '[agent:browser click [service] <n>]';
+    : sub === 'select' ? '[agent:browser select [service] <n>] <option>'
+      : sub === 'inspect' ? '[agent:browser inspect [service] <n>]' : '[agent:browser click [service] <n>]';
   if (positional.length > 2) throw new Error(`unexpected '${positional[2]}' for ${sub}`);
   const nTok = positional[positional.length - 1];
   if (nTok == null || !/^[0-9]+$/.test(nTok)) throw new Error(`${sub} needs an element number from your read — ${usage}`);
@@ -101,11 +103,17 @@ function serviceAndN(sub, positional) {
   return { service, n };
 }
 
-function clickText(positional, text) {
+function byText(sub, positional, text) {
   if (!text.trim()) throw new Error('--text needs the visible text, e.g. --text="Lista de plată"');
   const last = positional[positional.length - 1];
-  if (last != null && /^[0-9]+$/.test(last)) throw new Error('click takes an element number or --text, not both');
-  return { sub: 'click', service: serviceArg('click', positional, false), n: null, text };
+  if (last != null && /^[0-9]+$/.test(last)) throw new Error(`${sub} takes an element number or --text, not both`);
+  return { sub, service: serviceArg(sub, positional, false), n: null, text };
+}
+
+function clickCommand(positional, flags) {
+  if (flags.to === '') throw new Error('--to needs a folder, e.g. --to=bills');
+  const cmd = flags.text == null ? { sub: 'click', ...serviceAndN('click', positional) } : byText('click', positional, flags.text);
+  return flags.to == null ? cmd : { ...cmd, to: flags.to };
 }
 
 function checkUrl(text) {
@@ -175,7 +183,8 @@ function toCommand(intent) {
     };
   }
   const body = String((intent && intent.body) || '').trim();
-  if (sub === 'click') return flags.text == null ? { sub, ...serviceAndN(sub, positional) } : clickText(positional, flags.text);
+  if (sub === 'click') return clickCommand(positional, flags);
+  if (sub === 'inspect') return flags.text == null ? { sub, ...serviceAndN(sub, positional) } : byText(sub, positional, flags.text);
   if (sub === 'type') {
     const sn = serviceAndN(sub, positional);
     if (!body && !flags.enter) throw new Error('type needs text after the bracket — [agent:browser type [service] <n> [--enter]] <text>');

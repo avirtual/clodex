@@ -49,6 +49,19 @@ const PAGES = {
 <p><span>Duplicat</span> <span>Duplicat</span></p></main>
 <script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
   },
+  '/effects': () => {
+    const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
+    return `<title>Effects</title><main><h1>Efecte</h1>
+<p>${'Avizierul asociației de proprietari arată consumul lunar, soldul și listele de plată ale fiecărui apartament. '.repeat(3)}</p>
+<button onclick="document.getElementById('out').textContent='Sold nou: 120 lei'">Recalculează</button><div id=out>Sold: 0 lei</div>
+<select id=luna onchange="document.getElementById('tb').innerHTML = this.value === 'aug' ? '<tr><td>August</td><td>Apă rece 11</td></tr>' : '<tr><td>Iulie</td><td>Apă rece 10</td></tr>'">
+<option value=iul>Iulie</option><option value=aug>August</option></select>
+<table id=tb><tr><td>Iulie</td><td>Apă rece 10</td></tr></table>
+<span onclick="document.title='locked'" style="display:inline-block"><img alt="padlock" src="${gif}" width=16 height=16></span>
+<table><tr><td><img src="${gif}" width=16 height=16></td><td><img src="${gif}" width=16 height=16></td><td>Lista de plată 08/2026 11:09:38</td></tr></table>
+<a href="/att">Factura PDF</a>
+<div id=ondiv onclick="document.title='div'">Lista onclick</div></main>`;
+  },
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
@@ -166,7 +179,37 @@ async function clickablesStep(emit, base) {
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
   check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[\d+\] "Duplicat", \[\d+\] "Duplicat"/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
   await emit('[agent:browser read avizier]');
-  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf \d+ B \(PDF popup /.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
+  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
+}
+
+async function effectsStep(emit, base, cwd) {
+  console.log('== 8. act replies report their effect; icon labels, image-only cells, click downloads, inspect');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open effects] ${base}/effects`);
+  const content = fileOf(await emit('[agent:browser read effects]'));
+  const lines = content.split('\n');
+  const els = lines.filter((l) => /^\[\d+\]/.test(l));
+  const num = (re) => { const l = els.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
+  for (const l of els) console.log(`    ${l.slice(0, 120)}`);
+  for (const l of lines.slice(0, lines.indexOf('== elements ==')).filter((x) => /\|/.test(x))) console.log(`    ${JSON.stringify(l)}`);
+  check('an icon-only clickable takes the img alt as its label', els.some((l) => /\] clickable "padlock"$/.test(l)));
+  check('a row with two image-only cells keeps both slots', lines.includes('| | Lista de plată 08/2026 11:09:38'));
+  check('a button that rewrites a div reports the new text',
+    /same page · .* · changed: "Sold nou: 120 lei"$/.test(await emit(`[agent:browser click effects ${num(/button Recalculează/)}]`)));
+  check('a select that swaps a table carries the new row',
+    /changed: "[^"]*August[^"]*Apă rece 11[^"]*"$/.test(await emit(`[agent:browser select effects ${num(/^\[\d+\] select/)}] August`)));
+  check('a key with no effect says no visible change', / · no visible change$/.test(await emit('[agent:browser key effects] Escape')));
+  const pdf = num(/link Factura PDF/);
+  const first = await emit(`[agent:browser click effects ${pdf} --to=downloads]`);
+  const m = / → download (\S+\.pdf) · \d+ B · application\/pdf · from http/.exec(first);
+  check('a click download names the full path under the seat cwd with size, type and source',
+    !!m && m[1].startsWith(fs.realpathSync(cwd) + path.sep + 'downloads') && fs.existsSync(m[1]));
+  const second = await emit(`[agent:browser click effects ${pdf} --to=downloads]`);
+  check('a repeat click download is reported as the same file and not saved twice',
+    !!m && second.includes(`→ download same as ${m[1]} · `) && fs.readdirSync(path.dirname(m[1])).length === 1);
+  const insp = await emit(`[agent:browser inspect effects --text="Lista onclick"]`);
+  check('inspect on the onclick div lists its click listener', /\n {2}listeners: click(\n|,| ·)/.test(insp));
+  check('inspect shows the onclick attribute and the html', /attrs: onclick=/.test(insp) && /\n {2}html: <div id="ondiv"/.test(insp));
 }
 
 async function payStep(emit, base) {
@@ -196,8 +239,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host } = bootEngine(userData, tmp);
-  if (process.env.CXB_ONLY === 'pay' || process.env.CXB_ONLY === 'clickables') {
-    await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
+  if (process.env.CXB_ONLY === 'pay' || process.env.CXB_ONLY === 'clickables' || process.env.CXB_ONLY === 'effects') {
+    if (process.env.CXB_ONLY === 'effects') await effectsStep(emit, base, tmp);
+    else await (process.env.CXB_ONLY === 'pay' ? payStep : clickablesStep)(emit, base);
     engine.deactivate('browser-pane');
     await sleep(3000);
     srv.closeAllConnections();
@@ -289,6 +333,7 @@ async function main() {
 
   await payStep(emit, base);
   await clickablesStep(emit, base);
+  await effectsStep(emit, base, tmp);
 
   engine.deactivate('browser-pane');
   await sleep(3000);

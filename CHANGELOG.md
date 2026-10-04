@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: every act reply now says what it caused — the changed text for an in-place update (`changed: "…"`), `no visible change`, or the saved file's full path, size and type for a download, with repeat downloads reported as `same as <file>` instead of a numbered copy; `click` takes `--to=<dir in your cwd>`; new `inspect <n>` / `inspect --text=` shows an element's tag, attributes, listeners, cursor, position and HTML so an agent can see why something will not click; icon-only clickables take the image's alt as their label and image-only table cells keep their slot.
+
 ## 5.112.1 — 2026-10-04
 
 - Browser pane: elements that only open through a script (rows with a click handler, links without an href, pointer-cursor cells) are now numbered as `clickable`, and `click --text=` targets visible text when nothing is numbered; `read` no longer floods its text head with a dropdown's options, and table rows keep their empty cells so a value can be attributed to its column.

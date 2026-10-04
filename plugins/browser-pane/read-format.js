@@ -1,6 +1,7 @@
 'use strict';
 
 const TEXT_HEAD = 1200;
+const CHANGE_MAX = 600;
 const NUM_RE = /^\[(\d+)\]/;
 
 const fmt = (n) => Number(n).toLocaleString('en-US');
@@ -98,6 +99,20 @@ function framesLabel(frames) {
   return `${list.length} not read (${list[0]}${list.length > 1 ? ', …' : ''})`;
 }
 
+function changedRegion(before, after, max = CHANGE_MAX) {
+  const lines = (s) => (s ? String(s).split('\n') : []);
+  const b = lines(before);
+  const a = lines(after);
+  let i = 0;
+  while (i < b.length && i < a.length && b[i] === a[i]) i++;
+  let j = 0;
+  while (j < b.length - i && j < a.length - i && b[b.length - 1 - j] === a[a.length - 1 - j]) j++;
+  const mid = a.slice(i, a.length - j);
+  if (!mid.length) return b.length - j > i ? 'text removed' : '';
+  const s = mid.join(' / ');
+  return s.length > max ? s.slice(0, Math.max(0, max - 1)) + '…' : s;
+}
+
 function formatRead(raw, opts) {
   const o = {
     service: opts.service,
@@ -139,4 +154,4 @@ function formatRead(raw, opts) {
   return { content, page: o.page, pages: total, elements: elementsTotal, tokens };
 }
 
-module.exports = { formatRead, paginate, loginLabel, TEXT_HEAD };
+module.exports = { formatRead, paginate, loginLabel, changedRegion, TEXT_HEAD, CHANGE_MAX };

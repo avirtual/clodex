@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loginLabel } = require('./read-format');
+const { loginLabel, CHANGE_MAX } = require('./read-format');
 
 const ANSI = new RegExp('\\u001B\\[[0-9;?]*[a-zA-Z]|\\u001B\\][^\\u0007]*\\u0007', 'g');
 const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
@@ -84,6 +84,7 @@ function downloadTarget(cmd) {
 function downloadReply(service, cmd, r) {
   const head = `${PREFIX} downloaded ${service} ${downloadTarget(cmd)}`;
   const parts = [`${Number(r.bytes || 0).toLocaleString('en-US')} B`, String(r.mime || 'unknown type')];
+  if (r.same) parts.unshift('same as an existing file');
   if (r.magic === 'html' && looksPdf(r)) {
     parts.push(`WARNING: not a PDF — looks like a web page (session expired?) — read ${service}`);
   } else {
@@ -145,8 +146,8 @@ const TEXT = {
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
-  manyText: (service, text, count, hits) => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
-    hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — click one by number`,
+  manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
+    hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
 };
 
 function isGoogle(login) {
@@ -203,14 +204,57 @@ function actReply(sub, service, cmd, r) {
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   let text = parts.join(' · ');
-  if (r.download) {
-    const size = r.download.failed ? `failed: ${r.download.failed}`
-      : r.download.bytes == null ? 'still downloading' : `${Number(r.download.bytes).toLocaleString('en-US')} B`;
-    text += ` · → download ${r.download.name} ${size}${r.popupUrl ? ` (PDF popup ${clipUrl(r.popupUrl)})` : ''}`;
-  } else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
+  if (r.download) text += downloadTail(r.download, r.popupUrl);
+  else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
   else if (r.popup) text += TEXT.popup;
+  else if (!r.navigated && typeof r.changed === 'string') text += r.changed ? ` · changed: ${JSON.stringify(r.changed)}` : ' · no visible change';
   if (r.takeover) text += TEXT.takeover;
-  return reply(text);
+  return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
+}
+
+function bytesLabel(n) {
+  return `${Number(n).toLocaleString('en-US')} B`;
+}
+
+function downloadTail(d, popupUrl) {
+  const where = showPath(String(d.file || d.name || ''));
+  if (d.failed) return ` · → download ${where} failed: ${d.failed}`;
+  if (d.bytes == null) return ` · → download ${where} still downloading`;
+  if (d.same) return ` · → download same as ${where} · ${bytesLabel(d.bytes)}`;
+  const from = d.url ? ` · from ${clipUrl(d.url)}${popupUrl ? ' (PDF popup)' : ''}` : '';
+  return ` · → download ${where} · ${bytesLabel(d.bytes)} · ${String(d.mime || 'unknown type')}${from}`;
+}
+
+function shortEl(r, k) {
+  return `${r.tag || '?'}${r.id ? `#${r.id}` : ''}${(r.classes || []).slice(0, k).map((c) => `.${c}`).join('')}`;
+}
+
+function attrValue(v) {
+  const s = oneLine(v);
+  return !s || /\s/.test(s) ? JSON.stringify(s) : s;
+}
+
+function listenersLabel(l) {
+  if (!l) return 'unknown';
+  const own = (l.types || []).join(', ');
+  const up = l.ancestor ? `${l.ancestorType || 'click'} on ancestor ${l.ancestor}` : '';
+  if (own && up) return `${own} · ${up}`;
+  if (own) return own;
+  return up ? `none here · ${up}` : 'none';
+}
+
+function inspectReply(service, r) {
+  const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
+  const rect = r.rect || {};
+  const lines = [
+    `${PREFIX} inspect ${service} [${r.n}]: ${oneLine(shortEl(r, 5))} · ${r.kind} ${JSON.stringify(String(r.label || ''))}`,
+    `  attrs: ${attrs || 'none'}`,
+    `  listeners: ${listenersLabel(r.listeners)}`,
+    `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,
+    `  in: ${(r.ancestors || []).slice().reverse().map((a) => oneLine(a)).join(' > ') || '(none)'}`,
+    `  html: ${oneLine(r.html || '')}`,
+  ];
+  return lines.join('\n');
 }
 
 function waitReply(service, r, forText) {
@@ -278,6 +322,6 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 
 module.exports = {
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
-  downloadReply, screenshotReply,
+  downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
 };

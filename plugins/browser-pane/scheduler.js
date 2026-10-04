@@ -34,7 +34,8 @@ const realTimers = {
 };
 
 function cmdLabel(cmd) {
-  if (cmd.sub === 'click' && cmd.text != null) return `click --text=${JSON.stringify(cmd.text)}`;
+  if ((cmd.sub === 'click' || cmd.sub === 'inspect') && cmd.text != null) return `${cmd.sub} --text=${JSON.stringify(cmd.text)}`;
+  if (cmd.sub === 'inspect') return `inspect ${cmd.n}`;
   if (N_ACTS.has(cmd.sub)) return `${cmd.sub} ${cmd.n}`;
   if (cmd.sub === 'key') return `key ${cmd.key}`;
   if (cmd.sub === 'download' && cmd.n != null) return `download ${cmd.n}`;
@@ -42,7 +43,7 @@ function cmdLabel(cmd) {
 }
 
 function needsRead(cmd) {
-  return N_ACTS.has(cmd.sub) || (cmd.sub === 'download' && cmd.n != null);
+  return N_ACTS.has(cmd.sub) || cmd.sub === 'inspect' || (cmd.sub === 'download' && cmd.n != null);
 }
 
 function createScheduler({
@@ -138,16 +139,43 @@ function createScheduler({
     return replies.readReply(service, out, file, handle.type);
   }
 
+  function downloadDir(handle, service, to) {
+    if (to != null) {
+      const root = paths.scopeCwd(fsScope(handle.name));
+      return { root, dir: paths.resolveTo(root, to) };
+    }
+    if (!downloadsDir) throw new Error('no downloads folder');
+    return { root: null, dir: path.join(downloadsDir, service) };
+  }
+
+  function keepInside(root, file) {
+    if (!root || paths.landedInside(root, file)) return;
+    try { fs.unlinkSync(file); } catch {}
+    throw new Error(paths.leftCwd(root));
+  }
+
   async function runAct(handle, service, cmd) {
     const args = { expectDoc: seatState(handle.name).lastDoc[service] };
+    let root = null;
+    if (cmd.sub === 'click' && cmd.to != null) ({ root, dir: args.dir } = downloadDir(handle, service, cmd.to));
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
     if (cmd.sub === 'key') { args.key = cmd.key; delete args.expectDoc; }
     const r = await client.request(cmd.sub, args, { service, seat: handle.name });
+    const d = r.download;
+    if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
     if (r.held && !r.takeover) signin(service, r);
     return replies.actReply(cmd.sub, service, cmd, r);
+  }
+
+  async function runInspect(handle, service, cmd) {
+    const args = { expectDoc: seatState(handle.name).lastDoc[service] };
+    if (cmd.n != null) args.n = cmd.n;
+    if (cmd.text != null) args.byText = cmd.text;
+    const r = await client.request('inspect', args, { service, seat: handle.name });
+    return replies.inspectReply(service, r);
   }
 
   async function runWait(handle, service, cmd) {
@@ -157,22 +185,11 @@ function createScheduler({
   }
 
   async function runDownload(handle, service, cmd) {
-    let root = null;
-    let dir;
-    if (cmd.to != null) {
-      root = paths.scopeCwd(fsScope(handle.name));
-      dir = paths.resolveTo(root, cmd.to);
-    } else {
-      if (!downloadsDir) throw new Error('no downloads folder');
-      dir = path.join(downloadsDir, service);
-    }
+    const { root, dir } = downloadDir(handle, service, cmd.to);
     const args = { dir, as: cmd.as, n: cmd.n, url: cmd.url };
     if (cmd.n != null) args.expectDoc = seatState(handle.name).lastDoc[service];
     const r = await client.request('download', args, { service, seat: handle.name, timeoutMs: DOWNLOAD_OP_MS });
-    if (root && !paths.landedInside(root, r.file)) {
-      try { fs.unlinkSync(r.file); } catch {}
-      throw new Error(`the download left your working directory (${root}) and was deleted — download it again`);
-    }
+    keepInside(root, r.file);
     if (r.held && !r.takeover) signin(service, r);
     return replies.downloadReply(service, cmd, r);
   }
@@ -184,7 +201,7 @@ function createScheduler({
   }
 
   const RUN = {
-    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait, download: runDownload, screenshot: runScreenshot,
+    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
   };
 
   function fail(handle, s, text, keepWaits) {

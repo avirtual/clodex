@@ -47,7 +47,12 @@ function readText(main) {
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
-  const cellText = c => c.getClientRects().length ? (c.innerText || '').replace(/\\s+/g, ' ').trim() : '';
+  const cellText = c => {
+    if (!c.getClientRects().length) return '';
+    const t = (c.innerText || '').replace(/\\s+/g, ' ').trim();
+    const img = t ? null : c.querySelector('img[alt]');
+    return t || (img ? img.getAttribute('alt').replace(/\\s+/g, ' ').trim() : '');
+  };
   const tables = [...clone.querySelectorAll('table')];
   const layout = new Set(tables.filter(t => t.querySelector('table')
     || [...t.rows].some(r => [...r.cells].some(c => (c.innerText || '').length > ${LAYOUT_CELL_CHARS}))));
@@ -65,7 +70,7 @@ function readText(main) {
 }
 
 function readInteractive(main) {
-  return `(() => {${DEEP}
+  return `(() => {${DEEP}${ICON}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
   if (!window.__cxEls) { window.__cxEls = [null]; window.__cxOf = new WeakMap(); }
@@ -119,10 +124,10 @@ function readInteractive(main) {
     let line = '';
     if (plain) {
       if (underRow(el)) continue;
-      const label = clip(labelOf(el) || el.getAttribute('alt') || '', 60);
+      const label = clip(labelOf(el) || el.getAttribute('alt') || iconLabel(el), 60);
       if (tag === 'a' && !label) continue;
       if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
-      line = JSON.stringify(label);
+      line = label ? JSON.stringify(label) : '(icon)';
     } else if (tag === 'a') {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
@@ -155,6 +160,23 @@ function readInteractive(main) {
 })()`;
 }
 
+const ICON = `
+  const iconLabel = e => {
+    const img = [...e.querySelectorAll('img')].find(i => (i.getAttribute('alt') || '').trim());
+    const t = e.querySelector('svg > title');
+    return (img && img.getAttribute('alt')) || e.getAttribute('title') || e.getAttribute('aria-label') || (t && t.textContent) || '';
+  };`;
+
+const KIND_LABEL = `${ICON}
+  const tag = el.tagName.toLowerCase();
+  const type = (el.type || '').toLowerCase();
+  const kind = !el.matches(${JSON.stringify(STD_SEL)}) ? 'clickable'
+    : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
+  const raw = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.innerText
+    || el.getAttribute('title') || el.getAttribute('placeholder') || (tag === 'input' && type !== 'password' ? el.value : '') || el.getAttribute('name')
+    || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : '') || '';
+  const label = String(raw).replace(/\\s+/g, ' ').trim().slice(0, 60);`;
+
 const REF = (n) => `const ref = window.__cxEls && window.__cxEls[${Number(n) | 0}];
   const el = ref && ref.deref();
   if (!el || !el.isConnected) return null;`;
@@ -164,13 +186,7 @@ function find(n) {
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  const tag = el.tagName.toLowerCase();
-  const type = (el.type || '').toLowerCase();
-  const kind = !el.matches(${JSON.stringify(STD_SEL)}) ? 'clickable'
-    : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
-  const raw = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.innerText
-    || el.getAttribute('title') || el.getAttribute('placeholder') || (tag === 'input' && type !== 'password' ? el.value : '') || el.getAttribute('name') || '';
-  const label = String(raw).replace(/\\s+/g, ' ').trim().slice(0, 60);
+  ${KIND_LABEL}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   return {
     x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
@@ -182,6 +198,42 @@ function find(n) {
   };
 })()`;
 }
+
+function inspect(n) {
+  return `(() => {${DEEP}
+  ${REF(n)}
+  ${KIND_LABEL}
+  const clip = (s, k) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
+  const secret = e => e.tagName === 'INPUT' && (e.type === 'password' || e.getAttribute('autocomplete') === 'one-time-code');
+  const FIRST = ['href', 'onclick', 'role', 'tabindex', 'type', 'name', 'value'];
+  const rank = k => { const i = FIRST.indexOf(k); return i < 0 ? FIRST.length : i; };
+  const names = [...el.attributes].map(a => a.name)
+    .filter(k => k !== 'id' && k !== 'class' && k !== 'data-cx' && !(k === 'value' && secret(el)));
+  names.sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+  const attrs = names.slice(0, 8).map(k => [k, clip(el.getAttribute(k), 60)]);
+  const short = (e, k) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].slice(0, k).map(c => '.' + c).join('');
+  const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
+  const ancestors = [];
+  for (let p = up(el); p && ancestors.length < 5; p = up(p)) ancestors.push(short(p, 2));
+  const clone = el.cloneNode(true);
+  for (const e of [clone, ...clone.querySelectorAll('*')]) {
+    e.removeAttribute('data-cx');
+    if (secret(e)) e.removeAttribute('value');
+  }
+  const r = el.getBoundingClientRect();
+  return {
+    tag, id: el.id || '', classes: [...el.classList].slice(0, 5), kind, label, attrs,
+    cursor: getComputedStyle(el).cursor,
+    rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
+    visible: vis(el), ancestors, html: clip(clone.outerHTML, 300),
+  };
+})()`;
+}
+
+const PAGE_TEXT = `(() => {
+  const t = (document.body && document.body.innerText) || '';
+  return t.replace(/[ \\t]+/g, ' ').split('\\n').map(l => l.trim()).filter(Boolean).join('\\n').slice(0, ${TEXT_MAX});
+})()`;
 
 function findText(text) {
   const want = String(text).replace(/\s+/g, ' ').trim().toLowerCase();
@@ -258,6 +310,6 @@ const LOGIN_PROBE = `(() => {${DEEP}
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX,
-  READ_TEXT: readText, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select,
+  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select,
 };
