@@ -176,7 +176,7 @@ test('client: a missed heartbeat kills the child and counts as a crash', async (
   assert.strictEqual(exits[0].expected, false);
 });
 
-test('client: dispose sends shutdown, then SIGTERM after 3 s', async (t) => {
+test('client: dispose sends shutdown, then SIGTERM after 3 s', { timeout: 5000 }, async (t) => {
   const { client, clock, nextExit, waitLog } = boot(t, { mode: 'ignore-shutdown' });
   await client.request('echo', { v: 1 });
   const exited = nextExit();
