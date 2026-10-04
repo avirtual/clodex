@@ -110,14 +110,56 @@ function readInteractive(main) {
 })()`;
 }
 
+const REF = (n) => `const ref = window.__cxEls && window.__cxEls[${Number(n) | 0}];
+  const el = ref && ref.deref();
+  if (!el || !el.isConnected) return null;`;
+
 function find(n) {
   return `(() => {
-  const ref = window.__cxEls && window.__cxEls[${Number(n) | 0}];
-  const el = ref && ref.deref();
-  if (!el || !el.isConnected) return null;
+  ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag: el.tagName.toLowerCase(), type: el.type || null };
+  const tag = el.tagName.toLowerCase();
+  const type = (el.type || '').toLowerCase();
+  const kind = el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
+  const raw = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.innerText
+    || el.getAttribute('title') || el.getAttribute('placeholder') || (tag === 'input' && type !== 'password' ? el.value : '') || el.getAttribute('name') || '';
+  const label = String(raw).replace(/\\s+/g, ' ').trim().slice(0, 60);
+  const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
+  return {
+    x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
+    password: tag === 'input' && type === 'password',
+    otp: el.getAttribute('autocomplete') === 'one-time-code',
+    editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
+  };
+})()`;
+}
+
+function clear(n) {
+  return `(() => {
+  ${REF(n)}
+  el.focus();
+  if (el.isContentEditable) document.execCommand('selectAll');
+  else if (typeof el.select === 'function') el.select();
+  return true;
+})()`;
+}
+
+function select(n, option) {
+  return `(() => {
+  ${REF(n)}
+  if (el.tagName !== 'SELECT') return { err: 'NOT_SELECT' };
+  const want = ${JSON.stringify(String(option))};
+  const opts = [...el.options].map(o => ({ o, value: o.value, text: o.text.trim() }));
+  let hit = opts.filter(x => x.value === want || x.text === want);
+  if (!hit.length) hit = opts.filter(x => x.value.toLowerCase() === want.toLowerCase() || x.text.toLowerCase() === want.toLowerCase());
+  if (!hit.length) hit = opts.filter(x => x.text.toLowerCase().includes(want.toLowerCase()));
+  if (hit.length !== 1) return { err: 'NO_OPTION', ambiguous: hit.length > 1, options: (hit.length ? hit : opts).map(x => x.text) };
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+  setter.call(el, hit[0].value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return { value: el.value, text: hit[0].text };
 })()`;
 }
 
@@ -143,5 +185,5 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE,
-  READ_TEXT: readText, READ_INTERACTIVE: readInteractive, FIND: find,
+  READ_TEXT: readText, READ_INTERACTIVE: readInteractive, FIND: find, CLEAR: clear, SELECT: select,
 };

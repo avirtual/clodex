@@ -8,7 +8,12 @@
   .bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; box-sizing: border-box; border-bottom: 1px solid #ccc; }
   .svc { font-weight: 600; }
   .url { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #555; }
-  .pill { padding: 2px 8px; border-radius: 10px; background: #ddd; }
+  .pill { padding: 2px 8px; border-radius: 10px; background: #ddd; max-width: 60%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pill.wait { background: #f3e3b5; }
+  .pill.amber { background: #f5a623; color: #000; }
+  .pill.blue { background: #2f6fde; color: #fff; }
+  button { font: inherit; padding: 2px 10px; }
+  button[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -16,13 +21,21 @@
   <span class="svc" id="svc"></span>
   <span class="url" id="url"></span>
   <span class="pill" id="state">idle</span>
+  <button id="takeover" hidden>Take over</button>
+  <button id="handback" hidden>Hand back to agent</button>
 </div>
 <script>
   window.cxbRender = function (vm) {
     document.getElementById('svc').textContent = String((vm && vm.service) || '');
     document.getElementById('url').textContent = String((vm && vm.url) || '');
-    document.getElementById('state').textContent = String((vm && vm.state) || 'idle');
+    const pill = document.getElementById('state');
+    pill.textContent = String((vm && vm.text) || (vm && vm.state) || 'idle');
+    pill.className = 'pill ' + (['wait', 'amber', 'blue'].includes(vm && vm.tone) ? vm.tone : '');
+    document.getElementById('takeover').hidden = !(vm && vm.takeover);
+    document.getElementById('handback').hidden = !(vm && vm.handback);
   };
+  document.getElementById('takeover').addEventListener('click', function () { console.log('cxb:takeover'); });
+  document.getElementById('handback').addEventListener('click', function () { console.log('cxb:handback'); });
 </script>
 </body>
 </html>

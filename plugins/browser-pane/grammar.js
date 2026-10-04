@@ -2,7 +2,10 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'wait', 'services', 'release'];
+const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
+const WAIT_MS_MAX = 1800000;
+const N_MAX = 1000000;
 const URL_MAX = 4096;
 const MAX_MIN = 500;
 const MAX_MAX = 8000;
@@ -11,6 +14,11 @@ const DEFAULT_MAX = 2500;
 const FLAGS = {
   open: {},
   read: { text: 'bool', links: 'bool', main: 'bool', filter: 'value', page: 'value', max: 'value' },
+  click: {},
+  type: { enter: 'bool' },
+  key: {},
+  select: {},
+  wait: { ms: 'value', for: 'value' },
   services: {},
   release: {},
 };
@@ -79,6 +87,18 @@ function serviceArg(sub, positional, required) {
   return s;
 }
 
+function serviceAndN(sub, positional) {
+  const usage = sub === 'type' ? '[agent:browser type [service] <n> [--enter]] <text>'
+    : sub === 'select' ? '[agent:browser select [service] <n>] <option>' : '[agent:browser click [service] <n>]';
+  if (positional.length > 2) throw new Error(`unexpected '${positional[2]}' for ${sub}`);
+  const nTok = positional[positional.length - 1];
+  if (nTok == null || !/^[0-9]+$/.test(nTok)) throw new Error(`${sub} needs an element number from your read — ${usage}`);
+  const n = Number(nTok);
+  if (n < 1 || n > N_MAX) throw new Error(`element number out of range: ${nTok}`);
+  const service = positional.length === 2 ? serviceArg(sub, positional.slice(0, 1), false) : null;
+  return { service, n };
+}
+
 function checkUrl(text) {
   if (!text) throw new Error('open needs a URL after the bracket — [agent:browser open <service>] <url>');
   if (text.length > URL_MAX) throw new Error('URL too long (max 4,096 chars)');
@@ -125,6 +145,33 @@ function toCommand(intent) {
       max,
     };
   }
+  const body = String((intent && intent.body) || '').trim();
+  if (sub === 'click') return { sub, ...serviceAndN(sub, positional) };
+  if (sub === 'type') {
+    const sn = serviceAndN(sub, positional);
+    if (!body && !flags.enter) throw new Error('type needs text after the bracket — [agent:browser type [service] <n> [--enter]] <text>');
+    return { sub, ...sn, text: body, enter: !!flags.enter };
+  }
+  if (sub === 'select') {
+    const sn = serviceAndN(sub, positional);
+    if (!body) throw new Error('select needs the option after the bracket — [agent:browser select [service] <n>] <option>');
+    return { sub, ...sn, option: body };
+  }
+  if (sub === 'key') {
+    const service = serviceArg(sub, positional, false);
+    if (!KEY_NAMES.includes(body)) throw new Error(`key needs one of ${KEY_NAMES.join(' ')} after the bracket`);
+    return { sub, service, key: body };
+  }
+  if (sub === 'wait') {
+    const service = serviceArg(sub, positional, false);
+    if (flags.for === '') throw new Error('--for needs a value, e.g. --for="Showing 1"');
+    return {
+      sub,
+      service,
+      ms: flags.ms == null ? null : Math.min(WAIT_MS_MAX, intArg('ms', flags.ms, 1)),
+      forText: flags.for == null ? null : flags.for,
+    };
+  }
   if (sub === 'services') {
     if (positional.length) throw new Error(`unexpected '${positional[0]}' for services`);
     return { sub };
@@ -132,4 +179,4 @@ function toCommand(intent) {
   return { sub, service: serviceArg(sub, positional, false) };
 }
 
-module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, SUBCOMMANDS, DEFAULT_MAX };
+module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, SUBCOMMANDS, KEY_NAMES, DEFAULT_MAX, WAIT_MS_MAX };

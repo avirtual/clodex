@@ -5,6 +5,8 @@ const path = require('node:path');
 const readline = require('node:readline');
 const driver = require('./driver');
 const scripts = require('./page-scripts');
+const lock = require('./lock');
+const { TEXT } = require('./replies');
 
 const BAR_HEIGHT = 40;
 const MAX_WINDOWS = 8;
@@ -13,12 +15,25 @@ const QUIT_CAP_MS = 2000;
 const OPEN_IDLE_MS = 15000;
 const LOAD_TIMEOUT_MS = 25000;
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
-const CODES = new Set(['NOT_OPEN', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL']);
+const ACT_IDLE_MS = 15000;
+const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show']);
 
 function codedError(code, message) {
   const e = new Error(message);
   e.code = code;
   return e;
+}
+
+function signinOf(login) {
+  if (!login) return null;
+  if (login.idp === 'google' || login.googleRejected) return 'idp';
+  if (login.password) return 'login';
+  if (login.otp) return 'otp';
+  if (login.captcha) return 'captcha';
+  if (login.idp) return 'idp';
+  return null;
 }
 
 function argValue(argv, key) {
@@ -60,6 +75,8 @@ function run(electron, ctx) {
   app.on('window-all-closed', () => {});
 
   const t0 = Date.now();
+  const quietMs = Number((ctx && ctx.quietMs) || 3000);
+  const gateMaxMs = Number((ctx && ctx.gateMaxMs) || 60000);
   const services = new Map();
   const chains = new Map();
   const partitions = new Set();
@@ -85,8 +102,19 @@ function run(electron, ctx) {
 
   const render = (svc) => {
     if (svc.win.isDestroyed()) return;
-    const vm = { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL(), state: 'idle' };
+    const vm = lock.barView(svc.lock, { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL() });
     svc.win.webContents.executeJavaScript(`window.cxbRender && window.cxbRender(${JSON.stringify(vm)})`).catch(() => {});
+  };
+
+  const pageInfo = (svc) => (svc.wc.isDestroyed() ? { url: '', title: '' } : { url: svc.wc.getURL(), title: svc.wc.getTitle() });
+
+  const dispatch = (svc, ev, extra = {}) => {
+    const prev = svc.lock;
+    svc.lock = lock.reduce(prev, ev);
+    render(svc);
+    if (prev.state === svc.lock.state && prev.reason === svc.lock.reason) return false;
+    send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, ...pageInfo(svc), ...extra });
+    return true;
   };
 
   const ensureCdp = (svc) => {
@@ -125,6 +153,14 @@ function run(electron, ctx) {
     });
     win.webContents.on('will-navigate', (e) => e.preventDefault());
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('console-message', (...a) => {
+      const first = a[0];
+      const msg = first && typeof first.message === 'string' ? first.message : a[2];
+      const svc = services.get(name);
+      if (!svc || svc.win !== win) return;
+      if (msg === 'cxb:takeover') takeover(svc);
+      else if (msg === 'cxb:handback') handback(svc).catch(() => {});
+    });
     win.loadFile(path.join(__dirname, 'bar.html')).catch(() => {});
     const view = new WebContentsView({
       webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
@@ -138,8 +174,12 @@ function run(electron, ctx) {
     layout();
     win.on('resize', layout);
     const wc = view.webContents;
-    const svc = { name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, blank: wc.loadURL('about:blank').catch(() => {}) };
-    wc.on('did-navigate', () => { svc.doc += 1; render(svc); });
+    const svc = {
+      name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
+      lastInput: 0, popup: false, blank: wc.loadURL('about:blank').catch(() => {}),
+    };
+    driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
+    wc.on('did-navigate', () => { svc.doc += 1; dispatch(svc, { type: 'navigate' }); });
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
       const target = (e && e.url) || url;
@@ -148,8 +188,8 @@ function run(electron, ctx) {
     wc.on('will-navigate', block);
     wc.on('will-frame-navigate', block);
     wc.setWindowOpenHandler(({ url }) => {
-      if (svc.busy > 0) {
-        if (allowedNav(url)) wc.loadURL(url).catch(() => {});
+      if (svc.lock.state === 'driving') {
+        if (allowedNav(url)) { svc.popup = true; wc.loadURL(url).catch(() => {}); }
         return { action: 'deny' };
       }
       return {
@@ -161,6 +201,7 @@ function run(electron, ctx) {
     try { ensureCdp(svc); } catch {}
     win.on('closed', () => {
       if (services.get(name) === svc) services.delete(name);
+      svc.lock = lock.initial();
       send({ event: 'window-closed', service: name });
       dockSync();
       blockerSync();
@@ -168,6 +209,7 @@ function run(electron, ctx) {
     services.set(name, svc);
     dockSync();
     win.showInactive();
+    send({ event: 'state', service: name, state: 'idle', reason: null, url: '', title: '' });
     return svc;
   }
 
@@ -178,47 +220,213 @@ function run(electron, ctx) {
 
   const probe = async (svc) => (await inIsolated(svc.wc, scripts.LOGIN_PROBE)) || {};
 
-  async function opOpen(name, args) {
-    const url = checkOpenUrl(String(args.url || ''));
-    const svc = openService(name);
+  const need = (name) => {
+    const svc = services.get(name);
+    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) {
+      throw codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
+    }
+    return svc;
+  };
+
+  const heldError = (svc) => codedError('HELD', TEXT.held(svc.name, svc.lock.reason));
+  const closedError = (name) => codedError('CLOSED', `the operator closed the ${name} window — open it again`);
+
+  const checkDoc = (svc, args) => {
+    if (args.expectDoc != null && Number(args.expectDoc) !== svc.doc) {
+      throw codedError('STALE_DOC', TEXT.staleDoc(svc.name, svc.wc.getURL()));
+    }
+  };
+
+  async function resolve(svc, n) {
+    const el = await inIsolated(svc.wc, scripts.FIND(n));
+    if (!el) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+    return el;
+  }
+
+  async function mutating(svc, frame, what, body) {
+    const seat = frame.seat || null;
+    if (svc.lock.state === 'held') throw heldError(svc);
     svc.busy += 1;
     blockerSync();
-    let status = null;
-    const onNav = (_e, _url, code) => { status = code; };
+    svc.popup = false;
     try {
-      await svc.blank;
-      svc.wc.on('did-navigate', onNav);
-      ensureCdp(svc);
-      let navErr = null;
-      const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
-      const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS });
-      if (svc.wc.isDestroyed()) throw codedError('CLOSED', `the operator closed the ${name} window — open it again`);
-      if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
-      const login = svc.wc.isLoading() ? {} : await probe(svc);
-      return {
-        status, url: svc.wc.getURL(), title: svc.wc.getTitle(), doc: svc.doc,
-        idle: { ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [] }, login,
-      };
+      dispatch(svc, { type: 'gate', seat, what }, { seat });
+      const gate = await driver.quietGate({
+        lastInputAt: () => svc.lastInput, quietMs, maxMs: gateMaxMs, shouldStop: () => svc.lock.state !== 'gating',
+      });
+      if (svc.win.isDestroyed() || svc.wc.isDestroyed()) throw closedError(svc.name);
+      if (svc.lock.state === 'held') throw heldError(svc);
+      if (gate !== 'quiet') {
+        dispatch(svc, { type: 'busy' }, { seat });
+        throw codedError('OPERATOR_BUSY', TEXT.operatorBusy(svc.name));
+      }
+      dispatch(svc, { type: 'quiet' }, { seat });
+      let out;
+      const docAt = svc.doc;
+      try {
+        out = await body();
+      } catch (e) {
+        if (!svc.wc.isDestroyed()) {
+          if (e && e.handoff) dispatch(svc, { type: 'done', signin: 'login', force: true }, { seat, login: e.handoff });
+          else dispatch(svc, { type: 'done' }, { seat });
+        }
+        throw e;
+      }
+      if (svc.win.isDestroyed() || svc.wc.isDestroyed()) throw closedError(svc.name);
+      if (out && out.idle && !out.idle.ok && svc.wc.isLoading() && (frame.op === 'open' || svc.doc !== docAt)) {
+        svc.wc.stop();
+        out.idle.stopped = true;
+      }
+      const login = await probe(svc);
+      const takeover = svc.lock.takeover;
+      dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });
+      const result = { ...out, ...pageInfo(svc), doc: svc.doc, login, takeover };
+      if (svc.popup) result.popup = true;
+      if (!takeover && svc.lock.state === 'held') result.held = { reason: svc.lock.reason, login, url: result.url };
+      return result;
     } finally {
-      if (!svc.wc.isDestroyed()) svc.wc.removeListener('did-navigate', onNav);
       svc.busy -= 1;
       blockerSync();
     }
   }
 
-  async function opRead(name, args) {
-    const svc = services.get(name);
-    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) {
-      throw codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
-    }
+  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [] });
+  const actOpts = (svc) => ({ timeoutMs: ACT_IDLE_MS, shouldStop: () => svc.lock.takeover });
+
+  async function opOpen(name, frame, args) {
+    const url = checkOpenUrl(String(args.url || ''));
+    const svc = openService(name);
+    await svc.blank;
+    return mutating(svc, frame, `open ${url.slice(0, 80)}`, async () => {
+      let status = null;
+      const onNav = (_e, _url, code) => { status = code; };
+      svc.wc.on('did-navigate', onNav);
+      try {
+        ensureCdp(svc);
+        let navErr = null;
+        const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
+        const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
+        if (svc.wc.isDestroyed()) throw closedError(name);
+        if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
+        return { status, idle: idleOf(idle) };
+      } finally {
+        if (!svc.wc.isDestroyed()) svc.wc.removeListener('did-navigate', onNav);
+      }
+    });
+  }
+
+  async function opAct(name, frame, args) {
+    const svc = need(name);
+    const op = frame.op;
+    const n = Number(args.n);
+    checkDoc(svc, args);
+    const what = op === 'key' ? `press ${args.key}` : `${op} [${n}]`;
+    return mutating(svc, frame, what, async () => {
+      ensureCdp(svc);
+      const wc = svc.wc;
+      await driver.emulateFocus(wc);
+      const docBefore = svc.doc;
+      if (op === 'key') {
+        if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
+        const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
+        return { navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+      }
+      checkDoc(svc, args);
+      const el = await resolve(svc, n);
+      dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
+      if (op === 'click') {
+        const { idle } = await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
+        return { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+      }
+      if (op === 'type') {
+        if (el.password || el.otp) {
+          const e = codedError('PASSWORD_FIELD', TEXT.passwordField(svc.name, n));
+          e.handoff = { password: !!el.password, otp: !!el.otp };
+          throw e;
+        }
+        if (!el.editable) throw codedError('NOT_EDITABLE', TEXT.notEditable(n, el.kind));
+        const text = String(args.text || '');
+        const { idle } = await driver.act(wc, async () => {
+          driver.click(wc, el);
+          await inIsolated(wc, scripts.CLEAR(n));
+          await driver.typeText(wc, text);
+          if (args.enter) driver.pressKey(wc, 'Enter');
+        }, actOpts(svc));
+        return { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+      }
+      let picked = null;
+      const { idle } = await driver.act(wc, async () => {
+        picked = await inIsolated(wc, scripts.SELECT(n, String(args.option || '')));
+      }, actOpts(svc));
+      if (!picked) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+      if (picked.err === 'NOT_SELECT') throw codedError('NOT_SELECT', TEXT.notSelect(n));
+      if (picked.err === 'NO_OPTION') {
+        const list = picked.options.slice(0, 20).map((o) => JSON.stringify(o)).join(', ')
+          + (picked.options.length > 20 ? `, …(+${picked.options.length - 20} more)` : '');
+        throw codedError('NO_OPTION', picked.ambiguous
+          ? `${JSON.stringify(String(args.option))} matches ${picked.options.length} options of [${n}]: ${list} — use the exact text`
+          : `no option ${JSON.stringify(String(args.option))} in [${n}] — options: ${list}`);
+      }
+      return { kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+    });
+  }
+
+  async function opRead(name, frame, args) {
+    const svc = need(name);
+    if (svc.lock.state === 'held') throw heldError(svc);
     svc.reading += 1;
     blockerSync();
     try {
-      return await readPage(name, svc, args);
+      const r = await readPage(name, svc, args);
+      const reason = signinOf(r.login);
+      if (reason && svc.lock.state === 'idle' && dispatch(svc, { type: 'signin', reason }, { seat: frame.seat || null, login: r.login })) {
+        r.held = { reason, login: r.login, url: r.url };
+      }
+      return r;
     } finally {
       svc.reading -= 1;
       blockerSync();
     }
+  }
+
+  async function opIdle(name, args) {
+    const svc = need(name);
+    const ms = Math.max(1, Number(args.ms) || 15000);
+    if (args.forText) {
+      const t = Date.now();
+      const want = JSON.stringify(String(args.forText));
+      for (;;) {
+        const has = await inMain(svc.wc, `!!(document.body && document.body.innerText.includes(${want}))`);
+        if (has) return { ok: true, found: true, ms: Date.now() - t };
+        if (Date.now() - t >= ms) return { ok: false, found: false, ms: Date.now() - t };
+        await driver.sleep(250);
+      }
+    }
+    const r = await driver.waitIdle(svc.wc, { timeoutMs: ms });
+    return idleOf(r);
+  }
+
+  function takeover(svc) {
+    dispatch(svc, { type: 'takeover' });
+    return { state: svc.lock.state };
+  }
+
+  async function handback(svc) {
+    if (svc.lock.state !== 'held') return { state: svc.lock.state };
+    await driver.pinSessionCookies(svc.ses).catch(() => 0);
+    const login = svc.wc.isDestroyed() ? {} : await probe(svc);
+    if (svc.lock.state === 'held') dispatch(svc, { type: 'handback' }, { handback: true, login });
+    return { state: svc.lock.state };
+  }
+
+  function operatorOp(op, name) {
+    const svc = need(name);
+    if (op === 'hold') return takeover(svc);
+    if (op === 'handback') return handback(svc);
+    svc.win.show();
+    svc.win.focus();
+    app.focus({ steal: true });
+    return {};
   }
 
   async function readPage(name, svc, args) {
@@ -277,10 +485,18 @@ function run(electron, ctx) {
       await app.whenReady();
       let result;
       if (op === 'ping') result = { uptimeMs: Date.now() - t0 };
-      else if (op === 'open' || op === 'read') {
+      else if (SERVICE_OPS.has(op)) {
         const name = String(frame.service || '');
         if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
-        result = await serial(name, () => (op === 'open' ? opOpen(name, args) : opRead(name, args)));
+        if (op === 'hold' || op === 'handback' || op === 'show') result = await operatorOp(op, name);
+        else {
+          result = await serial(name, () => {
+            if (op === 'open') return opOpen(name, frame, args);
+            if (op === 'read') return opRead(name, frame, args);
+            if (op === 'idle') return opIdle(name, args);
+            return opAct(name, frame, args);
+          });
+        }
       } else {
         throw codedError('INTERNAL', `unknown op ${op}`);
       }

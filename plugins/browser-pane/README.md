@@ -7,8 +7,16 @@ page text plus a numbered list of links and controls, about 2,500 tokens per
 page, delivered as a file the agent reads. You watch the window, and you sign in
 yourself; the agent never types a password.
 
-This release covers `open`, `read`, `services` and `release`. Clicking, typing,
-downloads and the take-over controls come in later releases.
+This release covers `open`, `read`, `click`, `type`, `key`, `select`, `wait`,
+`services` and `release`, and the take-over controls. Downloads and screenshots
+come in a later release.
+
+While an agent acts, the bar at the top of the window turns amber, names the
+agent and ignores your clicks and keys until the action finishes. An agent waits
+for you to pause typing or clicking for 3 s before it acts. **Take over** gives
+you the window (it lands when the current action finishes); **Hand back to
+agent** returns it. On a sign-in page the window is handed to you with one
+notification; agents are refused password and one-time-code fields.
 
 ## Turning it on
 
@@ -26,9 +34,18 @@ The desktop app is required. A headless Clodex answers every command with
 ```
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N] [--max=<tokens>]]
+[agent:browser click [service] <n>]
+[agent:browser type [service] <n> [--enter]] <text>
+[agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
+[agent:browser select [service] <n>] <option text or value>
+[agent:browser wait [service] [--ms=N] [--for=<text>]]
 [agent:browser services]
 [agent:browser release [service]]
 ```
+
+`<n>` comes from the seat's latest `read` of that page. One seat holds a service
+at a time; it frees after 5 min without commands, on `release`, or when the
+seat's session ends.
 
 Omitting `[service]` means the last service that seat opened or read. Only
 `http:` and `https:` URLs open, and a URL carrying `user:pass@` is refused.

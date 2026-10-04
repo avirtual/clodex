@@ -1,0 +1,286 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+const { createScheduler } = require('../plugins/browser-pane/scheduler');
+const { parseLine, toCommand } = require('../plugins/browser-pane/grammar');
+
+process.env.TMPDIR = mkTmpRoot('clodex-bp-sched-');
+
+const PAGE = { url: 'https://portal.example.com/bills', title: 'My Bills', doc: 1 };
+
+const DEFAULTS = {
+  open: (a) => ({ status: 200, url: a.url, title: 'Bills', doc: 1, idle: { ok: true, ms: 1000 }, login: {} }),
+  read: () => ({ ...PAGE, contentType: 'text/html', text: 'My Bills', elements: ['[1] button View'], truncated: false, frames: [], login: {} }),
+  click: () => ({ kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 1200 }, ...PAGE }),
+  type: () => ({ kind: 'input:text', label: 'Find', navigated: false, idle: { ok: true, ms: 900 }, ...PAGE }),
+  select: () => ({ value: '2026-08', text: 'August 2026', navigated: false, idle: { ok: true, ms: 1000 }, ...PAGE }),
+  key: () => ({ navigated: false, idle: { ok: true, ms: 400 }, ...PAGE }),
+  idle: () => ({ ok: true, ms: 2300, inflight: [] }),
+};
+
+function coded(code, message) {
+  return Object.assign(new Error(message), { code });
+}
+
+function harness(script = {}) {
+  let t = 1000000;
+  let seq = 0;
+  const pending = [];
+  const timers = {
+    setTimeout(fn, ms) { const h = { at: t + ms, fn, id: seq++ }; pending.push(h); return h; },
+    clearTimeout(h) { const i = pending.indexOf(h); if (i >= 0) pending.splice(i, 1); },
+  };
+  const calls = [];
+  const client = {
+    request(op, args, meta) {
+      calls.push([meta.seat, op, args]);
+      const fn = script[op] || DEFAULTS[op];
+      return Promise.resolve().then(() => fn(args, meta));
+    },
+  };
+  let stored = null;
+  const storage = { get: () => stored, set: (v) => { stored = JSON.parse(JSON.stringify(v)); } };
+  const sched = createScheduler({ client, storage, mirror: new Map(), now: () => t, timers });
+  const out = [];
+  const handles = new Map();
+  const seat = (name) => {
+    if (!handles.has(name)) handles.set(name, { name, type: 'claude', inject: (text) => out.push([name, text.replace(/ → @\S+ $/, ' → @FILE')]) });
+    return handles.get(name);
+  };
+  const settle = async () => { for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r)); };
+  const run = async (rows) => {
+    for (const [who, line] of rows) {
+      try { sched.submit(seat(who), toCommand(parseLine(line))); } catch (e) { out.push([who, `THROW ${e.message}`]); }
+    }
+    await settle();
+    return out.splice(0);
+  };
+  const advance = (ms) => {
+    const end = t + ms;
+    for (;;) {
+      pending.sort((a, b) => (a.at - b.at) || (a.id - b.id));
+      const h = pending[0];
+      if (!h || h.at > end) break;
+      pending.shift();
+      t = h.at;
+      h.fn();
+    }
+    t = end;
+  };
+  return { sched, run, advance, calls, out, seat, settle, storage };
+}
+
+const OPENED = '[agent:browser] opened utility · 200 · "Bills" · https://portal.example.com/bills · login: none · idle 1.0s · next: read';
+const READ_REPLY = '[agent:browser] read utility · page 1/1 · 1 elements · ≈87 tok → @FILE';
+const LEASE_40 = '[agent:browser] error: utility is in use by hand-a (last command 40s ago). It frees after 5 min without commands, when they emit [agent:browser release utility], or when their session ends.';
+const HELD = '[agent:browser] error: the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.';
+const HELD_STATE = { event: 'state', service: 'utility', state: 'held', reason: 'login', seat: 'hand-a', login: { password: true } };
+
+test('scheduler lease: acquire, then a second seat is refused with the holder named', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]), [['hand-a', OPENED]]);
+  h.advance(40000);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', LEASE_40]]);
+  assert.deepStrictEqual(h.calls.map((c) => [c[0], c[1]]), [['hand-a', 'open']]);
+});
+
+test('scheduler lease: expires at 5 min without commands, not before', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.advance(5 * 60 * 1000 - 1);
+  assert.match((await h.run([['hand-b', '[agent:browser read utility]']]))[0][1], /in use by hand-a \(last command 5m ago\)/);
+  h.advance(1);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
+  h.advance(1000);
+  assert.match((await h.run([['hand-a', '[agent:browser read utility]']]))[0][1], /^\[agent:browser\] error: utility is in use by hand-b \(last command 1s ago\)/);
+});
+
+test('scheduler lease: paused while held and while the holder has a held-wait pending', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.sched.onState(HELD_STATE);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait utility --ms=1800000]']]), []);
+  h.advance(10 * 60 * 1000);
+  assert.match((await h.run([['hand-b', '[agent:browser read utility]']]))[0][1], /in use by hand-a \(last command 10m ago\)/);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'https://portal.example.com/account', title: 'Account', login: {} });
+  await h.settle();
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a',
+    '[agent:browser] the operator handed utility back · now https://portal.example.com/account ("Account") · signed in · read to continue']]);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
+});
+
+test('scheduler lease: release frees it, and session exit frees it', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await h.run([
+    ['hand-a', '[agent:browser open utility] https://portal.example.com/bills'],
+    ['hand-a', '[agent:browser release utility]'],
+    ['hand-b', '[agent:browser read utility]'],
+  ]), [['hand-a', '[agent:browser] released utility'], ['hand-a', OPENED], ['hand-b', READ_REPLY]]);
+  h.sched.onSessionExit({ name: 'hand-b' });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser read utility]']]), [['hand-a', READ_REPLY]]);
+});
+
+test('scheduler: commands from the holder run one at a time in arrival order', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([
+    ['hand-a', '[agent:browser click 1]'],
+    ['hand-a', '[agent:browser type 2 --enter] 1040'],
+    ['hand-a', '[agent:browser select 3] August 2026'],
+    ['hand-a', '[agent:browser key] Tab'],
+  ]), [
+    ['hand-a', '[agent:browser] clicked utility [1] button "View" · same page · idle 1.2s'],
+    ['hand-a', '[agent:browser] typed utility [2] (4 chars) + Enter · same page · idle 0.9s'],
+    ['hand-a', '[agent:browser] selected utility [3] = "August 2026" · same page · idle 1.0s'],
+    ['hand-a', '[agent:browser] pressed Tab on utility · same page · idle 0.4s'],
+  ]);
+  assert.deepStrictEqual(h.calls, [
+    ['hand-a', 'click', { expectDoc: 1, n: 1 }],
+    ['hand-a', 'type', { expectDoc: 1, n: 2, text: '1040', enter: true }],
+    ['hand-a', 'select', { expectDoc: 1, n: 3, option: 'August 2026' }],
+    ['hand-a', 'key', { key: 'Tab' }],
+  ]);
+});
+
+test('scheduler: a failure drops the same seat\'s queued commands and names them', async () => {
+  const h = harness({ select: () => { throw coded('NO_OPTION', 'no option "Sep" in [3] — options: "August 2026"'); } });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([
+    ['hand-a', '[agent:browser select 3] Sep'],
+    ['hand-a', '[agent:browser click 4]'],
+    ['hand-a', '[agent:browser key] Enter'],
+  ]), [['hand-a',
+    '[agent:browser] error: no option "Sep" in [3] — options: "August 2026" — dropped 2 queued commands after it: click 4, key Enter']]);
+  assert.deepStrictEqual(h.calls.map((c) => c[1]), ['select']);
+});
+
+test('scheduler: STALE_DOC from the child drops one queued command, singular', async () => {
+  const msg = 'utility navigated since your last read (now https://portal.example.com/x) — numbers from that read are void; read again.';
+  const h = harness({ click: () => { throw coded('STALE_DOC', msg); } });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 4]'], ['hand-a', '[agent:browser click 5]']]),
+    [['hand-a', `[agent:browser] error: ${msg} — dropped 1 queued command after it: click 5`]]);
+});
+
+test('scheduler: an act before any read is refused with read first', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await h.run([
+    ['hand-a', '[agent:browser open utility] https://portal.example.com/bills'],
+    ['hand-a', '[agent:browser click utility 4]'],
+    ['hand-a', '[agent:browser type 2] x'],
+    ['hand-a', '[agent:browser select 3] x'],
+  ]), [
+    ['hand-a', '[agent:browser] error: read utility first — numbers come from your read'],
+    ['hand-a', '[agent:browser] error: read utility first — numbers come from your read'],
+    ['hand-a', '[agent:browser] error: read utility first — numbers come from your read'],
+    ['hand-a', OPENED],
+  ]);
+});
+
+test('scheduler: a held service refuses everything but wait, services and release', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.sched.onState(HELD_STATE);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([
+    ['hand-a', '[agent:browser read utility]'],
+    ['hand-a', '[agent:browser click 3]'],
+    ['hand-a', '[agent:browser open utility] https://portal.example.com/x'],
+    ['hand-a', '[agent:browser wait]'],
+    ['hand-a', '[agent:browser services]'],
+  ]), [
+    ['hand-a', HELD], ['hand-a', HELD], ['hand-a', HELD],
+    ['hand-a', '[agent:browser] services: utility — sign-in page · window open · held'],
+  ]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser release utility]']]), [['hand-a', '[agent:browser] released utility']]);
+  assert.deepStrictEqual(h.calls, []);
+});
+
+test('scheduler: a held wait times out at --ms, and a closed window answers the rest', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.sched.onState(HELD_STATE);
+  await h.run([['hand-a', '[agent:browser wait utility --ms=60000]']]);
+  h.advance(59999);
+  assert.deepStrictEqual(h.out.splice(0), []);
+  h.advance(1);
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a',
+    '[agent:browser] the operator still has control of utility after 1m — emit [agent:browser wait utility] again, or end your turn']]);
+  await h.run([['hand-a', '[agent:browser wait utility]']]);
+  h.sched.onClosed('utility');
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] error: the utility window was closed — open it again']]);
+});
+
+test('scheduler: a non-held wait asks the child for idle, clamped to 120 s', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait --ms=999999]']]), [['hand-a', '[agent:browser] utility idle after 2.3s']]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'idle', { ms: 120000, forText: null }]]);
+});
+
+test('scheduler: a sign-in result replies with the handoff text and drops what was queued', async () => {
+  const h = harness({
+    click: () => ({ ...PAGE, held: { reason: 'login', login: { password: true }, url: 'https://portal.example.com/login' } }),
+  });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 2]'], ['hand-a', '[agent:browser click 3]']]), [['hand-a',
+    '[agent:browser] sign-in needed on utility (password field at https://portal.example.com/login). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait utility] and end your turn; the reply comes when the operator hands the window back. — dropped 1 queued command after it: click 3']]);
+});
+
+test('scheduler: a takeover during the command adds the suffix', async () => {
+  const h = harness({ click: () => ({ kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 300 }, takeover: true, held: { reason: 'takeover' } }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]), [['hand-a',
+    '[agent:browser] clicked utility [1] button "View" · same page · idle 0.3s · the operator took over during this command']]);
+});
+
+test('scheduler: a wait queued behind a command becomes a held waiter when the service is held meanwhile', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const read = h.run([['hand-a', '[agent:browser read utility]'], ['hand-a', '[agent:browser wait utility]']]);
+  h.sched.onState({ ...HELD_STATE, reason: 'takeover' });
+  assert.deepStrictEqual(await read, [['hand-a', READ_REPLY]]);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+});
+
+test('scheduler: a sign-in failure keeps the seat\'s queued wait and drops the rest', async () => {
+  const h = harness({ read: () => ({ ...PAGE, held: { reason: 'login', login: { password: true }, url: 'https://portal.example.com/login' } }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const replies = h.run([['hand-a', '[agent:browser read utility]'], ['hand-a', '[agent:browser key] Tab'], ['hand-a', '[agent:browser wait utility]']]);
+  h.sched.onState(HELD_STATE);
+  const got = await replies;
+  assert.strictEqual(got.length, 1);
+  assert.match(got[0][1], /^\[agent:browser\] sign-in needed on utility .* — dropped 1 queued command after it: key Tab$/);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+});
+
+test('scheduler: a closed window forgets the seats\' numbers for it', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  h.sched.onClosed('utility');
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]),
+    [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
+});
+
+test('scheduler: a takeover during open adds the suffix', async () => {
+  const h = harness({ open: (a) => ({ status: 200, url: a.url, title: 'Bills', doc: 1, idle: { ok: true, ms: 1000 }, login: {}, takeover: true, held: { reason: 'takeover' } }) });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]),
+    [['hand-a', `${OPENED} · the operator took over during this command`]]);
+});
+
+test('scheduler: handback records the login as logged-in via handback', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.sched.onState(HELD_STATE);
+  assert.strictEqual(h.storage.get().services.utility.login.state, 'login-page');
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
+  const { state, via } = h.storage.get().services.utility.login;
+  assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
+});

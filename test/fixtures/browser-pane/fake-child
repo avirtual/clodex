@@ -7,6 +7,7 @@ const arg = (k) => {
   return hit ? hit.slice(k.length + 3) : null;
 };
 const mode = arg('mode') || 'normal';
+if (mode === 'ignore-term') process.on('SIGTERM', () => process.stderr.write('ignoring SIGTERM\n'));
 const send = (f) => process.stdout.write(JSON.stringify({ cxb: 1, ...f }) + '\n');
 
 const READ = {
@@ -29,11 +30,33 @@ function answer(f) {
   if (f.op === 'ping') return send({ id: f.id, ok: true, result: { uptimeMs: 1 } });
   if (f.op === 'shutdown') {
     process.stderr.write('got shutdown\n');
-    if (mode === 'ignore-shutdown') return undefined;
+    if (mode === 'ignore-shutdown' || mode === 'ignore-term') return undefined;
     send({ id: f.id, ok: true, result: {} });
     return setImmediate(() => process.exit(0));
   }
   if (mode === 'crash-on-op') { process.stderr.write('dying\n'); process.exit(3); }
+  if (f.op === 'open' && /login/.test(f.args.url)) {
+    doc += 1;
+    const login = { password: true };
+    send({ event: 'state', service: f.service, state: 'held', reason: 'login', seat: f.seat, url: f.args.url, title: 'Sign in', login });
+    return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Sign in', doc, idle: { ok: true, ms: 800 }, login,
+      held: { reason: 'login', login, url: f.args.url } } });
+  }
+  if (f.op === 'handback') {
+    send({ event: 'state', service: f.service, state: 'idle', reason: null, handback: true,
+      url: 'https://portal.example.com/account', title: 'Account overview', login: { logoutLink: true } });
+    return send({ id: f.id, ok: true, result: { state: 'idle' } });
+  }
+  if (f.op === 'type' && f.args.n === 7) {
+    const login = { password: true };
+    send({ event: 'state', service: f.service, state: 'held', reason: 'login', seat: f.seat, url: 'https://portal.example.com/login', title: 'Sign in', login });
+    return send({ id: f.id, ok: false, code: 'PASSWORD_FIELD',
+      error: `[7] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${f.service}] and end your turn. Do not ask anyone for the password.` });
+  }
+  if (f.op === 'click') {
+    return send({ id: f.id, ok: true, result: { kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 1200 },
+      url: READ.url, title: READ.title, doc, login: {}, takeover: false } });
+  }
   if (f.op === 'open') {
     doc += 1;
     return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Fixture ' + f.service, doc,
@@ -52,7 +75,7 @@ rl.on('line', (line) => {
   answer(f);
   if (held && held !== f) { const h = held; held = null; answer(h); }
 });
-rl.on('close', () => { if (mode !== 'ignore-shutdown') process.exit(0); });
+rl.on('close', () => { if (mode !== 'ignore-shutdown' && mode !== 'ignore-term') process.exit(0); });
 
 
 if (mode === 'noisy') process.stdout.write('hello from a library\n{"not":"a frame"}\n');

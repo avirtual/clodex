@@ -216,6 +216,23 @@ test('client: dispose sends shutdown, then SIGTERM after 3 s', { timeout: 5000 }
   await assert.rejects(client.request('echo', {}), { message: 'browser pane is disabled' });
 });
 
+test('client: stop escalates SIGTERM then SIGKILL on a child that ignores both', { timeout: 5000 }, async (t) => {
+  const { client, clock, nextExit, waitLog } = boot(t, { mode: 'ignore-term' });
+  await client.request('echo', { v: 1 });
+  const exited = nextExit();
+  clock.advance(15 * 60 * 1000);
+  assert.strictEqual(client.state(), 'stopping');
+  await waitLog('child: got shutdown');
+  clock.advance(3000);
+  await waitLog('child: ignoring SIGTERM');
+  clock.advance(1999);
+  assert.strictEqual(client.state(), 'stopping');
+  clock.advance(1);
+  const e = await exited;
+  assert.strictEqual(e.signal, 'SIGKILL');
+  assert.strictEqual(e.expected, true);
+});
+
 test('fixtures: no .js, .cjs or .mjs file under test/fixtures (node --test would load it as a test)', () => {
   const found = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (/\.(c|m)?js$/.test(e.name)) found.push(p); } };

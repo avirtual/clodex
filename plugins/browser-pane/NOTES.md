@@ -58,3 +58,51 @@ capped at 2 s.
 Stripping ` Electron/…` and ` Clodex/…` from the user agent makes it a plain
 Chrome UA. With it, Google's refusal is an explicit `/v3/signin/rejected` page
 rather than the Lite-flow dead end (spike Q1).
+
+## driver.js — emulateFocus
+
+Measured in T3 (Electron 43): in a window shown with `showInactive()`, synthesised
+`sendInputEvent` mouse and key events reach a `data:` page but never reach an
+`http:` page (no `mousedown` at all) until `Emulation.setFocusEmulationEnabled`
+is on. It is re-sent before every act, since a navigation can swap the renderer.
+
+## driver.js — S
+
+`sendInputEvent` fires `before-input-event` / `before-mouse-event` synchronously
+inside the call, so a module-level flag set around it marks our own events. CDP
+`Input.dispatchKeyEvent` bypasses `before-input-event` entirely, so the filters
+cannot be proven against keys from this seat; real OS keys take the native path.
+
+## driver.js — click
+
+`getBoundingClientRect` is in CSS px and `sendInputEvent` takes view DIPs, so
+coordinates are multiplied by `getZoomFactor()`. CDP `Input.dispatchMouseEvent`
+takes CSS px and needs no scaling.
+
+## driver.js — typeText
+
+Per-character `keyDown`/`char`/`keyUp`, not `insertText`: `insertText` fires no
+key events, and keyup-driven widgets (debounced auto-submit, typeahead) ignore
+it. Characters outside the BMP fall back to `insertText`.
+
+## page-scripts.js — SELECT
+
+Native `<select>` popups are not drivable by input events. The value is set with
+the prototype setter from the isolated world, which bypasses a main-world
+instance value tracker (React's), so the page's `change` handler sees a changed
+value and fires `onChange`.
+
+## child.js — mutating
+
+When the idle wait times out and the page is still loading (a subresource that
+never finishes), the load is stopped before the login probe runs:
+`executeJavaScript` waits for load in both worlds, so without the stop every later
+`read` times out and the probe sees nothing. For an act the stop runs only if the
+main frame committed during the act: stopping an uncommitted navigation would
+cancel a slow form POST the server may already have processed.
+
+## client.js — OP_DEADLINE_MS
+
+Deviation from DESIGN §3.4 (50 s / 90 s), which predates `open` being gated.
+`open` worst case: gate 60 s + load 25 s + idle 15 s + probe 8 s ≈ 108 s → 110 s.
+Acts: gate 60 s + FIND 8 s + idle 15 s (+≈3.5 s overrun) + probe 8 s ≈ 95 s → 100 s.

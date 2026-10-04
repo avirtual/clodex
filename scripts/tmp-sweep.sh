@@ -62,6 +62,7 @@ clodex-bash-marks-
 clodex-bp-client-
 clodex-bp-engine-
 clodex-bp-replies-
+clodex-bp-sched-
 clodex-bundles-
 clodex-candidate-
 clodex-changelog-
