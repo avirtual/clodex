@@ -13,8 +13,60 @@ const POINTER_SCAN_MAX = 3000;
 const LAYOUT_CELL_CHARS = 400;
 const VALUE_MAX = 200;
 const OVERLAY_ID = '__cx_numbers';
+const BOX_SEL = 'tr,li,article,[role=row],section';
 const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
 const CHROME_MARK = '\u0001';
+
+const CONSEQUENTIAL = [
+  ['payment', ['pay', 'plata', 'plati', 'plateste', 'checkout', 'card', 'confirm payment']],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda']],
+  ['deletion', ['delete', 'sterge', 'remove', 'elimina']],
+  ['sign-out', ['sign out', 'log out', 'iesire', 'deconectare']],
+  ['alarm', ['arm', 'disarm']],
+  ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription']],
+  ['transfer', ['transfer', 'send money', 'wire']],
+];
+const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
+const CQ_LABEL_MAX = 40;
+
+function consequentialOf(d) {
+  if (!d || d.textual) return null;
+  const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const short = (x) => { const f = fold(x); return f.length > CQ_LABEL_MAX ? '' : f; };
+  const hay = [short(d.label), short(d.value), short(d.aria), fold(d.idClass), fold(d.formaction)].filter(Boolean);
+  for (const [cat, terms] of CONSEQUENTIAL) {
+    for (const t of terms) {
+      const re = new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])');
+      if (hay.some((h) => re.test(h))) return cat;
+    }
+  }
+  const action = fold(d.action);
+  if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
+  return null;
+}
+
+const CQ = `
+  const CONSEQUENTIAL = ${JSON.stringify(CONSEQUENTIAL)};
+  const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
+  const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  ${consequentialOf.toString()}
+  const cqOf = e => {
+    const tg = e.tagName.toLowerCase();
+    const ty = String(e.type || '').toLowerCase();
+    const textual = tg === 'textarea' || e.isContentEditable
+      || (tg === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file'].includes(ty));
+    const submit = (tg === 'button' && (ty === 'submit' || !e.getAttribute('type'))) || (tg === 'input' && (ty === 'submit' || ty === 'image'));
+    const form = e.form || null;
+    return consequentialOf({
+      textual,
+      label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
+      value: tg === 'input' && ty !== 'password' ? e.value : '',
+      aria: e.getAttribute('aria-label'),
+      idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
+      formaction: e.getAttribute('formaction'),
+      action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
+    });
+  };`;
 
 const DEEP = `
   const deepAll = (root, test, out = []) => {
@@ -134,7 +186,7 @@ const numbering = (state) => {
   const next = Math.max(1, Number(state && state.next) | 0);
   const learned = state && Array.isArray(state.volatile) ? state.volatile.map(String) : [];
   const listedBefore = state && Array.isArray(state.listed) ? state.listed.map(Number) : null;
-  return `${ICON}
+  return `${ICON}${CQ}
   ${keys.PAGE_SOURCE}
   const known = ${JSON.stringify(known)};
   const learned = ${JSON.stringify(learned)};
@@ -172,7 +224,7 @@ const numbering = (state) => {
   let headings = null;
   const boxText = new Map();
   const contextOf = el => {
-    const box = el.closest('tr,li,article,[role=row],section');
+    const box = el.closest(${JSON.stringify(BOX_SEL)});
     if (box) {
       if (!boxText.has(box)) boxText.set(box, box.innerText || box.textContent || '');
       return boxText.get(box);
@@ -299,7 +351,7 @@ function readInteractive(main, state) {
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
-    items.push({ el, line: kind + ' ' + line + (disabled ? ' [disabled]' : '') });
+    items.push({ el, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : '') });
   }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
@@ -360,7 +412,7 @@ function find(n) {
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  ${KIND_LABEL}
+  ${KIND_LABEL}${CQ}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   return {
     x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
@@ -369,6 +421,7 @@ function find(n) {
     editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
     href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
     download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
+    consequential: cqOf(el),
   };
 })()`;
 }
@@ -518,7 +571,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   };
 })()`;
 
-const OVERLAY = `(() => {${DEEP}
+const OVERLAY = `(() => {${DEEP}${CQ}
   const old = document.getElementById(${JSON.stringify(OVERLAY_ID)});
   if (old) old.remove();
   const layer = document.createElement('div');
@@ -532,7 +585,8 @@ const OVERLAY = `(() => {${DEEP}
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
     const b = document.createElement('span');
     b.textContent = k;
-    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;border:1px solid #fff;padding:0 2px;border-radius:2px;z-index:2147483647'
+    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;padding:0 2px;border-radius:2px;z-index:2147483647'
+      + (cqOf(el) ? ';border:2px solid #e00' : ';border:1px solid #fff')
       + ';left:' + Math.max(0, Math.round(r.left)) + 'px;top:' + Math.max(0, Math.round(r.top)) + 'px';
     layer.appendChild(b);
     drawn += 1;
@@ -546,7 +600,7 @@ const OVERLAY_OFF = `(() => {
   if (layer) layer.remove();
   return !!layer;
 })()`;
-const TILE_SEL = '[role=button],article,li,tr,[role=row],section,[class*=card],[class*=tile]';
+const TILE_SEL = `[role=button],${BOX_SEL},[class*=card]`;
 const STATE_ATTRS = ['aria-label', 'aria-pressed', 'aria-checked', 'aria-expanded', 'class'];
 
 function targetState(n) {
@@ -568,7 +622,7 @@ function targetState(n) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
-  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, consequentialOf,
 };

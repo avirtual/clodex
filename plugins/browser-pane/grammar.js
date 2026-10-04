@@ -14,10 +14,10 @@ const DEFAULT_MAX = 2500;
 const FLAGS = {
   open: {},
   read: { text: 'bool', links: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value' },
-  click: { text: 'value', to: 'value' },
+  click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool' },
   key: {},
-  select: {},
+  select: { confirm: 'bool' },
   download: { to: 'value', as: 'value' },
   screenshot: { numbers: 'bool' },
   inspect: { text: 'value' },
@@ -137,7 +137,8 @@ function byText(sub, positional, text) {
 function clickCommand(positional, flags) {
   if (flags.to === '') throw new Error('--to needs a folder, e.g. --to=bills');
   const cmd = flags.text == null ? { sub: 'click', ...serviceAndN('click', positional) } : byText('click', positional, flags.text);
-  return flags.to == null ? cmd : { ...cmd, to: flags.to };
+  const out = flags.to == null ? cmd : { ...cmd, to: flags.to };
+  return flags.confirm ? { ...out, confirm: true } : out;
 }
 
 function checkUrl(text) {
@@ -219,7 +220,7 @@ function toCommand(intent) {
   if (sub === 'select') {
     const sn = serviceAndN(sub, positional);
     if (!body) throw new Error('select needs the option after the bracket — [agent:browser select [service] <n>] <option>');
-    return { sub, ...sn, option: body };
+    return { sub, ...sn, option: body, ...(flags.confirm ? { confirm: true } : {}) };
   }
   if (sub === 'key') {
     const service = serviceArg(sub, positional, false);

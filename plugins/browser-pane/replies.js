@@ -45,7 +45,7 @@ function idleLabel(idle) {
   if (idle.ok) return `idle ${secs}s`;
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
-  return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).join(', ')})`
+  return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 
@@ -148,8 +148,9 @@ const TEXT = {
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
   readFirst: (service) => `read ${service} first — numbers come from your read`,
-  denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${url} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
+  denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
+  consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} looks consequential (${category}) — re-issue with --confirm if the operator asked for it`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
   driving: (seat, service, waiting) => `agent ${seat} ${waiting ? 'is waiting on' : 'is driving'} ${service} — wait or ask it to release`,
@@ -211,7 +212,10 @@ function pageLabel(r) {
 
 function actReply(sub, service, cmd, r) {
   let head;
-  if (sub === 'click') head = `clicked ${service} [${r.n != null ? r.n : cmd.n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
+  if (sub === 'click') {
+    const n = r.n != null ? r.n : cmd.n;
+    head = `clicked ${service} [${n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}${r.textChanged ? ` (text under [${n}] changed since your read)` : ''}`;
+  }
   else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
   else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;
   else head = `pressed ${cmd.key} on ${service}`;

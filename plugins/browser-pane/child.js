@@ -39,7 +39,7 @@ const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL']);
 const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
 function codedError(code, message) {
@@ -156,7 +156,8 @@ function numberRefusal(service, n, stored, verdict) {
   if (stored == null) return codedError('NO_ELEMENT', TEXT.noElement(service, n));
   if (verdict === 'ok') return null;
   const p = keys.parseStored(stored);
-  if (verdict === 'ambiguous') return codedError('AMBIGUOUS', TEXT.ambiguousN(service, n, p.label, p.context));
+  const label = p.label.length > 60 ? p.label.slice(0, 59) + '…' : p.label;
+  if (verdict === 'ambiguous') return codedError('AMBIGUOUS', TEXT.ambiguousN(service, n, label, p.context));
   return codedError('NO_ELEMENT', TEXT.noElement(service, n));
 }
 
@@ -247,6 +248,21 @@ function retiredOf(prevKeys, curKeys, sameDoc) {
     .map(([n]) => Number(n)).sort((a, b) => a - b);
 }
 
+const SIGNIN_REASONS = new Set(['login', 'otp', 'captcha', 'idp']);
+
+function signinHold(svc) {
+  return !!svc && !!svc.lock && svc.lock.state === 'held' && SIGNIN_REASONS.has(svc.lock.reason);
+}
+
+function lateMsFor(op) {
+  return op === 'click' || op === 'select' ? LATE_CHANGE_MS : 0;
+}
+
+function consequentialRefusal(n, el, confirm) {
+  if (!el || !el.consequential || confirm) return null;
+  return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential));
+}
+
 function changedOf(prevSigs, curSigs) {
   if (!prevSigs || !curSigs) return [];
   return Object.keys(curSigs).filter((n) => prevSigs[n] != null && prevSigs[n] !== curSigs[n])
@@ -332,7 +348,7 @@ function run(electron, ctx) {
 
   const operatorNav = (svc, inPage) => {
     const info = pageInfo(svc);
-    if (!info.url || info.url === 'about:blank') return;
+    if (!info.url || info.url === 'about:blank' || signinHold(svc)) return;
     send({ event: 'operator-nav', service: svc.name, ...info, ...(inPage ? { inPage: true } : {}) });
   };
 
@@ -756,17 +772,20 @@ function run(electron, ctx) {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
         const pre = await preAct(svc, null);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
-        return withChange(svc, pre, { ...nav(), idle: idleOf(idle) });
+        return withChange(svc, pre, { ...nav(), idle: idleOf(idle) }, lateMsFor(op));
       }
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
+      const refused = consequentialRefusal(n, el, !!args.confirm);
+      if (refused) throw refused;
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
       const pre = await preAct(svc, op === 'click' ? n : null);
       if (op === 'click') {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
-        return withChange(svc, pre, out);
+        if (svc.num && svc.num.changed && svc.num.changed.has(Number(n))) out.textChanged = true;
+        return withChange(svc, pre, out, lateMsFor(op));
       }
       if (op === 'type') {
         if (el.password || el.otp) {
@@ -782,7 +801,7 @@ function run(electron, ctx) {
           await driver.typeText(wc, text);
           if (args.enter) driver.pressKey(wc, 'Enter');
         }, actOpts(svc));
-        const out = await withChange(svc, pre, { kind: el.kind, label: el.label, ...nav(), idle: idleOf(idle) });
+        const out = await withChange(svc, pre, { kind: el.kind, label: el.label, ...nav(), idle: idleOf(idle) }, lateMsFor(op));
         if (out.changed === '' && !wc.isDestroyed()) {
           const value = await inIsolated(wc, scripts.VALUE(n));
           if (typeof value === 'string') out.value = value;
@@ -804,7 +823,7 @@ function run(electron, ctx) {
       }
       return withChange(svc, pre, {
         kind: el.kind, label: el.label, value: picked.value, text: picked.text, ...nav(), idle: idleOf(idle),
-      });
+      }, lateMsFor(op));
     });
   }
 
@@ -819,7 +838,7 @@ function run(electron, ctx) {
     return { before, tickers: tickersOf(first, before), n, target };
   }
 
-  async function withChange(svc, pre, out) {
+  async function withChange(svc, pre, out, lateMs) {
     if (pre.before == null || (out.navigated && !out.inPage) || out.download || svc.popup || svc.popupUrl || svc.wc.isDestroyed()) return out;
     const r = await settleChange({
       before: pre.before,
@@ -827,10 +846,11 @@ function run(electron, ctx) {
       snap: () => (svc.wc.isDestroyed() ? null : snapText(svc.wc)),
       target: pre.target ? () => (svc.wc.isDestroyed() ? null : targetOf(svc, pre.n)) : null,
       targetBefore: pre.target,
+      lateMs,
     });
     if (r.changed != null) out.changed = r.changed;
     if (r.target) out.target = r.target;
-    if (pre.target && !r.changed && !r.target) out.watched = LATE_CHANGE_MS;
+    if (pre.target && !r.changed && !r.target) out.watched = lateMs;
     return out;
   }
 
@@ -1298,5 +1318,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, changedOf, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, changedOf, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

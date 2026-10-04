@@ -398,5 +398,6 @@ test('engine: a burst of operator navigations within 5 s tells the lease holder 
   const before = injected.length;
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'denylist.set', [{ scope: 'other', patterns: ['x.com'] }], 'desktop'),
     { ok: true, patterns: ['x.com'] });
+  mock.timers.tick(engineMod.OPERATOR_NAV_MS);
   assert.strictEqual(injected.length, before, 'no seat holds the other lease: no injection');
 });

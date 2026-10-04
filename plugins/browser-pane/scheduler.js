@@ -253,6 +253,7 @@ function createScheduler({
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
+    if (cmd.confirm) args.confirm = true;
     if (cmd.sub === 'key') args.key = cmd.key;
     const r = await client.request(cmd.sub, args, { service, seat: handle.name });
     noteUrl(service, r.url);
