@@ -160,10 +160,11 @@ test('read-format: changedRegion strips the common line prefix and suffix and re
   assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b /…');
 });
 
-const { chromeStrip, CHROME_MAX_LINES } = require('../plugins/browser-pane/read-format');
+const { chromeStrip, CHROME_MAX_LINES, CHROME_MARK } = require('../plugins/browser-pane/read-format');
 
-const MENU = ['Acasa', 'Avizier', 'Plati', 'Contact', 'Setari', 'Iesire'];
-const FOOT = ['Termeni', 'Confidentialitate', 'Ajutor', '© 2026 e-bloc', 'v1.2'];
+const M = (l) => CHROME_MARK + l;
+const MENU = ['Acasa', 'Avizier', 'Plati', 'Contact', 'Setari', 'Iesire'].map(M);
+const FOOT = ['Termeni', 'Confidentialitate', 'Ajutor', '© 2026 e-bloc', 'v1.2'].map(M);
 const page = (mid, top = MENU.slice(0, 3), bottom = FOOT) => [...top, ...mid, ...bottom].join('\n');
 
 test('read-format: chromeStrip table', () => {
@@ -175,14 +176,35 @@ test('read-format: chromeStrip table', () => {
   const a2 = page(['x'], MENU.slice(0, 2), ['f1', 'f2']);
   const b2 = page(['y'], MENU.slice(0, 2), ['f1', 'f2']);
   assert.deepStrictEqual(chromeStrip(a2, b2), { text: b2, top: 0, bottom: 0 });
-  const long = Array.from({ length: CHROME_MAX_LINES + 5 }, (_, i) => `menu ${i}`);
+  const long = Array.from({ length: CHROME_MAX_LINES + 5 }, (_, i) => M(`menu ${i}`));
   const r = chromeStrip(page(['old'], long, []), page(['new'], long, []));
   assert.strictEqual(r.top, CHROME_MAX_LINES);
   assert.strictEqual(r.bottom, 0);
-  assert.strictEqual(r.text, ['menu 40', 'menu 41', 'menu 42', 'menu 43', 'menu 44', 'new'].join('\n'));
+  assert.strictEqual(r.text, [...long.slice(40), 'new'].join('\n'));
   const prevWs = ['Acasa', '', '  Avizier  ', 'Plati', 'old body', 'Termeni', 'Ajutor', 'v1.2'].join('\n');
-  const curWs = ['Acasa', 'Avizier', '   ', 'Plati', '', 'new line 1', '', 'new line 2', '', 'Termeni', '', 'Ajutor', 'v1.2'].join('\n');
+  const curWs = [M('Acasa'), M('Avizier'), '   ', M('Plati'), '', 'new line 1', '', 'new line 2', '', M('Termeni'), '', M('Ajutor'), M('v1.2')].join('\n');
   assert.deepStrictEqual(chromeStrip(prevWs, curWs), { text: 'new line 1\n\nnew line 2', top: 3, bottom: 3 });
+});
+
+test('read-format: chromeStrip never strips unmarked body lines that repeat; marked nav lines it does', () => {
+  const body = ['Datoria curentă - Ap. 6', 'Suma de plată', '335,90 Lei', 'Detalii'];
+  const prev = [...body, 'collapsed'].join('\n');
+  const cur = [...body, 'Factura iulie 120 lei', 'Factura august 215,90 Lei'].join('\n');
+  assert.deepStrictEqual(chromeStrip(prev, cur), { text: cur, top: 0, bottom: 0 });
+  const nav = ['Acasa', 'Avizier', 'Plati'].map(M);
+  const prevNav = [...nav, ...body, 'collapsed'].join('\n');
+  const curNav = [...nav, ...body, 'expanded'].join('\n');
+  assert.deepStrictEqual(chromeStrip(prevNav, curNav), { text: [...body, 'expanded'].join('\n'), top: 3, bottom: 0 });
+  const out = formatRead({ ...RAW, text: curNav }, { service: 'utility', mode: 'text' }).content;
+  assert.ok(!out.includes(CHROME_MARK) && out.includes('\nAcasa\n'));
+});
+
+test('read-format: read --all returns the full text, not the 1,200-char head', () => {
+  const long = Array.from({ length: 200 }, (_, i) => `line ${i} of the page body`).join('\n');
+  const head = formatRead({ ...RAW, text: long }, { service: 'utility', max: 8000 }).content;
+  assert.ok(!head.includes('line 199 of'));
+  const all = formatRead({ ...RAW, text: long }, { service: 'utility', all: true, max: 8000 }).content;
+  assert.ok(all.includes('line 199 of the page body') && all.includes('\n== text ==\n'));
 });
 
 test('read-format: stripped and loading header rows appear only when set, after title:', () => {
@@ -191,7 +213,7 @@ test('read-format: stripped and loading header rows appear only when set, after 
   assert.strictEqual(fmt({}).stripped, false);
   assert.strictEqual(fmt({}).loading, false);
   const s = formatRead(RAW, { service: 'utility', strip: { top: 6, bottom: 4 } });
-  assert.strictEqual(s.content.split('\n')[3], 'stripped: 6 lines at top, 4 at bottom (same as your last read of utility)');
+  assert.strictEqual(s.content.split('\n')[3], 'stripped: 6 lines at top, 4 at bottom (repeated from your last read of utility)');
   assert.strictEqual(s.stripped, true);
   assert.ok(!formatRead(RAW, { service: 'utility', strip: { top: 0, bottom: 0 } }).content.includes('stripped:'));
   const l = formatRead({ ...RAW, loading: { active: true, inflight: 2, ms: 120 } }, { service: 'utility' });
@@ -204,6 +226,9 @@ test('read-format: stripped and loading header rows appear only when set, after 
   const b = formatRead({ ...RAW, busy: { count: 2, text: 'INCARCA...' } }, { service: 'utility' });
   assert.strictEqual(b.content.split('\n')[3], 'loading: page shows "INCARCA..." (2 busy element(s))');
   assert.strictEqual(b.loading, true);
+  const bg = formatRead({ ...RAW, loading: { active: false, inflight: 0, background: 1, ms: 9000 } }, { service: 'utility', all: true });
+  assert.ok(bg.content.includes('\nloading: no (+1 background)\n'));
+  assert.strictEqual(bg.loading, false);
 });
 
 const { elementStrip, elementKey } = require('../plugins/browser-pane/read-format');
@@ -214,8 +239,9 @@ test('read-format: elementStrip hides lines whose number and key the previous re
     '[5] input:checkbox Tot [ ]', '[6] textarea Mesaj', '[7] combobox Oras', '[8] checkbox Accept [ ]', '[9] link Plati → /plati'];
   const cur = ['[1] link Acasa → /?t=222', '[2] link Avizier → /avizier', '[3] input:text Cauta', '[4] select Luna = "Mai" {Mai}',
     '[5] input:checkbox Tot [ ]', '[6] textarea Mesaj', '[7] combobox Oras', '[8] checkbox Accept [ ]', '[10] link Plati → /plati', '[11] link Nou → /n'];
-  assert.deepStrictEqual(elementStrip(prev, cur), { lines: cur.slice(2), hidden: 2 });
-  assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2)), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
+  assert.deepStrictEqual(elementStrip(prev, cur, null, null, { chrome: ['1', '2'] }), { lines: cur.slice(2), hidden: 2 });
+  assert.deepStrictEqual(elementStrip(prev, cur), { lines: cur, hidden: 0 });
+  assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2), null, null, { chrome: ['1', '2'] }), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
   assert.deepStrictEqual(elementStrip(null, cur), { lines: cur, hidden: 0 });
   assert.deepStrictEqual(elementStrip([], cur), { lines: cur, hidden: 0 });
 });
@@ -234,25 +260,27 @@ test('read-format: elementStrip by stored key hides e-bloc t= repeats once t is 
   const eb = 'https://www.e-bloc.ro';
   const prev = ['[13] link Mobil → /index.php?page=1&tk=1791145507', '[14] link Avizier → /avizier'];
   const cur = ['[13] link Mobil → /index.php?page=1&tk=1791145567', '[15] link Nou → /n'];
-  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, ['tk']), keyed(cur, eb, ['tk'])), { lines: ['[15] link Nou → /n'], hidden: 1 });
-  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, []), keyed(cur, eb, [])), { lines: cur, hidden: 0 });
+  const nav = { chrome: ['13'] };
+  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, ['tk']), keyed(cur, eb, ['tk']), nav), { lines: ['[15] link Nou → /n'], hidden: 1 });
+  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, ['tk']), keyed(cur, eb, ['tk'])), { lines: cur, hidden: 0 });
+  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, []), keyed(cur, eb, []), nav), { lines: cur, hidden: 0 });
   const t = ['[13] link Mobil → /index.php?page=1&t=1791145507', '[9] link X → /x'];
   const t2 = ['[13] link Mobil → /index.php?page=1&t=1791145567', '[10] link Y → /y'];
-  assert.deepStrictEqual(elementStrip(t, t2, keyed(t, eb, []), keyed(t2, eb, [])).hidden, 1);
+  assert.deepStrictEqual(elementStrip(t, t2, keyed(t, eb, []), keyed(t2, eb, []), nav).hidden, 1);
   const hn = 'https://news.ycombinator.com';
   const a = ['[4] link item → /item?id=1', '[5] link More → /news?p=2', '[6] link new → /newest'];
   const b = ['[4] link item → /item?id=2', '[5] link More → /news?p=3', '[7] link past → /front'];
-  assert.deepStrictEqual(elementStrip(a, b, keyed(a, hn, []), keyed(b, hn, [])), { lines: b, hidden: 0 });
+  assert.deepStrictEqual(elementStrip(a, b, keyed(a, hn, []), keyed(b, hn, []), { chrome: ['4', '5', '7'] }), { lines: b, hidden: 0 });
 });
 
 test('read-format: elementStrip hides two same-label row links only when both repeat with the same context', () => {
   const base = K.keyOf({ kind: 'link', label: 'hide', href: '/hide' });
   const prev = ['[1] link hide → /hide', '[2] link hide → /hide', '[3] link x → /x'];
   const prevKeys = { 1: K.storedKey(base, 1, 'Story A'), 2: K.storedKey(base, 2, 'Story B'), 3: 'link\u0000x\u0000/x' };
-  assert.strictEqual(elementStrip(prev, prev, prevKeys, { ...prevKeys }).hidden, 2);
+  assert.strictEqual(elementStrip(prev, prev, prevKeys, { ...prevKeys }, { chrome: ['1', '2', '3'] }).hidden, 2);
   const cur = ['[1] link hide → /hide', '[4] link hide → /hide', '[3] link x → /x'];
   const curKeys = { 1: prevKeys[1], 4: K.storedKey(base, 2, 'Story C'), 3: prevKeys[3] };
-  assert.deepStrictEqual(elementStrip(prev, cur, prevKeys, curKeys), { lines: ['[4] link hide → /hide'], hidden: 2 });
+  assert.deepStrictEqual(elementStrip(prev, cur, prevKeys, curKeys, { chrome: ['1', '3', '4'] }), { lines: ['[4] link hide → /hide'], hidden: 2 });
 });
 
 test('read-format: the elements header lists up to 10 new numbers then +N, and retired ones when any', () => {
@@ -308,6 +336,8 @@ test('read-format: the url header line is redacted and names the site when it di
 test('read-format: the first read of a service says so instead of listing every number as new', () => {
   const head = (raw) => formatRead({ ...RAW, ...raw }, { service: 'ebloc' }).content.split('\n').find((l) => l.startsWith('doc:'));
   assert.match(head({ first: true, fresh: [1, 2, 3] }), /\(numbers: stable per site; first read of ebloc\)/);
+  assert.match(head({ first: 'my.smartthings.com', fresh: [1] }), /\(numbers: stable per site; first read of my\.smartthings\.com\)/);
+  assert.match(head({ fresh: [], changed: [10, 11] }), /new since your last read: none; changed: \[10\], \[11\]\)/);
   assert.match(head({ fresh: [23, 24, 25] }), /new since your last read: \[23\], \[24\], \[25\]\)/);
 });
 

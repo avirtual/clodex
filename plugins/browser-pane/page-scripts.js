@@ -13,6 +13,83 @@ const POINTER_SCAN_MAX = 3000;
 const LAYOUT_CELL_CHARS = 400;
 const VALUE_MAX = 200;
 const OVERLAY_ID = '__cx_numbers';
+const BOX_SEL = 'tr,li,article,[role=row],section';
+const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
+const CHROME_MARK = '\u0001';
+
+const CONSEQUENTIAL = [
+  ['payment', ['pay', 'payment', 'payments', 'plata', 'plati', 'platire', 'plateste', 'checkout', 'card', 'confirm payment']],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda']],
+  ['deletion', ['delete', 'sterge', 'remove', 'elimina']],
+  ['sign-out', ['sign out', 'log out', 'iesire', 'deconectare']],
+  ['alarm', ['arm', 'disarm']],
+  ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription']],
+  ['transfer', ['transfer', 'send money', 'wire']],
+];
+const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
+const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
+const CQ_LABEL_MAX = 40;
+const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
+
+function cqCompile(table, idTerms) {
+  const out = [];
+  for (const [cat, terms] of table) {
+    for (const t of terms) {
+      out.push({ cat, id: idTerms.includes(t), re: new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])') });
+    }
+  }
+  return out;
+}
+
+function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
+  if (!d || d.textual) return null;
+  const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
+  const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
+  const idClass = fold(d.idClass);
+  for (const r of res) {
+    if (hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass))) return r.cat;
+  }
+  const action = fold(d.action);
+  if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
+  return null;
+}
+
+const CQ = `
+  const CONSEQUENTIAL = ${JSON.stringify(CONSEQUENTIAL)};
+  const ID_TERMS = ${JSON.stringify(ID_TERMS)};
+  const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
+  const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  ${cqCompile.toString()}
+  ${consequentialOf.toString()}
+  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS);
+  const cqOf = e => {
+    const tg = e.tagName.toLowerCase();
+    const ty = String(e.type || '').toLowerCase();
+    const textual = tg === 'textarea' || e.isContentEditable
+      || (tg === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file'].includes(ty));
+    const submit = (tg === 'button' && (ty === 'submit' || !e.getAttribute('type'))) || (tg === 'input' && (ty === 'submit' || ty === 'image'));
+    const form = e.form || null;
+    return consequentialOf({
+      textual,
+      capped: tg === 'a' || !e.matches(${JSON.stringify(STD_SEL)}),
+      label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
+      value: tg === 'input' && ty !== 'password' ? e.value : '',
+      aria: e.getAttribute('aria-label'),
+      idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
+      formaction: e.getAttribute('formaction'),
+      action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
+    }, CQ_RES);
+  };`;
+
+const ROW = `
+  const rowText = new Map();
+  const rowOf = el => {
+    const r = el.closest('tr,[role=row]');
+    if (!r) return '';
+    if (!rowText.has(r)) rowText.set(r, String(r.innerText || r.textContent || '').replace(/\\s+/g, ' ').trim().replace(${HMS_RE}, '#:##:##').slice(0, 200));
+    return rowText.get(r);
+  };`;
 
 const DEEP = `
   const deepAll = (root, test, out = []) => {
@@ -92,7 +169,7 @@ const TABLES = `
 
 function readText(main) {
   return `(() => {${DEEP}
-  const DROP = 'script,style,noscript,select,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  const DROP = 'script,style,noscript,select,svg,form,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
     const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
@@ -112,6 +189,11 @@ function readText(main) {
   if (!root) return { text: '', busy };
   const clone = root.cloneNode(true);
   clone.querySelectorAll(DROP).forEach(n => n.remove());
+  const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
+  for (const c of chrome) {
+    const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
+    for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim()) t.data = ${JSON.stringify(CHROME_MARK)} + t.data;
+  }
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
@@ -127,7 +209,7 @@ const numbering = (state) => {
   const next = Math.max(1, Number(state && state.next) | 0);
   const learned = state && Array.isArray(state.volatile) ? state.volatile.map(String) : [];
   const listedBefore = state && Array.isArray(state.listed) ? state.listed.map(Number) : null;
-  return `${ICON}
+  return `${ICON}${CQ}
   ${keys.PAGE_SOURCE}
   const known = ${JSON.stringify(known)};
   const learned = ${JSON.stringify(learned)};
@@ -135,7 +217,8 @@ const numbering = (state) => {
   let next = ${next};
   const assigned = {};
   const fresh = [];
-  const clip = (s, n) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const flat = s => String(s || '').replace(/\\s+/g, ' ').trim();
+  const clip = (s, n) => { s = flat(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const labelOf = el => {
     if (el.labels && el.labels[0]) return el.labels[0].innerText;
     return el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder')
@@ -152,9 +235,9 @@ const numbering = (state) => {
     if (tag === 'input' || tag === 'textarea' || tag === 'select') {
       const btn = tag === 'input' && /^(button|submit|reset)$/.test(el.type);
       const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || (btn ? el.value : '') || '';
-      return { kind, label: clip(label, 60), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
+      return { kind, label: flat(label), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
     }
-    const label = clip(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''), 60);
+    const label = flat(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''));
     if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
     let raw = '';
     try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
@@ -164,7 +247,7 @@ const numbering = (state) => {
   let headings = null;
   const boxText = new Map();
   const contextOf = el => {
-    const box = el.closest('tr,li,article,[role=row],section');
+    const box = el.closest(${JSON.stringify(BOX_SEL)});
     if (box) {
       if (!boxText.has(box)) boxText.set(box, box.innerText || box.textContent || '');
       return boxText.get(box);
@@ -256,6 +339,7 @@ function readInteractive(main, state) {
     const kind = plain ? 'clickable' : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
     const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
     let line = '';
+    let sig = null;
     if (plain) {
       if (underRow(el)) continue;
       const inner = el.querySelectorAll(sel);
@@ -274,6 +358,7 @@ function readInteractive(main, state) {
       seen.add(key);
       if (!label.trim() && !h) continue;
       line = label + (h ? ' → ' + clip(h, 80) : '') + (el.hasAttribute('download') ? ' [download]' : '');
+      sig = label + (el.hasAttribute('download') ? ' [download]' : '');
     } else if (tag === 'select') {
       const opts = [...el.options].map(o => o.text.trim());
       const cur = el.selectedOptions[0] ? el.selectedOptions[0].text : '';
@@ -291,19 +376,24 @@ function readInteractive(main, state) {
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
-    items.push({ el, line: kind + ' ' + line + (disabled ? ' [disabled]' : '') });
+    items.push({ el, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
   }
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = [];
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
     const p = parts[i];
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
-    if (it.line != null) out.push('[' + n + '] ' + it.line);
+    if (it.line != null) {
+      out.push('[' + n + '] ' + it.line);
+      rowsOut[n] = rowOf(it.el);
+      sigs[n] = (it.sig == null ? it.line : it.sig) + '\u0000' + rowsOut[n];
+      if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
+    }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, url: location.href };
 })()`;
 }
 
@@ -341,7 +431,7 @@ function find(n) {
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  ${KIND_LABEL}
+  ${KIND_LABEL}${CQ}${ROW}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   return {
     x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
@@ -350,6 +440,8 @@ function find(n) {
     editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
     href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
     download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
+    consequential: cqOf(el),
+    row: rowOf(el),
   };
 })()`;
 }
@@ -499,7 +591,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   };
 })()`;
 
-const OVERLAY = `(() => {${DEEP}
+const OVERLAY = `(() => {${DEEP}${CQ}
   const old = document.getElementById(${JSON.stringify(OVERLAY_ID)});
   if (old) old.remove();
   const layer = document.createElement('div');
@@ -513,7 +605,8 @@ const OVERLAY = `(() => {${DEEP}
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
     const b = document.createElement('span');
     b.textContent = k;
-    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;border:1px solid #fff;padding:0 2px;border-radius:2px;z-index:2147483647'
+    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;padding:0 2px;border-radius:2px;z-index:2147483647'
+      + (cqOf(el) ? ';border:2px solid #e00' : ';border:1px solid #fff')
       + ';left:' + Math.max(0, Math.round(r.left)) + 'px;top:' + Math.max(0, Math.round(r.top)) + 'px';
     layer.appendChild(b);
     drawn += 1;
@@ -527,7 +620,7 @@ const OVERLAY_OFF = `(() => {
   if (layer) layer.remove();
   return !!layer;
 })()`;
-const TILE_SEL = '[role=button],article,li,tr,[role=row],section,[class*=card],[class*=tile]';
+const TILE_SEL = `[role=button],${BOX_SEL},[class*=card]`;
 const STATE_ATTRS = ['aria-label', 'aria-pressed', 'aria-checked', 'aria-expanded', 'class'];
 
 function targetState(n) {
@@ -549,7 +642,7 @@ function targetState(n) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
-  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, consequentialOf,
 };

@@ -217,7 +217,7 @@ function createScheduler({
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
       : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
     if (elBase) {
-      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys);
+      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base };
@@ -253,6 +253,7 @@ function createScheduler({
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
+    if (cmd.confirm) args.confirm = true;
     if (cmd.sub === 'key') args.key = cmd.key;
     const r = await client.request(cmd.sub, args, { service, seat: handle.name });
     noteUrl(service, r.url);

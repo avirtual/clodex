@@ -123,3 +123,11 @@ test('grammar: a URL over 4,096 chars is refused', () => {
   const url = 'https://x.example/' + 'a'.repeat(4096);
   assert.deepStrictEqual(run(`[agent:browser open utility] ${url}`), { error: 'URL too long (max 4,096 chars)' });
 });
+
+test('grammar: click and select take --confirm; other subcommands refuse it', () => {
+  assert.deepStrictEqual(run('[agent:browser click utility 27 --confirm]'), { sub: 'click', service: 'utility', n: 27, confirm: true });
+  assert.strictEqual(run('[agent:browser click utility 27]').confirm, undefined);
+  assert.strictEqual(run('[agent:browser click utility --text="Plătește" --confirm]').confirm, true);
+  assert.strictEqual(run('[agent:browser select utility 4 --confirm] Card').confirm, true);
+  assert.match(run('[agent:browser type utility 4 --confirm] x').error, /unknown flag --confirm for type/);
+});

@@ -6,6 +6,7 @@ const TIMEY = ['t', 'ts', 'time', 'timestamp', 'rand', 'r', 'v'];
 const DIGITS_RE = /^\d{9,}$/;
 const TOKEN_RE = /^[0-9a-z]{16,}$/i;
 const CONTEXT_MAX = 40;
+const LABEL_KEY_MAX = 400;
 
 function isVolatile(name, value, learned) {
   const k = String(name).toLowerCase();
@@ -26,8 +27,19 @@ function normHref(href, origin, learned) {
   return kept.length ? base + '?' + kept.map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&') : base;
 }
 
+function labelHash(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+  return h.toString(36);
+}
+
+function keyLabel(label) {
+  const s = String(label || '').replace(/\s+/g, ' ').trim();
+  return s.length > LABEL_KEY_MAX ? s.slice(0, LABEL_KEY_MAX) + '~' + labelHash(s.slice(LABEL_KEY_MAX)) : s;
+}
+
 function keyOf(d) {
-  return String(d.kind || '') + '\u0000' + String(d.label || '') + '\u0000' + String(d.href || '').replace(/#/g, '%23');
+  return String(d.kind || '') + '\u0000' + keyLabel(d.label) + '\u0000' + String(d.href || '').replace(/#/g, '%23');
 }
 
 function storedKey(base, ordinal, context) {
@@ -105,10 +117,11 @@ const PAGE_SOURCE = [
   `const DIGITS_RE = new RegExp(${JSON.stringify(DIGITS_RE.source)});`,
   `const TOKEN_RE = new RegExp(${JSON.stringify(TOKEN_RE.source)}, 'i');`,
   `const CONTEXT_MAX = ${CONTEXT_MAX};`,
-  isVolatile.toString(), normHref.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
+  `const LABEL_KEY_MAX = ${LABEL_KEY_MAX};`,
+  isVolatile.toString(), normHref.toString(), labelHash.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
 ].join('\n');
 
 module.exports = {
-  WELL_KNOWN, WELL_KNOWN_PREFIX, TIMEY, CONTEXT_MAX, PAGE_SOURCE,
-  isVolatile, normHref, keyOf, storedKey, parseStored, learnVolatile, sameDoc,
+  WELL_KNOWN, WELL_KNOWN_PREFIX, TIMEY, CONTEXT_MAX, LABEL_KEY_MAX, PAGE_SOURCE,
+  isVolatile, normHref, keyLabel, keyOf, storedKey, parseStored, learnVolatile, sameDoc,
 };

@@ -205,10 +205,13 @@ click's effect. 300 ms misses most ticks of a 1 s clock, so `H:MM:SS` tokens are
 masked in every comparison as well. When the first after-snapshot shows nothing,
 `settleChange` re-snapshots every 500 ms for up to `LATE_CHANGE_MS` (3 s): a cloud
 round-trip flipped the SmartThings AC tile ≈1 s after the idle wait returned.
+Only click and select take that watch (`lateMsFor`); type and key settle on the
+first snapshot, their reply being `value now` or the key itself.
 A click also diffs the target's and its tile's (`TILE_SEL`) aria-label,
 aria-pressed, aria-checked, aria-expanded, class and value; class tokens matching
 focus/hover/ripple are focus noise from the click itself, and a class-only diff
-does not end the watch early.
+does not end the watch early. `TILE_SEL` is `BOX_SEL` (the row list `contextOf`
+uses) plus `[role=button]` and `[class*=card]`; `[class*=tile]` matched `subtitle`.
 
 ## child.js — routerFor (dedupe)
 
@@ -231,6 +234,13 @@ when the element has none of its own.
 
 ## read-format.js — chromeStrip
 
+`READ_TEXT` keeps `CHROME_SEL` landmarks (nav, header, footer, aside and their
+roles) and prefixes each of their text nodes with `CHROME_MARK` (`\u0001`), so
+a chrome line starts with the mark; `formatRead` removes every mark. Only
+marked lines are stripped: e-bloc's "Suma de plată 335,90 Lei", repeated at
+the top of a same-URL re-read after an expand click, was cut as chrome when
+any common prefix counted. Mixed lines (chrome inline in body) do not start
+with the mark and stay.
 Lines are compared trimmed with blank lines skipped; a common top or bottom run
 counts only at `CHROME_MIN_LINES` (3) and is capped at `CHROME_MAX_LINES` (40).
 When the common runs cover all of the new text (same page), nothing is stripped.
@@ -291,7 +301,9 @@ image-only cell keeps its slot as a trailing `|` (innerText trims the space).
 ## read-format.js — elementStrip
 
 Compares the stored keys the read carries (`keys: n → storedKey`): a line is
-hidden when the previous read listed the same stored key. Without keys it
+hidden when the previous read listed the same stored key and the element sits
+inside a chrome landmark (`chrome`, from `READ_INTERACTIVE`); body elements are
+never hidden. Without keys it
 falls back to the line text minus the number, `t=`/`_=`/`ts=` digits blanked,
 under the same number. Form controls are never hidden, and at least one line always stays.
 
@@ -389,6 +401,27 @@ used to wipe e-bloc's numbers. A number the active origin never assigned is
 has shown, so a number first assigned unlisted (out of `--main` scope, past the
 cap) is new when a read first lists it.
 
+## keys.js — keyOf
+
+The label part is the whole whitespace-collapsed label up to `LABEL_KEY_MAX`
+(400) chars, then `~` and an FNV-1a hash of the rest (`keyLabel`); the shown
+line keeps its 60-char clip. With the clip in the key, e-bloc's July and August
+"Lista de plată … [Document generat 03.0x.2026]" shared one number after a
+month select.
+
+## page-scripts.js — consequentialOf
+
+Labels are folded (NFD, combining marks dropped, lower case) so plată/plata,
+ş (cedilla) and ș (comma) match one term list. Terms must stand as whole words:
+the e-bloc nav "Carduri" must not read as "card"; so "payment" is its own term.
+On links and plain clickables, label, value and aria-label count only up to
+`CQ_LABEL_MAX` (40) chars, so a long document title that names a payment
+("Lista de plată pentru Bloc M4 …") is not tagged; buttons and submits are never
+capped. id/class match only the verbs in `ID_TERMS`: Bootstrap's `card`,
+`order-*` and `transfer-list` classes are layout. Text inputs and textareas are never
+tagged. A submit's `formaction` or form `action` containing pay, checkout,
+order or delete tags it too.
+
 ## child.js — operatorNav
 
 Sent on every main-frame `did-navigate` the agent did not cause, and on a
@@ -397,7 +430,8 @@ commit, or a navigation started while busy (`svc.agentNav`, cleared like
 `pendingNav`); a navigation the page starts after the agent's op returned is
 reported as the operator's. The cross-document event is sent at
 `did-stop-loading`, not at commit: at `did-navigate` the title is still the URL.
-`about:blank` is never reported. The engine's
+`about:blank` is never reported, nor is any navigation while a sign-in hold is
+up (`signinHold`): the hand-back line already names where the page ended. The engine's
 `createNavNotifier` holds the first event `OPERATOR_NAV_MS` (5 s) and tells the
 lease holder once, naming the last URL of the burst.
 
