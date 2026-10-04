@@ -254,4 +254,19 @@ test('replies handover: the instruction clips at 400 chars with …, and the wor
   assert.ok(worst.length <= 800, String(worst.length));
   assert.ok(!/[\r\n]/.test(worst));
   assert.ok(worst.endsWith(`start with [agent:browser read ${'s'.repeat(32)}]`));
+  const quoted = R.handover('s'.repeat(32), `https://e.com/${'u'.repeat(400)}`, '"'.repeat(80), 'z'.repeat(1000));
+  assert.ok(quoted.length <= 800, String(quoted.length));
+  assert.ok(quoted.endsWith(`z… — start with [agent:browser read ${'s'.repeat(32)}]`));
+});
+
+test('replies: a numbered screenshot says how many numbers it drew; a plain one says nothing about numbers', () => {
+  assert.match(R.screenshotReply('ebloc', { width: 1280, height: 900, numbers: 7 }, '/tmp/s.jpg', 'claude'), /^\[agent:browser\] screenshot ebloc 1280×900 · 7 numbers drawn/);
+  assert.doesNotMatch(R.screenshotReply('ebloc', { width: 1280, height: 900 }, '/tmp/s.jpg', 'claude'), /numbers/);
+});
+
+test('replies: inspect renders an empty label as (icon), like read; a waiting holder is named as waiting', () => {
+  const r = { n: 3, tag: 'label', id: '', classes: [], kind: 'clickable', label: '', attrs: [], listeners: null, cursor: 'pointer', rect: {}, visible: true, ancestors: [], html: '' };
+  assert.strictEqual(R.inspectReply('ebloc', r).split('\n')[0], '[agent:browser] inspect ebloc [3]: label · clickable (icon)');
+  assert.strictEqual(R.TEXT.driving('hand-b', 'utility', true), 'agent hand-b is waiting on utility — wait or ask it to release');
+  assert.strictEqual(R.TEXT.driving('hand-b', 'utility'), 'agent hand-b is driving utility — wait or ask it to release');
 });

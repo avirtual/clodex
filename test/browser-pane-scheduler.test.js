@@ -424,7 +424,7 @@ test('scheduler: elements repeated from the previous read of the site are hidden
   const navB = NAV.map((l) => l.replace('t=1700000001', 't=1700000999'));
   const second = await read({ url: 'https://portal.example.com/b', text: 'B\nFactura mai', elements: [...navB, '[5] input:text Cauta', '[6] link Factura mai → /f/5', '[7] link Plati → /plati'] });
   assert.match(second.reply, / · 4 elements hidden → @FILE$/);
-  assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; this page: \[5\]–\[7\]; numbers can skip\)/);
+  assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; numbers: stable per site; new since your last read: none\)/);
   assert.ok(second.file.includes('\n== elements ==\n[5] input:text Cauta\n[6] link Factura mai → /f/5\n[7] link Plati → /plati\n'));
   const again = await read(null);
   assert.ok(!/elements hidden/.test(again.reply));
@@ -479,7 +479,7 @@ test('scheduler: a --text read hides no elements, and a closed window forgets th
 
 test('scheduler grant: a free service is granted, the lease runs from the grant, and the first read needs no read', async () => {
   const h = harness();
-  assert.deepStrictEqual(h.sched.grant('utility', 'hand-a'), { service: 'utility', seat: 'hand-a' });
+  assert.deepStrictEqual((({ prev, ...g }) => g)(h.sched.grant('utility', 'hand-a')), { service: 'utility', seat: 'hand-a' });
   assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', LEASE_40.replace('40s', '0s')]]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser read]']]), [['hand-a', READ_REPLY]]);
   h.advance(5 * 60 * 1000);
@@ -490,7 +490,7 @@ test('scheduler grant: an operator-held service with an idle leaseholder is gran
   const h = harness();
   await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.sched.onState({ event: 'state', service: 'utility', state: 'held', reason: 'takeover' });
-  assert.deepStrictEqual(h.sched.grant('utility', 'hand-a'), { service: 'utility', seat: 'hand-a' });
+  assert.deepStrictEqual((({ prev, ...g }) => g)(h.sched.grant('utility', 'hand-a')), { service: 'utility', seat: 'hand-a' });
   h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser read utility]']]), [['hand-a', READ_REPLY]]);
 });
@@ -500,6 +500,17 @@ test('scheduler grant: a seat busy on the service refuses the grant, naming it',
   await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.sched.onState(HELD_STATE);
   await h.run([['hand-b', '[agent:browser wait utility]']]);
-  assert.throws(() => h.sched.grant('utility', 'hand-a'), { message: 'agent hand-b is driving utility — wait or ask it to release' });
+  assert.throws(() => h.sched.grant('utility', 'hand-a'), { message: 'agent hand-b is waiting on utility — wait or ask it to release' });
   assert.strictEqual(h.sched.activeSeat('utility'), 'hand-b');
+});
+
+test('scheduler restoreLease: a failed handover gives the lease back to the previous holder, only while the new seat holds it', async () => {
+  const h = harness();
+  await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const g = h.sched.grant('utility', 'hand-a');
+  assert.strictEqual(g.prev.seat, 'hand-b');
+  h.sched.restoreLease('utility', 'hand-a', g.prev);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
+  h.sched.restoreLease('utility', 'hand-a', null);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
 });

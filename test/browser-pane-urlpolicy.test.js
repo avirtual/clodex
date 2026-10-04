@@ -54,6 +54,18 @@ test('urlpolicy: an allow exception is checked before every deny, in either list
   assert.strictEqual(compilePolicy(undefined)('https://example.com/'), null);
 });
 
+test('urlpolicy: an allow exception does not admit a dot-dot path that leaves it; a deny catches it after normalising', () => {
+  const check = compile(['example.com', '!example.com/ok/*']);
+  assert.strictEqual(check('https://example.com/ok/..%2Fadmin/x'), 'example.com');
+  assert.strictEqual(check('https://example.com/ok/a%20b'), null);
+  assert.strictEqual(compile(['example.com/admin/*'])('https://example.com/ok/..%2Fadmin/x'), 'example.com/admin/*');
+});
+
+test('urlpolicy: the FQDN form example.com. is accepted as a pattern and matches example.com', () => {
+  assert.strictEqual(compile(['example.com.'])('https://example.com/x'), 'example.com.');
+  assert.strictEqual(compile(['example.com./admin/*'])('https://example.com./admin/1'), 'example.com./admin/*');
+});
+
 test('urlpolicy: invalid patterns are rejected with the reason and their 1-based line', () => {
   const rows = [
     ['ftp://example.com', 'only http:// or https:// may lead a pattern, not ftp://'],

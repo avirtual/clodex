@@ -95,7 +95,7 @@ test('engine: read writes the reply file and injects an @path pointer for a clau
   assert.deepStrictEqual(lines.slice(1, 6), [
     'url: https://portal.example.com/bills',
     'title: My Bills',
-    'doc: 2 · elements: 2 (this page: [1]–[2]; numbers can skip) · mode: default · filter: none',
+    'doc: 2 · elements: 2 (numbers: stable per site; new since your last read: none) · mode: default · filter: none',
     'login: none',
     'frames: none',
   ]);
@@ -313,13 +313,16 @@ test('engine operator.handover: refuses an unknown or shell seat and a service w
   await refuses(hand({ service: 'Bad', seat: 'clodex-hand' }), /bad service name/);
 });
 
-function handHarness({ grantThrows = null } = {}) {
+function handHarness({ grantThrows = null, handbackThrows = null } = {}) {
   const log = [];
   const live = new Map([['utility', { state: 'held', reason: 'takeover', url: 'about:blank', title: '' }]]);
   const deps = {
     live,
-    scheduler: { grant: (svc, seat) => { log.push(['grant', svc, seat]); if (grantThrows) throw new Error(grantThrows); } },
-    request: async (op, args, meta) => { log.push([op, meta.service]); return { state: 'idle', url: 'https://portal.example.com/bills', title: 'My Bills' }; },
+    scheduler: {
+      grant: (svc, seat) => { log.push(['grant', svc, seat]); if (grantThrows) throw new Error(grantThrows); return { service: svc, seat, prev: { seat: 'hand-b', lastCmdAt: 1 } }; },
+      restoreLease: (svc, seat, prev) => log.push(['restoreLease', svc, seat, prev]),
+    },
+    request: async (op, args, meta) => { log.push([op, meta.service]); if (handbackThrows) throw new Error(handbackThrows); return { state: 'idle', url: 'https://portal.example.com/bills', title: 'My Bills' }; },
     session: (name) => (name === 'hand-a' ? { name, type: 'codex', isAlive: () => true, inject: (text) => log.push(['inject', text]) } : null),
   };
   return { log, deps };
@@ -333,6 +336,12 @@ test('engine handOver: grant, then handback, then one inject — in that order',
     ['handback', 'utility'],
     ['inject', '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — check the total — start with [agent:browser read utility]'],
   ]);
+});
+
+test('engine handOver: a rejected child handback restores the previous lease and injects nothing', async () => {
+  const { log, deps } = handHarness({ handbackThrows: 'the utility window was closed' });
+  assert.deepStrictEqual(await engineMod.handOver(deps, { service: 'utility', seat: 'hand-a' }), { ok: false, error: 'the utility window was closed' });
+  assert.deepStrictEqual(log, [['grant', 'utility', 'hand-a'], ['handback', 'utility'], ['restoreLease', 'utility', 'hand-a', { seat: 'hand-b', lastCmdAt: 1 }]]);
 });
 
 test('engine handOver: a busy holder refuses at grant, before any handback or inject', async () => {
