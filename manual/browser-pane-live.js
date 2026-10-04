@@ -139,7 +139,7 @@ function server() {
         res.writeHead(200, headers);
         res.end(`<html><head><title>Quirks</title><style>body{overflow-x:hidden;margin:0}</style></head><body><main><h1>Fara doctype</h1>
 <p>${'Pagina veche fara doctype, randata in quirks mode, cu body overflow-x hidden si continut mai inalt decat fereastra. '.repeat(3)}</p>
-<div style="height:1500px"></div><a href="/form">Mijloc pagina</a><button>Jos pagina</button><div style="height:1500px"></div></main></body></html>`);
+<div style="height:1500px"></div><a href="/form">Mijloc pagina</a><button>Jos pagina</button><div style="height:300px"></div></main></body></html>`);
         return;
       }
       if (url.pathname === '/set') {
