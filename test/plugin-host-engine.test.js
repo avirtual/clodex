@@ -1438,6 +1438,24 @@ test('runtime.electronChild: a symlink inside the dir pointing outside is refuse
   assert.deepStrictEqual(calls, []);
 });
 
+test('runtime.electronChild: a .js symlink inside the dir pointing at a .mjs file is refused', () => {
+  const { host, calls, pluginDir } = childFixture();
+  fs.writeFileSync(path.join(pluginDir, 'other.mjs'), 'export const run = () => {};');
+  fs.symlinkSync(path.join(pluginDir, 'other.mjs'), path.join(pluginDir, 'mlink.js'));
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'mlink.js')),
+    { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('runtime.electronChild: a .js symlink inside the dir pointing at a directory is refused', () => {
+  const { host, calls, pluginDir } = childFixture();
+  fs.mkdirSync(path.join(pluginDir, 'sub.js'));
+  fs.symlinkSync(path.join(pluginDir, 'sub.js'), path.join(pluginDir, 'dlink.js'));
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'dlink.js')),
+    { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(calls, []);
+});
+
 test('runtime.electronChild: a missing file, a relative path and a non-.js script are refused', () => {
   const { host, calls, pluginDir } = childFixture();
   assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'nope.js')), { error: 'script not found' });
