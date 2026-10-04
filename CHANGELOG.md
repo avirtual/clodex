@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Plugins: an engine half can now launch its own Electron child process through `host.runtime.electronChild` (desktop app only — a headless host refuses), the foundation for the browser pane.
+- Browser pane (new plugin, off by default): agents granted the `[agent:browser]` verb can open a site in a persistent per-service browser window and read it as text plus a numbered list of links and controls, about 2,500 tokens per page.
 
 ## 5.111.3 — 2026-10-04
 
