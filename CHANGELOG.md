@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: a read drops menu and footer text that repeated from the previous read of the same site (header says how many lines; `read --all` keeps them), and says when the page is still loading — requests in flight or a visible loading element — so an agent waits instead of acting on a half-filled page.
+
 ## 5.112.2 — 2026-10-04
 
 - Browser pane: every act reply now says what it caused — the changed text for an in-place update (`changed: "…"`), `no visible change`, or the saved file's full path, size and type for a download, with repeat downloads reported as `same as <file>` instead of a numbered copy; `click` takes `--to=<dir in your cwd>`; new `inspect <n>` / `inspect --text=` shows an element's tag, attributes, listeners, cursor, position and HTML so an agent can see why something will not click; icon-only clickables take the image's alt as their label and image-only table cells keep their slot.
