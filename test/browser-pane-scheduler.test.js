@@ -5,8 +5,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createScheduler } = require('../plugins/browser-pane/scheduler');
+const { createScheduler, storedLogin } = require('../plugins/browser-pane/scheduler');
 const { parseLine, toCommand } = require('../plugins/browser-pane/grammar');
+const R = require('../plugins/browser-pane/replies');
 
 process.env.TMPDIR = mkTmpRoot('clodex-bp-sched-');
 
@@ -196,7 +197,7 @@ test('scheduler: a held service refuses everything but wait, services and releas
     ['hand-a', '[agent:browser services]'],
   ]), [
     ['hand-a', HELD], ['hand-a', HELD], ['hand-a', HELD],
-    ['hand-a', '[agent:browser] services: utility — sign-in page · window open · held'],
+    ['hand-a', '[agent:browser] services: utility — portal.example.com · sign-in page · window open · held'],
   ]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser release utility]']]), [['hand-a', '[agent:browser] released utility']]);
   assert.deepStrictEqual(h.calls, []);
@@ -513,4 +514,44 @@ test('scheduler restoreLease: a failed handover gives the lease back to the prev
   assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
   h.sched.restoreLease('utility', 'hand-a', null);
   assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
+});
+
+test('scheduler restoreLease: a failed handover restores the granted seat\'s previous current service', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open other] https://other.example.com/']]);
+  assert.strictEqual(h.sched.seatState('hand-a').current, 'other');
+  const g = h.sched.grant('utility', 'hand-a');
+  assert.strictEqual(g.prevCurrent, 'other');
+  assert.strictEqual(h.sched.seatState('hand-a').current, 'utility');
+  h.sched.restoreLease('utility', 'hand-a', g.prev, g.prevCurrent);
+  assert.strictEqual(h.sched.seatState('hand-a').current, 'other');
+});
+
+test('storedLogin: each account-UI hint reads as logged in via account-ui; a password field or nothing does not', () => {
+  for (const hint of ['logout', 'profile', 'composer']) {
+    assert.deepStrictEqual(storedLogin({ loggedInHint: hint }, 5), { state: 'logged-in', at: 5, via: 'account-ui' }, hint);
+  }
+  assert.deepStrictEqual(storedLogin({ logoutLink: true, loggedInHint: 'logout' }, 5), { state: 'logged-in', at: 5, via: 'logout-link' });
+  assert.deepStrictEqual(storedLogin({ password: true, loggedInHint: 'profile' }, 5), { state: 'login-page', at: 5, via: 'password-field' });
+  assert.deepStrictEqual(storedLogin({ loggedInHint: null }, 5), { state: 'unknown', at: 5 });
+});
+
+test('scheduler: services and the read header name the site a window moved to, against the host it was opened as', async () => {
+  const h = harness({
+    read: () => ({ ...PAGE, url: 'https://my.smartthings.com/devices', contentType: 'text/html', text: 'Devices', elements: [], truncated: false, frames: [], login: {} }),
+  });
+  await h.run([['hand-a', '[agent:browser open ebloc] https://e-bloc.ro/']]);
+  assert.strictEqual(h.storage.get().services.ebloc.openedHost, 'e-bloc.ro');
+  h.sched.onState({ service: 'ebloc', state: 'idle', url: 'https://e-bloc.ro/' });
+  await h.run([['hand-a', '[agent:browser release ebloc]']]);
+  const seat = `hand-site-${process.pid}`;
+  await h.run([[seat, '[agent:browser read ebloc]']]);
+  const dir = R.replyDir(seat);
+  const newest = fs.readdirSync(dir).filter((f) => f.startsWith('r-')).sort().at(-1);
+  assert.strictEqual(fs.readFileSync(path.join(dir, newest), 'utf8').split('\n')[1],
+    'url: https://my.smartthings.com/devices · site: my.smartthings.com (opened as e-bloc.ro)');
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.match((await h.run([['hand-a', '[agent:browser services]']]))[0][1], /services: ebloc — my\.smartthings\.com \(was e-bloc\.ro\) · unknown · window open · idle/);
+  h.sched.noteUrl('ebloc', 'https://www.e-bloc.ro/index.php');
+  assert.match((await h.run([['hand-a', '[agent:browser services]']]))[0][1], /services: ebloc — e-bloc\.ro · unknown/);
 });

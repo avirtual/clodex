@@ -8,7 +8,9 @@ const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
-const { keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf } = require('../plugins/browser-pane/child');
+const {
+  keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+} = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
 const scripts = require('../plugins/browser-pane/page-scripts');
@@ -303,4 +305,112 @@ test('page scripts: an icon clickable falls back to its img file name after alt,
   assert.strictEqual(iconLabel(el([img('/img/lock.png?v=3')])), 'lock.png');
   assert.strictEqual(iconLabel(el([img('/img/lock.png', 'padlock')])), 'padlock');
   assert.strictEqual(iconLabel(el([img('data:image/gif;base64,R0l')])), '');
+});
+
+const svcOf = () => ({ origins: new Map(), num: null });
+const stampOn = (svc, url, labels) => {
+  const st = stampAll(numState(svc, url), labels.map((l) => button(l)));
+  mergeNumbers(svc, { assigned: Object.fromEntries(st.stored.map((k, i) => [k, st.ns[i]])), next: st.state.next });
+  return st;
+};
+
+test('numState: each origin keeps its own numbers; a detour to another site and back resolves the same element', () => {
+  const svc = svcOf();
+  const a = stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa', 'Contoare', 'Plati']);
+  assert.deepStrictEqual(a.ns, [1, 2, 3]);
+  const b = stampOn(svc, 'https://my.smartthings.com/devices', ['Devices', 'AC', 'Lights', 'Scenes', 'Menu']);
+  assert.deepStrictEqual(b.ns, [1, 2, 3, 4, 5]);
+  const back = numState(svc, 'https://www.e-bloc.ro/contoare');
+  assert.strictEqual(back.known[a.stored[1]], 2);
+  assert.strictEqual(svc.num.byN.get(2), a.stored[1]);
+  assert.strictEqual(back.next, 4);
+  assert.strictEqual(numberRefusal('ebloc', 2, svc.num.byN.get(2), 'ok'), null);
+});
+
+test('numberRefusal: a number only the other site has is no element; a stale number of this site names what it was', () => {
+  const svc = svcOf();
+  const a = stampOn(svc, 'https://www.e-bloc.ro/', ['Acasa', 'Contoare']);
+  stampOn(svc, 'https://my.smartthings.com/', ['Devices', 'AC', 'Lights', 'Scenes', 'Menu']);
+  numState(svc, 'https://www.e-bloc.ro/');
+  const gone = numberRefusal('ebloc', 5, svc.num.byN.get(5), 'gone');
+  assert.strictEqual(gone.code, 'NO_ELEMENT');
+  assert.strictEqual(gone.message, R.TEXT.noElement('ebloc', 5));
+  assert.doesNotMatch(gone.message, /\(was /);
+  const amb = numberRefusal('ebloc', 2, svc.num.byN.get(2), 'ambiguous');
+  assert.strictEqual(amb.code, 'AMBIGUOUS');
+  assert.match(amb.message, /\(was "Contoare"\)/);
+  assert.strictEqual(svc.num.byN.get(2), a.stored[1]);
+});
+
+test('numState: at most ORIGINS_MAX origins are kept, least recently used dropped first', () => {
+  const svc = svcOf();
+  for (let i = 0; i <= ORIGINS_MAX; i += 1) stampOn(svc, `https://s${i}.test/`, ['X']);
+  assert.strictEqual(svc.origins.size, ORIGINS_MAX);
+  assert.ok(!svc.origins.has('https://s0.test'));
+  assert.ok(svc.origins.has(`https://s${ORIGINS_MAX}.test`));
+});
+
+test('numbering: with a listed set, a number first listed now is new even when an earlier stamp assigned it unlisted', () => {
+  const p = page({ known: { 'button\u0000Contor 23\u0000': 23 }, next: 24, listed: [1, 2] });
+  p.place(button('Acasa'), 'button\u0000Acasa\u0000');
+  p.place(button('Contor 23'), 'button\u0000Contor 23\u0000');
+  p.place(button('Ascuns'), 'button\u0000Ascuns\u0000', false);
+  assert.deepStrictEqual([...p.fresh], [24, 23]);
+  const q = page({ known: { 'button\u0000Contor 23\u0000': 23 }, next: 24, listed: [23] });
+  q.place(button('Contor 23'), 'button\u0000Contor 23\u0000');
+  assert.deepStrictEqual([...q.fresh], []);
+});
+
+test('navOf: a pushState click is an in-page navigation; a popup download that ends on the same url is the same page', () => {
+  const at = 'https://x.com/search?q=a';
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: at, hrefAfter: 'https://x.com/DanKornas/status/1' }), { navigated: true, inPage: true });
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: at, hrefAfter: at }), { navigated: false });
+  const page4 = 'https://www.e-bloc.ro/index.php?page=4&t=1791145507';
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 5, hrefBefore: page4, hrefAfter: page4, download: true }), { navigated: false });
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 5, hrefBefore: page4, hrefAfter: page4 }), { navigated: true });
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 4, hrefBefore: page4, hrefAfter: 'https://www.e-bloc.ro/x', download: true }), { navigated: true });
+});
+
+const fakeWatch = (snaps, targets = []) => {
+  let t = 0;
+  let i = 0;
+  let k = 0;
+  const sleeps = [];
+  return {
+    sleeps,
+    opts: {
+      snap: async () => snaps[Math.min(i++, snaps.length - 1)],
+      target: targets.length ? async () => targets[Math.min(k++, targets.length - 1)] : null,
+      sleepFn: async (ms) => { sleeps.push(ms); t += ms; },
+      now: () => t,
+    },
+  };
+};
+
+test('settleChange: a ticking clock seen between the two baselines is not a change; a tile text landing a second later is', async () => {
+  const before = 'Living room\n7:56:11 PM\nAC · On';
+  const tickers = tickersOf('Living room\n7:56:10 PM\nAC · On', before);
+  const w = fakeWatch(['Living room\n7:56:12 PM\nAC · On', 'Living room\n7:56:12 PM\nAC · On', 'Living room\n7:56:13 PM\nAC · Off']);
+  const r = await settleChange({ before, tickers, ...w.opts });
+  assert.deepStrictEqual(r, { changed: 'AC · Off', target: null });
+  assert.deepStrictEqual(w.sleeps, [500, 500]);
+});
+
+test('settleChange: an H:MM:SS clock the baselines missed is still not a change, and the watch gives up after LATE_CHANGE_MS', async () => {
+  const w = fakeWatch(['Hall\n7:56:12\nAC · On', 'Hall\n7:56:13\nAC · On']);
+  const r = await settleChange({ before: 'Hall\n7:56:11\nAC · On', ...w.opts });
+  assert.deepStrictEqual(r, { changed: '', target: null });
+  assert.strictEqual(w.sleeps.reduce((a, b) => a + b, 0), LATE_CHANGE_MS);
+});
+
+test('settleChange: a target aria flip after the click is reported and ends the watch; class-only noise does not end it', async () => {
+  const off = { el: { 'aria-label': 'AC Off', class: 'btn' }, tile: { 'aria-pressed': 'false' } };
+  const focused = { el: { 'aria-label': 'AC Off', class: 'btn focus-visible' }, tile: { 'aria-pressed': 'false' } };
+  const on = { el: { 'aria-label': 'AC On', class: 'btn on' }, tile: { 'aria-pressed': 'true' } };
+  const w = fakeWatch(['same'], [focused, focused, on]);
+  const r = await settleChange({ before: 'same', targetBefore: off, ...w.opts });
+  assert.deepStrictEqual(r, { changed: '', target: 'aria-label "AC Off" → "AC On", class +on, tile aria-pressed "false" → "true"' });
+  assert.deepStrictEqual(w.sleeps, [500, 500]);
+  assert.strictEqual(targetDiff(off, focused), null);
+  assert.deepStrictEqual(targetDiff(off, { el: { 'aria-label': 'AC Off', class: 'btn sel' }, tile: off.tile }), { text: 'class +sel', strong: false });
 });
