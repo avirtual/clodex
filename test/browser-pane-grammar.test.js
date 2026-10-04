@@ -37,7 +37,7 @@ const ROWS = [
   ['[agent:browser open utility --links] https://x.example/',
     { error: 'unknown flag --links for open — valid: none' }],
   ['[agent:browser frob utility 4]',
-    { error: "unknown subcommand 'frob' — use open, read, click, type, key, select, wait, services, release" }],
+    { error: "unknown subcommand 'frob' — use open, read, click, type, key, select, download, screenshot, wait, services, release" }],
   ['[agent:browser click 4]', { sub: 'click', service: null, n: 4 }],
   ['[agent:browser click utility 4]', { sub: 'click', service: 'utility', n: 4 }],
   ['[agent:browser click utility]', { error: 'click needs an element number from your read — [agent:browser click [service] <n>]' }],

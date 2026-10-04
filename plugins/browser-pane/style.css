@@ -1,0 +1,36 @@
+.bp-attention {
+  color: var(--accent, #e94560);
+  font-weight: 600;
+}
+
+.bp-services {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.bp-name {
+  font-weight: 600;
+  min-width: 90px;
+}
+
+.bp-login,
+.bp-window {
+  opacity: 0.8;
+}
+
+.bp-window {
+  flex: 1;
+}
+
+.bp-empty,
+.bp-desktop-only {
+  opacity: 0.8;
+}

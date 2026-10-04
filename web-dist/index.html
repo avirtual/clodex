@@ -12869,8 +12869,167 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     }
   });
 
-  // plugins/git-branches/renderer.js
+  // plugins/browser-pane/renderer.js
   var require_renderer = __commonJS({
+    "plugins/browser-pane/renderer.js"(exports, module) {
+      "use strict";
+      var NOT_ON_SURFACE = "plugin method not available on this surface";
+      var DESKTOP_ONLY_SEGMENT = "browser: desktop only";
+      var DESKTOP_ONLY_NOTICE = "Browser pane: desktop only \u2014 its windows open on the machine running Clodex.";
+      var ATTENTION = "bp-attention";
+      var LOGIN_TEXT = {
+        "logged-in": "signed in",
+        "login-page": "sign-in page",
+        "idp-refused": "Google sign-in refused",
+        unknown: "login unknown"
+      };
+      function refused(res) {
+        return !!(res && res.ok === false && res.error === NOT_ON_SURFACE);
+      }
+      function stamp(ms) {
+        if (!ms) return "";
+        const d = new Date(ms);
+        const p = (n) => String(n).padStart(2, "0");
+        return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      }
+      function segmentFor(status) {
+        if (!status) return null;
+        if (status.desktopOnly) return { text: DESKTOP_ONLY_SEGMENT, tip: DESKTOP_ONLY_NOTICE };
+        if (status.child === "off") return null;
+        if (status.child === "unavailable") return { text: "browser: unavailable", tip: "The browser child crashed repeatedly; see the Clodex log." };
+        const list = Array.isArray(status.services) ? status.services : [];
+        const tip = list.length ? list.map((s) => `${s.name}: ${s.state}${s.seat ? ` (${s.seat})` : ""}`).join("\n") : "No browser windows open";
+        const held = list.find((s) => s.state === "held");
+        if (held) return { text: `browser: needs you (${held.name})`, tip, accentClass: ATTENTION };
+        const driving = list.find((s) => s.state === "driving");
+        if (driving) return { text: `browser: driving ${driving.seat || "an agent"}`, tip };
+        if (list.some((s) => s.state === "gating")) return { text: "browser: waiting for you", tip };
+        return { text: "browser: idle", tip };
+      }
+      function forgetText(name) {
+        return `Forget the login for ${name}?
+
+Its cookies and site data are deleted, so the next visit starts signed out. Downloaded files are kept.`;
+      }
+      function el(tag, cls, text) {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = String(text);
+        return node;
+      }
+      function activate(rhost) {
+        let status = null;
+        let alive = true;
+        const relayout = () => {
+          const sb = rhost.ui && rhost.ui.statusBar;
+          if (sb && typeof sb.requestRelayout === "function") sb.requestRelayout();
+        };
+        const call = async (method, ...args) => {
+          try {
+            return await rhost.invoke(method, ...args);
+          } catch (e) {
+            return { ok: false, error: String(e && e.message || e) };
+          }
+        };
+        async function pull() {
+          const res = await call("status", rhost.workspaceId);
+          if (!alive) return;
+          if (refused(res)) status = { desktopOnly: true };
+          else if (res && res.ok) status = res;
+          else status = null;
+          relayout();
+        }
+        rhost.ui.statusBar.addSegment({
+          id: "browser",
+          render: () => segmentFor(status),
+          onClick: () => {
+            if (status && !status.desktopOnly) call("show");
+          }
+        });
+        const toast = (msg) => {
+          if (rhost.ui.showToast) rhost.ui.showToast(msg, { kind: "error" });
+        };
+        async function forget(name, btn, refill) {
+          if (btn.disabled) return;
+          btn.disabled = true;
+          try {
+            if (!confirm(forgetText(name))) return;
+            const res = await call("services.forget", name);
+            if (!res || res.ok === false) toast(`Could not forget ${name}: ${res && res.error || "unknown error"}`);
+            refill();
+          } finally {
+            btn.disabled = false;
+          }
+        }
+        function row(s, refill) {
+          const r = el("div", "bp-row");
+          r.appendChild(el("span", "bp-name", s.name));
+          const when = s.loginAt ? ` (${stamp(s.loginAt)})` : "";
+          r.appendChild(el("span", "bp-login", `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when}`));
+          r.appendChild(el("span", "bp-window", s.windowOpen ? `window open \xB7 ${s.state}` : "closed"));
+          const show = el("button", "bp-show", "Show");
+          show.addEventListener("click", () => {
+            call("show", s.name);
+          });
+          r.appendChild(show);
+          if (s.state === "held") {
+            const hb = el("button", "bp-handback", "Hand back");
+            hb.addEventListener("click", async () => {
+              await call("handback", s.name);
+              refill();
+            });
+            r.appendChild(hb);
+          }
+          const fg = el("button", "bp-forget", "Forget login");
+          fg.addEventListener("click", () => forget(s.name, fg, refill));
+          r.appendChild(fg);
+          return r;
+        }
+        rhost.ui.settings.section({
+          id: "services",
+          title: "Browser Pane",
+          render(bodyEl) {
+            bodyEl.textContent = "";
+            const list = el("div", "bp-services");
+            bodyEl.appendChild(list);
+            const reveal = el("button", "bp-reveal", "Reveal downloads");
+            reveal.addEventListener("click", async () => {
+              const res = await call("downloads.dir");
+              if (res && res.ok && res.dir) rhost.ui.openPath(res.dir);
+              else toast(`Could not open the downloads folder: ${res && res.error || "unknown error"}`);
+            });
+            bodyEl.appendChild(reveal);
+            const fill = async () => {
+              const res = await call("services.list");
+              if (refused(res)) {
+                bodyEl.textContent = "";
+                bodyEl.appendChild(el("div", "bp-desktop-only", DESKTOP_ONLY_NOTICE));
+                return;
+              }
+              list.textContent = "";
+              const services = res && res.ok && Array.isArray(res.services) ? res.services : [];
+              if (!services.length) list.appendChild(el("div", "bp-empty", "No services yet."));
+              for (const s of services) list.appendChild(row(s, fill));
+            };
+            return fill();
+          },
+          collect: () => null
+        });
+        const off = rhost.events.on("changed", () => {
+          pull();
+        });
+        pull();
+        return () => {
+          alive = false;
+          if (typeof off === "function") off();
+        };
+      }
+      module.exports = { activate, segmentFor, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+    }
+  });
+
+  // plugins/git-branches/renderer.js
+  var require_renderer2 = __commonJS({
     "plugins/git-branches/renderer.js"(exports, module) {
       "use strict";
       module.exports.activate = (rhost) => {
@@ -13144,7 +13303,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   });
 
   // plugins/memory-viewer/renderer.js
-  var require_renderer2 = __commonJS({
+  var require_renderer3 = __commonJS({
     "plugins/memory-viewer/renderer.js"(exports, module) {
       "use strict";
       function fmtWhen(iso) {
@@ -13421,7 +13580,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   });
 
   // plugins/tickets-viewer/renderer.js
-  var require_renderer3 = __commonJS({
+  var require_renderer4 = __commonJS({
     "plugins/tickets-viewer/renderer.js"(exports, module) {
       "use strict";
       var SEARCH_DEBOUNCE_MS = 250;
@@ -14556,7 +14715,7 @@ ${p.root}` : p.key;
   });
 
   // plugins/workbench/renderer.js
-  var require_renderer4 = __commonJS({
+  var require_renderer5 = __commonJS({
     "plugins/workbench/renderer.js"(exports, module) {
       "use strict";
       var WORKBENCH_HTML = `
@@ -15387,10 +15546,11 @@ Modified ${when}` : ent.name;
       "use strict";
       var MODULES = {
         // <<< BUILD-GENERATED PLUGIN MODULES — build/build-web.js rewrites this block
-        "git-branches": require_renderer(),
-        "memory-viewer": require_renderer2(),
-        "tickets-viewer": require_renderer3(),
-        "workbench": require_renderer4()
+        "browser-pane": require_renderer(),
+        "git-branches": require_renderer2(),
+        "memory-viewer": require_renderer3(),
+        "tickets-viewer": require_renderer4(),
+        "workbench": require_renderer5()
         // >>> END BUILD-GENERATED PLUGIN MODULES
       };
       var registry = {
@@ -48464,7 +48624,7 @@ ${detail}` });
   });
 
   // renderer/renderer.js
-  var require_renderer5 = __commonJS({
+  var require_renderer6 = __commonJS({
     "renderer/renderer.js"() {
       var { Terminal } = require_xterm();
       var { FitAddon } = require_addon_fit();
@@ -57386,7 +57546,7 @@ ${res.stderr}` : "");
   shim.start().then((welcome) => {
     osShim.__setHome(welcome && welcome.home);
     window.__CLODEX_PLUGIN_REGISTRY__ = pluginRegistry;
-    require_renderer5();
+    require_renderer6();
     menubar.mount(shim);
     mountVersion();
   }).catch((err) => {
