@@ -21,6 +21,23 @@ function credMatches(crypto, want, got) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+const SUBAGENT_TAG_SUFFIX = '/agent';
+
+function subagentTag(seat) {
+  return `${seat}${SUBAGENT_TAG_SUFFIX}`;
+}
+
+function seatOfAgentTag(name) {
+  if (typeof name !== 'string' || name.includes('@') || !name.endsWith(SUBAGENT_TAG_SUFFIX)) return name;
+  const seat = name.slice(0, -SUBAGENT_TAG_SUFFIX.length);
+  return seat || name;
+}
+
+function isMainThread(agentId, sessionId) {
+  if (!agentId || typeof sessionId !== 'string' || !sessionId) return false;
+  return sessionId === agentId || sessionId.endsWith(`-${agentId}`);
+}
+
 function intentLabel(intent) {
   if (!intent) return 'unknown';
   if (intent.type === 'exec' && intent.cmd) return `exec ${intent.cmd}`;
@@ -42,17 +59,22 @@ function createIntentRequestHandler({ seat, parse, entryOf, sessionIdOf, allows,
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
-    const subagent = !!agentId && agentId !== sessionIdOf();
+    const subagent = !!agentId && !isMainThread(agentId, sessionIdOf());
     if (subagent && !allows(intent, entryOf())) {
       return { ok: false, error: `not available to a subagent: ${intentLabel(intent)}` };
     }
     const lines = [];
+    let open = true;
     const replyTo = (t) => {
-      if (ctl && ctl.closed()) return false;
+      if (!open || (ctl && ctl.closed())) return false;
       lines.push(String(t));
       return true;
     };
-    await dispatch(intent, { replyTo, fromLabel: subagent ? `${seat}/agent` : null });
+    try {
+      await dispatch(intent, { replyTo, fromLabel: subagent ? subagentTag(seat) : null });
+    } finally {
+      open = false;
+    }
     return { ok: true, reply: lines.length ? lines.join('\n') : defaultReply(intent) };
   };
 }
@@ -69,7 +91,7 @@ function createIntentSocketServer({
   let server = null;
 
   const respond = (sock, res) => {
-    try { sock.end(JSON.stringify(res) + '\n'); } catch {}
+    try { sock.end(JSON.stringify(res) + '\n', () => sock.destroy()); } catch {}
   };
 
   const onConnection = (sock) => {
@@ -146,6 +168,9 @@ module.exports = {
   mintIntentCredential,
   seatChannelEnv,
   credMatches,
+  subagentTag,
+  seatOfAgentTag,
+  isMainThread,
   intentLabel,
   createIntentRequestHandler,
   createIntentSocketServer,

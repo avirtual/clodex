@@ -7,8 +7,9 @@ const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
 const CLIENT_TIMEOUT_MS = 15 * 1000;
 
 const HELP = [
-  'usage: clodex \'<[agent:…] intent line>\' [body lines…]',
+  'usage: clodex \'<[agent:…] intent line>\' [more words…]',
   '       clodex -            read the intent (and a multi-line body) from stdin',
+  'Remaining args are joined with spaces into ONE line; use - for a multi-line body.',
   '',
   'Sends ONE Clodex intent as this seat ($CLODEX_SEAT) and prints the reply.',
   'A body is closed with [agent:end] automatically when you leave it open.',

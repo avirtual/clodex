@@ -486,7 +486,7 @@ const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
-const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer } = require('./intent-socket');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
 const { subagentAllows } = require('./intent-registry');
 
 const intentReplyScope = new AsyncLocalStorage();
@@ -5313,6 +5313,7 @@ function createSessionManager(deps) {
 
       switch (intent.type) {
         case 'dm': {
+          intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.clone) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
@@ -8144,7 +8145,7 @@ function createSessionManager(deps) {
         if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) return true;
         return this._relayViaForOrigin(origin) != null;
       }
-      const s = this.sessions.get(senderName);
+      const s = this.sessions.get(seatOfAgentTag(senderName));
       return !!(s && s.agentType && !s._dead);
     }
 
