@@ -146,7 +146,7 @@ const TABLES = `
 
 function readText(main) {
   return `(() => {${DEEP}
-  const DROP = 'script,style,noscript,select,svg,nav,header,footer,aside,form,[role=navigation],[role=banner],[role=contentinfo],[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  const DROP = 'script,style,noscript,select,svg,form,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
     const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);

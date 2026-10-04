@@ -496,3 +496,12 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
   assert.match(scripts.READ_INTERACTIVE(false, {}), /line: kind \+ ' ' \+ \(cqOf\(el\) \? '⚠ ' : ''\) \+ line/);
   assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';border:2px solid #e00'/);
 });
+
+test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
+  const src = scripts.READ_TEXT(false);
+  const drop = /const DROP = '([^']*)'/.exec(src)[1].split(',');
+  for (const sel of scripts.CHROME_SEL.split(',')) assert.ok(!drop.includes(sel), sel);
+  assert.ok(src.includes(`clone.querySelectorAll(${JSON.stringify(scripts.CHROME_SEL)})`));
+  assert.ok(src.includes(`t.data = ${JSON.stringify(scripts.CHROME_MARK)} + t.data`));
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`if (it.el.closest(${JSON.stringify(scripts.CHROME_SEL)})) chrome.push(n);`));
+});

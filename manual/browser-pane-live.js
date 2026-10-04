@@ -17,9 +17,9 @@ const PDF = Buffer.from('%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer 
 
 const navLink = (m, i) => `<div><a href="/chrome-a?m=${i}&t=${Date.now()}">${m}</a></div>`;
 const chromePage = (title, mid) => `<title>${title}</title><main>
-${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map(navLink).join('')}
+<nav>${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu'].map(navLink).join('')}</nav>
 ${mid}<p>${title} al asociatiei de proprietari: cheltuieli comune, consumuri individuale, fond de rulment si fond de reparatii, defalcate pe apartament.</p>
-${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m, i) => navLink(m, 10 + i)).join('')}</main>`;
+<footer>${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m, i) => navLink(m, 10 + i)).join('')}</footer></main>`;
 
 const rowsPage = (order) => `<title>Rows</title><main><table>${order.map((r) => `<tr><td>Factura ${r}</td><td><button onclick="document.title='deleted ${r}'">Delete</button></td></tr>`).join('')}</table></main>`;
 
@@ -57,7 +57,10 @@ const PAGES = {
 <p><span>Duplicat</span> <span>Duplicat</span></p>
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style>
 <label style="cursor:pointer"><input type="checkbox" class="sr-only">Tine-ma minte</label>
-<label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label></main>
+<label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label>
+<nav><a href="/form">Carduri</a></nav>
+<form action="/plata" onsubmit="document.title='paid'; return false"><label><input type=radio name=m value=card onclick="document.title='card picked'">Card bancar</label>
+<button type=submit>Plătește</button></form></main>
 <script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
   },
   '/effects': () => {
@@ -81,6 +84,14 @@ const PAGES = {
 <script>setTimeout(() => document.getElementById('go').click(), 2500);</script>`,
   '/opnav-dst': () => `<title>Opnav destination</title><main><p>Ajuns</p></main>
 <script>setTimeout(() => history.pushState({}, '', '/opnav-dst/route'), 7000);</script>`,
+  '/lista': () => `<title>Lista</title><main><h1>Liste</h1>
+<select id=luna onchange="document.getElementById('l').textContent = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna [Document generat 03.' + this.value + '.2026]'">
+<option value=08>August 2026</option><option value=07>Iulie 2026</option></select>
+<p><a id=l href="/inline.pdf">Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna [Document generat 03.08.2026]</a></p></main>`,
+  '/chrome-body-a': () => `<title>Datorii</title><main><nav>${['Acasa', 'Avizier', 'Plati online'].map(navLink).join('')}</nav>
+<p>Datoria curentă - Ap. 6</p><p>Suma de plată</p><p>335,90 Lei</p><p>Detalii restrânse</p></main>`,
+  '/chrome-body-b': () => `<title>Datorii</title><main><nav>${['Acasa', 'Avizier', 'Plati online'].map(navLink).join('')}</nav>
+<p>Datoria curentă - Ap. 6</p><p>Suma de plată</p><p>335,90 Lei</p><p>Factura iulie 120 lei</p><p>Factura august 215,90 Lei</p></main>`,
   '/chrome-a': () => chromePage('Avizier aprilie', '<p>Factura aprilie: 98 lei</p><p>Restanta: 0 lei</p>'),
   '/chrome-b': () => chromePage('Avizier mai', '<p>Factura mai: 120 lei</p><p>Index apa: 19,486</p><p>Scadenta: 25 mai</p><p><a href="/chrome-a?pdf=5">Factura mai PDF</a></p>'),
   '/app-scroll': () => `<title>App scroll</title><style>html,body{height:100%;margin:0;overflow:hidden} #app{height:100%;overflow:auto}</style>
@@ -241,8 +252,18 @@ async function clickablesStep(emit, base) {
   const els = lines.slice(cut + 1).filter((l) => /^\[\d+\]/.test(l));
   for (const l of els) console.log(`    ${l.slice(0, 120)}`);
   for (const l of lines.slice(0, cut).filter((x) => / \| /.test(x))) console.log(`    ${l}`);
-  check('a div with onclick is numbered as clickable', els.some((l) => /\] clickable "Lista de plată 08\/2026"$/.test(l)));
-  check('an <a> without href is numbered', els.some((l) => /\] clickable "Lista de plată 07\/2026 PDF"$/.test(l)));
+  check('a div with onclick is numbered as clickable', els.some((l) => /\] clickable ⚠ "Lista de plată 08\/2026"$/.test(l)));
+  check('an <a> without href is numbered', els.some((l) => /\] clickable ⚠ "Lista de plată 07\/2026 PDF"$/.test(l)));
+  const numOf = (re) => { const l = els.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
+  check('the Plătește submit and the Card bancar radio are marked ⚠; the Carduri nav link is not',
+    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:radio ⚠ Card bancar/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
+  const pay = numOf(/button ⚠ Plătește/);
+  check('a click on Plătește without --confirm is refused naming payment',
+    new RegExp(`error: \\[${pay}\\] "Plătește" looks consequential \\(payment\\) — re-issue with --confirm`).test(await emit(`[agent:browser click avizier ${pay}]`)));
+  check('click --text on Card bancar without --confirm is refused the same way',
+    /looks consequential \(payment\)/.test(await emit('[agent:browser click avizier --text="Card bancar"]')));
+  check('a click on Plătește with --confirm goes through',
+    new RegExp(`clicked avizier \\[${pay}\\] button "Plătește"`).test(await emit(`[agent:browser click avizier ${pay} --confirm]`)));
   check('a pointer-cursor row is numbered once', els.filter((l) => /Factura/.test(l)).length === 1 && !els.some((l) => /"120 lei"/.test(l)));
   check('select options are absent from the text', !/Luna 1 din arhivă/.test(text));
   check('a pointer label around an sr-only checkbox is listed once, as the label', els.filter((l) => /Tine-ma minte/.test(l)).length === 1
@@ -250,11 +271,11 @@ async function clickablesStep(emit, base) {
   check('a label around a visible input button lists only the input', els.filter((l) => /Trimite index/.test(l)).length === 1
     && els.some((l) => /\] input:button .*Trimite index/.test(l)));
   check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
-  check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
+  check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026" --confirm]')));
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
   check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[\d+\] "Duplicat", \[\d+\] "Duplicat"/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
   await emit('[agent:browser read avizier]');
-  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
+  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF" --confirm]')));
 }
 
 async function effectsStep(emit, base, cwd) {
@@ -318,7 +339,7 @@ async function chromeStep(emit, base) {
   const second = await emit('[agent:browser read chrome]');
   const f2 = fileOf(second);
   for (const l of f2.split('\n').slice(0, 12)) console.log(`    ${l}`);
-  check('second read header says 6 lines at top, 4 at bottom', rows(f2).includes('stripped: 6 lines at top, 4 at bottom (same as your last read of chrome)'));
+  check('second read header says 6 lines at top, 4 at bottom', rows(f2).includes('stripped: 6 lines at top, 4 at bottom (repeated from your last read of chrome)'));
   check('second read reply says chrome stripped', / · chrome stripped( → | · )/.test(second));
   check('second read text keeps the middle and drops the menu', /Factura mai/.test(f2) && !/Plati online|Confidentialitate/.test(f2.split('== elements ==')[0]));
   const hid = /elements: (\d+) \((\d+) repeated, hidden — still clickable by number; read --all lists them;/.exec(f2);
@@ -335,6 +356,13 @@ async function chromeStep(emit, base) {
   const avizier = firstEls.length ? /^\[(\d+)\]/.exec(firstEls[0])[1] : '0';
   check(`a hidden number [${avizier}] still clicks the same link`,
     new RegExp(`clicked chrome \\[${avizier}\\] link "Avizier"`).test(await emit(`[agent:browser click chrome ${avizier}]`)));
+  await emit(`[agent:browser open chrome] ${base}/chrome-body-a`);
+  await emit('[agent:browser read chrome]');
+  await emit(`[agent:browser open chrome] ${base}/chrome-body-b`);
+  const fb = fileOf(await emit('[agent:browser read chrome]'));
+  const tb = fb.split('== elements ==')[0];
+  check('repeated body lines (the amount owed) are kept; only the marked nav is stripped',
+    /Suma de plată\n335,90 Lei/.test(tb) && /Factura august/.test(tb) && !/Plati online/.test(tb) && rows(fb).some((l) => /^stripped: 3 lines at top, 0 at bottom/.test(l)));
   await emit(`[agent:browser open busy] ${base}/busy`);
   const t0 = Date.now();
   const r1 = await emit('[agent:browser read busy]');
@@ -413,6 +441,17 @@ async function rowsStep(emit, base) {
   const delB = b.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
   check('the reordered rows get new numbers', delB.length === 2 && !delB.some((n) => del.includes(n)));
   check('nothing was deleted', /\ntitle: Rows\n/.test(bFile));
+  await emit(`[agent:browser open rows] ${base}/lista`);
+  const la = els(fileOf(await emit('[agent:browser read rows]')));
+  const listaN = (ls) => { const l = ls.find((x) => /\] link Lista de plată/.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : null; };
+  const sel = (la.find((l) => /\] select/.test(l)) || '[0]').match(/^\[(\d+)\]/)[1];
+  const aug = listaN(la);
+  await emit(`[agent:browser select rows ${sel}] Iulie 2026`);
+  check('August\'s Lista number is refused after the select replaced its text',
+    /no longer points at one element|no element/.test(await emit(`[agent:browser click rows ${aug}]`)));
+  const lb = els(fileOf(await emit('[agent:browser read rows]')));
+  for (const l of lb) console.log(`    ${l}`);
+  check('two Lista rows differing only in a trailing date get different numbers after a select', !!aug && !!listaN(lb) && listaN(lb) !== aug);
   await emit(`[agent:browser open rows] ${base}/hn?p=1`);
   const h1 = fileOf(await emit('[agent:browser read rows]'));
   await emit(`[agent:browser open rows] ${base}/hn?p=2`);
