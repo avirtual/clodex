@@ -625,11 +625,11 @@ seats get a request/response channel whose reply is the caller's own tool result
   the seat's main conversation, and a call with no captured acknowledgement
   answers `sent to <target>; a reply arrives in the seat's main conversation`.
 - **Subagent filter:** a request with an `agentId` other than the seat's own
-  `sessionId` is a subagent call and passes `subagentAllows` (intent-registry.js):
-  `dm` (delivered as `<seat>/agent`), `who`, `name`, `task list`, `exec <cmd>` for
+  `sessionId` (or, on Codex, its rollout uuid tail) is a subagent call and passes `subagentAllows` (intent-registry.js):
+  `dm` (delivered as `<seat>/agent`; a dm back to `<seat>/agent` lands in the seat), `who`, `name`, `task list`, `exec <cmd>` for
   the seat's granted commands, `memory recall|list`. Everything else answers
   `not available to a subagent: <verb>`. No `agentId` = the seat's full catalog.
-- **Verb:** `clodex '<intent>' [body…]` or `clodex -` (stdin). Forwards
+- **Verb:** `clodex '<intent>' [more words…]` (args joined with spaces into one line) or `clodex -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
   agent-id env var as of 2.1.289). Exit 0 ok, 1 error, 2 usage,
   3 unauthorized/not available, 4 no socket, 5 timeout.
