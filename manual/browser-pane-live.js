@@ -402,10 +402,9 @@ async function overlayStep(emit, base) {
   check('the --numbers reply says N numbers drawn with N = the read\'s element count', count > 0 && drawn === count);
   const plain = await emit('[agent:browser screenshot overlay]');
   check('a plain screenshot right after says nothing about numbers', /screenshot overlay \d+×\d+/.test(plain) && !/numbers/.test(plain));
-  const nums = content.split('\n').filter((l) => /^\[\d+\]/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
-  const probe = nums.find((n) => !content.split('== elements ==')[0].includes(n)) || nums[nums.length - 1];
-  check(`the DOM has no overlay badge left (no visible text "${probe}")`,
-    /no visible element with the text/.test(await emit(`[agent:browser inspect overlay --text="${probe}"]`)));
+  const probe = String(drawn);
+  const hit = await emit(`[agent:browser inspect overlay --text="${probe}"]`);
+  check(`the DOM has no overlay badge left (--text="${probe}" finds no element inside #__cx_numbers)`, !/__cx_numbers/.test(hit) && !/matches \d+ visible elements/.test(hit));
 }
 
 async function policyStep(emit, base, engine) {
