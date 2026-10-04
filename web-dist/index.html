@@ -47584,6 +47584,7 @@ ${detail}` });
         // () -> bool
         scheduleSidebarRelayout,
         // () -> void   (the debounced core relayout)
+        scheduleStatusBarRelayout,
         listSessions,
         // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
         openPath,
@@ -48252,7 +48253,10 @@ ${detail}` });
               },
               statusBar: Object.freeze({
                 addAction: (s) => register(statusActions, s, ["when", "button", "onClick"], pluginId),
-                addSegment: (s) => register(statusSegments, s, ["render"], pluginId)
+                addSegment: (s) => register(statusSegments, s, ["render"], pluginId),
+                requestRelayout: () => {
+                  if (scheduleStatusBarRelayout) scheduleStatusBarRelayout();
+                }
               }),
               sidebar: Object.freeze({
                 footerButton: (s) => addFooterButton(s, pluginId),
@@ -49979,6 +49983,14 @@ ${detail}` });
         relayoutTimer = setTimeout(() => {
           relayoutTimer = null;
           refreshSidebarView();
+        }, 250);
+      }
+      var statusBarRelayoutTimer = null;
+      function scheduleStatusBarRelayout() {
+        if (statusBarRelayoutTimer) return;
+        statusBarRelayoutTimer = setTimeout(() => {
+          statusBarRelayoutTimer = null;
+          renderProxyBar();
         }, 250);
       }
       function makeGroupHeader(key, count) {
@@ -52880,6 +52892,7 @@ ${detail}` });
         activePeerQueryable,
         activePeerConfigurable,
         scheduleSidebarRelayout,
+        scheduleStatusBarRelayout,
         getWorkspaceId: () => currentWorkspaceId,
         listSessions: () => window.api.listSessions(),
         openPath: (p) => window.api.fileOpen(p),

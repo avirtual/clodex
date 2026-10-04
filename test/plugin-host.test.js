@@ -393,6 +393,14 @@ test('requestRelayout wraps the core debounced relayout', () => {
   assert.equal(state.relayouts, 1, 'the plugin never reaches refreshSidebarView directly');
 });
 
+test('statusBar.requestRelayout wraps the core debounced status-bar repaint', () => {
+  let barRelayouts = 0;
+  const { host, state } = makeHost({ scheduleStatusBarRelayout: () => { barRelayouts++; } });
+  activate(host, 'demo', (rhost) => { rhost.ui.statusBar.requestRelayout(); });
+  assert.equal(barRelayouts, 1, 'the plugin never reaches renderProxyBar directly');
+  assert.equal(state.relayouts, 0, 'a status-bar request does not relayout the sidebar');
+});
+
 // ── §2.4 Session menu ───────────────────────────────────────────────────────
 
 test('menu providers append namespaced entries and receive their own pick', () => {

@@ -243,6 +243,9 @@ esac
 step "DMG pty probe"
 run bash scripts/dmg-pty-probe.sh "$DMG" || die "the packaged app cannot spawn a shell through node-pty — do not ship this DMG"
 
+step "DMG child probe"
+run bash scripts/dmg-child-probe.sh "$DMG" || die "the packaged app cannot boot a plugin Electron child — do not ship this DMG"
+
 # --- commit, tag, push -----------------------------------------------------
 # The tag must name the commit built above, never a named ref like origin/master.
 # Every check upstream — the web-dist rebuild, the smoke test, the deploy pins,

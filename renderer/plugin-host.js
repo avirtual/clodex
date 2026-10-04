@@ -14,6 +14,7 @@ function initPluginHost({
   activePeerQueryable,       // () -> bool
   activePeerConfigurable,    // () -> bool
   scheduleSidebarRelayout,   // () -> void   (the debounced core relayout)
+  scheduleStatusBarRelayout,
   listSessions,              // () -> Promise<[{name,type,cwd,…}]>  (session:list — WORKSPACE-SCOPED)
   openPath,                  // (p) -> void   (window.api.fileOpen — reveal in Finder)
   showToast,                 // (msg, opts) -> void
@@ -599,6 +600,7 @@ function initPluginHost({
         statusBar: Object.freeze({
           addAction: (s) => register(statusActions, s, ['when', 'button', 'onClick'], pluginId),
           addSegment: (s) => register(statusSegments, s, ['render'], pluginId),
+          requestRelayout: () => { if (scheduleStatusBarRelayout) scheduleStatusBarRelayout(); },
         }),
         sidebar: Object.freeze({
           footerButton: (s) => addFooterButton(s, pluginId),

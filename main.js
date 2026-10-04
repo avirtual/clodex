@@ -1,3 +1,8 @@
+const electronChild = require('./electron-child').childScriptFromArgv(process.argv);
+if (electronChild) {
+  require('./electron-child').runChild(electronChild, require('electron'), process.argv);
+  return;
+}
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, Notification, Tray, nativeImage } = require('electron');
 const https = require('https');
 const path = require('path');
@@ -12,6 +17,7 @@ const { isExternallyOpenable } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
 const { writeHostStamp } = require('./host-stamp');
+const { childSpawnSpec } = require('./electron-child');
 
 
 
@@ -549,6 +555,10 @@ app.whenReady().then(() => {
       refreshTrayMenu: (...a) => refreshTrayMenu(...a),
       scheduleTrayRefresh: (...a) => scheduleTrayRefresh(...a),
       restartHost: () => restartClodex(),
+      electronChild: (script, extraArgs) => childSpawnSpec({
+        execPath: process.execPath, isPackaged: app.isPackaged, appPath: app.getAppPath(),
+        script, extraArgs, env: process.env,
+      }),
       thumbnail: async (buf) => {
         const img = nativeImage.createFromBuffer(buf);
         if (img.isEmpty()) return null;

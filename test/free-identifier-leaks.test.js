@@ -69,6 +69,7 @@ const SCANNED_MODULES = [
   'statusline.js',
   'intent-scanner.js',
   'host-stamp.js',
+  'electron-child.js',
   'intent-catalog.js',
   'intent-registry.js',
   'prompt-rails.js',

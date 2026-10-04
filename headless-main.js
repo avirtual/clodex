@@ -197,6 +197,7 @@ const engine = createEngine({
     restartHost: restartNow,
     restartHostWhenIdle: headlessRestart.restartHostWhenIdle,
     restartUnavailable: headlessRestart.restartUnavailable,
+    electronChild: null,
   },
 });
 
