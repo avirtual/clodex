@@ -439,7 +439,7 @@ test('changedOf: kept numbers whose line or row text differs since the last read
   assert.ok(ri.includes("sig = label + (el.hasAttribute('download') ? ' [download]' : '');"), 'a link signature leaves out its raw href (volatile t= is not a change)');
   assert.match(ri, /sigs\[n\] = \(it\.sig == null \? it\.line : it\.sig\) \+ '.' \+ rowsOut\[n\];/);
   assert.match(CHILD_SRC, /if \(rowChanged\(svc\.num && svc\.num\.lastRead, n, el\.row\)\) out\.textChanged = true;/);
-  assert.match(CHILD_SRC, /ent\.lastRead = \{ [^}]*rows: el\.rows \|\| \{\} \};/);
+  assert.ok(/ent\.lastRead = \{ .*, rows: el\.rows \|\| \{\} \};/.test(CHILD_SRC));
   assert.match(scripts.FIND(1), /row: rowOf\(el\),/);
   assert.match(scripts.READ_INTERACTIVE(false, {}), /rowsOut\[n\] = rowOf\(it\.el\);/);
 });
