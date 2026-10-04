@@ -144,10 +144,11 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
 
   const RUN = { open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait };
 
-  function fail(handle, s, text) {
+  function fail(handle, s, text, keepWaits) {
     const seat = handle.name;
-    const dropped = s.queue.filter((j) => j.handle.name === seat);
-    s.queue = s.queue.filter((j) => j.handle.name !== seat);
+    const drops = (j) => j.handle.name === seat && !(keepWaits && j.cmd.sub === 'wait');
+    const dropped = s.queue.filter(drops);
+    s.queue = s.queue.filter((j) => !drops(j));
     handle.inject(text + replies.dropSuffix(dropped.map((j) => cmdLabel(j.cmd))));
   }
 
@@ -172,7 +173,7 @@ function createScheduler({ client, storage, mirror, now = () => Date.now(), log,
     else p = Promise.resolve().then(() => RUN[job.cmd.sub](job.handle, service, job.cmd));
     p
       .then((text) => job.handle.inject(text))
-      .catch((e) => fail(job.handle, s, errText(service, e)))
+      .catch((e) => fail(job.handle, s, errText(service, e), !!(e && (e.signin || e.code === 'HELD' || e.code === 'PASSWORD_FIELD')) || s.state === 'held'))
       .finally(() => {
         if (s.inflight === job) s.inflight = null;
         pump(service);

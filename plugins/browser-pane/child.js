@@ -262,6 +262,7 @@ function run(electron, ctx) {
       }
       dispatch(svc, { type: 'quiet' }, { seat });
       let out;
+      const docAt = svc.doc;
       try {
         out = await body();
       } catch (e) {
@@ -272,7 +273,10 @@ function run(electron, ctx) {
         throw e;
       }
       if (svc.win.isDestroyed() || svc.wc.isDestroyed()) throw closedError(svc.name);
-      if (out && out.idle && !out.idle.ok && svc.wc.isLoading()) svc.wc.stop();
+      if (out && out.idle && !out.idle.ok && svc.wc.isLoading() && (frame.op === 'open' || svc.doc !== docAt)) {
+        svc.wc.stop();
+        out.idle.stopped = true;
+      }
       const login = await probe(svc);
       const takeover = svc.lock.takeover;
       dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });

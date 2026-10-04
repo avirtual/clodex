@@ -43,6 +43,7 @@ function idleLabel(idle) {
   if (!idle) return '';
   const secs = (Number(idle.ms) / 1000).toFixed(1);
   if (idle.ok) return `idle ${secs}s`;
+  if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).join(', ')})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
