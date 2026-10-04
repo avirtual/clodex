@@ -437,7 +437,7 @@ test('changedOf: kept numbers whose line or row text differs since the last read
   assert.deepStrictEqual(changedOf(null, { 1: 'a' }), []);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.ok(ri.includes("sig = label + (el.hasAttribute('download') ? ' [download]' : '');"), 'a link signature leaves out its raw href (volatile t= is not a change)');
-  assert.ok(ri.includes("sigs[n] = (it.sig == null ? it.line : it.sig) + '\\u0000' + rowOf(it.el);"));
+  assert.match(ri, /sigs\[n\] = \(it\.sig == null \? it\.line : it\.sig\) \+ '.' \+ rowOf\(it\.el\);/);
   assert.match(CHILD_SRC, /if \(svc\.num && svc\.num\.changed && svc\.num\.changed\.has\(Number\(n\)\)\) out\.textChanged = true;/);
 });
 
