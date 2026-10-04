@@ -1,12 +1,14 @@
 'use strict';
 
-const WELL_KNOWN = ['fbclid', 'gclid', 'msclkid', '_', '_t', 'cb', 'nocache'];
+const WELL_KNOWN = ['fbclid', 'gclid', 'msclkid', 'twclid', '_', '_t', 'cb', 'nocache'];
 const WELL_KNOWN_PREFIX = ['utm_'];
 const TIMEY = ['t', 'ts', 'time', 'timestamp', 'rand', 'r', 'v'];
 const DIGITS_RE = /^\d{9,}$/;
 const TOKEN_RE = /^[0-9a-z]{16,}$/i;
 const CONTEXT_MAX = 40;
 const LABEL_KEY_MAX = 400;
+const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies', 'view', 'views', 'bookmark', 'bookmarks', 'posts', 'followers', 'following'];
+const COUNTER_RE = /\d[\d.,]*[KkMm]?/;
 
 function isVolatile(name, value, learned) {
   const k = String(name).toLowerCase();
@@ -36,6 +38,24 @@ function labelHash(s) {
 function keyLabel(label) {
   const s = String(label || '').replace(/\s+/g, ' ').trim();
   return s.length > LABEL_KEY_MAX ? s.slice(0, LABEL_KEY_MAX) + '~' + labelHash(s.slice(LABEL_KEY_MAX)) : s;
+}
+
+function counterWord(t) {
+  const w = String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+  return COUNTER_WORDS.indexOf(w) >= 0 ? w : '';
+}
+
+function counterMask(label) {
+  const t = String(label == null ? '' : label).split(' ');
+  const num = (x) => new RegExp('^[^\\w]*' + COUNTER_RE.source + '[^\\w]*$').test(x || '');
+  return t.map((x, i) => (num(x) && (counterWord(t[i - 1] || '') || counterWord(t[i + 1] || '')) ? x.replace(COUNTER_RE, '#') : x)).join(' ');
+}
+
+function actionOf(masked) {
+  const t = String(masked || '').split(' ').filter(Boolean);
+  if (!t.length || !t.every((x) => /^[^\w]*#[^\w]*$/.test(x) || counterWord(x))) return '';
+  const w = t.map(counterWord).filter(Boolean).pop() || '';
+  return w.replace(/ies$/, 'y').replace(/(like|repost|view|bookmark)s$/, '$1');
 }
 
 function keyOf(d) {
@@ -118,10 +138,13 @@ const PAGE_SOURCE = [
   `const TOKEN_RE = new RegExp(${JSON.stringify(TOKEN_RE.source)}, 'i');`,
   `const CONTEXT_MAX = ${CONTEXT_MAX};`,
   `const LABEL_KEY_MAX = ${LABEL_KEY_MAX};`,
+  `const COUNTER_WORDS = ${JSON.stringify(COUNTER_WORDS)};`,
+  `const COUNTER_RE = new RegExp(${JSON.stringify(COUNTER_RE.source)});`,
+  counterWord.toString(), counterMask.toString(), actionOf.toString(),
   isVolatile.toString(), normHref.toString(), labelHash.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
 ].join('\n');
 
 module.exports = {
   WELL_KNOWN, WELL_KNOWN_PREFIX, TIMEY, CONTEXT_MAX, LABEL_KEY_MAX, PAGE_SOURCE,
-  isVolatile, normHref, keyLabel, keyOf, storedKey, parseStored, learnVolatile, sameDoc,
+  COUNTER_WORDS, isVolatile, normHref, keyLabel, keyOf, counterMask, actionOf, storedKey, parseStored, learnVolatile, sameDoc,
 };

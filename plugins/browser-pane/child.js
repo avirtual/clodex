@@ -158,6 +158,8 @@ function numberRefusal(service, n, stored, verdict) {
   const p = keys.parseStored(stored);
   const label = p.label.length > 60 ? p.label.slice(0, 59) + '…' : p.label;
   if (verdict === 'ambiguous') return codedError('AMBIGUOUS', TEXT.ambiguousN(service, n, label, p.context));
+  if (verdict && verdict.verdict === 'retired') return codedError('NO_ELEMENT', TEXT.retiredN(service, n, verdict.now));
+  if (verdict === 'hidden') return codedError('NO_ELEMENT', TEXT.hiddenN(service, n));
   return codedError('NO_ELEMENT', TEXT.noElement(service, n));
 }
 
@@ -226,11 +228,18 @@ async function settleChange({
   return { changed, target: tgt ? tgt.text : null };
 }
 
-function numberVerdict(verdict, stored, pageKeys) {
+const RETIRED_PREFIX = 60;
+
+function numberVerdict(verdict, stored, pageKeys, chrome = null) {
   if (verdict === 'ok' || verdict === 'ambiguous') return verdict;
   if (!pageKeys) return 'gone';
-  const base = keys.parseStored(stored).base;
-  return Object.values(pageKeys).some((k) => keys.parseStored(k).base === base) ? 'ambiguous' : 'gone';
+  const p = keys.parseStored(stored);
+  const entries = Object.entries(pageKeys);
+  if (entries.some(([n, k]) => k === stored && chrome && [...chrome].map(String).includes(String(n)))) return 'hidden';
+  if (entries.some(([, k]) => keys.parseStored(k).base === p.base)) return 'ambiguous';
+  const head = p.label.slice(0, RETIRED_PREFIX);
+  const now = head ? entries.find(([, k]) => { const q = keys.parseStored(k); return q.kind === p.kind && q.label.slice(0, RETIRED_PREFIX) === head; }) : null;
+  return now ? { verdict: 'retired', now: Number(now[0]) } : 'gone';
 }
 
 function inspectKind(r, listeners) {
@@ -639,7 +648,7 @@ function run(electron, ctx) {
       page = await stampPage(svc);
       verdict = await inIsolated(svc.wc, scripts.CHECK(n, stored, numOf(svc)));
     }
-    const refused = numberRefusal(svc.name, n, stored, numberVerdict(verdict, stored, page && page.keys));
+    const refused = numberRefusal(svc.name, n, stored, numberVerdict(verdict, stored, page && page.keys, page && page.chrome));
     if (refused) throw refused;
   }
 
