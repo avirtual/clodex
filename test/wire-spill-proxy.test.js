@@ -1231,3 +1231,70 @@ test('t1167 (g): a record for an agent not registered since load is pruned once 
     assert.deepStrictEqual(Object.keys(store.saved).sort(), ['fresh', 'tester']);
   });
 });
+
+const TAIL_PROSE = `Wrapping up; the report is with the lead.\n${'p'.repeat(900)}\n`;
+const DONE_BIG = 'd'.repeat(900);
+const MIX_SSE = [
+  ev('message_start', {
+    type: 'message_start',
+    message: { id: 'msg_mix', usage: { input_tokens: 10, cache_read_input_tokens: 5 } },
+  }),
+  ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text' } }),
+  td(0, '[agent:task done t1]\n'),
+  td(0, `${DONE_BIG}\n`),
+  td(0, '[agent:end]\n'),
+  td(0, '[agent:dm bob]\n'),
+  td(0, `${BIG}\n`),
+  td(0, '[agent:end]\n'),
+  td(0, TAIL_PROSE),
+  ev('content_block_stop', { type: 'content_block_stop', index: 0 }),
+  ev('message_stop', { type: 'message_stop' }),
+].join('');
+
+function mixSeat(proxy, root) {
+  proxy.registerAgent('tester', { spill: { root, verbs: ['task.done', 'dm'], turnInjected: () => true } });
+}
+
+test('spill categories: messages and tickets on, prose off — the dm spills and the trailing prose passes as written', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: MIX_SSE, proxyOpts: { spillEnabled: () => ({ tickets: true, messages: true, prose: false }) } }, async (proxy) => {
+    mixSeat(proxy, root);
+    const events = collect(proxy, ['spill', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'));
+    const seen = textOf(res.body);
+    assert.deepEqual(events.spill.map((s) => s.verb), ['task.done', 'dm']);
+    assert.ok(!seen.includes(BIG), 'the dm body is off the wire');
+    assert.ok(seen.endsWith(`[agent:end]\n${TAIL_PROSE}`), 'the closing prose stays in the transcript verbatim');
+  });
+});
+
+test('spill categories: tickets off — a long task done body passes untouched while a long dm spills', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: MIX_SSE, proxyOpts: { spillEnabled: () => ({ tickets: false, messages: true, prose: true }) } }, async (proxy) => {
+    mixSeat(proxy, root);
+    const events = collect(proxy, ['spill', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'));
+    const seen = textOf(res.body);
+    assert.ok(events.spill.some((s) => s.verb === 'dm'), 'the dm spilled');
+    assert.ok(!events.spill.some((s) => s.verb === 'task.done'), 'the ticket body did not');
+    assert.ok(seen.startsWith(`[agent:task done t1]\n${DONE_BIG}\n[agent:end]\n`), 'the task done body is on the wire as written');
+    assert.ok(!seen.includes(BIG), 'the dm body is off the wire');
+  });
+});
+
+test('spill categories: all three off — the tee is never armed and nothing is written', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  await withProxy({ body: MIX_SSE, proxyOpts: { spillEnabled: () => ({ tickets: false, messages: false, prose: false }) } }, async (proxy, up) => {
+    mixSeat(proxy, root);
+    const events = collect(proxy, ['spill', 'spill-skip', 'stream-end']);
+    const res = await request(proxy.port, '/agent/tester/v1/messages', makeBody());
+    assert.ok(await whenEvent(events, 'stream-end'));
+    assert.equal(res.body.toString('utf8'), MIX_SSE, 'byte-identical to upstream');
+    assert.equal(events.spill.length, 0);
+    assert.equal(events['spill-skip'].length, 0);
+    assert.equal(up.seen.requests[0].headers['accept-encoding'], 'gzip, br', 'not armed: identity never requested');
+    assert.ok(!fs.existsSync(path.join(root, 'spill')), 'nothing reached disk');
+  });
+});

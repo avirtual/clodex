@@ -874,7 +874,10 @@ function createSessionManager(deps) {
         hold,
         spillShownStore,
         onSpillShownError: (message) => this._shadowLog({ type: 'wire-spill-shown-store-error', error: message }),
-        spillEnabled: () => getUiSettings().get().intentSpill === 'on',
+        spillEnabled: () => {
+          const ui = getUiSettings().get();
+          return { tickets: ui.spillTickets === true, messages: ui.spillMessages === true, prose: ui.spillProse === true };
+        },
       });
       // Header presence gates a reading; the provider check gates the 429 path, which carries no
       // ratelimit headers from any provider and would file a codex refusal against the Claude org.

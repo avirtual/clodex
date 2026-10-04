@@ -388,36 +388,51 @@ test('uiSettings: a corrupt ui-settings.json is quarantined once, byte-exact, be
   } finally { cleanup(); }
 });
 
-test('uiSettings: intentSpill ships on, round-trips, and refuses a junk value', () => {
+const spillTriple = (s) => ({ spillTickets: s.spillTickets, spillMessages: s.spillMessages, spillProse: s.spillProse });
+const ALL_ON = { spillTickets: true, spillMessages: true, spillProse: true };
+const ALL_OFF = { spillTickets: false, spillMessages: false, spillProse: false };
+
+test('uiSettings: the three spill flags ship on, round-trip independently, and refuse a junk value', () => {
   const { stores, cleanup } = freshStores();
   try {
     const { uiSettings } = stores;
-    assert.strictEqual(uiSettings.get().intentSpill, 'on',
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), ALL_ON,
       'default ON: the spill is a plain optimization, so it is opt-OUT');
-    uiSettings.set({ intentSpill: 'off' });
-    assert.strictEqual(uiSettings.get().intentSpill, 'off');
+    assert.strictEqual(uiSettings.get().intentSpill, undefined, 'the old key is out of the schema');
+    uiSettings.set({ spillProse: false });
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), { ...ALL_ON, spillProse: false });
     uiSettings.set({ theme: uiSettings.get().theme });
-    assert.strictEqual(uiSettings.get().intentSpill, 'off', 'survives an unrelated write');
-    uiSettings.set({ intentSpill: 'maybe' });
-    assert.strictEqual(uiSettings.get().intentSpill, 'off',
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), { ...ALL_ON, spillProse: false }, 'survives an unrelated write');
+    uiSettings.set({ spillProse: 'maybe', spillTickets: 'off' });
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), { ...ALL_ON, spillProse: false },
       'an unknown value keeps the current one rather than silently re-arming a disabled setting');
-    uiSettings.set({ intentSpill: 'on' });
-    assert.strictEqual(uiSettings.get().intentSpill, 'on');
+    uiSettings.set({ intentSpill: 'off' });
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), { ...ALL_ON, spillProse: false },
+      'a write of the old key does nothing');
+    assert.strictEqual(uiSettings.get().intentSpill, undefined, 'and is not dual-written');
+    uiSettings.set({ spillProse: true });
+    assert.deepStrictEqual(spillTriple(uiSettings.get()), ALL_ON);
   } finally { cleanup(); }
 });
 
-test('uiSettings: a settings file predating intentSpill reads back ON', () => {
+test('uiSettings: the old intentSpill key migrates to the three flags on read', () => {
   const { stores, userData, cleanup } = freshStores();
   try {
     const p = path.join(userData, 'ui-settings.json');
-    fs.writeFileSync(p, JSON.stringify({ theme: 'midnight' }));
-    assert.strictEqual(stores.uiSettings.get().intentSpill, 'on',
-      'an absent key is the same answer as on, so an upgrade gets the optimization');
-    fs.writeFileSync(p, JSON.stringify({ intentSpill: 'yes please' }));
-    assert.strictEqual(stores.uiSettings.get().intentSpill, 'on');
-    fs.writeFileSync(p, JSON.stringify({ intentSpill: 'off' }));
-    assert.strictEqual(stores.uiSettings.get().intentSpill, 'off',
-      'an explicit off is still honoured');
+    const cases = [
+      [{ intentSpill: 'off' }, ALL_OFF, 'an explicit old off reads as all three off'],
+      [{ intentSpill: 'on' }, ALL_ON, 'an old on reads as all three on'],
+      [{ theme: 'midnight' }, ALL_ON, 'a file predating both reads all on'],
+      [{ spillProse: false }, { ...ALL_ON, spillProse: false }, 'one new key alone sets only itself'],
+      [{ intentSpill: 'off', spillMessages: true }, { ...ALL_OFF, spillMessages: true }, 'an explicit new boolean wins over the old key'],
+      [{ intentSpill: 'yes please', spillTickets: 'no', spillMessages: 0, spillProse: null }, ALL_ON, 'junk values read as defaults'],
+    ];
+    for (const [file, want, why] of cases) {
+      fs.writeFileSync(p, JSON.stringify(file));
+      const got = stores.uiSettings.get();
+      assert.deepStrictEqual(spillTriple(got), want, why);
+      assert.strictEqual(got.intentSpill, undefined, `${why}: old key not carried`);
+    }
   } finally { cleanup(); }
 });
 
