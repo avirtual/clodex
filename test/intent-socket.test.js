@@ -183,7 +183,7 @@ for (const [line, label, allowed] of TABLE) {
   });
 }
 
-function seatHarness() {
+function seatHarness({ realDeliver = false } = {}) {
   const root = mkTmpRoot('isock-sm-');
   const logs = [];
   const broadcasts = [];
@@ -202,6 +202,7 @@ function seatHarness() {
     registry: { listPeers: async () => [], getPeer: async () => null, register: () => {}, unregister: () => {} },
     getPeerManager: () => null,
     peerStatusLabel: require('../proxy-util').peerStatusLabel,
+    shouldHoldDm: require('../proxy-util').shouldHoldDm,
     parseIntent: require('../intent-scanner').parseIntent,
     looksLikeIntent: require('../intent-scanner').looksLikeIntent,
     execBodyCap: 64 * 1024,
@@ -211,13 +212,13 @@ function seatHarness() {
   });
   m._broadcast = (...a) => broadcasts.push(JSON.stringify(a));
   m._injectHoldReason = () => null;
-  m._injectQueueFor = (s) => ({ enqueue: (t) => injected.push({ to: s.name, text: t }) });
-  m._gatedDeliver = (target, tag, body) => { delivered.push({ target, tag, body }); return { queued: true }; };
+  m._injectQueueFor = (s) => ({ enqueue: (t, o) => injected.push({ to: s.name, text: o && o.produce ? o.produce() : t }) });
+  if (!realDeliver) m._gatedDeliver = (target, tag, body) => { delivered.push({ target, tag, body }); return { queued: true }; };
   const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a' };
-  const b = { name: 'b', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1' };
+  const b = { name: 'b', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', activityState: 'working', activityTs: Date.now() };
   m.sessions.set('a', a);
   m.sessions.set('b', b);
-  return { m, root, a, logs, broadcasts, injected, delivered };
+  return { m, root, a, b, logs, broadcasts, injected, delivered };
 }
 
 function sink() {
@@ -233,8 +234,8 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
   return { code, out: out.buf, err: err.buf };
 }
 
-async function withSeat(fn) {
-  const h = seatHarness();
+async function withSeat(fn, opts) {
+  const h = seatHarness(opts);
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
   const cred = mintIntentCredential(crypto);
   await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
@@ -310,4 +311,46 @@ test('dropping run/<name>/ on exit unlinks the live intent socket', async () => 
     hooks.cleanupClaudeHook('s1');
     assert.strictEqual(fs.existsSync(sockPath), false);
   } finally { srv.stop(); }
+});
+
+test('a subagent dm reaches the recipient answerable, and its reply to <seat>/agent lands in the seat', async () => {
+  await withSeat(async (h, cred) => {
+    h.a.activityState = 'working';
+    h.a.activityTs = Date.now();
+    const r = await viaVerb(h, cred, ['[agent:dm b] which file holds the pin'], { CLODEX_AGENT_ID: 'agent-7' });
+    assert.strictEqual(r.code, 0, `${r.err} ${h.logs.join(' | ')}`);
+    await new Promise((res) => setImmediate(res));
+    const toB = h.injected.filter((i) => i.to === 'b').map((i) => i.text).join('\n');
+    assert.match(toB, /\[agent:from a\/agent\] which file holds the pin/);
+    assert.ok(!toB.includes('no reply path'), `the recipient is told it can answer: ${toB}`);
+    await h.m._handleIntent('b', { type: 'dm', target: 'a/agent', body: 'pins.test.js', urgent: false });
+    await new Promise((res) => setImmediate(res));
+    const toA = h.injected.filter((i) => i.to === 'a').map((i) => i.text).join('\n');
+    assert.match(toA, /\[agent:from b\] pins\.test\.js/, 'the reply lands in the seat\'s main conversation');
+  }, { realDeliver: true });
+});
+
+test('a Codex main thread whose id is the rollout uuid tail keeps the full catalog', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'cx', parse, entryOf: () => ({}), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
+  });
+  const main = await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false });
+  assert.strictEqual(main.ok, true, 'CODEX_THREAD_ID of the main thread is the main agent');
+  assert.deepStrictEqual(seen, [null], 'and its dm would go out as the seat');
+  const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
+  assert.deepStrictEqual(sub, { ok: false, error: 'not available to a subagent: shout' });
+});
+
+test('the reply sink closes when the reply is built, so a late acknowledgement falls through to the seat', async () => {
+  let late = null;
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    dispatch: async (intent, opts) => { opts.replyTo('now'); late = opts.replyTo; },
+  });
+  const r = await handle({ intent: '[agent:who]' }, { closed: () => false });
+  assert.deepStrictEqual(r, { ok: true, reply: 'now' });
+  assert.strictEqual(late('later'), false, 'the late text goes to _injectText\'s normal path');
 });
