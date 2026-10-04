@@ -367,8 +367,13 @@ function createScheduler({
     seats.delete(name);
   }
 
+  function leaseHolder(service) {
+    const s = services.get(service);
+    return s && s.lease && !leaseFree(s, null) ? s.lease.seat : null;
+  }
+
   return {
-    submit, onState, onClosed, onChildExit, onSessionExit, seatState, NO_SERVICE,
+    submit, onState, onClosed, onChildExit, onSessionExit, seatState, leaseHolder, NO_SERVICE,
   };
 }
 

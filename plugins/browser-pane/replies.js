@@ -142,6 +142,8 @@ const TEXT = {
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
   readFirst: (service) => `read ${service} first — numbers come from your read`,
+  denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${url} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
+  deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
   takeover: ' · the operator took over during this command',
@@ -150,6 +152,10 @@ const TEXT = {
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
     hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
 };
+
+function operatorNav(service, url, title) {
+  return reply(`the operator navigated ${service} to ${url} (${JSON.stringify(oneLine(title || '', 120))}) — read before using numbers`);
+}
 
 function isGoogle(login) {
   return !!(login && (login.idp === 'google' || login.googleRejected));
@@ -333,5 +339,5 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 module.exports = {
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
-  PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle, operatorNav,
 };

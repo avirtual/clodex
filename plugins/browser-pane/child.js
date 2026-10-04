@@ -8,6 +8,7 @@ const scripts = require('./page-scripts');
 const lock = require('./lock');
 const { TEXT } = require('./replies');
 const paths = require('./paths');
+const urlpolicy = require('./urlpolicy');
 const { changedRegion, CHANGE_MAX } = require('./read-format');
 
 const BAR_HEIGHT = 40;
@@ -26,11 +27,13 @@ const LOADING_INFLIGHT_MS = 300;
 const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FLASH_MS = 4000;
+const BAR_MSG_MS = 5000;
+const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -168,7 +171,28 @@ function run(electron, ctx) {
     if (svc.win.isDestroyed()) return;
     const vm = lock.barView(svc.lock, { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL() });
     if (svc.flash && Date.now() < svc.flash.until) vm.text = svc.flash.text;
+    vm.editable = svc.lock.state === 'idle' || svc.lock.state === 'held';
+    vm.canBack = !svc.wc.isDestroyed() && !!(svc.wc.navigationHistory && svc.wc.navigationHistory.canGoBack());
+    if (svc.barMsg && Date.now() < svc.barMsg.until) vm.msg = svc.barMsg.text;
     svc.win.webContents.executeJavaScript(`window.cxbRender && window.cxbRender(${JSON.stringify(vm)})`).catch(() => {});
+  };
+
+  const policyDenies = (svc, url, by) => {
+    const hit = svc.policy ? svc.policy(url) : null;
+    if (!hit) return null;
+    const now = Date.now();
+    const seen = svc.lastDenied && svc.lastDenied.url === url && now - svc.lastDenied.at < DENY_DEDUPE_MS;
+    svc.lastDenied = { url, at: now };
+    if (!seen) send({ event: 'denied', service: svc.name, url, pattern: hit.pattern, list: hit.list, by });
+    return hit;
+  };
+
+  const deniedError = (svc, url, hit, verb) => codedError('DENIED', TEXT.denied(url, hit.pattern, hit.list === 'service' ? svc.name : null, verb));
+
+  const barSay = (svc, text) => {
+    svc.barMsg = { text, until: Date.now() + BAR_MSG_MS };
+    render(svc);
+    setTimeout(() => render(svc), BAR_MSG_MS + 50);
   };
 
   const pageInfo = (svc) => (svc.wc.isDestroyed() ? { url: '', title: '' } : { url: svc.wc.getURL(), title: svc.wc.getTitle() });
@@ -220,6 +244,13 @@ function run(electron, ctx) {
       let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
       if (!w) w = waiters.find((x) => !x.url);
       if (w) drop(w);
+      const owner = services.get(name);
+      const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
+      if (hit) {
+        item.cancel();
+        if (w) w.reject(deniedError(owner, url, hit, 'download'));
+        return;
+      }
       const mime = item.getMimeType();
       const dir = w ? w.dir : path.join(downloadsRoot, name);
       const t0 = Date.now();
@@ -295,6 +326,8 @@ function run(electron, ctx) {
       if (!svc || svc.win !== win) return;
       if (msg === 'cxb:takeover') takeover(svc);
       else if (msg === 'cxb:handback') handback(svc).catch(() => {});
+      else if (msg === 'cxb:back' || msg === 'cxb:reload') barNav(svc, msg.slice(4)).catch(() => {});
+      else if (typeof msg === 'string' && msg.startsWith('cxb:go ')) barNav(svc, 'go', msg.slice(7)).catch(() => {});
     });
     win.loadFile(path.join(__dirname, 'bar.html')).catch(() => {});
     const view = new WebContentsView({
@@ -312,6 +345,7 @@ function run(electron, ctx) {
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
+      policy: null, barMsg: null, lastDenied: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
@@ -328,20 +362,26 @@ function run(electron, ctx) {
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
       const target = (e && e.url) || url;
-      if (!allowedNav(target)) e.preventDefault();
+      if (!allowedNav(target) || policyDenies(svc, target, 'page')) e.preventDefault();
+    };
+    const popupOpts = { webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false } };
+    const guardPopup = (pwc) => {
+      for (const ev of ['will-navigate', 'will-frame-navigate', 'will-redirect']) pwc.on(ev, block);
+      pwc.setWindowOpenHandler(({ url }) => (policyDenies(svc, url, 'page') ? { action: 'deny' } : { action: 'allow', overrideBrowserWindowOptions: popupOpts }));
+      pwc.on('did-create-window', (w) => guardPopup(w.webContents));
     };
     wc.on('will-navigate', block);
     wc.on('will-frame-navigate', block);
+    wc.on('will-redirect', block);
+    wc.on('did-create-window', (w) => guardPopup(w.webContents));
     wc.setWindowOpenHandler(({ url }) => {
+      if (policyDenies(svc, url, 'page')) return { action: 'deny' };
       if (svc.lock.state === 'driving') {
         if (svc.downloading) { if (allowedNav(url)) svc.popupUrl = url; return { action: 'deny' }; }
         if (allowedNav(url)) { svc.popup = true; svc.popupUrl = url; wc.loadURL(url).catch(() => {}); }
         return { action: 'deny' };
       }
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: { webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false } },
-      };
+      return { action: 'allow', overrideBrowserWindowOptions: popupOpts };
     });
     win.webContents.on('did-finish-load', () => render(svc));
     try { ensureCdp(svc); } catch {}
@@ -446,7 +486,13 @@ function run(electron, ctx) {
 
   async function opOpen(name, frame, args) {
     const url = checkOpenUrl(String(args.url || ''));
+    const policy = urlpolicy.compilePolicy(args.policy);
+    const have = services.get(name);
+    if (have) have.policy = policy;
+    const hit = policyDenies(have || { name, policy }, url, 'agent');
+    if (hit) throw deniedError({ name }, url, hit, 'open');
     const svc = openService(name);
+    svc.policy = policy;
     await svc.blank;
     return mutating(svc, frame, `open ${url.slice(0, 80)}`, async () => {
       let status = null;
@@ -613,6 +659,8 @@ function run(electron, ctx) {
   }
 
   async function viaUrl(svc, url, dir, nameHint) {
+    const hit = policyDenies(svc, url, 'agent');
+    if (hit) throw deniedError(svc, url, hit, 'download');
     const w = routerFor(svc.name, svc.ses).expect({ url, dir, nameHint });
     svc.wc.downloadURL(url);
     return landed(w, DOWNLOAD_START_MS);
@@ -788,6 +836,35 @@ function run(electron, ctx) {
     return idleOf(r);
   }
 
+  async function barNav(svc, kind, text) {
+    svc.lastInput = Date.now();
+    const free = () => svc.lock.state === 'idle' || svc.lock.state === 'held';
+    if (!free()) return barSay(svc, 'agent driving');
+    const wc = svc.wc;
+    let url;
+    if (kind === 'go') {
+      try { url = checkOpenUrl(urlpolicy.typedUrl(text)); } catch (e) { return barSay(svc, e.message); }
+    } else if (kind === 'back') {
+      const h = wc.navigationHistory;
+      if (!h || !h.canGoBack()) return undefined;
+      const entry = h.getEntryAtIndex ? h.getEntryAtIndex(h.getActiveIndex() - 1) : null;
+      url = entry && entry.url;
+    } else url = wc.getURL();
+    const hit = url ? policyDenies(svc, url, 'operator') : null;
+    if (hit) return barSay(svc, TEXT.deniedBar(hit.pattern, hit.list === 'service' ? svc.name : null));
+    return serial(svc.name, async () => {
+      if (wc.isDestroyed() || !free()) return;
+      ensureCdp(svc);
+      const docAt = svc.doc;
+      const go = kind === 'go' ? () => driver.withTimeout(wc.loadURL(url).catch(() => {}), LOAD_TIMEOUT_MS)
+        : kind === 'back' ? () => wc.navigationHistory.goBack() : () => wc.reload();
+      const { idle } = await driver.act(wc, go, { timeoutMs: OPEN_IDLE_MS });
+      if (wc.isDestroyed()) return;
+      if (!idle.ok && wc.isLoading() && !svc.pendingNav && (kind === 'go' || svc.doc !== docAt)) wc.stop();
+      if (svc.doc !== docAt) send({ event: 'operator-nav', service: svc.name, ...pageInfo(svc) });
+    });
+  }
+
   function takeover(svc) {
     dispatch(svc, { type: 'takeover' });
     return { state: svc.lock.state };
@@ -881,7 +958,11 @@ function run(electron, ctx) {
       else if (SERVICE_OPS.has(op)) {
         const name = String(frame.service || '');
         if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
-        if (op === 'hold' || op === 'handback' || op === 'show') result = await operatorOp(op, name);
+        if (op === 'policy') {
+          const svc = services.get(name);
+          if (svc) svc.policy = urlpolicy.compilePolicy(args.policy);
+          result = { open: !!svc };
+        } else if (op === 'hold' || op === 'handback' || op === 'show') result = await operatorOp(op, name);
         else if (op === 'forget') result = await serial(name, () => opForget(name));
         else {
           result = await serial(name, () => {
