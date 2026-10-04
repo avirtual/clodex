@@ -91,8 +91,9 @@ service's cookies.
 
 Every act reply says what it caused: `navigated → …` (read again), `changed:
 "…"` with the text that changed in place, `no visible change`, or `→ download
-<full path> · <size> · <type>`; a file identical to one already in the folder is
-not saved twice and is reported as `same as <file>`. `inspect` shows an element's
+<full path> · <size> · <type>`; `type` says `value now "…"` when the page text did
+not change; a file identical to one already in the folder is not saved twice and
+is reported as `same as <file>`, unless it was named with `--as`. `inspect` shows an element's
 tag, attributes, event listeners, cursor, position and HTML, to see why a click
 does nothing.
 
