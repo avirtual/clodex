@@ -75,7 +75,7 @@ function harness(script = {}, extra = {}) {
 }
 
 const OPENED = '[agent:browser] opened utility · 200 · "Bills" · https://portal.example.com/bills · login: none · idle 1.0s · next: read';
-const READ_REPLY = '[agent:browser] read utility · page 1/1 · 1 elements · ≈87 tok → @FILE';
+const READ_REPLY = '[agent:browser] read utility · page 1/1 · 1 elements · ≈92 tok → @FILE';
 const LEASE_40 = '[agent:browser] error: utility is in use by hand-a (last command 40s ago). It frees after 5 min without commands, when they emit [agent:browser release utility], or when their session ends.';
 const HELD = '[agent:browser] error: the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.';
 const HELD_STATE = { event: 'state', service: 'utility', state: 'held', reason: 'login', seat: 'hand-a', login: { password: true } };
