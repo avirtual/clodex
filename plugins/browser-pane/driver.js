@@ -34,7 +34,7 @@ async function armIdle(wc, { network = true } = {}) {
   const onMsg = (_e, method, params) => {
     if (method === 'Page.lifecycleEvent') fired.lifecycle.push(params.name);
     else if (method === 'Network.requestWillBeSent' && !SKIP_TYPES.includes(params.type)) {
-      inflight.set(params.requestId, params.request.url);
+      inflight.set(params.requestId, { url: params.request.url, at: Date.now() });
       fired.requests++;
       lastNet = Date.now();
     } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
@@ -59,7 +59,7 @@ async function armIdle(wc, { network = true } = {}) {
         if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: Date.now() - t0, fired, inflight: [] };
         if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: Date.now() - t0, fired };
         if (Date.now() - t0 > timeoutMs) {
-          return { ok: false, reason: 'timeout', ms: Date.now() - t0, fired, inflight: [...inflight.values()].slice(0, 5) };
+          return { ok: false, reason: 'timeout', ms: Date.now() - t0, fired, inflight: [...inflight.values()].slice(0, 5).map((v) => v.url) };
         }
         if (!wc.isLoading() && inflight.size === 0) {
           const q = await withTimeout(wc.executeJavaScript(`new Promise(res => {
@@ -77,7 +77,13 @@ async function armIdle(wc, { network = true } = {}) {
       detach();
     }
   };
-  return { wait, fired, detach };
+  const size = (minAgeMs = 0) => {
+    const cut = Date.now() - minAgeMs;
+    let n = 0;
+    for (const v of inflight.values()) if (v.at <= cut) n++;
+    return n;
+  };
+  return { wait, fired, detach, size, lastNet: () => lastNet };
 }
 
 async function waitIdle(wc, opts = {}) {

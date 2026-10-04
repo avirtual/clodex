@@ -348,3 +348,32 @@ test('scheduler inspect: needs a read first, then asks the child with the read d
   assert.deepStrictEqual(h.calls[1], ['hand-a', 'inspect', { expectDoc: 1, byText: 'Go' }]);
   assert.strictEqual(out[0][1].split('\n').length, 6);
 });
+
+test('scheduler: a second read of the same site drops the repeated chrome; --all and another origin keep it', async () => {
+  const chrome = (mid) => ['Acasa', 'Avizier', 'Plati', ...mid, 'Termeni', 'Ajutor', 'v1.2'].join('\n');
+  let cur = { url: 'https://portal.example.com/a', text: chrome(['Factura aprilie']) };
+  const h = harness({ read: () => ({ ...DEFAULTS.read(), url: cur.url, text: cur.text }) });
+  const hd = h.seat('hand-a');
+  const files = [];
+  const inject = hd.inject;
+  hd.inject = (text) => { const m = / → @(\S+) $/.exec(text); if (m) files.push(fs.readFileSync(m[1], 'utf8')); inject(text); };
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a'], ['hand-a', '[agent:browser read]']]);
+  assert.ok(!files[0].includes('stripped:'));
+  cur = { url: 'https://portal.example.com/b', text: chrome(['Factura mai', '120 lei']) };
+  const [[, second]] = await h.run([['hand-a', '[agent:browser read]']]);
+  assert.match(second, / · chrome stripped → @FILE$/);
+  assert.ok(files[1].includes('\nstripped: 3 lines at top, 3 at bottom (same as your last read of utility)\n'));
+  assert.ok(files[1].includes('\n== text ==\nFactura mai\n120 lei\n== elements =='));
+  assert.ok(!/Acasa|Termeni/.test(files[1]));
+  const [[, again]] = await h.run([['hand-a', '[agent:browser read --page=1]']]);
+  assert.match(again, / · chrome stripped /);
+  assert.ok(files[2].includes('\n== text ==\nFactura mai\n120 lei\n'));
+  const [[, all]] = await h.run([['hand-a', '[agent:browser read --all]']]);
+  assert.ok(!all.includes('chrome stripped'));
+  assert.ok(!files[3].includes('stripped:'));
+  assert.ok(files[3].includes('Acasa') && files[3].includes('Termeni'));
+  cur = { url: 'https://other.example.com/c', text: chrome(['Altceva']) };
+  await h.run([['hand-a', '[agent:browser read]']]);
+  assert.ok(!files[4].includes('stripped:'));
+  assert.ok(files[4].includes('Acasa'));
+});

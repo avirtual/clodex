@@ -10,7 +10,7 @@ const run = (line) => {
   try { return toCommand(intent); } catch (e) { return { error: e.message }; }
 };
 
-const READ = { sub: 'read', service: null, mode: 'default', main: false, filter: null, page: 1, max: 2500 };
+const READ = { sub: 'read', service: null, mode: 'default', main: false, all: false, filter: null, page: 1, max: 2500 };
 
 const ROWS = [
   ['[agent:browser open utility] https://portal.example.com/bills',
@@ -22,6 +22,7 @@ const ROWS = [
   ['[agent:browser read utility --links --filter=.pdf --page=3]',
     { ...READ, service: 'utility', mode: 'links', filter: '.pdf', page: 3 }],
   ['[agent:browser read --text --main]', { ...READ, mode: 'text', main: true }],
+  ['[agent:browser read utility --all]', { ...READ, service: 'utility', all: true }],
   ['[agent:browser read utility --filter="sep 2026"]', { ...READ, service: 'utility', filter: 'sep 2026' }],
   ['[agent:browser read "utility" --max=100]', { ...READ, service: 'utility', max: 500 }],
   ['[agent:browser read --max=99999]', { ...READ, max: 8000 }],
@@ -33,7 +34,7 @@ const ROWS = [
   ['[agent:browser read Utility]',
     { error: "bad service name 'Utility' — use a-z, 0-9 and -, starting with a letter, at most 32 chars" }],
   ['[agent:browser read utility --bogus]',
-    { error: 'unknown flag --bogus for read — valid: --text --links --main --filter --page --max' }],
+    { error: 'unknown flag --bogus for read — valid: --text --links --main --all --filter --page --max' }],
   ['[agent:browser open utility --links] https://x.example/',
     { error: 'unknown flag --links for open — valid: none' }],
   ['[agent:browser frob utility 4]',

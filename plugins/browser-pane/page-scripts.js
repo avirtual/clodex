@@ -2,6 +2,7 @@
 
 const ISOLATED_WORLD = 4242;
 const TEXT_MAX = 400000;
+const BUSY_SEL = '[aria-busy=true], .loading, .spinner, [class*=loading i], [class*=spinner i], [id*=loading i]';
 const ELEMENTS_MAX = 6000;
 const MAIN_SEL = 'main, article, [role=main]';
 const STD_SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=combobox],summary,[contenteditable=true]';
@@ -41,7 +42,9 @@ function readText(main) {
     });
     root = best;
   }
-  if (!root) return '';
+  const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(e => e.getClientRects().length);
+  const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
+  if (!root) return { text: '', busy };
   const clone = root.cloneNode(true);
   clone.querySelectorAll(DROP).forEach(n => n.remove());
   const host = document.createElement('div');
@@ -65,7 +68,8 @@ function readText(main) {
     t.replaceWith(box);
   }
   const txt = clone.innerText; host.remove();
-  return (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
+  const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
+  return { text, busy };
 })()`;
 }
 

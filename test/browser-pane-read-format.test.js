@@ -159,3 +159,49 @@ test('read-format: changedRegion strips the common line prefix and suffix and re
   assert.strictEqual(clipped, `${'x'.repeat(599)}…`);
   assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b /…');
 });
+
+const { chromeStrip, CHROME_MAX_LINES } = require('../plugins/browser-pane/read-format');
+
+const MENU = ['Acasa', 'Avizier', 'Plati', 'Contact', 'Setari', 'Iesire'];
+const FOOT = ['Termeni', 'Confidentialitate', 'Ajutor', '© 2026 e-bloc', 'v1.2'];
+const page = (mid, top = MENU.slice(0, 3), bottom = FOOT) => [...top, ...mid, ...bottom].join('\n');
+
+test('read-format: chromeStrip table', () => {
+  const b = page(['Factura mai', '120 lei'], MENU.slice(0, 3), FOOT);
+  assert.deepStrictEqual(chromeStrip(null, b), { text: b, top: 0, bottom: 0 });
+  assert.deepStrictEqual(chromeStrip(b, b), { text: b, top: 0, bottom: 0 });
+  const a = page(['Factura aprilie', '98 lei', 'restanta']);
+  assert.deepStrictEqual(chromeStrip(a, b), { text: 'Factura mai\n120 lei', top: 3, bottom: 5 });
+  const a2 = page(['x'], MENU.slice(0, 2), ['f1', 'f2']);
+  const b2 = page(['y'], MENU.slice(0, 2), ['f1', 'f2']);
+  assert.deepStrictEqual(chromeStrip(a2, b2), { text: b2, top: 0, bottom: 0 });
+  const long = Array.from({ length: CHROME_MAX_LINES + 5 }, (_, i) => `menu ${i}`);
+  const r = chromeStrip(page(['old'], long, []), page(['new'], long, []));
+  assert.strictEqual(r.top, CHROME_MAX_LINES);
+  assert.strictEqual(r.bottom, 0);
+  assert.strictEqual(r.text, ['menu 40', 'menu 41', 'menu 42', 'menu 43', 'menu 44', 'new'].join('\n'));
+  const prevWs = ['Acasa', '', '  Avizier  ', 'Plati', 'old body', 'Termeni', 'Ajutor', 'v1.2'].join('\n');
+  const curWs = ['Acasa', 'Avizier', '   ', 'Plati', '', 'new line 1', '', 'new line 2', '', 'Termeni', '', 'Ajutor', 'v1.2'].join('\n');
+  assert.deepStrictEqual(chromeStrip(prevWs, curWs), { text: 'new line 1\n\nnew line 2', top: 3, bottom: 3 });
+});
+
+test('read-format: stripped and loading header rows appear only when set, after title:', () => {
+  const plain = fmt({}).content.split('\n');
+  assert.ok(!plain.some((l) => /^(stripped|loading):/.test(l)));
+  assert.strictEqual(fmt({}).stripped, false);
+  assert.strictEqual(fmt({}).loading, false);
+  const s = formatRead(RAW, { service: 'utility', strip: { top: 6, bottom: 4 } });
+  assert.strictEqual(s.content.split('\n')[3], 'stripped: 6 lines at top, 4 at bottom (same as your last read of utility)');
+  assert.strictEqual(s.stripped, true);
+  assert.ok(!formatRead(RAW, { service: 'utility', strip: { top: 0, bottom: 0 } }).content.includes('stripped:'));
+  const l = formatRead({ ...RAW, loading: { active: true, inflight: 2, ms: 120 } }, { service: 'utility' });
+  assert.strictEqual(l.content.split('\n')[3],
+    'loading: yes (2 requests in flight) — the page may still be filling in; [agent:browser wait utility] then read again');
+  assert.strictEqual(l.loading, true);
+  const idle = formatRead({ ...RAW, loading: { active: false, inflight: 0, ms: 9000 }, busy: { count: 0, text: '' } }, { service: 'utility' });
+  assert.ok(!idle.content.includes('loading:'));
+  assert.strictEqual(idle.loading, false);
+  const b = formatRead({ ...RAW, busy: { count: 2, text: 'INCARCA...' } }, { service: 'utility' });
+  assert.strictEqual(b.content.split('\n')[3], 'loading: page shows "INCARCA..." (2 busy element(s))');
+  assert.strictEqual(b.loading, true);
+});
