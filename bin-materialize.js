@@ -39,4 +39,21 @@ function materializeExecScripts({ root, srcDir = __dirname, files = EXEC_SCRIPTS
   return { binDir, copied };
 }
 
-module.exports = { EXEC_SCRIPTS, materializeExecScripts };
+const SEAT_VERB_SRC = 'cli/bin/clodex.js';
+const SEAT_VERB_NAME = 'clodex';
+
+function materializeSeatVerb({ root, srcDir = __dirname, log } = {}) {
+  const binDir = path.join(root, 'bin');
+  const dest = path.join(binDir, SEAT_VERB_NAME);
+  try {
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(dest, fs.readFileSync(path.join(srcDir, SEAT_VERB_SRC)));
+    fs.chmodSync(dest, 0o755);
+    return { binDir, path: dest };
+  } catch (e) {
+    if (log) log.info('bin', `seat verb materialize skipped (${e && e.message})`);
+    return { binDir, path: null };
+  }
+}
+
+module.exports = { EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, materializeExecScripts, materializeSeatVerb };
