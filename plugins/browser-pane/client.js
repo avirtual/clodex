@@ -55,6 +55,7 @@ function createClient(opts) {
   let idleTimer = null;
   let beatTimer = null;
   let stderrTail = [];
+  let exitWaiters = [];
   let logCount = 0;
   let logWindowAt = 0;
 
@@ -157,6 +158,9 @@ function createClient(opts) {
       }
     }
     onExit({ code, signal, expected, quit });
+    const waiters = exitWaiters;
+    exitWaiters = [];
+    for (const w of waiters) w();
   }
 
   function kill(sig) {
@@ -192,6 +196,7 @@ function createClient(opts) {
   }
 
   function start() {
+    if (proc && state === 'stopping') return new Promise((r) => exitWaiters.push(r)).then(() => start());
     if (proc && state === 'running') return Promise.resolve();
     if (startP) return startP.promise;
     const spec = opts.spawnSpec();
@@ -282,6 +287,7 @@ function createClient(opts) {
 
   function stop() {
     if (!proc) return;
+    state = 'stopping';
     expectExit = true;
     send({ id: nextId++, op: 'shutdown', args: {} });
   }

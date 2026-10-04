@@ -11,6 +11,7 @@ const MAX_WINDOWS = 8;
 const PIN_DEBOUNCE_MS = 2000;
 const QUIT_CAP_MS = 2000;
 const OPEN_IDLE_MS = 15000;
+const LOAD_TIMEOUT_MS = 25000;
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const CODES = new Set(['NOT_OPEN', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL']);
 
@@ -75,7 +76,7 @@ function run(electron, ctx) {
     else app.dock.hide();
   };
 
-  const busyTotal = () => [...services.values()].reduce((n, s) => n + s.busy, 0);
+  const busyTotal = () => [...services.values()].reduce((n, s) => n + s.busy + s.reading, 0);
   const blockerSync = () => {
     const busy = busyTotal() > 0;
     if (busy && blockerId == null) blockerId = powerSaveBlocker.start('prevent-app-suspension');
@@ -137,7 +138,7 @@ function run(electron, ctx) {
     layout();
     win.on('resize', layout);
     const wc = view.webContents;
-    const svc = { name, win, view, wc, ses, doc: 0, busy: 0, blank: wc.loadURL('about:blank').catch(() => {}) };
+    const svc = { name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, blank: wc.loadURL('about:blank').catch(() => {}) };
     wc.on('did-navigate', () => { svc.doc += 1; render(svc); });
     wc.on('did-navigate-in-page', () => render(svc));
     const block = (e, url) => {
@@ -184,12 +185,13 @@ function run(electron, ctx) {
     blockerSync();
     let status = null;
     const onNav = (_e, _url, code) => { status = code; };
-    svc.wc.on('did-navigate', onNav);
     try {
       await svc.blank;
+      svc.wc.on('did-navigate', onNav);
       ensureCdp(svc);
       let navErr = null;
-      const { idle } = await driver.act(svc.wc, () => svc.wc.loadURL(url).catch((e) => { navErr = e; }), { timeoutMs: OPEN_IDLE_MS });
+      const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
+      const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS });
       if (svc.wc.isDestroyed()) throw codedError('CLOSED', `the operator closed the ${name} window — open it again`);
       if (navErr && status == null) throw codedError('NAV_FAILED', `NAV_FAILED: ${navErr.code || navErr.message} for ${url}`);
       const login = await probe(svc);
@@ -209,6 +211,17 @@ function run(electron, ctx) {
     if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) {
       throw codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
     }
+    svc.reading += 1;
+    blockerSync();
+    try {
+      return await readPage(name, svc, args);
+    } finally {
+      svc.reading -= 1;
+      blockerSync();
+    }
+  }
+
+  async function readPage(name, svc, args) {
     const wc = svc.wc;
     const main = args.scope === 'main';
     const contentType = await inMain(wc, scripts.CONTENT_TYPE);

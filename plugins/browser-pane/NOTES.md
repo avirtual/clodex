@@ -8,7 +8,7 @@ comments; these entries do that job, keyed by file and symbol.
 
 `executeJavaScript` never settles when the document is replaced mid-call. Every
 page call is raced against a timeout (8 s for scripts); `child.js` retries a
-read once when it comes back empty.
+read once when it times out (null).
 
 ## driver.js — armIdle
 

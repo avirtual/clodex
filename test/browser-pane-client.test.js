@@ -35,7 +35,7 @@ function fakeClock() {
   };
 }
 
-function boot(t, { mode = 'normal' } = {}) {
+function boot(t, { mode = 'normal', timeouts = {} } = {}) {
   const dir = mkTmpRoot('clodex-bp-client-');
   const state = { mode };
   const engine = createPluginHostEngine({
@@ -55,7 +55,7 @@ function boot(t, { mode = 'normal' } = {}) {
   const client = createClient({
     spawnSpec: () => host.runtime.electronChild(path.join(PLUGIN_DIR, 'child.js'), ['--cxb-data=' + path.join(dir, 'chromium'), '--cxb-proto=1']),
     clock,
-    timeouts: { heartbeatMs: 1e12 },
+    timeouts: { heartbeatMs: 1e12, ...timeouts },
     log: { info: (m) => logs.push(m), error: (m) => logs.push(m) },
     onExit: (e) => { exits.push(e); if (exitWaiter) { const w = exitWaiter; exitWaiter = null; w(e); } },
   });
@@ -150,8 +150,32 @@ test('client: 15 min without commands sends shutdown, and that exit is not a cra
   assert.strictEqual(client.state(), 'off');
 });
 
+test('client: a request during the idle shutdown waits for the exit and respawns', async (t) => {
+  const { client, clock } = boot(t);
+  const first = (await client.request('echo', { v: 1 })).pid;
+  clock.advance(15 * 60 * 1000);
+  assert.strictEqual(client.state(), 'stopping');
+  const r = await client.request('echo', { v: 2 });
+  assert.strictEqual(r.echo, 2);
+  assert.notStrictEqual(r.pid, first);
+});
+
+test('client: a missed heartbeat kills the child and counts as a crash', async (t) => {
+  const { client, clock, exits, nextExit } = boot(t, { mode: 'ignore-ping', timeouts: { heartbeatMs: 30000 } });
+  await client.request('echo', { v: 1 });
+  const exited = nextExit();
+  clock.advance(30000);
+  await new Promise((r) => setImmediate(r));
+  clock.advance(9999);
+  assert.strictEqual(client.state(), 'running');
+  clock.advance(1);
+  await exited;
+  assert.strictEqual(exits[0].signal, 'SIGKILL');
+  assert.strictEqual(exits[0].expected, false);
+});
+
 test('client: dispose sends shutdown, then SIGTERM after 3 s', async (t) => {
-  const { client, clock, nextExit } = boot(t, { mode: 'ignore-shutdown' });
+  const { client, clock, logs, nextExit } = boot(t, { mode: 'ignore-shutdown' });
   await client.request('echo', { v: 1 });
   const exited = nextExit();
   client.dispose();
@@ -162,6 +186,7 @@ test('client: dispose sends shutdown, then SIGTERM after 3 s', async (t) => {
   const e = await exited;
   assert.strictEqual(e.signal, 'SIGTERM');
   assert.strictEqual(e.expected, true);
+  assert.ok(logs.includes('child: got shutdown'));
   await assert.rejects(client.request('echo', {}), { message: 'browser pane is disabled' });
 });
 

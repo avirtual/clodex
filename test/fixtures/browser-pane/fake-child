@@ -25,6 +25,7 @@ let held = null;
 let doc = 1;
 
 function answer(f) {
+  if (f.op === 'ping' && mode === 'ignore-ping') return undefined;
   if (f.op === 'ping') return send({ id: f.id, ok: true, result: { uptimeMs: 1 } });
   if (f.op === 'shutdown') {
     process.stderr.write('got shutdown\n');
