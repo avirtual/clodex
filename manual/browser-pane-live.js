@@ -411,7 +411,7 @@ async function overlayStep(emit, base) {
   check('a plain screenshot right after says nothing about numbers', /screenshot overlay \d+×\d+/.test(plain) && !/numbers/.test(plain));
   const probe = String(drawn);
   const hit = await emit(`[agent:browser inspect overlay --text="${probe}"]`);
-  check(`the DOM has no overlay badge left (--text="${probe}" finds no element inside #__cx_numbers)`, !/__cx_numbers/.test(hit) && !/matches \d+ visible elements/.test(hit));
+  check(`the DOM has no overlay badge left (--text="${probe}" finds no element inside #__cx_numbers)`, !/__cx_numbers/.test(hit) && !hit.includes(`] "${probe}"`) && !hit.includes(`element "${probe}"`));
 }
 
 async function policyStep(emit, base, engine) {
