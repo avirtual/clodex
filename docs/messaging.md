@@ -601,6 +601,42 @@ stdin message.
 - The composer shows queued items as dimmed `.seat-outbox-row`s, fed by
   `transcript:pull` (`outbox`) and refreshed on `transcript-changed`.
 
+## 7b. Subagent channel (intent-socket.js)
+
+A subagent's text never reaches the intent scanner (§1), so Claude and Codex
+seats get a request/response channel whose reply is the caller's own tool result.
+
+- **Socket:** `run/<name>/intent.sock` (kind `intentSocket`), mode 0600, bound by
+  `_startIntentSocket` after the seat is registered, closed in `_cleanup`, and
+  unlinked with `run/<name>/` on every exit path (`dropRunDir`).
+- **Env:** `CLODEX_SEAT`, `CLODEX_INTENT_SOCK`, `CLODEX_INTENT_CRED` (32 random
+  bytes, hex; held in memory as the non-enumerable `session.intentCred` and in
+  the CLI env only). No KEY/SECRET/TOKEN in the names, so Codex's default shell
+  env excludes keep them. `PATH` gets `~/.clodex/bin` prepended, where
+  `materializeSeatVerb` stamps `cli/bin/clodex.js` as an executable `clodex`.
+- **Wire:** one JSON line `{cred, intent, agentId?, agentType?}` in, one JSON line
+  `{ok, reply}` or `{ok:false, error}` out. Wrong cred → `unauthorized`; over 64KB
+  → `request too large`; a ninth concurrent connection → `busy`; 10 s → `timeout`.
+  One intent per request, parsed by `_extractIntents` (same body rules as PTY text).
+- **Reply capture:** `_handleIntent(name, intent, {replyTo, fromLabel})` runs the
+  unchanged handler inside an AsyncLocalStorage scope; `_injectText` to the
+  sender seat goes to `replyTo` instead of the PTY until the response is sent.
+  Anything later (a dm's answer, an exec run's result) takes its normal path to
+  the seat's main conversation, and a call with no captured acknowledgement
+  answers `sent to <target>; a reply arrives in the seat's main conversation`.
+- **Subagent filter:** a request with an `agentId` other than the seat's own
+  `sessionId` is a subagent call and passes `subagentAllows` (intent-registry.js):
+  `dm` (delivered as `<seat>/agent`), `who`, `name`, `task list`, `exec <cmd>` for
+  the seat's granted commands, `memory recall|list`. Everything else answers
+  `not available to a subagent: <verb>`. No `agentId` = the seat's full catalog.
+- **Verb:** `clodex '<intent>' [body…]` or `clodex -` (stdin). Forwards
+  `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
+  agent-id env var as of 2.1.289). Exit 0 ok, 1 error, 2 usage,
+  3 unauthorized/not available, 4 no socket, 5 timeout.
+- **Deferred to ticket B:** the PreToolUse stamp that makes `agentId`
+  trustworthy, the SubagentStart briefing and the SubagentStop late-reply
+  handoff. Until then the filter trusts the caller's claim.
+
 ## Invariants (do not break)
 
 - Column-1 anchoring: the scanner sees one trimmed line at a time; anything

@@ -374,6 +374,10 @@ bundle), whose packaged form is the Docker image under
 - **intent-segments.js** — `scanIntentLines`: the greedy body loop split out
   of `_extractIntents`, returning prose / intent / near-miss / end segments
   over a turn's lines. Shared by session-manager and transcript-records.
+- **intent-socket.js** — the per-seat subagent channel: credential mint, seat
+  env, the unix-socket server (auth, 64KB cap, 8 connections, timeout) and the
+  request handler (one intent, subagent filter, captured reply). Wired by
+  session-manager `_startIntentSocket`; see docs/messaging.md §7b.
 - **intent-glyphs.js** — the glyph vocabulary: `glyphFor`, `headOf` (glyph,
   label, target, chips for a card head), `REPLY_GLYPHS` for runtime replies,
   and the plugin-glyph check `registerIntent` applies. Main-side, no deps.

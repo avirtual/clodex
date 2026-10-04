@@ -10,6 +10,7 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Subagents can talk to Clodex: every Claude and Codex seat now exposes a per-seat socket and a `clodex` shell verb (`clodex '[agent:dm reviewer] which file holds the pin'`) whose reply comes back as the caller's own tool result, so a subagent can dm, ask `who`, list the board and run the seat's granted commands without the main agent relaying; a subagent is refused every lead and operator verb (task add/accept, shout, reboot, spawn, team…).
 
 ## Unreleased
 

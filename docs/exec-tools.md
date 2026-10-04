@@ -183,6 +183,9 @@ Two spawn-time grants (both ride templates / persisted config):
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 
+A subagent reaches the same grants through the seat's `clodex` shell verb, limited to
+the seat's `execCommands` (docs/messaging.md §7b).
+
 ## Terminal commands inside an open session
 
 `[agent:term exec]` is the other capability an operator grants a seat, and since

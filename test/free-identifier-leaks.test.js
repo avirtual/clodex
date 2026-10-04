@@ -72,6 +72,7 @@ const SCANNED_MODULES = [
   'electron-child.js',
   'intent-catalog.js',
   'intent-registry.js',
+  'intent-socket.js',
   'prompt-rails.js',
   'exec-schema.js',
   // The Library menus' category layout (t793). A pure array→array leaf: the rows

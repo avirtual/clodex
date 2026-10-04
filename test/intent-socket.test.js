@@ -201,6 +201,12 @@ function seatHarness() {
     log: logger,
     registry: { listPeers: async () => [], getPeer: async () => null, register: () => {}, unregister: () => {} },
     getPeerManager: () => null,
+    peerStatusLabel: require('../proxy-util').peerStatusLabel,
+    parseIntent: require('../intent-scanner').parseIntent,
+    looksLikeIntent: require('../intent-scanner').looksLikeIntent,
+    execBodyCap: 64 * 1024,
+    isFilenameToken: require('../exec-schema').isFilenameToken,
+    parseAndValidate: require('../exec-schema').parseAndValidate,
     getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null }),
   });
   m._broadcast = (...a) => broadcasts.push(JSON.stringify(a));
