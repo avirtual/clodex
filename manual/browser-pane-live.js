@@ -377,12 +377,12 @@ async function rowsStep(emit, base) {
   const delB = b.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
   check('the reordered rows get new numbers', delB.length === 2 && !delB.some((n) => del.includes(n)));
   check('nothing was deleted', /\ntitle: Rows\n/.test(bFile));
-  await emit(`[agent:browser open hn] ${base}/hn?p=1`);
-  const h1 = fileOf(await emit('[agent:browser read hn]'));
-  await emit(`[agent:browser open hn] ${base}/hn?p=2`);
-  const h2r = await emit('[agent:browser read hn]');
+  await emit(`[agent:browser open rows] ${base}/hn?p=1`);
+  const h1 = fileOf(await emit('[agent:browser read rows]'));
+  await emit(`[agent:browser open rows] ${base}/hn?p=2`);
+  const h2r = await emit('[agent:browser read rows]');
   const h2 = fileOf(h2r);
-  await emit('[agent:browser read hn]');
+  await emit('[agent:browser read rows]');
   const more = (c) => (els(c).find((l) => /link More/.test(l)) || '');
   const items = (c) => els(c).filter((l) => /link item/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
   console.log(`    p=1 ${more(h1)} · p=2 ${more(h2)}`);
@@ -489,9 +489,7 @@ async function main() {
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
   if (['pay', 'clickables', 'effects', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'stable') {
-      for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep, (e, b) => policyStep(e, b, engine)]) await step(emit, base);
-      await handoverStep(engine, emit, nextInject, base);
-      await overlayStep(emit, base);
+      for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
     else if (process.env.CXB_ONLY === 'overlay') await overlayStep(emit, base);
     else if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
