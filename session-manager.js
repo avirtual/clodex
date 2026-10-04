@@ -5207,27 +5207,6 @@ function createSessionManager(deps) {
     }
 
 
-    _startIntentSocket(session, channel) {
-      const name = session.name;
-      Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
-      const handle = createIntentRequestHandler({
-        seat: name,
-        parse: (text) => this._extractIntents(text, { receiptsFor: name }),
-        entryOf: () => getPersistence().get(name),
-        sessionIdOf: () => session.sessionId || null,
-        allows: subagentAllows,
-        dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
-      });
-      const server = createIntentSocketServer({
-        net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred, handle, log,
-      });
-      session.intentSocket = server;
-      return server.start().catch((e) => {
-        log.warn('intent-socket', `${name}: socket not bound (${e.message})`);
-        if (session.intentSocket === server) session.intentSocket = null;
-      });
-    }
-
     async _handleIntent(senderName, intent, opts = {}) {
       if (!opts || typeof opts.replyTo !== 'function') return this._handleIntentBody(senderName, intent);
       const scope = { session: this.sessions.get(senderName) || null, replyTo: opts.replyTo, fromLabel: opts.fromLabel || null };
@@ -5593,6 +5572,27 @@ function createSessionManager(deps) {
       }
 
       if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
+    }
+
+    _startIntentSocket(session, channel) {
+      const name = session.name;
+      Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
+      const handle = createIntentRequestHandler({
+        seat: name,
+        parse: (text) => this._extractIntents(text, { receiptsFor: name }),
+        entryOf: () => getPersistence().get(name),
+        sessionIdOf: () => session.sessionId || null,
+        allows: subagentAllows,
+        dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+      });
+      const server = createIntentSocketServer({
+        net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred, handle, log,
+      });
+      session.intentSocket = server;
+      return server.start().catch((e) => {
+        log.warn('intent-socket', `${name}: socket not bound (${e.message})`);
+        if (session.intentSocket === server) session.intentSocket = null;
+      });
     }
 
     _dispatchPluginIntent(session, intent) {
