@@ -16,7 +16,10 @@ const DEFAULTS = {
   logBurst: 20,
 };
 
-const OP_DEADLINE_MS = { ping: 10000, open: 50000, read: 20000, shutdown: 5000 };
+const OP_DEADLINE_MS = {
+  ping: 10000, open: 50000, read: 20000, shutdown: 5000,
+  click: 90000, type: 90000, key: 90000, select: 90000, handback: 15000, show: 5000,
+};
 const STDERR_KEEP = 20;
 const HEADLESS = 'browser unavailable — this Clodex host has no Electron (headless); the browser pane needs the desktop app.';
 const CRASHED = 'browser unavailable — the child crashed 3 times; see the Clodex log';
@@ -286,17 +289,24 @@ function createClient(opts) {
     }));
   }
 
+  function escalate(p) {
+    const gone = () => p.exitCode != null || p.signalCode != null;
+    clock.setTimeout(() => {
+      if (gone()) return;
+      try { p.kill('SIGTERM'); } catch {}
+      clock.setTimeout(() => {
+        if (gone()) return;
+        try { p.kill('SIGKILL'); } catch {}
+      }, o.killMs);
+    }, o.termMs);
+  }
+
   function stop() {
     if (!proc) return;
-    const p = proc;
     state = 'stopping';
     expectExit = true;
     send({ id: nextId++, op: 'shutdown', args: {} });
-    clock.setTimeout(() => {
-      if (p !== proc) return;
-      kill('SIGTERM');
-      clock.setTimeout(() => { if (p === proc) kill('SIGKILL'); }, o.killMs);
-    }, o.termMs);
+    escalate(proc);
   }
 
   function dispose() {
@@ -304,17 +314,9 @@ function createClient(opts) {
     idleTimer = clear(idleTimer);
     beatTimer = clear(beatTimer);
     if (!proc) return;
-    const p = proc;
     expectExit = true;
     send({ id: nextId++, op: 'shutdown', args: {} });
-    clock.setTimeout(() => {
-      if (p.exitCode != null || p.signalCode != null) return;
-      try { p.kill('SIGTERM'); } catch {}
-      clock.setTimeout(() => {
-        if (p.exitCode != null || p.signalCode != null) return;
-        try { p.kill('SIGKILL'); } catch {}
-      }, o.killMs);
-    }, o.termMs);
+    escalate(proc);
   }
 
   return {

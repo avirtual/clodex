@@ -79,6 +79,81 @@ async function waitIdle(wc, opts = {}) {
   return (await armIdle(wc, opts)).wait(opts);
 }
 
+let synth = false;
+
+function S(wc, ev) {
+  synth = true;
+  try { wc.sendInputEvent(ev); } finally { synth = false; }
+}
+
+const isSynth = () => synth;
+
+const KEYS = {
+  Enter: { code: 'Return', char: '\r' },
+  Tab: { code: 'Tab' },
+  Escape: { code: 'Escape' },
+  Backspace: { code: 'Backspace' },
+  Delete: { code: 'Delete' },
+  ArrowUp: { code: 'Up' },
+  ArrowDown: { code: 'Down' },
+  ArrowLeft: { code: 'Left' },
+  ArrowRight: { code: 'Right' },
+  PageUp: { code: 'PageUp' },
+  PageDown: { code: 'PageDown' },
+  Home: { code: 'Home' },
+  End: { code: 'End' },
+  Space: { code: 'Space', char: ' ' },
+};
+
+function installFilters(wc, { driving, onOperator }) {
+  wc.on('before-input-event', (e, i) => {
+    if (synth) return;
+    if (driving()) { e.preventDefault(); return; }
+    if (i && (i.type === 'keyDown' || i.type === 'rawKeyDown')) onOperator();
+  });
+  wc.on('before-mouse-event', (e, m) => {
+    if (synth) return;
+    if (driving()) { e.preventDefault(); return; }
+    if (m && (m.type === 'mouseDown' || m.type === 'mouseWheel')) onOperator();
+  });
+}
+
+async function quietGate({ lastInputAt, quietMs = 3000, maxMs = 60000, shouldStop = null, now = Date.now, sleepFn = sleep, stepMs = 100 }) {
+  const t0 = now();
+  for (;;) {
+    if (shouldStop && shouldStop()) return 'stopped';
+    if (now() - lastInputAt() >= quietMs) return 'quiet';
+    if (now() - t0 >= maxMs) return 'busy';
+    await sleepFn(stepMs);
+  }
+}
+
+function click(wc, pt) {
+  const z = wc.getZoomFactor() || 1;
+  const x = Math.round(pt.x * z);
+  const y = Math.round(pt.y * z);
+  S(wc, { type: 'mouseMove', x, y });
+  S(wc, { type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  S(wc, { type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+}
+
+async function typeText(wc, text) {
+  for (const ch of String(text)) {
+    if (ch.codePointAt(0) > 0xffff) { await wc.insertText(ch); continue; }
+    S(wc, { type: 'keyDown', keyCode: ch });
+    S(wc, { type: 'char', keyCode: ch });
+    S(wc, { type: 'keyUp', keyCode: ch });
+  }
+}
+
+function pressKey(wc, name) {
+  const k = KEYS[name];
+  if (!k) throw new Error(`unknown key ${name}`);
+  S(wc, { type: 'keyDown', keyCode: k.code });
+  if (k.char) S(wc, { type: 'char', keyCode: k.char });
+  S(wc, { type: 'keyUp', keyCode: k.code });
+}
+
 async function act(wc, fn, opts = {}) {
   const idle = await armIdle(wc, opts);
   let r;
@@ -117,4 +192,7 @@ async function pinSessionCookies(ses, days = 30) {
   return n;
 }
 
-module.exports = { withTimeout, attachCdp, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS };
+module.exports = {
+  withTimeout, attachCdp, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS,
+  S, isSynth, installFilters, quietGate, click, typeText, pressKey, KEYS,
+};

@@ -94,6 +94,108 @@ function servicesReply(services, mirror) {
   return reply(`services: ${items.join(' │ ')}`);
 }
 
+function ago(ms) {
+  const secs = Math.max(0, Math.round(ms / 1000));
+  return secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
+}
+
+function clipUrl(url) {
+  const u = String(url || '');
+  return u.length > 160 ? u.slice(0, 159) + '…' : u;
+}
+
+const TEXT = {
+  lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
+  staleDoc: (service, url) => `${service} navigated since your last read (now ${url}) — numbers from that read are void; read again.`,
+  noElement: (service, n) => `no element [${n}] on ${service} any more (the page changed) — read again.`,
+  held: (service, reason) => `the operator has control of ${service} (${reason === 'takeover' ? 'takeover' : 'sign-in'}). Emit [agent:browser wait ${service}] and end your turn.`,
+  operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
+  passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
+  readFirst: (service) => `read ${service} first — numbers come from your read`,
+  notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
+  notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
+  takeover: ' · the operator took over during this command',
+  popup: ' · link opened a new window; followed it in this view',
+};
+
+function isGoogle(login) {
+  return !!(login && (login.idp === 'google' || login.googleRejected));
+}
+
+function signinKind(login) {
+  if (!login) return 'sign-in page';
+  if (login.password) return 'password field';
+  if (login.otp) return 'one-time code field';
+  if (login.captcha) return 'captcha';
+  if (login.idp) return `${login.idp} sign-in`;
+  return 'sign-in page';
+}
+
+function signinReply(service, login, url) {
+  if (isGoogle(login)) {
+    return reply(`sign-in on ${service} goes through Google (accounts.google.com), which refuses sign-in inside embedded browsers, so the operator probably cannot log in here. Tell the operator in one line and stop: they can try the portal's own email/password login, or download the files by hand. Do not ask for credentials.`);
+  }
+  return reply(`sign-in needed on ${service} (${signinKind(login)} at ${clipUrl(url)}). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait ${service}] and end your turn; the reply comes when the operator hands the window back.`);
+}
+
+function signinNotice(service, seat, url, login) {
+  if (isGoogle(login)) {
+    return {
+      title: `Browser: ${service} uses Google sign-in`,
+      body: 'Google refuses sign-in inside embedded browsers ("This browser or app may not be secure"). If the portal has its own email/password login, use it in the window and press Hand back; otherwise this service cannot be automated yet.',
+    };
+  }
+  return {
+    title: `Browser: sign in to ${service}`,
+    body: `${seat} opened ${url} and hit a sign-in page. Click "browser: needs you" in the status bar (or find the "${service} — Clodex Browser" window), sign in, then press "Hand back to agent". The agent never sees what you type.`,
+  };
+}
+
+function dropSuffix(labels) {
+  if (!labels.length) return '';
+  const n = labels.length;
+  return ` — dropped ${n} queued command${n === 1 ? '' : 's'} after it: ${labels.join(', ')}`;
+}
+
+function pageLabel(r) {
+  if (!r || !r.navigated) return 'same page';
+  return `navigated → ${r.url} (${JSON.stringify(String(r.title || ''))}) · numbers reset, read again`;
+}
+
+function actReply(sub, service, cmd, r) {
+  let head;
+  if (sub === 'click') head = `clicked ${service} [${cmd.n}] ${r.kind} ${JSON.stringify(String(r.label || ''))}`;
+  else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
+  else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;
+  else head = `pressed ${cmd.key} on ${service}`;
+  const parts = [head, pageLabel(r)];
+  const idle = idleLabel(r.idle);
+  if (idle) parts.push(idle);
+  let text = parts.join(' · ');
+  if (r.popup) text += TEXT.popup;
+  if (r.takeover) text += TEXT.takeover;
+  return reply(text);
+}
+
+function waitReply(service, r, forText) {
+  const secs = (Number(r.ms) / 1000).toFixed(1);
+  if (forText != null) {
+    return r.found ? reply(`${service} shows ${JSON.stringify(forText)} after ${secs}s`)
+      : reply(`${service} does not show ${JSON.stringify(forText)} after ${Math.round(r.ms / 1000)}s`);
+  }
+  if (r.ok) return reply(`${service} idle after ${secs}s`);
+  return reply(`${service} ${idleLabel(r)}`);
+}
+
+function handbackReply(service, frame) {
+  const signed = frame.login && frame.login.password ? 'still on a sign-in page' : 'signed in';
+  return reply(`the operator handed ${service} back · now ${frame.url || ''} (${JSON.stringify(String(frame.title || ''))}) · ${signed} · read to continue`);
+}
+
+function heldTimeout(service, ms) {
+  return reply(`the operator still has control of ${service} after ${ago(ms)} — emit [agent:browser wait ${service}] again, or end your turn`);
+}
+
 function replyDir(seat, root) {
   if (!SEAT_RE.test(String(seat || ''))) throw new Error(`bad seat name for a reply file: ${seat}`);
   return path.join(root || os.tmpdir(), 'clodex-browser-pane', seat);
@@ -140,5 +242,5 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 
 module.exports = {
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
-  PREFIX, REPLY_MAX,
+  PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
 };
