@@ -77,7 +77,7 @@ function createScheduler({
   const seats = new Map();
 
   const seatState = (name) => {
-    if (!seats.has(name)) seats.set(name, { current: null, lastDoc: {}, lastText: {} });
+    if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {} });
     return seats.get(name);
   };
 
@@ -111,10 +111,22 @@ function createScheduler({
 
   function grant(service, seat) {
     const s = svcState(service);
-    if (s.lease && s.lease.seat !== seat && holderActive(s)) throw new Error(replies.TEXT.driving(s.lease.seat, service));
+    if (s.lease && s.lease.seat !== seat && holderActive(s)) {
+      const holder = s.lease.seat;
+      const waiting = s.waiters.some((w) => w.seat === holder) && !(s.inflight && s.inflight.handle.name === holder) && !s.queue.some((j) => j.handle.name === holder);
+      throw new Error(replies.TEXT.driving(holder, service, waiting));
+    }
+    const prev = s.lease;
+    const prevCurrent = seatState(seat).current;
     s.lease = { seat, lastCmdAt: now() };
     seatState(seat).current = service;
-    return { service, seat };
+    return { service, seat, prev, prevCurrent };
+  }
+
+  function restoreLease(service, seat, prev, prevCurrent = null) {
+    const s = svcState(service);
+    if (s.lease && s.lease.seat === seat) s.lease = prev || null;
+    if (seatState(seat).current === service) seatState(seat).current = prevCurrent;
   }
 
   function leaseFree(s, seat) {
@@ -144,7 +156,7 @@ function createScheduler({
       lastSeat: seat,
       lastUrl: originPath(r.url),
       lastTitle: String(r.title || '').slice(0, 200),
-      login: storedLogin(r.login, t),
+      login: r.login == null && prev.login ? prev.login : storedLogin(r.login, t),
     }));
   }
 
@@ -195,14 +207,14 @@ function createScheduler({
     }
     const samePage = !!last && last.page === pageKey(raw && raw.url);
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
-      : !samePage ? last.elements : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
+      : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
     if (elBase) {
-      const e = elementStrip(elBase, raw.elements);
+      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys);
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
-    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, elBase, base };
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base };
     const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden });
-    if (raw && raw.doc != null) seatState(handle.name).lastDoc[service] = raw.doc;
+    if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);
     return replies.readReply(service, out, file, handle.type);
@@ -224,14 +236,14 @@ function createScheduler({
   }
 
   async function runAct(handle, service, cmd) {
-    const args = cmd.sub === 'click' && cmd.text != null ? {} : { expectDoc: seatState(handle.name).lastDoc[service] };
+    const args = {};
     let root = null;
     if (cmd.sub === 'click' && cmd.to != null) ({ root, dir: args.dir } = downloadDir(handle, service, cmd.to));
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
-    if (cmd.sub === 'key') { args.key = cmd.key; delete args.expectDoc; }
+    if (cmd.sub === 'key') args.key = cmd.key;
     const r = await client.request(cmd.sub, args, { service, seat: handle.name });
     const d = r.download;
     if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
@@ -240,7 +252,7 @@ function createScheduler({
   }
 
   async function runInspect(handle, service, cmd) {
-    const args = cmd.text != null ? {} : { expectDoc: seatState(handle.name).lastDoc[service] };
+    const args = {};
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.text != null) args.byText = cmd.text;
     const r = await client.request('inspect', args, { service, seat: handle.name });
@@ -256,15 +268,14 @@ function createScheduler({
   async function runDownload(handle, service, cmd) {
     const { root, dir } = downloadDir(handle, service, cmd.to);
     const args = { dir, as: cmd.as, n: cmd.n, url: cmd.url };
-    if (cmd.n != null) args.expectDoc = seatState(handle.name).lastDoc[service];
     const r = await client.request('download', args, { service, seat: handle.name, timeoutMs: DOWNLOAD_OP_MS });
     keepInside(root, r.file);
     if (r.held && !r.takeover) signin(service, r);
     return replies.downloadReply(service, cmd, r);
   }
 
-  async function runScreenshot(handle, service) {
-    const r = await client.request('screenshot', {}, { service, seat: handle.name, timeoutMs: SCREENSHOT_OP_MS });
+  async function runScreenshot(handle, service, cmd) {
+    const r = await client.request('screenshot', cmd && cmd.numbers ? { numbers: true } : {}, { service, seat: handle.name, timeoutMs: SCREENSHOT_OP_MS });
     const file = replies.writeReplyFile(handle.name, Buffer.from(String(r.jpeg || ''), 'base64'), { kind: 's', ext: 'jpg' });
     return replies.screenshotReply(service, r, file, handle.type);
   }
@@ -363,7 +374,7 @@ function createScheduler({
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
       return;
     }
-    if (needsRead(cmd) && seatState(handle.name).lastDoc[service] == null) {
+    if (needsRead(cmd) && !seatState(handle.name).hasRead[service]) {
       handle.inject(replies.errorReply(replies.TEXT.readFirst(service)));
       return;
     }
@@ -394,7 +405,7 @@ function createScheduler({
   }
 
   function onClosed(service) {
-    for (const st of seats.values()) { delete st.lastDoc[service]; delete st.lastText[service]; }
+    for (const st of seats.values()) { delete st.hasRead[service]; delete st.lastText[service]; }
     onState({ service, state: 'closed' });
   }
 
@@ -428,6 +439,7 @@ function createScheduler({
     grant,
     activeSeat,
     operatorOpened,
+    restoreLease,
     leaseHolder,
     NO_SERVICE,
   };

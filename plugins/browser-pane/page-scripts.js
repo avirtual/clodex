@@ -1,5 +1,7 @@
 'use strict';
 
+const keys = require('./keys');
+
 const ISOLATED_WORLD = 4242;
 const TEXT_MAX = 400000;
 const BUSY_SEL = '[aria-busy=true], .loading, .spinner, [class*=loading i], [class*=spinner i], [id*=loading i]';
@@ -9,6 +11,8 @@ const STD_SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[role=b
 const X_SEL = 'a:not([href]),[onclick],[tabindex]:not([tabindex="-1"])';
 const POINTER_SCAN_MAX = 3000;
 const LAYOUT_CELL_CHARS = 400;
+const VALUE_MAX = 200;
+const OVERLAY_ID = '__cx_numbers';
 
 const DEEP = `
   const deepAll = (root, test, out = []) => {
@@ -20,6 +24,7 @@ const DEEP = `
   };
   const upOf = (e) => e.parentElement || (e.parentNode && e.parentNode.host) || null;
   const scrollers = new Map();
+  const FIXED = {};
   const scrollerOf = (start) => {
     const d = document.documentElement;
     const se = document.scrollingElement || d;
@@ -30,14 +35,17 @@ const DEEP = `
       seen.push(p);
       const ps = getComputedStyle(p);
       if (/auto|scroll/.test(ps.overflowX + ' ' + ps.overflowY) && (p.scrollHeight > p.clientHeight || p.scrollWidth > p.clientWidth)) { found = p; break; }
+      if (ps.position === 'fixed') { found = FIXED; break; }
     }
     for (const q of seen) scrollers.set(q, found);
     return found;
   };
   const placedScroller = new Map();
+  const inViewport = r => r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
   const placed = (e, r, st) => {
-    if (st.position === 'fixed') return r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
+    if (st.position === 'fixed') return inViewport(r);
     const sc = scrollerOf(upOf(e));
+    if (sc === FIXED) return inViewport(r);
     if (!sc) {
       const se = document.scrollingElement || document.documentElement;
       return r.right + scrollX > 0 && r.bottom + scrollY > 0
@@ -114,29 +122,106 @@ function readText(main) {
 })()`;
 }
 
-function readInteractive(main) {
-  return `(() => {${DEEP}${ICON}
-  const sel = ${JSON.stringify(STD_SEL)};
-  const xsel = ${JSON.stringify(X_SEL)};
-  if (!window.__cxEls) { window.__cxEls = [null]; window.__cxOf = new WeakMap(); }
-  const clip = (s, n) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const numbering = (state) => {
+  const known = state && state.known && typeof state.known === 'object' ? state.known : {};
+  const next = Math.max(1, Number(state && state.next) | 0);
+  const learned = state && Array.isArray(state.volatile) ? state.volatile.map(String) : [];
+  return `${ICON}
+  ${keys.PAGE_SOURCE}
+  const known = ${JSON.stringify(known)};
+  const learned = ${JSON.stringify(learned)};
+  let next = ${next};
+  const assigned = {};
+  const fresh = [];
+  const clip = (s, n) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const labelOf = el => {
     if (el.labels && el.labels[0]) return el.labels[0].innerText;
     return el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder')
       || el.value || (el.querySelector('img[alt]') || {}).alt || el.getAttribute('name') || '';
   };
+  const kindOf = el => {
+    const tag = el.tagName.toLowerCase();
+    if (!el.matches(${JSON.stringify(STD_SEL)})) return 'clickable';
+    return el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
+  };
+  const partsOf = el => {
+    const tag = el.tagName.toLowerCase();
+    const kind = kindOf(el);
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      const btn = tag === 'input' && /^(button|submit|reset)$/.test(el.type);
+      const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || (btn ? el.value : '') || '';
+      return { kind, label: clip(label, 60), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
+    }
+    const label = clip(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''), 60);
+    if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
+    let raw = '';
+    try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
+    return { kind, label, raw, href: normHref(el.href, location.origin, learned) };
+  };
+  const baseKeyOf = el => keyOf(partsOf(el));
+  let headings = null;
+  const boxText = new Map();
+  const contextOf = el => {
+    const box = el.closest('tr,li,article,[role=row],section');
+    if (box) {
+      if (!boxText.has(box)) boxText.set(box, box.innerText || box.textContent || '');
+      return boxText.get(box);
+    }
+    if (!headings) headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')];
+    let h = null;
+    for (const x of headings) {
+      if (x.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) h = x;
+      else break;
+    }
+    return h ? h.innerText || h.textContent || '' : '';
+  };
+  const storedKeysOf = (els, bases = els.map(baseKeyOf)) => {
+    const count = new Map();
+    for (const b of bases) count.set(b, (count.get(b) || 0) + 1);
+    const ord = new Map();
+    return bases.map((b, i) => {
+      if (count.get(b) === 1) return b;
+      const o = (ord.get(b) || 0) + 1;
+      ord.set(b, o);
+      return storedKey(b, o, contextOf(els[i]));
+    });
+  };
+  const place = (el, s, listed = true) => {
+    let n = known[s];
+    if (n == null) { n = next++; known[s] = n; assigned[s] = n; if (listed) fresh.push(n); }
+    window.__cxEls[n] = new WeakRef(el);
+    window.__cxKeys[n] = s;
+    window.__cxOf.set(el, n);
+    el.setAttribute('data-cx', String(n));
+    return n;
+  };
+  const verify = (n, expect) => {
+    const ref = window.__cxEls && window.__cxEls[n];
+    const el = ref && ref.deref();
+    if (!el || !el.isConnected) return null;
+    const k = window.__cxKeys && window.__cxKeys[n];
+    if (k == null || k !== expect) return 'ambiguous';
+    const p = parseStored(k);
+    const now = p.ordinal ? storedKey(baseKeyOf(el), p.ordinal, contextOf(el)) : baseKeyOf(el);
+    return now === k ? 'ok' : 'ambiguous';
+  };
+  const resetTable = () => {
+    for (const r of Object.values(window.__cxEls || {})) { const e = r && r.deref(); if (e) e.removeAttribute('data-cx'); }
+    window.__cxEls = {}; window.__cxKeys = {}; window.__cxOf = new WeakMap();
+  };`;
+};
+
+function readInteractive(main, state) {
+  return `(() => {${DEEP}${numbering(state)}
+  const sel = ${JSON.stringify(STD_SEL)};
+  const xsel = ${JSON.stringify(X_SEL)};
+  resetTable();
   const mainRoot = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
   const inScope = el => {
     if (!mainRoot) return true;
     let n = el;
     while (n) { if (n === mainRoot) return true; n = n.parentNode || n.host; }
     return false;
-  };
-  const stamp = el => {
-    let n = window.__cxOf.get(el);
-    if (!n) { n = window.__cxEls.length; window.__cxEls.push(new WeakRef(el)); window.__cxOf.set(el, n); }
-    el.setAttribute('data-cx', String(n));
-    return n;
   };
   const SKIP = new Set(['HTML', 'BODY', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'OPTION', 'OPTGROUP', 'BR', 'META', 'LINK', 'TITLE']);
   let scans = 0;
@@ -159,7 +244,7 @@ function readInteractive(main) {
     for (let p = el.parentNode || el.host; p; p = p.parentNode || p.host) if (rows.has(p)) return true;
     return false;
   };
-  const out = []; const seen = new Set(); let truncated = false;
+  const items = []; const seen = new Set(); let listed = 0; let truncated = false;
   for (const el of cands) {
     if (!vis(el)) continue;
     const tag = el.tagName.toLowerCase();
@@ -169,6 +254,8 @@ function readInteractive(main) {
     let line = '';
     if (plain) {
       if (underRow(el)) continue;
+      const inner = el.querySelectorAll(sel);
+      if (inner.length === 1 && inner[0].matches('input,button,select,a[href]') && vis(inner[0])) continue;
       const label = clip(labelOf(el) || el.getAttribute('alt') || iconLabel(el), 60);
       if (tag === 'a' && !label) continue;
       if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
@@ -197,11 +284,22 @@ function readInteractive(main) {
     } else {
       line = clip(labelOf(el), 60);
     }
-    if (!inScope(el)) { stamp(el); continue; }
-    if (out.length >= ${ELEMENTS_MAX}) { truncated = true; stamp(el); continue; }
-    out.push('[' + stamp(el) + '] ' + kind + ' ' + line + (disabled ? ' [disabled]' : ''));
+    if (!inScope(el)) { items.push({ el, line: null }); continue; }
+    if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
+    listed += 1;
+    items.push({ el, line: kind + ' ' + line + (disabled ? ' [disabled]' : '') });
   }
-  return { lines: out, truncated };
+  const parts = items.map(i => partsOf(i.el));
+  const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
+  const out = []; const keys = {}; const descs = [];
+  items.forEach((it, i) => {
+    const n = place(it.el, stored[i], it.line != null);
+    keys[n] = stored[i];
+    const p = parts[i];
+    if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
+    if (it.line != null) out.push('[' + n + '] ' + it.line);
+  });
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, url: location.href };
 })()`;
 }
 
@@ -227,6 +325,12 @@ const KIND_LABEL = `${ICON}
 const REF = (n) => `const ref = window.__cxEls && window.__cxEls[${Number(n) | 0}];
   const el = ref && ref.deref();
   if (!el || !el.isConnected) return null;`;
+
+function check(n, expect, state) {
+  return `(() => {${numbering(state)}
+  return verify(${Number(n) | 0}, ${JSON.stringify(expect == null ? null : String(expect))});
+})()`;
+}
 
 function find(n) {
   return `(() => {
@@ -271,6 +375,7 @@ function inspect(n) {
   return {
     tag, id: el.id || '', classes: [...el.classList].slice(0, 5), kind, label, attrs,
     cursor: getComputedStyle(el).cursor,
+    marked: el.matches(${JSON.stringify(X_SEL)}),
     rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
     visible: vis(el), ancestors, html: clip(clone.outerHTML, 300),
   };
@@ -289,10 +394,10 @@ const PAGE_TEXT = `(() => {
   return t.replace(/[ \\t]+/g, ' ').split('\\n').map(l => l.trim()).filter(Boolean).join('\\n').slice(0, ${TEXT_MAX});
 })()`;
 
-function findText(text) {
+function findText(text, state) {
   const want = String(text).replace(/\s+/g, ' ').trim().toLowerCase();
-  return `(() => {${DEEP}
-  if (!window.__cxEls) { window.__cxEls = [null]; window.__cxOf = new WeakMap(); }
+  return `(() => {${DEEP}${numbering(state)}
+  if (!window.__cxEls || !window.__cxKeys) return { unstamped: true };
   const want = ${JSON.stringify(want)};
   const SKIP = new Set(['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'OPTION', 'OPTGROUP', 'SELECT', 'TEXTAREA']);
   const BUTTONS = new Set(['button', 'submit', 'reset']);
@@ -302,18 +407,24 @@ function findText(text) {
     return t.replace(/\\s+/g, ' ').trim();
   };
   const hits = deepAll(document, el => !SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
-  const stamp = el => {
-    let n = window.__cxOf.get(el);
-    const fresh = !n;
-    if (!n) { n = window.__cxEls.length; window.__cxEls.push(new WeakRef(el)); window.__cxOf.set(el, n); }
-    el.setAttribute('data-cx', String(n));
-    return { n, fresh };
-  };
-  return { count: hits.length, hits: hits.slice(0, 5).map(el => {
+  const top = hits.slice(0, 5);
+  const loose = top.filter(el => !window.__cxOf.get(el));
+  const pageBases = new Set(Object.values(window.__cxKeys).map(k => parseStored(k).base));
+  const bases = loose.map(baseKeyOf);
+  const dup = bases.map(b => pageBases.has(b) || bases.filter(x => x === b).length > 1);
+  const ord = new Map();
+  const storedOf = new Map(loose.map((el, i) => {
+    if (!dup[i]) return [el, bases[i]];
+    let o = (ord.get(bases[i]) || 0) + 1;
+    while (Object.values(window.__cxKeys).some(k => parseStored(k).base === bases[i] && parseStored(k).ordinal === o)) o += 1;
+    ord.set(bases[i], o);
+    return [el, storedKey(bases[i], o, contextOf(el))];
+  }));
+  return { count: hits.length, hits: top.map(el => {
     const t = own(el);
-    const { n, fresh } = stamp(el);
-    return { n, fresh, text: t.length > 60 ? t.slice(0, 59) + '…' : t };
-  }) };
+    const n = window.__cxOf.get(el) || place(el, storedOf.get(el));
+    return { n, fresh: fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+  }), assigned, next };
 })()`;
 }
 
@@ -330,7 +441,8 @@ function clear(n) {
 function value(n) {
   return `(() => {
   ${REF(n)}
-  return el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
+  const v = el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
+  return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
 }
 
@@ -370,9 +482,38 @@ const LOGIN_PROBE = `(() => {${DEEP}
   };
 })()`;
 
+const OVERLAY = `(() => {${DEEP}
+  const old = document.getElementById(${JSON.stringify(OVERLAY_ID)});
+  if (old) old.remove();
+  const layer = document.createElement('div');
+  layer.id = ${JSON.stringify(OVERLAY_ID)};
+  layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647';
+  let drawn = 0;
+  for (const [k, ref] of Object.entries(window.__cxEls || {})) {
+    const el = ref && ref.deref();
+    if (!el || !el.isConnected || !vis(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
+    const b = document.createElement('span');
+    b.textContent = k;
+    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;border:1px solid #fff;padding:0 2px;border-radius:2px;z-index:2147483647'
+      + ';left:' + Math.max(0, Math.round(r.left)) + 'px;top:' + Math.max(0, Math.round(r.top)) + 'px';
+    layer.appendChild(b);
+    drawn += 1;
+  }
+  (document.body || document.documentElement).appendChild(layer);
+  return new Promise(res => { setTimeout(() => res(drawn), 150); requestAnimationFrame(() => requestAnimationFrame(() => res(drawn))); });
+})()`;
+
+const OVERLAY_OFF = `(() => {
+  const layer = document.getElementById(${JSON.stringify(OVERLAY_ID)});
+  if (layer) layer.remove();
+  return !!layer;
+})()`;
+
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
+  ISOLATED_WORLD, TEXT_MAX, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
 };

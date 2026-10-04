@@ -110,9 +110,9 @@ test('replies: writing 55 keeps the 50 newest, and a file older than 24 h is pru
 }));
 
 test('replies: the T3 refusal texts, verbatim', () => {
-  assert.strictEqual(R.TEXT.staleDoc('utility', 'https://portal.example.com/x'),
-    'utility navigated since your last read (now https://portal.example.com/x) — numbers from that read are void; read again.');
-  assert.strictEqual(R.TEXT.noElement('utility', 12), 'no element [12] on utility any more (the page changed) — read again.');
+  assert.strictEqual(R.TEXT.noElement('utility', 12), 'no element [12] on utility on this page (hidden or gone) — read again or use --text');
+  assert.strictEqual(R.TEXT.ambiguousN('utility', 7, 'Delete', 'Factura 08 | 120 lei'),
+    '[7] on utility no longer points at one element (was "Delete" in "Factura 08 | 120 lei") — read again and use the new number');
   assert.strictEqual(R.TEXT.held('utility', 'login'),
     'the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.');
   assert.strictEqual(R.TEXT.operatorBusy('utility'),
@@ -184,7 +184,7 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'ab' }, { navigated: false, idle, changed: 'text removed' }),
     '[agent:browser] typed ebloc [2] (2 chars) · same page · idle 0.8s · changed: "text removed"');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
-    '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers reset, read again · idle 0.8s');
+    '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers kept where the page repeats · idle 0.8s');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),
     '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · value now "abc"');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: 'x', value: 'abc' }),
@@ -254,4 +254,20 @@ test('replies handover: the instruction clips at 400 chars with …, and the wor
   assert.ok(worst.length <= 800, String(worst.length));
   assert.ok(!/[\r\n]/.test(worst));
   assert.ok(worst.endsWith(`start with [agent:browser read ${'s'.repeat(32)}]`));
+  const quoted = R.handover('s'.repeat(32), `https://e.com/${'u'.repeat(400)}`, '"'.repeat(80), 'z'.repeat(1000));
+  assert.ok(quoted.length <= 800, String(quoted.length));
+  assert.ok(quoted.endsWith(`z… — start with [agent:browser read ${'s'.repeat(32)}]`));
+});
+
+test('replies: a numbered screenshot says how many numbers it drew; a plain one says nothing about numbers', () => {
+  assert.match(R.screenshotReply('ebloc', { width: 1280, height: 900, numbers: 7 }, '/tmp/s.jpg', 'claude'), /^\[agent:browser\] screenshot ebloc 1280×900 · 7 numbers drawn/);
+  assert.doesNotMatch(R.screenshotReply('ebloc', { width: 1280, height: 900 }, '/tmp/s.jpg', 'claude'), /numbers/);
+});
+
+test('replies: inspect renders an empty label as (icon), like read; a waiting holder is named as waiting', () => {
+  const r = { n: 3, tag: 'label', id: '', classes: [], kind: 'clickable', label: '', attrs: [], listeners: null, cursor: 'pointer', rect: {}, visible: true, ancestors: [], html: '' };
+  assert.strictEqual(R.inspectReply('ebloc', r).split('\n')[0], '[agent:browser] inspect ebloc [3]: label · clickable (icon)');
+  assert.strictEqual(R.inspectReply('ebloc', { ...r, tag: 'input', kind: 'input:text' }).split('\n')[0], '[agent:browser] inspect ebloc [3]: input · input:text ""');
+  assert.strictEqual(R.TEXT.driving('hand-b', 'utility', true), 'agent hand-b is waiting on utility — wait or ask it to release');
+  assert.strictEqual(R.TEXT.driving('hand-b', 'utility'), 'agent hand-b is driving utility — wait or ask it to release');
 });

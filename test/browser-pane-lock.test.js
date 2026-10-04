@@ -23,6 +23,7 @@ const ROWS = [
   ['deferred takeover beats sign-in', { ...DRIVING, takeover: true }, { type: 'done', signin: 'login' }, S('held', { reason: 'takeover' })],
   ['idle takeover → held', S('idle'), { type: 'takeover' }, S('held', { reason: 'takeover' })],
   ['idle sign-in from a read → held', S('idle'), { type: 'signin', reason: 'otp' }, S('held', { reason: 'otp' })],
+  ['takeover of a sign-in hold makes it the operator\'s', S('held', { reason: 'login' }), { type: 'takeover' }, S('held', { reason: 'takeover' })],
   ['held refuses gate', S('held', { reason: 'login' }), { type: 'gate', seat: 'clodex-hand', what: 'click [5]' }, S('held', { reason: 'login' })],
   ['handback sets suppression', S('held', { reason: 'login' }), { type: 'handback' }, S('idle', { suppress: true })],
   ['suppressed read sign-in stays idle', S('idle', { suppress: true }), { type: 'signin', reason: 'login' }, S('idle', { suppress: true })],

@@ -33,7 +33,7 @@ test('read-format: default page 1 is the text head then the elements, with exact
   assert.deepStrictEqual(lines.slice(1, 6), [
     'url: https://portal.example.com/bills',
     'title: My Bills — Example Utility',
-    'doc: 4 · elements: 5 (this page: [1]–[6]; numbers can skip) · mode: default · filter: none',
+    'doc: 4 · elements: 5 (numbers: stable per site; new since your last read: none) · mode: default · filter: none',
     'login: none',
     'frames: none',
   ]);
@@ -62,7 +62,7 @@ test('read-format: --filter is case-insensitive on text and elements and keeps n
     '== text ==', 'Statements for Sep 2026',
     '== elements ==', '[3] select Statement month = "September 2026" {September 2026|August 2026}',
   ]);
-  assert.match(out.content.split('\n')[3], /elements: 5 \(this page: \[3\]–\[3\]; numbers can skip\) · mode: default · filter: "SEP"$/);
+  assert.match(out.content.split('\n')[3], /elements: 5 \(numbers: stable per site; new since your last read: none\) · mode: default · filter: "SEP"$/);
 });
 
 test('read-format: login and frames lines report the raw probe', () => {
@@ -136,7 +136,7 @@ test('read-format: clickable element lines and one-line table rows pass through,
   const out = formatRead(raw, { service: 'ebloc' });
   assert.deepStrictEqual(bodyOf(out.content), ['== text ==', 'Avizier', 'Contor | Index precedent | Index curent', 'Apă rece | | 19,486', '| | Lista de plată 08/2026 11:09:38',
     '== elements ==', ...raw.elements]);
-  assert.match(out.content.split('\n')[3], /elements: 4 \(this page: \[1\]–\[24\]; numbers can skip\)/);
+  assert.match(out.content.split('\n')[3], /elements: 4 \(numbers: stable per site; new since your last read: none\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
     ['== text ==', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
 });
@@ -220,11 +220,52 @@ test('read-format: elementStrip hides lines whose number and key the previous re
   assert.deepStrictEqual(elementStrip([], cur), { lines: cur, hidden: 0 });
 });
 
+const K = require('../plugins/browser-pane/keys');
+const keyed = (lines, origin, learned) => {
+  const out = {};
+  for (const l of lines) {
+    const m = /^\[(\d+)\] (\S+) (.*?)(?: → (\S+))?$/.exec(l);
+    out[m[1]] = K.keyOf({ kind: m[2], label: m[3], href: m[4] ? K.normHref(origin + m[4], origin, learned) : '' });
+  }
+  return out;
+};
+
+test('read-format: elementStrip by stored key hides e-bloc t= repeats once t is learned, never HN items or pagination', () => {
+  const eb = 'https://www.e-bloc.ro';
+  const prev = ['[13] link Mobil → /index.php?page=1&tk=1791145507', '[14] link Avizier → /avizier'];
+  const cur = ['[13] link Mobil → /index.php?page=1&tk=1791145567', '[15] link Nou → /n'];
+  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, ['tk']), keyed(cur, eb, ['tk'])), { lines: ['[15] link Nou → /n'], hidden: 1 });
+  assert.deepStrictEqual(elementStrip(prev, cur, keyed(prev, eb, []), keyed(cur, eb, [])), { lines: cur, hidden: 0 });
+  const t = ['[13] link Mobil → /index.php?page=1&t=1791145507', '[9] link X → /x'];
+  const t2 = ['[13] link Mobil → /index.php?page=1&t=1791145567', '[10] link Y → /y'];
+  assert.deepStrictEqual(elementStrip(t, t2, keyed(t, eb, []), keyed(t2, eb, [])).hidden, 1);
+  const hn = 'https://news.ycombinator.com';
+  const a = ['[4] link item → /item?id=1', '[5] link More → /news?p=2', '[6] link new → /newest'];
+  const b = ['[4] link item → /item?id=2', '[5] link More → /news?p=3', '[7] link past → /front'];
+  assert.deepStrictEqual(elementStrip(a, b, keyed(a, hn, []), keyed(b, hn, [])), { lines: b, hidden: 0 });
+});
+
+test('read-format: elementStrip hides two same-label row links only when both repeat with the same context', () => {
+  const base = K.keyOf({ kind: 'link', label: 'hide', href: '/hide' });
+  const prev = ['[1] link hide → /hide', '[2] link hide → /hide', '[3] link x → /x'];
+  const prevKeys = { 1: K.storedKey(base, 1, 'Story A'), 2: K.storedKey(base, 2, 'Story B'), 3: 'link\u0000x\u0000/x' };
+  assert.strictEqual(elementStrip(prev, prev, prevKeys, { ...prevKeys }).hidden, 2);
+  const cur = ['[1] link hide → /hide', '[4] link hide → /hide', '[3] link x → /x'];
+  const curKeys = { 1: prevKeys[1], 4: K.storedKey(base, 2, 'Story C'), 3: prevKeys[3] };
+  assert.deepStrictEqual(elementStrip(prev, cur, prevKeys, curKeys), { lines: ['[4] link hide → /hide'], hidden: 2 });
+});
+
+test('read-format: the elements header lists up to 10 new numbers then +N, and retired ones when any', () => {
+  const fresh = Array.from({ length: 13 }, (_v, i) => i + 20);
+  const r = formatRead({ ...RAW, fresh, retired: [3, 7] }, { service: 'utility' });
+  assert.ok(r.content.includes('(numbers: stable per site; new since your last read: [20], [21], [22], [23], [24], [25], [26], [27], [28], [29] (+3); retired: [3], [7]) · mode: default'));
+});
+
 test('read-format: a hidden count rides in the elements header and the result', () => {
   const r = formatRead({ ...RAW, elements: RAW.elements.slice(2) }, { service: 'utility', hidden: 2 });
   assert.strictEqual(r.hidden, 2);
   assert.strictEqual(r.elements, 5);
-  assert.ok(r.content.includes('\ndoc: 4 · elements: 5 (2 repeated, hidden — still clickable by number; read --all lists them; this page: [3]–[6]; numbers can skip) · mode: default'));
+  assert.ok(r.content.includes('\ndoc: 4 · elements: 5 (2 repeated, hidden — still clickable by number; read --all lists them; numbers: stable per site; new since your last read: none) · mode: default'));
   assert.strictEqual(fmt({}).hidden, 0);
   assert.ok(!fmt({}).content.includes('repeated'));
 });

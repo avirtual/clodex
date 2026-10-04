@@ -228,6 +228,40 @@ test('segment click with two windows opens a picker listing both, Escape closes 
   } finally { restore(); }
 });
 
+test('segment picker: a mousedown on a re-rendered segment with the same data-act is the anchor and does not close it', async () => {
+  const { body, fire, restore } = fakeDom();
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({ getAttribute: (k) => (k === 'data-act' ? 'browser' : null), getBoundingClientRect: () => ({ left: 10, top: 500 }) });
+    await tick();
+    assert.strictEqual(body.children.length, 1);
+    fire('mousedown', { target: { closest: (sel) => (sel === '[data-act="browser"]' ? {} : null) } });
+    assert.strictEqual(body.children.length, 1);
+    fire('mousedown', { target: { closest: () => null } });
+    assert.strictEqual(body.children.length, 0);
+    await tick();
+  } finally { restore(); }
+});
+
+test('Settings: a first-time operator.open refills the denylist section too', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const f = withSeats(makeRhost({ status: status('off'), 'services.list': { ok: true, services: [] }, 'operator.open': { ok: true, service: 'gas' } }), SEATS);
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const gets = () => f.invokes.filter((i) => i.method === 'denylist.get').length;
+    const before = gets();
+    const find = (cls) => walk(root).find((n) => n.className === cls);
+    find('bp-open-service').value = 'gas';
+    find('bp-open-url').value = 'https://gas.example.com/';
+    await find('bp-open-go').click();
+    await tick();
+    assert.strictEqual(gets(), before + 1);
+  } finally { restore(); }
+});
+
 test('Settings: the open row invokes operator.open, and an open window row hands over with seat and instruction', async () => {
   const { root, restore } = fakeDom();
   try {

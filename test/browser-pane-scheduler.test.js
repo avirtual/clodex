@@ -75,7 +75,7 @@ function harness(script = {}, extra = {}) {
 }
 
 const OPENED = '[agent:browser] opened utility · 200 · "Bills" · https://portal.example.com/bills · login: none · idle 1.0s · next: read';
-const READ_REPLY = '[agent:browser] read utility · page 1/1 · 1 elements · ≈87 tok → @FILE';
+const READ_REPLY = '[agent:browser] read utility · page 1/1 · 1 elements · ≈92 tok → @FILE';
 const LEASE_40 = '[agent:browser] error: utility is in use by hand-a (last command 40s ago). It frees after 5 min without commands, when they emit [agent:browser release utility], or when their session ends.';
 const HELD = '[agent:browser] error: the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.';
 const HELD_STATE = { event: 'state', service: 'utility', state: 'held', reason: 'login', seat: 'hand-a', login: { password: true } };
@@ -140,9 +140,9 @@ test('scheduler: commands from the holder run one at a time in arrival order', a
     ['hand-a', '[agent:browser] pressed Tab on utility · same page · idle 0.4s'],
   ]);
   assert.deepStrictEqual(h.calls, [
-    ['hand-a', 'click', { expectDoc: 1, n: 1 }],
-    ['hand-a', 'type', { expectDoc: 1, n: 2, text: '1040', enter: true }],
-    ['hand-a', 'select', { expectDoc: 1, n: 3, option: 'August 2026' }],
+    ['hand-a', 'click', { n: 1 }],
+    ['hand-a', 'type', { n: 2, text: '1040', enter: true }],
+    ['hand-a', 'select', { n: 3, option: 'August 2026' }],
     ['hand-a', 'key', { key: 'Tab' }],
   ]);
 });
@@ -160,9 +160,9 @@ test('scheduler: a failure drops the same seat\'s queued commands and names them
   assert.deepStrictEqual(h.calls.map((c) => c[1]), ['select']);
 });
 
-test('scheduler: STALE_DOC from the child drops one queued command, singular', async () => {
-  const msg = 'utility navigated since your last read (now https://portal.example.com/x) — numbers from that read are void; read again.';
-  const h = harness({ click: () => { throw coded('STALE_DOC', msg); } });
+test('scheduler: a number absent after navigation reads no element [n] on <svc> on this page and drops one queued command, singular', async () => {
+  const msg = 'no element [4] on utility on this page (hidden or gone) — read again or use --text';
+  const h = harness({ click: () => { throw coded('NO_ELEMENT', msg); } });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 4]'], ['hand-a', '[agent:browser click 5]']]),
     [['hand-a', `[agent:browser] error: ${msg} — dropped 1 queued command after it: click 5`]]);
@@ -378,9 +378,9 @@ test('scheduler: a second read of the same site drops the repeated chrome; --all
   assert.ok(files[4].includes('Acasa'));
 });
 
-test('scheduler: after a navigation --text targets go through without a doc; a numbered click is still refused as stale', async () => {
+test('scheduler: after a navigation --text and numbered acts carry no doc; a number absent from the new page reads no element', async () => {
   let doc = 1;
-  const stale = (a) => { if (a.expectDoc != null && a.expectDoc !== doc) throw coded('STALE_DOC', 'utility navigated since your last read — read again.'); };
+  const stale = (a) => { if (a.n === 7 && doc !== 1 && a.byText == null) throw coded('NO_ELEMENT', 'no element [7] on utility on this page (hidden or gone) — read again or use --text'); };
   const h = harness({
     click: (a) => { stale(a); return { n: 7, kind: 'link', label: 'Avizier', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE, doc }; },
     inspect: (a) => {
@@ -393,10 +393,10 @@ test('scheduler: after a navigation --text targets go through without a doc; a n
   doc = 2;
   h.calls.length = 0;
   const out = await h.run([['hand-a', '[agent:browser click --text=Avizier]'], ['hand-a', '[agent:browser inspect --text=Avizier]'], ['hand-a', '[agent:browser click 7]']]);
-  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ byText: 'Avizier' }, { byText: 'Avizier' }, { expectDoc: 1, n: 7 }]);
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ byText: 'Avizier' }, { byText: 'Avizier' }, { n: 7 }]);
   assert.match(out[0][1], /^\[agent:browser\] clicked utility \[7\] link "Avizier"/);
   assert.match(out[1][1], /^\[agent:browser\] inspect utility \[7\]/);
-  assert.deepStrictEqual(out[2], ['hand-a', '[agent:browser] error: utility navigated since your last read — read again.']);
+  assert.deepStrictEqual(out[2], ['hand-a', '[agent:browser] error: no element [7] on utility on this page (hidden or gone) — read again or use --text']);
 });
 
 function siteHarness() {
@@ -424,7 +424,7 @@ test('scheduler: elements repeated from the previous read of the site are hidden
   const navB = NAV.map((l) => l.replace('t=1700000001', 't=1700000999'));
   const second = await read({ url: 'https://portal.example.com/b', text: 'B\nFactura mai', elements: [...navB, '[5] input:text Cauta', '[6] link Factura mai → /f/5', '[7] link Plati → /plati'] });
   assert.match(second.reply, / · 4 elements hidden → @FILE$/);
-  assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; this page: \[5\]–\[7\]; numbers can skip\)/);
+  assert.match(second.file, /\ndoc: 1 · elements: 7 \(4 repeated, hidden — still clickable by number; read --all lists them; numbers: stable per site; new since your last read: none\)/);
   assert.ok(second.file.includes('\n== elements ==\n[5] input:text Cauta\n[6] link Factura mai → /f/5\n[7] link Plati → /plati\n'));
   const again = await read(null);
   assert.ok(!/elements hidden/.test(again.reply));
@@ -479,7 +479,7 @@ test('scheduler: a --text read hides no elements, and a closed window forgets th
 
 test('scheduler grant: a free service is granted, the lease runs from the grant, and the first read needs no read', async () => {
   const h = harness();
-  assert.deepStrictEqual(h.sched.grant('utility', 'hand-a'), { service: 'utility', seat: 'hand-a' });
+  assert.deepStrictEqual((({ prev, prevCurrent, ...g }) => g)(h.sched.grant('utility', 'hand-a')), { service: 'utility', seat: 'hand-a' });
   assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', LEASE_40.replace('40s', '0s')]]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser read]']]), [['hand-a', READ_REPLY]]);
   h.advance(5 * 60 * 1000);
@@ -490,7 +490,7 @@ test('scheduler grant: an operator-held service with an idle leaseholder is gran
   const h = harness();
   await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.sched.onState({ event: 'state', service: 'utility', state: 'held', reason: 'takeover' });
-  assert.deepStrictEqual(h.sched.grant('utility', 'hand-a'), { service: 'utility', seat: 'hand-a' });
+  assert.deepStrictEqual((({ prev, prevCurrent, ...g }) => g)(h.sched.grant('utility', 'hand-a')), { service: 'utility', seat: 'hand-a' });
   h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser read utility]']]), [['hand-a', READ_REPLY]]);
 });
@@ -500,6 +500,17 @@ test('scheduler grant: a seat busy on the service refuses the grant, naming it',
   await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.sched.onState(HELD_STATE);
   await h.run([['hand-b', '[agent:browser wait utility]']]);
-  assert.throws(() => h.sched.grant('utility', 'hand-a'), { message: 'agent hand-b is driving utility — wait or ask it to release' });
+  assert.throws(() => h.sched.grant('utility', 'hand-a'), { message: 'agent hand-b is waiting on utility — wait or ask it to release' });
   assert.strictEqual(h.sched.activeSeat('utility'), 'hand-b');
+});
+
+test('scheduler restoreLease: a failed handover gives the lease back to the previous holder, only while the new seat holds it', async () => {
+  const h = harness();
+  await h.run([['hand-b', '[agent:browser open utility] https://portal.example.com/bills']]);
+  const g = h.sched.grant('utility', 'hand-a');
+  assert.strictEqual(g.prev.seat, 'hand-b');
+  h.sched.restoreLease('utility', 'hand-a', g.prev);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
+  h.sched.restoreLease('utility', 'hand-a', null);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', READ_REPLY]]);
 });

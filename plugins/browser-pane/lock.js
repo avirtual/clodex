@@ -38,6 +38,7 @@ function reduce(s, ev) {
       return s;
     case 'held':
       if (t === 'handback') return { ...released(s, 'idle'), suppress: true };
+      if (t === 'takeover' && s.reason !== 'takeover') return { ...s, reason: 'takeover' };
       return s;
     default:
       return s;

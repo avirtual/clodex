@@ -21,6 +21,8 @@ ${['Acasa', 'Avizier', 'Plati online', 'Index contoare', 'Mesaje', 'Contul meu']
 ${mid}<p>${title} al asociatiei de proprietari: cheltuieli comune, consumuri individuale, fond de rulment si fond de reparatii, defalcate pe apartament.</p>
 ${['Termeni si conditii', 'Confidentialitate', 'Ajutor', '© 2026 Asociatia'].map((m, i) => navLink(m, 10 + i)).join('')}</main>`;
 
+const rowsPage = (order) => `<title>Rows</title><main><table>${order.map((r) => `<tr><td>Factura ${r}</td><td><button onclick="document.title='deleted ${r}'">Delete</button></td></tr>`).join('')}</table></main>`;
+
 const PAGES = {
   '/dl': () => `<title>Downloads</title><main><a href="/att">Attachment</a> <a href="/inline.pdf">Inline PDF</a>
 <a href="/named-src" download="named-by-page.pdf">Named</a> <a href="/gated.pdf">Gated</a>
@@ -52,7 +54,10 @@ const PAGES = {
 <div onclick="document.title='div clicked'">Lista de plată 08/2026</div>
 <p><a onclick="window.open('/inline.pdf')">Lista de plată 07/2026 PDF</a></p>
 <table><tr id=prow style="cursor:pointer"><td>Factura iulie</td><td><b>120 lei</b></td></tr></table>
-<p><span>Duplicat</span> <span>Duplicat</span></p></main>
+<p><span>Duplicat</span> <span>Duplicat</span></p>
+<style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style>
+<label style="cursor:pointer"><input type="checkbox" class="sr-only">Tine-ma minte</label>
+<label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label></main>
 <script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
   },
   '/effects': () => {
@@ -92,6 +97,13 @@ const PAGES = {
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/policy': () => `<title>Policy</title><main><a href="/blocked/x">Blocked link</a>
 <button onclick="window.open('/blocked/p', '_blank')">Blocked popup</button></main>`,
+  '/rows-a': () => rowsPage(['A', 'B']),
+  '/rows-b': () => rowsPage(['B', 'A']),
+  '/hn': (req) => {
+    const p = Number(new URL(req.url, 'http://x').searchParams.get('p') || 1);
+    const items = [1, 2, 3].map((i) => `<li><a href="/item?id=${p * 10 + i}">item</a> story ${p * 10 + i}</li>`).join('');
+    return `<title>HN ${p}</title><main><ol>${items}</ol><a href="/hn?p=${p + 1}">More</a></main>`;
+  },
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
 
@@ -225,6 +237,10 @@ async function clickablesStep(emit, base) {
   check('an <a> without href is numbered', els.some((l) => /\] clickable "Lista de plată 07\/2026 PDF"$/.test(l)));
   check('a pointer-cursor row is numbered once', els.filter((l) => /Factura/.test(l)).length === 1 && !els.some((l) => /"120 lei"/.test(l)));
   check('select options are absent from the text', !/Luna 1 din arhivă/.test(text));
+  check('a pointer label around an sr-only checkbox is listed once, as the label', els.filter((l) => /Tine-ma minte/.test(l)).length === 1
+    && els.some((l) => /\] clickable "Tine-ma minte"$/.test(l)));
+  check('a label around a visible input button lists only the input', els.filter((l) => /Trimite index/.test(l)).length === 1
+    && els.some((l) => /\] input:button .*Trimite index/.test(l)));
   check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
   check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
@@ -349,6 +365,55 @@ async function offscreenStep(emit, base) {
   check('a quirks-mode page with body overflow-x hidden still lists the scrolled-to elements', q2.some((l) => /Jos pagina/.test(l)) && q2.some((l) => /Mijloc pagina/.test(l)));
 }
 
+async function rowsStep(emit, base) {
+  console.log('== 10b. a remembered Delete number never clicks the other row after the rows are reordered; pagination is not learned');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const els = (content) => content.split('\n').filter((l) => /^\[\d+\]/.test(l));
+  await emit(`[agent:browser open rows] ${base}/rows-a`);
+  const a = els(fileOf(await emit('[agent:browser read rows]')));
+  for (const l of a) console.log(`    ${l}`);
+  const del = a.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
+  check('two Delete buttons carry two numbers', del.length === 2 && del[0] !== del[1]);
+  await emit(`[agent:browser open rows] ${base}/rows-b`);
+  const refused = await emit(`[agent:browser click rows ${del[0]}]`);
+  check('row A\'s Delete number after the reorder is refused as ambiguous, naming row A',
+    new RegExp(`error: \\[${del[0]}\\] on rows no longer points at one element \\(was "Delete" in "Factura A`).test(refused));
+  const bFile = fileOf(await emit('[agent:browser read rows]'));
+  const b = els(bFile);
+  for (const l of b) console.log(`    ${l}`);
+  const delB = b.filter((l) => /\] button Delete$/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
+  check('the reordered rows get new numbers', delB.length === 2 && !delB.some((n) => del.includes(n)));
+  check('nothing was deleted', /\ntitle: Rows\n/.test(bFile));
+  await emit(`[agent:browser open rows] ${base}/hn?p=1`);
+  const h1 = fileOf(await emit('[agent:browser read rows]'));
+  await emit(`[agent:browser open rows] ${base}/hn?p=2`);
+  const h2r = await emit('[agent:browser read rows]');
+  const h2 = fileOf(h2r);
+  await emit('[agent:browser read rows]');
+  const more = (c) => (els(c).find((l) => /link More/.test(l)) || '');
+  const items = (c) => els(c).filter((l) => /link item/.test(l)).map((l) => /^\[(\d+)\]/.exec(l)[1]);
+  console.log(`    p=1 ${more(h1)} · p=2 ${more(h2)}`);
+  check('the More link on page 2 is listed with its own number, not hidden', !!more(h2) && more(h1).split(' ')[0] !== more(h2).split(' ')[0]);
+  check('the item links of the two pages keep different numbers', items(h1).length === 3 && items(h2).length === 3 && !items(h2).some((n) => items(h1).includes(n)));
+}
+
+async function overlayStep(emit, base) {
+  console.log('== 13. screenshot --numbers draws the read\'s visible numbers; a plain screenshot right after draws none');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open overlay] ${base}/clickables`);
+  const content = fileOf(await emit('[agent:browser read overlay]'));
+  const count = Number((/elements: (\d+) /.exec(content) || [])[1]);
+  const shot = await emit('[agent:browser screenshot overlay --numbers]');
+  const drawn = Number((/ · (\d+) numbers drawn/.exec(shot) || [])[1]);
+  console.log(`    read elements ${count} · drawn ${drawn}`);
+  check('the --numbers reply says N numbers drawn with N = the read\'s element count', count > 0 && drawn === count);
+  const plain = await emit('[agent:browser screenshot overlay]');
+  check('a plain screenshot right after says nothing about numbers', /screenshot overlay \d+×\d+/.test(plain) && !/numbers/.test(plain));
+  const probe = String(drawn);
+  const hit = await emit(`[agent:browser inspect overlay --text="${probe}"]`);
+  check(`the DOM has no overlay badge left (--text="${probe}" finds no element inside #__cx_numbers)`, !/__cx_numbers/.test(hit) && !hit.includes(`] "${probe}"`) && !hit.includes(`element "${probe}"`));
+}
+
 async function policyStep(emit, base, engine) {
   console.log('== 11. a global and a per-service denylist refuse open, page links and popups; an allow exception lets open through');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
@@ -428,8 +493,12 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen', 'handover', 'policy'].includes(process.env.CXB_ONLY)) {
-    if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
+  if (['pay', 'clickables', 'effects', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable'].includes(process.env.CXB_ONLY)) {
+    if (process.env.CXB_ONLY === 'stable') {
+      for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
+    } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
+    else if (process.env.CXB_ONLY === 'overlay') await overlayStep(emit, base);
+    else if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
     else if (process.env.CXB_ONLY === 'handover') await handoverStep(engine, emit, nextInject, base);
     else if (process.env.CXB_ONLY === 'policy') await policyStep(emit, base, engine);
     else if (process.env.CXB_ONLY === 'chrome') await chromeStep(emit, base);
@@ -529,7 +598,9 @@ async function main() {
   await effectsStep(emit, base, tmp);
   await chromeStep(emit, base);
   await offscreenStep(emit, base);
+  await rowsStep(emit, base);
   await handoverStep(engine, emit, nextInject, base);
+  await overlayStep(emit, base);
 
   engine.deactivate('browser-pane');
   await sleep(3000);

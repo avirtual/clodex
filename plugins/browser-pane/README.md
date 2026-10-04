@@ -133,6 +133,9 @@ ipc handlers (step 12).
   same app bundle. Its icon is hidden whenever no browser window is open.
 - **Script-only rows**: rows that open through a script are numbered as
   `clickable`; when nothing is numbered, `click --text=` targets visible text.
+  `--text="…"` quotes the text; unquoted, the rest of the bracket is the text.
+- **Stable numbers**: an element keeps its number across pages of one site;
+  `screenshot --numbers` draws each visible number on the image.
 - **The verb is privileged**: until `browser` is ticked in a seat's intent
   checklist, that seat's `[agent:browser …]` lines are silently inert, with no
   error reply.
@@ -142,13 +145,13 @@ ipc handlers (step 12).
 ```
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>]]
-[agent:browser click [service] <n>|--text=<visible text> [--to=<dir in your cwd>]]
+[agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser select [service] <n>] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
-[agent:browser screenshot [service]]
-[agent:browser inspect [service] <n>|--text=<visible text>]
+[agent:browser screenshot [service] [--numbers]]
+[agent:browser inspect [service] <n>|--text="<visible text>"]
 [agent:browser wait [service] [--ms=N] [--for=<text>]]
 [agent:browser services]
 [agent:browser release [service]]

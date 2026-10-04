@@ -10,7 +10,7 @@ function hostOf(raw) {
   if (raw.includes('*')) return { error: '"*" is allowed only as a leading "*." on the host or a trailing "/*" on the path' };
   if (/:/.test(raw)) return { error: 'ports and IPv6 hosts are not supported; a host pattern matches every port' };
   let h;
-  try { h = new URL(`http://${raw}/`).hostname; } catch { return { error: `"${raw}" is not a valid host` }; }
+  try { h = new URL(`http://${raw.replace(/\.$/, '')}/`).hostname; } catch { return { error: `"${raw}" is not a valid host` }; }
   if (!h || !h.split('.').every((l) => LABEL_RE.test(l))) return { error: `"${raw}" is not a valid host` };
   return { host: h };
 }
@@ -60,15 +60,32 @@ function validate(patterns) {
   return { ok: true, patterns: kept };
 }
 
+function decode(p) {
+  try { return decodeURIComponent(p); } catch { return p; }
+}
+
+function dotless(p) {
+  const out = [];
+  for (const seg of p.split('/')) {
+    if (seg === '.') continue;
+    if (seg === '..') { if (out.length > 1) out.pop(); continue; }
+    out.push(seg);
+  }
+  const joined = out.join('/') || '/';
+  return /\/\.{1,2}$/.test(p) && !joined.endsWith('/') ? joined + '/' : joined;
+}
+
 function matches(rule, u) {
   if (rule.scheme && u.protocol !== rule.scheme + ':') return false;
   const h = u.hostname.toLowerCase().replace(/\.$/, '');
   const sub = h.endsWith('.' + rule.host);
   if (rule.subOnly ? !sub : !(sub || h === rule.host)) return false;
   if (rule.path == null) return true;
-  let decoded = u.pathname;
-  try { decoded = decodeURIComponent(u.pathname); } catch {}
-  return [u.pathname, decoded].some((p) => (rule.prefix ? p.startsWith(rule.path) : p === rule.path));
+  const hit = (p, want) => (rule.prefix ? p.startsWith(want) : p === want);
+  const decoded = decode(u.pathname);
+  const canonical = dotless(decoded);
+  if (rule.allow) return hit(canonical, decode(rule.path));
+  return [u.pathname, decoded, canonical].some((p) => hit(p, rule.path) || hit(p, decode(rule.path)));
 }
 
 function rulesOf(patterns) {
