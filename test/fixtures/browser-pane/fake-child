@@ -34,6 +34,22 @@ function answer(f) {
     return setImmediate(() => process.exit(0));
   }
   if (mode === 'crash-on-op') { process.stderr.write('dying\n'); process.exit(3); }
+  if (f.op === 'open' && /login/.test(f.args.url)) {
+    doc += 1;
+    const login = { password: true };
+    send({ event: 'state', service: f.service, state: 'held', reason: 'login', seat: f.seat, url: f.args.url, title: 'Sign in', login });
+    return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Sign in', doc, idle: { ok: true, ms: 800 }, login,
+      held: { reason: 'login', login, url: f.args.url } } });
+  }
+  if (f.op === 'handback') {
+    send({ event: 'state', service: f.service, state: 'idle', reason: null, handback: true,
+      url: 'https://portal.example.com/account', title: 'Account overview', login: { logoutLink: true } });
+    return send({ id: f.id, ok: true, result: { state: 'idle' } });
+  }
+  if (f.op === 'click') {
+    return send({ id: f.id, ok: true, result: { kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 1200 },
+      url: READ.url, title: READ.title, doc, login: {}, takeover: false } });
+  }
   if (f.op === 'open') {
     doc += 1;
     return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Fixture ' + f.service, doc,
