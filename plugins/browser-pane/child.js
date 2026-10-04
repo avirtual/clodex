@@ -8,6 +8,7 @@ const scripts = require('./page-scripts');
 const lock = require('./lock');
 const { TEXT } = require('./replies');
 const paths = require('./paths');
+const { changedRegion, CHANGE_MAX } = require('./read-format');
 
 const BAR_HEIGHT = 40;
 const MAX_WINDOWS = 8;
@@ -20,13 +21,15 @@ const ACT_IDLE_MS = 15000;
 const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
 const CLICK_DOWNLOAD_MS = 5000;
+const SNAP_MS = 2000;
+const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FLASH_MS = 4000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'STALE_DOC', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
   'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -183,6 +186,7 @@ function run(electron, ctx) {
     };
     ses.on('will-download', (_e, item) => {
       const chain = item.getURLChain();
+      const url = (chain && chain[0]) || '';
       let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
       if (!w) w = waiters.find((x) => !x.url);
       if (w) drop(w);
@@ -216,8 +220,17 @@ function run(electron, ctx) {
         }
         let bytes = 0;
         try { bytes = fs.statSync(file).size; } catch {}
-        const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0 };
-        if (w) { w.resolve(out); return; }
+        const out = { file, bytes, mime, magic: magicOf(file), ms: Date.now() - t0, url };
+        if (w) {
+          const dup = paths.sameFileIn(file, (p) => reserved.has(p));
+          if (dup) {
+            try { fs.unlinkSync(file); } catch {}
+            w.resolve({ ...out, file: dup, magic: magicOf(dup), same: true });
+            return;
+          }
+          w.resolve(out);
+          return;
+        }
         send({ event: 'operator-download', service: name, file, bytes, mime });
         const svc = services.get(name);
         if (svc) {
@@ -327,6 +340,8 @@ function run(electron, ctx) {
     driver.SCRIPT_TIMEOUT_MS, null);
   const inMain = (wc, code) => driver.withTimeout(wc.executeJavaScript(code).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
 
+  const snapText = (wc) => driver.withTimeout(wc.executeJavaScript(scripts.PAGE_TEXT).catch(() => null), SNAP_MS, null);
+
   const probe = async (svc) => (await inIsolated(svc.wc, scripts.LOGIN_PROBE)) || {};
 
   const need = (name) => {
@@ -431,6 +446,8 @@ function run(electron, ctx) {
     const op = frame.op;
     const byText = op === 'click' && args.byText != null ? String(args.byText) : null;
     let n = Number(args.n);
+    const dir = args.dir == null ? path.join(downloadsRoot, svc.name) : String(args.dir);
+    if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'click needs an absolute dir');
     checkDoc(svc, args);
     const what = op === 'key' ? `press ${args.key}` : byText != null ? `click --text=${JSON.stringify(byText)}` : `${op} [${n}]`;
     return mutating(svc, frame, what, async () => {
@@ -440,14 +457,16 @@ function run(electron, ctx) {
       const docBefore = svc.doc;
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
+        const before = await snapText(wc);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
-        return { navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+        return withChange(svc, before, { navigated: svc.doc !== docBefore, idle: idleOf(idle) });
       }
       checkDoc(svc, args);
       if (byText != null) n = await textTarget(svc, byText);
       const el = await resolve(svc, n);
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
-      if (op === 'click') return clickWatched(svc, n, el, docBefore);
+      const before = await snapText(wc);
+      if (op === 'click') return withChange(svc, before, await clickWatched(svc, n, el, docBefore, dir));
       if (op === 'type') {
         if (el.password || el.otp) {
           const e = codedError('PASSWORD_FIELD', TEXT.passwordField(svc.name, n));
@@ -462,7 +481,7 @@ function run(electron, ctx) {
           await driver.typeText(wc, text);
           if (args.enter) driver.pressKey(wc, 'Enter');
         }, actOpts(svc));
-        return { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+        return withChange(svc, before, { kind: el.kind, label: el.label, navigated: svc.doc !== docBefore, idle: idleOf(idle) });
       }
       let picked = null;
       const { idle } = await driver.act(wc, async () => {
@@ -477,14 +496,23 @@ function run(electron, ctx) {
           ? `${JSON.stringify(String(args.option))} matches ${picked.options.length} options of [${n}]: ${list} — use the exact text`
           : `no option ${JSON.stringify(String(args.option))} in [${n}] — options: ${list}`);
       }
-      return { kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle) };
+      return withChange(svc, before, {
+        kind: el.kind, label: el.label, value: picked.value, text: picked.text, navigated: svc.doc !== docBefore, idle: idleOf(idle),
+      });
     });
   }
 
-  async function textTarget(svc, text) {
+  async function withChange(svc, before, out) {
+    if (before == null || out.navigated || out.download || svc.popup || svc.popupUrl || svc.wc.isDestroyed()) return out;
+    const after = await snapText(svc.wc);
+    if (after != null) out.changed = changedRegion(before, after, CHANGE_MAX);
+    return out;
+  }
+
+  async function textTarget(svc, text, verb = 'click') {
     const found = await inIsolated(svc.wc, scripts.FIND_TEXT(text));
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
-    if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits));
+    if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
     return found.hits[0].n;
   }
 
@@ -496,18 +524,18 @@ function run(electron, ctx) {
     };
     const item = await within(w.started);
     if (!item) return null;
-    const name = path.basename(item.getSavePath());
+    const head = { file: item.getSavePath(), mime: item.getMimeType(), url: (item.getURLChain() || [])[0] || '' };
     try {
       const out = await within(w.done);
-      return { name: out ? path.basename(out.file) : name, bytes: out ? out.bytes : null };
+      if (!out) return { ...head, bytes: null };
+      return { file: out.file, bytes: out.bytes, mime: out.mime, url: out.url || head.url, ...(out.same ? { same: true } : {}) };
     } catch (e) {
-      return { name, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
+      return { ...head, bytes: null, failed: String((e && e.message) || e).replace(/^DOWNLOAD_FAILED: /, '') };
     }
   }
 
-  async function clickWatched(svc, n, el, docBefore) {
+  async function clickWatched(svc, n, el, docBefore, dir) {
     const wc = svc.wc;
-    const dir = path.join(downloadsRoot, svc.name);
     const w = routerFor(svc.name, svc.ses).expect({ dir });
     let began = false;
     let pdf = false;
@@ -531,6 +559,7 @@ function run(electron, ctx) {
         const pw = routerFor(svc.name, svc.ses).expect({ url: wc.getURL(), dir });
         wc.downloadURL(wc.getURL());
         out.download = await settleDownload(pw, deadline);
+        if (out.download) out.download.url = svc.popupUrl;
         pw.cancel();
         if (wc.navigationHistory && wc.navigationHistory.canGoBack()) {
           await driver.act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
@@ -656,6 +685,55 @@ function run(electron, ctx) {
     return { forgotten: name };
   }
 
+  async function listenersOf(svc, n) {
+    ensureCdp(svc);
+    const dbg = svc.wc.debugger;
+    const group = 'cx-inspect';
+    const typesAt = async (k) => {
+      const expression = `(() => { let e = document.querySelector('[data-cx="${Number(n) | 0}"]');
+        for (let i = 0; i < ${k} && e; i++) e = e.parentElement || (e.parentNode && e.parentNode.host) || null; return e; })()`;
+      const { result } = await dbg.sendCommand('Runtime.evaluate', { expression, objectGroup: group });
+      if (!result || !result.objectId) return null;
+      const { listeners } = await dbg.sendCommand('DOMDebugger.getEventListeners', { objectId: result.objectId, depth: 0 });
+      return [...new Set((listeners || []).map((l) => l.type))];
+    };
+    try {
+      const types = await typesAt(0);
+      if (!types) return null;
+      const out = { types };
+      if (!types.some((t) => CLICKISH.includes(t))) {
+        for (let k = 1; k <= 4; k++) {
+          const up = await typesAt(k);
+          if (!up) break;
+          const hit = CLICKISH.find((t) => up.includes(t));
+          if (hit) { out.ancestorAt = k; out.ancestorType = hit; break; }
+        }
+      }
+      return out;
+    } finally {
+      await dbg.sendCommand('Runtime.releaseObjectGroup', { objectGroup: group }).catch(() => {});
+    }
+  }
+
+  async function opInspect(name, frame, args) {
+    const svc = need(name);
+    if (svc.lock.state === 'held') throw heldError(svc);
+    checkDoc(svc, args);
+    svc.reading += 1;
+    blockerSync();
+    try {
+      const n = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : Number(args.n);
+      const r = await inIsolated(svc.wc, scripts.INSPECT(n));
+      if (!r) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
+      const listeners = await driver.withTimeout(listenersOf(svc, n).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
+      if (listeners && listeners.ancestorAt) listeners.ancestor = r.ancestors[listeners.ancestorAt - 1] || '?';
+      return { n, ...r, listeners };
+    } finally {
+      svc.reading -= 1;
+      blockerSync();
+    }
+  }
+
   async function opRead(name, frame, args) {
     const svc = need(name);
     if (svc.lock.state === 'held') throw heldError(svc);
@@ -779,6 +857,7 @@ function run(electron, ctx) {
           result = await serial(name, () => {
             if (op === 'open') return opOpen(name, frame, args);
             if (op === 'read') return opRead(name, frame, args);
+            if (op === 'inspect') return opInspect(name, frame, args);
             if (op === 'idle') return opIdle(name, args);
             if (op === 'download') return opDownload(name, frame, args);
             if (op === 'screenshot') return opScreenshot(name);
