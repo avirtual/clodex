@@ -7,9 +7,9 @@ page text plus a numbered list of links and controls, about 2,500 tokens per
 page, delivered as a file the agent reads. You watch the window, and you sign in
 yourself; the agent never types a password.
 
-This release covers `open`, `read`, `click`, `type`, `key`, `select`, `wait`,
-`services` and `release`, and the take-over controls. Downloads and screenshots
-come in a later release.
+This release covers `open`, `read`, `click`, `type`, `key`, `select`,
+`download`, `screenshot`, `wait`, `services` and `release`, and the take-over
+controls.
 
 While an agent acts, the bar at the top of the window turns amber, names the
 agent and ignores your clicks and keys until the action finishes. An agent waits
