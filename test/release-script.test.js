@@ -286,3 +286,16 @@ test('release: the DMG pty probe runs after the build and before anything is com
   assert.ok(commit > 0 && probe < commit, 'the probe must run before the release commit');
   assert.ok(tag > 0 && probe < tag, 'the probe must run before the tag');
 });
+
+test('release: the DMG child probe runs right after the pty probe, before anything is committed or tagged', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const pty = src.indexOf('run bash scripts/dmg-pty-probe.sh "$DMG" || die ');
+  const child = src.indexOf('run bash scripts/dmg-child-probe.sh "$DMG" || die ');
+  const commit = src.indexOf('git commit');
+  const tag = src.search(/^git tag "\$TAG"/m);
+  assert.ok(child > 0, 'the DMG child probe step is gone — the packaged child dispatch is never proven before tagging');
+  assert.ok(src.includes('step "DMG child probe"'), 'the child probe has no step header');
+  assert.ok(pty > 0 && child > pty, 'the child probe runs after the pty probe');
+  assert.ok(commit > 0 && child < commit, 'the child probe must run before the release commit');
+  assert.ok(tag > 0 && child < tag, 'the child probe must run before the tag');
+});

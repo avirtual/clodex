@@ -43,7 +43,7 @@ function makeManager(sessions = []) {
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
   notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined,
-  refreshPluginUpdates = undefined, onPluginUpdated = undefined } = {}) {
+  refreshPluginUpdates = undefined, onPluginUpdated = undefined, electronChild = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
   let ui = { ...settings };
   const logged = [];
@@ -71,6 +71,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     getNotifications: () => store,
     notifyOS: notifyOS || ((spec) => { osNotes.push(spec); }),
     broadcast: (channel, payload) => manager._broadcast(channel, payload),
+    electronChild,
   });
   return { engine, manager, dir, logged, removals, pins, notes, osNotes, uiSettings: () => ui };
 }
@@ -588,7 +589,7 @@ test('the host deliberately exposes no stores, manager, or transport seams', () 
   // so it should cost a deliberate edit here.
   assert.deepEqual(Object.keys(host).sort(), [
     'events', 'hostApiVersion', 'id', 'intents', 'ipc', 'lib', 'library', 'log',
-    'notify', 'paths', 'sessions', 'settings', 'storage', 'telemetry',
+    'notify', 'paths', 'runtime', 'sessions', 'settings', 'storage', 'telemetry',
   ].sort());
 });
 
@@ -1397,4 +1398,75 @@ test('plugins/plugin-api.md documents host.notify.user in §4 and does not list 
   assert.ok(s13.length > 200, 'ENTER: §13 was located, not an empty slice');
   assert.match(s13, /`host\.notify\.user`/,
     '§13 claims plugins reach no store; it must name this verb as the exception it now is');
+});
+
+function childFixture() {
+  const calls = [];
+  const seam = (script, extraArgs) => { calls.push([script, extraArgs]); return { command: '/bin/electron', args: [script, ...extraArgs], env: {} }; };
+  const { engine } = makeHost({ electronChild: seam });
+  const root = mkTmpRoot('clodex-electron-child-');
+  const pluginDir = path.join(root, 'plug');
+  fs.mkdirSync(pluginDir);
+  fs.writeFileSync(path.join(pluginDir, 'child.js'), 'exports.run = () => {};');
+  fs.writeFileSync(path.join(root, 'outside.js'), 'exports.run = () => {};');
+  const host = engine.register('demo', { activate() {} }, {}, { dir: pluginDir });
+  return { engine, host, calls, root, pluginDir };
+}
+
+test('runtime.electronChild: a script inside the plugin dir returns the seam spec, and the seam sees the exact args', () => {
+  const { host, calls, pluginDir } = childFixture();
+  const script = path.join(pluginDir, 'child.js');
+  const real = fs.realpathSync(script);
+  const spec = host.runtime.electronChild(script, ['--port', '9']);
+  assert.deepStrictEqual(spec, { command: '/bin/electron', args: [real, '--port', '9'], env: {} });
+  assert.deepStrictEqual(calls, [[real, ['--port', '9']]]);
+  assert.deepStrictEqual(host.runtime.electronChild(script), { command: '/bin/electron', args: [real], env: {} });
+});
+
+test('runtime.electronChild: a ../ escape is refused', () => {
+  const { host, calls, pluginDir } = childFixture();
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, '..', 'outside.js')),
+    { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('runtime.electronChild: a symlink inside the dir pointing outside is refused (realpath rule)', () => {
+  const { host, calls, root, pluginDir } = childFixture();
+  fs.symlinkSync(path.join(root, 'outside.js'), path.join(pluginDir, 'link.js'));
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'link.js')),
+    { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('runtime.electronChild: a missing file, a relative path and a non-.js script are refused', () => {
+  const { host, calls, pluginDir } = childFixture();
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'nope.js')), { error: 'script not found' });
+  assert.deepStrictEqual(host.runtime.electronChild('plug/child.js'), { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'child.mjs')), { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(host.runtime.electronChild(42), { error: 'script outside the plugin directory' });
+  assert.deepStrictEqual(calls, []);
+});
+
+test('runtime.electronChild: no seam answers no Electron on this host', () => {
+  const { engine } = makeHost();
+  const root = mkTmpRoot('clodex-electron-child-');
+  fs.writeFileSync(path.join(root, 'child.js'), '');
+  const host = engine.register('demo', { activate() {} }, {}, { dir: root });
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(root, 'child.js')), { error: 'no Electron on this host' });
+});
+
+test('runtime.electronChild: extraArgs holding a non-string, the child flag, NUL, or too many entries is bad extraArgs', () => {
+  const { host, calls, pluginDir } = childFixture();
+  const script = path.join(pluginDir, 'child.js');
+  for (const bad of [[1], ['--clodex-electron-child=/x.js'], ['a\0b'], 'str', Array(17).fill('a'), ['x'.repeat(4097)]]) {
+    assert.deepStrictEqual(host.runtime.electronChild(script, bad), { error: 'bad extraArgs' }, JSON.stringify(bad).slice(0, 40));
+  }
+  assert.deepStrictEqual(calls, []);
+});
+
+test('runtime.electronChild: a deactivated plugin is refused', () => {
+  const { engine, host, calls, pluginDir } = childFixture();
+  engine.deactivate('demo');
+  assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'child.js')), { error: 'plugin is deactivated' });
+  assert.deepStrictEqual(calls, []);
 });

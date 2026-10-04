@@ -37,6 +37,7 @@ function createPluginHostEngine(deps) {
     getNotifications,
     notifyOS,
     broadcast,
+    electronChild,
   } = deps;
   const notifyStateChanged = () => {
     try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
@@ -523,7 +524,45 @@ function createPluginHostEngine(deps) {
           return notifyUser(pluginId, title, body);
         },
       }),
+
+      runtime: Object.freeze({
+        electronChild: (script, extraArgs = []) => electronChildSpec(pluginId, script, extraArgs),
+      }),
     });
+  }
+
+  const CHILD_FLAG_PREFIX = '--clodex-electron-child';
+  const EXTRA_ARGS_MAX = 16;
+  const EXTRA_ARG_MAX_CHARS = 4096;
+
+  function electronChildSpec(pluginId, script, extraArgs) {
+    const rec = registered.get(pluginId);
+    if (!rec) return { error: 'plugin is deactivated' };
+    if (typeof electronChild !== 'function') return { error: 'no Electron on this host' };
+    if (typeof script !== 'string' || !path.isAbsolute(script) || !script.endsWith('.js') || !rec.dir) {
+      return { error: 'script outside the plugin directory' };
+    }
+    let real;
+    let root;
+    try {
+      root = fs.realpathSync(rec.dir);
+      real = fs.realpathSync(script);
+    } catch {
+      return { error: 'script not found' };
+    }
+    if (!real.startsWith(root + path.sep)) return { error: 'script outside the plugin directory' };
+    const argsOk = Array.isArray(extraArgs)
+      && extraArgs.length <= EXTRA_ARGS_MAX
+      && extraArgs.every((a) => typeof a === 'string'
+        && a.length <= EXTRA_ARG_MAX_CHARS
+        && !a.includes('\0')
+        && !a.startsWith(CHILD_FLAG_PREFIX));
+    if (!argsOk) return { error: 'bad extraArgs' };
+    try {
+      return electronChild(real, [...extraArgs]);
+    } catch (e) {
+      return { error: (e && e.message) || 'electron child spec failed' };
+    }
   }
 
   const NOTIFY_USER_MAX_BYTES = 16 * 1024;

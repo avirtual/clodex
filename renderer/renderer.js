@@ -1544,6 +1544,12 @@ function scheduleSidebarRelayout() {
   relayoutTimer = setTimeout(() => { relayoutTimer = null; refreshSidebarView(); }, 250);
 }
 
+let statusBarRelayoutTimer = null;
+function scheduleStatusBarRelayout() {
+  if (statusBarRelayoutTimer) return;
+  statusBarRelayoutTimer = setTimeout(() => { statusBarRelayoutTimer = null; renderProxyBar(); }, 250);
+}
+
 function makeGroupHeader(key, count) {
   const h = document.createElement('div');
   h.className = 'session-group-header';
@@ -4540,6 +4546,7 @@ const pluginBar = initPluginHost({
   getActiveSession: () => activeSession,
   sessionTypeOf, activeIsAgent, activePeerQueryable, activePeerConfigurable,
   scheduleSidebarRelayout,
+  scheduleStatusBarRelayout,
   getWorkspaceId: () => currentWorkspaceId,
   listSessions: () => window.api.listSessions(),
   openPath: (p) => window.api.fileOpen(p),

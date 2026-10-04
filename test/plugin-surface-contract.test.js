@@ -56,6 +56,7 @@ const HOST_CONTRACT = [
   // built without an inbox must not answer by dropping the key — an out-of-tree
   // author feature-detecting on `host.notify` would read that as an old host.
   { name: 'notify', kind: 'ns', members: ['user'] },
+  { name: 'runtime', kind: 'ns', members: ['electronChild'] },
 ];
 
 // The SessionHandle — five fields and two methods, deliberately tiny. Widening
@@ -107,7 +108,7 @@ const UI_SLOTS = [
 // `sidebar.requestRelayout` is NOT a slot — it is the companion to rowBadge's
 // sync `resolve` (docs §6.4), so it is pinned separately rather than inflating
 // the count.
-const UI_EXTRA = [['sidebar', 'requestRelayout']];
+const UI_EXTRA = [['sidebar', 'requestRelayout'], ['statusBar', 'requestRelayout']];
 
 // ── The `_host` pseudo-plugin's methods ─────────────────────────────────────
 // Host plumbing, reachable by CORE only: every one takes a plugin id as an

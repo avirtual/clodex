@@ -559,6 +559,7 @@ host = {
   lib: { gitWorktree },                  // sanctioned shared core leaves
   telemetry: { snapshot(sessionName) },  // read-only, may be null
   notify: { user({ title, body }) },     // -> { ok, id } | { ok: false, error }
+  runtime: { electronChild(script, extraArgs) }, // -> { command, args, env } | { error }
 }
 ```
 
@@ -1174,6 +1175,43 @@ const r = host.notify.user({ title: 'Deploy failed', body: 'staging: 3 pods cras
 if (!r.ok) host.log.error(`note refused: ${r.error}`);
 ```
 
+### `host.runtime.electronChild`
+
+`electronChild(script, extraArgs = [])` tells you how to launch an Electron
+child process of your own — a real window, a `WebContentsView` — from an engine
+half that may never require electron. It returns `{ command, args, env }`; you
+spawn it yourself with `node:child_process` and own the process. The host does
+not spawn anything. It never throws: a refusal is `{ error }`.
+
+`args` boots the Clodex binary straight into your script
+(`--clodex-electron-child=<script>`, then your `extraArgs`), so the child is not
+a second Clodex. `env` is the host's environment without `ELECTRON_RUN_AS_NODE`.
+
+The refusals, checked in this order:
+
+- `'plugin is deactivated'` — called after your plugin was deactivated.
+- `'no Electron on this host'` — the headless host has no Electron to launch.
+- `'script outside the plugin directory'` — `script` is not an absolute `.js`
+  path whose realpath lies inside your plugin directory (a `../` or a symlink
+  pointing out both count). `'script not found'` — the file does not exist.
+- `'bad extraArgs'` — not an array of at most 16 strings, each at most 4,096
+  characters, without NUL, none starting with `--clodex-electron-child`.
+
+The child script exports `run(electron, ctx)` and is handed electron; it never
+requires it, so the §12 lint still applies to every file in your plugin.
+`ctx.argv` is the child's `process.argv`. Before anything else, `run` **must**
+call `app.setPath('userData', …)` and `app.setPath('sessionData', …)` on a
+directory of its own (under `host.paths.dataDir`), or two Chromium instances
+open the operator's profile. It must also subscribe `window-all-closed`, or
+Electron quits the child when its last window closes.
+
+```js
+const { spawn } = require('node:child_process');
+const spec = host.runtime.electronChild(path.join(__dirname, 'child.js'), ['--port', '0']);
+if (spec.error) host.log.error(`no child: ${spec.error}`);
+else spawn(spec.command, spec.args, { env: spec.env, stdio: ['pipe', 'pipe', 'inherit'] });
+```
+
 ---
 
 ## 5. The renderer `rhost` object
@@ -1202,7 +1240,7 @@ rhost = {
     openPath(path),                    // reveal in the OS file manager
     pickDirectory(),                   // -> Promise<absolute path | null>  native dialog
     showToast(msg, opts),              // core's toast host
-    statusBar:   { addAction, addSegment },
+    statusBar:   { addAction, addSegment, requestRelayout },
     sidebar:     { footerButton, rowBadge, requestRelayout },
     sessionMenu: { addProvider },
     settings:    { section },
@@ -1422,6 +1460,12 @@ returned one wins.
 Segments have one property worth knowing: **a visible segment keeps the status
 bar itself alive**. Core hides the bar entirely for sessions that have nothing to
 show, so a segment is how a plugin gets a bar for, say, a plain shell session.
+
+Core repaints the bar on a seat switch and when the active seat's context
+changes, not when your state does. `rhost.ui.statusBar.requestRelayout()` is a
+debounced request for another pass: call it when the value behind your segment
+changes while the active seat sits idle, or the segment stays stale until the
+next core repaint.
 
 ### 6.3 `rhost.ui.sidebar.footerButton(spec)`
 
@@ -2100,7 +2144,8 @@ These are not style guidelines. Each is a test that fails the build.
   list names `node:child_process` explicitly. Shelling out to a CLI the user has
   already authenticated (`gh`, `kubectl`, `docker`) is the intended way to reach
   an external service, and it keeps credentials out of your plugin entirely: the
-  CLI holds the token, you hold none.
+  CLI holds the token, you hold none. An Electron child launched through
+  `host.runtime.electronChild` still never requires electron: it receives it.
 - **No manifest escape.** Entry and style paths must resolve inside your
   directory (§2). The static lint cannot see a path assembled in a manifest, and
   the runtime check cannot see a require buried three files deep — hence both.

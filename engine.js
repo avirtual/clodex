@@ -2182,6 +2182,7 @@ const toolCache = createToolCache({ whichBin });
         getNotifications: () => notifications,
         notifyOS,
         broadcast: (ch, p) => manager._broadcast(ch, p),
+        electronChild: seams.electronChild,
       });
       pluginLoader = createPluginLoader({
         fs, path,
