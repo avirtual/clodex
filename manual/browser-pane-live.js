@@ -27,6 +27,8 @@ const PAGES = {
   const r = this.attachShadow({ mode: 'open' }); r.innerHTML = '<button>Shadow Pay</button>'; } });</script>`,
   '/login': () => `<title>Sign in</title><main><form><label>Email <input type="email" name="email"></label>
 <label>Password <input type="password" name="pw"></label><button>Sign in</button></form></main>`,
+  '/form': () => `<title>Form</title><main><label>Find <input id=q></label><button onclick="document.title='clicked'">Go</button>
+<select id=m><option>July 2026</option><option>August 2026</option></select><a href="/shadow">Shadow page</a></main>`,
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
 
@@ -39,6 +41,11 @@ function server() {
       if (url.pathname === '/stall') {
         res.writeHead(200, headers);
         res.end('<title>Stall</title><main><p>waiting</p><img src="/hang"></main>');
+        return;
+      }
+      if (url.pathname === '/stall-login') {
+        res.writeHead(200, headers);
+        res.end('<title>Stalled sign-in</title><main><form><input type="password"></form><img src="/hang"></main>');
         return;
       }
       if (url.pathname === '/set') {
@@ -55,6 +62,8 @@ function server() {
   });
 }
 
+let pendingWait = null;
+let liveHandle = null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function bootEngine(userData, tmp) {
@@ -66,9 +75,13 @@ function bootEngine(userData, tmp) {
       list: () => [...sessions.values()],
       listForWorkspace: () => [...sessions.values()],
       _broadcast() {}, _sendToSession() {}, windowForWorkspace: () => null,
-      _injectText(_s, text) { if (waiter) { const w = waiter; waiter = null; w(text); } },
+      _injectText(_s, text) {
+        if (pendingWait) { const w = pendingWait; pendingWait = null; w(text); return; }
+        if (waiter) { const w = waiter; waiter = null; w(text); }
+      },
     },
     getUiSettings: () => ({ get: () => ({}), set: () => {} }),
+    getNotifications: () => ({ add: (rec) => { console.log(`[notify] ${rec.body.replace(/\n+/g, ' | ')}`); return { id: 1 }; } }),
     log: { info: (s, m) => process.stderr.write(`[log] ${m}\n`), error: (s, m) => process.stderr.write(`[err] ${m}\n`) },
     userDataPath: userData,
     fs, path,
@@ -79,6 +92,7 @@ function bootEngine(userData, tmp) {
   });
   const host = engine.register('browser-pane', require(path.join(PLUGIN_DIR, 'engine')), { hostApi: HOST_API_VERSION }, { dir: PLUGIN_DIR });
   const handle = host.sessions.get('live-seat');
+  liveHandle = () => handle;
   const emit = (line) => {
     const p = new Promise((r) => { waiter = r; });
     pluginRowFor('browser').handler(handle, parseWithRegistry(line));
@@ -126,6 +140,26 @@ async function main() {
   console.log('== 3c. a subresource that never finishes');
   await emit(`[agent:browser open stall] ${base}/stall`);
   await emit('[agent:browser read stall]');
+
+  console.log('== 3d. a sign-in page with a subresource that never finishes');
+  await emit(`[agent:browser open stallin] ${base}/stall-login`);
+  await emit('[agent:browser read stallin]');
+
+  console.log('== 3e. acts through the child');
+  await emit(`[agent:browser open fixture] ${base}/form`);
+  show(fileOf(await emit('[agent:browser read fixture]')), (l) => /^\[\d+\]/.test(l));
+  await emit('[agent:browser type fixture 1 --enter] Form 1040');
+  await emit('[agent:browser click fixture 2]');
+  await emit('[agent:browser select fixture 3] august');
+  await emit('[agent:browser key fixture] Tab');
+  await emit('[agent:browser click fixture 4]');
+  await emit('[agent:browser click fixture 2]');
+  const back = new Promise((r) => { pendingWait = r; });
+  pluginRowFor('browser').handler(liveHandle(), parseWithRegistry('[agent:browser wait signin]'));
+  console.log(`handback → ${JSON.stringify(await engine.dispatch('browser-pane', 'handback', ['signin'], 'desktop'))}`);
+  console.log(`< ${await back}`);
+  show(fileOf(await emit('[agent:browser read signin]')), (l) => /input:password/.test(l));
+  await emit('[agent:browser type signin 2] hunter2');
 
   console.log('== 4. persistence across a restart');
   await emit(`[agent:browser open jar] ${base}/set`);

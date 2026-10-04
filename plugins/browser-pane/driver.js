@@ -18,6 +18,11 @@ function attachCdp(wc) {
   return wc.debugger;
 }
 
+async function emulateFocus(wc) {
+  const dbg = attachCdp(wc);
+  await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+}
+
 async function armIdle(wc, { network = true } = {}) {
   const dbg = attachCdp(wc);
   await dbg.sendCommand('Page.enable');
@@ -193,6 +198,6 @@ async function pinSessionCookies(ses, days = 30) {
 }
 
 module.exports = {
-  withTimeout, attachCdp, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS,
+  withTimeout, attachCdp, emulateFocus, armIdle, waitIdle, act, pinSessionCookies, sleep, SCRIPT_TIMEOUT_MS,
   S, isSynth, installFilters, quietGate, click, typeText, pressKey, KEYS,
 };

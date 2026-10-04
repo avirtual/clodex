@@ -320,6 +320,7 @@ function run(electron, ctx) {
     return mutating(svc, frame, what, async () => {
       ensureCdp(svc);
       const wc = svc.wc;
+      await driver.emulateFocus(wc);
       const docBefore = svc.doc;
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
