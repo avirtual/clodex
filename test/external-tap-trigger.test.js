@@ -174,6 +174,12 @@ test('an OFF seat is declined by the route, and a tap sends it nothing', () => {
   assert.deepStrictEqual(win.sent, []);
 });
 
+test('an ephemeral seat with no voice mode is declined by the route', () => {
+  const m = mk({ getPersistence: () => ({ list: () => [], get: () => ({ name: 's', ephemeral: true }) }) });
+  seat(m, 's');
+  assert.deepStrictEqual(m._voiceRoute('s'), { ok: false, error: 'voice is off for this seat' });
+});
+
 test('a seat persisted as hold reads as on and IS tapped', () => {
   const { m } = mkSeatModes({ s: 'hold' });
   const win = seat(m, 's');

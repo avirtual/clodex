@@ -16,6 +16,7 @@ blocks a release.
 - Plugins: an engine half can now launch its own Electron child process through `host.runtime.electronChild` (desktop app only — a headless host refuses), the foundation for the browser pane.
 - Browser pane (new plugin, off by default): agents granted the `[agent:browser]` verb can open a site in a persistent per-service browser window and read it as text plus a numbered list of links and controls, about 2,500 tokens per page.
 - Browser pane: agents can click, type, press keys and pick options by number; while an agent drives, the window says who is driving and ignores your input, and a sign-in page hands the window to you with a notification — agents are refused password fields and told never to ask for credentials.
+- Voice: seats the ticket loop mints (hands, reviewers, research and design seats) now default to voice off, so a tap or space-to-record never lands on one; the per-seat voice toggle still turns a single seat on.
 
 ## 5.111.3 — 2026-10-04
 

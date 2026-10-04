@@ -28,6 +28,20 @@ test('a record persisted as hold reads as on (tap), with no migration', () => {
   assert.strictEqual(rec.voice, 'hold');
 });
 
+test('an ephemeral (loop-minted) seat defaults to off; an explicit mode wins', () => {
+  const rows = [
+    [null, 'tap'],
+    [{}, 'tap'],
+    [{ voice: 'off' }, 'off'],
+    [{ voice: 'tap' }, 'tap'],
+    [{ ephemeral: true }, 'off'],
+    [{ ephemeral: true, voice: 'tap' }, 'tap'],
+    [{ ephemeral: true, voice: 'off' }, 'off'],
+    [{ ephemeral: false }, 'tap'],
+  ];
+  for (const [rec, want] of rows) assert.strictEqual(voiceModeOf(rec), want, JSON.stringify(rec));
+});
+
 test('the settings-file voice read and write are gone', () => {
   assert.deepStrictEqual(Object.keys(voiceSettings).sort(), ['DEFAULT_VOICE_MODE', 'VOICE_MODES', 'voiceModeOf']);
 });
