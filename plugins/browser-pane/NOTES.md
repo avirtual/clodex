@@ -193,3 +193,25 @@ the reply already named the planned path, or `clickWatched` returned).
 reachable by `querySelector` from the document, so they read `unknown`. Up to
 four ancestors are probed for a click/mousedown/pointerdown/mouseup listener
 when the element has none of its own.
+
+## read-format.js — chromeStrip
+
+Lines are compared trimmed with blank lines skipped; a common top or bottom run
+counts only at `CHROME_MIN_LINES` (3) and is capped at `CHROME_MAX_LINES` (40).
+When the common runs cover all of the new text (same page), nothing is stripped.
+
+## scheduler.js — runRead
+
+The strip base is the seat's previous read of the service on the same origin.
+Re-reading identical text reuses that read's base, so `--page=2` paginates the
+same stripped text as page 1. The leading title line (`READ_TEXT` prepends
+`document.title`) is kept out of the comparison: titles differ per page and
+would otherwise end every common prefix at line 1. `--all` and `--links` skip it.
+
+## child.js — loadingOf
+
+`svc.watch` is an `armIdle` handle armed at the first `open` and never waited
+on. A read is loading when `wc.isLoading()` or a non-skipped request has been in
+flight over `LOADING_INFLIGHT_MS` (300 ms). `READ_TEXT` also counts visible
+`BUSY_SEL` elements (`.loading`, spinners, `aria-busy`); either signal marks the
+reply `still loading`.

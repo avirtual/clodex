@@ -29,6 +29,16 @@ test('replies: claude gets @path with a trailing space, codex gets the Read-tool
   assert.strictEqual(R.readReply('utility', info, '/tmp/a b/r-1.txt', 'claude').endsWith(' → @"/tmp/a b/r-1.txt" '), true);
 });
 
+test('replies: a read reply says chrome stripped and still loading', () => {
+  const info = { page: 1, pages: 1, elements: 3, tokens: 900 };
+  assert.strictEqual(R.readReply('utility', { ...info, stripped: true }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · chrome stripped → @/t/r-1.txt ');
+  assert.strictEqual(R.readReply('utility', { ...info, loading: true }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · still loading → @/t/r-1.txt ');
+  assert.strictEqual(R.readReply('utility', { ...info, stripped: true, loading: true }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · chrome stripped · still loading → @/t/r-1.txt ');
+});
+
 test('replies: a long reply is capped at 600 chars but the path is never cut', () => {
   const file = '/t/' + 'p'.repeat(700) + '.txt';
   const out = R.readReply('utility', { page: 1, pages: 1, elements: 1, tokens: 10 }, file, 'claude');

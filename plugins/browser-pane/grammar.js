@@ -13,7 +13,7 @@ const DEFAULT_MAX = 2500;
 
 const FLAGS = {
   open: {},
-  read: { text: 'bool', links: 'bool', main: 'bool', filter: 'value', page: 'value', max: 'value' },
+  read: { text: 'bool', links: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value' },
   click: { text: 'value', to: 'value' },
   type: { enter: 'bool' },
   key: {},
@@ -177,6 +177,7 @@ function toCommand(intent) {
       service,
       mode: flags.text ? 'text' : flags.links ? 'links' : 'default',
       main: !!flags.main,
+      all: !!flags.all,
       filter: flags.filter == null ? null : flags.filter,
       page: flags.page == null ? 1 : intArg('page', flags.page, 1),
       max,

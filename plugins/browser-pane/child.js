@@ -22,6 +22,7 @@ const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
 const CLICK_DOWNLOAD_MS = 5000;
 const SNAP_MS = 2000;
+const LOADING_INFLIGHT_MS = 300;
 const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
 const DOWNLOAD_MAX_BYTES = 500 * 1024 * 1024;
 const FLASH_MS = 4000;
@@ -310,7 +311,7 @@ function run(electron, ctx) {
     const wc = view.webContents;
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
-      lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null,
+      lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
@@ -319,7 +320,7 @@ function run(electron, ctx) {
       const same = e && e.isSameDocument != null ? e.isSameDocument : a[1];
       if (main && !same) svc.pendingNav = true;
     });
-    wc.on('did-navigate', () => { svc.pendingNav = false; svc.doc += 1; dispatch(svc, { type: 'navigate' }); });
+    wc.on('did-navigate', () => { svc.pendingNav = false; svc.doc += 1; svc.navAt = Date.now(); dispatch(svc, { type: 'navigate' }); });
     const failed = (_e, _code, _desc, _url, isMainFrame) => { if (isMainFrame) svc.pendingNav = false; };
     wc.on('did-fail-load', failed);
     wc.on('did-fail-provisional-load', failed);
@@ -346,6 +347,7 @@ function run(electron, ctx) {
     try { ensureCdp(svc); } catch {}
     win.on('closed', () => {
       if (services.get(name) === svc) services.delete(name);
+      if (svc.watch) { try { svc.watch.detach(); } catch {} }
       svc.lock = lock.initial();
       send({ event: 'window-closed', service: name });
       dockSync();
@@ -452,6 +454,7 @@ function run(electron, ctx) {
       svc.wc.on('did-navigate', onNav);
       try {
         ensureCdp(svc);
+        if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
         let navErr = null;
         const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
         const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
@@ -814,8 +817,10 @@ function run(electron, ctx) {
     const contentType = await inMain(wc, scripts.CONTENT_TYPE);
     const base = { url: wc.getURL(), title: wc.getTitle(), doc: svc.doc, contentType };
     if (contentType === 'application/pdf') return base;
-    let text = await inMain(wc, scripts.READ_TEXT(main));
-    if (text == null) text = await inMain(wc, scripts.READ_TEXT(main));
+    let got = await inMain(wc, scripts.READ_TEXT(main));
+    if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
+    const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
+    const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
     let el = await inIsolated(wc, scripts.READ_INTERACTIVE(main));
     if (el == null) el = await inIsolated(wc, scripts.READ_INTERACTIVE(main));
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
@@ -833,7 +838,16 @@ function run(electron, ctx) {
       truncated: !!(el && el.truncated) || (text || '').length >= scripts.TEXT_MAX,
       frames,
       login,
+      loading: loadingOf(svc),
+      ...(busy ? { busy } : {}),
     };
+  }
+
+  function loadingOf(svc) {
+    const w = svc.watch;
+    const inflight = w ? w.size(LOADING_INFLIGHT_MS) : 0;
+    const since = Math.max(svc.navAt || 0, w ? w.lastNet() : 0);
+    return { active: svc.wc.isLoading() || inflight > 0, inflight, ms: Date.now() - since };
   }
 
   function serial(name, fn) {

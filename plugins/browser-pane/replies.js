@@ -63,7 +63,8 @@ function tokLabel(n) {
 }
 
 function readReply(service, info, file, sessionType) {
-  const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`;
+  const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`
+    + (info.stripped ? ' · chrome stripped' : '') + (info.loading ? ' · still loading' : '');
   return withPath(head, fileTail(file, sessionType));
 }
 

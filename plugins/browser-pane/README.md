@@ -76,7 +76,7 @@ service's cookies.
 
 ```
 [agent:browser open <service>] <url>
-[agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N] [--max=<tokens>]]
+[agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>]]
 [agent:browser click [service] <n>|--text=<visible text> [--to=<dir in your cwd>]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>

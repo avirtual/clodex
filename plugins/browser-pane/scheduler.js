@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const replies = require('./replies');
 const paths = require('./paths');
-const { formatRead } = require('./read-format');
+const { formatRead, chromeStrip } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -14,6 +14,15 @@ function storedLogin(login, now) {
   if (login.password || login.otp || login.captcha || login.idp) return { state: 'login-page', at: now, via: 'password-field' };
   if (login.logoutLink) return { state: 'logged-in', at: now, via: 'logout-link' };
   return { state: 'unknown', at: now };
+}
+
+function originOf(url) {
+  try { return new URL(url).origin; } catch { return ''; }
+}
+
+function splitTitle(text, title) {
+  const t = String(title || '');
+  return t && text.startsWith(`${t}\n`) ? [t, text.slice(t.length + 1)] : ['', text];
 }
 
 function originPath(url) {
@@ -53,7 +62,7 @@ function createScheduler({
   const seats = new Map();
 
   const seatState = (name) => {
-    if (!seats.has(name)) seats.set(name, { current: null, lastDoc: {} });
+    if (!seats.has(name)) seats.set(name, { current: null, lastDoc: {}, lastText: {} });
     return seats.get(name);
   };
 
@@ -132,7 +141,21 @@ function createScheduler({
   async function runRead(handle, service, cmd) {
     const raw = await client.request('read', { scope: cmd.main ? 'main' : 'all' }, { service, seat: handle.name });
     if (raw && raw.held) signin(service, raw);
-    const out = formatRead(raw, { service, mode: cmd.mode, main: cmd.main, filter: cmd.filter, page: cmd.page, max: cmd.max });
+    const st = seatState(handle.name);
+    const last = st.lastText[service];
+    const hasText = !!raw && typeof raw.text === 'string';
+    const origin = hasText ? originOf(raw.url) : '';
+    const base = last && last.origin === origin ? (last.text === raw.text ? last.base : { text: last.text, title: last.title }) : null;
+    let page = raw;
+    let strip = null;
+    if (hasText && base && !cmd.all && cmd.mode !== 'links') {
+      const [title, body] = splitTitle(raw.text, raw.title);
+      const r = chromeStrip(splitTitle(base.text, base.title)[1], body);
+      if (r.top || r.bottom) page = { ...raw, text: title ? `${title}\n\n${r.text}` : r.text };
+      strip = { top: r.top, bottom: r.bottom };
+    }
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, base };
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip });
     if (raw && raw.doc != null) seatState(handle.name).lastDoc[service] = raw.doc;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);

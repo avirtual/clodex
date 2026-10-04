@@ -14,7 +14,7 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 
 const DESIGN_PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
-  '  [agent:browser read [service] [--text|--links] [--main] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
+  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
   '  [agent:browser click [service] <n> [--to=<dir in your cwd>]]  [agent:browser click [service] --text=<visible text>]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
   '  [agent:browser select [service] <n>] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',
   '  [agent:browser screenshot [service]]  [agent:browser inspect [service] <n>|--text=<s>]  [agent:browser wait [service] [--ms=N] [--for=<text>]]  [agent:browser services]  [agent:browser release [service]]',
@@ -26,7 +26,7 @@ const DESIGN_PROMPT_LINES = [
 const FILL = [
   ['<n>|--text=<s>', '3'],
   ['[service]', 'utility'], ['<service>', 'utility'], ['[<n>]', '3'], ['<n>', '3'],
-  ['[--text|--links]', '--links'], ['[--main]', '--main'], ['[--filter=<s>]', '--filter=pdf'],
+  ['[--text|--links]', '--links'], ['[--main]', '--main'], ['[--all]', '--all'], ['[--filter=<s>]', '--filter=pdf'],
   ['[--page=N]', '--page=2'], ['[--enter]', '--enter'], ['[--to=<dir in your cwd>]', '--to=bills'],
   ['[--as=<name>]', '--as=2026-08.pdf'], ['[--ms=N]', '--ms=5000'], ['[--for=<text>]', '--for=done'], ['--text=<visible text>', '--text="Lista de plată"'],
 ];
