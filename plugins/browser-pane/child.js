@@ -329,6 +329,10 @@ function run(electron, ctx) {
       else if (msg === 'cxb:back' || msg === 'cxb:reload') barNav(svc, msg.slice(4)).catch(() => {});
       else if (typeof msg === 'string' && msg.startsWith('cxb:go ')) barNav(svc, 'go', msg.slice(7)).catch(() => {});
     });
+    win.webContents.on('before-input-event', () => {
+      const svc = services.get(name);
+      if (svc && svc.win === win) svc.lastInput = Date.now();
+    });
     win.loadFile(path.join(__dirname, 'bar.html')).catch(() => {});
     const view = new WebContentsView({
       webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },

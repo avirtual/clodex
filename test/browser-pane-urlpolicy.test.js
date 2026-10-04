@@ -31,6 +31,11 @@ test('urlpolicy: every grammar form matches what it names and nothing else', () 
     ['example.com/Path/*', 'https://example.com/path/x', null],
     ['example.com/Path/*', 'https://EXAMPLE.com/Path/x', 'example.com/Path/*'],
     ['example.com', 'about:blank', null],
+    ['example.com', 'https://example.com./', 'example.com'],
+    ['*.example.com', 'https://a.example.com./', '*.example.com'],
+    ['example.com/admin/*', 'https://example.com/%61dmin/x', 'example.com/admin/*'],
+    ['example.com/admin', 'https://example.com/%61dmin', 'example.com/admin'],
+    ['example.com/admin/*', 'https://example.com/%E0%A4%A/x', null],
     ['example.com', 'not a url', null],
   ];
   for (const [pattern, url, want] of rows) assert.strictEqual(compile([pattern])(url), want, `${pattern} vs ${url}`);
@@ -61,6 +66,8 @@ test('urlpolicy: invalid patterns are rejected with the reason and their 1-based
     ['exa mple.com', 'queries, fragments and spaces are not supported'],
     ['ex_am$ple.com', '"ex_am$ple.com" is not a valid host'],
     ['/only/path', 'no host'],
+    ['user@example.com', '"user@example.com" is not a valid host: "@" and "\\" are not allowed'],
+    ['example.com\\admin', '"example.com\\admin" is not a valid host: "@" and "\\" are not allowed'],
     ['!', 'no host'],
     ['x'.repeat(MAX_CHARS + 1), `longer than ${MAX_CHARS} characters`],
   ];

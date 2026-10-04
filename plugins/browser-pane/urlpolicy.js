@@ -6,6 +6,7 @@ const LABEL_RE = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?$/;
 
 function hostOf(raw) {
   if (!raw) return { error: 'no host' };
+  if (/[@\\]/.test(raw)) return { error: `"${raw}" is not a valid host: "@" and "\\" are not allowed` };
   if (raw.includes('*')) return { error: '"*" is allowed only as a leading "*." on the host or a trailing "/*" on the path' };
   if (/:/.test(raw)) return { error: 'ports and IPv6 hosts are not supported; a host pattern matches every port' };
   let h;
@@ -61,11 +62,13 @@ function validate(patterns) {
 
 function matches(rule, u) {
   if (rule.scheme && u.protocol !== rule.scheme + ':') return false;
-  const h = u.hostname.toLowerCase();
+  const h = u.hostname.toLowerCase().replace(/\.$/, '');
   const sub = h.endsWith('.' + rule.host);
   if (rule.subOnly ? !sub : !(sub || h === rule.host)) return false;
   if (rule.path == null) return true;
-  return rule.prefix ? u.pathname.startsWith(rule.path) : u.pathname === rule.path;
+  let decoded = u.pathname;
+  try { decoded = decodeURIComponent(u.pathname); } catch {}
+  return [u.pathname, decoded].some((p) => (rule.prefix ? p.startsWith(rule.path) : p === rule.path));
 }
 
 function rulesOf(patterns) {

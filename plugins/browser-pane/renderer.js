@@ -169,6 +169,10 @@ function activate(rhost) {
         const services = (res && res.ok && Array.isArray(res.services)) ? res.services : [];
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
         for (const s of services) list.appendChild(row(s, fill));
+        return services;
+      };
+      const fillDeny = async (services) => {
+        if (!services) return;
         const d = await call('denylist.get');
         deny.textContent = '';
         if (!d || !d.ok) return;
@@ -177,7 +181,7 @@ function activate(rhost) {
         const named = [...new Set([...services.map((s) => s.name), ...Object.keys(d.services || {})])].sort();
         for (const name of named) deny.appendChild(denyBlock(name, name, (d.services || {})[name]));
       };
-      return fill();
+      return fill().then(fillDeny);
     },
     collect: () => null,
   });

@@ -227,6 +227,8 @@ overlap an agent op, and stamp `svc.lastInput` so an agent's quiet gate waits.
 A committed navigation sends `operator-nav`; the engine tells the lease holder
 once per 5 s per service. `driver.installFilters` sits on the page view's
 webContents, not the bar's, so typing in the address bar is never filtered.
+The bar's own `before-input-event` stamps `svc.lastInput`, so an agent's quiet
+gate waits while the operator types a URL.
 
 ## child.js — policyDenies
 
@@ -245,5 +247,7 @@ reads as `NAV_FAILED`, not the refusal text.
 subdomains only; `host/path/*` a path prefix, `host/path` the exact path;
 `http://` or `https://` pins the scheme; `!` makes an allow exception, checked
 across both lists before any deny. Host compare is case-insensitive (WHATWG
-host parsing), path compare exact-case. Ports, IPv6, `?`, `#` and inner `*` are
-rejected. 200 patterns per list, 512 chars each; blank lines are dropped.
+host parsing), path compare exact-case. Ports, IPv6, `@`, `\`, `?`, `#` and inner `*`
+are rejected. A trailing dot on the URL host is dropped before matching, and
+the path is compared both raw and percent-decoded, so `example.com./` and
+`/%61dmin/` cannot slip past a rule. 200 patterns per list, 512 chars each; blank lines are dropped.

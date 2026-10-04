@@ -42,6 +42,10 @@ https://example.com    only that scheme
 !example.com/admin/ok  an exception: allowed even though a pattern matches
 ```
 
+A path without `/*` matches that exact path only (`example.com/` is the root
+page alone). Hosts match on any port; IPv6 literals cannot be listed, so to
+block loopback list `localhost` and `127.0.0.1`.
+
 Saving applies to open windows at once. An invalid line is refused with its
 line number and reason.
 
