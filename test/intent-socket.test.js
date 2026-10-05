@@ -417,7 +417,7 @@ test('a client that hangs up before the reply closes the sink, so the late reply
 });
 
 test('the socket writes the credential file 0600 beside it and removes it on stop', async () => {
-  const root = mkTmpRoot('isock-cred-');
+  const root = mkTmpRoot('isock-');
   const sockPath = sockIn(root);
   const credPath = pathFor(root, 's1', 'intentCred');
   const srv = createIntentSocketServer({ net, fs, crypto, sockPath, cred: CRED, credPath, handle: async () => ({ ok: true }) });

@@ -30825,7 +30825,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
       var { PLUGIN_GLYPH, pluginGlyphOk } = require_intent_glyphs();
       var PLUGIN_REPLY_WAIT_MS = 30 * 1e3;
-      var PLUGIN_REPLY_WAIT_MAX_MS = 120 * 1e3;
+      var PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1e3;
+      var REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
       function parseDm(cleaned) {
         const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
         return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
@@ -31115,6 +31116,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             return Number.isFinite(ms) && ms > 0 ? Math.min(ms, PLUGIN_REPLY_WAIT_MAX_MS) : PLUGIN_REPLY_WAIT_MS;
           },
+          classifyReply: (line) => {
+            let c = null;
+            try {
+              c = typeof spec.classifyReply === "function" ? spec.classifyReply(line) : null;
+            } catch {
+              c = null;
+            }
+            return c === "refused" || c === "error" ? c : defaultReplyStatus(line);
+          },
           source: src,
           // Both threaded by the host at register(), never read off `spec`: a plugin that
           // could declare its own scope could declare itself global, and one that could
@@ -31211,6 +31221,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
         return grants.includes(intent.cmd) ? null : "";
       }
+      function defaultReplyStatus(line) {
+        return REPLY_ERROR_RE.test(String(line || "")) ? "error" : "ok";
+      }
+      function classifyReplyLine(type, line) {
+        const row = pluginRowFor(type);
+        return row && row.classifyReply ? row.classifyReply(line) : defaultReplyStatus(line);
+      }
       function subagentAllows(intent, entry) {
         return subagentRefusal(intent, entry) === null;
       }
@@ -31292,6 +31309,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         intentEnabledForSeat,
         subagentAllows,
         subagentRefusal,
+        classifyReplyLine,
         PLUGIN_REPLY_WAIT_MS,
         PLUGIN_REPLY_WAIT_MAX_MS,
         SUBAGENT_SUBS,

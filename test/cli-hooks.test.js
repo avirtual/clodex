@@ -1374,7 +1374,7 @@ test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child 
   const src = fs.readFileSync(__filename, 'utf8');
   const calls = src.match(/(?:spawn|spawnSync|execFileSync)\('bash'/g) || [];
   const guarded = src.match(/(?:spawn|spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
-  assert.strictEqual(calls.length, 20);
+  assert.strictEqual(calls.length, 21);
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
