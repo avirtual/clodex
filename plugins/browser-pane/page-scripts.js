@@ -1166,7 +1166,8 @@ function feedPosts(scope, cats, byEl, loc) {
     if (!body) {
       const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
       body = [...art.querySelectorAll('p,div')]
-        .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head)))
+        .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
+          && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
     const moreEl = [...art.querySelectorAll('button,[role=button]')]

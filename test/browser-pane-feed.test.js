@@ -346,3 +346,11 @@ test('FEED: an Article quote card carries its title from the line after "Article
   assert.strictEqual(quoteOf(h('div', {}, 'Article 10 Projects You Should Build with Jev')).article, '10 Projects You Should Build with Jev');
   assert.strictEqual('article' in quoteOf(h('div', { lang: 'en' }, 'plain words'), h('div', {}, 'Article')), false);
 });
+
+test('FEED: a post with only a photo has no text; the header row is never its clip', () => {
+  const { row } = xHeader('EvanKirstel', 'Evan', '/EvanKirstel/status/4', {}, '14h');
+  const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })));
+  const got = runFeed(h('main', {}, art), {}, {});
+  assert.strictEqual(got.posts[0].text, '');
+  assert.strictEqual(feedLines(got)[0], '[?] Evan @EvanKirstel · 14h · photo · → /EvanKirstel/status/4');
+});
