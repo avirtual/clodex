@@ -110,7 +110,7 @@ function readCommand(service, opts, page) {
 
 const FEED_TEXT = 200;
 const QUOTE_TEXT = 120;
-const ISO_MIN_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+const ISO_MIN_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
 
 function countLabel(num) {
   const s = String(num);
@@ -124,6 +124,15 @@ function clipText(text, room, more) {
   return JSON.stringify(cut + tail + (more != null ? ` (more [${more}])` : ''));
 }
 
+function mediaParts(m) {
+  const out = [];
+  if (m.videos === 1) out.push(m.duration ? `video ${m.duration}` : 'video');
+  else if (m.videos > 1) out.push(`${m.videos} videos`);
+  if (m.photos === 1) out.push('photo');
+  else if (m.photos > 1) out.push(`${m.photos} photos`);
+  return out;
+}
+
 function feedBlocks(feed) {
   const posts = feed && Array.isArray(feed.posts) ? feed.posts : [];
   return posts.map((p) => {
@@ -135,27 +144,26 @@ function feedBlocks(feed) {
     parts.push(`[${p.n == null ? '?' : p.n}]${who.length ? ` ${who.join(' ')}` : ''}`);
     const t = p.time || {};
     const iso = ISO_MIN_RE.exec(String(t.iso || ''));
-    if (t.rel || iso) parts.push([t.rel, iso ? `(${iso[0]})` : ''].filter(Boolean).join(' '));
+    if (t.rel || iso) parts.push([t.rel, iso ? `(${iso[1]}${iso[2] || ''})` : ''].filter(Boolean).join(' '));
     const f = p.flags || {};
     if (f.ad) parts.push('Ad');
     if (f.repostedBy) parts.push(`reposted by ${f.repostedBy}`);
     if (f.pinned) parts.push('pinned');
     if (f.replyTo) parts.push(`reply to ${f.replyTo}`);
+    if (f.parody) parts.push('parody');
     if (p.text || p.more != null) parts.push(clipText(p.text, FEED_TEXT, p.more));
     for (const c of Array.isArray(p.counts) ? p.counts : []) parts.push(`${countLabel(c.num)} ${c.word}`);
     const m = p.media || {};
-    if (m.videos === 1) parts.push(m.duration ? `video ${m.duration}` : 'video');
-    else if (m.videos > 1) parts.push(`${m.videos} videos`);
-    if (m.photos === 1) parts.push('photo');
-    else if (m.photos > 1) parts.push(`${m.photos} photos`);
+    parts.push(...mediaParts(m));
     if (m.card) parts.push(`card ${m.card}`);
     if (p.path) parts.push(`→ ${p.path}`);
     const lines = [parts.join(' · ')];
     const q = p.quote;
     if (q) {
-      const qp = ['↳ quoting' + (q.handle ? ` @${q.handle}` : '')];
+      const qp = [`↳ ${q.n == null ? '' : `[${q.n}] `}quoting` + (q.handle ? ` @${q.handle}` : '')];
       if (q.rel) qp.push(q.rel);
       if (q.text) qp.push(clipText(q.text, QUOTE_TEXT, null));
+      qp.push(...mediaParts(q.media || {}));
       if (q.path) qp.push(`→ ${q.path}`);
       lines.push(`  ${qp.join(' · ')}`);
     }
@@ -163,9 +171,18 @@ function feedBlocks(feed) {
   });
 }
 
-function feedLines(feed, filter = null) {
+function feedMatches(feed, filter = null) {
   const needle = filter ? String(filter).toLowerCase() : '';
-  return feedBlocks(feed).filter((b) => !needle || b.some((l) => l.toLowerCase().includes(needle))).flat();
+  return feedBlocks(feed).filter((b) => !needle || b.some((l) => l.toLowerCase().includes(needle)));
+}
+
+function feedLines(feed, filter = null) {
+  return feedMatches(feed, filter).flat();
+}
+
+function compactLabel(raw, opts) {
+  if (opts.mode !== 'default' || compactFeed(raw, opts)) return '';
+  return raw.feed && raw.feed.failed ? ' (feed unavailable — default sections)' : ' (no feed found)';
 }
 
 function compactFeed(raw, opts) {
@@ -182,18 +199,20 @@ function outsideFeed(elements, feed) {
 }
 
 function sections(raw, opts) {
-  const rawLines = filterLines(String(raw.text || '').split('\n'), opts.filter, { blocks: true });
-  const textLines = rawLines.map(unmark);
   const elements = filterLines(Array.isArray(raw.elements) ? raw.elements.map(String) : [], opts.filter);
   const out = [];
   const feed = compactFeed(raw, opts);
   if (feed) {
-    const lines = feedLines(feed, opts.filter);
+    const blocks = feedMatches(feed, opts.filter);
+    const lines = blocks.flat();
     const rest = outsideFeed(elements, feed);
-    out.push({ marker: `== feed (${feed.posts.length} posts) ==`, lines: lines.length ? lines : ['(none)'] });
+    const total = feed.posts.length;
+    out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} posts) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
     return out;
   }
+  const rawLines = filterLines(String(raw.text || '').split('\n'), opts.filter, { blocks: true });
+  const textLines = rawLines.map(unmark);
   if (opts.mode === 'default' || opts.mode === 'text') {
     const text = textLines.join('\n');
     if (opts.mode === 'text' || opts.all) {
@@ -488,7 +507,7 @@ function formatRead(raw, opts) {
       : raw.first ? `numbers: stable per site; first read of ${typeof raw.first === 'string' ? raw.first : o.service}` : `numbers: stable per site; new since your last read: ${numberList(raw.fresh)}`)
     + (Array.isArray(raw.retired) && raw.retired.length ? `; retired: ${numberList(raw.retired)}` : '')
     + (Array.isArray(raw.changed) && raw.changed.length ? `; changed: ${numberList(raw.changed)}` : '');
-  const mode = o.mode + (o.main ? ' --main' : '') + (o.compact ? ' --compact' : '');
+  const mode = o.mode + (o.main ? ' --main' : '') + (o.compact ? ` --compact${compactLabel(raw, o)}` : '');
   const posts = raw.feed && Number(raw.feed.count) > 0 ? Number(raw.feed.count) : 0;
   const filter = o.filter ? `"${o.filter}"` : 'none';
   const head = (tok) => [

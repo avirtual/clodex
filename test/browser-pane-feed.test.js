@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const scripts = require('../plugins/browser-pane/page-scripts');
+const { feedLines } = require('../plugins/browser-pane/read-format');
 
 const BLOCK = new Set(['DIV', 'P', 'ARTICLE', 'MAIN', 'SECTION']);
 const SIMPLE_RE = /^([a-z]*)((?:\[[^\]]+\])*)$/;
@@ -25,7 +26,9 @@ function matches(el, sel) {
 
 function h(tag, attrs, ...kids) {
   const el = {
-    tagName: tag.toUpperCase(), attrs: attrs || {}, children: [], kids, parentElement: null,
+    tagName: tag.toUpperCase(), attrs: attrs || {}, children: [], kids, parentElement: null, nodeType: 1,
+    get childNodes() { return el.kids.map((k) => (typeof k === 'string' ? { nodeType: 3, nodeValue: k } : k)); },
+    get previousElementSibling() { const sib = el.parentElement ? el.parentElement.children : []; return sib[sib.indexOf(el) - 1] || null; },
     getAttribute: (k) => (k in el.attrs ? String(el.attrs[k]) : null),
     get innerText() {
       return el.kids.map((k) => (typeof k === 'string' ? k : k.innerText)).filter((t) => t !== '').join(BLOCK.has(el.tagName) ? '\n' : ' ');
@@ -39,13 +42,40 @@ function h(tag, attrs, ...kids) {
       return out;
     },
     querySelector: (sel) => el.querySelectorAll(sel)[0] || null,
-    getBoundingClientRect: () => ({ width: Number(el.attrs.w || 0), height: Number(el.attrs.h || 0) }),
+    getBoundingClientRect: () => {
+      const [x, y, w, hh] = ['x', 'y', 'w', 'h'].map((k) => Number(el.attrs[k] || 0));
+      return { left: x, top: y, right: x + w, bottom: y + hh, width: w, height: hh };
+    },
   };
   for (const k of kids) if (typeof k !== 'string') { k.parentElement = el; el.children.push(k); }
   return el;
 }
 
+function createRange() {
+  let start = null;
+  let end = null;
+  return {
+    setStart: (node) => { start = node; },
+    setEndBefore: (node) => { end = node; },
+    toString: () => {
+      const out = [];
+      let done = false;
+      const walk = (e) => {
+        for (const k of e.kids) {
+          if (done) return;
+          if (k === end) { done = true; return; }
+          if (typeof k === 'string') out.push(k);
+          else walk(k);
+        }
+      };
+      walk(start);
+      return out.join('');
+    },
+  };
+}
+
 function runFeed(doc, numbered, cats, main = false) {
+  doc.createRange = createRange;
   const window = { __cxEls: Object.fromEntries(Object.entries(numbered).map(([n, e]) => [n, { deref: () => e }])) };
   const location = { href: 'https://site.test/home', origin: 'https://site.test' };
   return new Function('document', 'window', 'location', `return ${scripts.FEED(main, cats)}`)(doc, window, location);
@@ -102,7 +132,7 @@ test('FEED: one entry per article — permalink number, header, lang body, Show 
         counts: [{ num: '5', word: 'reposts' }],
         media: { videos: 0, duration: null, photos: 0, card: 'example.com' },
         flags: { replyTo: '@ana' },
-        quote: { handle: 'cy', rel: '4d', text: 'the quoted words', path: null },
+        quote: { n: null, handle: 'cy', rel: '4d', text: 'the quoted words', path: null, media: { videos: 0, duration: null, photos: 0 } },
       },
     ],
     numbers: [10, 11, 12, 13, 14, 20, 21],
@@ -118,4 +148,102 @@ test('FEED: an article whose permalink was not numbered reports n null; nested a
   const inner = h('article', {}, h('a', { href: '/z/status/9' }, h('time', {}, '1m')));
   const doc = h('main', {}, h('article', {}, h('div', {}, '@q', h('a', { href: '/q/status/8' }, h('time', {}, '2m'))), inner));
   assert.strictEqual(runFeed(doc, {}, {}).posts.length, 1);
+});
+
+function adFixture() {
+  const views = h('a', { href: '/marco__marsano/status/2104987795370750155/analytics' }, '268,217 views');
+  const shop = h('a', { href: 'https://t.co/abc' }, 'From millerandhill.com');
+  const wrapper = h('div', {},
+    h('div', {}, h('span', {}, 'Marco Marsano Milano'), h('span', {}, '@marco__marsano')),
+    h('div', {}, 'Ad'),
+    h('div', { lang: 'en' }, 'Discover our denim jacket'),
+    shop, views);
+  const art = h('article', {}, wrapper);
+  return { doc: h('main', {}, art), art, wrapper, views, shop };
+}
+
+test('FEED: an ad (no time link) takes the clickable wrapper number, the analytics link minus /analytics, the @handle span, the Ad line under the header and the domain in the link text', () => {
+  const f = adFixture();
+  const [p] = runFeed(f.doc, { 1020: f.wrapper, 1025: f.views, 1026: f.shop }, {}).posts;
+  assert.strictEqual(p.n, 1020);
+  assert.strictEqual(p.path, '/marco__marsano/status/2104987795370750155');
+  assert.deepStrictEqual([p.handle, p.name, p.flags.ad, p.media.card], ['marco__marsano', 'Marco Marsano Milano', true, 'millerandhill.com']);
+});
+
+function xHeader(handle, name, statusPath, timeAttrs, rel) {
+  const timeLink = h('a', { href: statusPath, ...timeAttrs }, h('time', { datetime: '2026-10-05T10:22:00.000Z' }, rel));
+  const row = h('div', {},
+    h('div', {}, h('a', { href: `/${handle}` }, name), h('svg', { 'aria-label': 'Verified account' })),
+    h('div', {}, h('a', { href: `/${handle}` }, `@${handle}`), h('span', {}, '·'), timeLink));
+  return { row, timeLink };
+}
+
+test('FEED: a two-level header gives handle, name and ✓ from the author links; the time link is the permalink and never a count; a /photo/N link before it is not the path', () => {
+  const { row, timeLink } = xHeader('coinbureau', 'Coin Bureau', '/coinbureau/status/7', { 'aria-label': '10 minutes' }, '10m');
+  const photo = h('a', { href: '/coinbureau/status/7/photo/1' }, h('img', { w: 40, h: 40 }));
+  const art = h('article', {},
+    photo,
+    h('div', {}, h('a', { href: '/coinbureau' }, h('img', { w: 40, h: 40 })), row),
+    h('div', { lang: 'en' }, 'Do not ignore this.'),
+    h('button', { 'aria-label': '11 Replies. Reply' }, '11'));
+  const [p] = runFeed(h('main', {}, art), { 1007: timeLink, 1001: photo }, {}).posts;
+  assert.deepStrictEqual([p.n, p.path, p.handle, p.name, p.verified], [1007, '/coinbureau/status/7', 'coinbureau', 'Coin Bureau', true]);
+  assert.deepStrictEqual(p.counts, [{ num: '11', word: 'replies' }]);
+});
+
+test('FEED: a self-repost line above the header sets repostedBy; the name comes from the author link nearest the handle', () => {
+  const { row } = xHeader('analee', 'Ana Lee', '/analee/status/8', {}, '2h');
+  const art = h('article', {},
+    h('div', {}, h('a', { href: '/analee' }, 'Ana Lee reposted')),
+    h('div', {}, row),
+    h('div', { lang: 'en' }, 'hello again'));
+  const [p] = runFeed(h('main', {}, art), {}, {}).posts;
+  assert.deepStrictEqual([p.handle, p.name, p.flags.repostedBy], ['analee', 'Ana Lee', 'Ana Lee']);
+});
+
+test('FEED: a video poster at the video\'s rect is not a photo; a parody label is a flag, not a card; a card image is not a photo', () => {
+  const { row } = xHeader('vip', 'Vip', '/vip/status/9', {}, '15h');
+  const cardLink = h('a', { href: 'https://shop.test/p' }, h('img', { w: 300, h: 300 }));
+  const art = h('article', {},
+    row,
+    h('a', { href: 'https://help.x.com/rules-and-policies/authenticity' }, 'Parody account'),
+    h('div', { lang: 'en' }, 'laughing'),
+    h('div', {}, h('div', {}, h('div', {}, h('div', {}, h('div', {}, h('video', { w: 300, h: 200 })))))),
+    h('img', { w: 300, h: 200 }),
+    cardLink);
+  const [p] = runFeed(h('main', {}, art), {}, {}).posts;
+  assert.deepStrictEqual(p.media, { videos: 1, duration: null, photos: 0, card: 'shop.test' });
+  assert.strictEqual(p.flags.parody, true);
+});
+
+test('FEED: the quote link carries a different status id than the post; its number, path and media go on the quote; an Article quote takes its box number', () => {
+  const { row } = xHeader('qwinsi0x', 'Qwinsi', '/qwinsi0x/status/5', {}, '15h');
+  const qlink = h('a', { href: '/RohOnChain/status/6' }, 'Article');
+  const qbox = h('div', { role: 'link' },
+    h('a', { href: '/qwinsi0x/status/5/photo/1' }, h('img', { w: 40, h: 40 })),
+    h('div', {}, h('span', {}, 'Roan'), h('span', {}, '@RohOnChain'), h('time', { datetime: '2026-09-19T00:00:00.000Z' }, 'Sep 19')),
+    h('div', { lang: 'en' }, 'Jev is fast'),
+    h('div', {}, h('video', {}), h('div', { 'aria-label': 'Play Video. 12 seconds long' })),
+    qlink);
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'A quant'), qbox);
+  const [p] = runFeed(h('main', {}, art), { 1284: qlink }, {}).posts;
+  assert.deepStrictEqual(p.quote, { n: 1284, handle: 'RohOnChain', rel: 'Sep 19', text: 'Jev is fast', path: '/RohOnChain/status/6', media: { videos: 1, duration: '0:12', photos: 0 } });
+  const a2 = xHeader('hayatomaruu', 'Hayato', '/hayatomaruu/status/4', {}, '15h');
+  const abox = h('div', {}, h('div', {}, h('span', {}, 'Beam'), h('span', {}, '@beamnxw'), h('time', {}, 'Jul 25')));
+  const art2 = h('article', {}, a2.row, h('div', { lang: 'en' }, 'Creator'), abox);
+  const got = runFeed(h('main', {}, art2), { 1040: abox }, {});
+  assert.strictEqual(feedLines(got)[1], '  ↳ [1040] quoting @beamnxw · Jul 25');
+});
+
+test('FEED: on a focal post the own time link sits below a quote whose linked time comes first; the post keeps its own number, path and time', () => {
+  const row = h('div', {},
+    h('div', {}, h('a', { href: '/coinbureau' }, 'Coin Bureau')),
+    h('div', {}, h('a', { href: '/coinbureau' }, '@coinbureau')));
+  const qlink = h('a', { href: '/RohOnChain/status/6' }, h('span', {}, '@RohOnChain'), h('time', { datetime: '2026-09-19T00:00:00.000Z' }, 'Sep 19'));
+  const qbox = h('div', { role: 'link' }, h('div', {}, h('span', {}, 'Roan'), qlink), h('div', { lang: 'en' }, 'Jev is fast'));
+  const own = h('a', { href: '/coinbureau/status/7' }, h('time', { datetime: '2026-10-05T10:22:00.000Z' }, '1:22 PM · Oct 5, 2026'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'Do not ignore this.'), qbox, h('div', {}, own), h('button', { 'aria-label': '11 Replies. Reply' }, '11'));
+  const [p] = runFeed(h('main', {}, art), { 1122: own, 1284: qlink }, {}).posts;
+  assert.deepStrictEqual([p.n, p.path, p.time.rel], [1122, '/coinbureau/status/7', '1:22 PM · Oct 5, 2026']);
+  assert.deepStrictEqual([p.quote.n, p.quote.path, p.quote.rel], [1284, '/RohOnChain/status/6', 'Sep 19']);
 });

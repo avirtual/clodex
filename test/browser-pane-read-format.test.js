@@ -446,7 +446,7 @@ const MIN_POST = { n: 12, path: '/a/status/1', handle: 'a', name: null, verified
 
 test('feedLines: a full line carries every part in order; text is JSON-quoted with the Show more number', () => {
   assert.deepStrictEqual(feedLines({ posts: [POST] }), [
-    '[11] @ana (Ana Lee ✓) · 9h (2026-10-05T04:12) · Ad · reposted by @bo · pinned · reply to @x · "Hello world… (more [12])" · 1,058 replies · 621 reposts · 3.1K likes · 1.2M views · video 1:06 · 2 photos · card example.com · → /ana/status/111',
+    '[11] @ana (Ana Lee ✓) · 9h (2026-10-05T04:12Z) · Ad · reposted by @bo · pinned · reply to @x · "Hello world… (more [12])" · 1,058 replies · 621 reposts · 3.1K likes · 1.2M views · video 1:06 · 2 photos · card example.com · → /ana/status/111',
   ]);
 });
 
@@ -460,6 +460,16 @@ test('feedLines: absent parts leave no empty separators; an unnumbered post prin
 test('feedLines: a quote is a second indented line', () => {
   const q = { ...MIN_POST, quote: { handle: 'cy', rel: '2d', text: 'the quoted words', path: '/cy/status/2' } };
   assert.deepStrictEqual(feedLines({ posts: [q] }), ['[12] @a · 9h · "hi" · → /a/status/1', '  ↳ quoting @cy · 2d · "the quoted words" · → /cy/status/2']);
+  const nq = { ...MIN_POST, quote: { ...q.quote, n: 1284, media: { videos: 1, duration: '0:12', photos: 2 } } };
+  assert.strictEqual(feedLines({ posts: [nq] })[1], '  ↳ [1284] quoting @cy · 2d · "the quoted words" · video 0:12 · 2 photos · → /cy/status/2');
+});
+
+test('feedLines: the ISO keeps its zone, Z or offset, and drops seconds; no zone prints the minute only; a parody flag prints', () => {
+  const at = (iso) => feedLines({ posts: [{ ...MIN_POST, time: { rel: '10m', iso } }] })[0].split(' · ')[1];
+  assert.strictEqual(at('2026-10-05T10:22:41.000Z'), '10m (2026-10-05T10:22Z)');
+  assert.strictEqual(at('2026-10-05T10:22:41+03:00'), '10m (2026-10-05T10:22+03:00)');
+  assert.strictEqual(at('2026-10-05T10:22'), '10m (2026-10-05T10:22)');
+  assert.match(feedLines({ posts: [{ ...MIN_POST, flags: { parody: true } }] })[0], / · parody · /);
 });
 
 const FEED_RAW = {
@@ -487,7 +497,16 @@ test('read --compact --filter applies to feed lines, a match on the quote line k
   const body = formatRead(FEED_RAW, { service: 'x', compact: true, filter: '@ANA' }).content.split('\n').slice(6, -2);
   assert.deepStrictEqual(body.slice(0, 4), ['== feed (2 posts) ==', feedLines(FEED_RAW.feed)[0], '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
   const zed = formatRead(FEED_RAW, { service: 'x', compact: true, filter: 'zed' }).content.split('\n').slice(6, -2);
-  assert.deepStrictEqual(zed, ['== feed (2 posts) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"', '== elements (outside the feed) ==', '(none)']);
+  assert.deepStrictEqual(zed, ['== feed (1 of 2 posts) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"', '== elements (outside the feed) ==', '(none)']);
+});
+
+test('read --compact without a feed: a failed FEED says so in the mode, no articles says no feed found; both keep the default sections', () => {
+  const failed = formatRead({ ...FEED_RAW, feed: { count: 2, failed: true } }, { service: 'x', compact: true }).content;
+  assert.match(failed.split('\n')[3], / · posts: 2 · mode: default --compact \(feed unavailable — default sections\) · /);
+  assert.match(failed, /\n== elements ==\n\[1\] link Home/);
+  const none = formatRead({ ...RAW, feed: { count: 0, posts: [], numbers: [], folded: {} } }, { service: 'x', compact: true }).content;
+  assert.match(none.split('\n')[3], / · mode: default --compact \(no feed found\) · /);
+  assert.doesNotMatch(none, /== feed/);
 });
 
 test('read without --compact keeps the text and full elements sections and reports posts: N', () => {

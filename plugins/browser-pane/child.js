@@ -1364,7 +1364,7 @@ function run(electron, ctx) {
     let feed = posts ? { count: posts } : null;
     if (args.compact && el) {
       const f = await inIsolated(wc, scripts.FEED(main, el.cats || {}));
-      if (f && Array.isArray(f.posts)) feed = { count: f.posts.length, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} };
+      feed = f && Array.isArray(f.posts) ? { count: f.posts.length, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} } : { count: posts, failed: true };
     }
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),

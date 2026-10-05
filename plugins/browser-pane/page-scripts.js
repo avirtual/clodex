@@ -557,7 +557,7 @@ function readInteractive(main, state) {
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, posts: document.querySelectorAll('article').length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, posts: [...(${main ? `document.querySelector('main, [role=main]') || document` : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, url: location.href };
 })()`;
 }
 
@@ -988,10 +988,89 @@ function feedPosts(scope, cats, byEl, loc) {
     for (let i = 0; e && e !== art && i < 4; i++, e = e.parentElement) if (e.querySelector('video')) return true;
     return false;
   };
+  const statusPath = (p) => (p == null ? null : String(p).replace(/[?#].*$/, '').replace(/\/(?:analytics|history|(?:photo|video)\/\d+)\/?$/, ''));
+  const statusId = (p) => { const m = /\/status\/(\d+)/.exec(p || ''); return m ? m[1] : null; };
+  const plain = (e) => !/^(A|BUTTON|INPUT|SELECT|TEXTAREA|SUMMARY)$/.test(e.tagName) && !/^(button|link|tab|menuitem|checkbox|combobox)$/.test(e.getAttribute('role') || '');
+  const wrapperNum = (box, up) => {
+    if (numOf(box) != null) return numOf(box);
+    let best = null;
+    for (const [e, n] of byEl) if (e !== box && inside(e, box) && plain(e) && (best == null || n < best)) best = n;
+    if (best != null || !up) return best;
+    for (let e = box.parentElement; e; e = e.parentElement) {
+      if (arts.some((o) => o !== box && e.contains(o))) return null;
+      if (numOf(e) != null && plain(e)) return numOf(e);
+    }
+    return null;
+  };
+  const common = (x, y) => { for (let e = x; e; e = e.parentElement) if (e.contains(y)) return e; return null; };
+  const depth = (e) => { let d = 0; for (; e; e = e.parentElement) d++; return d; };
+  const ownText = (e) => flat([...(e.childNodes || [])].filter((c) => c.nodeType === 3).map((c) => c.nodeValue).join(''));
+  const find = (root, fn) => {
+    for (const c of root.children) {
+      if (fn(c)) return c;
+      const r = find(c, fn);
+      if (r) return r;
+    }
+    return null;
+  };
+  const nameNear = (el, art) => {
+    for (let e = el, i = 0; e && e !== art && i < 3; e = e.parentElement, i++) {
+      for (let s = e.previousElementSibling; s; s = s.previousElementSibling) {
+        const t = flat(s.innerText);
+        if (t) return s;
+      }
+    }
+    return null;
+  };
+  const host = (h) => {
+    try {
+      const u = new URL(h, loc.href);
+      return u.origin !== loc.origin ? u.hostname.replace(/^www\./, '') : null;
+    } catch { return null; }
+  };
+  const HOST_RE = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/i;
+  const LABEL_RE = /^(parody|fan|commentary) account$/i;
+  const overlap = (a, b) => {
+    const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+    const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+    return w > 0 && h > 0 ? w * h : 0;
+  };
+  const mediaOf = (box, keep, authorPath) => {
+    const vids = [...box.querySelectorAll('video')].filter(keep);
+    const videos = vids.length;
+    let duration = null;
+    for (const e of box.querySelectorAll('[aria-label]')) {
+      if (!videos || duration || !keep(e)) continue;
+      duration = durationOf(e.getAttribute('aria-label'));
+    }
+    const vrects = vids.map((v) => v.getBoundingClientRect());
+    const photos = [...box.querySelectorAll('img')].filter((img) => {
+      if (!keep(img)) return false;
+      const r = img.getBoundingClientRect();
+      if (r.width < 100 || r.height < 100) return false;
+      if (vrects.some((v) => overlap(r, v) >= 0.5 * r.width * r.height)) return false;
+      const a = img.closest('a');
+      if (a && host(a.getAttribute('href'))) return false;
+      const p = pathOf(a);
+      return !(authorPath && p && p.toLowerCase() === authorPath) && !nearVideo(img, box);
+    }).length;
+    return { videos, duration, photos };
+  };
   const post = (art) => {
     const times = [...art.querySelectorAll('time')];
-    const pl = art.querySelector('a[href*="/status/"]') || (times[0] && times[0].closest('a'));
-    const time = (pl && pl.querySelector('time')) || times[0] || null;
+    const isHandle = (a) => {
+      const m = /^\/@?([\w.-]+)\/?$/.exec(pathOf(a) || '');
+      const t = flat(a.innerText).toLowerCase();
+      return !!m && (t === '@' + m[1].toLowerCase() || t.startsWith('@' + m[1].toLowerCase() + '@'));
+    };
+    const hl0 = [...art.querySelectorAll('a[href]')].find(isHandle) || null;
+    const ownStatus = hl0 ? pathOf(hl0).replace(/\/$/, '').toLowerCase() + '/status/' : null;
+    const linked = times.map((t) => t.closest('a')).filter((a) => a && inside(a, art));
+    const timeA = (ownStatus && linked.find((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus))) || linked[0] || null;
+    const links = [...art.querySelectorAll('a[href*="/status/"]')];
+    const clean = links.find((a) => { const p = pathOf(a); return p && statusPath(p) === p; }) || null;
+    const pl = timeA || clean;
+    const time = (timeA && timeA.querySelector('time')) || times[0] || null;
     const qt = times.find((t) => t !== time && !(pl && pl.contains(t)));
     let qbox = null;
     if (qt && time) {
@@ -999,31 +1078,51 @@ function feedPosts(scope, cats, byEl, loc) {
       while (qbox.parentElement && qbox.parentElement !== art && !qbox.parentElement.contains(time)) qbox = qbox.parentElement;
     }
     const own = (e) => !inside(e, qbox);
-    let row = time;
-    while (row && row !== art && !/@\w/.test(row.innerText || '')) row = row.parentElement;
-    if (row === art) row = null;
-    const rowText = row ? String(row.innerText || '') : '';
-    const hm = /@(\w+)/.exec(rowText);
-    const handle = hm ? hm[1] : null;
-    const name = hm ? flat(rowText.slice(0, hm.index)).replace(/[\s·]+$/, '') || null : null;
-    const verified = !!row && [...row.querySelectorAll('svg[aria-label]')].some((s) => /verified/i.test(s.getAttribute('aria-label')));
-    const artText = String(art.innerText || '');
-    const rowLines = rowText.split('\n').map(flat).filter(Boolean);
-    const at = rowLines.length ? artText.indexOf(rowLines[0]) : -1;
-    const above = (at > 0 ? artText.slice(0, at) : '').split('\n').map(flat).filter(Boolean);
-    const flags = {};
-    if ([...above, ...rowLines].some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
-    const rp = above.find((l) => /reposted|retweeted/i.test(l));
-    if (rp) {
-      const m = /@\w+/.exec(rp);
-      flags.repostedBy = m ? m[0] : flat(rp.replace(/\s*(reposted|retweeted)\b.*$/i, '')) || rp;
+    const ownA = [...art.querySelectorAll('a[href]')].filter(own);
+    const path = statusPath(pl ? pathOf(pl) : links.length ? pathOf(links[0]) : null);
+    const n = pl ? numOf(pl) : wrapperNum(art, true);
+    const hl = ownA.find(isHandle);
+    let handleEl = hl || null;
+    let nameEl = null;
+    let handle = null;
+    let authorLinks = [];
+    if (hl) {
+      handle = flat(hl.innerText).slice(1);
+      const hp = pathOf(hl).toLowerCase();
+      authorLinks = ownA.filter((a) => (pathOf(a) || '').toLowerCase() === hp);
+      nameEl = authorLinks.filter((a) => a !== hl && flat(a.innerText) && flat(a.innerText) !== flat(hl.innerText))
+        .reduce((b, a) => (!b || depth(common(a, hl)) > depth(common(b, hl)) ? a : b), null);
+    } else {
+      handleEl = find(art, (e) => own(e) && /^@[\w.-]+(?:@[\w.-]+)?$/.test(ownText(e)));
+      if (handleEl) handle = ownText(handleEl).slice(1);
     }
-    if (above.some((l) => /pinned/i.test(l))) flags.pinned = true;
-    const rt = artText.split('\n').map((l) => /^replying to (@\S+)/i.exec(flat(l))).find(Boolean);
+    if (handleEl && !nameEl) nameEl = nameNear(handleEl, art);
+    const name = nameEl ? clip(nameEl.innerText, 40).replace(/[\s·]+$/, '') || null : null;
+    let row = handleEl ? (nameEl ? common(handleEl, nameEl) : handleEl.parentElement) : null;
+    if (row === art || (row && !inside(row, art))) row = null;
+    const verified = [...authorLinks, ...(row ? [row] : [])]
+      .some((e) => [...e.querySelectorAll('svg[aria-label]')].some((s) => /verified/i.test(s.getAttribute('aria-label'))));
+    let above = '';
+    if (row) {
+      const range = document.createRange();
+      range.setStart(art, 0);
+      range.setEndBefore(row);
+      above = flat(range.toString());
+    }
+    const qLines = new Set(qbox ? String(qbox.innerText || '').split('\n').map(flat).filter(Boolean) : []);
+    const ownLines = String(art.innerText || '').split('\n').map(flat).filter((l) => l && !qLines.has(l));
+    const flags = {};
+    if (ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
+    const rp = /^(.*?)\s*\b(?:reposted|retweeted)\b/i.exec(above);
+    const rpBy = rp ? (/@\w+/.exec(rp[1]) || [flat(rp[1])])[0] : null;
+    if (rpBy) flags.repostedBy = rpBy;
+    if (/pinned/i.test(above)) flags.pinned = true;
+    if (ownA.some((a) => LABEL_RE.test(flat(a.innerText)))) flags.parody = true;
+    const rt = ownLines.map((l) => /^replying to (@\S+)/i.exec(l)).find(Boolean);
     if (rt) flags.replyTo = rt[1];
     let body = [...art.querySelectorAll('[lang]')].find(own);
     if (!body) {
-      const head = rowLines[0] || '';
+      const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
       body = [...art.querySelectorAll('p,div')]
         .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
@@ -1033,52 +1132,44 @@ function feedPosts(scope, cats, byEl, loc) {
     const counts = [];
     const seen = new Set();
     for (const e of art.querySelectorAll('button,a,[role=button]')) {
-      if (!own(e)) continue;
+      if (!own(e) || e === pl || e.querySelector('time')) continue;
       const hit = /^([\d.,]+[KkMm]?)\s+([A-Za-z]+)/.exec(flat(e.getAttribute('aria-label'))) || /^([\d.,]+[KkMm]?)\s*(views?)$/i.exec(flat(e.innerText));
       if (!hit) continue;
       const word = hit[2].toLowerCase();
-      if (seen.has(word)) continue;
+      if (seen.has(word) || /^(seconds?|minutes?|hours?|days?|weeks?|months?|years?)$/.test(word)) continue;
       seen.add(word);
       counts.push({ num: hit[1], word });
     }
-    const videos = [...art.querySelectorAll('video')].filter(own).length;
-    let duration = null;
-    for (const e of art.querySelectorAll('[aria-label]')) {
-      if (!videos || duration || !own(e)) continue;
-      duration = durationOf(e.getAttribute('aria-label'));
-    }
-    const authorPath = handle ? '/' + handle.toLowerCase() : null;
-    const photos = [...art.querySelectorAll('img')].filter((img) => {
-      if (!own(img)) return false;
-      const r = img.getBoundingClientRect();
-      if (r.width < 100 || r.height < 100) return false;
-      const p = pathOf(img.closest('a'));
-      return !(authorPath && p && p.toLowerCase() === authorPath) && !nearVideo(img, art);
-    }).length;
+    const media = mediaOf(art, own, handle ? '/' + handle.toLowerCase() : null);
     let card = null;
-    for (const a of art.querySelectorAll('a[href]')) {
-      if (card || !own(a) || !flat(a.innerText)) continue;
-      try {
-        const u = new URL(a.getAttribute('href'), loc.href);
-        if (u.origin !== loc.origin) card = u.hostname.replace(/^www\./, '');
-      } catch {}
+    for (const a of ownA) {
+      const t = flat(a.innerText);
+      const h = host(a.getAttribute('href'));
+      if (card || !h || LABEL_RE.test(t)) continue;
+      const tok = HOST_RE.exec(t);
+      const big = [...a.querySelectorAll('img')].some((img) => { const r = img.getBoundingClientRect(); return r.width >= 100 && r.height >= 100; });
+      if (tok) card = tok[0].toLowerCase().replace(/^www\./, '');
+      else if (big) card = h;
     }
-    const path = pathOf(pl);
+    media.card = card;
     let quote = null;
     if (qbox) {
-      const qa = qbox.querySelector('a[href*="/status/"]') || qt.closest('a');
-      const qp = qa && inside(qa, qbox) ? pathOf(qa) : null;
-      if (qp == null || qp !== path) {
-        const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
-        const ql = qbox.querySelector('[lang]');
-        quote = { handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null, text: clip(ql ? ql.innerText : '', 160), path: qp };
-      }
+      const pid = statusId(path);
+      const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid; });
+      const qa = qas.find((a) => a.contains(qt)) || qas[0] || null;
+      const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
+      const ql = qbox.querySelector('[lang]');
+      quote = {
+        n: qa ? numOf(qa) : wrapperNum(qbox, false), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
+        text: clip(ql ? ql.innerText : '', 160), path: qa ? statusPath(pathOf(qa)) : null,
+        media: mediaOf(qbox, () => true, null),
+      };
     }
     return {
-      n: numOf(pl), path, handle, name, verified,
+      n, path, handle, name, verified,
       time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
       text: body ? clip(body.innerText, 260) : '', more: numOf(moreEl), counts,
-      media: { videos, duration, photos, card }, flags, quote,
+      media, flags, quote,
     };
   };
   const set = new Set(arts);

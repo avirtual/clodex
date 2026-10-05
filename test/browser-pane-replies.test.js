@@ -199,6 +199,10 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'More', navigated: false, idle, changed: long }).endsWith(`changed: "${long}"`));
   assert.strictEqual(R.actReply('key', 'x', { sub: 'key', key: 'Escape' }, { navigated: false, idle, changed: 'most of the page (menu closed?)' }),
     '[agent:browser] pressed Escape on x · same page · idle 0.8s · changed: most of the page (menu closed?)');
+  assert.strictEqual(R.actReply('key', 'x', { sub: 'key', key: 'Enter' }, { navigated: false, idle, changed: 'most of the page (menu closed?)' }),
+    '[agent:browser] pressed Enter on x · same page · idle 0.8s · changed: most of the page');
+  assert.strictEqual(R.actReply('click', 'x', { sub: 'click', n: 1007 }, { kind: 'link', label: '10m', navigated: true, inPage: true, url: 'https://x.com/a/status/1', idle, changed: 'most of the page (menu closed?)' }),
+    '[agent:browser] clicked x [1007] link "10m" · navigated → https://x.com/a/status/1 (in-page) · numbers kept where the page repeats · idle 0.8s · changed: most of the page');
 });
 
 test('replies: scroll reports position, items loaded or dropped, page growth and what changed', () => {
