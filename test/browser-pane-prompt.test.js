@@ -105,5 +105,5 @@ test('prompt: every form the prompt lines name parses into a command, covering e
   }
   assert.deepStrictEqual([...subs].sort(),
     ['back', 'click', 'close', 'download', 'forward', 'inspect', 'key', 'open', 'read', 'release', 'screenshot', 'scroll', 'select', 'services', 'type', 'wait']);
-  assert.strictEqual(lines.length, 17);
+  assert.strictEqual(lines.length, 18);
 });
