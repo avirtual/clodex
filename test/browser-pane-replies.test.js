@@ -201,6 +201,26 @@ test('replies: an act that stays on the page says what text changed, or that not
     '[agent:browser] pressed Escape on x · same page · idle 0.8s · changed: most of the page (menu closed?)');
 });
 
+test('replies: scroll reports position, items loaded or dropped, page growth and what changed', () => {
+  const idle = { ok: true, ms: 400 };
+  const down = { sub: 'scroll', dir: 'down', pages: 1 };
+  assert.strictEqual(R.scrollReply('x', down, {
+    before: { y: 1000, height: 6300, items: 12 }, after: { y: 1868, height: 9500, items: 16 }, vh: 868, navigated: false, idle, changed: 'most of the page (menu closed?)',
+  }), '[agent:browser] scrolled x down · 1868–2736 of 9500 px (20–29%) · +4 items (12 → 16) · page grew 3200 px · idle 0.4s · changed: most of the page (menu closed?)');
+  assert.strictEqual(R.scrollReply('x', down, {
+    before: { y: 8632, height: 9500, items: 16 }, after: { y: 8632, height: 9500, items: 16 }, vh: 868, navigated: false, idle, changed: '',
+  }), '[agent:browser] scrolled x down · already at bottom of page');
+  assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'down', pages: 3 }, {
+    before: { y: 1868, height: 9500, items: 16 }, after: { y: 4472, height: 9500, items: 13 }, vh: 868, navigated: false, idle, changed: 'x',
+  }), '[agent:browser] scrolled x down ×3 · 4472–5340 of 9500 px (47–56%) · −3 items (16 → 13) · idle 0.4s · changed: "x"');
+  assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'top' }, {
+    before: { y: 4472, height: 9500, items: 13 }, after: { y: 0, height: 9500, items: 13 }, vh: 868, navigated: false, idle, changed: '',
+  }), '[agent:browser] scrolled x top · top of page · no new items · idle 0.4s · no visible change');
+  assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'bottom' }, {
+    before: { y: 0, height: 900, items: 0 }, after: { y: 2000, height: 2868, items: 0 }, vh: 868, navigated: false, idle, changed: '',
+  }), '[agent:browser] scrolled x bottom · bottom of page · page grew 1968 px · idle 0.4s · no visible change');
+});
+
 test('replies: the download verb names a repeat as the same as an existing file', () => {
   assert.strictEqual(R.downloadReply('ebloc', { n: 4 }, { file: '/w/bills/lista.pdf', bytes: 120, mime: 'application/pdf', magic: 'pdf', ms: 400, same: true }),
     '[agent:browser] downloaded ebloc [4] → /w/bills/lista.pdf · same as an existing file · 120 B · application/pdf · %PDF ok · 0.4s');

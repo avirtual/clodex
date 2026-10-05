@@ -148,6 +148,18 @@ test('scheduler: commands from the holder run one at a time in arrival order', a
   ]);
 });
 
+test('scheduler: scroll reaches the child as op scroll with dir and pages, without a prior read', async () => {
+  const h = harness({ scroll: () => ({
+    dir: 'down', pages: 2, before: { y: 0, height: 4000, items: 5 }, after: { y: 1656, height: 6000, items: 9 }, vh: 868, navigated: false, idle: { ok: true, ms: 400 }, changed: 'x',
+  }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser scroll down --pages=2]']]), [
+    ['hand-a', '[agent:browser] scrolled utility down ×2 · 1656–2524 of 6000 px (28–42%) · +4 items (5 → 9) · page grew 2000 px · idle 0.4s · changed: "x"'],
+  ]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'scroll', { dir: 'down', pages: 2 }]]);
+});
+
 test('scheduler: a failure drops the same seat\'s queued commands and names them', async () => {
   const h = harness({ select: () => { throw coded('NO_OPTION', 'no option "Sep" in [3] — options: "August 2026"'); } });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);

@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, consequentialRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -583,6 +583,31 @@ test('page scripts: VALUE clips at the source to 200 chars', () => {
   const run = (v) => new Function('window', `return ${scripts.VALUE(1)}`)({ __cxEls: { 1: { deref: () => ({ isConnected: true, value: v }) } } });
   assert.strictEqual(run('x'.repeat(500)).length, 200);
   assert.strictEqual(run('abc'), 'abc');
+});
+
+test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then li under the read root, with y/height/vh', () => {
+  const run = ({ article = 0, listitem = 0, li = 0, root = true }) => {
+    const rootEl = { querySelectorAll: (sel) => ({ length: sel === '[role=listitem]' ? listitem : sel === 'li' ? li : 0 }) };
+    const document = {
+      querySelector: (sel) => (root && sel.startsWith('main article') ? rootEl : null),
+      querySelectorAll: (sel) => ({ length: sel === 'article' ? article : 0 }),
+      body: { querySelectorAll: () => ({ length: 0 }) },
+      scrollingElement: { scrollHeight: 9500.4 },
+    };
+    return new Function('document', 'window', `return ${scripts.SCROLL_INFO}`)(document, { scrollY: 1867.6, innerHeight: 868 });
+  };
+  assert.deepStrictEqual(run({ article: 12, listitem: 30, li: 40 }), { y: 1868, height: 9500, vh: 868, items: 12 });
+  assert.strictEqual(run({ listitem: 30, li: 40 }).items, 30);
+  assert.strictEqual(run({ li: 40 }).items, 40);
+  assert.strictEqual(run({ li: 40, root: false }).items, 0);
+  assert.ok(scripts.READ_TEXT(false).includes(JSON.stringify(scripts.READ_ROOT_SEL)));
+});
+
+test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', () => {
+  assert.strictEqual(scrollCode('down', 3), "window.scrollBy({ top: (window.innerHeight - 40) * 3, behavior: 'instant' })");
+  assert.strictEqual(scrollCode('up', 1), "window.scrollBy({ top: -(window.innerHeight - 40) * 1, behavior: 'instant' })");
+  assert.strictEqual(scrollCode('top'), "window.scrollTo({ top: 0, behavior: 'instant' })");
+  assert.match(scrollCode('bottom'), /^window\.scrollTo\(\{ top: .*scrollHeight, behavior: 'instant' \}\)$/);
 });
 
 function visOf(view = {}) {

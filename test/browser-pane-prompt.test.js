@@ -16,7 +16,7 @@ const DESIGN_PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
   '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--attach|--path-only]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file; --attach forces it inline, --path-only sends the path plus a digest',
   '  A read hides navigation/header/footer/sidebar text and elements repeated from your previous read of that site (header says how many; numbers stay valid); page body text is never hidden; --all shows everything.',
-  '  [agent:browser click [service] <n> [--to=<dir in your cwd>] [--confirm]]  [agent:browser click [service] --text="<visible text>" [--confirm]]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
+  '  [agent:browser click [service] <n> [--to=<dir in your cwd>] [--confirm]]  [agent:browser click [service] --text="<visible text>" [--confirm]]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>  [agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]',
   '  [agent:browser select [service] <n> [--confirm]] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',
   '  [agent:browser screenshot [service] [--numbers]]  [agent:browser inspect [service] <n>|--text="<s>"]  [agent:browser wait [service] [--ms=N] [--for=<text>] [--idle]]  [agent:browser services]  [agent:browser release [service]]',
   '  An element marked ⚠ looks consequential (payment, deletion, sign-out, alarm, transfer…): click/select on it is refused unless you add --confirm, and add it only when the operator asked for that action. Buttons that publish as the operator (post, reply, like, follow, send, share…) are marked ⚠ too.',
@@ -33,6 +33,7 @@ const FILL = [
   ['[--text|--links]', '--links'], ['[--main]', '--main'], ['[--all]', '--all'], ['[--filter=<s>]', '--filter=pdf'],
   ['[--page=N]', '--page=2'], ['[--attach|--path-only]', '--path-only'], ['[--enter]', '--enter'], ['[--to=<dir in your cwd>]', '--to=bills'],
   ['[--as=<name>]', '--as=2026-08.pdf'], ['[--ms=N]', '--ms=5000'], ['[--for=<text>]', '--for=done'], ['[--idle]', '--idle'], ['--text="<visible text>"', '--text="Lista de plată"'], ['[--numbers]', '--numbers'], ['[--confirm]', '--confirm'],
+  ['[down|up|top|bottom]', 'up'], ['[--pages=N]', '--pages=2'],
 ];
 const BODY = {
   '<url>': 'https://portal.example.com/bills', '<text>': 'Form 1040', '<Enter|Tab|Escape|…>': 'Enter',
@@ -103,6 +104,6 @@ test('prompt: every form the prompt lines name parses into a command, covering e
     subs.add(cmd.sub);
   }
   assert.deepStrictEqual([...subs].sort(),
-    ['click', 'download', 'inspect', 'key', 'open', 'read', 'release', 'screenshot', 'select', 'services', 'type', 'wait']);
-  assert.strictEqual(lines.length, 14);
+    ['click', 'download', 'inspect', 'key', 'open', 'read', 'release', 'screenshot', 'scroll', 'select', 'services', 'type', 'wait']);
+  assert.strictEqual(lines.length, 15);
 });

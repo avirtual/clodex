@@ -243,3 +243,7 @@ test('fixtures: no .js, .cjs or .mjs file under test/fixtures (node --test would
 test('client: inspect waits 30 s, room for the child\'s three capped page waits', () => {
   assert.strictEqual(OP_DEADLINE_MS.inspect, 30000);
 });
+
+test('client: scroll gets the same deadline as key, room for the quiet gate and the idle watch', () => {
+  assert.strictEqual(OP_DEADLINE_MS.scroll, OP_DEADLINE_MS.key);
+});

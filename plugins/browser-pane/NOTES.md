@@ -536,3 +536,15 @@ block context differs); `changed` lists numbers on both pages whose line or row
 text differs (shared nav and chrome links). Nothing within an origin is evicted:
 the `numbers` map and `nextN` are unbounded, `ELEMENTS_MAX` only stops listing,
 and `ORIGINS_MAX` drops whole origins.
+
+## page-scripts.js — SCROLL_INFO
+
+Feed items are counted as `article` in the document, else `[role=listitem]`,
+else `li`, the latter two under `READ_ROOT_SEL` (the read root), else `body`.
+
+## child.js — scrollCode
+
+`up`/`down` move by `innerHeight − 40` per page, so one line of the previous
+viewport stays visible.
+`behavior: 'instant'` overrides a page's CSS `scroll-behavior: smooth`, which would
+animate the scroll and let the after-measure land mid-animation.

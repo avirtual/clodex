@@ -216,6 +216,16 @@ function bulletItems(root, mark, hidden = (e) => getComputedStyle(e).display ===
   }
 }
 
+const READ_ROOT_SEL = 'main article, article, [role=main], main, #mw-content-text, #content';
+
+const SCROLL_INFO = `(() => {
+  const root = document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body;
+  const count = (el, sel) => (el ? el.querySelectorAll(sel).length : 0);
+  const items = count(document, 'article') || count(root, '[role=listitem]') || count(root, 'li');
+  const se = document.scrollingElement || document.documentElement;
+  return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
+})()`;
+
 function readText(main) {
   return `(() => {${DEEP}
   ${bulletItems.toString()}
@@ -226,7 +236,7 @@ function readText(main) {
     return t - 2 * l;
   };
   const forced = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
-  let root = forced || document.querySelector('main article, article, [role=main], main, #mw-content-text, #content');
+  let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
   if (!forced && (!root || (root.innerText || '').length < 200)) {
     let best = document.body, bs = -1;
     document.querySelectorAll('div,section,td').forEach(el => {
@@ -953,7 +963,7 @@ function targetState(n) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

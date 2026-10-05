@@ -7,7 +7,7 @@ page text plus a numbered list of links and controls, about 2,500 tokens per
 page, delivered as a file the agent reads. You watch the window, and you sign in
 yourself; the agent never types a password.
 
-This release covers `open`, `read`, `click`, `type`, `key`, `select`,
+This release covers `open`, `read`, `click`, `type`, `key`, `scroll`, `select`,
 `download`, `screenshot`, `inspect`, `wait`, `services` and `release`, and the take-over
 controls.
 
@@ -126,7 +126,8 @@ ipc handlers (step 12).
 - **iframes are not read.** The read file's header names the frames it skipped;
   the agent may open a frame's URL in the same service.
 - **Closed shadow roots are not read** (open ones are).
-- **Infinite scroll** is only partly covered, by `key PageDown` / `key End`.
+- **Infinite scroll**: `scroll` loads more and counts it; a `read` is still
+  needed to number what loaded.
 - **Keychain prompt**: on macOS a one-time prompt for "Clodex Safe Storage" can
   appear after an ad-hoc re-sign; it guards the browser's cookie encryption.
 - **Two "Clodex" Dock icons** while a browser window is open: the browser is the
@@ -175,6 +176,7 @@ ipc handlers (step 12).
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
+[agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]
 [agent:browser select [service] <n> [--confirm]] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service] [--numbers] [--attach|--path-only]]
@@ -183,6 +185,12 @@ ipc handlers (step 12).
 [agent:browser services]
 [agent:browser release [service]]
 ```
+
+`scroll` moves the page by viewports (default `down`, `--pages=N` up to 20 for
+`up`/`down`) and replies with the position (`1868–2736 of 9500 px (20–29%)`, or
+top/bottom of page), how many feed items loaded or dropped, how much the page
+grew, and what changed. It does not number anything: `read` again to get numbers
+for the new items.
 
 A read reply ends in `→ @<path>`, which a Claude seat attaches to its context, only
 when the page is at or under the seat's budget (default ≈1,000 tokens, set under
