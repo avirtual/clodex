@@ -210,7 +210,7 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'ab' }, { navigated: false, idle, changed: 'text removed' }),
     '[agent:browser] typed ebloc [2] (2 chars) · same page · idle 0.8s · changed: "text removed"');
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
-    '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers kept where the page repeats · idle 0.8s');
+    '[agent:browser] clicked ebloc [2] link "Next" · navigated → ("Two") https://x/2 · numbers kept where the page repeats · idle 0.8s');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),
     '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · value now "abc"');
   assert.strictEqual(R.actReply('key', 'ebloc', { sub: 'key', key: 'Backspace' }, { navigated: false, idle, changed: '', value: 'ab' }),
@@ -233,6 +233,17 @@ test('replies: an act that stays on the page says what text changed, or that not
     '[agent:browser] pressed Enter on x · same page · idle 0.8s · changed: most of the page');
   assert.strictEqual(R.actReply('click', 'x', { sub: 'click', n: 1007 }, { kind: 'link', label: '10m', navigated: true, inPage: true, url: 'https://x.com/a/status/1', idle, changed: 'most of the page (menu closed?)' }),
     '[agent:browser] clicked x [1007] link "10m" · navigated → https://x.com/a/status/1 (in-page) · numbers kept where the page repeats · idle 0.8s · changed: most of the page');
+  assert.strictEqual(R.actReply('click', 'x', { sub: 'click', n: 3 }, { kind: 'link', label: 'P2', navigated: true, url: 'https://x.com/list?page=2', title: 'Two', idle }),
+    '[agent:browser] clicked x [3] link "P2" · navigated → ("Two") https://x.com/list?page=2 · numbers kept where the page repeats · idle 0.8s');
+  const longQuery = Array.from({ length: 50 }, (_, i) => `k${i}=v${i}`).join('&');
+  const bk = R.actReply('click', 'bk', { sub: 'click', n: 283 }, { kind: 'link', label: 'Search', navigated: true, url: `https://www.booking.com/searchresults.html?${longQuery}`, title: 'Booking.com: Brașov hotels', idle });
+  assert.strictEqual(bk, '[agent:browser] clicked bk [283] link "Search" · navigated → ("Booking.com: Brașov hotels") https://www.booking.com/searchresults.html… · numbers kept where the page repeats · idle 0.8s');
+  const deep = R.actReply('click', 'bk', { sub: 'click', n: 4 }, { kind: 'link', label: 'Deep', navigated: true, url: `https://www.booking.com/${'p'.repeat(400)}?ss=1`, title: 'Deep', idle });
+  const deepUrl = deep.split('("Deep") ')[1].split(' · ')[0];
+  assert.ok(deepUrl.length <= 120 && deepUrl.endsWith('…') && deepUrl.startsWith('https://www.booking.com/ppp'), deepUrl);
+  assert.ok(deep.endsWith(' · numbers kept where the page repeats · idle 0.8s'), deep);
+  const inPage = R.actReply('click', 'bk', { sub: 'click', n: 5 }, { kind: 'link', label: 'Tab', navigated: true, inPage: true, url: `https://www.booking.com/h.html?${longQuery}`, idle });
+  assert.strictEqual(inPage, '[agent:browser] clicked bk [5] link "Tab" · navigated → https://www.booking.com/h.html… (in-page) · numbers kept where the page repeats · idle 0.8s');
 });
 
 test('replies: scroll reports position, items loaded or dropped, page growth and what changed', () => {
@@ -265,7 +276,7 @@ test('replies: back and forward say where they landed and whether another step i
   const idle = { ok: true, ms: 1200 };
   assert.strictEqual(R.navReply('x', { sub: 'back', service: null }, {
     dir: 'back', navigated: true, url: 'https://x.com/home', title: 'Home / X', idle, canBack: true, canForward: true,
-  }), '[agent:browser] went back on x · navigated → https://x.com/home ("Home / X") · numbers kept where the page repeats · idle 1.2s · history: back ✓ forward ✓');
+  }), '[agent:browser] went back on x · navigated → ("Home / X") https://x.com/home · numbers kept where the page repeats · idle 1.2s · history: back ✓ forward ✓');
   assert.strictEqual(R.navReply('x', { sub: 'back', service: 'x' }, {
     dir: 'back', navigated: true, inPage: true, url: 'https://x.com/home', title: 'Home / X', idle, changed: 'most of the page (menu closed?)', canBack: false, canForward: true,
   }), '[agent:browser] went back on x · navigated → https://x.com/home (in-page) · numbers kept where the page repeats · idle 1.2s · changed: most of the page · history: back ✗ forward ✓');
@@ -409,7 +420,7 @@ test('replies: operator-nav, navigated →, download from and handback lines red
   assert.strictEqual(R.operatorNav('ebloc', TOKEN_URL, 'G'), `[agent:browser] the operator navigated ebloc to ${red} ("G") — read before using numbers`);
   assert.strictEqual(R.operatorNav('x', 'https://x.com/home', 'Home', true), '[agent:browser] the operator navigated x to https://x.com/home (in-page) ("Home") — read before using numbers');
   const idle = { ok: true, ms: 800 };
-  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'G', navigated: true, url: TOKEN_URL, title: 'G', idle }).includes(`navigated → ${red} ("G")`));
+  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'G', navigated: true, url: TOKEN_URL, title: 'G', idle }).includes(`navigated → ("G") ${red}`));
   assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'G', navigated: false, idle,
     download: { file: '/tmp/a.pdf', bytes: 1, mime: 'application/pdf', url: TOKEN_URL } }).endsWith(`from ${red}`));
   assert.ok(R.handbackReply('ebloc', { url: TOKEN_URL, title: 'G', login: {} }).includes(`now ${red} (`));
