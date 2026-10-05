@@ -9,10 +9,68 @@ const CHROME_MAX_LINES = 40;
 
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
-function filterLines(lines, filter) {
+const BLOCK_MAX = 8;
+const WORD_BACK_MAX = 40;
+
+function filterLines(lines, filter, { blocks = false } = {}) {
   if (!filter) return lines;
   const needle = filter.toLowerCase();
-  return lines.filter((l) => l.toLowerCase().includes(needle));
+  const low = lines.map((l) => unmark(l).toLowerCase());
+  if (!blocks) return lines.filter((_l, i) => low[i].includes(needle));
+  const row = (l) => l.includes(' | ');
+  const keep = lines.map(() => false);
+  lines.forEach((l, i) => {
+    if (!low[i].includes(needle)) return;
+    keep[i] = true;
+    if (row(l)) {
+      let h = i;
+      while (h > 0 && row(lines[h - 1])) h--;
+      keep[h] = true;
+      return;
+    }
+    let s = i;
+    while (s > 0 && lines[s - 1].trim()) s--;
+    let e = i;
+    while (e < lines.length - 1 && lines[e + 1].trim()) e++;
+    if (e - s + 1 > BLOCK_MAX) { s = Math.max(s, i - 1); e = Math.min(e, i + 1); }
+    for (let k = s; k <= e; k++) keep[k] = true;
+  });
+  const out = [];
+  let prev = -1;
+  lines.forEach((l, i) => {
+    if (!keep[i] || !l.trim()) return;
+    const tableGap = prev >= 0 && lines.slice(prev, i + 1).every(row);
+    if (prev >= 0 && i > prev + 1 && !tableGap) out.push('');
+    out.push(l);
+    prev = i;
+  });
+  return out;
+}
+
+function wordCut(line, room) {
+  if (line.length <= room) return line;
+  const head = line.slice(0, room);
+  if (/\s/.test(line[room])) return head.trimEnd();
+  const ws = Math.max(head.lastIndexOf(' '), head.lastIndexOf('\t'));
+  return (ws >= 0 && room - ws <= WORD_BACK_MAX ? head.slice(0, ws) : head).trimEnd();
+}
+
+function textHead(lines, budget = TEXT_HEAD) {
+  const out = [];
+  let used = 0;
+  let free = 0;
+  for (const raw of lines) {
+    const chrome = marked(raw);
+    if (chrome && free < CHROME_MAX_LINES) { free += 1; out.push(unmark(raw)); continue; }
+    const l = chrome ? unmark(raw) : raw;
+    const need = l.length + (used ? 1 : 0);
+    if (used + need <= budget) { out.push(l); used += need; continue; }
+    const room = budget - used - (used ? 1 : 0);
+    const cut = room > 0 ? wordCut(l, room) : '';
+    if (cut) out.push(cut);
+    return { lines: out, cut: true };
+  }
+  return { lines: out, cut: false };
 }
 
 function splitLong(line, size) {
@@ -39,8 +97,8 @@ function readCommand(service, opts, page) {
 }
 
 function sections(raw, opts) {
-  const allText = unmark(raw.text || '');
-  const textLines = filterLines(allText.split('\n'), opts.filter);
+  const rawLines = filterLines(String(raw.text || '').split('\n'), opts.filter, { blocks: true });
+  const textLines = rawLines.map(unmark);
   const elements = filterLines(Array.isArray(raw.elements) ? raw.elements.map(String) : [], opts.filter);
   const out = [];
   if (opts.mode === 'default' || opts.mode === 'text') {
@@ -48,11 +106,11 @@ function sections(raw, opts) {
     if (opts.mode === 'text' || opts.all) {
       out.push({ marker: '== text ==', lines: text ? text.split('\n') : ['(no text)'] });
     } else {
-      const head = text.length > TEXT_HEAD ? text.slice(0, TEXT_HEAD) : text;
-      const marker = text.length > TEXT_HEAD
+      const head = textHead(rawLines);
+      const marker = head.cut
         ? `== text (first ${fmt(TEXT_HEAD)} of ${fmt(text.length)} chars; read --text for all) ==`
         : '== text ==';
-      out.push({ marker, lines: head ? head.split('\n') : ['(no text)'], headOnly: true });
+      out.push({ marker, lines: text ? head.lines : ['(no text)'], headOnly: true });
     }
   }
   if (opts.mode === 'default' || opts.mode === 'links') {
@@ -308,5 +366,5 @@ function formatRead(raw, opts) {
 
 module.exports = {
   redactUrl, frameLabel, hostOf, framesLabel,
-  formatRead, paginate, loginLabel, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, CHROME_MIN_LINES, CHROME_MAX_LINES,
+  formatRead, paginate, loginLabel, filterLines, wordCut, textHead, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, CHROME_MIN_LINES, CHROME_MAX_LINES,
 };

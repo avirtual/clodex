@@ -153,11 +153,12 @@ function mergeNumbers(svc, out) {
 }
 
 function numberRefusal(service, n, stored, verdict) {
-  if (stored == null) return codedError('NO_ELEMENT', TEXT.noElement(service, n));
+  if (stored == null) return codedError('NO_ELEMENT', TEXT.unknownN(service, n));
   if (verdict === 'ok') return null;
   const p = keys.parseStored(stored);
   const label = p.label.length > 60 ? p.label.slice(0, 59) + '…' : p.label;
   if (verdict === 'ambiguous') return codedError('AMBIGUOUS', TEXT.ambiguousN(service, n, label, p.context));
+  if (verdict && verdict.verdict === 'retired') return codedError('NO_ELEMENT', TEXT.retiredN(service, n, verdict.now));
   return codedError('NO_ELEMENT', TEXT.noElement(service, n));
 }
 
@@ -226,11 +227,17 @@ async function settleChange({
   return { changed, target: tgt ? tgt.text : null };
 }
 
+const RETIRED_PREFIX = 60;
+
 function numberVerdict(verdict, stored, pageKeys) {
   if (verdict === 'ok' || verdict === 'ambiguous') return verdict;
   if (!pageKeys) return 'gone';
-  const base = keys.parseStored(stored).base;
-  return Object.values(pageKeys).some((k) => keys.parseStored(k).base === base) ? 'ambiguous' : 'gone';
+  const p = keys.parseStored(stored);
+  const entries = Object.entries(pageKeys);
+  if (entries.some(([, k]) => keys.parseStored(k).base === p.base)) return 'ambiguous';
+  const head = p.label.slice(0, RETIRED_PREFIX);
+  const now = head ? entries.find(([, k]) => { const q = keys.parseStored(k); return q.kind === p.kind && q.label.slice(0, RETIRED_PREFIX) === head; }) : null;
+  return now ? { verdict: 'retired', now: Number(now[0]) } : 'gone';
 }
 
 function inspectKind(r, listeners) {

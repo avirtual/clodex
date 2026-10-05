@@ -59,7 +59,9 @@ const PAGES = {
 <label style="cursor:pointer"><input type="checkbox" class="sr-only">Tine-ma minte</label>
 <label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label>
 <nav><a href="/form">Carduri</a></nav>
-<form action="/plata" onsubmit="document.title='paid'; return false"><label><input type=radio name=m value=card onclick="document.title='card picked'">Card bancar</label>
+<div class="row" style="cursor:pointer" onclick="document.title='suma'">Suma de plată 335,90 Lei</div>
+<p><a href="/index.php?page=5">Ieşire</a></p>
+<form action="/plata" onsubmit="document.title='paid'; return false"><input type=submit value="Card bancar">
 <button type=submit>Plătește</button></form></main>
 <script>document.getElementById('prow').addEventListener('click', () => { document.title = 'row clicked'; });</script>`;
   },
@@ -116,6 +118,17 @@ const PAGES = {
   '/slowlink': () => '<title>Slow link</title><main><a href="/slow">Slow page</a></main>',
   '/policy': () => `<title>Policy</title><main><a href="/blocked/x">Blocked link</a>
 <button onclick="window.open('/blocked/p', '_blank')">Blocked popup</button></main>`,
+  '/overlay': () => `<title>Overlay</title><main><h1>Badges</h1>
+<p>Un text cu un link <a id=bil href="/form">bilant</a> in mijlocul randului.</p>
+<p><button id=out>Ieşire</button></p><p id=probe>probe: none</p></main>
+<script>new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) {
+  if (n.id !== '__cx_numbers') continue;
+  const at = (id) => [...n.children].find((b) => b.textContent === document.getElementById(id).getAttribute('data-cx'));
+  const link = document.getElementById('bil').getBoundingClientRect();
+  const lb = at('bil').getBoundingClientRect();
+  const hit = lb.left < link.right && lb.right > link.left && lb.top < link.bottom && lb.bottom > link.top;
+  document.getElementById('probe').textContent = 'probe: link badge overlaps ' + hit + ' · tagged badge ' + getComputedStyle(at('out')).backgroundColor;
+} }).observe(document.body, { childList: true });</script>`,
   '/rows-a': () => rowsPage(['A', 'B']),
   '/rows-b': () => rowsPage(['B', 'A']),
   '/hn': (req) => {
@@ -252,11 +265,13 @@ async function clickablesStep(emit, base) {
   const els = lines.slice(cut + 1).filter((l) => /^\[\d+\]/.test(l));
   for (const l of els) console.log(`    ${l.slice(0, 120)}`);
   for (const l of lines.slice(0, cut).filter((x) => / \| /.test(x))) console.log(`    ${l}`);
-  check('a div with onclick is numbered as clickable', els.some((l) => /\] clickable ⚠ "Lista de plată 08\/2026"$/.test(l)));
-  check('an <a> without href is numbered', els.some((l) => /\] clickable ⚠ "Lista de plată 07\/2026 PDF"$/.test(l)));
+  check('a div with onclick is numbered as clickable, not ⚠ (plată is a noun)', els.some((l) => /\] clickable "Lista de plată 08\/2026"$/.test(l)));
+  check('an <a> without href is numbered, not ⚠', els.some((l) => /\] clickable "Lista de plată 07\/2026 PDF"$/.test(l)));
+  check('a pointer display row "Suma de plată 335,90 Lei" is not ⚠', els.some((l) => /\] clickable "Suma de plată 335,90 Lei"$/.test(l)));
+  check('the Ieşire link is ⚠ (a sign-out verb) and the read says login: signed in', els.some((l) => /\] link ⚠ Ieşire → /.test(l)) && /\nlogin: signed in\n/.test(content));
   const numOf = (re) => { const l = els.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
-  check('the Plătește submit and the Card bancar radio are marked ⚠; the Carduri nav link is not',
-    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:radio ⚠ Card bancar/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
+  check('the Plătește submit and the Card bancar input:submit in the form are marked ⚠; the Carduri nav link is not',
+    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:submit ⚠ += "Card bancar"/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
   const pay = numOf(/button ⚠ Plătește/);
   check('a click on Plătește without --confirm is refused naming payment',
     new RegExp(`error: \\[${pay}\\] "Plătește" looks consequential \\(payment\\) — re-issue with --confirm`).test(await emit(`[agent:browser click avizier ${pay}]`)));
@@ -271,11 +286,11 @@ async function clickablesStep(emit, base) {
   check('a label around a visible input button lists only the input', els.filter((l) => /Trimite index/.test(l)).length === 1
     && els.some((l) => /\] input:button .*Trimite index/.test(l)));
   check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
-  check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026" --confirm]')));
+  check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
   check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[\d+\] "Duplicat", \[\d+\] "Duplicat"/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
   await emit('[agent:browser read avizier]');
-  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF" --confirm]')));
+  check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
 }
 
 async function effectsStep(emit, base, cwd) {
@@ -482,6 +497,13 @@ async function overlayStep(emit, base) {
   const probe = String(drawn);
   const hit = await emit(`[agent:browser inspect overlay --text="${probe}"]`);
   check(`the DOM has no overlay badge left (--text="${probe}" finds no element inside #__cx_numbers)`, !/__cx_numbers/.test(hit) && !hit.includes(`] "${probe}"`) && !hit.includes(`element "${probe}"`));
+  await emit(`[agent:browser open overlay] ${base}/overlay`);
+  await emit('[agent:browser read overlay]');
+  await emit('[agent:browser screenshot overlay --numbers]');
+  const probed = (/probe: [^\n]*/.exec(fileOf(await emit('[agent:browser read overlay --text]'))) || ['probe: none'])[0];
+  console.log(`    ${probed}`);
+  check('a text link\'s badge does not cover the link', /link badge overlaps false/.test(probed));
+  check('a ⚠ badge is solid red', /tagged badge rgb\(238, 0, 0\)/.test(probed));
 }
 
 async function policyStep(emit, base, engine) {

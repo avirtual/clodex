@@ -55,3 +55,21 @@ test('keys: learnVolatile never learns across two different pages, an unchanged 
     `${hn}/news`, `${hn}/news`, []), []);
   assert.deepStrictEqual(K.learnVolatile([el('Mobil', '/m?a=1&b=1')], [el('Mobil', '/m?a=2&b=2')], `${O}/x`, `${O}/x`, []), []);
 });
+
+test('keys: twclid is a well-known volatile param', () => {
+  assert.strictEqual(K.normHref('https://x.com/a?twclid=2-abc&q=1', 'https://x.com'), '/a?q=1');
+});
+
+test('keys: counterMask blanks a count next to a counter word; amounts and dates keep their digits', () => {
+  const rows = [
+    ['248 Likes. Like', '# Likes. Like'], ['1.2K views. View post analytics', '# views. View post analytics'],
+    ['12 replies. Reply', '# replies. Reply'], ['Following 3', 'Following #'], ['3,104 posts', '# posts'],
+    ['19,486', '19,486'], ['Lista de plată 08/2026', 'Lista de plată 08/2026'], ['Index 19,486 lei', 'Index 19,486 lei'],
+  ];
+  for (const [label, want] of rows) assert.strictEqual(K.counterMask(label), want, label);
+  assert.strictEqual(K.actionOf(K.counterMask('248 Likes. Like')), 'like');
+  assert.strictEqual(K.actionOf('Like'), 'like');
+  assert.strictEqual(K.actionOf(K.counterMask('12 replies. Reply')), 'reply');
+  assert.strictEqual(K.actionOf(K.counterMask('1.2K views. View post analytics')), '');
+  assert.strictEqual(K.actionOf('19,486'), '');
+});

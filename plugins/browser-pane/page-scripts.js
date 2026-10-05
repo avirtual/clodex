@@ -13,30 +13,37 @@ const POINTER_SCAN_MAX = 3000;
 const LAYOUT_CELL_CHARS = 400;
 const VALUE_MAX = 200;
 const OVERLAY_ID = '__cx_numbers';
+const BADGE_CHAR_PX = 7.3;
+const BADGE_PAD_PX = 6;
+const BADGE_H_PX = 16;
 const BOX_SEL = 'tr,li,article,[role=row],section';
 const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
 const CHROME_MARK = '\u0001';
 
+const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abmelden', 'deconnexion', 'cerrar sesion', 'uitloggen', 'esci', 'sair'];
 const CONSEQUENTIAL = [
-  ['payment', ['pay', 'payment', 'payments', 'plata', 'plati', 'platire', 'plateste', 'checkout', 'card', 'confirm payment']],
-  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda']],
-  ['deletion', ['delete', 'sterge', 'remove', 'elimina']],
-  ['sign-out', ['sign out', 'log out', 'iesire', 'deconectare']],
-  ['alarm', ['arm', 'disarm']],
-  ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription']],
-  ['transfer', ['transfer', 'send money', 'wire']],
+  ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], []],
+  ['deletion', ['delete', 'sterge', 'remove', 'elimina'], []],
+  ['sign-out', SIGN_OUT, []],
+  ['alarm', ['arm', 'disarm'], []],
+  ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
+  ['transfer', ['transfer', 'send money', 'wire'], []],
 ];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
 
+function termRe(t) {
+  return new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])');
+}
+
 function cqCompile(table, idTerms) {
   const out = [];
-  for (const [cat, terms] of table) {
-    for (const t of terms) {
-      out.push({ cat, id: idTerms.includes(t), re: new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])') });
-    }
+  for (const [cat, verbs, nouns] of table) {
+    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, re: termRe(t) });
+    for (const t of nouns) out.push({ cat, id: false, noun: true, re: termRe(t) });
   }
   return out;
 }
@@ -48,6 +55,7 @@ function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
   const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
   const idClass = fold(d.idClass);
   for (const r of res) {
+    if (r.noun && !d.control) continue;
     if (hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass))) return r.cat;
   }
   const action = fold(d.action);
@@ -55,11 +63,18 @@ function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
   return null;
 }
 
+function signOutOf(texts, res = SIGN_OUT.map(termRe)) {
+  const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return texts.some((t) => res.some((re) => re.test(fold(t))));
+}
+
 const CQ = `
+  const SIGN_OUT = ${JSON.stringify(SIGN_OUT)};
   const CONSEQUENTIAL = ${JSON.stringify(CONSEQUENTIAL)};
   const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  ${termRe.toString()}
   ${cqCompile.toString()}
   ${consequentialOf.toString()}
   const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS);
@@ -70,8 +85,12 @@ const CQ = `
       || (tg === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file'].includes(ty));
     const submit = (tg === 'button' && (ty === 'submit' || !e.getAttribute('type'))) || (tg === 'input' && (ty === 'submit' || ty === 'image'));
     const form = e.form || null;
+    const href = tg === 'a' ? String(e.getAttribute('href') || '').split(/[?#]/)[0] : '';
+    const doc = tg === 'a' && (e.hasAttribute('download') || /\\.(pdf|xlsx?|docx?)$/i.test(href));
+    const button = tg === 'button' || (tg === 'input' && ['submit', 'button', 'image'].includes(ty)) || e.getAttribute('role') === 'button';
     return consequentialOf({
       textual,
+      control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
       capped: tg === 'a' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
       value: tg === 'input' && ty !== 'password' ? e.value : '',
@@ -219,11 +238,6 @@ const numbering = (state) => {
   const fresh = [];
   const flat = s => String(s || '').replace(/\\s+/g, ' ').trim();
   const clip = (s, n) => { s = flat(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
-  const labelOf = el => {
-    if (el.labels && el.labels[0]) return el.labels[0].innerText;
-    return el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || el.getAttribute('placeholder')
-      || el.value || (el.querySelector('img[alt]') || {}).alt || el.getAttribute('name') || '';
-  };
   const kindOf = el => {
     const tag = el.tagName.toLowerCase();
     if (!el.matches(${JSON.stringify(STD_SEL)})) return 'clickable';
@@ -237,7 +251,14 @@ const numbering = (state) => {
       const label = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || (btn ? el.value : '') || '';
       return { kind, label: flat(label), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
     }
-    const label = flat(labelOf(el) || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : ''));
+    let label = counterMask(flat(labelOf(el)));
+    const art = (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') && el.closest('article');
+    const act = art ? actionOf(label) : '';
+    if (act) {
+      const time = art.querySelector('time');
+      const pl = art.querySelector('a[href*="/status/"]') || (time && time.closest('a'));
+      if (pl) label = act + ' ' + (pl.getAttribute('href') || '');
+    }
     if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
     let raw = '';
     try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
@@ -298,8 +319,34 @@ const numbering = (state) => {
   };`;
 };
 
+function distinctClips(labels, max = 60, part = 30) {
+  const clipOf = (s) => (s.length > max ? s.slice(0, max - 1) + '…' : s);
+  const groups = new Map();
+  labels.forEach((s, i) => {
+    if (!s || s.length <= max) return;
+    const c = clipOf(s);
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(i);
+  });
+  const out = labels.map(() => null);
+  for (const idx of groups.values()) {
+    if (new Set(idx.map((i) => labels[i])).size < 2) continue;
+    for (const i of idx) {
+      const s = labels[i];
+      let head = s.slice(0, part);
+      if (s[part] !== ' ' && head.lastIndexOf(' ') > 0) head = head.slice(0, head.lastIndexOf(' '));
+      let tail = s.slice(-part);
+      if (s[s.length - part - 1] !== ' ' && tail.indexOf(' ') >= 0) tail = tail.slice(tail.indexOf(' ') + 1);
+      out[i] = head.trim() + ' … ' + tail.trim();
+    }
+    if (new Set(idx.map((i) => out[i])).size < idx.length) for (const i of idx) out[i] = null;
+  }
+  return out;
+}
+
 function readInteractive(main, state) {
   return `(() => {${DEEP}${numbering(state)}
+  ${distinctClips.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
   resetTable();
@@ -340,11 +387,13 @@ function readInteractive(main, state) {
     const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
     let line = '';
     let sig = null;
+    let full = null;
     if (plain) {
       if (underRow(el)) continue;
       const inner = el.querySelectorAll(sel);
       if (inner.length === 1 && inner[0].matches('input,button,select,a[href]') && vis(inner[0])) continue;
-      const label = clip(labelOf(el) || el.getAttribute('alt') || iconLabel(el), 60);
+      full = flat(labelOf(el));
+      const label = clip(full, 60);
       if (tag === 'a' && !label) continue;
       if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
       line = label ? JSON.stringify(label) : '(icon)';
@@ -352,7 +401,8 @@ function readInteractive(main, state) {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
       if (h.startsWith('#') || h.startsWith('javascript:')) h = '';
-      const label = clip(labelOf(el), 60);
+      full = flat(labelOf(el));
+      const label = clip(full, 60);
       const key = label + '|' + h;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -371,13 +421,20 @@ function readInteractive(main, state) {
         + (el.type === 'checkbox' || el.type === 'radio' ? (el.checked ? ' [x]' : ' [ ]') : '')
         + (pw ? ' (operator only)' : '');
     } else {
-      line = clip(labelOf(el), 60);
+      full = flat(labelOf(el));
+      line = clip(full, 60);
     }
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
-    items.push({ el, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
+    items.push({ el, full, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
   }
+  const tails = distinctClips(items.map(i => (i.line != null && i.full) || ''));
+  items.forEach((it, i) => {
+    if (!tails[i]) return;
+    it.line = it.line.replace(clip(it.full, 60), () => tails[i]);
+    if (it.sig != null) it.sig = it.sig.replace(clip(it.full, 60), () => tails[i]);
+  });
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
   const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {};${ROW}
@@ -389,7 +446,7 @@ function readInteractive(main, state) {
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
       rowsOut[n] = rowOf(it.el);
-      sigs[n] = (it.sig == null ? it.line : it.sig) + '\u0000' + rowsOut[n];
+      sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
@@ -397,24 +454,68 @@ function readInteractive(main, state) {
 })()`;
 }
 
+const PLACEHOLDER_ALTS = ['alt', 'image', 'icon', 'img', 'photo', 'picture'];
+const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link', 'nav', 'text', 'bg', 'is', 'has', 'js', 'ui'];
+
+function labelFrom(d) {
+  const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) ? a : ''; };
+  const tid = (s) => flat(s).replace(/[-_](container|wrapper|wrap|button|btn)$/i, '');
+  const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase().split(/[-_]/)[0])) || '';
+  const path = (h) => { try { return new URL(h, 'http://x.invalid/').pathname; } catch { return ''; } };
+  const segs = (h) => path(h).split('/').filter(Boolean);
+  const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
+  const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
+  const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
+  const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
+    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : '')]);
+  if (named) return named;
+  if (d.tag === 'a' && d.href && path(d.href) !== '/') {
+    const s = segs(d.href);
+    return pick([tid(d.svgTestid), flat(d.svgTitle), s.length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(s[0]) ? '@' + s[0] : '', () => last(d.href)]);
+  }
+  const src = /^data:/i.test(flat(d.src)) ? '' : flat(d.src).split(/[?#]/)[0].split('/').pop() || '';
+  const icon = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid), cls(d.classes), src]);
+  return icon && icon === src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src) ? 'video' : icon;
+}
+
 const ICON = `
-  const iconLabel = e => {
-    const img = [...e.querySelectorAll('img')].find(i => (i.getAttribute('alt') || '').trim());
-    const t = e.querySelector('svg > title');
-    const src = [...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src')).find(u => !/^data:/i.test(u)) || '';
-    return (img && img.getAttribute('alt')) || e.getAttribute('title') || e.getAttribute('aria-label') || (t && t.textContent)
-      || src.split(/[?#]/)[0].split('/').pop() || '';
-  };`;
+  const PLACEHOLDER_ALTS = ${JSON.stringify(PLACEHOLDER_ALTS)};
+  const GENERIC_CLASSES = ${JSON.stringify(GENERIC_CLASSES)};
+  ${labelFrom.toString()}
+  const descOf = e => {
+    const tg = e.tagName.toLowerCase();
+    const svg = e.querySelector('svg');
+    const st = e.querySelector('svg > title');
+    const inner = e.querySelector('[data-testid]');
+    return {
+      tag: tg,
+      label: e.labels && e.labels[0] ? e.labels[0].innerText : '',
+      aria: e.getAttribute('aria-label'),
+      text: e.innerText,
+      placeholder: e.getAttribute('placeholder'),
+      value: typeof e.value === 'string' && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
+      title: e.getAttribute('title'),
+      alts: [e.getAttribute('alt'), ...[...e.querySelectorAll('img')].map(i => i.getAttribute('alt'))],
+      name: e.getAttribute('name'), id: e.id,
+      href: tg === 'a' ? e.getAttribute('href') : '',
+      testid: e.getAttribute('data-testid') || (inner ? inner.getAttribute('data-testid') : ''),
+      svgTestid: svg ? svg.getAttribute('data-testid') : '',
+      svgTitle: st ? st.textContent : '',
+      classes: e.getAttribute('class'),
+      src: [e.getAttribute('src') || '', ...[...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src'))].find(u => u && !/^data:/i.test(u)) || '',
+      video: !!(e.closest('video,[data-testid*=video i]') || e.querySelector('video,[data-testid*=video i]')),
+    };
+  };
+  const labelOf = el => labelFrom(descOf(el));`;
+
 
 const KIND_LABEL = `${ICON}
   const tag = el.tagName.toLowerCase();
   const type = (el.type || '').toLowerCase();
   const kind = !el.matches(${JSON.stringify(STD_SEL)}) ? 'clickable'
     : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (type || 'text') : tag);
-  const raw = (el.labels && el.labels[0] && el.labels[0].innerText) || el.getAttribute('aria-label') || el.innerText
-    || el.getAttribute('title') || el.getAttribute('placeholder') || (tag === 'input' && type !== 'password' ? el.value : '') || el.getAttribute('name')
-    || (kind === 'clickable' ? el.getAttribute('alt') || iconLabel(el) : '') || '';
-  const label = String(raw).replace(/\\s+/g, ' ').trim().slice(0, 60);`;
+  const label = labelOf(el).slice(0, 60);`;
 
 const REF = (n) => `const ref = window.__cxEls && window.__cxEls[${Number(n) | 0}];
   const el = ref && ref.deref();
@@ -563,6 +664,11 @@ function select(n, option) {
 const PROFILE_SEL = 'a[href$="/profile"], a[aria-label*="Profile" i], [data-testid*="AppTabBar_Profile" i], [aria-label*="Account menu" i]';
 
 const LOGIN_PROBE = `(() => {${DEEP}
+  const SIGN_OUT = ${JSON.stringify(SIGN_OUT)};
+  ${termRe.toString()}
+  ${signOutOf.toString()}
+  const SO_RES = SIGN_OUT.map(termRe);
+  const hrefPath = el => String(el.getAttribute('href') || '').split(/[?#]/)[0].replace(/[/._-]+/g, ' ');
   const any = (test) => deepAll(document, test).some(vis);
   const host = location.hostname;
   const idp = /(^|\\.)accounts\\.google\\.com$/.test(host) ? 'google'
@@ -586,7 +692,8 @@ const LOGIN_PROBE = `(() => {${DEEP}
     captcha: any(el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '')),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
-    logoutLink: any(el => (el.tagName === 'A' || el.tagName === 'BUTTON') && /\\b(log|sign)\\s?out\\b/i.test(el.innerText || '')),
+    logoutLink: any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
+      && signOutOf([el.innerText || el.textContent, el.getAttribute('aria-label'), hrefPath(el)], SO_RES)),
     loggedInHint: loggedInHint(),
   };
 })()`;
@@ -605,9 +712,19 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
     const b = document.createElement('span');
     b.textContent = k;
-    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;background:#111;padding:0 2px;border-radius:2px;z-index:2147483647'
-      + (cqOf(el) ? ';border:2px solid #e00' : ';border:1px solid #fff')
-      + ';left:' + Math.max(0, Math.round(r.left)) + 'px;top:' + Math.max(0, Math.round(r.top)) + 'px';
+    const st = getComputedStyle(el);
+    const lh = parseFloat(st.lineHeight) || (parseFloat(st.fontSize) || 15) * 1.2;
+    const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
+    const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
+    let x = r.left;
+    let y = r.top;
+    if (!media && r.height <= 2 * lh + 2) {
+      if (r.left - bw - 2 >= 0) x = r.left - bw - 2;
+      else if (r.top - ${BADGE_H_PX} >= 0) y = r.top - ${BADGE_H_PX};
+    }
+    b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
+      + (cqOf(el) ? ';background:#e00' : ';background:#111')
+      + ';left:' + Math.max(0, Math.round(x)) + 'px;top:' + Math.max(0, Math.round(y)) + 'px';
     layer.appendChild(b);
     drawn += 1;
   }
@@ -644,5 +761,5 @@ const CONTENT_TYPE = 'document.contentType';
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
-  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, consequentialOf,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips,
 };
