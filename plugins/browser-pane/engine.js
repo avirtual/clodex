@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const grammar = require('./grammar');
-const { createClient } = require('./client');
+const { createClient, OP_DEADLINE_MS } = require('./client');
 const { createScheduler } = require('./scheduler');
 const replies = require('./replies');
 const urlpolicy = require('./urlpolicy');
@@ -181,6 +181,10 @@ function activate(host) {
     handler(handle, intent) {
       const cmd = grammar.toCommand(intent);
       scheduler.submit(handle, cmd);
+    },
+    replyWaitMs(intent) {
+      const sub = String((intent && intent.raw) || '').trim().split(/\s+/)[0];
+      return Object.hasOwn(OP_DEADLINE_MS, sub) ? OP_DEADLINE_MS[sub] + 5000 : null;
     },
   });
   host.sessions.onExit((h) => scheduler.onSessionExit(h));

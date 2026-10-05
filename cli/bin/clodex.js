@@ -4,7 +4,7 @@
 const net = require('net');
 
 const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
-const CLIENT_TIMEOUT_MS = 15 * 1000;
+const CLIENT_TIMEOUT_MS = 140 * 1000;
 
 const HELP = [
   'usage: clodex \'<[agent:…] intent line>\' [more words…]',
@@ -23,6 +23,10 @@ const HELP = [
   '  [agent:task list] [filter]      the board',
   '  [agent:exec <cmd>] {json}       only commands granted to this seat',
   '  [agent:memory recall] <query>   and [agent:memory list]',
+  '  [agent:browser <sub> …]         open, read, click, type, select, key, wait,',
+  '                                  download, screenshot, inspect, services — as the',
+  '                                  seat, when the seat has the browser plugin; not',
+  '                                  release, and never --confirm',
   'Everything else (task add/accept/…, shout, spawn, reboot, term, team, context,',
   'remind, memory remember/forget, scratch, file) is refused to a subagent.',
   '',

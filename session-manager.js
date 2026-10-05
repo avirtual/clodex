@@ -487,7 +487,7 @@ const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
-const { subagentAllows } = require('./intent-registry');
+const { subagentRefusal } = require('./intent-registry');
 
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
@@ -5583,8 +5583,12 @@ function createSessionManager(deps) {
         parse: (text) => this._extractIntents(text, { receiptsFor: name }),
         entryOf: () => getPersistence().get(name),
         sessionIdOf: () => session.sessionId || null,
-        allows: subagentAllows,
+        refusal: subagentRefusal,
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+        replyWaitMs: (intent) => {
+          const row = pluginRowFor(intent.type);
+          return row && row.handler ? row.replyWaitMs(intent) : 0;
+        },
       });
       const server = createIntentSocketServer({
         net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred, handle, log,
@@ -5601,8 +5605,18 @@ function createSessionManager(deps) {
       if (!row || !row.handler) return;
       if (!session || !session.agentType) return;
       const hooks = getPluginHooks && getPluginHooks();
-      const handle = hooks && hooks.handleFor ? hooks.handleFor(session.name) : null;
-      if (!handle) return;
+      const seatHandle = hooks && hooks.handleFor ? hooks.handleFor(session.name) : null;
+      if (!seatHandle) return;
+      const scope = intentReplyScope.getStore();
+      const handle = scope && scope.session === session
+        ? Object.freeze({
+          ...seatHandle,
+          inject(text, opts) {
+            if (scope.replyTo(String(text)) !== false) return;
+            seatHandle.inject(text, opts);
+          },
+        })
+        : seatHandle;
       try {
         const r = row.handler(handle, intent);
         if (r && typeof r.then === 'function') {
@@ -8385,7 +8399,7 @@ function createSessionManager(deps) {
     _injectText(session, text, opts = {}) {
       if (session._dead) return;
       const produce = typeof opts.produce === 'function' ? opts.produce : null;
-      const replyScope = produce ? null : intentReplyScope.getStore();
+      const replyScope = produce || opts.ownScope ? null : intentReplyScope.getStore();
       if (replyScope && replyScope.session === session && replyScope.replyTo(text) !== false) return;
       if (session.io === 'stream') {
         this._streamEnqueueSystem(session, text, produce, 'inject', null, opts.parkKey || null);

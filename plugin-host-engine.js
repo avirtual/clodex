@@ -275,7 +275,7 @@ function createPluginHostEngine(deps) {
       inject(text, opts = {}) {
         const cur = manager.sessions.get(name);
         if (!cur) return;
-        manager._injectText(cur, String(text), { parkable: opts.parkable !== false });
+        manager._injectText(cur, String(text), { parkable: opts.parkable !== false, ownScope: true });
       },
     });
   }

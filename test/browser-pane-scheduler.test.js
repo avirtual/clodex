@@ -600,3 +600,16 @@ test('scheduler: services and the read header name the site a window moved to, a
   h.sched.noteUrl('ebloc', 'https://www.e-bloc.ro/index.php');
   assert.match((await h.run([['hand-a', '[agent:browser services]']]))[0][1], /services: ebloc — e-bloc\.ro · unknown/);
 });
+
+test('scheduler replies through the handle each submit was given, even two of one seat', async () => {
+  const h = harness();
+  const got = { first: [], second: [] };
+  const first = { name: 'hand-a', type: 'claude', inject: (text) => got.first.push(text) };
+  const second = { name: 'hand-a', type: 'claude', inject: (text) => got.second.push(text.replace(/ → @\S+ $/, ' → @FILE')) };
+  h.sched.submit(first, toCommand(parseLine('[agent:browser open utility] https://portal.example.com/bills')));
+  h.sched.submit(second, toCommand(parseLine('[agent:browser read utility]')));
+  await h.settle();
+  assert.deepStrictEqual(got.first, [OPENED]);
+  assert.deepStrictEqual(got.second, [READ_REPLY]);
+  assert.deepStrictEqual(h.out, [], 'nothing reached a handle obtained by name');
+});

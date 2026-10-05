@@ -290,7 +290,7 @@ test('fake plugin: the sessions facade answers global, scoped, single and fs-sco
     assert.strictEqual(host.sessions.get('ghost'), null);
 
     h.inject('hello');
-    assert.deepStrictEqual(manager.injected, [{ name: 'seat-a', text: 'hello', opts: { parkable: true } }]);
+    assert.deepStrictEqual(manager.injected, [{ name: 'seat-a', text: 'hello', opts: { parkable: true, ownScope: true } }]);
 
     assert.deepStrictEqual(host.sessions.fsScope('seat-a'), { cwd: '/repo/a' });
     assert.deepStrictEqual(host.sessions.fsScope('peered'), { error: 'remote' });

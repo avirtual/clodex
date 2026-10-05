@@ -10,7 +10,6 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
-- Subagents can talk to Clodex: every Claude and Codex seat now exposes a per-seat socket and a `clodex` shell verb (`clodex '[agent:dm reviewer] which file holds the pin'`) whose reply comes back as the caller's own tool result, so a subagent can dm, ask `who`, list the board and run the seat's granted commands without the main agent relaying; a subagent is refused every lead and operator verb (task add/accept, shout, reboot, spawn, team…).
 
 ## Unreleased
 
@@ -23,6 +22,8 @@ blocks a release.
 - Browser pane: ⚠ marks only real controls (a payment list link or an amount row is no longer refused without `--confirm`), feed buttons keep their numbers while like and view counts tick, a stale number says why it is stale (its text changed, or it left the page) and which number replaced it, screenshot badges sit beside text links instead of covering their first letters and ⚠ badges are solid red, long look-alike labels show their distinguishing tail, icon and avatar links are labelled from their alt, handle or test id, text cuts land on word boundaries, `--filter` keeps a table row's header and a match's surrounding block, and a localized sign-out link (Ieşire, Abmelden, …) counts as signed in.
 - Browser pane: element numbers survive a Clodex restart (saved per site) and an act with a number from before the restart is refused until the agent reads again, so a stale number can never land on a payment button; buttons that publish as the operator (Post, Reply, Repost, Like, Follow, Send, Share) are marked ⚠ and need `--confirm`; feed posts keep their numbers while their counts move; screenshot badges no longer cover neighbouring links; `wait --ms` without `--for` is a fixed pause; filter results return the matching list item only.
 - Browser pane: a wrapper around a consequential button is ⚠ too; button-type inputs are labelled by their value; avatar links read as @handle; Share is no longer ⚠ (Send via Direct Message is); number badges avoid neighbouring text and the line above; list-item filter matches return only the item; forget also deletes the saved element numbers.
+- Subagents can talk to Clodex: every Claude and Codex seat now exposes a per-seat socket and a `clodex` shell verb (`clodex '[agent:dm reviewer] which file holds the pin'`) whose reply comes back as the caller's own tool result, so a subagent can dm, ask `who`, list the board and run the seat's granted commands without the main agent relaying; a subagent is refused every lead and operator verb (task add/accept, shout, reboot, spawn, team…).
+- Subagents can drive the browser pane through the `clodex` shell verb and get the reply as their tool result (read, click, type, wait, download, screenshot, inspect…); `release` and `--confirm` stay with the seat's main agent; a plugin reply that takes longer than its deadline arrives in the seat's conversation instead.
 
 ## 5.112.2 — 2026-10-04
 
