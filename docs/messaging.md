@@ -629,19 +629,24 @@ seats get a request/response channel whose reply is the caller's own tool result
   the seat's main conversation, and a call with no captured acknowledgement
   answers `sent to <target>; a reply arrives in the seat's main conversation`.
 - **Identity (Claude):** the PreToolUse Bash hook `run/<name>/hook-ident.sh` prefixes every
-  `clodex` segment of the command with `CLODEX_HOOK_IDENT=<token>` through `updatedInput`
+  `clodex` segment of the command with `CLODEX_HOOK_IDENT=@<nonce>` through `updatedInput`
   (a pre-existing `CLODEX_HOOK_IDENT=` in the segment is removed). The shell wrapper exits
   before starting the interpreter unless `clodex` appears after the input's `"command"` key, or the input is `SubagentStart`
   (`transcript_path` and `cwd` come first and may contain `.clodex`).
   The stamp also reaches a `clodex` behind `if then else elif do while until !` and `time`
   (stamped after those), and behind `command exec env builtin nohup`, `timeout [flags] <duration>`
   and `nice [-n <n> | -<n>]` (stamped before them, so the assignment reaches `clodex`'s env).
-  A `clodex` that is an argument (`echo clodex`, `which clodex`) is not stamped. The token is
-  `main.<hmac16>` with no `agent_id` in the hook input, else `sub.<agent_id>.<agent_type>.<hmac16>`;
-  the HMAC-SHA256 is keyed by the seat credential (env, else `run/<name>/intent.cred`, 0600)
-  over `(agent_id || 'main') + session_id`. The socket treats a Claude caller as the main
-  agent only when `ident` verifies as `main` for the seat's current `sessionId`; anything
-  else — no stamp, a forged or stale one — is a subagent.
+  A `clodex` that is an argument (`echo clodex`, `which clodex`) is not stamped. Each stamped
+  segment gets a fresh 16-hex nonce, and the stamp itself goes to `run/<name>/ident/<nonce>` (0600),
+  never onto the command line: `main.<nonce>.<hmac16>` with no `agent_id` in the hook input, else
+  `sub.<agent_id>.<agent_type>.<nonce>.<hmac16>`; the HMAC-SHA256 is keyed by the seat credential
+  (env, else `run/<name>/intent.cred`, 0600) over `kind + agent_id + session_id + nonce`. The verb
+  reads the file named by `@<nonce>` and unlinks it. The socket treats a Claude caller as the main
+  agent only when `ident` verifies as `main` for the seat's current `sessionId` and its nonce has
+  not been seen (512 nonces, 10 min); anything else — no stamp, a forged, old-shape or replayed
+  one, or no `sessionId` yet — is a subagent, and a replay logs a warn. The stamp is single-use
+  and file-backed: copying a `CLODEX_HOOK_IDENT` value from `time`, `set -x`, `ps` or any other
+  output does nothing.
 - **Identity (Codex):** the seat is Codex by `session.agentType` (a clone has no persistence
   entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
   or its uuid tail (uuid-shaped ids only) is the main thread; a seat with no `sessionId` yet
@@ -652,7 +657,9 @@ seats get a request/response channel whose reply is the caller's own tool result
   `not available to a subagent: <verb>`.
 - **Verb:** `clodex '<intent>' [more words…]` (args joined with spaces into one line) or `clodex -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
-  agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident`. stdout carries
+  agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident` (an `@<nonce>` value resolved
+  through `ident/<nonce>` beside the socket; a missing file sends none, with stderr
+  `clodex: identity stamp missing (hook not installed?)`). stdout carries
   the intent's reply; the verb's own lines (refusals, unauthorized, no socket, timeout)
   go to stderr as `clodex: <reason>`. Exit 0 ok, 1 error (the reply, or stderr `clodex: …`),
   2 usage, 3 refused (stderr `clodex: …`), 4 no socket, 5 timeout. The client waits up to 500 s,
