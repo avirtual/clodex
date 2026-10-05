@@ -50,6 +50,7 @@ blocks a release.
 - Browser pane: the status-bar window list is a compact menu like Clodex's other status-bar menus — one line per window with its site and page title, state, seat and whether it is hidden, plus Show and a Hand… button that unfolds the hand-over form; in Settings a closed service offers Open at its last page instead of a Show that did nothing, a Show that fails says why, and Forget login signs a service out without removing it from the list.
 - Browser pane: a click is refused when something else sits under its click point (the menu a page closes on scroll, an overlay) instead of landing on whatever is there — the ⚠ gate can no longer be bypassed by a shifted layout; an element already in view is not scrolled before the click; a target our own scroll parked under a sticky header is scrolled clear instead of refused, and the refusal names the cover's ⚠ and a consent banner's buttons.
 - Browser pane: Google sign-in is held for the operator like any sign-in (Gmail works in the window); the agent is told to stop only when Google actually rejects the embedded browser.
+- Browser pane: the Settings panel is laid out — services in an aligned table with sign-in, window state and actions on one line each, hand-over folded behind Hand…, and the sections (Open a window, Windows, Reads, Denylist) labelled.
 
 ## 5.112.2 — 2026-10-04
 
