@@ -807,9 +807,10 @@ const OVERLAY = `(() => {${DEEP}${CQ}
         || textUnder(lx, r.left - 2, r.top + r.height / 2);
       const above = { left: r.left, top: r.top - ${BADGE_H_PX}, right: r.left + bw, bottom: r.top };
       const aboveBlocked = above.top < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && hits(o, above)
-        && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom));
+        && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom))
+        || textUnder(above.left, above.right, above.top + ${BADGE_H_PX} / 2);
       if (!blocked) x = lx;
-      else if (!aboveBlocked) { x = r.left; y = r.top - ${BADGE_H_PX}; }
+      else if (!aboveBlocked) { x = r.left; y = Math.floor(r.top) - ${BADGE_H_PX}; }
     }
     badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'

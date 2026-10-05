@@ -304,6 +304,8 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.deepStrictEqual([lines[1].left, lines[1].top], [162, 34], 'a first-line link with a tight gap goes above');
   assert.deepStrictEqual([lines[3].left, lines[3].top], [139, 68], 'a second-line link whose above rect holds a first-line link goes inside');
   assert.ok(!hit(lines[1], box([100, 50, 60, 18])) && !hit(lines[3], box([100, 50, 60, 18])), 'no badge covers the first line');
+  const [inside] = overlayRun([[200, 68, 40, 18]], [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' }]);
+  assert.deepStrictEqual([inside.left, inside.top], [197, 68], 'a word left and a word above: inside with the nudge');
 });
 
 test('page scripts: inputLine labels button-type inputs by their value once; a blank wrapping label falls through to aria, placeholder, name, id', () => {
