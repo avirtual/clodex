@@ -282,3 +282,25 @@ test('FEED: a playing video keeps its duration from video.duration; the body joi
   assert.strictEqual(p.media.duration, '0:13');
   assert.strictEqual(p.text, 'read https://michaeljburry.substack.com/p/x now, https://michaeljburry.substack.com/p/y');
 });
+
+test('FEED: durations of an hour or more read h:mm:ss from video.duration and from the aria-label; a minutes-only time link is no duration', () => {
+  const durOf = (video, label, timeAttrs = {}) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/9', timeAttrs, '1h');
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'watch'), h('div', {}, video, h('div', { 'aria-label': label })));
+    return runFeed(h('main', {}, art), {}, {}).posts[0].media.duration;
+  };
+  const rows = [
+    [7007, 'Pause', '1:56:47'],
+    [null, 'Play Video. 1 hour 56 minutes 47 seconds long', '1:56:47'],
+    [null, 'Play Video. 2 hours long', '2:00:00'],
+    [null, 'Play Video. 1 minute 5 seconds long', '1:05'],
+    [null, 'Play Video. 13 seconds long', '0:13'],
+    [65, 'Pause', '1:05'],
+  ];
+  for (const [secs, label, want] of rows) {
+    const video = h('video', {});
+    if (secs != null) video.duration = secs;
+    assert.strictEqual(durOf(video, label), want, `${secs} / ${label}`);
+  }
+  assert.strictEqual(durOf(h('video', {}), 'Play Video. 13 seconds long', { 'aria-label': '10 minutes' }), '0:13');
+});

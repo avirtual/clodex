@@ -1009,11 +1009,17 @@ function feedPosts(scope, cats, byEl, loc) {
     while (a && !outer(a)) a = a.parentElement.closest('article');
     return a;
   };
+  const fmtSecs = (s) => {
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = String(s % 60).padStart(2, '0');
+    return hh ? hh + ':' + String(mm).padStart(2, '0') + ':' + ss : mm + ':' + ss;
+  };
   const durationOf = (l) => {
-    const ms = /(\d+) minutes? (\d+) seconds?/i.exec(l);
-    if (ms) return ms[1] + ':' + ms[2].padStart(2, '0');
-    const s = /(\d+) seconds?/i.exec(l);
-    return s ? Math.floor(Number(s[1]) / 60) + ':' + String(Number(s[1]) % 60).padStart(2, '0') : null;
+    for (const m of String(l || '').matchAll(/(?:(\d+) hours?\s*)?(?:(\d+) minutes?\s*)?(?:(\d+) seconds?)?/gi)) {
+      if (m[1] || m[2] || m[3]) return fmtSecs(Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0));
+    }
+    return null;
   };
   const nearVideo = (img, art) => {
     let e = img.parentElement;
@@ -1071,9 +1077,9 @@ function feedPosts(scope, cats, byEl, loc) {
     const vids = [...box.querySelectorAll('video')].filter(keep);
     const videos = vids.length;
     const secs = vids.map((v) => Math.round(Number(v.duration))).find((d) => Number.isFinite(d) && d > 0);
-    let duration = secs ? Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') : null;
+    let duration = secs ? fmtSecs(secs) : null;
     for (const e of box.querySelectorAll('[aria-label]')) {
-      if (!videos || duration || !keep(e)) continue;
+      if (!videos || duration || !keep(e) || e.closest('time') || e.querySelector('time')) continue;
       duration = durationOf(e.getAttribute('aria-label'));
     }
     const vrects = vids.map((v) => v.getBoundingClientRect());
