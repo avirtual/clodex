@@ -45,7 +45,7 @@ blocks a release.
 - Browser pane: `--main` scopes a read to the column that holds the page's posts — on X the timeline, no longer the Trending / Who to follow sidebar (a page without a `<main>` landmark still reads its whole feed).
 - Browser pane: `type --enter`, `key Enter` and `key Space`, and an arrow key that would choose a ⚠ radio or change a ⚠ select, are refused without --confirm when the key would press a ⚠ control or submit a payment, order or deletion form from any of its fields — the same gate a click gets; `key` and `inspect` report a field's live value.
 - Browser pane: text inside a form is read — e-bloc's debt table no longer disappears from `read`.
-- Browser pane: `close [service]` closes a service's window and keeps its sign-in — `release` only frees the seat's lease — and a subagent gets neither.
+- Browser pane: `close [service]` closes a service's window and keeps its sign-in — `release` only frees the seat's lease — and a subagent gets neither; a key that moves a radio or select choice replies `checked now`, and a subagent's refusal names the verb it may not use.
 
 ## 5.112.2 — 2026-10-04
 
