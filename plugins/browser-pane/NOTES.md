@@ -582,3 +582,15 @@ different status id. X Article quotes have no status link. Card hrefs on X are
 X's quote card is a ~500×370 `div[role=link]` with the quoted photo at its centre (run 20):
 a geometric-centre click opened the photo viewer. Above 120 px tall, the card is clicked
 on its time link or first text line instead.
+
+## site-notes.js — createStore
+
+Writes are serialised per origin by an in-process promise chain only: the
+scheduler is the single writer. A second process writing the same file would
+race; tmp+rename keeps each write whole but one of them is lost.
+
+## site-notes.js — screen
+
+The filters (intent, URL, credential words, account-like numbers) are
+best-effort, not a security boundary: notes live under the same user as every
+seat, and surfaced bodies are quoted and labelled as unverified data.
