@@ -95,7 +95,7 @@ function button(label, row) {
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
     hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [],
-    closest() { return this.row == null ? null : { innerText: this.row }; },
+    closest(sel) { return this.row == null || sel === 'article' ? null : { innerText: this.row }; },
   };
 }
 
@@ -136,6 +136,30 @@ test('numbering: feed buttons keep their numbers when only their counts move; am
   const amount = stampAll(first.state, [xbutton(null, null, '19,500')]);
   assert.deepStrictEqual(amount.ns, [6]);
   assert.deepStrictEqual([...amount.p.fresh], [6]);
+});
+
+function xarticle(text, permalink) {
+  const art = { querySelector: (sel) => (sel === 'a[href*="/status/"]' && permalink ? { getAttribute: () => permalink } : null) };
+  const attrs = { tabindex: '0' };
+  return {
+    tagName: 'ARTICLE', isConnected: true, innerText: text, labels: null, value: '', id: '',
+    matches: () => false,
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    closest: (sel) => (sel === 'article' ? art : null),
+  };
+}
+
+test('numbering: a feed article keys by its permalink while its bare counts move; without one every count in its label is masked', () => {
+  const a = stampAll({ known: {}, next: 1 }, [xarticle('Ana @ana · 3h Hello world 84 587 3K 88K', '/ana/status/2'), xarticle('Bob @bob Hi 12 4', '/bob/status/9')]);
+  const b = stampAll(a.state, [xarticle('Ana @ana · 3h Hello world 85 590 3.1K 89K', '/ana/status/2'), xarticle('Bob @bob Hi 13 4', '/bob/status/9')]);
+  assert.deepStrictEqual(b.ns, a.ns);
+  assert.notStrictEqual(a.stored[0], a.stored[1]);
+  assert.strictEqual(K.parseStored(a.stored[0]).label, 'article /ana/status/2');
+  const c = stampAll({ known: {}, next: 1 }, [xarticle('Promoted 84 587 3K', null)]);
+  const d = stampAll(c.state, [xarticle('Promoted 90 601 3.4K', null)]);
+  assert.deepStrictEqual(d.ns, c.ns);
+  assert.strictEqual(K.parseStored(c.stored[0]).label, 'Promoted # # #');
 });
 
 test('numbering: an element keeps its number when new elements appear before it on a later page', () => {
@@ -622,6 +646,8 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   assert.strictEqual(e.code, 'CONSEQUENTIAL');
   assert.strictEqual(e.message, '[27] "Card bancar" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(27, { label: 'Card bancar', consequential: 'payment' }, true), null);
+  assert.strictEqual(consequentialRefusal(36, { label: 'Post', consequential: 'publish' }, false).message,
+    '[36] "Post" publishes as the operator — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(3, { label: 'Avizier', consequential: null }, false), null);
   const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
@@ -677,6 +703,10 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Card bancar' }, null], [{ label: 'Make payment' }, null],
     [{ label: 'Lista de plată', capped: true }, null], [{ label: 'Plati online', capped: true }, null],
     [{ label: 'Ordin de plată 12/2026', capped: true }, null], [{ label: 'Suma de plată 335,90 Lei', capped: true }, null],
+    [{ label: 'Post' }, 'publish'], [{ label: 'Repost' }, 'publish'], [{ label: 'Like' }, 'publish'], [{ label: 'Follow @OpenAI' }, 'publish'],
+    [{ label: 'Follow back' }, 'publish'], [{ label: 'Send' }, 'publish'], [{ aria: 'Share' }, 'publish'], [{ aria: '84 Likes. Like' }, 'publish'],
+    [{ label: 'Trimite' }, 'publish'], [{ label: 'Latest posts', capped: true }, null], [{ label: 'Postal code', textual: true }, null],
+    [{ label: 'Like-minded people', capped: true }, null], [{ label: 'Read the latest post' }, null],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});

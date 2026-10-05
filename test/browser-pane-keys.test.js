@@ -67,6 +67,7 @@ test('keys: counterMask blanks a count next to a counter word; amounts and dates
     ['19,486', '19,486'], ['Lista de plată 08/2026', 'Lista de plată 08/2026'], ['Index 19,486 lei', 'Index 19,486 lei'],
   ];
   for (const [label, want] of rows) assert.strictEqual(K.counterMask(label), want, label);
+  assert.strictEqual(K.counterMask('Notifications (2 unread notifications)'), 'Notifications (# unread notifications)');
   assert.strictEqual(K.actionOf(K.counterMask('248 Likes. Like')), 'like');
   assert.strictEqual(K.actionOf('Like'), 'like');
   assert.strictEqual(K.actionOf(K.counterMask('12 replies. Reply')), 'reply');

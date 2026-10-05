@@ -7,7 +7,7 @@ const DIGITS_RE = /^\d{9,}$/;
 const TOKEN_RE = /^[0-9a-z]{16,}$/i;
 const CONTEXT_MAX = 40;
 const LABEL_KEY_MAX = 400;
-const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies', 'view', 'views', 'bookmark', 'bookmarks', 'posts', 'followers', 'following'];
+const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies', 'view', 'views', 'bookmark', 'bookmarks', 'posts', 'followers', 'following', 'notifications', 'unread'];
 const COUNTER_RE = /\d[\d.,]*[KkMm]?/;
 
 function isVolatile(name, value, learned) {

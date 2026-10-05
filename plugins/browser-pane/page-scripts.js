@@ -29,41 +29,49 @@ const CONSEQUENTIAL = [
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
   ['transfer', ['transfer', 'send money', 'wire'], []],
+  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'share', 'comment', 'publish', 'tweet',
+    'submit review', 'posteaza', 'trimite', 'urmareste', 'distribuie', 'apreciaza'], []],
 ];
+const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
 
-function termRe(t) {
-  return new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])');
+function termRe(t, lead) {
+  const body = t.split(' ').join('[\\s_-]?');
+  return lead ? new RegExp('(^|\\. )' + body + '(?![a-z0-9-])') : new RegExp('(^|[^a-z0-9])' + body + '(?![a-z0-9])');
 }
 
-function cqCompile(table, idTerms) {
+function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
   for (const [cat, verbs, nouns] of table) {
-    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, re: termRe(t) });
+    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
     for (const t of nouns) out.push({ cat, id: false, noun: true, re: termRe(t) });
   }
   return out;
 }
 
-function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
+function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)) {
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
   const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
   const idClass = fold(d.idClass);
+  let lead = null;
   for (const r of res) {
     if (r.noun && !d.control) continue;
-    if (hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass))) return r.cat;
+    if (lead && r.lead) continue;
+    if (!(hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
+    if (!r.lead) return r.cat;
+    lead = r.cat;
   }
   const action = fold(d.action);
   if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
-  return null;
+  return lead;
 }
 
-function signOutOf(texts, res = SIGN_OUT.map(termRe)) {
+function signOutOf(texts, res = SIGN_OUT.map((t) => termRe(t))) {
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   return texts.some((t) => res.some((re) => re.test(fold(t))));
 }
@@ -74,10 +82,11 @@ const CQ = `
   const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  const LEAD_CATS = ${JSON.stringify(LEAD_CATS)};
   ${termRe.toString()}
   ${cqCompile.toString()}
   ${consequentialOf.toString()}
-  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS);
+  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS);
   const cqOf = e => {
     const tg = e.tagName.toLowerCase();
     const ty = String(e.type || '').toLowerCase();
@@ -252,13 +261,21 @@ const numbering = (state) => {
       return { kind, label: flat(label), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
     }
     let label = counterMask(flat(labelOf(el)));
-    const art = (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') && el.closest('article');
+    const inArt = el.closest('article');
+    const art = (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') && inArt;
     const act = art ? actionOf(label) : '';
-    if (act) {
-      const time = art.querySelector('time');
-      const pl = art.querySelector('a[href*="/status/"]') || (time && time.closest('a'));
-      if (pl) label = act + ' ' + (pl.getAttribute('href') || '');
-    }
+    const permalink = a => {
+      const time = a.querySelector('time');
+      const pl = a.querySelector('a[href*="/status/"]') || (time && time.closest('a'));
+      return pl ? pl.getAttribute('href') || '' : null;
+    };
+    const pl = inArt ? permalink(inArt) : null;
+    if (act && pl != null) label = act + ' ' + pl;
+    else if (inArt && (tag === 'article' || kind === 'clickable') && pl && !actionOf(label)) {
+      let p = pl;
+      try { p = new URL(pl, location.href).pathname; } catch {}
+      label = 'article ' + p;
+    } else if (inArt) label = label.replace(/\\b\\d[\\d.,]*[KkMm]?\\b/g, '#');
     if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
     let raw = '';
     try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
@@ -667,7 +684,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const SIGN_OUT = ${JSON.stringify(SIGN_OUT)};
   ${termRe.toString()}
   ${signOutOf.toString()}
-  const SO_RES = SIGN_OUT.map(termRe);
+  const SO_RES = SIGN_OUT.map((t) => termRe(t));
   const hrefPath = el => String(el.getAttribute('href') || '').split(/[?#]/)[0].replace(/[/._-]+/g, ' ');
   const any = (test) => deepAll(document, test).some(vis);
   const host = location.hostname;
