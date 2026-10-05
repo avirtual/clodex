@@ -289,6 +289,11 @@ memoised per script run.
 (`OVERLAY_ID`) with a badge per numbered element visible in the viewport,
 captures, then removes it (`OVERLAY_OFF`). It waits two animation frames,
 capped at 150 ms since a minimised window may never paint.
+A badge goes left of a text-sized box only when no other numbered box or placed
+badge on the same line (top within `BADGE_LINE_PX`) reaches into the badge width
++ 2 px; otherwise above, or, at the top edge, inside nudged `BADGE_NUDGE_PX` left,
+like block rows. Left-of placement covered the end of the previous inline link
+("[20]Mo[21]Tabletă").
 
 ## page-scripts.js — TABLES
 
@@ -400,6 +405,15 @@ used to wipe e-bloc's numbers. A number the active origin never assigned is
 `NO_ELEMENT`, never another site's element. `listed` holds the numbers a read
 has shown, so a number first assigned unlisted (out of `--main` scope, past the
 cap) is new when a read first lists it.
+Each origin entry (`numbers`, `nextN`, `volatile`, `listed`, schema `NUMBERS_SCHEMA`)
+is saved by `saveNumbers` to `<cxb-data>/numbers/<service>/<origin slug>.json` at most
+1 s after a merge, and on window close and shutdown; `numState` loads it the first
+time it touches the origin; at most `ORIGINS_MAX` files per service, oldest mtime
+deleted. After a host reboot e-bloc's PDF link number became the payment button's.
+Persistence only keeps numbering continuous; `genRefusal` is what voids a stale
+transcript: the child mints `gen` at start, reads and `pageInfo` carry it, and a
+number act or inspect whose seat's last read carried another gen is RESTARTED even
+when the saved map would resolve the number. `--text` targets are exempt.
 
 ## keys.js — keyOf
 
@@ -414,7 +428,10 @@ renumbered those buttons as counts ticked (248→250 likes read as new [150],
 retired [98]). A bare amount ("19,486") is not a counter. A button or link in an
 `article` whose label is only counter words and counts is keyed by its action
 word and the post's permalink (`a[href*="/status/"]`, else the `time` link), so
-"Like" and "1 Like. Like" share a number. `changed:` signatures are masked the same way.
+"Like" and "1 Like. Like" share a number. The article itself, or a clickable in one
+with no action word, keys as `article <permalink path>`; without a permalink every
+number in the key label of an element inside an article reads `#`: X article labels
+carry bare counts ("84 587 3K 88K") that ticked into fresh numbers. `changed:` signatures are masked the same way.
 
 ## page-scripts.js — consequentialOf
 
@@ -435,6 +452,10 @@ input submit/button/image or a `[role=button]` inside a `form` or carrying
 the "Lista de plată" links, the "Plati online" nav and the "Suma de plată
 335,90 Lei" row were refused without `--confirm`, and agents learned to pass it
 reflexively; "Card bancar" is an input submit in the Datorii form and stays tagged.
+The publish verbs (`LEAD_CATS`) match only as the whole label, at its start, or after
+". " (X labels its Like button "84 Likes. Like"), never with a following hyphen, so
+"Latest posts" and "Like-minded" are not tagged. A form action naming pay, order or
+delete outranks them ("Trimite" submitting to /plata reads payment).
 The sign-out verbs (`SIGN_OUT`) also drive `LOGIN_PROBE`'s `logoutLink`, matched on
 text, aria-label and href path, so e-bloc's `<a href="index.php?page=5">Ieşire</a>` reads signed in.
 

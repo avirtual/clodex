@@ -16,6 +16,8 @@ const OVERLAY_ID = '__cx_numbers';
 const BADGE_CHAR_PX = 7.3;
 const BADGE_PAD_PX = 6;
 const BADGE_H_PX = 16;
+const BADGE_LINE_PX = 8;
+const BADGE_NUDGE_PX = 3;
 const BOX_SEL = 'tr,li,article,[role=row],section';
 const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
 const CHROME_MARK = '\u0001';
@@ -29,41 +31,49 @@ const CONSEQUENTIAL = [
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
   ['transfer', ['transfer', 'send money', 'wire'], []],
+  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'share', 'comment', 'publish', 'tweet',
+    'submit review', 'posteaza', 'trimite', 'urmareste', 'distribuie', 'apreciaza'], []],
 ];
+const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
 
-function termRe(t) {
-  return new RegExp('(^|[^a-z0-9])' + t.split(' ').join('[\\s_-]?') + '(?![a-z0-9])');
+function termRe(t, lead) {
+  const body = t.split(' ').join('[\\s_-]?');
+  return lead ? new RegExp('(^|\\. )' + body + '(?![a-z0-9-])') : new RegExp('(^|[^a-z0-9])' + body + '(?![a-z0-9])');
 }
 
-function cqCompile(table, idTerms) {
+function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
   for (const [cat, verbs, nouns] of table) {
-    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, re: termRe(t) });
+    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
     for (const t of nouns) out.push({ cat, id: false, noun: true, re: termRe(t) });
   }
   return out;
 }
 
-function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS)) {
+function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)) {
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
   const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
   const idClass = fold(d.idClass);
+  let lead = null;
   for (const r of res) {
     if (r.noun && !d.control) continue;
-    if (hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass))) return r.cat;
+    if (lead && r.lead) continue;
+    if (!(hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
+    if (!r.lead) return r.cat;
+    lead = r.cat;
   }
   const action = fold(d.action);
   if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
-  return null;
+  return lead;
 }
 
-function signOutOf(texts, res = SIGN_OUT.map(termRe)) {
+function signOutOf(texts, res = SIGN_OUT.map((t) => termRe(t))) {
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   return texts.some((t) => res.some((re) => re.test(fold(t))));
 }
@@ -74,10 +84,11 @@ const CQ = `
   const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  const LEAD_CATS = ${JSON.stringify(LEAD_CATS)};
   ${termRe.toString()}
   ${cqCompile.toString()}
   ${consequentialOf.toString()}
-  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS);
+  const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS);
   const cqOf = e => {
     const tg = e.tagName.toLowerCase();
     const ty = String(e.type || '').toLowerCase();
@@ -252,13 +263,21 @@ const numbering = (state) => {
       return { kind, label: flat(label), raw: '', href: el.getAttribute('name') || el.getAttribute('placeholder') || el.id || '' };
     }
     let label = counterMask(flat(labelOf(el)));
-    const art = (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') && el.closest('article');
+    const inArt = el.closest('article');
+    const art = (tag === 'button' || tag === 'a' || el.getAttribute('role') === 'button') && inArt;
     const act = art ? actionOf(label) : '';
-    if (act) {
-      const time = art.querySelector('time');
-      const pl = art.querySelector('a[href*="/status/"]') || (time && time.closest('a'));
-      if (pl) label = act + ' ' + (pl.getAttribute('href') || '');
-    }
+    const permalink = a => {
+      const time = a.querySelector('time');
+      const pl = a.querySelector('a[href*="/status/"]') || (time && time.closest('a'));
+      return pl ? pl.getAttribute('href') || '' : null;
+    };
+    const pl = inArt ? permalink(inArt) : null;
+    if (act && pl != null) label = act + ' ' + pl;
+    else if (inArt && (tag === 'article' || kind === 'clickable') && pl && !actionOf(label)) {
+      let p = pl;
+      try { p = new URL(pl, location.href).pathname; } catch {}
+      label = 'article ' + p;
+    } else if (inArt) label = label.replace(/\\b\\d[\\d.,]*[KkMm]?\\b/g, '#');
     if (tag !== 'a' || !el.hasAttribute('href')) return { kind, label, raw: '', href: '' };
     let raw = '';
     try { const u = new URL(el.href); u.hash = ''; raw = u.origin === location.origin ? u.pathname + u.search : u.href; } catch {}
@@ -455,11 +474,12 @@ function readInteractive(main, state) {
 }
 
 const PLACEHOLDER_ALTS = ['alt', 'image', 'icon', 'img', 'photo', 'picture'];
+const PLACEHOLDER_ALT_RE = 'profile picture|avatar|user image|photo of';
 const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link', 'nav', 'text', 'bg', 'is', 'has', 'js', 'ui'];
 
 function labelFrom(d) {
   const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
-  const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) ? a : ''; };
+  const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) && !new RegExp(PLACEHOLDER_ALT_RE, 'i').test(a) ? a : ''; };
   const tid = (s) => flat(s).replace(/[-_](container|wrapper|wrap|button|btn)$/i, '');
   const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase().split(/[-_]/)[0])) || '';
   const path = (h) => { try { return new URL(h, 'http://x.invalid/').pathname; } catch { return ''; } };
@@ -467,9 +487,11 @@ function labelFrom(d) {
   const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
   const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
+  const photo = d.tag === 'a' && d.href ? /\/photo\/(\d+)\/?$/.exec(path(d.href)) : null;
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
-    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : '')]);
-  if (named) return named;
+    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
+  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : named;
+  if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
     const s = segs(d.href);
     return pick([tid(d.svgTestid), flat(d.svgTitle), s.length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(s[0]) ? '@' + s[0] : '', () => last(d.href)]);
@@ -481,6 +503,7 @@ function labelFrom(d) {
 
 const ICON = `
   const PLACEHOLDER_ALTS = ${JSON.stringify(PLACEHOLDER_ALTS)};
+  const PLACEHOLDER_ALT_RE = ${JSON.stringify(PLACEHOLDER_ALT_RE)};
   const GENERIC_CLASSES = ${JSON.stringify(GENERIC_CLASSES)};
   ${labelFrom.toString()}
   const descOf = e => {
@@ -488,6 +511,7 @@ const ICON = `
     const svg = e.querySelector('svg');
     const st = e.querySelector('svg > title');
     const inner = e.querySelector('[data-testid]');
+    const btn = ['button', 'input', 'select', 'textarea'].includes(tg) ? null : e.querySelector('button,input[type=button],input[type=submit],input[type=image]');
     return {
       tag: tg,
       label: e.labels && e.labels[0] ? e.labels[0].innerText : '',
@@ -504,6 +528,7 @@ const ICON = `
       svgTitle: st ? st.textContent : '',
       classes: e.getAttribute('class'),
       src: [e.getAttribute('src') || '', ...[...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src'))].find(u => u && !/^data:/i.test(u)) || '',
+      inner: btn ? (btn.tagName === 'INPUT' ? btn.value : btn.innerText) || btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.getAttribute('name') || '' : '',
       video: !!(e.closest('video,[data-testid*=video i]') || e.querySelector('video,[data-testid*=video i]')),
     };
   };
@@ -667,7 +692,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const SIGN_OUT = ${JSON.stringify(SIGN_OUT)};
   ${termRe.toString()}
   ${signOutOf.toString()}
-  const SO_RES = SIGN_OUT.map(termRe);
+  const SO_RES = SIGN_OUT.map((t) => termRe(t));
   const hrefPath = el => String(el.getAttribute('href') || '').split(/[?#]/)[0].replace(/[/._-]+/g, ' ');
   const any = (test) => deepAll(document, test).some(vis);
   const host = location.hostname;
@@ -705,23 +730,32 @@ const OVERLAY = `(() => {${DEEP}${CQ}
   layer.id = ${JSON.stringify(OVERLAY_ID)};
   layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647';
   let drawn = 0;
+  const items = [];
   for (const [k, ref] of Object.entries(window.__cxEls || {})) {
     const el = ref && ref.deref();
     if (!el || !el.isConnected || !vis(el)) continue;
     const r = el.getBoundingClientRect();
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
+    items.push({ k, el, r });
+  }
+  const badgeRects = [];
+  for (const { k, el, r } of items) {
     const b = document.createElement('span');
     b.textContent = k;
     const st = getComputedStyle(el);
     const lh = parseFloat(st.lineHeight) || (parseFloat(st.fontSize) || 15) * 1.2;
     const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
     const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
-    let x = r.left;
+    let x = r.left - ${BADGE_NUDGE_PX};
     let y = r.top;
     if (!media && r.height <= 2 * lh + 2) {
-      if (r.left - bw - 2 >= 0) x = r.left - bw - 2;
-      else if (r.top - ${BADGE_H_PX} >= 0) y = r.top - ${BADGE_H_PX};
+      const lx = r.left - bw - 2;
+      const blocked = lx < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && Math.abs(o.top - r.top) < ${BADGE_LINE_PX}
+        && o.left < r.left && o.right > lx && !(o.left <= r.left && o.right >= r.right));
+      if (!blocked) x = lx;
+      else if (r.top - ${BADGE_H_PX} >= 0) { x = r.left; y = r.top - ${BADGE_H_PX}; }
     }
+    badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
       + (cqOf(el) ? ';background:#e00' : ';background:#111')
       + ';left:' + Math.max(0, Math.round(x)) + 'px;top:' + Math.max(0, Math.round(y)) + 'px';

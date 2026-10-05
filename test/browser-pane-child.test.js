@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor,
+  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -95,7 +95,7 @@ function button(label, row) {
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
     hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [],
-    closest() { return this.row == null ? null : { innerText: this.row }; },
+    closest(sel) { return this.row == null || sel === 'article' ? null : { innerText: this.row }; },
   };
 }
 
@@ -136,6 +136,30 @@ test('numbering: feed buttons keep their numbers when only their counts move; am
   const amount = stampAll(first.state, [xbutton(null, null, '19,500')]);
   assert.deepStrictEqual(amount.ns, [6]);
   assert.deepStrictEqual([...amount.p.fresh], [6]);
+});
+
+function xarticle(text, permalink) {
+  const art = { querySelector: (sel) => (sel === 'a[href*="/status/"]' && permalink ? { getAttribute: () => permalink } : null) };
+  const attrs = { tabindex: '0' };
+  return {
+    tagName: 'ARTICLE', isConnected: true, innerText: text, labels: null, value: '', id: '',
+    matches: () => false,
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    closest: (sel) => (sel === 'article' ? art : null),
+  };
+}
+
+test('numbering: a feed article keys by its permalink while its bare counts move; without one every count in its label is masked', () => {
+  const a = stampAll({ known: {}, next: 1 }, [xarticle('Ana @ana · 3h Hello world 84 587 3K 88K', '/ana/status/2'), xarticle('Bob @bob Hi 12 4', '/bob/status/9')]);
+  const b = stampAll(a.state, [xarticle('Ana @ana · 3h Hello world 85 590 3.1K 89K', '/ana/status/2'), xarticle('Bob @bob Hi 13 4', '/bob/status/9')]);
+  assert.deepStrictEqual(b.ns, a.ns);
+  assert.notStrictEqual(a.stored[0], a.stored[1]);
+  assert.strictEqual(K.parseStored(a.stored[0]).label, 'article /ana/status/2');
+  const c = stampAll({ known: {}, next: 1 }, [xarticle('Promoted 84 587 3K', null)]);
+  const d = stampAll(c.state, [xarticle('Promoted 90 601 3.4K', null)]);
+  assert.deepStrictEqual(d.ns, c.ns);
+  assert.strictEqual(K.parseStored(c.stored[0]).label, 'Promoted # # #');
 });
 
 test('numbering: an element keeps its number when new elements appear before it on a later page', () => {
@@ -203,10 +227,44 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
-test('page scripts: overlay badges sit left of (or above) a text-sized box, inside media boxes; ⚠ badges are solid red', () => {
-  const o = scripts.OVERLAY;
-  assert.match(o, /if \(!media && r\.height <= 2 \* lh \+ 2\) \{\n\s*if \(r\.left - bw - 2 >= 0\) x = r\.left - bw - 2;\n\s*else if \(r\.top - 16 >= 0\) y = r\.top - 16;/);
-  assert.match(o, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
+function overlayRun(rects) {
+  const els = rects.map(([left, top, width, height]) => ({
+    tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
+    getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
+    getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }),
+  }));
+  const badges = [];
+  const document = {
+    getElementById: () => null, documentElement: { scrollWidth: 1200, scrollHeight: 800 },
+    createElement: (tag) => { const n = { tag, style: {}, appendChild: (c) => badges.push(c) }; return n; },
+    body: { appendChild: () => {} },
+  };
+  const window = { __cxEls: Object.fromEntries(els.map((e, i) => [String(i + 1), { deref: () => e }])) };
+  const style = () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px' });
+  new Function('getComputedStyle', 'document', 'window', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'setTimeout', `return ${scripts.OVERLAY}`)(
+    style, document, window, 0, 0, 1200, 800, () => {}, () => {});
+  return badges.map((b) => {
+    const left = Number(/left:(\d+)px/.exec(b.style.cssText)[1]);
+    const top = Number(/top:(\d+)px/.exec(b.style.cssText)[1]);
+    const w = Math.ceil(b.textContent.length * 7.3) + 6;
+    return { left, top, right: left + w, bottom: top + 16 };
+  });
+}
+
+test('page scripts: overlay badges never cover a neighbouring inline link or another badge; block rows and top-edge boxes get a 3 px nudge', () => {
+  const links = [[100, 50, 40, 18], [142, 50, 40, 18], [184, 50, 60, 18], [300, 200, 500, 60], [400, 2, 50, 18], [460, 2, 50, 18]];
+  const got = overlayRun(links);
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const rects = links.map(([l, t, w, h]) => ({ left: l, top: t, right: l + w, bottom: t + h }));
+  got.forEach((b, i) => {
+    rects.forEach((r, j) => { if (i !== j) assert.ok(!hit(b, r), `badge ${i + 1} covers link ${j + 1}`); });
+    got.forEach((c, j) => { if (i !== j) assert.ok(!hit(b, c), `badge ${i + 1} covers badge ${j + 1}`); });
+  });
+  assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'a free left gap keeps the badge left of the box');
+  assert.deepStrictEqual([got[1].left, got[1].top], [142, 34], 'a tight gap moves it above');
+  assert.deepStrictEqual([got[3].left, got[3].top], [297, 200], 'a block row is nudged 3 px left');
+  assert.deepStrictEqual([got[5].left, got[5].top], [457, 2], 'no room above: inside with the nudge');
+  assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
 });
 
 test('page scripts: look-alike long labels show a head and their distinguishing tail; unique ones keep the clip', () => {
@@ -389,7 +447,13 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'textarea', value: 'typed secret', id: 'msg' }, 'msg'],
     [{ tag: 'div', src: 'data:image/gif;base64,R0l' }, ''],
     [{ tag: 'a', href: '/karolzdeb', alts: [''] }, '@karolzdeb'],
-    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, 'Karol avatar'],
+    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, '@karolzdeb'],
+    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol Zdeb profile picture'] }, '@karolzdeb'],
+    [{ tag: 'a', href: '/ana_m', alts: ['Photo of Ana'] }, '@ana_m'], [{ tag: 'a', href: '/ana_m', alts: ['User image'] }, '@ana_m'],
+    [{ tag: 'a', href: '/ana_m/status/19/photo/2', alts: ['Image'] }, 'photo 2'], [{ tag: 'a', href: '/ana_m/status/19/photo/1', text: '1' }, 'photo 1'],
+    [{ tag: 'a', href: '/ana_m/status/19/photo/1', text: 'Sunset' }, 'Sunset'],
+    [{ tag: 'label', text: '', inner: 'Informatii' }, 'Informatii'], [{ tag: 'input', value: '', name: 'Informatii' }, 'Informatii'],
+    [{ tag: 'label', text: 'Tine-ma minte', inner: 'x' }, 'Tine-ma minte'],
     [{ tag: 'a', href: '/i/bookmarks', svgTestid: 'bookmark-icon' }, 'bookmark-icon'],
     [{ tag: 'a', href: '/i/bookmarks', svgTitle: 'Bookmarks' }, 'Bookmarks'],
     [{ tag: 'a', href: '/settings/account/security' }, 'security'],
@@ -403,6 +467,7 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'div', text: ' ', id: 'ondiv' }, ''],
   ];
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
 });
 
 const svcOf = () => ({ origins: new Map(), num: null });
@@ -446,6 +511,74 @@ test('numState: at most ORIGINS_MAX origins are kept, least recently used droppe
   assert.strictEqual(svc.origins.size, ORIGINS_MAX);
   assert.ok(!svc.origins.has('https://s0.test'));
   assert.ok(svc.origins.has(`https://s${ORIGINS_MAX}.test`));
+});
+
+test('numbers persist: a merge marks the origin dirty, a flush saves it, and a fresh service loads the same numbers back', () => {
+  const dir = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-child-')), 'numbers', 'ebloc');
+  let scheduled = 0;
+  const svc = { ...svcOf(), numDir: dir, scheduleSave: () => { scheduled += 1; } };
+  const a = stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa', 'Lista PDF', 'Plătește']);
+  svc.num.volatile.add('t');
+  svc.num.listed.add(2);
+  assert.ok(scheduled >= 1);
+  assert.ok(!fs.existsSync(numbersFile(dir, 'https://www.e-bloc.ro')));
+  flushNumbers(svc, 5000);
+  const file = numbersFile(dir, 'https://www.e-bloc.ro');
+  assert.strictEqual(path.basename(file), 'https___www.e-bloc.ro.json');
+  const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(disk.v, NUMBERS_SCHEMA);
+  assert.deepStrictEqual([disk.nextN, disk.volatile, disk.listed], [4, ['t'], [2]]);
+  const again = { ...svcOf(), numDir: dir };
+  const st = numState(again, 'https://www.e-bloc.ro/contoare');
+  assert.strictEqual(st.known[a.stored[1]], 2);
+  assert.strictEqual(again.num.byN.get(3), a.stored[2]);
+  assert.deepStrictEqual([st.next, st.volatile, [...again.num.listed]], [4, ['t'], [2]]);
+  assert.strictEqual(again.num.lastRead, null);
+});
+
+test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
+  const file = numbersFile(dir, 'https://x.com');
+  fs.writeFileSync(file, '{"v":1,"origin":"https://x.com","numbers":{');
+  assert.strictEqual(loadNumbers(dir, 'https://x.com'), null);
+  fs.writeFileSync(file, JSON.stringify({ v: NUMBERS_SCHEMA + 1, origin: 'https://x.com', numbers: { k: 9 }, nextN: 10 }));
+  assert.strictEqual(loadNumbers(dir, 'https://x.com'), null);
+  const svc = { ...svcOf(), numDir: dir };
+  const st = stampOn(svc, 'https://x.com/home', ['Home']);
+  assert.deepStrictEqual(st.ns, [1]);
+  flushNumbers(svc);
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).v, NUMBERS_SCHEMA);
+  assert.strictEqual(loadNumbers(dir, 'https://x.com').byN.get(1), st.stored[0]);
+});
+
+test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
+  const svc = { ...svcOf(), numDir: dir };
+  for (let i = 0; i <= ORIGINS_MAX; i += 1) {
+    stampOn(svc, `https://s${i}.test/`, ['X']);
+    flushNumbers(svc, 10000 + i * 1000);
+    if (i === 3) { loadNumbers(dir, 'https://s0.test', 10000 + i * 1000 + 500); }
+  }
+  const files = fs.readdirSync(dir).sort();
+  assert.strictEqual(files.length, ORIGINS_MAX);
+  assert.ok(files.includes('https___s0.test.json'));
+  assert.ok(!files.includes('https___s1.test.json'));
+  assert.strictEqual(originSlug('http://127.0.0.1:8080'), 'http___127.0.0.1_8080');
+  assert.strictEqual(originSlug(`https://${'a'.repeat(200)}.ro`).length, 120);
+});
+
+test('genRefusal: a number act or inspect carrying a read gen from another child is RESTARTED; same gen, --text and key pass', () => {
+  const e = genRefusal('ebloc', 'click', { n: 36, gen: 111 }, 222);
+  assert.strictEqual(e.code, 'RESTARTED');
+  assert.strictEqual(e.message, 'numbers from before the browser restarted are void on ebloc — read again');
+  for (const op of ['type', 'select', 'download', 'inspect']) assert.strictEqual(genRefusal('x', op, { n: 1, gen: null }, 222).code, 'RESTARTED', op);
+  assert.strictEqual(genRefusal('ebloc', 'click', { n: 36, gen: 222 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'click', { byText: 'Plata', gen: 111 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'key', { key: 'Enter', gen: 111 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'download', { url: 'https://x/a.pdf', n: null, gen: 111 }, 222), null);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.match(src, /const stale = genRefusal\(name, op, args, gen\);\n\s*if \(stale\) throw stale;/);
+  assert.match(src, /const base = \{ url: wc\.getURL\(\), title: wc\.getTitle\(\), doc: svc\.doc, contentType, gen \};/);
 });
 
 test('numbering: with a listed set, a number first listed now is new even when an earlier stamp assigned it unlisted', () => {
@@ -554,6 +687,8 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   assert.strictEqual(e.code, 'CONSEQUENTIAL');
   assert.strictEqual(e.message, '[27] "Card bancar" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(27, { label: 'Card bancar', consequential: 'payment' }, true), null);
+  assert.strictEqual(consequentialRefusal(36, { label: 'Post', consequential: 'publish' }, false).message,
+    '[36] "Post" publishes as the operator — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(3, { label: 'Avizier', consequential: null }, false), null);
   const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
@@ -609,6 +744,10 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Card bancar' }, null], [{ label: 'Make payment' }, null],
     [{ label: 'Lista de plată', capped: true }, null], [{ label: 'Plati online', capped: true }, null],
     [{ label: 'Ordin de plată 12/2026', capped: true }, null], [{ label: 'Suma de plată 335,90 Lei', capped: true }, null],
+    [{ label: 'Post' }, 'publish'], [{ label: 'Repost' }, 'publish'], [{ label: 'Like' }, 'publish'], [{ label: 'Follow @OpenAI' }, 'publish'],
+    [{ label: 'Follow back' }, 'publish'], [{ label: 'Send' }, 'publish'], [{ aria: 'Share' }, 'publish'], [{ aria: '84 Likes. Like' }, 'publish'],
+    [{ label: 'Trimite' }, 'publish'], [{ label: 'Latest posts', capped: true }, null], [{ label: 'Postal code', textual: true }, null],
+    [{ label: 'Like-minded people', capped: true }, null], [{ label: 'Read the latest post' }, null],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});

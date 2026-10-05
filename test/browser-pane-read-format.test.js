@@ -216,6 +216,8 @@ test('read-format: stripped and loading header rows appear only when set, after 
   assert.strictEqual(s.content.split('\n')[3], 'stripped: 6 lines at top, 4 at bottom (repeated from your last read of utility)');
   assert.strictEqual(s.stripped, true);
   assert.ok(!formatRead(RAW, { service: 'utility', strip: { top: 0, bottom: 0 } }).content.includes('stripped:'));
+  const f = formatRead(RAW, { service: 'utility', strip: { top: 6, bottom: 4 }, filter: 'bills' });
+  assert.ok(!f.content.includes('stripped:') && f.stripped === false);
   const l = formatRead({ ...RAW, loading: { active: true, inflight: 2, ms: 120 } }, { service: 'utility' });
   assert.strictEqual(l.content.split('\n')[3],
     'loading: yes (2 requests in flight) — the page may still be filling in; [agent:browser wait utility] then read again');
@@ -369,6 +371,18 @@ test('read-format: --filter on a table row keeps the table header; on a text lin
   assert.deepStrictEqual(filterLines(nav, 'proprietari bloc', { blocks: true }), [nav[0]], 'a match across a chrome mark');
   assert.deepStrictEqual(filterLines(nav, 'proprietari bloc'), [nav[0]]);
   assert.deepStrictEqual(filterLines(nav, 'factura', { blocks: true }), ['Factura iulie', '', 'Factura august'], 'one blank between kept runs');
+});
+
+test('read-format: a filter on a bullet list returns the matching item only; Wikipedia backref prefixes are dropped from the match line', () => {
+  const list = ['Releases', '• Node 20 LTS', '• Node 22 LTS', '• Node 24 Current', '', 'Footer'];
+  assert.deepStrictEqual(filterLines(list, 'node 22', { blocks: true }), ['• Node 22 LTS']);
+  assert.deepStrictEqual(filterLines(['Steps', '- unpack the archive', '- run setup', '- reboot'], 'setup', { blocks: true }), ['- run setup']);
+  assert.deepStrictEqual(filterLines(['Releases', 'Node 22 LTS ships in April', 'Node 24 next'], 'node 22', { blocks: true }),
+    ['Releases', 'Node 22 LTS ships in April', 'Node 24 next'], 'a paragraph still brings its block');
+  const refs = ['References', '^ Jump up to: a b c Smith, J. (2020). Bucharest housing survey.', '^ Ionescu, A. (2019). Bloc M4.', '^ Doe 2001'];
+  assert.deepStrictEqual(filterLines(refs, 'housing', { blocks: true }).filter((l) => /housing/.test(l)), ['Smith, J. (2020). Bucharest housing survey.']);
+  assert.deepStrictEqual(filterLines(refs, 'ionescu', { blocks: true }).filter((l) => /Ionescu/.test(l)), ['Ionescu, A. (2019). Bloc M4.']);
+  assert.ok(filterLines(refs, 'ionescu', { blocks: true }).includes('^ Doe 2001'), 'only the match line loses its prefix');
 });
 
 test('read-format: the text head is cut on a word boundary and marked chrome lines do not count against it', () => {

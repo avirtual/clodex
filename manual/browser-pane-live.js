@@ -129,6 +129,17 @@ const PAGES = {
   const hit = lb.left < link.right && lb.right > link.left && lb.top < link.bottom && lb.bottom > link.top;
   document.getElementById('probe').textContent = 'probe: link badge overlaps ' + hit + ' · tagged badge ' + getComputedStyle(at('out')).backgroundColor;
 } }).observe(document.body, { childList: true });</script>`,
+  '/overlay3': () => `<title>Overlay3</title><main><p>Categorii: <a id=l1 href="/form">Mobil</a><a id=l2 href="/form?b">Tabletă</a><a id=l3 href="/form?c">Laptop</a> si altele.</p>
+<p id=probe3>probe3: none</p></main>
+<script>new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) {
+  if (n.id !== '__cx_numbers') continue;
+  const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  const links = ['l1', 'l2', 'l3'].map((id) => document.getElementById(id).getBoundingClientRect());
+  const badges = [...n.children].map((b) => b.getBoundingClientRect());
+  let bl = 0; let bb = 0;
+  badges.forEach((b, i) => { links.forEach((l) => { if (hit(b, l)) bl += 1; }); badges.forEach((c, j) => { if (i < j && hit(b, c)) bb += 1; }); });
+  document.getElementById('probe3').textContent = 'probe3: badges ' + badges.length + ' · badge-link hits ' + bl + ' · badge-badge hits ' + bb;
+} }).observe(document.body, { childList: true });</script>`,
   '/rows-a': () => rowsPage(['A', 'B']),
   '/rows-b': () => rowsPage(['B', 'A']),
   '/hn': (req) => {
@@ -504,6 +515,37 @@ async function overlayStep(emit, base) {
   console.log(`    ${probed}`);
   check('a text link\'s badge does not cover the link', /link badge overlaps false/.test(probed));
   check('a ⚠ badge is solid red', /tagged badge rgb\(238, 0, 0\)/.test(probed));
+  await emit(`[agent:browser open overlay] ${base}/overlay3`);
+  await emit('[agent:browser read overlay]');
+  await emit('[agent:browser screenshot overlay --numbers]');
+  const probe3 = (/probe3: [^\n]*/.exec(fileOf(await emit('[agent:browser read overlay --text]'))) || ['probe3: none'])[0];
+  console.log(`    ${probe3}`);
+  check('three adjacent inline links: no badge covers a link or another badge', /badges 3 · badge-link hits 0 · badge-badge hits 0/.test(probe3));
+}
+
+async function restartStep(emit, base, host) {
+  console.log('== 14. numbers survive a child restart; the first number act after it is refused until a read');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const numOf = (content, re) => { const l = content.split('\n').find((x) => /^\[\d+\]/.test(x) && re.test(x)); return l ? Number(/^\[(\d+)\]/.exec(l)[1]) : 0; };
+  await emit(`[agent:browser open rs] ${base}/clickables`);
+  await emit('[agent:browser read rs]');
+  await emit(`[agent:browser open rs] ${base}/form`);
+  const before = numOf(fileOf(await emit('[agent:browser read rs]')), /Shadow page/);
+  await sleep(1500);
+  const dir = path.join(host.paths.dataDir, 'chromium', 'numbers', 'rs');
+  console.log(`    saved: ${fs.existsSync(dir) ? fs.readdirSync(dir).join(', ') : 'none'}`);
+  const cp = require('node:child_process');
+  const pid = cp.execSync(`pgrep -f "cxb-data=${path.join(host.paths.dataDir, 'chromium')}" | head -1`).toString().trim();
+  cp.execSync(`kill -9 ${pid}`);
+  console.log(`    killed child ${pid}`);
+  await sleep(2000);
+  await emit('[agent:browser services]');
+  await emit(`[agent:browser open rs] ${base}/form`);
+  const refused = await emit(`[agent:browser click rs ${before}]`);
+  check(`the first click by number after the restart is refused (${before})`, / error: /.test(refused));
+  const after = numOf(fileOf(await emit('[agent:browser read rs]')), /Shadow page/);
+  check(`the same element gets the same number back (${before} → ${after})`, before > 0 && after === before);
+  check('after a read the click lands', /clicked rs \[\d+\]/.test(await emit(`[agent:browser click rs ${after}]`)));
 }
 
 async function policyStep(emit, base, engine) {
@@ -585,8 +627,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable'].includes(process.env.CXB_ONLY)) {
-    if (process.env.CXB_ONLY === 'stable') {
+  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'stable', 'restart'].includes(process.env.CXB_ONLY)) {
+    if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
+    else if (process.env.CXB_ONLY === 'stable') {
       for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
     else if (process.env.CXB_ONLY === 'overlay') await overlayStep(emit, base);
@@ -695,6 +738,7 @@ async function main() {
   await opnavStep(emit, nextInject, base);
   await handoverStep(engine, emit, nextInject, base);
   await overlayStep(emit, base);
+  await restartStep(emit, base, host);
 
   engine.deactivate('browser-pane');
   await sleep(3000);

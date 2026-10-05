@@ -21,7 +21,7 @@ const FLAGS = {
   download: { to: 'value', as: 'value' },
   screenshot: { numbers: 'bool' },
   inspect: { text: 'value' },
-  wait: { ms: 'value', for: 'value' },
+  wait: { ms: 'value', for: 'value', idle: 'bool' },
   services: {},
   release: {},
 };
@@ -237,6 +237,7 @@ function toCommand(intent) {
       service,
       ms: flags.ms == null ? null : Math.min(WAIT_MS_MAX, intArg('ms', flags.ms, 1)),
       forText: flags.for == null ? null : flags.for,
+      ...(flags.ms != null && flags.for == null && !flags.idle ? { sleep: true } : {}),
     };
   }
   if (sub === 'services') {
