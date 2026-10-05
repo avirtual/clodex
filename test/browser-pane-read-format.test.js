@@ -595,3 +595,14 @@ test('read --compact: an ad with no number gets a [?] hint naming the page origi
   const numbered = formatRead({ ...raw, feed: { ...raw.feed, posts: [POST, { ...ad, n: 77 }] } }, { service: 'x', compact: true }).content;
   assert.doesNotMatch(numbered, /has no safe number/);
 });
+
+test('read --compact after a scroll: a new [?] ad gets the hint, a seen one or one dropped by --filter does not', () => {
+  const ad = { ...POST, n: null, handle: 'shop', flags: { ad: true }, path: '/shop/status/77' };
+  const raw = { ...FEED_RAW, url: 'https://x.com/home', feed: { ...FEED_RAW.feed, posts: [POST, ad] } };
+  const hint = "(an ad's [?] has no safe number — open x https://x.com/shop/status/77 shows the post)";
+  const read = (seen, extra = {}) => formatRead(raw, { service: 'x', compact: true, feedSeen: { seen: new Set(seen), dropped: 0, earlier: [] }, ...extra }).content.split('\n');
+  assert.ok(read(['/ana/status/111']).includes(hint), read(['/ana/status/111']).join('\n'));
+  assert.ok(!read(['/shop/status/77']).includes(hint));
+  assert.ok(read(['/shop/status/77'], { all: true }).includes(hint));
+  assert.ok(!formatRead(raw, { service: 'x', compact: true, filter: '@ana' }).content.split('\n').includes(hint));
+});
