@@ -48,11 +48,15 @@ test('child: agent back/forward checks the target history entry against the agen
   const nav = /async function opNav\([\s\S]*?\n {2}\}\n/.exec(CHILD);
   assert.ok(nav, 'opNav exists');
   const body = nav[0];
-  assert.ok(/h\.getEntryAtIndex\(h\.getActiveIndex\(\) \+ \(dir === 'back' \? -1 : 1\)\)/.test(body));
+  assert.ok(body.includes('const entry = realEntry(h, dir);'));
   assert.ok(/policyDenies\(svc, target, 'agent'\)/.test(body));
   assert.ok(body.indexOf('mutating(svc, frame, dir') < body.indexOf("codedError('NO_HISTORY'"), 'history is checked after the quiet gate');
+  assert.ok(body.indexOf('if (!realEntry(h, dir)) throw noHistory();') < body.indexOf('preAct(svc, null)'), 'NO_HISTORY is said before the snapshot');
   assert.ok(body.indexOf('preAct(svc, null)') < body.indexOf('policyDenies'), 'the policy check is the last step before the move');
-  assert.ok(body.indexOf('policyDenies') < body.indexOf('h.goBack()'));
+  assert.ok(body.indexOf('policyDenies') < body.indexOf('h.goToIndex(entry.index)'));
+  assert.ok(!body.includes('goBack(') && !body.includes('goForward('), 'a skipped blank entry is never visited');
+  assert.ok(body.includes("canBack: realEntry(h, 'back') != null,"));
+  assert.ok(body.includes("canForward: realEntry(h, 'forward') != null,"));
   assert.ok(body.includes("codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`)"));
   assert.ok(/if \(op === 'nav'\) return opNav\(name, frame, args\);/.test(CHILD));
   assert.ok(/'NO_HISTORY'\]\);/.test(CHILD), 'NO_HISTORY is a code the child passes through');
@@ -69,4 +73,17 @@ test('scheduler: leaseHolder names the seat holding the lease and null after rel
   assert.strictEqual(s.leaseHolder('x'), 'seat-a');
   s.submit(handle, { sub: 'release', service: 'x' });
   assert.strictEqual(s.leaseHolder('x'), null);
+});
+
+test('child: realEntry steps past the blank start entry in either direction and is null when only blanks remain', () => {
+  const src = /const realEntry = \(h, dir\) => \{[\s\S]*?\n {2}\};\n/.exec(CHILD);
+  assert.ok(src, 'realEntry exists');
+  const realEntry = new Function(`${src[0]}; return realEntry;`)();
+  const hist = (urls, active) => ({ getActiveIndex: () => active, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
+  assert.strictEqual(realEntry(hist(['about:blank', 'https://a.example/'], 1), 'back'), null);
+  assert.strictEqual(realEntry(hist(['about:blank', 'https://a.example/'], 1), 'forward'), null);
+  assert.deepStrictEqual(realEntry(hist(['https://a.example/', 'about:blank', '', 'https://b.example/'], 3), 'back'), { index: 0, url: 'https://a.example/' });
+  assert.deepStrictEqual(realEntry(hist(['https://a.example/', 'about:blank', 'https://b.example/'], 0), 'forward'), { index: 2, url: 'https://b.example/' });
+  assert.strictEqual(realEntry(null, 'back'), null);
+  assert.ok(/vm\.canBack = !svc\.wc\.isDestroyed\(\) && realEntry\(svc\.wc\.navigationHistory, 'back'\) != null;/.test(CHILD), 'the bar back button greys out on the first real page');
 });
