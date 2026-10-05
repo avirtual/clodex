@@ -7,6 +7,7 @@ const { createClient, OP_DEADLINE_MS } = require('./client');
 const { createScheduler, attachBudget, WAIT_MAX_MS, DOWNLOAD_OP_MS, ATTACH_MIN, ATTACH_MAX } = require('./scheduler');
 const replies = require('./replies');
 const urlpolicy = require('./urlpolicy');
+const siteNotes = require('./site-notes');
 const { hostOf } = require('./read-format');
 
 const PROMPT_LINES = [
@@ -189,6 +190,7 @@ function activate(host) {
     log: host.log,
     fsScope: (seat) => host.sessions.fsScope(seat),
     downloadsDir,
+    notes: siteNotes.createStore({ dir: path.join(host.paths.dataDir, 'sites') }),
   });
   host.intents.register({
     verb: 'browser',

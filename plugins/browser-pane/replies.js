@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { loginLabel, CHANGE_MAX, MOST_OF_PAGE, redactUrl, hostOf } = require('./read-format');
+const siteNotes = require('./site-notes');
 
 const ANSI = new RegExp('\\u001B\\[[0-9;?]*[a-zA-Z]|\\u001B\\][^\\u0007]*\\u0007', 'g');
 const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
@@ -49,14 +50,16 @@ function idleLabel(idle) {
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 
-function openReply(service, r) {
+function openReply(service, r, notes = null, tail = '') {
+  const n = siteNotes.openParts(service, notes);
   const parts = [`opened ${service}`, String(r.status == null ? '?' : r.status), JSON.stringify(String(r.title || '')), redactUrl(r.url || ''),
     `login: ${loginLabel(r.login)}`];
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   parts.push('next: read');
   if (r.shown === false) parts.push('window hidden (open --show or the pane\'s Show button raises it)');
-  return reply(parts.join(' · '));
+  if (n.part) parts.push(n.part);
+  return [reply(parts.join(' · ')) + tail, ...n.lines.map((l) => `  ${oneLine(l, REPLY_MAX)}`)].join('\n');
 }
 
 function tokLabel(n) {
@@ -322,9 +325,10 @@ function dropSuffix(labels) {
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
   const u = clipNavUrl(redactUrl(r.url), 120);
-  if (r.inPage && r.titleChanged) return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} (in-page) · numbers kept where the page repeats`;
-  if (r.inPage) return `navigated → ${u} (in-page) · numbers kept where the page repeats`;
-  return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} · numbers kept where the page repeats`;
+  const notes = r.notes > 0 ? ` · notes: ${r.notes} for this page` : '';
+  if (r.inPage && r.titleChanged) return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} (in-page) · numbers kept where the page repeats${notes}`;
+  if (r.inPage) return `navigated → ${u} (in-page) · numbers kept where the page repeats${notes}`;
+  return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} · numbers kept where the page repeats${notes}`;
 }
 
 function actReply(sub, service, cmd, r) {
