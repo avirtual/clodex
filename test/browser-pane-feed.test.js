@@ -483,4 +483,20 @@ test('feed: mainRootOf narrows --main to the column holding the articles', () =>
   const none = h('main', {}, h('div', {}, 'text'));
   assert.strictEqual(rootOf(h('body', {}, none)), none);
   assert.strictEqual(rootOf(h('body', {}, h('div', {}, 'no main'))), null);
+  const withBody = (b) => Object.assign(b, { body: b });
+  const column = h('section', {}, h('article', {}, 'one'), h('article', {}, 'two'), h('article', {}, 'three'));
+  assert.strictEqual(rootOf(withBody(h('body', {}, h('div', {}, column, h('aside', { 'aria-label': 'Who to follow' }, 'Ana'))))), column);
+  const lone = h('article', {}, 'a');
+  assert.strictEqual(rootOf(withBody(h('body', {}, lone))), lone);
+  assert.strictEqual(rootOf(withBody(h('body', {}, h('div', {}, 'no article')))), null);
+});
+
+test('feed: --main on a page without a main landmark still reads every post', () => {
+  const posts = (doc) => runFeed(doc, {}, {}, true).posts.length;
+  const page = () => {
+    const arts = ['/ana/status/1', '/bo/status/2'].map((p) => h('article', {}, h('a', { href: p }, h('time', {}, '1h')), h('div', { lang: 'en' }, 'words')));
+    const b = h('body', {}, h('div', {}, h('section', {}, ...arts), h('aside', { 'aria-label': 'Who to follow' }, 'Ana')));
+    return Object.assign(b, { body: b });
+  };
+  assert.strictEqual(posts(page()), 2);
 });
