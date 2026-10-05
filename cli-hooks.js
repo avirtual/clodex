@@ -195,6 +195,20 @@ ${INTERP} -e "$JS" - "${require.resolve('./bash-live')}" "${livePath}" 2>/dev/nu
 exit 0
 `, { mode: 0o700 });
 
+    const identScriptPath = pathFor(REGISTRY_DIR, name, 'identScript');
+    fs.writeFileSync(identScriptPath, `#!/bin/bash
+IFS= read -r -d '' JS <<'JSEOF' || true
+try {
+  const fs = require("fs");
+  let cred = process.env.CLODEX_INTENT_CRED || "";
+  if (!cred) { try { cred = fs.readFileSync(process.argv[3], "utf8").trim(); } catch (e) {} }
+  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred));
+} catch (e) {}
+JSEOF
+${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" 2>/dev/null
+exit 0
+`, { mode: 0o700 });
+
     const guardScriptPath = pathFor(REGISTRY_DIR, name, 'bashGuardScript');
     fs.writeFileSync(guardScriptPath, `#!/bin/bash
 IFS= read -r -d '' JS <<'JSEOF' || true
@@ -718,6 +732,10 @@ exit 0
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
         }],
+        SubagentStart: [{
+          matcher: '',
+          hooks: [{ type: 'command', command: identScriptPath }]
+        }],
         PreCompact: [{
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
@@ -744,6 +762,7 @@ exit 0
           hooks: [
             { type: 'command', command: liveScriptPath },
             { type: 'command', command: guardScriptPath },
+            { type: 'command', command: identScriptPath },
           ]
         }, {
           matcher: '',

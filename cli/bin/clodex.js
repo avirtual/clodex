@@ -4,7 +4,7 @@
 const net = require('net');
 
 const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
-const CLIENT_TIMEOUT_MS = 140 * 1000;
+const CLIENT_TIMEOUT_MS = 480 * 1000;
 
 const HELP = [
   'usage: clodex \'<[agent:…] intent line>\' [more words…]',
@@ -30,7 +30,11 @@ const HELP = [
   'Everything else (task add/accept/…, shout, spawn, reboot, term, team, context,',
   'remind, memory remember/forget, scratch, file) is refused to a subagent.',
   '',
-  'exit codes: 0 ok, 1 error, 2 usage, 3 unauthorized/not available, 4 no socket, 5 timeout',
+  'A browser wait or download answers here when it ends (up to ~8 min): give the',
+  'calling tool a timeout that covers it (Claude Code\'s Bash tool defaults to 120 s).',
+  '',
+  'exit codes: 0 ok, 1 error, 2 usage, 3 refused/unauthorized/not available, 4 no socket, 5 timeout',
+  'The reply text is printed either way.',
 ].join('\n');
 
 function hasEnd(text) {
@@ -49,6 +53,9 @@ function agentIdFrom(env) {
 }
 
 function exitFor(res) {
+  const status = res && res.status;
+  if (status === 'refused') return EXIT.DENIED;
+  if (status === 'error') return EXIT.ERROR;
   if (res && res.ok) return EXIT.OK;
   const err = String((res && res.error) || '');
   if (err === 'unauthorized' || err.startsWith('not available to a subagent')) return EXIT.DENIED;
@@ -96,13 +103,14 @@ async function main(argv, { env = process.env, stdin = process.stdin, out = proc
     return EXIT.NO_SOCKET;
   }
   const agentId = agentIdFrom(env);
-  const payload = { cred, intent: text, ...(agentId ? { agentId } : {}) };
+  const ident = env.CLODEX_HOOK_IDENT || null;
+  const payload = { cred, intent: text, ...(agentId ? { agentId } : {}), ...(ident ? { ident } : {}) };
   const r = await request({ sockPath, payload, connect, ...(timeoutMs ? { timeoutMs } : {}) });
   if (r.transport === 'no-socket') { err.write(`clodex: cannot reach ${sockPath} (${r.message})\n`); return EXIT.NO_SOCKET; }
   if (r.transport === 'timeout') { err.write('clodex: timeout\n'); return EXIT.TIMEOUT; }
   if (r.transport) { err.write('clodex: unreadable reply from the seat socket\n'); return EXIT.ERROR; }
   const code = exitFor(r.res);
-  if (code === EXIT.OK) out.write(String(r.res.reply == null ? '' : r.res.reply) + '\n');
+  if (r.res.ok) out.write(String(r.res.reply == null ? '' : r.res.reply) + '\n');
   else err.write(`clodex: ${r.res.error || 'failed'}\n`);
   return code;
 }

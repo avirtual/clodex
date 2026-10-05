@@ -368,7 +368,20 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
   return file;
 }
 
+const REFUSED_RES = [
+  /^\S+ refused: .* matches denylist pattern /,
+  /^\[\d+\] ".*" (publishes as the operator|looks consequential \()/,
+  /^\[\d+\] on \S+ no longer points at one element/,
+  /^\[\d+\] retired: its text changed since your read/,
+];
+
+function classifyReply(line) {
+  const body = String(line || '').replace(/^\[agent:browser\]\s*(error:\s*)?/, '');
+  return REFUSED_RES.some((re) => re.test(body)) ? 'refused' : null;
+}
+
 module.exports = {
+  classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,

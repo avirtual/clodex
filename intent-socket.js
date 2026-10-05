@@ -1,10 +1,19 @@
 'use strict';
 
+const nodeCrypto = require('node:crypto');
+
 const INTENT_SOCKET_MAX_BYTES = 64 * 1024;
 const INTENT_SOCKET_MAX_CONNS = 8;
 const INTENT_SOCKET_TIMEOUT_MS = 10 * 1000;
 const ASYNC_TAIL = "a reply arrives in the seat's main conversation";
 const RESULT_TAIL = "any result arrives in the seat's main conversation";
+const IDENT_ENV = 'CLODEX_HOOK_IDENT';
+const IDENT_HEX = 16;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const CMD_PREFIX = ['command', 'exec', 'env'];
+const SEPARATORS = ';&|(){}\n';
+const SUBAGENT_BRIEF = "This seat's browser pane and Clodex intents are reachable from Bash as `clodex '[agent:browser …]'`; run `clodex --help` for the subagent catalog.";
 
 function mintIntentCredential(crypto) {
   return crypto.randomBytes(32).toString('hex');
@@ -35,7 +44,102 @@ function seatOfAgentTag(name) {
 
 function isMainThread(agentId, sessionId) {
   if (!agentId || typeof sessionId !== 'string' || !sessionId) return false;
-  return sessionId === agentId || sessionId.endsWith(`-${agentId}`);
+  if (sessionId === agentId) return true;
+  return UUID_RE.test(agentId) && sessionId.endsWith(`-${agentId}`);
+}
+
+function identPart(s) {
+  return String(s || '').replace(/[^A-Za-z0-9_:-]/g, '_') || '_';
+}
+
+function identToken(crypto, cred, agentId, agentType, sessionId) {
+  const mac = crypto.createHmac('sha256', String(cred))
+    .update(`${agentId || 'main'}${sessionId || ''}`).digest('hex').slice(0, IDENT_HEX);
+  return agentId ? `sub.${identPart(agentId)}.${identPart(agentType)}.${mac}` : `main.${mac}`;
+}
+
+function identIsMain(crypto, cred, ident, sessionId) {
+  if (!cred || typeof ident !== 'string' || typeof sessionId !== 'string' || !sessionId) return false;
+  if (!/^main\.[0-9a-f]+$/.test(ident)) return false;
+  return credMatches(crypto, identToken(crypto, cred, null, null, sessionId), ident);
+}
+
+function callerIsSubagent({ req, entry, sessionId, cred, crypto }) {
+  if (entry && entry.type === 'codex') {
+    const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
+    if (!sessionId) return true;
+    return !!agentId && !isMainThread(agentId, sessionId);
+  }
+  return !identIsMain(crypto, cred, req && req.ident, sessionId);
+}
+
+function shellSegments(cmd) {
+  const segs = [[]];
+  let tok = null;
+  let q = null;
+  const at = (i) => { if (!tok) tok = { start: i, end: i, text: '' }; return tok; };
+  const push = (i) => { if (tok) { tok.end = i; segs[segs.length - 1].push(tok); } tok = null; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd.charAt(i);
+    if (q) {
+      if (c === q) { q = null; continue; }
+      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; tok.text += cmd.charAt(i); continue; }
+      tok.text += c;
+      continue;
+    }
+    if (c === "'" || c === '"') { at(i); q = c; continue; }
+    if (c === '\\' && i + 1 < cmd.length) { at(i).text += cmd.charAt(i + 1); i++; continue; }
+    if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
+    if (SEPARATORS.includes(c)) { push(i); segs.push([]); continue; }
+    if (c <= ' ') { push(i); continue; }
+    at(i).text += c;
+  }
+  push(cmd.length);
+  return segs;
+}
+
+function isClodexWord(w) {
+  return typeof w === 'string' && (w === 'clodex' || w.endsWith('/clodex'));
+}
+
+function stampClodexCommand(cmd, token) {
+  const edits = [];
+  for (const seg of shellSegments(cmd)) {
+    let i = 0;
+    const forged = [];
+    while (i < seg.length && (ASSIGN_RE.test(seg[i].text) || CMD_PREFIX.includes(seg[i].text))) {
+      if (seg[i].text.startsWith(`${IDENT_ENV}=`)) forged.push(seg[i]);
+      i++;
+    }
+    if (!seg[i] || !isClodexWord(seg[i].text)) continue;
+    for (const f of forged) {
+      let end = f.end;
+      while (end < cmd.length && (cmd.charAt(end) === ' ' || cmd.charAt(end) === '\t')) end++;
+      edits.push({ start: f.start, end, text: '' });
+    }
+    edits.push({ start: seg[0].start, end: seg[0].start, text: `${IDENT_ENV}=${token} ` });
+  }
+  if (!edits.length) return null;
+  edits.sort((a, b) => b.start - a.start || (b.end - b.start) - (a.end - a.start));
+  let out = cmd;
+  for (const e of edits) out = out.slice(0, e.start) + e.text + out.slice(e.end);
+  return out;
+}
+
+function hookIdentOutput(raw, cred, crypto = nodeCrypto) {
+  let d;
+  try { d = JSON.parse(raw); } catch { return ''; }
+  if (!d || typeof d !== 'object') return '';
+  if (d.hook_event_name === 'SubagentStart') {
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: SUBAGENT_BRIEF } });
+  }
+  const input = d.tool_input;
+  const cmd = input && input.command;
+  if (typeof cmd !== 'string' || !cmd || !cred) return '';
+  const agentId = typeof d.agent_id === 'string' && d.agent_id ? d.agent_id : null;
+  const next = stampClodexCommand(cmd, identToken(crypto, cred, agentId, d.agent_type, d.session_id));
+  if (next == null) return '';
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: next } } });
 }
 
 function intentLabel(intent) {
@@ -54,8 +158,8 @@ function lateReply(intent) {
 }
 
 function createIntentRequestHandler({
-  seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs,
-  setTimer = setTimeout, clearTimer = clearTimeout,
+  seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred,
+  crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout,
 }) {
   return async function handleIntentRequest(req, ctl) {
     const text = req && typeof req.intent === 'string' ? req.intent : '';
@@ -65,11 +169,10 @@ function createIntentRequestHandler({
     if (intents.length > 1) return { ok: false, error: 'one intent per call' };
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
-    const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
-    const subagent = !!agentId && !isMainThread(agentId, sessionIdOf());
+    const subagent = callerIsSubagent({ req, entry: entryOf(), sessionId: sessionIdOf(), cred, crypto });
     if (subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
-      if (why !== null) return { ok: false, error: why || `not available to a subagent: ${intentLabel(intent)}` };
+      if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)}` };
     }
     const lines = [];
     let open = true;
@@ -89,17 +192,19 @@ function createIntentRequestHandler({
           const timer = setTimer(() => resolve(false), waitMs);
           wake = () => { clearTimer(timer); resolve(true); };
         });
-        if (!replied && !lines.length) return { ok: true, reply: lateReply(intent) };
+        if (!replied && !lines.length) return { ok: true, status: 'ok', reply: lateReply(intent) };
       }
     } finally {
       open = false;
     }
-    return { ok: true, reply: lines.length ? lines.join('\n') : defaultReply(intent) };
+    if (!lines.length) return { ok: true, status: 'ok', reply: defaultReply(intent) };
+    const status = classifyReply ? classifyReply(intent, lines[0]) : 'ok';
+    return { ok: true, status: status === 'error' || status === 'refused' ? status : 'ok', reply: lines.join('\n') };
   };
 }
 
 function createIntentSocketServer({
-  net, fs, crypto, sockPath, cred, handle, log,
+  net, fs, crypto, sockPath, cred, credPath, handle, log,
   maxBytes = INTENT_SOCKET_MAX_BYTES,
   maxConns = INTENT_SOCKET_MAX_CONNS,
   timeoutMs = INTENT_SOCKET_TIMEOUT_MS,
@@ -122,8 +227,9 @@ function createIntentSocketServer({
     active += 1;
     let released = false;
     const release = () => { if (!released) { released = true; active -= 1; } };
-    sock.on('close', release);
     let done = false;
+    let gone = false;
+    sock.on('close', () => { gone = true; release(); });
     let buf = Buffer.alloc(0);
     const end = (res) => {
       if (done) return;
@@ -146,9 +252,9 @@ function createIntentSocketServer({
       const expire = () => end({ ok: false, error: 'timeout' });
       let timer = setTimer(expire, timeoutMs);
       const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
-      const request = { intent: req.intent, agentId: req.agentId, agentType: req.agentType };
+      const request = { intent: req.intent, agentId: req.agentId, agentType: req.agentType, ident: req.ident };
       Promise.resolve()
-        .then(() => handle(request, { closed: () => done, extend }))
+        .then(() => handle(request, { closed: () => done || gone, extend }))
         .then((r) => end(r && typeof r === 'object' ? r : { ok: false, error: 'no reply' }),
           (e) => {
             if (log) log.warn('intent-socket', `request failed: ${(e && e.message) || e}`);
@@ -167,6 +273,11 @@ function createIntentSocketServer({
         server.removeListener('error', reject);
         server.on('error', (e) => { if (log) log.warn('intent-socket', `${sockPath}: ${e.message}`); });
         try { fs.chmodSync(sockPath, 0o600); } catch {}
+        if (credPath) {
+          try { fs.writeFileSync(credPath, cred, { mode: 0o600 }); fs.chmodSync(credPath, 0o600); } catch (e) {
+            if (log) log.warn('intent-socket', `${credPath}: ${e.message}`);
+          }
+        }
         if (typeof server.unref === 'function') server.unref();
         resolve();
       });
@@ -177,6 +288,7 @@ function createIntentSocketServer({
     if (server) { try { server.close(); } catch {} }
     server = null;
     try { fs.unlinkSync(sockPath); } catch {}
+    if (credPath) { try { fs.unlinkSync(credPath); } catch {} }
   }
 
   return { start, stop, activeCount: () => active };
@@ -192,6 +304,14 @@ module.exports = {
   subagentTag,
   seatOfAgentTag,
   isMainThread,
+  IDENT_ENV,
+  SUBAGENT_BRIEF,
+  identToken,
+  identIsMain,
+  callerIsSubagent,
+  shellSegments,
+  stampClodexCommand,
+  hookIdentOutput,
   intentLabel,
   createIntentRequestHandler,
   createIntentSocketServer,
