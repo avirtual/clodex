@@ -171,6 +171,19 @@ test('read-format: a change spanning most of the page lines reads as most of the
   assert.strictEqual(changedRegion(page.join('\n'), page.join('\n').replace('Trends', 'Trends 2'), CHANGE_MAX), 'Trends 2', 'one line of ten is still quoted');
 });
 
+test('read-format: an X menu that hides the app root reads as the menu items on open and as removed text or most of the page on Escape', () => {
+  const { MOST_OF_PAGE } = require('../plugins/browser-pane/read-format');
+  const page = (clock) => ['Home', 'Explore', '2', 'Notifications', 'Chat', ...Array.from({ length: 18 }, (_x, k) => `Post ${k} text`), clock];
+  const menu = ['Send via Chat', 'Copy link', 'Post Video'];
+  const norm = (l) => l.replace(/\d+:\d+/g, '#:#');
+  const open = changedRegion(page('0:09').join('\n'), [...menu, ...page('0:10')].join('\n'), CHANGE_MAX, norm);
+  assert.strictEqual(open, 'Send via Chat / Copy link / Post Video');
+  assert.strictEqual(changedRegion(page('0:09').join('\n'), menu.join('\n'), CHANGE_MAX, norm), 'Send via Chat / Copy link / Post Video', 'the hidden root dropped from the snapshot');
+  assert.strictEqual(changedRegion([...menu, ...page('0:10')].join('\n'), page('0:11').join('\n'), CHANGE_MAX, norm), 'text removed');
+  assert.strictEqual(changedRegion(menu.join('\n'), page('0:11').join('\n'), CHANGE_MAX, norm), MOST_OF_PAGE);
+  assert.match(require('../plugins/browser-pane/page-scripts').PAGE_TEXT, /audio,\[aria-hidden=true\],\[inert\]'\)\.forEach\(n => n\.remove\(\)\)/);
+});
+
 const { chromeStrip, CHROME_MAX_LINES, CHROME_MARK } = require('../plugins/browser-pane/read-format');
 
 const M = (l) => CHROME_MARK + l;

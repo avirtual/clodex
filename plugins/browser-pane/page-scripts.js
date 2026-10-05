@@ -433,13 +433,10 @@ function inputLine(d) {
     + (pw ? ' (operator only)' : '');
 }
 
-function readInteractive(main, state) {
-  return `(() => {${DEEP}${numbering(state)}
-  ${distinctClips.toString()}
-  ${inputLine.toString()}
+function collect(main) {
+  return `
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
-  resetTable();
   const mainRoot = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
   const inScope = el => {
     if (!mainRoot) return true;
@@ -518,7 +515,14 @@ function readInteractive(main, state) {
     listed += 1;
     items.push({ el, full, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
   }
-  const tails = distinctClips(items.map(i => (i.line != null && i.full) || ''));
+`;
+}
+
+function readInteractive(main, state) {
+  return `(() => {${DEEP}${numbering(state)}
+  ${distinctClips.toString()}
+  ${inputLine.toString()}
+  resetTable();${collect(main)}  const tails = distinctClips(items.map(i => (i.line != null && i.full) || ''));
   items.forEach((it, i) => {
     if (!tails[i]) return;
     it.line = it.line.replace(clip(it.full, 60), () => tails[i]);
@@ -563,7 +567,8 @@ function labelFrom(d) {
   const handle = d.tag === 'a' && d.href && segs(d.href).length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(segs(d.href)[0]) ? '@' + segs(d.href)[0] : '';
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
     () => (handle ? '' : (d.alts || []).map(alt).find(Boolean)), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
-  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) && /\.(jpe?g|png|webp|gif)$/i.test(named) ? 'avatar' : named;
+  const pic = d.inLink && d.h <= 24 ? 'badge' : !d.inLink || d.h >= 32 ? 'avatar' : '';
+  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) && /\.(jpe?g|png|webp|gif)$/i.test(named) ? pic || named : named;
   if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
     return pick([tid(d.svgTestid), flat(d.svgTitle), handle, () => last(d.href)]);
@@ -572,7 +577,7 @@ function labelFrom(d) {
   const marked = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid)]);
   if (marked) return marked;
   if (src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src)) return 'video';
-  if (avatar(src)) return 'avatar';
+  if (avatar(src) && pic) return pic;
   return pick([human(src.replace(/\.\w{2,5}$/, '')), human(d.for), cls(d.classes)]);
 }
 
@@ -605,6 +610,8 @@ const ICON = `
       src: [e.getAttribute('src') || '', ...[...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src'))].find(u => u && !/^data:/i.test(u)) || '',
       inner: btn ? (btn.tagName === 'INPUT' ? btn.value : btn.innerText) || btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.getAttribute('name') || '' : '',
       video: !!(e.closest('video,[data-testid*=video i]') || e.querySelector('video,[data-testid*=video i]')),
+      h: e.getBoundingClientRect().height,
+      inLink: !!e.closest('a[href] *'),
     };
   };
   const labelOf = el => labelFrom(descOf(el));`;
@@ -682,7 +689,7 @@ function inspect(n) {
 const PAGE_TEXT = `(() => {
   if (!document.body) return '';
   const clone = document.body.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio').forEach(n => n.remove());
+  clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio,[aria-hidden=true],[inert]').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
@@ -694,32 +701,41 @@ const PAGE_TEXT = `(() => {
 function findText(text, state) {
   const want = String(text).replace(/\s+/g, ' ').trim().toLowerCase();
   return `(() => {${DEEP}${numbering(state)}
+  ${inputLine.toString()}
   if (!window.__cxEls || !window.__cxKeys) return { unstamped: true };
-  const want = ${JSON.stringify(want)};
-  const SKIP = new Set(['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'OPTION', 'OPTGROUP', 'SELECT', 'TEXTAREA']);
+  const want = ${JSON.stringify(want)};${collect(false)}
+  const stored = storedKeysOf(items.map(i => i.el));
+  const keyed = new Map(items.map((it, i) => [it.el, stored[i]]));
+  const fullOf = new Map(items.map(it => [it.el, String(it.full || '').toLowerCase()]));
+  const plainOf = (el, t) => {
+    for (let p = el; p; p = p.parentElement) if (keyed.has(p)) return fullOf.get(p) === t.toLowerCase() ? p : null;
+    return null;
+  };
+  const TEXT_SKIP = new Set(['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'OPTION', 'OPTGROUP', 'SELECT', 'TEXTAREA']);
   const BUTTONS = new Set(['button', 'submit', 'reset']);
   const own = el => {
     let t = el.tagName === 'INPUT' && BUTTONS.has(el.type) ? el.value || '' : '';
     for (const c of el.childNodes) if (c.nodeType === 3) t += c.nodeValue;
     return t.replace(/\\s+/g, ' ').trim();
   };
-  const hits = deepAll(document, el => !SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
-  const top = hits.slice(0, 5);
-  const loose = top.filter(el => !window.__cxOf.get(el));
-  const pageBases = new Set(Object.values(window.__cxKeys).map(k => parseStored(k).base));
-  const bases = loose.map(baseKeyOf);
-  const dup = bases.map(b => pageBases.has(b) || bases.filter(x => x === b).length > 1);
-  const numberOf = el => {
-    if (window.__cxOf.get(el)) return window.__cxOf.get(el);
-    const i = loose.indexOf(el);
-    if (!dup[i]) return place(el, bases[i]);
-    const s = twinKey(el, bases[i]);
-    return Object.values(window.__cxKeys).includes(s) ? null : place(el, s);
-  };
-  return { count: hits.length, hits: top.map(el => {
+  const hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
+  const found = [];
+  const loose = [];
+  for (const el of hits) {
     const t = own(el);
-    const n = numberOf(el);
-    return { n, fresh: n != null && fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+    const c = (el.matches(sel) ? el : el.closest(sel)) || plainOf(el, t);
+    if (!c || !keyed.has(c)) { loose.push({ n: null, loose: true, text: t }); continue; }
+    const have = found.find(x => x.el === c);
+    if (have) { have.exact = have.exact || t.toLowerCase() === want; continue; }
+    found.push({ el: c, text: t, exact: t.toLowerCase() === want });
+  }
+  const exact = found.filter(x => x.exact);
+  const pick = exact.length ? exact : [...found, ...loose];
+  const clipT = t => (t.length > 60 ? t.slice(0, 59) + '…' : t);
+  return { count: pick.length, hits: pick.slice(0, 5).map(h => {
+    if (h.loose) return { n: null, loose: true, text: clipT(h.text) };
+    const n = place(h.el, keyed.get(h.el));
+    return { n, fresh: n != null && fresh.includes(n), text: clipT(h.text) };
   }), assigned, next };
 })()`;
 }
@@ -813,7 +829,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     items.push({ k, el, r });
   }
   const badgeRects = [];
-  const hits = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const hits = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
   const wordAt = (x, y) => {
     const c = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
     const t = c && c.startContainer;
@@ -856,8 +872,13 @@ const OVERLAY = `(() => {${DEEP}${CQ}
         || mediaAt((q.left + q.right) / 2, q.top + ${BADGE_H_PX} / 2, el);
       const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
       const free = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom))].find(q => !blocked(q));
-      if (free) { x = free.left; y = free.top; }
-      else { x = r.left - bw / 2; y = r.top - ${BADGE_H_PX} / 2; }
+      const sup = slot(r.left - bw / 2, r.top - ${BADGE_H_PX} - 1);
+      const right = () => {
+        for (let d = 0; d <= bw; d += 2) if (!blocked(slot(r.right + 2 + d, r.top))) return slot(r.right + 2 + d, r.top);
+        return slot(r.right + 2, r.top);
+      };
+      const at = free || (sup.top >= 0 && !textUnder(sup.left, sup.right, sup.top + ${BADGE_H_PX} / 2) ? sup : right());
+      x = at.left; y = at.top;
     }
     badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'

@@ -5,6 +5,7 @@ const keys = require('./keys');
 const TEXT_HEAD = 1200;
 const CHANGE_MAX = 600;
 const MOST_MIN_LINES = 10;
+const SET_MAX_LINES = 20;
 const MOST_OF_PAGE = 'most of the page (menu closed?)';
 const CHROME_MIN_LINES = 3;
 const CHROME_MAX_LINES = 40;
@@ -227,6 +228,22 @@ function changedRegion(before, after, max = CHANGE_MAX, norm = (l) => l) {
   let j = 0;
   while (j < nb.length - i && j < na.length - i && nb[nb.length - 1 - j] === na[na.length - 1 - j]) j++;
   const mid = a.slice(i, a.length - j);
+  const shorter = Math.min(a.length, b.length);
+  if (shorter && (i + j) * 5 < shorter) {
+    const left = new Map();
+    for (const l of nb) left.set(l, (left.get(l) || 0) + 1);
+    const added = a.filter((_l, k) => {
+      const c = left.get(na[k]) || 0;
+      if (c) left.set(na[k], c - 1);
+      return !c;
+    });
+    if (!added.length && b.length > a.length) return 'text removed';
+    if (added.length >= SET_MAX_LINES) return MOST_OF_PAGE;
+    if (added.length) {
+      const s = added.join(' / ');
+      return s.length > max ? s.slice(0, Math.max(0, max - 1)) + '…' : s;
+    }
+  }
   if (Math.max(a.length, b.length) >= MOST_MIN_LINES && Math.max(mid.length, b.length - i - j) * 2 > Math.max(a.length, b.length)) return MOST_OF_PAGE;
   if (!mid.length) return b.length - j > i ? 'text removed' : '';
   const row = (l) => l.includes(' | ');

@@ -373,9 +373,14 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.deepStrictEqual([inside.left, inside.top], [242, 68], 'a word left and a word above: right of the link when the right is clear');
   const words4 = [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' },
     { left: 244, top: 68, width: 12, height: 18, text: 'și' }, { left: 200, top: 86, width: 30, height: 18, text: 'jos' }];
-  const [sup] = overlayRun([[200, 68, 40, 18]], words4);
-  assert.deepStrictEqual([sup.left, sup.top], [193, 60], 'every slot blocked: a superscript at the corner, half a badge up and left');
-  assert.ok(sup.top === 68 - 8 && sup.left < 200);
+  const [noSup] = overlayRun([[200, 68, 40, 18]], words4);
+  assert.deepStrictEqual([noSup.left, noSup.top], [242, 68], 'every slot blocked and a word under the superscript centre: right of the link, never below its top');
+  const words5 = [words4[0], words4[2], words4[3]];
+  const [sup] = overlayRun([[200, 68, 40, 18], [205, 36, 40, 18]], words5);
+  assert.ok(sup.top === 68 - 17 && sup.left < 200, 'every slot blocked, the line above clear at the badge centre: a superscript whose bottom clears the line box');
+  assert.deepStrictEqual([sup.left, sup.top], [193, 51]);
+  const [ad] = overlayRun([[112, 50, 70, 18], [112, 49, 200, 18], [60, 44, 40, 40]]);
+  assert.deepStrictEqual([ad.left, ad.top], [112, 34], 'an ad name row: a wrapper sharing the left edge and an avatar left of the slot leave the above slot free');
   const img = { left: 270, top: 100, right: 298, bottom: 118 };
   const elementFromPoint = (x, y) => (x >= img.left && x <= img.right && y >= img.top && y <= img.bottom
     ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null), contains: () => false } : { nodeType: 1, closest: () => null, contains: () => false });
@@ -622,9 +627,14 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'a', href: '/elonmusk', alts: ['OSHY3ewP_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/123/OSHY3ewP_bigger.jpg' }, '@elonmusk'],
     [{ tag: 'a', href: '/AOC', alts: [null, 'X20dMMBa_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/9/X20dMMBa_bigger.jpg' }, '@AOC'],
     [{ tag: 'a', href: '/photo/1', alts: ['Image'] }, 'photo 1'],
+    [{ tag: 'div', role: 'link', src: 'x_bigger.jpg', h: 16, inLink: true }, 'badge'],
+    [{ tag: 'div', role: 'link', alts: ['x_bigger.jpg'], h: 16, inLink: true }, 'badge'],
+    [{ tag: 'a', href: '/elonmusk', alts: ['x_bigger.jpg'], h: 40 }, '@elonmusk'],
+    [{ tag: 'div', role: 'link', src: 'x_bigger.jpg', h: 40, inLink: false }, 'avatar'],
   ];
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
   assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /h: e\.getBoundingClientRect\(\)\.height,\n\s*inLink: !!e\.closest\('a\[href\] \*'\),/);
 });
 
 const svcOf = () => ({ origins: new Map(), num: null });
@@ -732,7 +742,12 @@ test('numbers persist: a corrupt or other-schema file is ignored and overwritten
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).v, NUMBERS_SCHEMA);
   assert.strictEqual(loadNumbers(dir, 'https://x.com').byN.get(1), st.stored[0]);
   fs.writeFileSync(file, JSON.stringify({ v: NUMBERS_SCHEMA, origin: 'https://x.com', numbers: { k: 9 }, nextN: 10 }));
-  assert.strictEqual(loadNumbers(dir, 'https://x.com').restoredAt, '', 'an old file without savedAt still loads as restored');
+  const mtime = new Date(2026, 9, 5, 8, 21);
+  fs.utimesSync(file, mtime, mtime);
+  const old = loadNumbers(dir, 'https://x.com');
+  assert.strictEqual(old.restoredAt, mtime.toISOString(), 'an old file without savedAt dates its restore by the file mtime');
+  const head = RF.formatRead({ url: 'https://x.com/home', title: 'X', text: 'Home', elements: [], restored: old.restoredAt, fresh: [] }, { service: 'x' }).content.split('\n').find((l) => l.startsWith('doc:'));
+  assert.match(head, /numbers restored \(saved 2026-10-05 08:21\)/);
 });
 
 test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {

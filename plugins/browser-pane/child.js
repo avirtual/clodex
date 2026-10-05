@@ -167,9 +167,18 @@ function loadNumbers(dir, origin, now = Date.now()) {
   e.nextN = Math.max(1, j.nextN, ...[...e.byN.keys()].map((n) => n + 1));
   for (const v of Array.isArray(j.volatile) ? j.volatile : []) e.volatile.add(String(v));
   for (const n of Array.isArray(j.listed) ? j.listed : []) if (Number.isInteger(n)) e.listed.add(n);
-  e.restoredAt = typeof j.savedAt === 'string' ? j.savedAt : '';
+  let mtime = '';
+  try { mtime = fs.statSync(file).mtime.toISOString(); } catch {}
+  e.restoredAt = typeof j.savedAt === 'string' ? j.savedAt : mtime;
   try { fs.utimesSync(file, now / 1000, now / 1000); } catch {}
   return e;
+}
+
+function notOpenError(name, opened, numbersDir) {
+  let saved = [];
+  try { saved = fs.readdirSync(numbersDir).filter((f) => !f.startsWith('.')); } catch {}
+  if (opened.has(name) || saved.includes(name)) return codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
+  return codedError('NOT_OPEN', TEXT.notService(name, [...new Set([...opened, ...saved])].sort()));
 }
 
 function pruneNumbers(dir, max = ORIGINS_MAX) {
@@ -410,6 +419,7 @@ function run(electron, ctx) {
   const quietMs = Number((ctx && ctx.quietMs) || 3000);
   const gateMaxMs = Number((ctx && ctx.gateMaxMs) || 60000);
   const services = new Map();
+  const opened = new Set();
   const chains = new Map();
   const partitions = new Set();
   const routers = new Map();
@@ -575,6 +585,7 @@ function run(electron, ctx) {
     if (services.size >= MAX_WINDOWS) {
       throw codedError('TOO_MANY_WINDOWS', `at most ${MAX_WINDOWS} service windows can be open — the operator can close one`);
     }
+    opened.add(name);
     const ses = session.fromPartition('persist:' + name);
     ses.setUserAgent(ses.getUserAgent().replace(/ (Clodex|Electron)\/\S+/g, ''));
     ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
@@ -718,9 +729,7 @@ function run(electron, ctx) {
 
   const need = (name) => {
     const svc = services.get(name);
-    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) {
-      throw codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
-    }
+    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) throw notOpenError(name, opened, path.join(data, 'numbers'));
     return svc;
   };
 
@@ -975,6 +984,7 @@ function run(electron, ctx) {
     mergeNumbers(svc, found);
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
+    if (found.hits[0].loose) throw codedError('NO_ELEMENT', TEXT.looseText(svc.name, text, found.hits[0]));
     if (found.hits[0].n == null) throw codedError('AMBIGUOUS', TEXT.twinText(svc.name, text));
     return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
   }
@@ -1438,5 +1448,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };
