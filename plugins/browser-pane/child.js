@@ -30,6 +30,7 @@ const BASELINE_GAP_MS = 300;
 const ORIGINS_MAX = 8;
 const NUMBERS_SCHEMA = 1;
 const NUMBERS_SAVE_MS = 1000;
+const PARENT_POLL_MS = 5000;
 const SLUG_MAX = 120;
 const GEN_OPS = new Set(['click', 'type', 'select', 'download', 'inspect']);
 const HMS = /\b\d{1,2}:\d{2}:\d{2}\b/g;
@@ -450,7 +451,7 @@ function run(electron, ctx) {
 
   const dockSync = () => {
     if (!app.dock) return;
-    if (services.size) Promise.resolve(app.dock.show()).catch(() => {});
+    if ([...services.values()].some((s) => !s.win.isDestroyed() && s.win.isVisible())) Promise.resolve(app.dock.show()).catch(() => {});
     else app.dock.hide();
   };
 
@@ -670,6 +671,8 @@ function run(electron, ctx) {
     };
     layout();
     win.on('resize', layout);
+    win.on('show', dockSync);
+    win.on('hide', dockSync);
     const wc = view.webContents;
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
@@ -868,6 +871,7 @@ function run(electron, ctx) {
     if (have) have.policy = policy;
     const hit = policyDenies(have || { name, policy }, url, 'agent');
     if (hit) throw deniedError({ name }, url, hit, 'open');
+    const created = !(have && !have.win.isDestroyed());
     const svc = openService(name);
     svc.policy = policy;
     await svc.blank;
@@ -892,7 +896,7 @@ function run(electron, ctx) {
       }
     });
     if (args.show && !svc.win.isDestroyed()) svc.win.showInactive();
-    return have ? out : { ...out, shown: !!args.show };
+    return created ? { ...out, shown: !!args.show } : out;
   }
 
   async function opOperatorOpen(name, args) {
@@ -964,7 +968,15 @@ function run(electron, ctx) {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
         if (rowChanged(svc.num && svc.num.lastRead, n, el.row)) out.textChanged = true;
-        return withChange(svc, pre, out, lateMsFor(op));
+        const done = await withChange(svc, pre, out, lateMsFor(op));
+        if ((done.changed === '' || done.watched) && !wc.isDestroyed()) {
+          const value = await inIsolated(wc, scripts.VALUE_CHOICE(n));
+          if (value && value.kind === 'choice' && typeof value.label === 'string') {
+            done.choice = value.label;
+            if (value.select) done.choiceKind = 'select';
+          }
+        }
+        return done;
       }
       if (op === 'type') {
         if (el.password || el.otp) {
@@ -1268,9 +1280,10 @@ function run(electron, ctx) {
   async function opClose(name) {
     const svc = need(name);
     const closed = new Promise((resolve) => svc.win.once('closed', resolve));
+    svc.win.hide();
     svc.win.close();
     await closed;
-    return { closed: name, windows: services.size };
+    return { closed: name, windows: services.size, electron: BrowserWindow.getAllWindows().length };
   }
 
   async function opForget(name) {
@@ -1531,7 +1544,7 @@ function run(electron, ctx) {
       }
       await app.whenReady();
       let result;
-      if (op === 'ping') result = { uptimeMs: Date.now() - t0 };
+      if (op === 'ping') result = { uptimeMs: Date.now() - t0, pid: process.pid };
       else if (SERVICE_OPS.has(op)) {
         const name = String(frame.service || '');
         if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
@@ -1566,6 +1579,10 @@ function run(electron, ctx) {
       send({ id, ok: false, code, error: String((e && e.message) || e) });
     }
   }
+
+  const parentPid = process.ppid;
+  setInterval(() => { if (process.ppid !== parentPid) shutdown(); }, PARENT_POLL_MS).unref();
+  process.on('SIGTERM', () => shutdown());
 
   app.on('before-quit', (e) => {
     if (shuttingDown) return;

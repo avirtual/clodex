@@ -700,6 +700,27 @@ async function payStep(emit, base) {
   await emit('[agent:browser wait pay --ms=15000 --for="Payment done"]');
 }
 
+async function shownCloseStep(emit, base, host) {
+  console.log('== 0b. a window surfaced with open --show leaves the window server on close');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const cp = require('node:child_process');
+  const probe = () => {
+    const pids = cp.execSync(`pgrep -f "cxb-data=${path.join(host.paths.dataDir, 'chromium')}" || true`).toString().trim().split(/\s+/).filter(Boolean);
+    return JSON.parse(cp.execSync(`swift ${path.join(__dirname, 'window-onscreen.swift')} ${pids.join(' ')}`).toString());
+  };
+  await emit(`[agent:browser open shown] ${base}/hidden`);
+  const hidden = probe();
+  await emit(`[agent:browser open shown --show] ${base}/hidden`);
+  await sleep(500);
+  const shown = probe();
+  await emit('[agent:browser close shown]');
+  await sleep(1500);
+  const closed = probe();
+  console.log(`    onscreen: hidden=${hidden.onscreen} · shown=${shown.onscreen} · after close=${closed.onscreen} (windows ${closed.windows})`);
+  check('the shown window was on screen', shown.onscreen > hidden.onscreen);
+  check('after close no service window is on screen', closed.onscreen === hidden.onscreen);
+}
+
 async function hiddenStep(emit, base) {
   console.log('== 0. a window that was never shown still paints, runs rAF and fires IntersectionObserver');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
@@ -743,9 +764,10 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
+  if (['shownclose', 'hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
     else if (process.env.CXB_ONLY === 'hidden') await hiddenStep(emit, base);
+    else if (process.env.CXB_ONLY === 'shownclose') await shownCloseStep(emit, base, host);
     else if (process.env.CXB_ONLY === 'stable') {
       for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);

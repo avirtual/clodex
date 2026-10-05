@@ -82,8 +82,7 @@ The desktop app is required. A headless Clodex answers every command with
    my last 30 monthly statements from the utility portal into `bills/`".
 2. The agent opens the portal. When it lands on a sign-in page, the window is
    handed to you: you get one notification ("Browser: sign in to utility"), and
-   the status bar shows **browser: needs you**. Click it, or find the
-   "utility — Clodex Browser" window.
+   the status bar shows **browser: needs you**. Click it to raise the window.
 3. Sign in yourself in that window, including any one-time code. The agent never
    sees what you type and is refused password and code fields.
 4. Press **Hand back to agent**. The agent's `wait` resolves and it carries on:
@@ -135,8 +134,8 @@ ipc handlers (step 12).
   needed to number what loaded.
 - **Keychain prompt**: on macOS a one-time prompt for "Clodex Safe Storage" can
   appear after an ad-hoc re-sign; it guards the browser's cookie encryption.
-- **Two "Clodex" Dock icons** while a browser window is open: the browser is the
-  same app bundle. Its icon is hidden whenever no browser window is open.
+- **Two "Clodex" Dock icons**: the browser is the same app bundle; the second
+  icon appears only while a browser window is on screen.
 - **Script-only rows**: rows that open through a script are numbered as
   `clickable`; when nothing is numbered, `click --text=` targets visible text.
   `--text="…"` quotes the text; unquoted, the rest of the bracket is the text.

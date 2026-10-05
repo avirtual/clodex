@@ -923,9 +923,7 @@ function value(n) {
 })()`;
 }
 
-const VALUE_ACTIVE = `(() => {${ICON}
-  ${ACTIVE}
-  const tag = el.tagName.toLowerCase();
+const CHOICE_OF = `const tag = el.tagName.toLowerCase();
   const type = (el.type || '').toLowerCase();
   if (tag === 'input' && type === 'radio') {
     const group = el.name ? [...el.getRootNode().querySelectorAll('input[type=radio]')].filter(r => r.name === el.name && r.form === el.form) : [el];
@@ -936,11 +934,21 @@ const VALUE_ACTIVE = `(() => {${ICON}
   if (tag === 'select' && !el.multiple) {
     const opt = el.options[el.selectedIndex];
     return opt ? { kind: 'choice', select: true, label: String(opt.text).replace(/\\s+/g, ' ').trim().slice(0, 60), value: String(el.value) } : null;
-  }
+  }`;
+
+const VALUE_ACTIVE = `(() => {${ICON}
+  ${ACTIVE}
+  ${CHOICE_OF}
   const textual = tag === 'textarea' || (tag === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes(type));
   if (!(textual || el.isContentEditable) || type === 'password' || el.getAttribute('autocomplete') === 'one-time-code') return null;
   const v = el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
+})()`;
+
+const VALUE_CHOICE = (n) => `(() => {${ICON}
+  ${REF(n)}
+  ${CHOICE_OF}
+  return null;
 })()`;
 
 function select(n, option) {
@@ -1403,6 +1411,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
