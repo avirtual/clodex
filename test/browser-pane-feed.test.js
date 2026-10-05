@@ -7,16 +7,18 @@ const { feedLines } = require('../plugins/browser-pane/read-format');
 
 const BLOCK = new Set(['DIV', 'P', 'ARTICLE', 'MAIN', 'SECTION']);
 const SIMPLE_RE = /^([a-z]*)((?:\[[^\]]+\])*)$/;
-const ATTR_RE = /\[([\w-]+)(?:(\*?=)"?([^"\]]*)"?)?\]/g;
+const ATTR_RE = /\[([\w-]+)(?:(\*?=)"?([^"\]]*)"?( i)?)?\]/g;
 
 function matches(el, sel) {
   return sel.split(',').map((s) => s.trim()).some((one) => {
     const m = SIMPLE_RE.exec(one);
     if (!m) throw new Error(`stub selector unsupported: ${one}`);
     if (m[1] && el.tagName !== m[1].toUpperCase()) return false;
-    for (const [, name, op, val] of m[2].matchAll(ATTR_RE)) {
-      const v = el.getAttribute(name);
-      if (v == null) return false;
+    for (const [, name, op, raw, ci] of m[2].matchAll(ATTR_RE)) {
+      const got = el.getAttribute(name);
+      if (got == null) return false;
+      const v = ci ? got.toLowerCase() : got;
+      const val = ci ? raw.toLowerCase() : raw;
       if (op === '=' && v !== val) return false;
       if (op === '*=' && !v.includes(val)) return false;
     }
@@ -465,4 +467,20 @@ test('FEED: a punctuation-only candidate is no clip; an emoji-only one is', () =
   };
   assert.strictEqual(textOf('·'), '');
   assert.strictEqual(textOf('😭😭😭'), '😭😭😭');
+});
+
+test('feed: mainRootOf narrows --main to the column holding the articles', () => {
+  const rootOf = (doc) => new Function('document', `${scripts.MAIN_ROOT}\nreturn mainRootOf();`)(doc);
+  const section = h('section', {}, h('article', {}, 'one'), h('article', {}, 'two'), h('article', {}, 'three'));
+  const primary = h('div', { id: 'primary' }, h('div', { class: 'header' }, h('a', { href: '/following' }, 'Following')), section);
+  const sidebar = h('div', { id: 'sidebar' }, h('aside', { 'aria-label': 'Who to follow' }, 'Ana'), h('div', { 'aria-label': 'Timeline: Trending now' }, 'Trending'));
+  const xMain = h('main', {}, h('div', {}, primary, sidebar));
+  assert.strictEqual(rootOf(h('body', {}, xMain)), primary);
+  const single = h('main', {}, h('section', {}, h('article', {}, 'a'), h('article', {}, 'b')));
+  assert.strictEqual(rootOf(h('body', {}, single)), single);
+  const one = h('main', {}, h('article', {}, 'a'));
+  assert.strictEqual(rootOf(h('body', {}, one)), one);
+  const none = h('main', {}, h('div', {}, 'text'));
+  assert.strictEqual(rootOf(h('body', {}, none)), none);
+  assert.strictEqual(rootOf(h('body', {}, h('div', {}, 'no main'))), null);
 });
