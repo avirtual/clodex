@@ -158,8 +158,9 @@ ipc handlers (step 12).
   An ad's profile links (@handle, name) and its card are `⚠ ad` too — any click inside a
   promoted post is billed — so open the advertiser by URL instead. The read digest folds
   them into one `⚠ ad: M ads (N elements)` line.
-  `type --enter` and `key Enter` are refused the same way when Enter would activate
-  a ⚠ control or submit a form whose action is a payment, order or deletion; `--confirm` applies.
+  `type --enter`, `key Enter` and `key Space` are refused the same way: Enter or Space on a
+  focused ⚠ control, and Enter in any field of a form whose default submit is ⚠ (or whose
+  action is a payment, order or deletion); `--confirm` applies.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
@@ -172,7 +173,8 @@ ipc handlers (step 12).
   matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows.
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
-  hidden. `read --all` shows everything, the full text included.
+  hidden. `read --all` shows everything, the full text included. Text inside forms is
+  read; only the controls are left to the element list.
 - **The verb is privileged**: until `browser` is ticked in a seat's intent
   checklist, that seat's `[agent:browser …]` lines are silently inert, with no
   error reply.

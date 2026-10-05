@@ -189,6 +189,8 @@ test('replies: an act that stays on the page says what text changed, or that not
     '[agent:browser] clicked ebloc [2] link "Next" · navigated → https://x/2 ("Two") · numbers kept where the page repeats · idle 0.8s');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),
     '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · value now "abc"');
+  assert.strictEqual(R.actReply('key', 'ebloc', { sub: 'key', key: 'Backspace' }, { navigated: false, idle, changed: '', value: 'ab' }),
+    '[agent:browser] pressed Backspace on ebloc · same page · idle 0.8s · value now "ab"');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: 'x', value: 'abc' }),
     '[agent:browser] typed ebloc [2] (3 chars) · same page · idle 0.8s · changed: "x"');
   assert.ok(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'y' }, { navigated: false, idle, changed: '', value: 'y'.repeat(80) })
@@ -266,7 +268,11 @@ test('replies: Enter that would submit a consequential form is refused naming th
   assert.strictEqual(R.TEXT.consequentialSubmit(26, { n: null, label: 'plata', consequential: 'payment' }),
     'Enter in [26] would submit the form "plata" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(R.TEXT.consequentialSubmit(null, { n: 5, press: true, label: 'Post', consequential: 'publish' }),
-    'Enter in the focused field would press [5] "Post" which publishes as the operator — re-issue with --confirm if the operator asked for it');
+    'Enter on the focused control would press [5] "Post" which publishes as the operator — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(2, { n: 2, press: true, label: 'Card bancar', consequential: 'payment' }, 'Space'),
+    'Space on [2] would press [2] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(10, { n: 11, label: 'Place order', consequential: 'purchase' }, 'Enter'),
+    'Enter in [10] would submit through [11] "Place order" which looks consequential (purchase) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(R.TEXT.consequentialSubmit(8, { n: 9, label: 'Shop now', consequential: 'ad' }),
     'Enter in [8] would submit through [9] "Shop now" which is an ad — a paid click on the operator\'s account that leaves the site; re-issue with --confirm if the operator asked for it');
 });
@@ -296,6 +302,8 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(lines({ listeners: { types: ['click', 'mouseover'] } })[2], '  listeners: click, mouseover');
   assert.strictEqual(lines({ listeners: { types: [], ancestor: 'tr#r1.odd', ancestorType: 'click' } })[2], '  listeners: none here · click on ancestor tr#r1.odd');
   assert.strictEqual(lines({ visible: false })[3], '  cursor: pointer · at 10,220 size 300×24 · hidden');
+  assert.strictEqual(lines({ tag: 'input', id: '', classes: [], kind: 'input:text', label: 'Suma', value: '315,90' })[0], '[agent:browser] inspect ebloc [12]: input · input:text "Suma" · value "315,90"');
+  assert.ok(lines({ value: 'z'.repeat(80) })[0].endsWith(` · value "${'z'.repeat(59)}…"`));
   const evil = lines({ kind: 'clickable"\nhtml: <evil>' });
   assert.strictEqual(evil.length, 6);
   assert.strictEqual(evil[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable" html: <evil> "Factura iulie"');

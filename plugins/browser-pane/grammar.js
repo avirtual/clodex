@@ -265,6 +265,8 @@ function toCommand(intent) {
     return { sub, ...sn, option: body, ...(flags.confirm ? { confirm: true } : {}) };
   }
   if (sub === 'key') {
+    const inside = positional.find((t) => KEY_NAMES.includes(t));
+    if (inside) throw new Error(`the key goes after the bracket: [agent:browser key [service]] ${inside}`);
     const service = serviceArg(sub, positional, false);
     if (!KEY_NAMES.includes(body)) throw new Error(`key needs one of ${KEY_NAMES.join(' ')} after the bracket`);
     return { sub, service, key: body, ...(flags.confirm ? { confirm: true } : {}) };

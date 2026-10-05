@@ -383,10 +383,11 @@ function consequentialRefusal(n, el, confirm) {
 
 async function enterRefusal(isolated, n, args) {
   if (args.confirm) return null;
-  const sub = await isolated(scripts.SUBMIT_TARGET(n));
-  if (!sub) return codedError('INTERNAL', TEXT.submitUnknown);
+  const key = args.key === 'Space' ? 'Space' : 'Enter';
+  const sub = await isolated(scripts.SUBMIT_TARGET(n, key));
+  if (!sub) return codedError('INTERNAL', TEXT.submitUnknown(key));
   if (!sub.consequential) return null;
-  return codedError('CONSEQUENTIAL', TEXT.consequentialSubmit(n == null ? sub.from : n, sub));
+  return codedError('CONSEQUENTIAL', TEXT.consequentialSubmit(n == null ? sub.from : n, sub, key));
 }
 
 function rowChanged(lastRead, n, row) {
@@ -934,11 +935,16 @@ function run(electron, ctx) {
       const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download });
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
-        const refusedKey = args.key === 'Enter' ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
+        const refusedKey = args.key === 'Enter' || args.key === 'Space' ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
         if (refusedKey) throw refusedKey;
         const pre = await preAct(svc, null);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
-        return withChange(svc, pre, { ...nav(), idle: idleOf(idle) }, lateMsFor(op));
+        const out = await withChange(svc, pre, { ...nav(), idle: idleOf(idle) }, lateMsFor(op));
+        if (out.changed === '' && !wc.isDestroyed()) {
+          const value = await inIsolated(wc, scripts.VALUE_ACTIVE);
+          if (typeof value === 'string') out.value = value;
+        }
+        return out;
       }
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
