@@ -455,7 +455,7 @@ function run(electron, ctx) {
   const realEntry = (h, dir) => {
     if (!h) return null;
     const step = dir === 'back' ? -1 : 1;
-    for (let i = h.getActiveIndex() + step; i >= 0; i += step) {
+    for (let i = h.getActiveIndex() + step; i >= 0 && i < h.length(); i += step) {
       const e = h.getEntryAtIndex(i);
       if (!e) return null;
       if (e.url && e.url !== 'about:blank') return { index: i, url: e.url };
@@ -1344,13 +1344,13 @@ function run(electron, ctx) {
     if (!free()) return barSay(svc, 'agent driving');
     const wc = svc.wc;
     let url;
+    let back = null;
     if (kind === 'go') {
       try { url = checkOpenUrl(urlpolicy.typedUrl(text)); } catch (e) { return barSay(svc, e.message); }
     } else if (kind === 'back') {
-      const h = wc.navigationHistory;
-      if (!h || !h.canGoBack()) return undefined;
-      const entry = h.getEntryAtIndex ? h.getEntryAtIndex(h.getActiveIndex() - 1) : null;
-      url = entry && entry.url;
+      back = realEntry(wc.navigationHistory, 'back');
+      if (!back) return undefined;
+      url = back.url;
     } else url = wc.getURL();
     const hit = url ? policyDenies(svc, url, 'operator') : null;
     if (hit) return barSay(svc, TEXT.deniedBar(hit.pattern, hit.list === 'service' ? svc.name : null));
@@ -1359,7 +1359,7 @@ function run(electron, ctx) {
       ensureCdp(svc);
       const docAt = svc.doc;
       const go = kind === 'go' ? () => driver.withTimeout(wc.loadURL(url).catch(() => {}), LOAD_TIMEOUT_MS)
-        : kind === 'back' ? () => wc.navigationHistory.goBack() : () => wc.reload();
+        : kind === 'back' ? () => wc.navigationHistory.goToIndex(back.index) : () => wc.reload();
       const { idle } = await driver.act(wc, go, { timeoutMs: OPEN_IDLE_MS });
       if (wc.isDestroyed()) return;
       if (!idle.ok && wc.isLoading() && !svc.pendingNav && (kind === 'go' || svc.doc !== docAt)) wc.stop();
