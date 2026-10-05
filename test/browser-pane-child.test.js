@@ -171,15 +171,35 @@ test('numbering: an element keeps its number when new elements appear before it 
   assert.deepStrictEqual([...second.p.fresh], [3, 4]);
 });
 
-test('numbering: two same-label buttons in different rows get ordinal+context keys; reordered rows get fresh numbers', () => {
+test('numbering: two same-label buttons in different rows get ordinal+context keys; reordered rows keep their numbers', () => {
   const a = button('Delete', 'Factura A 120 lei');
   const b = button('Delete', 'Factura B 80 lei');
   const first = stampAll({ known: {}, next: 1 }, [a, b]);
   assert.deepStrictEqual(first.stored.map((k) => K.parseStored(k).context), ['Factura A 120 lei', 'Factura B 80 lei']);
   const second = stampAll(first.state, [button('Delete', 'Factura B 80 lei'), button('Delete', 'Factura A 120 lei')]);
-  assert.deepStrictEqual(second.ns, [3, 4]);
+  assert.deepStrictEqual(second.ns, [2, 1]);
+  const twins = stampAll({ known: {}, next: 1 }, [button('Delete', 'Same row'), button('Delete', 'Same row')]);
+  assert.deepStrictEqual(twins.stored.map((k) => K.parseStored(k).ordinal), [1, 2], 'the ordinal breaks a tie of identical context');
   const same = stampAll(first.state, [button('Delete', 'Factura A 120 lei'), button('Delete', 'Factura B 80 lei')]);
   assert.deepStrictEqual(same.ns, [1, 2]);
+});
+
+test('numbering: a duplicate keys by its own block, so a retired twin never hands its number to the next one', () => {
+  const list = { innerText: 'Trends', parentElement: null };
+  const trends = ['Trending in Romania\nRomanians\n12.5K posts', 'Trending\n#connect\n3,100 posts', 'Politics\nElection\n890 posts', 'Sports\nDerby\n45K posts']
+    .map((innerText) => ({ innerText, parentElement: list }));
+  const carets = trends.map((t) => Object.assign(button('More', null), { parentElement: t }));
+  const { p, ns, stored, state } = stampAll({ known: {}, next: 1 }, carets);
+  assert.deepStrictEqual(ns, [1, 2, 3, 4]);
+  assert.deepStrictEqual(stored.map((k) => K.parseStored(k).context), ['Trending in Romania Romanians # posts', 'Trending #connect # posts', 'Politics Election # posts', 'Sports Derby # posts']);
+  carets[0].isConnected = false;
+  trends[1].innerText = 'Trending\n#connect\n3,400 posts';
+  assert.strictEqual(p.verify(ns[0], stored[0]), null, 'the retired caret is gone, not ok');
+  assert.strictEqual(p.verify(ns[1], stored[1]), 'ok', 'the next caret still yields its own key');
+  const after = stampAll(state, carets.slice(1));
+  assert.deepStrictEqual(after.ns, [2, 3, 4], 'the second caret keeps [2]');
+  trends[2].innerText = 'Weather\nStorm';
+  assert.strictEqual(p.verify(ns[2], stored[2]), 'ambiguous', 'a changed block context is refused, never re-pointed');
 });
 
 test('numbering: verify refuses a number whose element no longer yields its stored key', () => {
@@ -228,7 +248,7 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
-function overlayRun(rects, words = []) {
+function overlayRun(rects, words = [], extra = {}) {
   const els = rects.map(([left, top, width, height]) => ({
     tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
     getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
@@ -240,6 +260,7 @@ function overlayRun(rects, words = []) {
     getElementById: () => null, documentElement: { scrollWidth: 1200, scrollHeight: 800 },
     createElement: (tag) => { const n = { tag, style: {}, appendChild: (c) => badges.push(c) }; return n; },
     body: { appendChild: () => {} },
+    ...extra,
     caretRangeFromPoint: (x, y) => {
       if (!words.length) return null;
       const w = words.find((o) => x >= o.left && x <= o.left + o.width && y >= o.top && y <= o.top + o.height)
@@ -284,7 +305,7 @@ test('page scripts: overlay badges never cover a neighbouring inline link or ano
   assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'a free left gap keeps the badge left of the box');
   assert.deepStrictEqual([got[1].left, got[1].top], [142, 34], 'a tight gap moves it above');
   assert.deepStrictEqual([got[3].left, got[3].top], [297, 200], 'a block row is nudged 3 px left');
-  assert.deepStrictEqual([got[5].left, got[5].top], [457, 2], 'no room above: inside with the nudge');
+  assert.deepStrictEqual([got[5].left, got[5].top], [512, 2], 'no room left or above: right of the box');
   assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
 });
 
@@ -302,10 +323,22 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'no word left of the first link: the badge stays left');
   const lines = overlayRun([[100, 50, 60, 18], [162, 50, 60, 18], [100, 68, 40, 18], [142, 68, 40, 18]]);
   assert.deepStrictEqual([lines[1].left, lines[1].top], [162, 34], 'a first-line link with a tight gap goes above');
-  assert.deepStrictEqual([lines[3].left, lines[3].top], [139, 68], 'a second-line link whose above rect holds a first-line link goes inside');
+  assert.deepStrictEqual([lines[3].left, lines[3].top], [184, 68], 'a second-line link whose above rect holds a first-line link goes right');
   assert.ok(!hit(lines[1], box([100, 50, 60, 18])) && !hit(lines[3], box([100, 50, 60, 18])), 'no badge covers the first line');
   const [inside] = overlayRun([[200, 68, 40, 18]], [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' }]);
-  assert.deepStrictEqual([inside.left, inside.top], [197, 68], 'a word left and a word above: inside with the nudge');
+  assert.deepStrictEqual([inside.left, inside.top], [242, 68], 'a word left and a word above: right of the link when the right is clear');
+  const words4 = [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' },
+    { left: 244, top: 68, width: 12, height: 18, text: 'și' }, { left: 200, top: 86, width: 30, height: 18, text: 'jos' }];
+  const [sup] = overlayRun([[200, 68, 40, 18]], words4);
+  assert.deepStrictEqual([sup.left, sup.top], [193, 60], 'every slot blocked: a superscript at the corner, half a badge up and left');
+  assert.ok(sup.top === 68 - 8 && sup.left < 200);
+  const img = { left: 270, top: 100, right: 298, bottom: 118 };
+  const elementFromPoint = (x, y) => (x >= img.left && x <= img.right && y >= img.top && y <= img.bottom
+    ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null) } : { nodeType: 1, closest: () => null });
+  const [logo] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint });
+  assert.deepStrictEqual([logo.left, logo.top], [300, 84], 'a logo image in the left slot blocks it');
+  const [bare] = overlayRun([[300, 100, 40, 18]]);
+  assert.deepStrictEqual([bare.left, bare.top], [284, 100]);
 });
 
 test('page scripts: inputLine labels button-type inputs by their value once; a blank wrapping label falls through to aria, placeholder, name, id', () => {
@@ -322,6 +355,7 @@ test('page scripts: inputLine labels button-type inputs by their value once; a b
     [{ tag: 'input', type: 'password', value: 'secret', label: 'Parola' }, 'Parola (operator only)'],
     [{ tag: 'input', type: 'checkbox', value: 'on', checked: true, label: 'Tine-ma minte' }, 'Tine-ma minte = "on" [x]'],
     [{ tag: 'input', type: 'button', value: '', label: '', name: 'go' }, 'go'],
+    [{ tag: 'input', type: 'submit', value: '  ', label: '', aria: 'Trimite' }, 'Trimite'],
   ];
   for (const [d, want] of rows) assert.strictEqual(scripts.inputLine(d), want, JSON.stringify(d));
   assert.match(scripts.READ_INTERACTIVE(false, {}), /line = inputLine\(\{\n\s*tag, type: el\.type, value: el\.value/);
@@ -501,7 +535,7 @@ test('page scripts: PAGE_TEXT renders tables as cell | cell rows with the same c
 test('page scripts: labelFrom skips placeholder alts and falls back to test id, class, handle, href segment, src; posters read video', () => {
   const L = scripts.labelFrom;
   const rows = [
-    [{ tag: 'div', alts: ['icon'], src: '/img/lock.png?v=3' }, 'lock.png'],
+    [{ tag: 'div', alts: ['icon'], src: '/img/lock.png?v=3' }, 'lock'],
     [{ tag: 'div', alts: [null, 'padlock'], src: '/img/lock.png' }, 'padlock'],
     [{ tag: 'div', alts: ['image'], testid: 'power-icon-container' }, 'power-icon'],
     [{ tag: 'div', alts: ['Logo'] }, 'Logo'],
@@ -521,7 +555,13 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'a', href: '/i/bookmarks', svgTitle: 'Bookmarks' }, 'Bookmarks'],
     [{ tag: 'a', href: '/settings/account/security' }, 'security'],
     [{ tag: 'div', src: 'https://pbs.example/media/poster_1.jpg', video: true }, 'video'],
-    [{ tag: 'div', src: 'https://pbs.example/media/poster_1.jpg' }, 'poster_1.jpg'],
+    [{ tag: 'div', src: 'https://pbs.example/media/poster_1.jpg' }, 'poster 1'],
+    [{ tag: 'label', text: '', for: 'attach_main', src: '/img/attach_icon.png', classes: 'uiLabelButtonSmall' }, 'attach icon'],
+    [{ tag: 'label', text: '', for: 'attach_main', classes: 'uiLabelButtonSmall' }, 'attach main'],
+    [{ tag: 'label', text: '', classes: 'uiLabelButtonSmall' }, 'uiLabelButtonSmall'],
+    [{ tag: 'div', alts: ['OSHY3ewP_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/1/OSHY3ewP_bigger.jpg' }, 'avatar'],
+    [{ tag: 'div', src: 'https://pbs.twimg.com/profile_images/1/k3Yq_400x400.png' }, 'avatar'],
+    [{ tag: 'div', src: 'https://pbs.twimg.com/media/GxQ_big.jpg' }, 'GxQ big'],
     [{ tag: 'button', text: '\n ', name: 'info', id: 'b1' }, 'info'],
     [{ tag: 'button', text: ' ', id: 'b1' }, 'b1'],
     [{ tag: 'button', aria: 'Informatii', text: 'x', name: 'info' }, 'Informatii'],
@@ -600,6 +640,10 @@ test('numbers persist: a merge marks the origin dirty, a flush saves it, and a f
   assert.strictEqual(again.num.byN.get(3), a.stored[2]);
   assert.deepStrictEqual([st.next, st.volatile, [...again.num.listed]], [4, ['t'], [2]]);
   assert.strictEqual(again.num.lastRead, null);
+  assert.strictEqual(disk.savedAt, new Date(5000).toISOString());
+  assert.strictEqual(again.num.restoredAt, disk.savedAt, 'a loaded entry carries when it was saved');
+  assert.strictEqual(svc.num.restoredAt, null, 'an entry never loaded has no restoredAt');
+  assert.match(CHILD_SRC, /first && ent\.restoredAt != null \? \{ restored: ent\.restoredAt \} : first \? \{ first: firstHost \|\| true \}/);
 });
 
 test('forgetNumbers: forget deletes the service numbers directory, and a flush or merge racing after it does not recreate it', () => {
@@ -636,6 +680,8 @@ test('numbers persist: a corrupt or other-schema file is ignored and overwritten
   flushNumbers(svc);
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).v, NUMBERS_SCHEMA);
   assert.strictEqual(loadNumbers(dir, 'https://x.com').byN.get(1), st.stored[0]);
+  fs.writeFileSync(file, JSON.stringify({ v: NUMBERS_SCHEMA, origin: 'https://x.com', numbers: { k: 9 }, nextN: 10 }));
+  assert.strictEqual(loadNumbers(dir, 'https://x.com').restoredAt, '', 'an old file without savedAt still loads as restored');
 });
 
 test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {
@@ -847,11 +893,11 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
 
 test('page scripts: cqOf tags payment nouns only on a button or submit inside a form; links, display rows and documents never by a noun', () => {
   const src = scripts.FIND(1);
-  const cqOf = new Function(`${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqOf;`)();
+  const cqOf = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqOf;`)((e) => !e.hidden);
   const el = (tag, text, o = {}) => {
     const attrs = { ...(o.attrs || {}) };
     return {
-      tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false,
+      tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false, hidden: !!o.hidden,
       getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, querySelectorAll: () => o.inner || [],
       closest: (sel) => (sel === 'form' && o.inForm ? {} : null),
       matches: (sel) => !o.plain && sel.split(',').some((x) => x === tag || x.startsWith(tag + '[') || x.startsWith(tag + ':')),
@@ -872,8 +918,14 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['download link in a form', el('a', 'Plata', { attrs: { href: '/f', download: '' }, inForm: true }), null],
     ['link Ieşire (a verb) anywhere', el('a', 'Ieşire', { attrs: { href: 'index.php?page=5' } }), 'sign-out'],
     ['clickable Plătește (a verb)', el('div', 'Plătește', { plain: true }), 'payment'],
-    ['label.btn around an input:submit Plătește', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Plătește' })] }), 'payment'],
-    ['div onclick around the Card bancar submit in a form', el('div', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Card bancar', form })] }), 'payment'],
+    ['label.btn around a hidden input:submit Plătește', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Plătește', hidden: true })] }), 'payment'],
+    ['div onclick around a hidden Card bancar submit in a form', el('div', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Card bancar', form, hidden: true })] }), 'payment'],
+    ['div onclick around a visible listed Card bancar submit: the submit carries the ⚠', el('div', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Card bancar', form })] }), null],
+    ['div role=button around a visible button Follow', el('div', 'OpenAI @OpenAI Follow', { attrs: { role: 'button' }, plain: true, inner: [el('button', 'Follow')] }), null],
+    ['clickable cell around a visible button Follow', el('div', 'OpenAI @OpenAI Follow', { plain: true, inner: [el('button', 'Follow')] }), null],
+    ['clickable cell around a hidden button Follow', el('div', 'OpenAI @OpenAI Follow', { plain: true, inner: [el('button', 'Follow', { hidden: true })] }), 'publish'],
+    ['the Follow button itself', el('button', 'Follow'), 'publish'],
+    ['wrapper around an inner role=button that is not a standard control', el('div', '', { plain: true, inner: [el('span', 'Plătește', { attrs: { role: 'button' }, plain: true })] }), 'payment'],
     ['label around a Caută submit', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Caută', form })] }), null],
     ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
   ];
@@ -889,7 +941,7 @@ test('page scripts: bulletItems marks each list item once so a filter on a refer
   const nested = e(t('\n'), e(t('Inner item')));
   const chrome = e(t(`${scripts.CHROME_MARK}Acasa`));
   let asked = '';
-  scripts.bulletItems({ querySelectorAll: (sel) => { asked = sel; return [...lis, nested, nested.childNodes[1], chrome]; } }, scripts.CHROME_MARK);
+  scripts.bulletItems({ querySelectorAll: (sel) => { asked = sel; return [...lis, nested, nested.childNodes[1], chrome]; } }, scripts.CHROME_MARK, () => false);
   assert.strictEqual(asked, 'ul > li:not([role=menuitem]), ol > li:not([role=menuitem])');
   assert.strictEqual(textOf(nested), '\n• Inner item', 'a nested item is marked once');
   assert.strictEqual(textOf(chrome), `${scripts.CHROME_MARK}Acasa`, 'chrome items keep their mark only');
@@ -900,6 +952,22 @@ test('page scripts: bulletItems marks each list item once so a filter on a refer
   assert.deepStrictEqual(RF.filterLines(['• First item', 'continues here', '• Second', 'more of it', '', 'Tail'], 'second', { blocks: true }), ['• Second', 'more of it'],
     'an item runs to the next bullet or blank');
   assert.ok(scripts.READ_TEXT(false).includes(`bulletItems(clone, ${JSON.stringify(scripts.CHROME_MARK)});`));
+});
+
+test('page scripts: a Parsoid reference item gets its bullet past the hidden backlink, so a filter returns that one cite alone', () => {
+  const t = (data) => ({ nodeType: 3, data });
+  const e = (tag, cls, ...childNodes) => ({ nodeType: 1, tagName: tag, cls, childNodes });
+  const textOf = (n) => (n.nodeType === 3 ? n.data : n.cls === 'mw-linkback-text' ? '' : n.childNodes.map(textOf).join(''));
+  const ref = (cite) => e('LI', '', e('SPAN', 'mw-cite-backlink', e('A', '', e('SPAN', 'mw-linkback-text', t('↑')))), t(' '),
+    e('SPAN', 'reference-text', e('CITE', '', e('A', '', t(`"${cite}"`)), t('. Retrieved 2026.'))));
+  const lis = [ref('Census of Population 2022'), ref('The population grew by 1,450 (Hagstofa Íslands)'), ref('Peste 358 mii de locuitori')];
+  const tabled = e('LI', '', e('TABLE', '', t('cell text')));
+  const hidden = (n) => n.cls === 'mw-linkback-text';
+  scripts.bulletItems({ querySelectorAll: () => [...lis, tabled] }, scripts.CHROME_MARK, hidden);
+  const lines = ['References', ...lis.map(textOf), 'External links'];
+  assert.deepStrictEqual(lines.slice(1, 4).map((l) => l.slice(0, 3)), ['• "', '• "', '• "']);
+  assert.deepStrictEqual(RF.filterLines(lines, 'hagstofa', { blocks: true }), ['• "The population grew by 1,450 (Hagstofa Íslands)". Retrieved 2026.']);
+  assert.strictEqual(textOf(tabled), 'cell text', 'no bullet inside a table cell');
 });
 
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {

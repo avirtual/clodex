@@ -423,7 +423,7 @@ function inputLine(d) {
   const pw = d.type === 'password';
   const btn = d.tag === 'input' && /^(button|submit|reset|image)$/.test(d.type);
   const lab = flat((btn && flat(d.value)) || flat(d.label) || d.aria || d.placeholder || d.name || d.id);
-  const shown = d.value && !pw && !(btn && lab === flat(d.value));
+  const shown = flat(d.value) && !pw && !(btn && lab === flat(d.value));
   return clip(lab, 50) + (shown ? ' = "' + clip(d.value, 30) + '"' : '')
     + (d.type === 'checkbox' || d.type === 'radio' ? (d.checked ? ' [x]' : ' [ ]') : '')
     + (pw ? ' (operator only)' : '');
@@ -833,7 +833,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     const e = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
     if (!e || e.nodeType !== 1) return false;
     if (e.closest('img,svg,canvas,video,picture')) return true;
-    return /url\(/.test(String(getComputedStyle(e).backgroundImage || ''));
+    return /url\\(/.test(String(getComputedStyle(e).backgroundImage || ''));
   };
   for (const { k, el, r } of items) {
     const b = document.createElement('span');
