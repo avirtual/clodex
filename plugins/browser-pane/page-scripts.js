@@ -208,6 +208,11 @@ const DEEP = `
     for (const q of seen) scrollers.set(q, found);
     return found;
   };
+  const clipOf = (el) => {
+    const sc = scrollerOf(upOf(el));
+    return sc && sc !== FIXED ? { sc, rect: sc.getBoundingClientRect() } : null;
+  };
+  const outOf = (r, c) => r.top < c.top || r.bottom > c.bottom || r.left < c.left || r.right > c.right;
   const placedScroller = new Map();
   const inViewport = r => r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight;
   const placed = (e, r, st) => {
@@ -740,12 +745,35 @@ function find(n) {
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   const r0 = el.getBoundingClientRect();
   if (!r0.width || !r0.height) return null;
-  const sc = scrollerOf(upOf(el));
-  const clip = sc && sc !== FIXED ? sc.getBoundingClientRect() : null;
-  const outside = r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth
-    || (!!clip && (r0.top < clip.top || r0.bottom > clip.bottom || r0.left < clip.left || r0.right > clip.right));
+  const clip = clipOf(el);
+  const outside = outOf(r0, { top: 0, left: 0, bottom: innerHeight, right: innerWidth }) || (!!clip && outOf(r0, clip.rect));
   if (outside) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const first = clickPoint(el, el.getBoundingClientRect(), document);
+  const positioned = e => { const p = getComputedStyle(e).position; return p === 'fixed' || p === 'sticky'; };
+  const stickyOf = (h) => { for (let e = h; e && e.getBoundingClientRect; e = upOf(e)) if (positioned(e)) return e; return null; };
+  const overlayOf = (h) => {
+    let big = null;
+    for (let e = h; e && e.getBoundingClientRect; e = upOf(e)) {
+      if (positioned(e) || e.tagName === 'DIALOG' || e.getAttribute('role') === 'dialog' || e.getAttribute('aria-modal') === 'true') return e;
+      const b = e.getBoundingClientRect();
+      if (Number(getComputedStyle(e).zIndex) > 0 && b.width * b.height >= innerWidth * innerHeight / 4) big = e;
+    }
+    return big;
+  };
+  const numberOf = (e) => {
+    const m = window.__cxOf && window.__cxOf.get(e);
+    return m != null && window.__cxEls[m] && window.__cxEls[m].deref() === e ? m : null;
+  };
+  const buttonsOf = (o) => {
+    const out = [];
+    for (const b of o ? o.querySelectorAll('button,[role=button],a') : []) {
+      const m = numberOf(b);
+      if (m != null) out.push({ n: m, label: labelOf(b).slice(0, 60) });
+      if (out.length === 4) break;
+    }
+    return out;
+  };
+  let lastHit = null;
   const report = () => {
     const r = el.getBoundingClientRect();
     const at = r.width && r.height ? clickPoint(el, r, document) : first;
@@ -757,11 +785,10 @@ function find(n) {
     }
     const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };
     const covered = !!hit && !within(el, hit) && !within(hit, el);
+    lastHit = covered ? hit : null;
     let hitN = null;
-    for (let e = covered ? hit : null; e && hitN == null; e = upOf(e)) {
-      const m = window.__cxOf && window.__cxOf.get(e);
-      if (m != null && window.__cxEls[m] && window.__cxEls[m].deref() === e) hitN = m;
-    }
+    for (let e = covered ? hit : null; e && hitN == null; e = upOf(e)) hitN = numberOf(e);
+    const hitButtons = covered && hitN == null ? buttonsOf(overlayOf(hit)) : [];
     return {
       x: at.x, y: at.y, tag, type, kind, label,
       password: tag === 'input' && type === 'password',
@@ -772,11 +799,35 @@ function find(n) {
       consequential: cqOf(el),
       row: rowOf(el),
       covered,
-      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit) } : {}),
+      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit), ...(hitButtons.length ? { hitButtons } : {}) } : {}),
     };
   };
+  const clear = () => {
+    const cover = stickyOf(lastHit);
+    const r = el.getBoundingClientRect();
+    const c = cover && cover.getBoundingClientRect();
+    let dx = 0, dy = 0;
+    if (c && c.top <= r.top && c.bottom < r.bottom) dy = -(c.bottom - r.top + 4);
+    else if (c && c.bottom >= r.bottom && c.top > r.top) dy = r.bottom - c.top + 4;
+    else if (c && c.left <= r.left && c.right < r.right) dx = -(c.right - r.left + 4);
+    else if (c && c.right >= r.right && c.left > r.left) dx = r.right - c.left + 4;
+    if (!dx && !dy) return el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    (clip ? clip.sc : window).scrollBy({ left: dx, top: dy, behavior: 'instant' });
+  };
+  const settle = f => new Promise(res => {
+    let done = false;
+    const once = () => { if (!done) { done = true; res(f()); } };
+    setTimeout(once, 150);
+    requestAnimationFrame(() => requestAnimationFrame(once));
+  });
   if (!outside) return report();
-  return new Promise(res => { setTimeout(() => res(report()), 150); requestAnimationFrame(() => requestAnimationFrame(() => res(report()))); });
+  return settle(() => {
+    const out = report();
+    const r = el.getBoundingClientRect();
+    if (!out.covered || !r.width || !r.height) return out;
+    clear();
+    return settle(report);
+  });
 })()`;
 }
 
@@ -860,12 +911,13 @@ function inspect(n) {
     if (secret(e)) e.removeAttribute('value');
   }
   const r = el.getBoundingClientRect();
+  const list = clipOf(el);
   return {
     tag, id: el.id || '', classes: [...el.classList].slice(0, 5), kind, label, attrs,
     cursor: getComputedStyle(el).cursor,
     marked: el.matches(${JSON.stringify(X_SEL)}),
     rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
-    visible: vis(el), ancestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
+    visible: vis(el), clipped: !!list && outOf(r, list.rect), ancestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
     ...(textual && !secret(el) ? { value: String(el.value == null ? '' : el.value) } : {}),
   };
 })()`;

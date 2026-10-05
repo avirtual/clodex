@@ -346,6 +346,8 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(lines({ listeners: { types: ['click', 'mouseover'] } })[2], '  listeners: click, mouseover');
   assert.strictEqual(lines({ listeners: { types: [], ancestor: 'tr#r1.odd', ancestorType: 'click' } })[2], '  listeners: none here · click on ancestor tr#r1.odd');
   assert.strictEqual(lines({ visible: false })[3], '  cursor: pointer · at 10,220 size 300×24 · hidden');
+  assert.strictEqual(lines({ clipped: true })[3], '  cursor: pointer · at 10,220 size 300×24 · clipped (scroll its list)');
+  assert.strictEqual(lines({ visible: false, clipped: true })[3], '  cursor: pointer · at 10,220 size 300×24 · hidden');
   assert.strictEqual(lines({ tag: 'input', id: '', classes: [], kind: 'input:text', label: 'Suma', value: '315,90' })[0], '[agent:browser] inspect ebloc [12]: input · input:text "Suma" · value "315,90"');
   assert.ok(lines({ value: 'z'.repeat(80) })[0].endsWith(` · value "${'z'.repeat(59)}…"`));
   const evil = lines({ kind: 'clickable"\nhtml: <evil>' });

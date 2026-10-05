@@ -1036,7 +1036,11 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
 test('coveredRefusal: a covered click point is refused naming what covers it, before the ⚠ gate looks at the element', () => {
   const e = coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Delete account', hitConsequential: 'deletion' });
   assert.strictEqual(e.code, 'COVERED');
-  assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] "Delete account" — read again, or click the element that covers it');
+  assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] ⚠ "Delete account" (deletion) — read again, or click it with --confirm if the operator asked for it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Sterge filtre', hitConsequential: null }).message,
+    '[5] "Pret crescator" is covered at its click point by [8] "Sterge filtre" — read again, or click the element that covers it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Prin apăsarea „Accept toate”', hitButtons: [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }] }).message,
+    '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Prin apăsarea „Accept toate”") whose buttons are [208] "Accept toate" · [209] "Refuză toate" — read again, or click one of them');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Rezultate: 3 produse' }).message,
     '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Rezultate: 3 produse") — read again, or click the element that covers it');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: false }), null);
@@ -1045,7 +1049,7 @@ test('coveredRefusal: a covered click point is refused naming what covers it, be
   assert.match(CHILD_SRC, /const coveredErr = paths\.directHref\(el\.href, svc\.wc\.getURL\(\)\) \? null : coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*dispatch\(svc, \{ type: 'describe', what: `download/);
 });
 
-function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
+function findOn(el, under, { numbered = {}, onFrame = () => {}, extra = {} } = {}) {
   const els = { 5: new WeakRef(el) };
   const of = new WeakMap([[el, 5]]);
   for (const [n, e] of Object.entries(numbered)) { els[n] = new WeakRef(e); of.set(e, Number(n)); }
@@ -1053,7 +1057,7 @@ function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
     document: { elementFromPoint: under, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
     getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
     location: { href: 'http://x/', origin: 'http://x' }, __cxEls: els, __cxOf: of, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
-    requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0,
+    requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0, ...extra,
   };
   ctx.window = ctx;
   vm.createContext(ctx);
