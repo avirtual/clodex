@@ -186,7 +186,8 @@ function activate(host) {
       const sub = String((intent && intent.raw) || '').trim().split(/\s+/)[0];
       if (sub === 'wait') return WAIT_MAX_MS + 10000;
       if (sub === 'download') return DOWNLOAD_OP_MS + 10000;
-      return Object.hasOwn(OP_DEADLINE_MS, sub) ? OP_DEADLINE_MS[sub] + 5000 : null;
+      const op = sub === 'back' || sub === 'forward' ? 'nav' : sub;
+      return Object.hasOwn(OP_DEADLINE_MS, op) ? OP_DEADLINE_MS[op] + 5000 : null;
     },
     classifyReply: replies.classifyReply,
   });

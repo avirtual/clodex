@@ -992,17 +992,17 @@ function run(electron, ctx) {
     const svc = need(name);
     const dir = args.dir === 'forward' ? 'forward' : 'back';
     const wc = svc.wc;
-    const h = wc.navigationHistory;
-    if (!h || !(dir === 'back' ? h.canGoBack() : h.canGoForward())) throw codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
-    const entry = h.getEntryAtIndex(h.getActiveIndex() + (dir === 'back' ? -1 : 1));
-    const target = entry && entry.url;
-    const hit = target ? policyDenies(svc, target, 'agent') : null;
-    if (hit) throw deniedError(svc, target, hit, dir);
     return mutating(svc, frame, dir, async () => {
       ensureCdp(svc);
       const docBefore = svc.doc;
       const hrefBefore = wc.getURL();
       const pre = await preAct(svc, null);
+      const h = wc.navigationHistory;
+      if (!h || !(dir === 'back' ? h.canGoBack() : h.canGoForward())) throw codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
+      const entry = h.getEntryAtIndex(h.getActiveIndex() + (dir === 'back' ? -1 : 1));
+      const target = entry && entry.url;
+      const hit = target ? policyDenies(svc, target, 'agent') : null;
+      if (hit) throw deniedError(svc, target, hit, dir);
       const { idle } = await driver.act(wc, () => (dir === 'back' ? h.goBack() : h.goForward()), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
       if (wc.isDestroyed()) throw closedError(name);
       return withChange(svc, pre, {

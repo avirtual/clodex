@@ -44,12 +44,14 @@ test('child: policyDenies is the one check referenced from every navigation site
   assert.ok(router && /policyDenies\(owner, u,/.test(router[0]) && router[0].indexOf('policyDenies') < router[0].indexOf('setSavePath'));
 });
 
-test('child: agent back/forward checks the target history entry against the agent policy before it moves, and says NO_HISTORY at either end', () => {
+test('child: agent back/forward checks the target history entry against the agent policy after the quiet gate, right before it moves, and says NO_HISTORY at either end', () => {
   const nav = /async function opNav\([\s\S]*?\n {2}\}\n/.exec(CHILD);
   assert.ok(nav, 'opNav exists');
   const body = nav[0];
   assert.ok(/h\.getEntryAtIndex\(h\.getActiveIndex\(\) \+ \(dir === 'back' \? -1 : 1\)\)/.test(body));
   assert.ok(/policyDenies\(svc, target, 'agent'\)/.test(body));
+  assert.ok(body.indexOf('mutating(svc, frame, dir') < body.indexOf("codedError('NO_HISTORY'"), 'history is checked after the quiet gate');
+  assert.ok(body.indexOf('preAct(svc, null)') < body.indexOf('policyDenies'), 'the policy check is the last step before the move');
   assert.ok(body.indexOf('policyDenies') < body.indexOf('h.goBack()'));
   assert.ok(body.includes("codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`)"));
   assert.ok(/if \(op === 'nav'\) return opNav\(name, frame, args\);/.test(CHILD));
