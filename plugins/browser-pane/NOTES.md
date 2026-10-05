@@ -546,3 +546,5 @@ else `li`, the latter two under `READ_ROOT_SEL` (the read root), else `body`.
 
 `up`/`down` move by `innerHeight − 40` per page, so one line of the previous
 viewport stays visible.
+`behavior: 'instant'` overrides a page's CSS `scroll-behavior: smooth`, which would
+animate the scroll and let the after-measure land mid-animation.

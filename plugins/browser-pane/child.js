@@ -366,10 +366,10 @@ const SCROLL_DIRS = new Set(['down', 'up', 'top', 'bottom']);
 const SCROLL_OVERLAP_PX = 40;
 
 function scrollCode(dir, pages) {
-  if (dir === 'top') return 'window.scrollTo(0, 0)';
-  if (dir === 'bottom') return 'window.scrollTo(0, (document.scrollingElement || document.documentElement).scrollHeight)';
+  if (dir === 'top') return "window.scrollTo({ top: 0, behavior: 'instant' })";
+  if (dir === 'bottom') return "window.scrollTo({ top: (document.scrollingElement || document.documentElement).scrollHeight, behavior: 'instant' })";
   const sign = dir === 'up' ? '-' : '';
-  return `window.scrollBy(0, ${sign}(window.innerHeight - ${SCROLL_OVERLAP_PX}) * ${pages})`;
+  return `window.scrollBy({ top: ${sign}(window.innerHeight - ${SCROLL_OVERLAP_PX}) * ${pages}, behavior: 'instant' })`;
 }
 
 function lateMsFor(op) {

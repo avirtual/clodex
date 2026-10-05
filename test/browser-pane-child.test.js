@@ -604,10 +604,10 @@ test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then
 });
 
 test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', () => {
-  assert.strictEqual(scrollCode('down', 3), 'window.scrollBy(0, (window.innerHeight - 40) * 3)');
-  assert.strictEqual(scrollCode('up', 1), 'window.scrollBy(0, -(window.innerHeight - 40) * 1)');
-  assert.strictEqual(scrollCode('top'), 'window.scrollTo(0, 0)');
-  assert.match(scrollCode('bottom'), /^window\.scrollTo\(0, .*scrollHeight\)$/);
+  assert.strictEqual(scrollCode('down', 3), "window.scrollBy({ top: (window.innerHeight - 40) * 3, behavior: 'instant' })");
+  assert.strictEqual(scrollCode('up', 1), "window.scrollBy({ top: -(window.innerHeight - 40) * 1, behavior: 'instant' })");
+  assert.strictEqual(scrollCode('top'), "window.scrollTo({ top: 0, behavior: 'instant' })");
+  assert.match(scrollCode('bottom'), /^window\.scrollTo\(\{ top: .*scrollHeight, behavior: 'instant' \}\)$/);
 });
 
 function visOf(view = {}) {

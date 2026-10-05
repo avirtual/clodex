@@ -443,6 +443,7 @@ test('engine: wait and download hold the socket call for their own ceilings, ins
   assert.strictEqual(row.replyWaitMs({ raw: 'wait utility --ms=60000' }), WAIT_MAX_MS + 10000);
   assert.strictEqual(row.replyWaitMs({ raw: 'download utility 7' }), DOWNLOAD_OP_MS + 10000);
   assert.strictEqual(row.replyWaitMs({ raw: 'read utility' }), 25000);
+  assert.strictEqual(row.replyWaitMs({ raw: 'scroll utility down' }), 115000);
   assert.ok(DOWNLOAD_OP_MS + 10000 <= PLUGIN_REPLY_WAIT_MAX_MS);
   assert.strictEqual(PLUGIN_REPLY_WAIT_MAX_MS, 470 * 1000);
 });

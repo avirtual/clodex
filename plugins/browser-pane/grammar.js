@@ -194,7 +194,11 @@ function scrollCommand(positional, flags, body) {
   const last = positional[positional.length - 1];
   const dir = SCROLL_DIRS.includes(last) ? last : null;
   const rest = dir ? positional.slice(0, -1) : positional;
-  if (!dir && positional.length > 1) throw new Error(`scroll direction must be one of ${SCROLL_DIRS.join(' ')}`);
+  if (!dir && positional.length > 1) {
+    const stray = positional.find((t) => SCROLL_DIRS.includes(t));
+    if (stray) throw new Error(`unexpected '${positional[positional.length - 1]}' for scroll`);
+    throw new Error(`scroll direction must be one of ${SCROLL_DIRS.join(' ')}`);
+  }
   const service = serviceArg('scroll', rest, false);
   const d = dir || 'down';
   if (d === 'top' || d === 'bottom') {
