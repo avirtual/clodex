@@ -366,3 +366,43 @@ test('FEED: the quote text joins an https:// split from its host', () => {
   const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
   assert.strictEqual(runFeed(h('main', {}, art), {}, {}).posts[0].quote.text, 'watch ( https://youtu.be/x)');
 });
+
+test('FEED: a text-less post has no clip — action-bar counts, a Follow description and a numbers-only div are not text', () => {
+  const textOf = (...rest) => {
+    const { row } = xHeader('EvanKirstel', 'Evan Kirstel', '/EvanKirstel/status/4', {}, '14h');
+    const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })), ...rest);
+    return runFeed(h('main', {}, art), {}, {}).posts[0].text;
+  };
+  const bar = () => h('div', { role: 'group' }, h('button', {}, h('span', {}, '93')), h('button', {}, h('span', {}, '570')), h('button', {}, h('span', {}, '27K')));
+  const follow = () => [h('button', { 'aria-describedby': 'id__f1' }, 'Follow'), h('div', { id: 'id__f1' }, 'Click to Follow EvanKirstel')];
+  assert.strictEqual(textOf(bar(), ...follow()), '');
+  assert.strictEqual(textOf(h('button', { 'aria-describedby': 'id__x id__f2' }), h('div', {}, h('div', { id: 'id__f2' }, 'Click to Follow EvanKirstel'))), '');
+  assert.strictEqual(textOf(h('div', {}, '93 570 27K')), '');
+  assert.strictEqual(textOf(bar()), '');
+});
+
+test('FEED: an Article quote is detected from the card label; its title is the line after the date, whole up to 120, else clipped with … and no trailing space', () => {
+  const quoteOf = (label, ...body) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const card = h('div', { role: 'link', 'aria-label': label },
+      h('div', {}, 'Quote'), h('div', {}, h('div', {}, 'Hanako'), h('div', {}, '@hanakoxbt'), h('div', {}, h('time', {}, 'Aug 23'))), ...body);
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+    const got = runFeed(h('main', {}, art), {}, {});
+    return { q: got.posts[0].quote, line: feedLines(got)[1] };
+  };
+  const title = 'Loops and Graphs: how to stop babysitting agents and only approve the last step (full course)';
+  const a = quoteOf(`Hanako @hanakoxbt · Aug 23 Article ${title}`, h('div', {}, title), h('div', {}, 'the excerpt'));
+  assert.strictEqual(a.q.article, title);
+  assert.strictEqual(a.line, '  ↳ quoting @hanakoxbt · Aug 23 · Article "Loops and Graphs: how to stop babysitting agents and only approve the last step (full course)"');
+  assert.strictEqual('article' in quoteOf('Hanako @hanakoxbt · Aug 23', h('div', {}, title), h('div', {}, 'the excerpt')).q, false);
+  assert.strictEqual(quoteOf('Hanako @hanakoxbt · Aug 23 Article From the label').q.article, 'From the label');
+  const long = 'word '.repeat(40) + 'end';
+  const b = quoteOf('Hanako @hanakoxbt Article x', h('div', {}, long));
+  assert.strictEqual(b.line, '  ↳ quoting @hanakoxbt · Aug 23 · Article "word word word word word word word word word word word word word word word word word word word word word word word word…"');
+});
+
+test('FEED: an inline link in the post text is never the card', () => {
+  const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'see ', h('a', { href: 'https://t.co/x' }, 'https://github.com/foo/bar'), ' now'));
+  assert.strictEqual(runFeed(h('main', {}, art), {}, {}).posts[0].media.card, null);
+});
