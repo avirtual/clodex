@@ -4,7 +4,7 @@ const keys = require('./keys');
 
 const ISOLATED_WORLD = 4242;
 const TEXT_MAX = 400000;
-const BUSY_SEL = '[aria-busy=true], .loading, .spinner, [class*=loading i], [class*=spinner i], [id*=loading i]';
+const BUSY_SEL = '[aria-busy=true], [role=progressbar], .loading, .spinner, [class*=loading i], [class*=spinner i], [id*=loading i]';
 const ELEMENTS_MAX = 6000;
 const MAIN_SEL = 'main, article, [role=main]';
 const STD_SEL = 'a[href],button,input:not([type=hidden]),select,textarea,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=combobox],summary,[contenteditable=true]';
@@ -295,9 +295,13 @@ const SCROLL_INFO = `(() => {
 const BUSY = `
   const busyScan = () => {
     const small = e => {
-      if (e.getAttribute('aria-busy') === 'true') return true;
+      if (e.getAttribute('aria-busy') === 'true' || e.getAttribute('role') === 'progressbar') return true;
       const r = e.getBoundingClientRect();
-      return r.width * r.height < 0.25 * innerWidth * innerHeight && (e.innerText || e.textContent || '').slice(0, 200).length <= 80;
+      if (r.width * r.height >= 0.25 * innerWidth * innerHeight) return false;
+      const t = (e.innerText || e.textContent || '').slice(0, 200).trim();
+      if (t.length > 80) return false;
+      const s = getComputedStyle(e);
+      return t.length > 0 || (!!s.animationName && s.animationName !== 'none' && s.animationPlayState !== 'paused');
     };
     const seen = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
     const busyEls = seen.filter(small);

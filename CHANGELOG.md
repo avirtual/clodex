@@ -52,7 +52,7 @@ blocks a release.
 - Browser pane: Google sign-in is held for the operator like any sign-in (Gmail works in the window); the agent is told to stop only when Google actually rejects the embedded browser.
 - Browser pane: the Settings panel is laid out — services in an aligned table with sign-in, window state and actions on one line each, hand-over folded behind Hand over, and the sections (Open a window, Windows, Reads, Denylist) labelled.
 - Browser pane: an act reply that navigated shows the page title first and clips a long URL, so the title and idle time are never cut off.
-- Browser pane: a readable slug in a URL (`?id=coverpage-as-homepage`) is no longer redacted as a secret; a page-sized container whose class contains "loading" no longer makes every read say `still loading`; an in-page navigation reply shows the new page title.
+- Browser pane: a readable slug in a URL (`?id=coverpage-as-homepage`) is no longer redacted as a secret; a page-sized container whose class contains "loading" no longer makes every read say `still loading`; an in-page navigation reply shows the new page title; a hash-route query (`#/reset?token=…`) is redacted like a real query, and a text-less, unanimated "loading" placeholder no longer counts as busy.
 - Browser pane: the ⚠ gate now covers broker and wallet controls (trade, sell, close position, copy a trader, deposit, add funds, withdraw) and like buttons whose only label is a count — a bare `close`/`copy` stays free; `open` with the URL inside the bracket says where the URL goes.
 
 ## 5.112.2 — 2026-10-04

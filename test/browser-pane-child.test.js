@@ -724,12 +724,24 @@ test('page scripts: the busy scan counts a spinner-sized element or an explicit 
   const el = (b, attrs = {}, innerText = '') => ({ ...b, innerText, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
   const scan = (els) => {
     const doc = { documentElement: { scrollWidth: 1200, scrollHeight: 3000 }, querySelectorAll: () => els };
-    return make((e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', ...e.style }),
+    return make((e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', animationName: 'none', animationPlayState: 'running', ...e.style }),
       doc, 0, 0, 1200, 800);
   };
   assert.strictEqual(scan([el(box(0, 0, 1200, 3000), { class: 'content-loading' }, 'x'.repeat(400))]).count, 0);
   assert.deepStrictEqual(scan([el(box(580, 380, 40, 40), { class: 'spinner' }, 'Loading')]), { count: 1, text: 'Loading' });
   assert.strictEqual(scan([el(box(0, 0, 1200, 800), { 'aria-busy': 'true' }, 'x'.repeat(400))]).count, 1);
+});
+
+test('page scripts: a text-less, unanimated loading placeholder is not busy; an animated one, a labelled spinner or a progressbar is', () => {
+  const make = new Function('getComputedStyle', 'document', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `${scripts.DEEP}${scripts.BUSY}\nreturn busyScan();`);
+  const el = (b, attrs = {}, innerText = '') => ({ ...b, innerText, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
+  const scan = (els) => make((e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', animationName: 'none', animationPlayState: 'running', ...e.style }),
+    { documentElement: { scrollWidth: 1200, scrollHeight: 3000 }, querySelectorAll: () => els }, 0, 0, 1200, 800);
+  assert.strictEqual(scan([el(box(100, 100, 40, 40, { animationName: 'none' }), { class: 'loading' })]).count, 0);
+  assert.strictEqual(scan([el(box(100, 100, 40, 40, { animationName: 'spin' }), { class: 'loading' })]).count, 1);
+  assert.strictEqual(scan([el(box(100, 100, 40, 40), { class: 'spinner' }, 'Loading…')]).count, 1);
+  assert.strictEqual(scan([el(box(0, 0, 1200, 800), { role: 'progressbar' }, 'x'.repeat(400))]).count, 1);
+  assert.match(scripts.BUSY, /\[role=progressbar\]/);
 });
 
 test('page scripts: PAGE_TEXT renders tables as cell | cell rows with the same code as READ_TEXT', () => {
