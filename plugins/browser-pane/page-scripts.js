@@ -1112,7 +1112,9 @@ function feedPosts(scope, cats, byEl, loc) {
     const hl0 = [...art.querySelectorAll('a[href]')].find(isHandle) || null;
     const ownStatus = hl0 ? pathOf(hl0).replace(/\/$/, '').toLowerCase() + '/status/' : null;
     const linked = times.map((t) => t.closest('a')).filter((a) => a && inside(a, art));
-    const timeA = (ownStatus && linked.find((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus))) || linked[0] || null;
+    const ownTimes = ownStatus ? linked.filter((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus)) : [];
+    const inCard = (a) => { const c = a.parentElement && a.parentElement.closest('[role=link]'); return !!c && c !== art && art.contains(c); };
+    const timeA = ownTimes.find((a) => !inCard(a)) || ownTimes[ownTimes.length - 1] || linked[0] || null;
     const links = [...art.querySelectorAll('a[href*="/status/"]')];
     const clean = links.find((a) => { const p = pathOf(a); return p && statusPath(p) === p; }) || null;
     const pl = timeA || clean;
@@ -1164,7 +1166,7 @@ function feedPosts(scope, cats, byEl, loc) {
     if (ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
     const rp = /^(.*?)\s*\b(?:reposted|retweeted)\b/i.exec(above);
     const rpBy = rp ? (/@\w+/.exec(rp[1]) || [flat(rp[1])])[0] : null;
-    if (rpBy) flags.repostedBy = rpBy;
+    if (rp) flags.repostedBy = rpBy || true;
     if (/pinned/i.test(above)) flags.pinned = true;
     if (ownA.some((a) => LABEL_RE.test(flat(a.innerText)))) flags.parody = true;
     const rt = ownLines.map((l) => /^replying to (@\S+)/i.exec(l)).find(Boolean);

@@ -248,6 +248,26 @@ test('FEED: on a focal post the own time link sits below a quote whose linked ti
   assert.deepStrictEqual([p.quote.n, p.quote.path, p.quote.rel], [1284, '/RohOnChain/status/6', 'Sep 19']);
 });
 
+test('FEED: a focal post quoting its own earlier post takes the time link outside the quote card, though the quote time comes first', () => {
+  const row = h('div', {},
+    h('div', {}, h('a', { href: '/me' }, 'Me')),
+    h('div', {}, h('a', { href: '/me' }, '@me')));
+  const qlink = h('a', { href: '/me/status/3' }, h('span', {}, '@me'), h('time', { datetime: '2026-09-19T00:00:00.000Z' }, 'Sep 19'));
+  const qbox = h('div', { role: 'link' }, h('div', {}, h('span', {}, 'Me'), qlink), h('div', { lang: 'en' }, 'the old take'));
+  const own = h('a', { href: '/me/status/9' }, h('time', { datetime: '2026-10-05T10:22:00.000Z' }, '1:22 PM · Oct 5, 2026'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'still true'), qbox, h('div', {}, own));
+  const [p] = runFeed(h('main', {}, art), { 1122: own, 1284: qlink }, {}).posts;
+  assert.deepStrictEqual([p.n, p.path, p.quote && p.quote.path], [1122, '/me/status/9', '/me/status/3']);
+});
+
+test('FEED: a Reposted line with no actor sets repostedBy true and the line says reposted', () => {
+  const { row } = xHeader('analee', 'Ana Lee', '/analee/status/8', {}, '2h');
+  const art = h('article', {}, h('div', {}, 'Reposted'), h('div', {}, row), h('div', { lang: 'en' }, 'hello again'));
+  const got = runFeed(h('main', {}, art), {}, {});
+  assert.strictEqual(got.posts[0].flags.repostedBy, true);
+  assert.strictEqual(feedLines(got)[0], '[?] @analee (Ana Lee ✓) · 2h (2026-10-05T10:22Z) · reposted · "hello again" · → /analee/status/8');
+});
+
 test('FEED: a quote [n] is its card, never its /photo/N link — a clean status link, else the box number, else the numbered @handle header', () => {
   const quoteOf = (qbox, numbered) => {
     const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');

@@ -211,6 +211,10 @@ characters with the site's own Show more as `(more [n])`, labelled counts
 numbers (reply, like, menu, avatar…) are folded: still valid for `click`/`inspect`,
 just unprinted, and their ⚠ controls collapse to one `⚠ folded: publish ×N` digest
 line. Elements outside the feed follow under `== elements (outside the feed) ==`.
+Across scrolls on one page the feed section prints only posts not printed before
+and says `N new · M already seen · K dropped off the top`; `--all` replays what
+scrolled away under `-- seen earlier, no longer on the page (K) --`; a navigation
+(open, back, click into a post) starts over.
 It is site-neutral: it reads only `article`/`time`/`lang` structure, aria-labels
 and hrefs. A default read of five or more posts hints `--compact`.
 
