@@ -1112,9 +1112,9 @@ function feedPosts(scope, cats, byEl, loc) {
     const hl0 = [...art.querySelectorAll('a[href]')].find(isHandle) || null;
     const ownStatus = hl0 ? pathOf(hl0).replace(/\/$/, '').toLowerCase() + '/status/' : null;
     const linked = times.map((t) => t.closest('a')).filter((a) => a && inside(a, art));
-    const own = ownStatus ? linked.filter((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus)) : [];
+    const ownTimes = ownStatus ? linked.filter((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus)) : [];
     const inCard = (a) => { const c = a.parentElement && a.parentElement.closest('[role=link]'); return !!c && c !== art && art.contains(c); };
-    const timeA = own.find((a) => !inCard(a)) || own[own.length - 1] || linked[0] || null;
+    const timeA = ownTimes.find((a) => !inCard(a)) || ownTimes[ownTimes.length - 1] || linked[0] || null;
     const links = [...art.querySelectorAll('a[href*="/status/"]')];
     const clean = links.find((a) => { const p = pathOf(a); return p && statusPath(p) === p; }) || null;
     const pl = timeA || clean;
