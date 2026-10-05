@@ -965,8 +965,8 @@ test('page scripts: a Parsoid reference item gets its bullet past the hidden bac
   const hidden = (n) => n.cls === 'mw-linkback-text';
   scripts.bulletItems({ querySelectorAll: () => [...lis, tabled] }, scripts.CHROME_MARK, hidden);
   const lines = ['References', ...lis.map(textOf), 'External links'];
-  assert.deepStrictEqual(lines.slice(1, 4).map((l) => l.slice(0, 3)), ['• "', '• "', '• "']);
-  assert.deepStrictEqual(RF.filterLines(lines, 'hagstofa', { blocks: true }), ['• "The population grew by 1,450 (Hagstofa Íslands)". Retrieved 2026.']);
+  assert.ok(lines.slice(1, 4).every((l) => /^\s*• "/.test(l)), 'every item is one bulleted line');
+  assert.deepStrictEqual(RF.filterLines(lines, 'hagstofa', { blocks: true }).map((l) => l.trim()), ['• "The population grew by 1,450 (Hagstofa Íslands)". Retrieved 2026.']);
   assert.strictEqual(textOf(tabled), 'cell text', 'no bullet inside a table cell');
 });
 

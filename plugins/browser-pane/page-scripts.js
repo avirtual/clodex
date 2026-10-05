@@ -321,8 +321,8 @@ const numbering = (state) => {
     }
     return h ? h.innerText || h.textContent || '' : '';
   };
-  const blockText = new Map();
   const dupContexts = els => {
+    const blockText = new Map();
     const under = new Map();
     for (const el of els) for (let a = el.parentElement; a; a = a.parentElement) under.set(a, (under.get(a) || 0) + 1);
     return els.map(el => {
