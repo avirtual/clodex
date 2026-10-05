@@ -287,7 +287,7 @@ const SCROLL_INFO = `(() => {
 function readText(main) {
   return `(() => {${DEEP}
   ${bulletItems.toString()}
-  const DROP = 'script,style,noscript,select,svg,form,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
     const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
@@ -760,7 +760,31 @@ const ACTIVE = `let el = document.activeElement;
   while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
   if (!el || el === document.body || el === document.documentElement) return { none: true };`;
 
-function submitTarget(n) {
+const NON_TEXT_TYPES = ['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file', 'range', 'color', 'hidden'];
+
+const SPACE_PRESS = `if (tag === 'button' || (tag === 'input' && ['submit', 'image', 'button', 'reset', 'checkbox', 'radio'].includes(type)) || role === 'button') {
+    return { from, n: from, press: true, label, consequential: cqOf(el) };
+  }
+  return { none: true };`;
+
+const ENTER_SUBMIT = `if (tag === 'button' || (tag === 'input' && ['submit', 'image', 'button'].includes(type))
+    || (tag === 'a' && el.hasAttribute('href')) || role === 'button' || role === 'link') {
+    return { from, n: from, press: true, label, consequential: cqOf(el) };
+  }
+  if (tag === 'textarea' || el.isContentEditable) return { none: true };
+  const textualIn = e => e.tagName.toLowerCase() === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes((e.type || '').toLowerCase());
+  const inForm = tag === 'select' || (tag === 'input' && !['button', 'submit', 'image', 'reset', 'hidden'].includes(type));
+  if (!inForm || !el.form) return { none: true };
+  const form = el.form;
+  const btn = [...form.getRootNode().querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
+  if (btn) return { from, n: numOf(btn), label: labelOf(btn).slice(0, 60), consequential: cqOf(btn) };
+  if ([...form.elements].filter(textualIn).length !== 1) return { none: true };
+  const action = form.getAttribute('action') || '';
+  const hit = consequentialHit({ action }, []);
+  const seg = action.split(/[?#]/)[0].split('/').filter(Boolean).pop();
+  return { from, n: null, label: String(seg || 'form').slice(0, 60), consequential: hit ? hit.cat : null };`;
+
+function submitTarget(n, key = 'Enter') {
   return `(() => {${DEEP}
   ${n == null ? ACTIVE : REF(n)}
   ${KIND_LABEL}${CQ}
@@ -770,22 +794,7 @@ function submitTarget(n) {
   };
   const from = numOf(el);
   const role = el.getAttribute('role');
-  if (tag === 'button' || (tag === 'input' && ['submit', 'image', 'button'].includes(type))
-    || (tag === 'a' && el.hasAttribute('href')) || role === 'button' || role === 'link') {
-    return { from, n: from, press: true, label, consequential: cqOf(el) };
-  }
-  if (tag === 'textarea' || el.isContentEditable) return { none: true };
-  const textualIn = e => e.tagName.toLowerCase() === 'input'
-    && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file', 'range', 'color', 'hidden'].includes((e.type || '').toLowerCase());
-  if (!textualIn(el) || !el.form) return { none: true };
-  const form = el.form;
-  const btn = [...form.getRootNode().querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
-  if (btn) return { from, n: numOf(btn), label: labelOf(btn).slice(0, 60), consequential: cqOf(btn) };
-  if ([...form.elements].filter(textualIn).length !== 1) return { none: true };
-  const action = form.getAttribute('action') || '';
-  const hit = consequentialHit({ action }, []);
-  const seg = action.split(/[?#]/)[0].split('/').filter(Boolean).pop();
-  return { from, n: null, label: String(seg || 'form').slice(0, 60), consequential: hit ? hit.cat : null };
+  ${key === 'Space' ? SPACE_PRESS : ENTER_SUBMIT}
 })()`;
 }
 
@@ -795,6 +804,7 @@ function inspect(n) {
   ${KIND_LABEL}${CQ}
   const clip = (s, k) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
   const secret = e => e.tagName === 'INPUT' && (e.type === 'password' || e.getAttribute('autocomplete') === 'one-time-code');
+  const textual = tag === 'textarea' || (tag === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes(type));
   const FIRST = ['href', 'onclick', 'role', 'tabindex', 'type', 'name', 'value'];
   const rank = k => { const i = FIRST.indexOf(k); return i < 0 ? FIRST.length : i; };
   const names = [...el.attributes].map(a => a.name)
@@ -817,6 +827,7 @@ function inspect(n) {
     marked: el.matches(${JSON.stringify(X_SEL)}),
     rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
     visible: vis(el), ancestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
+    ...(textual && !secret(el) ? { value: String(el.value == null ? '' : el.value) } : {}),
   };
 })()`;
 }
@@ -898,6 +909,16 @@ function value(n) {
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
 }
+
+const VALUE_ACTIVE = `(() => {
+  ${ACTIVE}
+  const tag = el.tagName.toLowerCase();
+  const type = (el.type || '').toLowerCase();
+  const textual = tag === 'textarea' || (tag === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes(type));
+  if (!(textual || el.isContentEditable) || type === 'password' || el.getAttribute('autocomplete') === 'one-time-code') return null;
+  const v = el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
+  return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
+})()`;
 
 function select(n, option) {
   return `(() => {
@@ -1359,6 +1380,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

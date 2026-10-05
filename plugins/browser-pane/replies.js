@@ -219,14 +219,15 @@ const TEXT = {
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
-  submitUnknown: 'could not tell what Enter would submit — read again, or add --confirm if the operator asked for it',
-  consequentialSubmit: (from, sub) => {
+  submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : 'submit'} — read again, or add --confirm if the operator asked for it`,
+  consequentialSubmit: (from, sub, key = 'Enter') => {
     const label = JSON.stringify(String(sub.label || ''));
     const what = sub.press ? `press ${sub.n == null ? '' : `[${sub.n}] `}${label}`
       : sub.n == null ? `submit the form ${label}` : `submit through [${sub.n}] ${label}`;
     const why = sub.consequential === 'ad' ? 'which is an ad — a paid click on the operator\'s account that leaves the site;'
       : sub.consequential === 'publish' ? 'which publishes as the operator —' : `which looks consequential (${sub.consequential}) —`;
-    return `Enter in ${from == null ? 'the focused field' : `[${from}]`} would ${what} ${why} re-issue with --confirm if the operator asked for it`;
+    const where = from == null ? (sub.press ? 'the focused control' : 'the focused field') : `[${from}]`;
+    return `${key} ${sub.press ? 'on' : 'in'} ${where} would ${what} ${why} re-issue with --confirm if the operator asked for it`;
   },
   waited: (service, ms) => `${service} waited ${Number((ms / 1000).toFixed(1))}s`,
   restarted: (service) => `numbers from before the browser restarted are void on ${service} — read again`,
@@ -374,14 +375,18 @@ function navReply(service, cmd, r) {
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
 }
 
+function clip60(s) {
+  const v = [...String(s)];
+  return v.length > 60 ? v.slice(0, 59).join('') + '…' : String(s);
+}
+
 function changeTail(sub, r, key) {
   const target = r.target ? ` · target: ${r.target}` : '';
   if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
-  if (sub === 'type' && typeof r.value === 'string') {
-    const v = [...r.value];
-    return ` · value now ${JSON.stringify(v.length > 60 ? v.slice(0, 59).join('') + '…' : r.value)}`;
+  if ((sub === 'type' || sub === 'key') && typeof r.value === 'string') {
+    return ` · value now ${JSON.stringify(clip60(r.value))}`;
   }
   if (sub === 'scroll') return ' · page text unchanged';
   return r.watched ? ` · no change on the target within ${Math.round((r.watched || 0) / 1000)}s` : ' · no visible change';
@@ -422,7 +427,7 @@ function inspectReply(service, r) {
   const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
   const rect = r.rect || {};
   const lines = [
-    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}`,
+    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}${typeof r.value === 'string' ? ` · value ${JSON.stringify(clip60(r.value))}` : ''}`,
     `  attrs: ${attrs || 'none'}`,
     `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
     `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,

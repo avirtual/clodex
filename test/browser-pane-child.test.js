@@ -1027,8 +1027,17 @@ test('enterRefusal: Enter that would submit a consequential target is refused wi
   assert.strictEqual(await enterRefusal(isolated({ ...card, consequential: null }), 26, { enter: true }), null);
   const typeGate = /const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;\n\s*const refusedEnter = op === 'type' && args\.enter \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), n, args\) : null;\n\s*if \(refusedEnter\) throw refusedEnter;\n\s*dispatch\(svc, \{ type: 'describe'/;
   assert.match(CHILD_SRC, typeGate, 'type refuses before it types anything, and only with --enter');
-  const keyGate = /const refusedKey = args\.key === 'Enter' \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
-  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter, before pressing');
+  const keyGate = /const refusedKey = args\.key === 'Enter' \|\| args\.key === 'Space' \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
+  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter and Space, before pressing');
+  const btn = { from: 2, n: 2, press: true, label: 'Card bancar', consequential: 'payment' };
+  const sp = await enterRefusal(isolated(btn), null, { key: 'Space' });
+  assert.strictEqual(sp.code, 'CONSEQUENTIAL');
+  assert.strictEqual(sp.message, 'Space on [2] would press [2] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[calls.length - 1], scripts.SUBMIT_TARGET(null, 'Space'));
+  assert.notStrictEqual(scripts.SUBMIT_TARGET(null, 'Space'), scripts.SUBMIT_TARGET(null, 'Enter'));
+  assert.strictEqual(await enterRefusal(isolated({ none: true }), null, { key: 'Space' }), null, 'Space on a text field proceeds');
+  assert.strictEqual((await enterRefusal(isolated(null), null, { key: 'Space' })).message,
+    'could not tell what Space would press — read again, or add --confirm if the operator asked for it');
   assert.strictEqual(CHILD_SRC.match(/SUBMIT_TARGET/g).length, 1);
 });
 
@@ -1094,6 +1103,39 @@ test('page scripts: SUBMIT_TARGET picks what Enter activates — the default sub
   const focusedBtn = mk('button', { form: shop, label: 'Card bancar' });
   assert.deepStrictEqual(run(focusedBtn, { tree: [focusedBtn], numbered: {} }, { 'Card bancar': 'payment' }),
     { from: 26, n: 26, press: true, label: 'Card bancar', consequential: 'payment' });
+  const order = form('/x');
+  const confirm = mk('input', { type: 'checkbox', form: order, label: 'Confirm order' });
+  const ship = mk('input', { type: 'radio', form: order, label: 'Courier' });
+  const country = mk('select', { form: order, label: 'Country' });
+  const place = mk('button', { form: order, label: 'Place order' });
+  order.elements = [confirm, ship, country, place];
+  const placed = { from: 26, n: 11, label: 'Place order', consequential: 'purchase' };
+  for (const el of [confirm, ship, country]) {
+    assert.deepStrictEqual(run(el, { tree: [el, place], numbered: { 11: place } }, { 'Place order': 'purchase' }), placed, `${el.type || 'select'} submits through the form's default submit`);
+  }
+  const two = form('/checkout/pay');
+  const box = mk('input', { type: 'checkbox', form: two, label: 'Agree' });
+  two.elements = [box, mk('input', { type: 'text', form: two }), mk('input', { type: 'text', form: two })];
+  assert.deepStrictEqual(run(box, { tree: [box], numbered: {} }), { none: true }, 'a checkbox in a form with two fields and no submit submits nothing');
+  two.elements = [box];
+  assert.deepStrictEqual(run(box, { tree: [box], numbered: {} }), { none: true }, 'a checkbox-only form with no submit submits nothing');
+});
+
+test('page scripts: SUBMIT_TARGET for Space presses a focused button, checkbox or radio, never a link or a text field', () => {
+  const src = scripts.SUBMIT_TARGET(null, 'Space');
+  const body = src.slice(src.indexOf('  const numOf'), src.lastIndexOf('})()'));
+  const mk = (tag, type, attrs = {}) => ({ tagName: tag.toUpperCase(), type, label: 'Card bancar', isContentEditable: false, form: {},
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs });
+  const run = (el) => new Function('el', 'tag', 'type', 'label', 'cqOf', 'window', body)(
+    el, el.tagName.toLowerCase(), el.type, el.label, () => 'payment', { __cxEls: { 2: { deref: () => el } } });
+  const pressed = { from: 2, n: 2, press: true, label: 'Card bancar', consequential: 'payment' };
+  for (const el of [mk('button', 'submit'), mk('input', 'submit'), mk('input', 'image'), mk('input', 'checkbox'), mk('input', 'radio'), mk('div', '', { role: 'button' })]) {
+    assert.deepStrictEqual(run(el), pressed, `${el.tagName} ${el.type}`);
+  }
+  for (const el of [mk('a', '', { href: '/pay' }), mk('input', 'text'), mk('textarea', ''), mk('div', '', { role: 'link' })]) {
+    assert.deepStrictEqual(run(el), { none: true }, `${el.tagName} ${el.type}`);
+  }
+  assert.ok(!src.includes('consequentialHit({ action }'), 'Space never submits a form');
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
@@ -1336,9 +1378,38 @@ test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their tex
   const src = scripts.READ_TEXT(false);
   const drop = /const DROP = '([^']*)'/.exec(src)[1].split(',');
   for (const sel of scripts.CHROME_SEL.split(',')) assert.ok(!drop.includes(sel), sel);
+  assert.ok(!drop.includes('form'), 'text inside a form is read');
+  assert.ok(drop.includes('button') && drop.includes('select'), 'button labels and options stay element rows');
   assert.ok(src.includes(`clone.querySelectorAll(${JSON.stringify(scripts.CHROME_SEL)})`));
   assert.ok(src.includes(`t.data = ${JSON.stringify(scripts.CHROME_MARK)} + t.data`));
   assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`if (it.el.closest(${JSON.stringify(scripts.CHROME_SEL)})) chrome.push(n);`));
+});
+
+test('page scripts: READ_TEXT reads the text of a table inside a form and drops its button label', () => {
+  const src = scripts.READ_TEXT(false);
+  const DROP = /const DROP = '([^']*)'/.exec(src)[1];
+  const node = (tag, kids = [], text = '') => {
+    const n = {
+      tagName: tag.toUpperCase(), kids, text, parent: null, getClientRects: () => [1], closest: () => null,
+      get innerText() { return [this.text, ...this.kids.map((k) => k.innerText)].filter(Boolean).join('\n'); },
+      all() { return this.kids.flatMap((k) => [k, ...k.all()]); },
+      querySelectorAll(sel) { return sel === DROP ? this.all().filter((e) => DROP.split(',').includes(e.tagName.toLowerCase())) : []; },
+      remove() { this.parent.kids = this.parent.kids.filter((k) => k !== this); },
+      cloneNode() { return node(tag, this.kids.map((k) => k.cloneNode()), this.text); },
+    };
+    kids.forEach((k) => { k.parent = n; });
+    return n;
+  };
+  const root = node('div', [
+    node('p', [], 'Datorii curente '.repeat(15)),
+    node('form', [node('table', [node('tr', [node('td', [], 'Întreţinere August 2026'), node('td', [], '315,90 Lei')])]), node('button', [], 'Plăteşte')]),
+  ]);
+  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} },
+    createElement: () => ({ style: {}, appendChild() {}, remove() {} }) };
+  const ctx = vm.createContext({ document, getComputedStyle: () => ({}), scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
+  const { text } = vm.runInContext(src, ctx);
+  assert.ok(text.includes('Întreţinere August 2026\n315,90 Lei'), text);
+  assert.ok(!text.includes('Plăteşte'));
 });
 
 test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {
