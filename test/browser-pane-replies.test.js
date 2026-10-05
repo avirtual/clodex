@@ -398,6 +398,8 @@ test('replies: the size line always carries change counts; a first or restored r
   const size = (raw) => R.readReply('wiki', formatRead({ ...BIG, ...raw }, { service: 'wiki' }), '/t/r.txt', 'claude', { attach: false }).split('\n')[2];
   assert.match(size({}), / · new: 3 · retired: 1 · changed: 0$/);
   assert.match(size({ first: true }), / · new: all \(first read\)$/);
+  assert.match(size({ first: true, fresh: undefined }), / · new: all \(first read\)$/);
+  assert.match(size({ fresh: undefined }), / · new: \? \(elements unavailable\)$/, 'a later read without element data is not a first read');
   assert.match(size({ restored: '2026-10-01T00:00:00Z' }), / · new: all \(numbers restored\)$/);
 });
 

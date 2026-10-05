@@ -105,7 +105,7 @@ function digestLines(info) {
   const d = info.digest || {};
   const c = d.counts;
   const size = `  size: ${tokLabel(info.tokens)} · page ${info.page}/${info.pages} · ${info.elements} elements`
-    + (!c ? '' : c.all ? ` · new: all (${c.all})` : ` · new: ${c.fresh} · retired: ${c.retired} · changed: ${c.changed}`);
+    + (!c ? '' : c.all ? ` · new: all (${c.all})` : c.unknown ? ` · new: ? (${c.unknown})` : ` · new: ${c.fresh} · retired: ${c.retired} · changed: ${c.changed}`);
   const clip = (t) => oneLine(t, DIGEST_LABEL);
   const headings = (d.headings || []).slice(0, DIGEST_HEADINGS).map(clip).filter(Boolean);
   const landmarks = (d.landmarks || []).slice(0, DIGEST_LANDMARKS).map(clip).filter(Boolean);

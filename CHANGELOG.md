@@ -32,6 +32,7 @@ blocks a release.
 - Subagents: the identity hook no longer runs a Node process for every shell command (only ones that invoke `clodex`), stamps `clodex` behind `if`, `time`, `timeout` and `nohup`, and a Codex clone's main thread is no longer refused its own privileged verbs.
 - Subagents: the identity stamp on a `clodex` call is now single-use — a token copied from a transcript or a shell's `time` output no longer lets a subagent pass as the main agent.
 - Subagent intent channel: the identity hook no longer stamps `clodex` words inside heredoc bodies, accepts `nice -n5`, sweeps stamp files older than ten minutes, and treats an empty stamp file as missing; a looped `clodex` call is main only on its first run (documented).
+- Browser pane: `aria-hidden` and disabled controls are listed in the screenshot's `not drawn:` legend instead of badged, a container taller than the viewport gets a dimmed badge that displaces nothing, an inline link with no free slot takes the badge under its line, the legend is never covered, and `new: all (first read)` appears only on a first read.
 
 ## 5.112.2 — 2026-10-04
 

@@ -300,9 +300,11 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
 let overlayLegend = null;
 
 function overlayRun(rects, words = [], extra = {}, bg = '') {
-  const els = rects.map(([left, top, width, height]) => ({
-    tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
-    getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
+  const els = rects.map(([left, top, width, height, o = {}]) => ({
+    tagName: o.tagName || 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
+    getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false,
+    closest: (sel) => (o.hidden && sel.includes('aria-hidden') ? {} : null),
+    matches: (sel) => (sel.includes(':disabled') ? !!o.disabled : true), querySelector: () => null,
     querySelectorAll: () => [],
     getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }),
   }));
@@ -341,7 +343,7 @@ function overlayRun(rects, words = [], extra = {}, bg = '') {
     const left = Number(/left:(\d+)px/.exec(b.style.cssText)[1]);
     const top = Number(/top:(\d+)px/.exec(b.style.cssText)[1]);
     const w = Math.ceil(b.textContent.length * 7.3) + 6;
-    return { left, top, right: left + w, bottom: top + 16 };
+    return { left, top, right: left + w, bottom: top + 16, dim: /opacity:\.6/.test(b.style.cssText) };
   });
 }
 
@@ -382,7 +384,7 @@ test('page scripts: overlay badges skip words between inline links and never lan
   const words4 = [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' },
     { left: 244, top: 68, width: 12, height: 18, text: 'și' }, { left: 200, top: 86, width: 30, height: 18, text: 'jos' }];
   const [noSup] = overlayRun([[200, 68, 40, 18]], words4);
-  assert.deepStrictEqual([noSup.left, noSup.top], [200, 68], 'every slot, the superscript and the right scan blocked: inside the link at its top-left');
+  assert.deepStrictEqual([noSup.left, noSup.top], [200, 87], 'every slot, the superscript and the right scan blocked: under the line, over the next line\'s leading');
   const words5 = [words4[0], words4[2], words4[3]];
   const [sup] = overlayRun([[200, 68, 40, 18], [208, 36, 40, 18]], words5);
   assert.ok(sup.top === 68 - 17 && sup.left < 200, 'every slot blocked, the line above clear at the badge centre: a superscript whose bottom clears the line box');
@@ -411,7 +413,7 @@ test('page scripts: overlay badges of two adjacent short links never overlap, ev
   const got = overlayRun([[100, 50, 6, 18], [108, 50, 6, 18]], words);
   const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
   assert.strictEqual(got.length, 2);
-  assert.deepStrictEqual([got[0].left, got[0].top], [100, 50], 'every slot blocked: inside the first link');
+  assert.deepStrictEqual([got[0].left, got[0].top], [100, 69], 'every slot blocked: under the first link');
   assert.ok(!hit(got[0], got[1]), `badges overlap: ${JSON.stringify(got)}`);
   const many = overlayRun(Array.from({ length: 12 }, (_v, i) => [100 + i * 9, 50, 7, 18]), words);
   many.forEach((b, i) => many.forEach((c, j) => { if (i < j) assert.ok(!hit(b, c), `badge ${i + 1} overlaps badge ${j + 1}`); }));
@@ -423,6 +425,45 @@ test('page scripts: a zero-box or hidden numbered element gets no badge and is l
   assert.strictEqual(overlayLegend, 'not drawn: [2] [3]');
   overlayRun([[100, 50, 40, 18]]);
   assert.strictEqual(overlayLegend, null);
+});
+
+test('page scripts: an aria-hidden, inert-wrapped or disabled control gets no badge and is listed in the overlay legend', () => {
+  const got = overlayRun([[100, 50, 40, 18], [300, 100, 157, 28, { tagName: 'BUTTON', hidden: true }], [500, 100, 36, 36, { tagName: 'BUTTON', disabled: true }], [600, 100, 40, 18, { hidden: true }]]);
+  assert.strictEqual(got.length, 1);
+  assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'a normal link is still badged');
+  assert.strictEqual(overlayLegend, 'not drawn: [2] [3] [4]');
+  assert.match(scripts.OVERLAY, /el\.closest\('\[aria-hidden="true"\],\[inert\]'\)/, 'an ancestor counts, not only the element');
+  assert.match(scripts.OVERLAY, /el\.matches\(':disabled,\[aria-disabled="true"\]'\)/);
+});
+
+test('page scripts: a container taller than the viewport gets a dimmed badge at its clamped corner that displaces no other badge', () => {
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const [link, big] = overlayRun([[284, -40, 600, 28000], [288, 9, 50, 16]]);
+  assert.deepStrictEqual([link.left, link.top, link.dim], [272, 9, false], 'the link keeps its own slot');
+  assert.deepStrictEqual([big.left, big.top, big.dim], [281, 26, true], 'the dimmed badge dodges the real one');
+  assert.ok(!hit(big, link));
+  const [under, wide] = overlayRun([[0, 300, 1500, 40], [3, 300, 300, 40]]);
+  assert.deepStrictEqual([under.left, under.top, wide.left, wide.top, wide.dim], [0, 300, 0, 317, true], 'a box wider than the viewport pushes nothing below it');
+  assert.ok(!hit(wide, under));
+});
+
+test('page scripts: an inline link with every slot blocked takes the badge under its line, not over its first letters', () => {
+  const xs = (n) => 'x'.repeat(n);
+  const words = [{ left: 600, top: 461, width: 36, height: 13, text: xs(6) }, { left: 670, top: 461, width: 60, height: 13, text: xs(10) },
+    { left: 560, top: 448, width: 200, height: 13, text: xs(30) }, { left: 560, top: 476, width: 200, height: 13, text: xs(30) }];
+  const [mobil] = overlayRun([[638, 461, 30, 13]], words);
+  assert.deepStrictEqual([mobil.left, mobil.top], [638, 475]);
+});
+
+test('page scripts: the overlay legend is a badge too, and a badge chain that would leave the viewport goes right instead', () => {
+  const [low] = overlayRun([[2, 784, 200, 60], [300, 100, 0, 0]]);
+  assert.strictEqual(overlayLegend, 'not drawn: [2]');
+  assert.ok(low.left >= Math.ceil(7.3 * overlayLegend.length + 4) - 1 && low.top === 784, `badge sits on the legend: ${JSON.stringify(low)}`);
+  const chain = overlayRun([[100, 760, 200, 60], [100, 770, 200, 60], [100, 780, 200, 60]]);
+  assert.deepStrictEqual(chain.map((b) => [b.left, b.top]), [[97, 760], [97, 777], [112, 780]]);
+  chain.forEach((b) => assert.ok(b.bottom <= 800, `badge past the viewport: ${JSON.stringify(b)}`));
+  const [edge] = overlayRun([[2, 790, 200, 60], [300, 100, 0, 0]]);
+  assert.deepStrictEqual([edge.top, edge.bottom], [784, 800], 'a slot that already ends past the viewport is lifted into it when it goes right');
 });
 
 test('page scripts: a logo covering only the right part of the left slot still blocks it', () => {
