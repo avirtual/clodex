@@ -779,7 +779,7 @@ function submitTarget(n) {
     && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file', 'range', 'color', 'hidden'].includes((e.type || '').toLowerCase());
   if (!textualIn(el) || !el.form) return { none: true };
   const form = el.form;
-  const btn = [...document.querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
+  const btn = [...form.getRootNode().querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
   if (btn) return { from, n: numOf(btn), label: labelOf(btn).slice(0, 60), consequential: cqOf(btn) };
   if ([...form.elements].filter(textualIn).length !== 1) return { none: true };
   const action = form.getAttribute('action') || '';

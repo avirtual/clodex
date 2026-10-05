@@ -1050,18 +1050,20 @@ test('page scripts: SUBMIT_TARGET picks what Enter activates — the default sub
   const body = src.slice(src.indexOf('  const numOf'), src.lastIndexOf('})()'));
   const SEL = 'button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]';
   const mk = (tag, o = {}) => ({ tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, label: o.label || '', isContentEditable: !!o.editable, attrs: o.attrs || {},
-    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; },
-    matches(sel) { assert.strictEqual(sel, SEL); return defaultSubmit(this); } });
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; } });
   const defaultSubmit = (e) => (e.tagName === 'BUTTON' && !['button', 'reset'].includes(e.type)) || (e.tagName === 'INPUT' && ['submit', 'image'].includes(e.type));
+  let tree = [];
+  const root = { querySelectorAll: (sel) => { assert.strictEqual(sel, SEL); return tree.filter(defaultSubmit); } };
   const run = (el, page, cq = {}) => {
+    tree = page.tree;
     const els = { 26: el, ...page.numbered };
     const win = { __cxEls: Object.fromEntries(Object.entries(els).map(([k, e]) => [k, { deref: () => e }])) };
-    const doc = { querySelectorAll: (sel) => { assert.strictEqual(sel, SEL); return page.tree.filter(defaultSubmit); } };
+    const doc = { querySelectorAll: () => [] };
     const tag = el.tagName.toLowerCase();
     return new Function('el', 'tag', 'type', 'label', 'labelOf', 'cqOf', 'consequentialHit', 'document', 'window', body)(
       el, tag, el.type, el.label, (e) => e.label, (e) => cq[e.label] || null, scripts.consequentialHit, doc, win);
   };
-  const form = (action, fields = []) => ({ getAttribute: () => action, elements: fields });
+  const form = (action, fields = []) => ({ getAttribute: () => action, elements: fields, getRootNode: () => root });
   const shop = form('/cart');
   const amount = mk('input', { type: 'text', form: shop, label: 'Amount' });
   const qty = mk('input', { type: 'text', form: shop, label: 'Qty' });
@@ -1069,6 +1071,12 @@ test('page scripts: SUBMIT_TARGET picks what Enter activates — the default sub
   shop.elements = [amount, qty];
   assert.deepStrictEqual(run(amount, { tree: [amount, qty, buy], numbered: { 27: buy } }, { 'Buy now': 'purchase' }),
     { from: 26, n: 27, label: 'Buy now', consequential: 'purchase' }, 'an image button is the default submit though form.elements omits it');
+  const lit = form('/x');
+  const card = mk('input', { type: 'submit', form: lit, label: 'Card bancar' });
+  const cardNo = mk('input', { type: 'text', form: lit, label: 'Card' });
+  lit.elements = [cardNo, mk('input', { type: 'text', form: lit, label: 'CVV' }), card];
+  assert.deepStrictEqual(run(cardNo, { tree: [cardNo, card], numbered: { 29: card } }, { 'Card bancar': 'payment' }),
+    { from: 26, n: 29, label: 'Card bancar', consequential: 'payment' }, 'a form inside a shadow root finds its submit through the form\'s root, not document');
   const other = mk('button', { form: form('/delete'), label: 'Delete' });
   const pay = mk('button', { form: shop, label: 'Plata' });
   assert.deepStrictEqual(run(amount, { tree: [other, amount, pay], numbered: { 28: pay } }, { Delete: 'deletion', Plata: 'payment' }),
