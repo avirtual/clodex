@@ -778,7 +778,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     const t = c && c.startContainer;
     if (!t || t.nodeType !== 3) return false;
     for (const i of [c.startOffset - 1, c.startOffset]) {
-      if (i < 0 || i >= t.data.length || !/\S/.test(t.data[i])) continue;
+      if (i < 0 || i >= t.data.length || !/\\S/.test(t.data[i])) continue;
       const q = document.createRange();
       q.setStart(t, i);
       q.setEnd(t, i + 1);
