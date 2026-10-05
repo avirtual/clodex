@@ -1145,9 +1145,8 @@ function feedPosts(scope, cats, byEl, loc) {
     const qLines = new Set(qbox ? String(qbox.innerText || '').split('\n').map(flat).filter(Boolean) : []);
     const ownLines = String(art.innerText || '').split('\n').map(flat).filter((l) => l && !qLines.has(l));
     const isAd = ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l));
-    const n = pl ? numOf(pl)
-      : isAd ? (ownA.map((a) => (statusPath(pathOf(a)) === path ? numOf(a) : null)).find((x) => x != null) ?? null)
-      : wrapperNum(art, true);
+    const n = isAd ? ((pl ? numOf(pl) : null) ?? (path == null ? null : ownA.map((a) => (pathOf(a) === path ? numOf(a) : null)).find((x) => x != null) ?? null))
+      : pl ? numOf(pl) : wrapperNum(art, true);
     const hl = ownA.find(isHandle);
     let handleEl = hl || null;
     let nameEl = null;

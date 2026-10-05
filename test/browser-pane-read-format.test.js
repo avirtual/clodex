@@ -574,3 +574,24 @@ test('read without --compact keeps the text and full elements sections and repor
   assert.doesNotMatch(out.content, /== feed/);
   assert.match(out.content.split('\n')[3], / · posts: 2 · mode: default · /);
 });
+
+test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
+  const raw = {
+    ...RAW, url: 'https://x.com/home',
+    elements: ['[30] link ⚠ Ad wrapper', '[31] link ⚠ @shop', '[32] link ⚠ Shop', '[40] button ⚠ publish Post', '[50] link ⚠ @brand', '[51] link ⚠ Brand', '[52] link ⚠ From brand.com'],
+    cats: { 30: 'ad', 31: 'ad', 32: 'ad', 40: 'publish', 50: 'ad', 51: 'ad', 52: 'ad' },
+  };
+  const d = formatRead(raw, { service: 'x' }).digest;
+  assert.deepStrictEqual(d.warn, [{ n: 40, label: 'publish Post', cat: 'publish' }]);
+  assert.deepStrictEqual(d.ads, { posts: 2, elements: 6 });
+  assert.deepStrictEqual(formatRead({ ...raw, cats: {} }, { service: 'x' }).digest.ads, { posts: 0, elements: 0 });
+});
+
+test('read --compact: an ad with no number gets a [?] hint naming the page origin and its path; none when every ad has a number', () => {
+  const ad = { ...POST, n: null, handle: 'shop', flags: { ad: true }, path: '/shop/status/77' };
+  const raw = { ...FEED_RAW, url: 'https://x.com/home', feed: { ...FEED_RAW.feed, posts: [POST, ad] } };
+  const body = formatRead(raw, { service: 'x', compact: true }).content.split('\n');
+  assert.ok(body.includes("(an ad's [?] has no safe number — open x https://x.com/shop/status/77 shows the post)"), body.join('\n'));
+  const numbered = formatRead({ ...raw, feed: { ...raw.feed, posts: [POST, { ...ad, n: 77 }] } }, { service: 'x', compact: true }).content;
+  assert.doesNotMatch(numbered, /has no safe number/);
+});

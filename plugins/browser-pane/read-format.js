@@ -225,6 +225,15 @@ function compactFeed(raw, opts) {
   return !!(opts.compact && opts.mode === 'default' && feed && Array.isArray(feed.posts) && feed.posts.length) ? feed : null;
 }
 
+function adHint(raw, feed, service) {
+  const ad = feed.posts.find((p) => p && p.flags && p.flags.ad && p.n == null && p.path);
+  if (!ad) return [];
+  let origin = '';
+  try { origin = new URL(String(raw.url || '')).origin; } catch { origin = ''; }
+  if (origin === 'null') origin = '';
+  return [`(an ad's [?] has no safe number — open ${service} ${origin}${ad.path} shows the post)`];
+}
+
 function outsideFeed(elements, feed) {
   const inFeed = new Set((Array.isArray(feed.numbers) ? feed.numbers : []).map(String));
   return elements.filter((l) => {
@@ -248,6 +257,7 @@ function sections(raw, opts) {
     }
     const blocks = feedMatches(feed, opts.filter);
     const lines = blocks.flat();
+    if (lines.length) lines.push(...adHint(raw, feed, opts.service));
     const total = feed.posts.length;
     out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} post${total === 1 ? '' : 's'}) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
@@ -508,14 +518,22 @@ function digestOf(raw, feed = null) {
   const outline = raw.outline && typeof raw.outline === 'object' ? raw.outline : {};
   const list = (a) => (Array.isArray(a) ? a.map(String) : []);
   const cats = raw.cats && typeof raw.cats === 'object' ? raw.cats : null;
-  const warn = [];
+  const rows = [];
   for (const l of feed ? outsideFeed(list(raw.elements), feed) : list(raw.elements)) {
     const m = WARN_RE.exec(l);
-    if (m) warn.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
+    if (m) rows.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
+  }
+  const warn = rows.filter((w) => w.cat !== 'ad');
+  const ads = { posts: 0, elements: 0 };
+  let prevAd = false;
+  for (const w of [...rows].sort((a, b) => a.n - b.n)) {
+    const isAd = w.cat === 'ad';
+    if (isAd) { ads.elements += 1; if (!prevAd) ads.posts += 1; }
+    prevAd = isAd;
   }
   return {
     title: String(raw.title || ''), url: redactUrl(raw.url || ''), login: loginLabel(raw.login),
-    counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn,
+    counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn, ads,
     ...(feed ? { folded: { ...(feed.folded || {}) } } : {}),
   };
 }
