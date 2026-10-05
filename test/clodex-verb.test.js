@@ -91,6 +91,20 @@ test('an @<nonce> stamp resolves to its run/<seat>/ident file, which is consumed
   } finally { await seat.close(); }
 });
 
+test('an empty @<nonce> stamp file is treated as missing: message, no ident sent, file unlinked', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, reply: 'ok' }));
+  try {
+    const dir = path.join(path.dirname(seat.sockPath), 'ident');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, '0123456789abcdef');
+    fs.writeFileSync(file, '  \n', { mode: 0o600 });
+    const r = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: '@0123456789abcdef' } });
+    assert.strictEqual(r.err, 'clodex: identity stamp missing (hook not installed?)\n');
+    assert.ok(!('ident' in seat.got[0]), 'an empty stamp sends no ident');
+    assert.strictEqual(fs.existsSync(file), false, 'the empty stamp file is unlinked');
+  } finally { await seat.close(); }
+});
+
 test('a reply status of error exits 1 and refused exits 3, with the reply text printed unchanged', async () => {
   for (const [answer, code] of [
     [{ ok: true, status: 'error', reply: '[agent:browser] error: x' }, verb.EXIT.ERROR],

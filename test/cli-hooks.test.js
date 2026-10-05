@@ -1506,6 +1506,38 @@ test('ident hook: a non-clodex command gets no output and exit 0', () => {
   assert.strictEqual(fs.existsSync(identDirOf(REGISTRY_DIR)), false, 'no stamp file written');
 });
 
+test('ident hook: a stamped call sweeps stamp files older than IDENT_SEEN_MS and keeps younger ones', () => {
+  const REGISTRY_DIR = identSeat();
+  const dir = identDirOf(REGISTRY_DIR);
+  fs.mkdirSync(dir, { recursive: true });
+  const old = path.join(dir, 'aaaaaaaaaaaaaaaa');
+  const young = path.join(dir, 'bbbbbbbbbbbbbbbb');
+  fs.writeFileSync(old, 'x');
+  fs.writeFileSync(young, 'y');
+  const t = Date.now() / 1000;
+  fs.utimesSync(old, t - 11 * 60, t - 11 * 60);
+  fs.utimesSync(young, t - 60, t - 60);
+  runIdent(REGISTRY_DIR, bashCall('ls'));
+  assert.ok(fs.existsSync(old), 'a non-clodex call sweeps nothing');
+  const st = stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x'))).hookSpecificOutput.updatedInput.command);
+  assert.strictEqual(fs.existsSync(old), false, 'the 11-minute-old file is swept');
+  assert.ok(fs.existsSync(young), 'the 1-minute-old file survives');
+  assert.ok(fs.existsSync(path.join(dir, st.nonces[0])), 'the new stamp is written');
+});
+
+test('ident hook: a readdir error in the sweep does not stop the stamp from being written', () => {
+  const { hookIdentOutput } = require('../intent-socket');
+  const written = [];
+  const fsDouble = {
+    readdirSync: () => { throw new Error('EACCES'); },
+    mkdirSync: () => {},
+    writeFileSync: (p, data) => written.push([p, data]),
+  };
+  const out = JSON.parse(hookIdentOutput(JSON.stringify(bashCall('clodex x')), ICRED, crypto, { identDir: '/nowhere/ident', fs: fsDouble }));
+  assert.match(out.hookSpecificOutput.updatedInput.command, /^CLODEX_HOOK_IDENT=@[0-9a-f]{16} clodex x$/);
+  assert.strictEqual(written.length, 1);
+});
+
 test('ident hook: only the clodex segments are prefixed, each with its own stamp; cd and the pipe stay byte-identical', () => {
   const REGISTRY_DIR = identSeat();
   const cmd = (c) => stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall(c))).hookSpecificOutput.updatedInput.command);

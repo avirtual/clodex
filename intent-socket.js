@@ -104,10 +104,44 @@ function callerIsSubagent({ req, isCodex, sessionId, cred, crypto, seen = null, 
   return verdict !== 'main';
 }
 
+function heredocWord(cmd, i) {
+  let j = i + 2;
+  const strip = cmd.charAt(j) === '-';
+  if (strip) j++;
+  while (cmd.charAt(j) === ' ' || cmd.charAt(j) === '\t') j++;
+  let delim = '';
+  let q = null;
+  for (; j < cmd.length; j++) {
+    const c = cmd.charAt(j);
+    if (q) { if (c === q) q = null; else delim += c; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === '\\' && j + 1 < cmd.length) { delim += cmd.charAt(++j); continue; }
+    if (c <= ' ' || SEPARATORS.includes(c) || c === '<' || c === '>') break;
+    delim += c;
+  }
+  return delim ? { end: j, delim, strip } : null;
+}
+
+function skipHeredocs(cmd, i, pending) {
+  let at = i;
+  for (const h of pending) {
+    for (;;) {
+      if (at >= cmd.length) return cmd.length;
+      const nl = cmd.indexOf('\n', at);
+      const stop = nl < 0 ? cmd.length : nl;
+      const line = cmd.slice(at, stop);
+      at = stop + 1;
+      if ((h.strip ? line.replace(/^\t+/, '') : line) === h.delim) break;
+    }
+  }
+  return at - 1;
+}
+
 function shellSegments(cmd) {
   const segs = [[]];
   let tok = null;
   let q = null;
+  let pending = [];
   const at = (i) => { if (!tok) tok = { start: i, end: i, text: '' }; return tok; };
   const push = (i) => { if (tok) { tok.end = i; segs[segs.length - 1].push(tok); } tok = null; };
   for (let i = 0; i < cmd.length; i++) {
@@ -121,6 +155,11 @@ function shellSegments(cmd) {
     if (c === "'" || c === '"') { at(i); q = c; continue; }
     if (c === '\\' && i + 1 < cmd.length) { at(i).text += cmd.charAt(i + 1); i++; continue; }
     if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
+    if (c === '<' && cmd.charAt(i + 1) === '<' && cmd.charAt(i + 2) !== '<') {
+      const h = heredocWord(cmd, i);
+      if (h) { push(i); at(i).text = cmd.slice(i, h.end); push(h.end); pending.push(h); i = h.end - 1; continue; }
+    }
+    if (c === '\n' && pending.length) { push(i); segs.push([]); i = skipHeredocs(cmd, i + 1, pending); pending = []; continue; }
     if (SEPARATORS.includes(c)) { push(i); segs.push([]); continue; }
     if (c <= ' ') { push(i); continue; }
     at(i).text += c;
@@ -144,7 +183,7 @@ function prefixLength(word, i) {
   }
   if (w === 'nice') {
     if (word(i + 1) === '-n') return 3;
-    return /^-[0-9]+$/.test(word(i + 1) || '') ? 2 : 1;
+    return /^-n?[0-9]+$/.test(word(i + 1) || '') ? 2 : 1;
   }
   return 0;
 }
@@ -188,7 +227,16 @@ function stampClodexCommand(cmd, token) {
   return out;
 }
 
-function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, fs = require('node:fs') } = {}) {
+function sweepIdentDir(fs, dir, now) {
+  let names;
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const p = nodePath.join(dir, name);
+    try { if (now - fs.statSync(p).mtimeMs > IDENT_SEEN_MS) fs.unlinkSync(p); } catch {}
+  }
+}
+
+function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, fs = require('node:fs'), now = Date.now() } = {}) {
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
   if (!d || typeof d !== 'object') return '';
@@ -206,6 +254,7 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, fs = requir
     return `@${nonce}`;
   });
   if (next == null) return '';
+  sweepIdentDir(fs, identDir, now);
   fs.mkdirSync(identDir, { recursive: true, mode: 0o700 });
   for (const [nonce, stamp] of stamps) fs.writeFileSync(nodePath.join(identDir, nonce), stamp, { mode: 0o600, flag: 'wx' });
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: next } } });

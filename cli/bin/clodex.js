@@ -66,7 +66,8 @@ function resolveIdent(env, sockPath, fs, err) {
     const file = path.join(path.dirname(sockPath), 'ident', nonce);
     const stamp = fs.readFileSync(file, 'utf8').trim();
     fs.unlinkSync(file);
-    return stamp || null;
+    if (!stamp) throw new Error('empty');
+    return stamp;
   } catch {
     err.write('clodex: identity stamp missing (hook not installed?)\n');
     return null;
