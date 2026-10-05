@@ -163,7 +163,7 @@ const TEXT = {
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
   twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service}; the re-read numbers both`,
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
-    hits.slice(0, 5).map(textHit).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
+    hits.slice(0, 5).map(textHit).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${hits.every((h) => h.loose) ? `read ${service} and use a number` : `${verb} one by number`}`,
   looseText: (service, text, hit) => `${JSON.stringify(String(text))} on ${service} is only text: ${textHit(hit)} — read ${service} and use a number`,
   notService: (name, names) => `${name} is not a service here — services: ${names.length ? names.join(', ') : 'none'} — [agent:browser open ${name}] <url> opens a new one`,
 };

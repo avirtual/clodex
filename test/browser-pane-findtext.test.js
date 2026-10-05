@@ -173,3 +173,25 @@ test('FIND_TEXT: a text hit with no clickable around it is listed as not clickab
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/child'), 'utf8');
   assert.match(src, /if \(found\.hits\[0\]\.loose\) throw codedError\('NO_ELEMENT', TEXT\.looseText\(svc\.name, text, found\.hits\[0\]\)\);/);
 });
+
+test('FIND_TEXT: a cell of a clickable row targets the row; a link the read folded into its twin is skipped, not listed as text', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const row = mk('div', { onclick: 'go()' }, [mk('span', {}, ['Factura iulie'], [10, 40, 100, 20]), mk('span', {}, ['120 lei'], [120, 40, 60, 20])], [10, 40, 300, 20]);
+  const next1 = mk('a', { href: '/n' }, ['Next'], [10, 100, 40, 20]);
+  const next2 = mk('a', { href: '/n' }, ['Next'], [10, 400, 40, 20]);
+  const body = mk('body', {}, [row, next1, next2], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  const state = merged({ known: {} }, read);
+  const cell = vm.runInContext(scripts.FIND_TEXT('Factura iulie', state), ctx);
+  assert.strictEqual(cell.count, 1);
+  assert.strictEqual(cell.hits[0].n, ctx.__cxOf.get(row));
+  const nx = vm.runInContext(scripts.FIND_TEXT('Nex', state), ctx);
+  assert.strictEqual(nx.count, 1);
+  assert.strictEqual(nx.hits[0].n, ctx.__cxOf.get(next1));
+  const R = require('../plugins/browser-pane/replies');
+  assert.match(R.TEXT.manyText('x', 'Duplicat', 2, [{ n: null, loose: true, text: 'Duplicat' }, { n: null, loose: true, text: 'Duplicat' }]),
+    /\(not clickable\) — read x and use a number$/);
+});

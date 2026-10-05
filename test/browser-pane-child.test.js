@@ -202,7 +202,7 @@ test('numbering: a duplicate keys by its own block, so a retired twin never hand
   assert.strictEqual(p.verify(ns[2], stored[2]), 'ambiguous', 'a changed block context is refused, never re-pointed');
 });
 
-test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loose twin is keyed against every twin on the page, as the read keys it', () => {
+test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a twin whose page key another connected element holds is not placed', () => {
   const style = { visibility: 'visible', display: 'block', opacity: '1', position: 'fixed', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', overflowY: 'visible' };
   const list = { innerText: 'Trends', parentElement: null };
   const order = [];
@@ -243,8 +243,11 @@ test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loos
   const full = vm.runInContext(`(() => {${scripts.numbering({ known: {}, next: 1 })}
   return storedKeysOf(__all);
 })()`, Object.assign(ctx, { __all: order }));
-  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [1], 'the twin takes the key a read over the whole page gives it, first of its block');
-  assert.strictEqual(ctx.__cxKeys[1], full[0]);
+  assert.strictEqual(K.parseStored(full[0]).base, K.parseStored(ctx.__cxKeys[1]).base);
+  assert.strictEqual(full[0], ctx.__cxKeys[1], 'a read over the whole page keys the twin as [1]\'s key');
+  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [null], 'the twin is not placed on a number another connected element holds');
+  assert.strictEqual(ctx.__cxOf.get(a), 1);
+  assert.strictEqual(verify(1), 'ok', '[1] still points at its own caret');
   assert.match(CHILD_SRC, /if \(found\.hits\[0\]\.n == null\) throw codedError\('AMBIGUOUS', TEXT\.twinText\(svc\.name, text\)\);/);
 });
 

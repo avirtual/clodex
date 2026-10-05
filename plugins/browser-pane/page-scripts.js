@@ -708,7 +708,7 @@ function findText(text, state) {
   const keyed = new Map(items.map((it, i) => [it.el, stored[i]]));
   const fullOf = new Map(items.map(it => [it.el, String(it.full || '').toLowerCase()]));
   const plainOf = (el, t) => {
-    for (let p = el; p; p = p.parentElement) if (keyed.has(p)) return fullOf.get(p) === t.toLowerCase() ? p : null;
+    for (let p = el; p; p = p.parentElement) if (keyed.has(p)) return rows.has(p) || fullOf.get(p) === t.toLowerCase() ? p : null;
     return null;
   };
   const TEXT_SKIP = new Set(['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TITLE', 'OPTION', 'OPTGROUP', 'SELECT', 'TEXTAREA']);
@@ -723,7 +723,9 @@ function findText(text, state) {
   const loose = [];
   for (const el of hits) {
     const t = own(el);
-    const c = (el.matches(sel) ? el : el.closest(sel)) || plainOf(el, t);
+    const ctl = el.matches(sel) ? el : el.closest(sel);
+    if (ctl && !keyed.has(ctl)) continue;
+    const c = ctl || plainOf(el, t);
     if (!c || !keyed.has(c)) { loose.push({ n: null, loose: true, text: t }); continue; }
     const have = found.find(x => x.el === c);
     if (have) { have.exact = have.exact || t.toLowerCase() === want; continue; }
@@ -734,7 +736,11 @@ function findText(text, state) {
   const clipT = t => (t.length > 60 ? t.slice(0, 59) + '…' : t);
   return { count: pick.length, hits: pick.slice(0, 5).map(h => {
     if (h.loose) return { n: null, loose: true, text: clipT(h.text) };
-    const n = place(h.el, keyed.get(h.el));
+    const s = keyed.get(h.el);
+    const ref = known[s] != null && window.__cxEls[known[s]];
+    const held = ref && ref.deref();
+    if (held && held.isConnected && held !== h.el) return { n: null, text: clipT(h.text) };
+    const n = place(h.el, s);
     return { n, fresh: n != null && fresh.includes(n), text: clipT(h.text) };
   }), assigned, next };
 })()`;
