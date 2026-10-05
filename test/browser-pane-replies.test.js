@@ -196,7 +196,8 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', text: 'PDF' }, { n: 9, fresh: true, kind: 'clickable', label: 'PDF', navigated: false, idle, changed: '' }),
     '[agent:browser] clicked ebloc [9] (numbered now) clickable "PDF" · same page · idle 0.8s · no visible change');
   const long = 'x'.repeat(599) + '…';
-  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'More', navigated: false, idle, changed: long }).endsWith(`changed: "${long}"`));  assert.strictEqual(R.actReply('key', 'x', { sub: 'key', key: 'Escape' }, { navigated: false, idle, changed: 'most of the page (menu closed?)' }),
+  assert.ok(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'More', navigated: false, idle, changed: long }).endsWith(`changed: "${long}"`));
+  assert.strictEqual(R.actReply('key', 'x', { sub: 'key', key: 'Escape' }, { navigated: false, idle, changed: 'most of the page (menu closed?)' }),
     '[agent:browser] pressed Escape on x · same page · idle 0.8s · changed: most of the page (menu closed?)');
 });
 

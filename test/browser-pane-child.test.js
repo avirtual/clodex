@@ -75,7 +75,7 @@ test('settleDownload: a click download that outruns its wait is abandoned and it
 
 test('page scripts: FIND_TEXT hits say whether this find assigned the number, and ask for a stamp on an unread page', () => {
   const src = scripts.FIND_TEXT('PDF');
-  assert.match(src, /return \{ n, fresh: fresh\.includes\(n\), text: /);
+  assert.match(src, /return \{ n, fresh: n != null && fresh\.includes\(n\), text: /);
   assert.match(src, /if \(!window\.__cxEls \|\| !window\.__cxKeys\) return \{ unstamped: true \};/);
 });
 
@@ -378,7 +378,7 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.ok(sup.top === 68 - 8 && sup.left < 200);
   const img = { left: 270, top: 100, right: 298, bottom: 118 };
   const elementFromPoint = (x, y) => (x >= img.left && x <= img.right && y >= img.top && y <= img.bottom
-    ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null) } : { nodeType: 1, closest: () => null });
+    ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null), contains: () => false } : { nodeType: 1, closest: () => null, contains: () => false });
   const [logo] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint });
   assert.deepStrictEqual([logo.left, logo.top], [300, 84], 'a logo image in the left slot blocks it');
   const [bare] = overlayRun([[300, 100, 40, 18]]);
