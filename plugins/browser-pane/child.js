@@ -1236,6 +1236,8 @@ function run(electron, ctx) {
         let out;
         if (n != null) {
           const el = await resolve(svc, n);
+          const coveredErr = paths.directHref(el.href, svc.wc.getURL()) ? null : coveredRefusal(n, el);
+          if (coveredErr) throw coveredErr;
           dispatch(svc, { type: 'describe', what: `download [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
           const hint = args.as || el.download || null;
           if (paths.directHref(el.href, svc.wc.getURL())) out = await viaUrl(svc, downloadUrlOf(svc, el.href), dir, hint);

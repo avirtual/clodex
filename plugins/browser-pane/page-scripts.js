@@ -739,7 +739,11 @@ function find(n) {
   ${KIND_LABEL}${CQ}${ROW}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   const r0 = el.getBoundingClientRect();
-  const outside = r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth;
+  if (!r0.width || !r0.height) return null;
+  const sc = scrollerOf(upOf(el));
+  const clip = sc && sc !== FIXED ? sc.getBoundingClientRect() : null;
+  const outside = r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth
+    || (!!clip && (r0.top < clip.top || r0.bottom > clip.bottom || r0.left < clip.left || r0.right > clip.right));
   if (outside) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   const first = clickPoint(el, el.getBoundingClientRect(), document);
   const report = () => {
@@ -768,7 +772,7 @@ function find(n) {
       consequential: cqOf(el),
       row: rowOf(el),
       covered,
-      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60), hitConsequential: cqOf(hit) } : {}),
+      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit) } : {}),
     };
   };
   if (!outside) return report();

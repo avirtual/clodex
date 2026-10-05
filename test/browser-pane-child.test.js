@@ -1042,6 +1042,7 @@ test('coveredRefusal: a covered click point is refused naming what covers it, be
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: false }), null);
   assert.ok(CHILD_SRC.indexOf('coveredRefusal(n, el)') < CHILD_SRC.indexOf('consequentialRefusal(n, el, !!args.confirm)'));
   assert.match(CHILD_SRC, /'CONSEQUENTIAL', 'COVERED',/);
+  assert.match(CHILD_SRC, /const coveredErr = paths\.directHref\(el\.href, svc\.wc\.getURL\(\)\) \? null : coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*dispatch\(svc, \{ type: 'describe', what: `download/);
 });
 
 function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
@@ -1050,7 +1051,7 @@ function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
   for (const [n, e] of Object.entries(numbered)) { els[n] = new WeakRef(e); of.set(e, Number(n)); }
   const ctx = {
     document: { elementFromPoint: under, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
-    getComputedStyle: () => ({ visibility: 'visible', display: 'block', opacity: '1' }), innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
+    getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
     location: { href: 'http://x/', origin: 'http://x' }, __cxEls: els, __cxOf: of, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
     requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0,
   };
@@ -1097,6 +1098,16 @@ test('FIND: scrolls only an element outside the viewport, to nearest, and report
   const label = boxEl('label', 'Email', box(0, 90, 300, 60));
   const field = boxEl('input', '', box(10, 100, 100, 30), label);
   assert.strictEqual(plain(findOn(field, () => label)).covered, false, 'an ancestor under the point is not a cover');
+  const list = Object.assign(boxEl('div', 'Brand', box(0, 100, 300, 150)), { scrollHeight: 600, clientHeight: 150, style: { overflowX: 'hidden', overflowY: 'auto', position: 'static' } });
+  const clipped = boxEl('a', 'Samsung', box(10, 300, 100, 30), list);
+  clipped.onScroll = () => { clipped.rect = box(10, 220, 100, 30); };
+  const e = plain(await findOn(clipped, () => clipped));
+  assert.deepStrictEqual(clipped.scrolls, [{ block: 'nearest', inline: 'nearest' }], 'an item clipped by its overflow:auto list is scrolled into the list');
+  assert.deepStrictEqual([e.x, e.y, e.covered], [60, 235, false]);
+  const backdrop = boxEl('div', '', box(0, 0, 1200, 800));
+  assert.strictEqual(plain(findOn(inView, () => backdrop)).hitLabel, 'div', 'a blank cover is named by its tag');
+  const gone = boxEl('button', 'Pret crescator', box(0, 0, 0, 0));
+  assert.strictEqual(findOn(gone, () => null), null, 'an element with no box is no longer on the page');
 });
 
 test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {
