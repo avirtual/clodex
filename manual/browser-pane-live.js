@@ -497,9 +497,9 @@ async function offscreenStep(emit, base) {
   check('a button 3000 px down an inner scroller is listed', app.some((l) => /\] button Jos in panou$/.test(l)) && app.some((l) => /link Sus in panou/.test(l)));
   const jos = /^\[(\d+)\]/.exec(app.find((l) => /Jos in panou/.test(l)) || '[0]')[1];
   const sus = /^\[(\d+)\]/.exec(app.find((l) => /Sus in panou/.test(l)) || '[0]')[1];
-  check('the button 3000 px down the inner scroller inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${jos}]`)));
+  check('the button 3000 px down the inner scroller inspects as clipped, not hidden', / · clipped \(scroll its list\)(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${jos}]`)));
   await emit(`[agent:browser click appscroll ${jos}]`);
-  check('after a click scrolled the inner scroller down, the link above inspects as visible', / · visible(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${sus}]`)));
+  check('after a click scrolled the inner scroller down, the link above inspects as clipped, not hidden', / · clipped \(scroll its list\)(\n|$)/.test(await emit(`[agent:browser inspect appscroll ${sus}]`)));
   await emit(`[agent:browser open quirks] ${base}/quirks`);
   const q1 = fileOf(await emit('[agent:browser read quirks]')).split('\n').filter((l) => /^\[\d+\]/.test(l));
   const qb = /^\[(\d+)\]/.exec(q1.find((l) => /Jos pagina/.test(l)) || '[0]')[1];

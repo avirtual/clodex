@@ -169,7 +169,9 @@ ipc handlers (step 12).
   A `click`, `type` or `select` whose click point is covered by another element (a menu
   the page closed on scroll, an overlay) is refused and names what covers it, so the
   mouse only ever lands on the element the ⚠ check ran on. An element already in view
-  is not scrolled before the click.
+  is not scrolled before the click. A click whose target our scroll parked under a
+  sticky header is scrolled clear first; when the cover is a dialog or consent banner
+  the refusal names its buttons.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
