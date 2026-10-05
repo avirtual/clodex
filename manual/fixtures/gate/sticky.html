@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>sticky header over a scrolled-out link</title>
+<style>
+body{margin:0;font:16px sans-serif} header{position:sticky;top:0;height:80px;background:#335;color:#fff;z-index:10}
+header a{color:#fff} #a{display:block;margin:20px;height:40px} #fill{height:4000px;background:linear-gradient(#fff,#ddd)}
+</style></head><body>
+<header>Site header <a href="sorted.html?o=header">Header link</a></header>
+<a id="a" href="sorted.html?o=top">Top link under the header</a>
+<div id="fill">filler</div>
+<a href="sorted.html?o=bottom">Bottom link</a>
+</body></html>

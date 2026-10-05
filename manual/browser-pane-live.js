@@ -764,6 +764,13 @@ async function coveredStep(emit, base) {
     second = await emit(`[agent:browser click covered ${again}]`);
   }
   check('sort.html: Pret crescator reaches sorted.html?o=asc, after reopening the menu when refused', gateLog.some((u) => u === '/gate/sorted.html?o=asc'));
+  await emit(`[agent:browser open covered] ${base}/gate/sticky.html`);
+  const topN = numOf(fileOf(await emit('[agent:browser read covered]')), 'Top link');
+  await emit('[agent:browser scroll covered down --pages=2]');
+  gateLog.length = 0;
+  const stickyReply = await emit(`[agent:browser click covered ${topN}]`);
+  console.log(`    sticky click ${topN}: ${stickyReply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
+  check('sticky.html: a link our scroll parked under the sticky header is scrolled clear and lands', gateLog.includes('/gate/sorted.html?o=top'));
   await emit('[agent:browser close covered]');
 }
 
