@@ -139,7 +139,7 @@ test('Forget login confirms, naming the service and that downloads are kept, the
     const f = makeRhost({ status: status('off'), 'services.list': list, 'services.forget': { ok: true, service: 'utility' } });
     bp.activate(f.rhost);
     await f.section().render(root);
-    const forget = () => walk(root).find((n) => n.className === 'bp-forget');
+    const forget = () => walk(root).find((n) => n.className === 'bp-forget bp-btn quiet');
     await forget().click();
     assert.deepStrictEqual(seen, [bp.forgetText('utility')]);
     assert.match(seen[0], /utility/);
@@ -161,7 +161,7 @@ test('Reveal downloads opens the engine-reported folder', async () => {
     const f = makeRhost({ status: status('off'), 'services.list': { ok: true, services: [] }, 'downloads.dir': { ok: true, dir: '/data/downloads' } });
     bp.activate(f.rhost);
     await f.section().render(root);
-    await walk(root).find((n) => n.className === 'bp-reveal').click();
+    await walk(root).find((n) => n.className === 'bp-reveal bp-btn').click();
     assert.deepStrictEqual(f.opened, ['/data/downloads']);
   } finally { restore(); }
 });
@@ -178,7 +178,7 @@ test('service data renders as text: an <img onerror> name is never parsed as HTM
     assert.strictEqual(name.textContent, evil);
     assert.strictEqual(name.children.length, 0);
     assert.ok(walk(root).every((n) => n.tag !== 'img'));
-    assert.ok(walk(root).some((n) => n.className === 'bp-handback'), 'a held service offers Hand back');
+    assert.ok(walk(root).some((n) => n.className === 'bp-handback bp-btn'), 'a held service offers Hand back');
   } finally { restore(); }
 });
 
@@ -343,7 +343,7 @@ test('Settings: a first-time operator.open refills the denylist section too', as
     const find = (cls) => walk(root).find((n) => n.className === cls);
     find('bp-open-service').value = 'gas';
     find('bp-open-url').value = 'https://gas.example.com/';
-    await find('bp-open-go').click();
+    await find('bp-open-go bp-btn primary').click();
     await tick();
     assert.strictEqual(gets(), before + 1);
   } finally { restore(); }
@@ -361,12 +361,13 @@ test('Settings: the open row invokes operator.open, and an open window row hands
     const find = (cls) => walk(root).find((n) => n.className === cls);
     find('bp-open-service').value = ' gas ';
     find('bp-open-url').value = 'https://gas.example.com/';
-    await find('bp-open-go').click();
+    await find('bp-open-go bp-btn primary').click();
     assert.deepStrictEqual(f.invokes.find((i) => i.method === 'operator.open').args, [{ service: 'gas', url: 'https://gas.example.com/' }]);
-    assert.strictEqual(find('bp-window').textContent, 'window open · held (operator)');
-    assert.strictEqual(find('bp-hand-text').placeholder, 'what should it do?');
+    assert.strictEqual(find('bp-window').textContent, 'open · held by operator');
     assert.strictEqual(find('bp-show bp-btn').textContent, 'Show');
-    assert.strictEqual(find('bp-hand-open bp-btn'), undefined);
+    assert.strictEqual(find('bp-hand-text'), undefined);
+    await find('bp-hand-open bp-btn').click();
+    assert.strictEqual(find('bp-hand-text').placeholder, 'what should it do?');
     await tick();
     find('bp-hand-seat').value = 'cx';
     find('bp-hand-text').value = 'pay it';
@@ -451,11 +452,11 @@ test('settings: the attach row is built once; a refresh keeps a focused edit and
     const [field] = fields();
     field.value = '3000';
     global.document.activeElement = field;
-    await walk(root).find((n) => n.className === 'bp-open-go').click();
+    await walk(root).find((n) => n.className === 'bp-open-go bp-btn primary').click();
     assert.deepStrictEqual(fields(), [field]);
     assert.strictEqual(field.value, '3000');
     global.document.activeElement = null;
-    await walk(root).find((n) => n.className === 'bp-open-go').click();
+    await walk(root).find((n) => n.className === 'bp-open-go bp-btn primary').click();
     assert.deepStrictEqual(fields(), [field]);
     assert.strictEqual(field.value, '1000');
   } finally { restore(); }
@@ -474,5 +475,58 @@ test('settings: the attach row shows the global read budget and saves an edit th
     await walk(root).find((n) => n.className === 'bp-attach-save').click();
     assert.deepStrictEqual(f.invokes.filter((i) => i.method === 'attach.set').map((i) => i.args), [[{ tokens: 2500 }]]);
     assert.strictEqual(walk(root).find((n) => n.className === 'bp-attach-error').textContent, 'tokens must be an integer from 100 to 20000');
+  } finally { restore(); }
+});
+
+test('stampShort: time only on the same day, else month day time', () => {
+  const now = new Date(2026, 9, 6, 1, 20).getTime();
+  assert.strictEqual(bp.stampShort(new Date(2026, 9, 6, 0, 5).getTime(), now), '00:05');
+  assert.strictEqual(bp.stampShort(new Date(2026, 9, 5, 23, 27).getTime(), now), 'Oct 5 23:27');
+  assert.strictEqual(bp.stampShort(0, now), '');
+});
+
+test('Settings: services are a grid table with a header; each row is one line of cells, Hand… unfolds a full-width form from one seat lookup', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const loginAt = new Date(2020, 9, 5, 23, 27).getTime();
+    const list = { ok: true, services: [
+      { name: 'guardian', login: 'logged-in', loginAt, lastUrl: 'https://g.example/', windowOpen: true, state: 'idle', visible: false },
+      { name: 'utility', login: 'unknown', loginAt: 0, lastUrl: 'https://u.example/', windowOpen: false, state: 'closed' },
+      { name: 'gas', login: 'none', loginAt: 0, lastUrl: '', windowOpen: true, state: 'idle' },
+    ] };
+    const f = withSeats(makeRhost({ status: status('off'), 'services.list': list }), [
+      { name: 'Plugins', type: 'claude' }, { name: 'term', type: 'bash' }, { name: 'cx', type: 'codex' }, { name: 'web', type: 'browser' },
+    ]);
+    let lookups = 0;
+    const lw = f.rhost.sessions.listWorkspace;
+    f.rhost.sessions.listWorkspace = (id) => { lookups += 1; return lw(id); };
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    assert.strictEqual(f.section().title, undefined);
+    const table = walk(root).find((n) => n.className === 'bp-services');
+    assert.deepStrictEqual(table.children.slice(0, 5).map((c) => [c.className, c.textContent]),
+      [['bp-th', 'Service'], ['bp-th', 'Sign-in'], ['bp-th', 'Window'], ['bp-th', ''], ['bp-th', '']]);
+    const rows = table.children.slice(5);
+    const cells = (r) => r.children.map((c) => [c.className, c.textContent]);
+    assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-login', 'signed in · Oct 5 23:27'],
+      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand…'], ['bp-forget bp-btn quiet', 'Forget login']]);
+    assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-login', 'login unknown'],
+      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login']]);
+    const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
+    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
+    assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));
+    assert.ok(css.includes('.bp-services > .bp-th,\n.bp-services > .bp-row > * {\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}'));
+    assert.ok(css.includes('.bp-services > .bp-row > .bp-hand {\n  grid-column: 1 / -1;'));
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-section').map((n) => n.textContent), ['Windows', 'Reads', 'Denylist']);
+    assert.strictEqual(walk(root).find((n) => n.className === 'bp-hand'), undefined);
+    const opens = () => walk(root).filter((n) => n.className === 'bp-hand-open bp-btn');
+    await opens()[0].click();
+    await tick();
+    assert.strictEqual(rows[0].children[5].className, 'bp-hand');
+    assert.deepStrictEqual(walk(root).filter((n) => n.tag === 'option').map((n) => n.textContent), ['Plugins', 'cx']);
+    await opens()[1].click();
+    await tick();
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-hand').map((n) => n.parentNode), [rows[2]]);
+    assert.strictEqual(lookups, 1);
   } finally { restore(); }
 });

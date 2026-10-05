@@ -18,11 +18,27 @@ function refused(res) {
   return !!(res && res.ok === false && res.error === NOT_ON_SURFACE);
 }
 
-function stamp(ms) {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function stampShort(ms, now = Date.now()) {
   if (!ms) return '';
   const d = new Date(ms);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  const n = new Date(now);
+  const p = (x) => String(x).padStart(2, '0');
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  const today = d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+  return today ? hm : `${MONTHS[d.getMonth()]} ${d.getDate()} ${hm}`;
+}
+
+function loginText(s, now) {
+  const when = stampShort(s.loginAt, now);
+  return `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when ? ` · ${when}` : ''}`;
+}
+
+function windowText(s) {
+  if (!s.windowOpen) return 'closed';
+  const state = s.operator ? `${s.state} by operator` : String(s.state);
+  return `open · ${state}${s.visible === false ? ' · hidden' : ''}`;
 }
 
 function segmentFor(status) {
@@ -177,19 +193,21 @@ function activate(rhost) {
     const show = el('button', 'bp-show bp-btn', 'Show');
     show.addEventListener('click', () => showIt(name));
     r.appendChild(show);
-    if (opts.inline) { r.appendChild(handControl(name, refill)); return; }
+    const owner = () => opts.owner || picker;
     const open = el('button', 'bp-hand-open bp-btn', 'Hand…');
     let form = null;
     const fold = () => {
       if (form && form.parentNode) form.parentNode.removeChild(form);
       form = null;
-      if (picker && picker.fold === fold) picker.fold = null;
+      const o = owner();
+      if (o && o.fold === fold) o.fold = null;
     };
     open.addEventListener('click', () => {
       if (form) { fold(); return; }
-      if (picker && picker.fold) picker.fold();
-      form = r.appendChild(handControl(name, refill, picker ? picker.seats : null));
-      if (picker) picker.fold = fold;
+      const o = owner();
+      if (o && o.fold) o.fold();
+      form = (opts.formHost || r).appendChild(handControl(name, refill, o ? o.seats : null));
+      if (o) o.fold = fold;
     });
     r.appendChild(open);
   }
@@ -276,13 +294,14 @@ function activate(rhost) {
     }
   }
 
-  function row(s, refill) {
+  function row(s, refill, hands) {
     const r = el('div', 'bp-row');
     r.appendChild(el('span', 'bp-name', s.name));
-    const when = s.loginAt ? ` (${stamp(s.loginAt)})` : '';
-    r.appendChild(el('span', 'bp-login', `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when}`));
-    r.appendChild(el('span', 'bp-window', s.windowOpen ? `window open · ${stateLabel(s)}` : 'closed'));
-    if (s.windowOpen) windowControls(r, s.name, refill, { inline: true });
+    r.appendChild(el('span', 'bp-login', loginText(s)));
+    r.appendChild(el('span', 'bp-window', windowText(s)));
+    const acts = el('span', 'bp-actions');
+    r.appendChild(acts);
+    if (s.windowOpen) windowControls(acts, s.name, refill, { owner: hands, formHost: r });
     else if (s.lastUrl) {
       const reopen = el('button', 'bp-reopen bp-btn', 'Open');
       reopen.addEventListener('click', async () => {
@@ -296,14 +315,14 @@ function activate(rhost) {
           reopen.disabled = false;
         }
       });
-      r.appendChild(reopen);
+      acts.appendChild(reopen);
     }
     if (s.state === 'held') {
-      const hb = el('button', 'bp-handback', 'Hand back');
+      const hb = el('button', 'bp-handback bp-btn', 'Hand back');
       hb.addEventListener('click', async () => { await call('handback', s.name); refill(); });
-      r.appendChild(hb);
+      acts.appendChild(hb);
     }
-    const fg = el('button', 'bp-forget', 'Forget login');
+    const fg = el('button', 'bp-forget bp-btn quiet', 'Forget login');
     fg.addEventListener('click', () => forget(s.name, fg, refill));
     r.appendChild(fg);
     return r;
@@ -378,7 +397,7 @@ function activate(rhost) {
     name.placeholder = 'service name';
     const url = el('input', 'bp-open-url');
     url.placeholder = 'https://…';
-    const go = el('button', 'bp-open-go', 'Open');
+    const go = el('button', 'bp-open-go bp-btn primary', 'Open');
     go.addEventListener('click', async () => {
       if (go.disabled) return;
       go.disabled = true;
@@ -399,24 +418,29 @@ function activate(rhost) {
 
   rhost.ui.settings.section({
     id: 'services',
-    title: 'Browser Pane',
     render(bodyEl) {
       bodyEl.textContent = '';
+      const hands = { seats: agentSeats(), fold: null };
       const list = el('div', 'bp-services');
       bodyEl.appendChild(openRow(() => fill().then(fillDeny)));
-      bodyEl.appendChild(list);
-      const attach = el('div', 'bp-attach-box');
-      const budget = attachRow();
-      attach.appendChild(budget.row);
-      bodyEl.appendChild(attach);
-      const reveal = el('button', 'bp-reveal', 'Reveal downloads');
+      const windows = el('div', 'bp-sect');
+      windows.appendChild(el('div', 'bp-section', 'Windows'));
+      windows.appendChild(list);
+      const reveal = el('button', 'bp-reveal bp-btn', 'Reveal downloads');
       reveal.addEventListener('click', async () => {
         const res = await call('downloads.dir');
         if (res && res.ok && res.dir) rhost.ui.openPath(res.dir);
         else toast(`Could not open the downloads folder: ${(res && res.error) || 'unknown error'}`);
       });
-      bodyEl.appendChild(reveal);
-      const deny = el('div', 'bp-denylist');
+      windows.appendChild(reveal);
+      bodyEl.appendChild(windows);
+      const attach = el('div', 'bp-sect bp-attach-box');
+      attach.style.display = 'none';
+      attach.appendChild(el('div', 'bp-section', 'Reads'));
+      const budget = attachRow();
+      attach.appendChild(budget.row);
+      bodyEl.appendChild(attach);
+      const deny = el('div', 'bp-sect bp-denylist');
       bodyEl.appendChild(deny);
       const fill = async () => {
         const res = await call('services.list');
@@ -425,12 +449,17 @@ function activate(rhost) {
           bodyEl.appendChild(el('div', 'bp-desktop-only', DESKTOP_ONLY_NOTICE));
           return;
         }
+        hands.fold = null;
         list.textContent = '';
         const services = (res && res.ok && Array.isArray(res.services)) ? res.services : [];
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
-        for (const s of services) list.appendChild(row(s, fill));
+        else for (const h of ['Service', 'Sign-in', 'Window', '', '']) list.appendChild(el('span', 'bp-th', h));
+        for (const s of services) list.appendChild(row(s, fill, hands));
         const a = await call('attach.get');
-        if (a && a.ok && Number.isInteger(a.global)) budget.show(a.global);
+        if (a && a.ok && Number.isInteger(a.global)) {
+          attach.style.display = '';
+          budget.show(a.global);
+        }
         return services;
       };
       const fillDeny = async (services) => {
@@ -438,7 +467,8 @@ function activate(rhost) {
         const d = await call('denylist.get');
         deny.textContent = '';
         if (!d || !d.ok) return;
-        deny.appendChild(el('div', 'bp-deny-title', 'Denylist — URLs the browser windows refuse to visit'));
+        deny.appendChild(el('div', 'bp-section', 'Denylist'));
+        deny.appendChild(el('div', 'bp-deny-title', 'URLs the browser windows refuse to visit'));
         deny.appendChild(denyBlock('All services', 'global', d.global));
         const named = [...new Set([...services.map((s) => s.name), ...Object.keys(d.services || {})])].sort();
         for (const name of named) deny.appendChild(denyBlock(name, name, (d.services || {})[name]));
@@ -457,4 +487,4 @@ function activate(rhost) {
   };
 }
 
-module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+module.exports = { activate, stampShort, loginText, windowText, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
