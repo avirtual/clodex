@@ -146,7 +146,7 @@ test('replies: the sign-in reply and notification, password and Google, verbatim
     "[agent:browser] sign-in on utility goes through Google (accounts.google.com), which refuses sign-in inside embedded browsers, so the operator probably cannot log in here. Tell the operator in one line and stop: they can try the portal's own email/password login, or download the files by hand. Do not ask for credentials.");
   assert.deepStrictEqual(R.signinNotice('utility', 'clodex-hand', 'https://portal.example.com/login', { password: true }), {
     title: 'Browser: sign in to utility',
-    body: 'clodex-hand opened https://portal.example.com/login and hit a sign-in page. Click "browser: needs you" in the status bar (or find the "utility — Clodex Browser" window), sign in, then press "Hand back to agent". The agent never sees what you type.',
+    body: 'clodex-hand opened https://portal.example.com/login and hit a sign-in page. Click "browser: needs you" in the status bar, sign in, then press "Hand back to agent". The agent never sees what you type.',
   });
   assert.deepStrictEqual(R.signinNotice('utility', 'clodex-hand', 'https://accounts.google.com/v3/signin/rejected', { googleRejected: true }), {
     title: 'Browser: utility uses Google sign-in',
@@ -418,6 +418,11 @@ test('replies: a target attribute flip is reported, and a watched target with no
     '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · changed: "AC On" · target: tile aria-pressed "false" → "true"');
   assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: '', watched: 3000 }),
     '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · no change on the target within 3s');
+  const radio = { kind: 'radio', label: 'Ridicare', navigated: false, idle };
+  assert.strictEqual(R.actReply('click', 't36', { sub: 'click', n: 7 }, { ...radio, changed: '', watched: 3000, choice: 'Ridicare' }),
+    '[agent:browser] clicked t36 [7] radio "Ridicare" · same page · idle 0.8s · checked now "Ridicare"');
+  assert.strictEqual(R.actReply('click', 't36', { sub: 'click', n: 8 }, { ...radio, label: 'Plata', changed: '', choice: 'Card bancar', choiceKind: 'select' }),
+    '[agent:browser] clicked t36 [8] radio "Plata" · same page · idle 0.8s · selected now "Card bancar"');
 });
 
 test('replies: services names the host each window is on and the host it was opened as when they differ', () => {

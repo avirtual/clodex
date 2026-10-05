@@ -133,7 +133,7 @@ test('engine: headless answers browser unavailable', async (t) => {
 });
 
 const SIGNIN = '[agent:browser] sign-in needed on utility (password field at https://portal.example.com/login). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait utility] and end your turn; the reply comes when the operator hands the window back.';
-const NOTE = 'Browser: sign in to utility\n\nclodex-hand opened https://portal.example.com/login and hit a sign-in page. Click "browser: needs you" in the status bar (or find the "utility — Clodex Browser" window), sign in, then press "Hand back to agent". The agent never sees what you type.';
+const NOTE = 'Browser: sign in to utility\n\nclodex-hand opened https://portal.example.com/login and hit a sign-in page. Click "browser: needs you" in the status bar, sign in, then press "Hand back to agent". The agent never sees what you type.';
 const HELD = '[agent:browser] error: the operator has control of utility (sign-in). Emit [agent:browser wait utility] and end your turn.';
 
 test('engine: a sign-in page replies with the handoff text and notifies the operator once per held episode', async (t) => {

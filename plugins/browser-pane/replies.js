@@ -292,7 +292,7 @@ function signinNotice(service, seat, url, login) {
   }
   return {
     title: `Browser: sign in to ${service}`,
-    body: `${seat} opened ${url} and hit a sign-in page. Click "browser: needs you" in the status bar (or find the "${service} — Clodex Browser" window), sign in, then press "Hand back to agent". The agent never sees what you type.`,
+    body: `${seat} opened ${url} and hit a sign-in page. Click "browser: needs you" in the status bar, sign in, then press "Hand back to agent". The agent never sees what you type.`,
   };
 }
 
@@ -395,7 +395,7 @@ function changeTail(sub, r, key) {
   if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
-  if (sub === 'key' && typeof r.choice === 'string') return ` · ${r.choiceKind === 'select' ? 'selected' : 'checked'} now ${JSON.stringify(clip60(r.choice))}`;
+  if ((sub === 'key' || sub === 'click') && typeof r.choice === 'string') return ` · ${r.choiceKind === 'select' ? 'selected' : 'checked'} now ${JSON.stringify(clip60(r.choice))}`;
   if ((sub === 'type' || sub === 'key') && typeof r.value === 'string') {
     return ` · value now ${JSON.stringify(clip60(r.value))}`;
   }

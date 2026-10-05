@@ -1208,11 +1208,33 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
   assert.deepStrictEqual(run('ArrowDown', mk('input', 'checkbox', { label: 'Transfer' }), []), { none: true });
 });
 
-test('child: op close closes the window and waits for closed, keeping the partition', () => {
+test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
   const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(name)'));
-  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*return \{ closed: name, windows: services\.size \};/);
-  assert.ok(!/destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close never destroys or clears the sign-in');
+  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*return \{ closed: name, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
+});
+
+test('child: exits when reparented away from its host or sent SIGTERM', () => {
+  assert.match(CHILD_SRC, /const PARENT_POLL_MS = 5000;/);
+  assert.ok(CHILD_SRC.includes("const parentPid = process.ppid;\n  setInterval(() => { if (process.ppid !== parentPid) shutdown(); }, PARENT_POLL_MS).unref();\n  process.on('SIGTERM', () => shutdown());"));
+});
+
+test('child: a click with no change probes VALUE_CHOICE for the clicked element', () => {
+  assert.ok(CHILD_SRC.includes("const done = await withChange(svc, pre, out, lateMsFor(op));\n        if ((done.changed === '' || done.watched) && !wc.isDestroyed()) {\n          const value = await inIsolated(wc, scripts.VALUE_CHOICE(n));\n          if (value && value.kind === 'choice' && typeof value.label === 'string') {\n            done.choice = value.label;\n            if (value.select) done.choiceKind = 'select';"));
+});
+
+test('page scripts: VALUE_ACTIVE and VALUE_CHOICE share CHOICE_OF; VALUE_CHOICE answers the numbered radio group', () => {
+  assert.ok(scripts.VALUE_ACTIVE.includes(scripts.CHOICE_OF));
+  assert.ok(scripts.VALUE_CHOICE(7).includes(scripts.CHOICE_OF));
+  const radio = (label, value, checked) => ({ tagName: 'INPUT', type: 'radio', name: 'm', form: null, value, checked, isConnected: true, labels: [{ innerText: label }], innerText: '', id: '',
+    getAttribute: () => null, querySelector: () => null, querySelectorAll: () => [], closest: () => null, getBoundingClientRect: () => ({ height: 20 }) });
+  const livrare = radio('Livrare', 'delivery', false);
+  const ridicare = radio('Ridicare', 'pickup', true);
+  ridicare.getRootNode = () => ({ querySelectorAll: () => [livrare, ridicare] });
+  const win = { __cxEls: { 7: { deref: () => ridicare } } };
+  assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.VALUE_CHOICE(7)}`)(win, {}), { kind: 'choice', label: 'Ridicare', value: 'pickup' });
+  assert.strictEqual(new Function('window', 'document', `return ${scripts.VALUE_CHOICE(8)}`)(win, {}), null);
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
@@ -1519,7 +1541,11 @@ test('windows: a service window opens hidden and surfaces without focus only on 
   assert.ok(!svcFn.includes('showInactive'));
   assert.doesNotMatch(CHILD_SRC, /paintWhenInitiallyHidden/);
   assert.strictEqual(CHILD_SRC.split('showInactive').length - 1, 1);
-  assert.ok(CHILD_SRC.includes("if (args.show && !svc.win.isDestroyed()) svc.win.showInactive();\n    return have ? out : { ...out, shown: !!args.show };"));
+  assert.ok(CHILD_SRC.includes("if (args.show && !svc.win.isDestroyed()) svc.win.showInactive();\n    return created ? { ...out, shown: !!args.show } : out;"));
+  assert.ok(CHILD_SRC.includes("const created = !(have && !have.win.isDestroyed());\n    const svc = openService(name);"));
+  assert.ok(svcFn.includes("const view = new WebContentsView({\n      webPreferences: { session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },"));
+  assert.ok(CHILD_SRC.includes("if ([...services.values()].some((s) => !s.win.isDestroyed() && s.win.isVisible())) Promise.resolve(app.dock.show()).catch(() => {});\n    else app.dock.hide();"));
+  assert.ok(svcFn.includes("win.on('show', dockSync);\n    win.on('hide', dockSync);"));
   const opFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function operatorOp('), CHILD_SRC.indexOf('async function readPage('));
   assert.ok(opFn.includes('svc.win.show();\n    svc.win.focus();\n    app.focus({ steal: true });'));
 });
