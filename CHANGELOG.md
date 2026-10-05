@@ -29,6 +29,7 @@ blocks a release.
 - Subagents can drive the browser pane through the `clodex` shell verb and get the reply as their tool result (read, click, type, wait, download, screenshot, inspect…); `release` and `--confirm` stay with the seat's main agent; a plugin reply that takes longer than its deadline arrives in the seat's conversation instead.
 - Subagents: the `clodex` verb now proves who is calling (a Claude Code hook stamps the subagent's identity into the call, so a subagent can no longer release the seat's browser window or pass `--confirm`), refusals and errors exit non-zero so a script can branch on them, and long browser waits and downloads return inline instead of landing in the seat's conversation.
 - Subagents: the identity hook no longer runs a Node process for every shell command (only ones that invoke `clodex`), stamps `clodex` behind `if`, `time`, `timeout` and `nohup`, and a Codex clone's main thread is no longer refused its own privileged verbs.
+- Subagents: the identity stamp on a `clodex` call is now single-use — a token copied from a transcript or a shell's `time` output no longer lets a subagent pass as the main agent.
 
 ## 5.112.2 — 2026-10-04
 

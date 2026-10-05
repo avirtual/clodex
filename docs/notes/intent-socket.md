@@ -20,6 +20,14 @@ Claude Code 2.1.289 exports no agent-id env var to a subagent's shell, so a Clau
 
 The seat credential is also in every shell's env, a subagent's included: the HMAC stops a guessed or copied stamp, not a subagent that reads the credential and computes one.
 
+## identToken
+
+Before t1589 the mac covered only `agent_id + session_id`, so one `main.<mac>` held for a whole session; zsh's `time` echoed it into the seat's own context and anyone who saw a transcript could replay it. The per-call nonce makes each stamp single-use.
+
+## rememberIdentNonce
+
+The seen-nonce set is bounded FIFO at `IDENT_SEEN_MAX` (512) and drops entries older than `IDENT_SEEN_MS` (10 min); a nonce evicted by either bound would verify again, which the file-backed stamp (consumed on first read) covers.
+
 ## hookIdentOutput
 
 Measured on Claude Code 2.1.289: a PreToolUse `updatedInput` with no `permissionDecision` rewrites the Bash command, and replaces the whole `tool_input` — so the output spreads the original input to keep `timeout` and `run_in_background`.

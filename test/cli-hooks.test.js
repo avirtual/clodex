@@ -1449,31 +1449,53 @@ const bashCall = (command, extra = {}) => ({
   hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', tool_input: { command, timeout: 300000 }, ...extra,
 });
 
-test('ident hook: a main-agent clodex call is stamped main.<hmac> that verifies with the seat credential', () => {
+const identDirOf = (R) => path.join(path.dirname(pathFor(R, 'agent1', 'intentSocket')), 'ident');
+
+function stamped(R, command) {
+  const nonces = [...command.matchAll(/CLODEX_HOOK_IDENT=@([0-9a-f]{16}) /g)].map((m) => m[1]);
+  const stamps = nonces.map((n) => fs.readFileSync(path.join(identDirOf(R), n), 'utf8'));
+  return { shape: command.replace(/CLODEX_HOOK_IDENT=@[0-9a-f]{16} /g, 'CLODEX_HOOK_IDENT=@N '), nonces, stamps };
+}
+
+test('ident hook: a main-agent clodex call is stamped @<nonce>; the file holds main.<nonce>.<hmac> that verifies', () => {
   const REGISTRY_DIR = identSeat();
   const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall("clodex '[agent:browser release wiki]'")));
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'PreToolUse');
-  const want = identToken(crypto, ICRED, null, null, 'sess-1');
-  assert.match(want, /^main\.[0-9a-f]{16}$/);
-  assert.deepStrictEqual(out.hookSpecificOutput.updatedInput, {
-    command: `CLODEX_HOOK_IDENT=${want} clodex '[agent:browser release wiki]'`, timeout: 300000,
-  });
-  assert.strictEqual(identIsMain(crypto, ICRED, want, 'sess-1'), true);
+  const { command, timeout } = out.hookSpecificOutput.updatedInput;
+  assert.strictEqual(timeout, 300000);
+  const st = stamped(REGISTRY_DIR, command);
+  assert.strictEqual(st.shape, "CLODEX_HOOK_IDENT=@N clodex '[agent:browser release wiki]'");
+  assert.doesNotMatch(command, /main\.|[0-9a-f]{16}\.[0-9a-f]{16}/, 'no mac on the command line');
+  assert.match(st.stamps[0], new RegExp(`^main\\.${st.nonces[0]}\\.[0-9a-f]{16}$`));
+  assert.strictEqual(st.stamps[0], identToken(crypto, ICRED, null, null, 'sess-1', st.nonces[0]));
+  assert.strictEqual(fs.statSync(path.join(identDirOf(REGISTRY_DIR), st.nonces[0])).mode & 0o777, 0o600);
+  assert.strictEqual(identIsMain(crypto, ICRED, st.stamps[0], 'sess-1'), true);
+});
+
+test('ident hook: two rewrites of the same command produce different stamps', () => {
+  const REGISTRY_DIR = identSeat();
+  const one = stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x'))).hookSpecificOutput.updatedInput.command);
+  const two = stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x'))).hookSpecificOutput.updatedInput.command);
+  assert.notStrictEqual(one.nonces[0], two.nonces[0]);
+  assert.notStrictEqual(one.stamps[0], two.stamps[0]);
 });
 
 test('ident hook: with no credential in env it reads run/<name>/intent.cred', () => {
   const REGISTRY_DIR = identSeat();
   fs.writeFileSync(pathFor(REGISTRY_DIR, 'agent1', 'intentCred'), ICRED, { mode: 0o600 });
   const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x'), {}));
-  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} clodex x`);
+  const st = stamped(REGISTRY_DIR, out.hookSpecificOutput.updatedInput.command);
+  assert.strictEqual(st.shape, 'CLODEX_HOOK_IDENT=@N clodex x');
+  assert.strictEqual(st.stamps[0], identToken(crypto, ICRED, null, null, 'sess-1', st.nonces[0]));
 });
 
-test('ident hook: a subagent call is stamped sub.<agent_id>.<agent_type>.<hmac>', () => {
+test('ident hook: a subagent call is stamped sub.<agent_id>.<agent_type>.<nonce>.<hmac>', () => {
   const REGISTRY_DIR = identSeat();
   const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x', { agent_id: 'a1b2', agent_type: 'general-purpose' })));
-  const cmd = out.hookSpecificOutput.updatedInput.command;
-  assert.match(cmd, /^CLODEX_HOOK_IDENT=sub\.a1b2\.general-purpose\.[0-9a-f]{16} clodex x$/);
-  assert.strictEqual(cmd, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, 'a1b2', 'general-purpose', 'sess-1')} clodex x`);
+  const st = stamped(REGISTRY_DIR, out.hookSpecificOutput.updatedInput.command);
+  assert.strictEqual(st.shape, 'CLODEX_HOOK_IDENT=@N clodex x');
+  assert.match(st.stamps[0], /^sub\.a1b2\.general-purpose\.[0-9a-f]{16}\.[0-9a-f]{16}$/);
+  assert.strictEqual(st.stamps[0], identToken(crypto, ICRED, 'a1b2', 'general-purpose', 'sess-1', st.nonces[0]));
 });
 
 test('ident hook: a non-clodex command gets no output and exit 0', () => {
@@ -1481,22 +1503,30 @@ test('ident hook: a non-clodex command gets no output and exit 0', () => {
   for (const c of ['ls -la', 'echo clodex', "grep clodex file | head", 'clodexify x']) {
     assert.strictEqual(runIdent(REGISTRY_DIR, bashCall(c)), '', c);
   }
+  assert.strictEqual(fs.existsSync(identDirOf(REGISTRY_DIR)), false, 'no stamp file written');
 });
 
-test('ident hook: only the clodex segments are prefixed; cd and the pipe stay byte-identical', () => {
+test('ident hook: only the clodex segments are prefixed, each with its own stamp; cd and the pipe stay byte-identical', () => {
   const REGISTRY_DIR = identSeat();
-  const tok = identToken(crypto, ICRED, null, null, 'sess-1');
-  const cmd = (c) => JSON.parse(runIdent(REGISTRY_DIR, bashCall(c))).hookSpecificOutput.updatedInput.command;
-  assert.strictEqual(cmd("cd x && clodex '[agent:name]' | head"), `cd x && CLODEX_HOOK_IDENT=${tok} clodex '[agent:name]' | head`);
-  assert.strictEqual(cmd('~/.clodex/bin/clodex a; clodex b'), `CLODEX_HOOK_IDENT=${tok} ~/.clodex/bin/clodex a; CLODEX_HOOK_IDENT=${tok} clodex b`);
+  const cmd = (c) => stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall(c))).hookSpecificOutput.updatedInput.command);
+  assert.strictEqual(cmd("cd x && clodex '[agent:name]' | head").shape, "cd x && CLODEX_HOOK_IDENT=@N clodex '[agent:name]' | head");
+  const two = cmd('~/.clodex/bin/clodex a; clodex b');
+  assert.strictEqual(two.shape, 'CLODEX_HOOK_IDENT=@N ~/.clodex/bin/clodex a; CLODEX_HOOK_IDENT=@N clodex b');
+  assert.strictEqual(new Set(two.nonces).size, 2);
 });
 
 test('ident hook: a forged CLODEX_HOOK_IDENT in the command is replaced by the hook value', () => {
   const REGISTRY_DIR = identSeat();
-  const tok = identToken(crypto, ICRED, 'a1', 'gp', 'sess-1');
-  const cmd = (c) => JSON.parse(runIdent(REGISTRY_DIR, bashCall(c, { agent_id: 'a1', agent_type: 'gp' }))).hookSpecificOutput.updatedInput.command;
-  assert.strictEqual(cmd('CLODEX_HOOK_IDENT=main.deadbeef clodex x'), `CLODEX_HOOK_IDENT=${tok} clodex x`);
-  assert.strictEqual(cmd('FOO=1 env CLODEX_HOOK_IDENT=main.deadbeef clodex x'), `CLODEX_HOOK_IDENT=${tok} FOO=1 env clodex x`);
+  const cmd = (c) => stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall(c, { agent_id: 'a1', agent_type: 'gp' }))).hookSpecificOutput.updatedInput.command);
+  for (const [c, want] of [
+    ['CLODEX_HOOK_IDENT=main.deadbeef clodex x', 'CLODEX_HOOK_IDENT=@N clodex x'],
+    ['FOO=1 env CLODEX_HOOK_IDENT=main.deadbeef clodex x', 'CLODEX_HOOK_IDENT=@N FOO=1 env clodex x'],
+    ['CLODEX_HOOK_IDENT=@0123456789abcdef clodex x', 'CLODEX_HOOK_IDENT=@N clodex x'],
+  ]) {
+    const st = cmd(c);
+    assert.strictEqual(st.shape, want, c);
+    assert.strictEqual(st.stamps[0], identToken(crypto, ICRED, 'a1', 'gp', 'sess-1', st.nonces[0]), c);
+  }
 });
 
 test('ident hook: SubagentStart is registered and briefs the subagent in one additionalContext line', () => {
@@ -1539,5 +1569,5 @@ test('ident hook: a non-clodex call never starts the interpreter; a clodex call 
   assert.strictEqual(fs.existsSync(marker), true);
   const real = identSeat();
   const out = JSON.parse(runIdent(real, bashCall('clodex x')));
-  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} clodex x`);
+  assert.strictEqual(stamped(real, out.hookSpecificOutput.updatedInput.command).shape, 'CLODEX_HOOK_IDENT=@N clodex x');
 });

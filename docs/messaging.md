@@ -561,7 +561,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | UserPromptSubmit | `run/<name>/poll-guard.sh` | clears `run/<name>/poll-state` — a new turn resets the repeat counter, so an operator's own reply can never be what trips the PreToolUse deny |
 | PreToolUse (`matcher: Bash`) | `run/<name>/bash-live.sh` | an OBSERVER for the live console: records the call under `run/<name>/bash-live/`, then exits 0 having printed NOTHING. A PreToolUse that emits `updatedInput` or exits 2 alters or blocks the Bash call, so silence is the safety property, not a style choice. Bails on `[ -e .watching ]` BEFORE reading stdin: unlike `bash-console.sh` it spawns an interpreter, so it earns that cost only while a pane is reading — `bash-live.js` writes the sentinel as it reads and removes it when the SEAT is reaped, which is per-seat rather than per-watch precisely because a tab sits watchless between calls |
 | PreToolUse (`matcher: Bash`, after the observer) | `run/<name>/bash-guard.sh` | the one PreToolUse hook allowed to SPEAK: on a seat whose env carries `CLODEX_TICKET` (set only by `_spawnTicketSeat`, never by the reviewer path or by a template), a `git add` with `-A`/`--all`/`--no-ignore-removal`/`-u`/`--update`/`.`/`:/`/`*` or a `git commit` with `-a` returns `permissionDecision: deny` naming the ticket, and every other command passes. The command is tokenized with real quote handling and split on `;`, `&&`, `|` AND newlines, so `git status\ngit add -A` — the default shape a hand writes — is examined per command rather than collapsing into one whose subcommand is `status`; a backslash-newline stays a continuation. Registered AFTER `bash-live.sh` so a denied call is still in the live console that explains the deny. Gated on `[ -n "$CLODEX_TICKET" ]` before reading stdin, so a lead or a bash tab pays nothing and can never be denied; fail-OPEN on an unparseable payload, since a hook in front of every Bash call that denied on garbage would wedge the seat |
-| PreToolUse (`matcher: Bash`, after the guard), SubagentStart | `run/<name>/hook-ident.sh` | stamps `CLODEX_HOOK_IDENT=<token>` onto every `clodex` segment through `updatedInput` (§7b); silent for any other command. On SubagentStart, one `additionalContext` line naming the `clodex` verb |
+| PreToolUse (`matcher: Bash`, after the guard), SubagentStart | `run/<name>/hook-ident.sh` | stamps `CLODEX_HOOK_IDENT=@<nonce>` onto every `clodex` segment (the stamp itself in `run/<name>/ident/<nonce>`) through `updatedInput` (§7b); silent for any other command. On SubagentStart, one `additionalContext` line naming the `clodex` verb |
 | PreToolUse (`matcher: ''`, all tools, registered after the Bash block) | `run/<name>/poll-guard.sh` | counts CONSECUTIVE identical Bash commands in `poll-state` and returns `permissionDecision: deny` on the third, naming the ticket (or, on a seat without `CLODEX_TICKET`, the seat) and the first 60 chars of the command; any non-Bash tool resets the count, so it fires only on a genuine poll loop. Runs on every Claude seat, not only ticket hands, and exits silently on a payload carrying `agent_id` — a subagent's own calls are exempt |
 | PostToolUse (`matcher: ''`) | `run/<name>/pending.sh` | the same parked-DM drain at every main-agent tool boundary (a subagent's call, which carries `agent_id`, is skipped), and spools one `delivered.jsonl` line per handed-over entry (`{ts, ev, file, head}`), tailed by the seat's ctxWatcher into an `ipc-message` `kind:'delivered'` row |
 | PostToolUse (`matcher: Bash`) | `run/<name>/bash-console.sh` | spools the raw hook JSON as ONE FILE PER RECORD under `run/<name>/bash-console/`, claimed by atomic rename (Bash hooks fire concurrently; a shared append loses records). The `<epoch-ns>-<pid>.json` name falls back to whole seconds where `date` has no `%N`, and its `.tmp` sweep is `kill -0`-guarded — an unguarded one deletes a live writer's spool |
@@ -629,19 +629,24 @@ seats get a request/response channel whose reply is the caller's own tool result
   the seat's main conversation, and a call with no captured acknowledgement
   answers `sent to <target>; a reply arrives in the seat's main conversation`.
 - **Identity (Claude):** the PreToolUse Bash hook `run/<name>/hook-ident.sh` prefixes every
-  `clodex` segment of the command with `CLODEX_HOOK_IDENT=<token>` through `updatedInput`
+  `clodex` segment of the command with `CLODEX_HOOK_IDENT=@<nonce>` through `updatedInput`
   (a pre-existing `CLODEX_HOOK_IDENT=` in the segment is removed). The shell wrapper exits
   before starting the interpreter unless `clodex` appears after the input's `"command"` key, or the input is `SubagentStart`
   (`transcript_path` and `cwd` come first and may contain `.clodex`).
   The stamp also reaches a `clodex` behind `if then else elif do while until !` and `time`
   (stamped after those), and behind `command exec env builtin nohup`, `timeout [flags] <duration>`
   and `nice [-n <n> | -<n>]` (stamped before them, so the assignment reaches `clodex`'s env).
-  A `clodex` that is an argument (`echo clodex`, `which clodex`) is not stamped. The token is
-  `main.<hmac16>` with no `agent_id` in the hook input, else `sub.<agent_id>.<agent_type>.<hmac16>`;
-  the HMAC-SHA256 is keyed by the seat credential (env, else `run/<name>/intent.cred`, 0600)
-  over `(agent_id || 'main') + session_id`. The socket treats a Claude caller as the main
-  agent only when `ident` verifies as `main` for the seat's current `sessionId`; anything
-  else — no stamp, a forged or stale one — is a subagent.
+  A `clodex` that is an argument (`echo clodex`, `which clodex`) is not stamped. Each stamped
+  segment gets a fresh 16-hex nonce, and the stamp itself goes to `run/<name>/ident/<nonce>` (0600),
+  never onto the command line: `main.<nonce>.<hmac16>` with no `agent_id` in the hook input, else
+  `sub.<agent_id>.<agent_type>.<nonce>.<hmac16>`; the HMAC-SHA256 is keyed by the seat credential
+  (env, else `run/<name>/intent.cred`, 0600) over `kind + agent_id + session_id + nonce`. The verb
+  reads the file named by `@<nonce>` and unlinks it. The socket treats a Claude caller as the main
+  agent only when `ident` verifies as `main` for the seat's current `sessionId` and its nonce has
+  not been seen (512 nonces, 10 min); anything else — no stamp, a forged, old-shape or replayed
+  one, or no `sessionId` yet — is a subagent, and a replay logs a warn. The stamp is single-use
+  and file-backed: copying a `CLODEX_HOOK_IDENT` value from `time`, `set -x`, `ps` or any other
+  output does nothing.
 - **Identity (Codex):** the seat is Codex by `session.agentType` (a clone has no persistence
   entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
   or its uuid tail (uuid-shaped ids only) is the main thread; a seat with no `sessionId` yet
@@ -652,7 +657,9 @@ seats get a request/response channel whose reply is the caller's own tool result
   `not available to a subagent: <verb>`.
 - **Verb:** `clodex '<intent>' [more words…]` (args joined with spaces into one line) or `clodex -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
-  agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident`. stdout carries
+  agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident` (an `@<nonce>` value resolved
+  through `ident/<nonce>` beside the socket; a missing file sends none, with stderr
+  `clodex: identity stamp missing (hook not installed?)`). stdout carries
   the intent's reply; the verb's own lines (refusals, unauthorized, no socket, timeout)
   go to stderr as `clodex: <reason>`. Exit 0 ok, 1 error (the reply, or stderr `clodex: …`),
   2 usage, 3 refused (stderr `clodex: …`), 4 no socket, 5 timeout. The client waits up to 500 s,

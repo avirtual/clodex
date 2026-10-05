@@ -1,6 +1,7 @@
 'use strict';
 
 const nodeCrypto = require('node:crypto');
+const nodePath = require('node:path');
 
 const INTENT_SOCKET_MAX_BYTES = 64 * 1024;
 const INTENT_SOCKET_MAX_CONNS = 8;
@@ -9,6 +10,9 @@ const ASYNC_TAIL = "a reply arrives in the seat's main conversation";
 const RESULT_TAIL = "any result arrives in the seat's main conversation";
 const IDENT_ENV = 'CLODEX_HOOK_IDENT';
 const IDENT_HEX = 16;
+const IDENT_SEEN_MAX = 512;
+const IDENT_SEEN_MS = 10 * 60 * 1000;
+const MAIN_IDENT_RE = /^main\.(?:([0-9a-f]{16})\.)?([0-9a-f]+)$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup'];
@@ -55,25 +59,49 @@ function identPart(s) {
   return String(s || '').replace(/[^A-Za-z0-9_:-]/g, '_') || '_';
 }
 
-function identToken(crypto, cred, agentId, agentType, sessionId) {
+function mintIdentNonce(crypto) {
+  return crypto.randomBytes(IDENT_HEX / 2).toString('hex');
+}
+
+function identToken(crypto, cred, agentId, agentType, sessionId, nonce = mintIdentNonce(crypto)) {
+  const kind = agentId ? 'sub' : 'main';
   const mac = crypto.createHmac('sha256', String(cred))
-    .update(`${agentId || 'main'}${sessionId || ''}`).digest('hex').slice(0, IDENT_HEX);
-  return agentId ? `sub.${identPart(agentId)}.${identPart(agentType)}.${mac}` : `main.${mac}`;
+    .update(`${kind}${agentId || ''}${sessionId || ''}${nonce}`).digest('hex').slice(0, IDENT_HEX);
+  return agentId ? `sub.${identPart(agentId)}.${identPart(agentType)}.${nonce}.${mac}` : `main.${nonce}.${mac}`;
 }
 
-function identIsMain(crypto, cred, ident, sessionId) {
-  if (!cred || typeof ident !== 'string' || typeof sessionId !== 'string' || !sessionId) return false;
-  if (!/^main\.[0-9a-f]+$/.test(ident)) return false;
-  return credMatches(crypto, identToken(crypto, cred, null, null, sessionId), ident);
+function rememberIdentNonce(seen, nonce, now) {
+  for (const [n, at] of seen) {
+    if (seen.size < IDENT_SEEN_MAX && now - at < IDENT_SEEN_MS) break;
+    seen.delete(n);
+  }
+  seen.set(nonce, now);
 }
 
-function callerIsSubagent({ req, isCodex, sessionId, cred, crypto }) {
+function identVerdict(crypto, cred, ident, sessionId, seen, now) {
+  if (!cred || typeof ident !== 'string' || typeof sessionId !== 'string' || !sessionId) return 'sub';
+  const m = MAIN_IDENT_RE.exec(ident);
+  if (!m || !m[1]) return 'sub';
+  if (!credMatches(crypto, identToken(crypto, cred, null, null, sessionId, m[1]), ident)) return 'sub';
+  if (!seen) return 'main';
+  if (seen.has(m[1])) return 'replay';
+  rememberIdentNonce(seen, m[1], now);
+  return 'main';
+}
+
+function identIsMain(crypto, cred, ident, sessionId, seen = null, now = Date.now()) {
+  return identVerdict(crypto, cred, ident, sessionId, seen, now) === 'main';
+}
+
+function callerIsSubagent({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null }) {
   if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
     if (!sessionId) return true;
     return !!agentId && !isMainThread(agentId, sessionId);
   }
-  return !identIsMain(crypto, cred, req && req.ident, sessionId);
+  const verdict = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
+  if (verdict === 'replay' && onReplay) onReplay();
+  return verdict !== 'main';
 }
 
 function shellSegments(cmd) {
@@ -151,7 +179,7 @@ function stampClodexCommand(cmd, token) {
       while (end < cmd.length && (cmd.charAt(end) === ' ' || cmd.charAt(end) === '\t')) end++;
       edits.push({ start: f.start, end, text: '' });
     }
-    edits.push({ start: seg[at].start, end: seg[at].start, text: `${IDENT_ENV}=${token} ` });
+    edits.push({ start: seg[at].start, end: seg[at].start, text: `${IDENT_ENV}=${typeof token === 'function' ? token() : token} ` });
   }
   if (!edits.length) return null;
   edits.sort((a, b) => b.start - a.start || (b.end - b.start) - (a.end - a.start));
@@ -160,7 +188,7 @@ function stampClodexCommand(cmd, token) {
   return out;
 }
 
-function hookIdentOutput(raw, cred, crypto = nodeCrypto) {
+function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, fs = require('node:fs') } = {}) {
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
   if (!d || typeof d !== 'object') return '';
@@ -169,10 +197,17 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto) {
   }
   const input = d.tool_input;
   const cmd = input && input.command;
-  if (typeof cmd !== 'string' || !cmd || !cred) return '';
+  if (typeof cmd !== 'string' || !cmd || !cred || !identDir) return '';
   const agentId = typeof d.agent_id === 'string' && d.agent_id ? d.agent_id : null;
-  const next = stampClodexCommand(cmd, identToken(crypto, cred, agentId, d.agent_type, d.session_id));
+  const stamps = [];
+  const next = stampClodexCommand(cmd, () => {
+    const nonce = mintIdentNonce(crypto);
+    stamps.push([nonce, identToken(crypto, cred, agentId, d.agent_type, d.session_id, nonce)]);
+    return `@${nonce}`;
+  });
   if (next == null) return '';
+  fs.mkdirSync(identDir, { recursive: true, mode: 0o700 });
+  for (const [nonce, stamp] of stamps) fs.writeFileSync(nodePath.join(identDir, nonce), stamp, { mode: 0o600, flag: 'wx' });
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, command: next } } });
 }
 
@@ -193,7 +228,7 @@ function lateReply(intent) {
 
 function createIntentRequestHandler({
   seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
-  crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout,
+  crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout, log = null, identSeen = new Map(), now = Date.now,
 }) {
   return async function handleIntentRequest(req, ctl) {
     const text = req && typeof req.intent === 'string' ? req.intent : '';
@@ -203,7 +238,10 @@ function createIntentRequestHandler({
     if (intents.length > 1) return { ok: false, error: 'one intent per call' };
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
-    const subagent = callerIsSubagent({ req, isCodex, sessionId: sessionIdOf(), cred, crypto });
+    const subagent = callerIsSubagent({
+      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
+      onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
+    });
     if (subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
       if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)}` };
@@ -339,6 +377,9 @@ module.exports = {
   seatOfAgentTag,
   isMainThread,
   IDENT_ENV,
+  IDENT_SEEN_MAX,
+  IDENT_SEEN_MS,
+  mintIdentNonce,
   SUBAGENT_BRIEF,
   identToken,
   identIsMain,

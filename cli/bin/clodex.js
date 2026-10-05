@@ -2,6 +2,8 @@
 'use strict';
 
 const net = require('net');
+const nodeFs = require('fs');
+const path = require('path');
 
 const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
 const CLIENT_TIMEOUT_MS = 500 * 1000;
@@ -55,6 +57,22 @@ function agentIdFrom(env) {
   return env.CLODEX_AGENT_ID || env.CODEX_THREAD_ID || null;
 }
 
+function resolveIdent(env, sockPath, fs, err) {
+  const v = env.CLODEX_HOOK_IDENT || null;
+  if (!v || !v.startsWith('@')) return v;
+  const nonce = v.slice(1);
+  try {
+    if (!/^[0-9a-f]{16}$/.test(nonce)) throw new Error('bad nonce');
+    const file = path.join(path.dirname(sockPath), 'ident', nonce);
+    const stamp = fs.readFileSync(file, 'utf8').trim();
+    fs.unlinkSync(file);
+    return stamp || null;
+  } catch {
+    err.write('clodex: identity stamp missing (hook not installed?)\n');
+    return null;
+  }
+}
+
 function exitFor(res) {
   const status = res && res.status;
   if (status === 'refused') return EXIT.DENIED;
@@ -92,7 +110,7 @@ function readStdin(stdin) {
   });
 }
 
-async function main(argv, { env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs } = {}) {
+async function main(argv, { env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
     (argv.length ? out : err).write(HELP + '\n');
     return argv.length ? EXIT.OK : EXIT.USAGE;
@@ -106,7 +124,7 @@ async function main(argv, { env = process.env, stdin = process.stdin, out = proc
     return EXIT.NO_SOCKET;
   }
   const agentId = agentIdFrom(env);
-  const ident = env.CLODEX_HOOK_IDENT || null;
+  const ident = resolveIdent(env, sockPath, fs, err);
   const payload = { cred, intent: text, ...(agentId ? { agentId } : {}), ...(ident ? { ident } : {}) };
   const r = await request({ sockPath, payload, connect, ...(timeoutMs ? { timeoutMs } : {}) });
   if (r.transport === 'no-socket') { err.write(`clodex: cannot reach ${sockPath} (${r.message})\n`); return EXIT.NO_SOCKET; }
@@ -125,4 +143,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { EXIT, CLIENT_TIMEOUT_MS, HELP, buildIntentText, agentIdFrom, exitFor, request, main };
+module.exports = { EXIT, CLIENT_TIMEOUT_MS, HELP, buildIntentText, agentIdFrom, resolveIdent, exitFor, request, main };
