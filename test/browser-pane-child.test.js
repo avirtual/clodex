@@ -1052,10 +1052,10 @@ test('page scripts: SUBMIT_TARGET picks what Enter activates — the default sub
   const mk = (tag, o = {}) => ({ tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, label: o.label || '', isContentEditable: !!o.editable, attrs: o.attrs || {},
     getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; } });
   const defaultSubmit = (e) => (e.tagName === 'BUTTON' && !['button', 'reset'].includes(e.type)) || (e.tagName === 'INPUT' && ['submit', 'image'].includes(e.type));
-  let tree = [];
-  const root = { querySelectorAll: (sel) => { assert.strictEqual(sel, SEL); return tree.filter(defaultSubmit); } };
+  let rooted = [];
+  const root = { querySelectorAll: (sel) => { assert.strictEqual(sel, SEL); return rooted.filter(defaultSubmit); } };
   const run = (el, page, cq = {}) => {
-    tree = page.tree;
+    rooted = page.tree;
     const els = { 26: el, ...page.numbered };
     const win = { __cxEls: Object.fromEntries(Object.entries(els).map(([k, e]) => [k, { deref: () => e }])) };
     const doc = { querySelectorAll: () => [] };
