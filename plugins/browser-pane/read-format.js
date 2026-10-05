@@ -4,6 +4,8 @@ const keys = require('./keys');
 
 const TEXT_HEAD = 1200;
 const CHANGE_MAX = 600;
+const MOST_MIN_LINES = 10;
+const MOST_OF_PAGE = 'most of the page (menu closed?)';
 const CHROME_MIN_LINES = 3;
 const CHROME_MAX_LINES = 40;
 
@@ -201,6 +203,13 @@ function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
+function savedLabel(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return ` (saved ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())})`;
+}
+
 function framesLabel(frames) {
   const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
   if (!list.length) return 'none';
@@ -218,6 +227,7 @@ function changedRegion(before, after, max = CHANGE_MAX, norm = (l) => l) {
   let j = 0;
   while (j < nb.length - i && j < na.length - i && nb[nb.length - 1 - j] === na[na.length - 1 - j]) j++;
   const mid = a.slice(i, a.length - j);
+  if (Math.max(a.length, b.length) >= MOST_MIN_LINES && Math.max(mid.length, b.length - i - j) * 2 > Math.max(a.length, b.length)) return MOST_OF_PAGE;
   if (!mid.length) return b.length - j > i ? 'text removed' : '';
   const row = (l) => l.includes(' | ');
   let s = mid.join(' / ');
@@ -348,7 +358,8 @@ function formatRead(raw, opts) {
   const hidden = opts.hidden > 0 ? opts.hidden : 0;
   const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.length : 0) + hidden;
   const range = (hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '')
-    + (raw.first ? `numbers: stable per site; first read of ${typeof raw.first === 'string' ? raw.first : o.service}` : `numbers: stable per site; new since your last read: ${numberList(raw.fresh)}`)
+    + (raw.restored != null ? `numbers: stable per site; numbers restored${savedLabel(raw.restored)}`
+      : raw.first ? `numbers: stable per site; first read of ${typeof raw.first === 'string' ? raw.first : o.service}` : `numbers: stable per site; new since your last read: ${numberList(raw.fresh)}`)
     + (Array.isArray(raw.retired) && raw.retired.length ? `; retired: ${numberList(raw.retired)}` : '')
     + (Array.isArray(raw.changed) && raw.changed.length ? `; changed: ${numberList(raw.changed)}` : '');
   const mode = o.mode + (o.main ? ' --main' : '');
@@ -374,5 +385,5 @@ function formatRead(raw, opts) {
 
 module.exports = {
   redactUrl, frameLabel, hostOf, framesLabel,
-  formatRead, paginate, loginLabel, filterLines, wordCut, textHead, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, CHROME_MIN_LINES, CHROME_MAX_LINES,
+  formatRead, paginate, loginLabel, filterLines, wordCut, textHead, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, MOST_OF_PAGE, MOST_MIN_LINES, CHROME_MIN_LINES, CHROME_MAX_LINES,
 };

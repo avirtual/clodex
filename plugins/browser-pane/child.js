@@ -139,7 +139,7 @@ function originOf(url) {
 }
 
 function blankNumbers(origin) {
-  return { origin, numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), lastRead: null, listed: new Set() };
+  return { origin, numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), lastRead: null, listed: new Set(), restoredAt: null };
 }
 
 function originSlug(origin) {
@@ -167,6 +167,7 @@ function loadNumbers(dir, origin, now = Date.now()) {
   e.nextN = Math.max(1, j.nextN, ...[...e.byN.keys()].map((n) => n + 1));
   for (const v of Array.isArray(j.volatile) ? j.volatile : []) e.volatile.add(String(v));
   for (const n of Array.isArray(j.listed) ? j.listed : []) if (Number.isInteger(n)) e.listed.add(n);
+  e.restoredAt = typeof j.savedAt === 'string' ? j.savedAt : '';
   try { fs.utimesSync(file, now / 1000, now / 1000); } catch {}
   return e;
 }
@@ -185,7 +186,7 @@ function saveNumbers(dir, e, now = Date.now()) {
   if (!e || !persistable(dir, e.origin)) return false;
   const file = numbersFile(dir, e.origin);
   const body = {
-    v: NUMBERS_SCHEMA, origin: e.origin, numbers: Object.fromEntries(e.numbers), nextN: e.nextN, volatile: [...e.volatile], listed: [...e.listed],
+    v: NUMBERS_SCHEMA, origin: e.origin, numbers: Object.fromEntries(e.numbers), nextN: e.nextN, volatile: [...e.volatile], listed: [...e.listed], savedAt: new Date(now).toISOString(),
   };
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -1313,7 +1314,7 @@ function run(electron, ctx) {
       changed: changedOf(prev && prev.sigs, el.sigs),
       chrome: el.chrome || [],
       keys: el.keys || {},
-      ...(first ? { first: firstHost || true } : {}),
+      ...(first && ent.restoredAt != null ? { restored: ent.restoredAt } : first ? { first: firstHost || true } : {}),
     } : {};
     if (el) {
       for (const n of el.fresh || []) ent.listed.add(Number(n));
