@@ -158,6 +158,8 @@ ipc handlers (step 12).
   An ad's profile links (@handle, name) and its card are `⚠ ad` too — any click inside a
   promoted post is billed — so open the advertiser by URL instead. The read digest folds
   them into one `⚠ ad: M ads (N elements)` line.
+  `type --enter` and `key Enter` are refused the same way when Enter would activate
+  a ⚠ control or submit a form whose action is a payment, order or deletion; `--confirm` applies.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
@@ -181,8 +183,8 @@ ipc handlers (step 12).
 [agent:browser open <service>] <url>
 [agent:browser read [service] [--text|--links|--compact] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
-[agent:browser type [service] <n> [--enter]] <text>
-[agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
+[agent:browser type [service] <n> [--enter] [--confirm]] <text>
+[agent:browser key [service] [--confirm]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]
 [agent:browser back [service]]
 [agent:browser forward [service]]
