@@ -144,10 +144,20 @@ ipc handlers (step 12).
   is listed with `⚠ ` before its label (a solid red badge in `screenshot
   --numbers`); `click` or `select` on it is refused unless the agent adds
   `--confirm`. A link, a display row or a document that only names a payment
-  ("Lista de plată …", "Suma de plată 335,90 Lei") is not marked.
+  ("Lista de plată …", "Suma de plată 335,90 Lei") is not marked. A control whose
+  label is, or starts with, a publishing verb (post, reply, repost, like, follow,
+  send, share, comment, publish, tweet, and their Romanian forms) publishes as you:
+  it is marked ⚠ and refused without `--confirm` ("Latest posts" is not marked).
+- **Numbers survive a restart**: numbers are saved per site, so after a Clodex
+  restart an element gets its old number back; an act or inspect by a number from
+  a read made before the restart is refused until the agent reads again.
+- **Wait**: `wait --ms=N` without `--for` is a fixed pause of N ms (at most
+  120 s); `wait`, `wait --idle` and `wait --for=<text>` wait for the page, with
+  `--ms` as the cap.
 - **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
   a matching table row with its table's header row, or a matching line with its
-  paragraph (or the line before and after it when the paragraph is long).
+  paragraph (or the line before and after it when the paragraph is long); a
+  matching bullet line comes alone, and under a filter no `stripped:` line shows.
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
   hidden. `read --all` shows everything, the full text included.
@@ -167,7 +177,7 @@ ipc handlers (step 12).
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service] [--numbers]]
 [agent:browser inspect [service] <n>|--text="<visible text>"]
-[agent:browser wait [service] [--ms=N] [--for=<text>]]
+[agent:browser wait [service] [--ms=N] [--for=<text>] [--idle]]
 [agent:browser services]
 [agent:browser release [service]]
 ```
