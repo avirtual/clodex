@@ -514,7 +514,7 @@ test('numState: at most ORIGINS_MAX origins are kept, least recently used droppe
 });
 
 test('numbers persist: a merge marks the origin dirty, a flush saves it, and a fresh service loads the same numbers back', () => {
-  const dir = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-num-')), 'numbers', 'ebloc');
+  const dir = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-child-')), 'numbers', 'ebloc');
   let scheduled = 0;
   const svc = { ...svcOf(), numDir: dir, scheduleSave: () => { scheduled += 1; } };
   const a = stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa', 'Lista PDF', 'Plătește']);
@@ -537,7 +537,7 @@ test('numbers persist: a merge marks the origin dirty, a flush saves it, and a f
 });
 
 test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
-  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-num-'));
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
   const file = numbersFile(dir, 'https://x.com');
   fs.writeFileSync(file, '{"v":1,"origin":"https://x.com","numbers":{');
   assert.strictEqual(loadNumbers(dir, 'https://x.com'), null);
@@ -552,7 +552,7 @@ test('numbers persist: a corrupt or other-schema file is ignored and overwritten
 });
 
 test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {
-  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-num-'));
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
   const svc = { ...svcOf(), numDir: dir };
   for (let i = 0; i <= ORIGINS_MAX; i += 1) {
     stampOn(svc, `https://s${i}.test/`, ['X']);
