@@ -1302,6 +1302,7 @@ function run(electron, ctx) {
     if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
+    const outline = got && got.outline && typeof got.outline === 'object' ? got.outline : null;
     const state = numOf(svc);
     const ent = svc.num;
     const first = !ent.lastRead;
@@ -1349,6 +1350,7 @@ function run(electron, ctx) {
       login,
       loading: loadingOf(svc),
       ...(busy ? { busy } : {}),
+      ...(outline ? { outline } : {}),
     };
   }
 

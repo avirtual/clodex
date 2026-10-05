@@ -236,7 +236,9 @@ function readText(main) {
   }
   const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
   const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
-  if (!root) return { text: '', busy };
+  const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(e => e.getClientRects().length).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
+  const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
+  if (!root) return { text: '', busy, outline };
   const clone = root.cloneNode(true);
   clone.querySelectorAll(DROP).forEach(n => n.remove());
   const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
@@ -251,7 +253,7 @@ function readText(main) {
   ${TABLES}
   const txt = clone.innerText; host.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
-  return { text, busy };
+  return { text, busy, outline };
 })()`;
 }
 

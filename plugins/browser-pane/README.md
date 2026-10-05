@@ -170,18 +170,29 @@ ipc handlers (step 12).
 
 ```
 [agent:browser open <service>] <url>
-[agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>]]
+[agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser select [service] <n> [--confirm]] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
-[agent:browser screenshot [service] [--numbers]]
+[agent:browser screenshot [service] [--numbers] [--attach|--path-only]]
 [agent:browser inspect [service] <n>|--text="<visible text>"]
 [agent:browser wait [service] [--ms=N] [--for=<text>] [--idle]]
 [agent:browser services]
 [agent:browser release [service]]
 ```
+
+A read reply ends in `→ @<path>`, which a Claude seat attaches to its context, only
+when the page is at or under the seat's budget (default ≈1,000 tokens, set under
+"Attach reads up to ≈N tokens" in the pane's Settings; a per-seat override is set
+through the `attach.set` call with `{ seat, tokens }`, 100–20,000). A larger page
+comes back as the plain path with `(not attached: over ≈N tok; …)` and a digest
+of at most a dozen lines: title, url and sign-in state; size, page and
+new/retired/changed counts; the first headings (or landmark labels); every ⚠
+element with its number; and a `--main`/`--filter=`/`--page=` hint. `--attach`
+forces the `@`, `--path-only` drops it. A screenshot attaches unless `--path-only`
+is given. A Codex seat gets its "read it with your Read tool" line either way.
 
 Every act reply says what it caused: `navigated → …` (read again),
 `navigated → <url> (in-page)` for a single-page-app route change (pushState),

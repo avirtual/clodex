@@ -44,6 +44,18 @@ function originPath(url) {
   try { const u = new URL(url); return u.origin + u.pathname; } catch { return ''; }
 }
 
+const ATTACH_DEFAULT = 1000;
+const ATTACH_MIN = 100;
+const ATTACH_MAX = 20000;
+
+function attachBudget(data, seat) {
+  const a = data && typeof data === 'object' && data.attach && typeof data.attach === 'object' ? data.attach : {};
+  const seats = a.seats && typeof a.seats === 'object' ? a.seats : {};
+  const ok = (n) => Number.isInteger(n) && n >= ATTACH_MIN && n <= ATTACH_MAX;
+  if (seat != null && Object.hasOwn(seats, seat) && ok(seats[seat])) return seats[seat];
+  return ok(a.global) ? a.global : ATTACH_DEFAULT;
+}
+
 const LEASE_MS = 5 * 60 * 1000;
 const IN_PLACE_LINES = 2;
 const WAIT_DEFAULT_MS = 15000;
@@ -233,7 +245,9 @@ function createScheduler({
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);
-    return replies.readReply(service, out, file, handle.type);
+    const budget = attachBudget(storage.get(), handle.name);
+    const attach = cmd.attach === true || (cmd.attach !== false && out.tokens <= budget);
+    return replies.readReply(service, out, file, handle.type, { attach, budget: cmd.attach === false ? null : budget });
   }
 
   function downloadDir(handle, service, to) {
@@ -303,7 +317,7 @@ function createScheduler({
   async function runScreenshot(handle, service, cmd) {
     const r = await client.request('screenshot', cmd && cmd.numbers ? { numbers: true } : {}, { service, seat: handle.name, timeoutMs: SCREENSHOT_OP_MS });
     const file = replies.writeReplyFile(handle.name, Buffer.from(String(r.jpeg || ''), 'base64'), { kind: 's', ext: 'jpg' });
-    return replies.screenshotReply(service, r, file, handle.type);
+    return replies.screenshotReply(service, r, file, handle.type, !(cmd && cmd.attach === false));
   }
 
   const RUN = {
@@ -473,4 +487,4 @@ function createScheduler({
   };
 }
 
-module.exports = { createScheduler, storedLogin, NO_SERVICE, WAIT_MAX_MS, DOWNLOAD_OP_MS };
+module.exports = { createScheduler, storedLogin, attachBudget, NO_SERVICE, WAIT_MAX_MS, DOWNLOAD_OP_MS, ATTACH_DEFAULT, ATTACH_MIN, ATTACH_MAX };

@@ -613,3 +613,44 @@ test('scheduler replies through the handle each submit was given, even two of on
   assert.deepStrictEqual(got.second, [READ_REPLY]);
   assert.deepStrictEqual(h.out, [], 'nothing reached a handle obtained by name');
 });
+
+const { formatRead } = require('../plugins/browser-pane/read-format');
+
+function sizedRead(target) {
+  const raw = (k) => ({ ...PAGE, contentType: 'text/html', text: 'My Bills', elements: Array.from({ length: k }, (_v, i) => `[${i + 1}] link Bill number ${i + 1}`), truncated: false, frames: [], login: {} });
+  let k = 1;
+  while (formatRead(raw(k + 1), { service: 'utility' }).tokens <= target) k += 1;
+  const r = raw(k);
+  return { read: () => r, tokens: formatRead(r, { service: 'utility' }).tokens };
+}
+
+test('scheduler: under the 1k budget a read attaches, over it the reply is a plain path plus digest; --attach and --path-only override', async () => {
+  const small = sizedRead(900);
+  const big = sizedRead(1100);
+  assert.ok(small.tokens > 850 && small.tokens <= 1000 && big.tokens > 1000 && big.tokens <= 1100, `${small.tokens} ${big.tokens}`);
+  const attached = (r) => / → @FILE$/.test(r) && !r.includes('\n');
+  const plain = (r) => /^\[agent:browser\] read utility .* → \S+\/r-\d+\.txt \(not attached: /.test(r) && r.split('\n').length > 2 && !r.includes('@');
+  const s1 = harness({ read: small.read });
+  let [[, r]] = await s1.run([['hand-a', '[agent:browser read utility]']]);
+  assert.ok(attached(r), r);
+  [[, r]] = await s1.run([['hand-a', '[agent:browser read utility --path-only]']]);
+  assert.ok(plain(r) && r.includes('(not attached: --path-only;'), r);
+  const s2 = harness({ read: big.read });
+  [[, r]] = await s2.run([['hand-a', '[agent:browser read utility]']]);
+  assert.ok(plain(r) && r.includes('(not attached: over ≈1.0k tok;'), r);
+  [[, r]] = await s2.run([['hand-a', '[agent:browser read utility --attach]']]);
+  assert.ok(attached(r), r);
+});
+
+test('scheduler: a seat override in storage wins over the global attach budget; an out-of-range stored value falls back', async () => {
+  const big = sizedRead(1100);
+  const h = harness({ read: big.read });
+  h.storage.set({ v: 1, services: {}, attach: { global: 500, seats: { 'hand-a': 2000, 'hand-c': 50 } } });
+  const first = (rows) => h.run(rows).then((o) => o.map(([who, text]) => [who, text.split('\n')[0].endsWith(' → @FILE')]));
+  assert.deepStrictEqual(await first([['hand-a', '[agent:browser read utility]']]), [['hand-a', true]]);
+  await h.run([['hand-a', '[agent:browser release utility]']]);
+  assert.deepStrictEqual(await first([['hand-b', '[agent:browser read utility]']]), [['hand-b', false]]);
+  await h.run([['hand-b', '[agent:browser release utility]']]);
+  h.storage.set({ v: 1, services: {}, attach: { global: 5000, seats: { 'hand-c': 50 } } });
+  assert.deepStrictEqual(await first([['hand-c', '[agent:browser read utility]']]), [['hand-c', true]]);
+});

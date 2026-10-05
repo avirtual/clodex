@@ -265,6 +265,34 @@ function activate(rhost) {
     return box;
   }
 
+  function attachRow(tokens) {
+    const r = el('div', 'bp-row bp-attach');
+    r.appendChild(el('span', 'bp-attach-label', 'Attach reads up to ≈'));
+    const field = el('input', 'bp-attach-tokens');
+    field.type = 'number';
+    field.min = '100';
+    field.max = '20000';
+    field.step = '100';
+    field.value = String(tokens);
+    r.appendChild(field);
+    r.appendChild(el('span', 'bp-attach-unit', 'tokens'));
+    const save = el('button', 'bp-attach-save', 'Save');
+    const err = el('span', 'bp-attach-error', '');
+    save.addEventListener('click', async () => {
+      if (save.disabled) return;
+      save.disabled = true;
+      try {
+        const res = await call('attach.set', { tokens: Number(field.value) });
+        err.textContent = res && res.ok ? 'Saved' : (res && res.error) || 'unknown error';
+      } finally {
+        save.disabled = false;
+      }
+    });
+    r.appendChild(save);
+    r.appendChild(err);
+    return r;
+  }
+
   function openRow(refill) {
     const r = el('div', 'bp-row bp-open');
     r.appendChild(el('span', 'bp-open-label', 'Open a window:'));
@@ -299,6 +327,8 @@ function activate(rhost) {
       const list = el('div', 'bp-services');
       bodyEl.appendChild(openRow(() => fill().then(fillDeny)));
       bodyEl.appendChild(list);
+      const attach = el('div', 'bp-attach-box');
+      bodyEl.appendChild(attach);
       const reveal = el('button', 'bp-reveal', 'Reveal downloads');
       reveal.addEventListener('click', async () => {
         const res = await call('downloads.dir');
@@ -319,6 +349,9 @@ function activate(rhost) {
         const services = (res && res.ok && Array.isArray(res.services)) ? res.services : [];
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
         for (const s of services) list.appendChild(row(s, fill));
+        const a = await call('attach.get');
+        attach.textContent = '';
+        if (a && a.ok && Number.isInteger(a.global)) attach.appendChild(attachRow(a.global));
         return services;
       };
       const fillDeny = async (services) => {

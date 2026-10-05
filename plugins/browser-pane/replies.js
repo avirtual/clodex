@@ -62,10 +62,59 @@ function tokLabel(n) {
   return n < 1000 ? `≈${n} tok` : `≈${(n / 1000).toFixed(1)}k tok`;
 }
 
-function readReply(service, info, file, sessionType) {
+const DIGEST_HEADINGS = 6;
+const DIGEST_LANDMARKS = 3;
+const DIGEST_WARN = 10;
+const DIGEST_LABEL = 60;
+const DIGEST_TITLE = 120;
+const WORD_RE = /[\p{L}\p{N}]{4,}/gu;
+
+function readReply(service, info, file, sessionType, attach = { attach: true }) {
   const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`
     + (info.stripped ? ' · chrome stripped' : '') + (info.hidden > 0 ? ` · ${info.hidden} elements hidden` : '') + (info.loading ? ' · still loading' : '');
-  return withPath(head, fileTail(file, sessionType));
+  if (attach.attach) return withPath(head, fileTail(file, sessionType));
+  const why = attach.budget == null ? '--path-only' : `over ${tokLabel(attach.budget)}`;
+  const tail = sessionType === 'claude'
+    ? ` → ${showPath(file)} (not attached: ${why}; read or grep it, or narrow with --filter=/--page=)` : fileTail(file, sessionType);
+  return [withPath(head, tail), ...digestLines(info)].join('\n');
+}
+
+function topWord(texts) {
+  const counts = new Map();
+  for (const t of texts) for (const w of String(t).toLowerCase().match(WORD_RE) || []) counts.set(w, (counts.get(w) || 0) + 1);
+  let best = null;
+  for (const [w, c] of counts) if (!best || c > best[1]) best = [w, c];
+  return best && best[0];
+}
+
+function readHint(info, headings) {
+  const parts = [];
+  const word = topWord(headings);
+  if (!info.main && info.stripped) parts.push('--main');
+  else if (word) parts.push(`--filter=${word}`);
+  if (info.pages > 1) parts.push(`--page=${info.page < info.pages ? info.page + 1 : 1} (of ${info.pages})`);
+  return parts.length ? [`  hint: ${parts.join(' · ')}`] : [];
+}
+
+function digestLines(info) {
+  const d = info.digest || {};
+  const c = d.counts;
+  const size = `  size: ${tokLabel(info.tokens)} · page ${info.page}/${info.pages} · ${info.elements} elements`
+    + (c ? ` · new: ${c.fresh} · retired: ${c.retired} · changed: ${c.changed}` : '');
+  const clip = (t) => oneLine(t, DIGEST_LABEL);
+  const headings = (d.headings || []).slice(0, DIGEST_HEADINGS).map(clip).filter(Boolean);
+  const landmarks = (d.landmarks || []).slice(0, DIGEST_LANDMARKS).map(clip).filter(Boolean);
+  const outline = headings.length ? [`  headings: ${headings.join(' | ')}`] : landmarks.length ? [`  landmarks: ${landmarks.join(' | ')}`] : [];
+  const warn = d.warn || [];
+  const warnLine = warn.length
+    ? [`  ⚠: ${warn.slice(0, DIGEST_WARN).map((w) => `[${w.n}] ${JSON.stringify(clip(w.label))}`).join(' · ')}${warn.length > DIGEST_WARN ? ` · +${warn.length - DIGEST_WARN} more` : ''}`] : [];
+  return [
+    `  title: ${JSON.stringify(oneLine(d.title || '', DIGEST_TITLE))} · ${oneLine(d.url || '')} · login: ${oneLine(d.login || '')}`,
+    size,
+    ...outline,
+    ...warnLine,
+    ...readHint(info, headings),
+  ];
 }
 
 function fileTail(file, sessionType) {
@@ -95,9 +144,10 @@ function downloadReply(service, cmd, r) {
   return withPath(head, ` → ${showPath(String(r.file || ''))} · ${parts.join(' · ')}`);
 }
 
-function screenshotReply(service, r, file, sessionType) {
+function screenshotReply(service, r, file, sessionType, attach = true) {
   const drawn = r.numbers == null ? '' : ` · ${r.numbers} numbers drawn`;
-  return withPath(`${PREFIX} screenshot ${service} ${r.width}×${r.height}${drawn}`, fileTail(file, sessionType));
+  const tail = attach || sessionType !== 'claude' ? fileTail(file, sessionType) : ` → ${showPath(file)}`;
+  return withPath(`${PREFIX} screenshot ${service} ${r.width}×${r.height}${drawn}`, tail);
 }
 
 function stamp(ms) {
@@ -392,6 +442,6 @@ module.exports = {
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
-  PREFIX, REPLY_MAX, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };
