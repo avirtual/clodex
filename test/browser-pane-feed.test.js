@@ -234,3 +234,16 @@ test('FEED: the quote link carries a different status id than the post; its numb
   const got = runFeed(h('main', {}, art2), { 1040: abox }, {});
   assert.strictEqual(feedLines(got)[1], '  ↳ [1040] quoting @beamnxw · Jul 25');
 });
+
+test('FEED: on a focal post the own time link sits below a quote whose linked time comes first; the post keeps its own number, path and time', () => {
+  const row = h('div', {},
+    h('div', {}, h('a', { href: '/coinbureau' }, 'Coin Bureau')),
+    h('div', {}, h('a', { href: '/coinbureau' }, '@coinbureau')));
+  const qlink = h('a', { href: '/RohOnChain/status/6' }, h('span', {}, '@RohOnChain'), h('time', { datetime: '2026-09-19T00:00:00.000Z' }, 'Sep 19'));
+  const qbox = h('div', { role: 'link' }, h('div', {}, h('span', {}, 'Roan'), qlink), h('div', { lang: 'en' }, 'Jev is fast'));
+  const own = h('a', { href: '/coinbureau/status/7' }, h('time', { datetime: '2026-10-05T10:22:00.000Z' }, '1:22 PM · Oct 5, 2026'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'Do not ignore this.'), qbox, h('div', {}, own), h('button', { 'aria-label': '11 Replies. Reply' }, '11'));
+  const [p] = runFeed(h('main', {}, art), { 1122: own, 1284: qlink }, {}).posts;
+  assert.deepStrictEqual([p.n, p.path, p.time.rel], [1122, '/coinbureau/status/7', '1:22 PM · Oct 5, 2026']);
+  assert.deepStrictEqual([p.quote.n, p.quote.path, p.quote.rel], [1284, '/RohOnChain/status/6', 'Sep 19']);
+});

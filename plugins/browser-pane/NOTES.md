@@ -552,7 +552,9 @@ animate the scroll and let the after-measure land mid-animation.
 ## page-scripts.js — feedPosts
 
 A post is a top-level `article` (one not inside another). Its permalink is the
-link holding its first `time`, else a status link with no `/photo/N`, `/video/N`
+link holding its own `time`: the linked `time` whose status path starts with the
+author's path. On a status page the focal post's time link sits below the quote
+box, whose linked `time` comes first. Without one it is the first linked `time`, else a status link with no `/photo/N`, `/video/N`
 or `/analytics` suffix. X ads have no `time`, so their number is the article's
 numbered clickable wrapper (`[1020] clickable "… Ad …"`) and their path comes from
 the analytics link with the suffix stripped. X's header has two levels: the name

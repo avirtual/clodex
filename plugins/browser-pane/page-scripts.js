@@ -1058,7 +1058,15 @@ function feedPosts(scope, cats, byEl, loc) {
   };
   const post = (art) => {
     const times = [...art.querySelectorAll('time')];
-    const timeA = times.map((t) => t.closest('a')).find((a) => a && inside(a, art)) || null;
+    const isHandle = (a) => {
+      const m = /^\/@?([\w.-]+)\/?$/.exec(pathOf(a) || '');
+      const t = flat(a.innerText).toLowerCase();
+      return !!m && (t === '@' + m[1].toLowerCase() || t.startsWith('@' + m[1].toLowerCase() + '@'));
+    };
+    const hl0 = [...art.querySelectorAll('a[href]')].find(isHandle) || null;
+    const ownStatus = hl0 ? pathOf(hl0).replace(/\/$/, '').toLowerCase() + '/status/' : null;
+    const linked = times.map((t) => t.closest('a')).filter((a) => a && inside(a, art));
+    const timeA = (ownStatus && linked.find((a) => (statusPath(pathOf(a)) || '').toLowerCase().startsWith(ownStatus))) || linked[0] || null;
     const links = [...art.querySelectorAll('a[href*="/status/"]')];
     const clean = links.find((a) => { const p = pathOf(a); return p && statusPath(p) === p; }) || null;
     const pl = timeA || clean;
@@ -1073,10 +1081,7 @@ function feedPosts(scope, cats, byEl, loc) {
     const ownA = [...art.querySelectorAll('a[href]')].filter(own);
     const path = statusPath(pl ? pathOf(pl) : links.length ? pathOf(links[0]) : null);
     const n = pl ? numOf(pl) : wrapperNum(art, true);
-    const hl = ownA.find((a) => {
-      const m = /^\/(\w+)\/?$/.exec(pathOf(a) || '');
-      return !!m && flat(a.innerText).toLowerCase() === '@' + m[1].toLowerCase();
-    });
+    const hl = ownA.find(isHandle);
     let handleEl = hl || null;
     let nameEl = null;
     let handle = null;
@@ -1088,7 +1093,7 @@ function feedPosts(scope, cats, byEl, loc) {
       nameEl = authorLinks.filter((a) => a !== hl && flat(a.innerText) && flat(a.innerText) !== flat(hl.innerText))
         .reduce((b, a) => (!b || depth(common(a, hl)) > depth(common(b, hl)) ? a : b), null);
     } else {
-      handleEl = find(art, (e) => own(e) && /^@\w+$/.test(ownText(e)));
+      handleEl = find(art, (e) => own(e) && /^@[\w.-]+(?:@[\w.-]+)?$/.test(ownText(e)));
       if (handleEl) handle = ownText(handleEl).slice(1);
     }
     if (handleEl && !nameEl) nameEl = nameNear(handleEl, art);
@@ -1109,10 +1114,8 @@ function feedPosts(scope, cats, byEl, loc) {
     const flags = {};
     if (ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
     const rp = /^(.*?)\s*\b(?:reposted|retweeted)\b/i.exec(above);
-    if (rp) {
-      const m = /@\w+/.exec(rp[1]);
-      flags.repostedBy = m ? m[0] : flat(rp[1]) || above;
-    }
+    const rpBy = rp ? (/@\w+/.exec(rp[1]) || [flat(rp[1])])[0] : null;
+    if (rpBy) flags.repostedBy = rpBy;
     if (/pinned/i.test(above)) flags.pinned = true;
     if (ownA.some((a) => LABEL_RE.test(flat(a.innerText)))) flags.parody = true;
     const rt = ownLines.map((l) => /^replying to (@\S+)/i.exec(l)).find(Boolean);
