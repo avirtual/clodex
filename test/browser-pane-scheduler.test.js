@@ -689,7 +689,7 @@ test('scheduler: read --compact asks the child for the feed; a plain read does n
 });
 
 function feedHarness() {
-  const post = (i, flags = {}) => ({ n: i, path: i == null ? null : `/a/status/${i}`, handle: 'a', name: null, verified: false, time: { rel: '9h', iso: null }, text: 'hi', more: null, counts: [], media: {}, flags, quote: null });
+  const post = (i, flags = {}, text = 'hi') => ({ n: i, path: i == null ? null : `/a/status/${i}`, handle: 'a', name: null, verified: false, time: { rel: '9h', iso: null }, text, more: null, counts: [], media: {}, flags, quote: null });
   const cur = { url: 'https://x.example.com/home', doc: 1, posts: [] };
   const h = harness({ read: () => ({ ...DEFAULTS.read(), url: cur.url, doc: cur.doc, feed: { count: cur.posts.length, posts: cur.posts, numbers: [], folded: {} } }) });
   const hd = h.seat('hand-a');
@@ -713,11 +713,11 @@ test('scheduler: read --compact after a scroll prints only new posts and counts 
   assert.strictEqual(first[0], '== feed (8 posts) ==');
   const second = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))]);
   assert.deepStrictEqual(second, [
-    '== feed (3 new · 5 already seen · 2 dropped off the top) ==', '[?] @a · 9h · "hi"', lineOf(8), lineOf(9), '== elements (outside the feed) ==',
+    '== feed (3 new · 5 already seen · 2 gone since your last read) ==', '[?] @a · 9h · "hi"', lineOf(8), lineOf(9), '== elements (outside the feed) ==',
   ]);
   const all = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))], '[agent:browser read --compact --all]');
   assert.deepStrictEqual(all.slice(0, 1).concat(all.slice(9, 12)), [
-    '== feed (8 on the page · 2 seen earlier) ==', '-- seen earlier, no longer on the page (2) --', lineOf(1), lineOf(2),
+    '== feed (8 on the page · 2 seen earlier, off the page now) ==', '-- seen earlier, off the page now (2) --', lineOf(1), lineOf(2),
   ]);
   const again = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))]);
   assert.strictEqual(again[0], '== feed (1 new · 7 already seen) ==');
@@ -735,6 +735,67 @@ test('scheduler: the feed memory starts over on a new document or another page; 
   assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
   assert.deepStrictEqual((await read([...eight, post(1, { repostedBy: 'Ana' })])).slice(0, 2),
     ['== feed (1 new · 8 already seen) ==', '[1] @a · 9h · reposted by Ana · "hi" · → /a/status/1']);
+});
+
+test('scheduler: a --filter read marks only the post it printed as seen; the next read prints the rest as new', async () => {
+  const { h, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const six = [1, 2, 3, 4, 5, 6].map((i) => post(i));
+  const nine = [...six, post(7), post(8), post(9)];
+  await read(six);
+  assert.deepStrictEqual((await read(nine, '[agent:browser read --compact --filter=status/8]')).slice(0, 2),
+    ['== feed (1 of 3 new · 6 already seen) ==', lineOf(8)]);
+  assert.deepStrictEqual((await read(nine)).slice(0, 3), ['== feed (2 new · 7 already seen) ==', lineOf(7), lineOf(9)]);
+});
+
+test('scheduler: a paged read marks only its page seen; --page=2 marks the rest', async () => {
+  const { h, post, read } = feedHarness();
+  const long = 'x'.repeat(190);
+  const twelve = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => post(i, {}, long));
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const first = await read(twelve, '[agent:browser read --compact --max=500]');
+  const onPage1 = first.filter((l) => l.startsWith('[')).length;
+  assert.ok(onPage1 > 0 && onPage1 < 12);
+  assert.strictEqual((await read(twelve))[0], `== feed (${12 - onPage1} new · ${onPage1} already seen) ==`);
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  await read(twelve, '[agent:browser read --compact --max=500]');
+  await read(twelve, '[agent:browser read --compact --max=500 --page=2]');
+  assert.strictEqual((await read(twelve))[0], '== feed (0 new · 12 already seen) ==');
+});
+
+test('scheduler: the feed memory survives an in-page trip to a post and back; an open starts over', async () => {
+  const { h, cur, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
+  await read(eight);
+  cur.url = 'https://x.example.com/u/status/1';
+  assert.strictEqual((await read([post(1)]))[0], '== feed (1 post) ==');
+  cur.url = 'https://x.example.com/home';
+  assert.strictEqual((await read(eight))[0], '== feed (0 new · 8 already seen) ==');
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
+});
+
+test('scheduler: the feed memory keeps 8 pages per service; a ninth drops the oldest', async () => {
+  const { h, cur, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
+  await read(eight);
+  for (let p = 1; p <= 7; p++) { cur.url = `https://x.example.com/p${p}`; await read(eight); }
+  cur.url = 'https://x.example.com/home';
+  assert.strictEqual((await read(eight))[0], '== feed (0 new · 8 already seen) ==');
+  for (let p = 1; p <= 8; p++) { cur.url = `https://x.example.com/q${p}`; await read(eight); }
+  cur.url = 'https://x.example.com/home';
+  assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
+});
+
+test('scheduler: gone since your last read counts seen posts that were on the page at the last read, printed or not', async () => {
+  const { h, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
+  await read(eight);
+  await read(eight);
+  assert.strictEqual((await read([3, 4, 5, 6, 7, 8, 9, 10].map((i) => post(i))))[0], '== feed (2 new · 6 already seen · 2 gone since your last read) ==');
 });
 
 test('scheduler: a closed window drops the feed memory, so reopening the same URL at the same doc starts over', async () => {
