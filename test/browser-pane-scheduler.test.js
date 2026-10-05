@@ -177,8 +177,8 @@ test('scheduler: back and forward reach the child as op nav with dir, without a 
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.calls.length = 0;
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser back]'], ['hand-a', '[agent:browser forward utility]']]), [
-    ['hand-a', '[agent:browser] went back on utility · navigated → https://portal.example.com/bills ("Bills") · numbers kept where the page repeats · idle 0.4s · history: back ✗ forward ✓'],
-    ['hand-a', '[agent:browser] went forward on utility · navigated → https://portal.example.com/bills ("Bills") · numbers kept where the page repeats · idle 0.4s · history: back ✓ forward ✗'],
+    ['hand-a', '[agent:browser] went back on utility · navigated → ("Bills") https://portal.example.com/bills · numbers kept where the page repeats · idle 0.4s · history: back ✗ forward ✓'],
+    ['hand-a', '[agent:browser] went forward on utility · navigated → ("Bills") https://portal.example.com/bills · numbers kept where the page repeats · idle 0.4s · history: back ✓ forward ✗'],
   ]);
   assert.deepStrictEqual(h.calls, [['hand-a', 'nav', { dir: 'back' }], ['hand-a', 'nav', { dir: 'forward' }]]);
 });

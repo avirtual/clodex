@@ -215,6 +215,12 @@ function clipUrl(url) {
   return u.length > 160 ? u.slice(0, 159) + '…' : u;
 }
 
+function clipNavUrl(u, max) {
+  if (u.length <= max) return u;
+  const base = u.split(/[?#]/)[0];
+  return `${base.length < max ? base : base.slice(0, max - 1)}…`;
+}
+
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
   noElement: (service, n) => `[${n}] is no longer on this page of ${service} — read again`,
@@ -314,8 +320,9 @@ function dropSuffix(labels) {
 
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
-  if (r.inPage) return `navigated → ${redactUrl(r.url)} (in-page) · numbers kept where the page repeats`;
-  return `navigated → ${redactUrl(r.url)} (${JSON.stringify(String(r.title || ''))}) · numbers kept where the page repeats`;
+  const u = clipNavUrl(redactUrl(r.url), 120);
+  if (r.inPage) return `navigated → ${u} (in-page) · numbers kept where the page repeats`;
+  return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} · numbers kept where the page repeats`;
 }
 
 function actReply(sub, service, cmd, r) {
