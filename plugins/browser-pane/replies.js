@@ -191,8 +191,7 @@ function servicesReply(services, mirror, urlOf = () => '') {
     const host = hostOf((open && urlOf(n)) || rec.lastUrl);
     const opened = rec.openedHost || hostOf(rec.lastUrl);
     const site = host ? `${host}${opened && opened !== host ? ` (was ${opened})` : ''} · ` : '';
-    const sign = !open && rec.login && rec.login.state === 'login-page' ? 'sign-in was pending' : loginState(rec.login);
-    return `${n} — ${site}${sign} · ${win}`;
+    return `${n} — ${site}${loginState(rec.login)} · ${win}`;
   });
   return reply(`services: ${items.join(' │ ')}`);
 }
@@ -200,8 +199,7 @@ function servicesReply(services, mirror, urlOf = () => '') {
 function closedReply(service, rec, windows) {
   const login = rec && rec.login && rec.login.state === 'logged-in'
     ? ` · signed in stays (open ${service} ${rec.lastUrl || '<url>'} resumes it)` : '';
-  const count = Number(windows) || 0;
-  return reply(`closed ${service}${login} · ${count} window${count === 1 ? '' : 's'} open`);
+  return reply(`closed ${service}${login} · ${Number(windows) || 0} windows open`);
 }
 
 function ago(ms) {
@@ -227,10 +225,10 @@ const TEXT = {
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
-  submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : key.startsWith('Arrow') ? 'choose' : 'submit'} — read again, or add --confirm if the operator asked for it`,
+  submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : 'submit'} — read again, or add --confirm if the operator asked for it`,
   consequentialSubmit: (from, sub, key = 'Enter') => {
     const label = JSON.stringify(String(sub.label || ''));
-    const verb = !sub.choose ? 'press' : sub.change ? 'change' : 'choose';
+    const verb = !sub.choose ? 'press' : sub.n === sub.from ? 'change' : 'choose';
     const what = sub.press ? `${verb} ${sub.n == null ? '' : `[${sub.n}] `}${label}`
       : sub.n == null ? `submit the form ${label}` : `submit through [${sub.n}] ${label}`;
     const why = sub.consequential === 'ad' ? 'which is an ad — a paid click on the operator\'s account that leaves the site;'
@@ -394,7 +392,6 @@ function changeTail(sub, r, key) {
   if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
-  if (sub === 'key' && typeof r.choice === 'string') return ` · ${r.choiceKind === 'select' ? 'selected' : 'checked'} now ${JSON.stringify(clip60(r.choice))}`;
   if ((sub === 'type' || sub === 'key') && typeof r.value === 'string') {
     return ` · value now ${JSON.stringify(clip60(r.value))}`;
   }

@@ -794,7 +794,7 @@ const ARROW_CHOOSE = (forward) => `if (tag === 'input' && type === 'radio') {
     const target = group[(i + ${forward ? 1 : -1} + group.length) % group.length];
     return { from, n: numOf(target), press: true, choose: true, label: labelOf(target).slice(0, 60), consequential: cqOf(target) };
   }
-  if (tag === 'select' && !el.multiple) return { from, n: from, press: true, choose: true, change: true, label, consequential: cqOf(el) };
+  if (tag === 'select' && !el.multiple) return { from, n: from, press: true, choose: true, label, consequential: cqOf(el) };
   return { none: true };`;
 
 function submitTarget(n, key = 'Enter') {
@@ -923,20 +923,10 @@ function value(n) {
 })()`;
 }
 
-const VALUE_ACTIVE = `(() => {${ICON}
+const VALUE_ACTIVE = `(() => {
   ${ACTIVE}
   const tag = el.tagName.toLowerCase();
   const type = (el.type || '').toLowerCase();
-  if (tag === 'input' && type === 'radio') {
-    const group = el.name ? [...el.getRootNode().querySelectorAll('input[type=radio]')].filter(r => r.name === el.name && r.form === el.form) : [el];
-    const on = group.find(r => r.checked);
-    return on ? { kind: 'choice', label: labelOf(on).slice(0, 60), value: String(on.value) } : null;
-  }
-  if (tag === 'input' && type === 'checkbox') return { kind: 'choice', label: labelOf(el).slice(0, 60) + (el.checked ? ' [x]' : ' [ ]'), value: String(el.value) };
-  if (tag === 'select' && !el.multiple) {
-    const opt = el.options[el.selectedIndex];
-    return opt ? { kind: 'choice', select: true, label: String(opt.text).replace(/\\s+/g, ' ').trim().slice(0, 60), value: String(el.value) } : null;
-  }
   const textual = tag === 'textarea' || (tag === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes(type));
   if (!(textual || el.isContentEditable) || type === 'password' || el.getAttribute('autocomplete') === 'one-time-code') return null;
   const v = el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);

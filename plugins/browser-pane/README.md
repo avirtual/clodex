@@ -268,8 +268,7 @@ still followed by what changed, `changed: "…"` with the text that changed in p
 "… Off" → "… On"` when the clicked element or its tile flipped state, `no change on
 the target within 3s` / `no visible change`, or `→ download
 <full path> · <size> · <type>`; `type` says `value now "…"` when the page text did
-not change; a key that moves a radio or select choice replies `checked now "…"` /
-`selected now "…"`; a file identical to one already in the folder is not saved twice and
+not change; a file identical to one already in the folder is not saved twice and
 is reported as `same as <file>`, unless it was named with `--as`. `inspect` shows an element's
 tag, attributes, event listeners, cursor, position and HTML, to see why a click
 does nothing.

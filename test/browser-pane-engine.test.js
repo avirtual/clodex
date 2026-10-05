@@ -467,7 +467,7 @@ test('engine: browser refusals classify as refused, a plain error as error, a no
     TEXT.consequentialSubmit(8, { n: 9, label: 'Shop now', consequential: 'ad' }),
     TEXT.consequentialSubmit(2, { n: 2, press: true, label: 'Card bancar', consequential: 'payment' }, 'Space'),
     TEXT.consequentialSubmit(1, { from: 1, n: 2, press: true, choose: true, label: 'Transfer', consequential: 'transfer' }, 'ArrowDown'),
-    TEXT.consequentialSubmit(3, { from: 3, n: 3, press: true, choose: true, change: true, label: 'Payment method', consequential: 'payment' }, 'ArrowLeft'),
+    TEXT.consequentialSubmit(3, { from: 3, n: 3, press: true, choose: true, label: 'Payment method', consequential: 'payment' }, 'ArrowLeft'),
     TEXT.ambiguousN('utility', 6, 'Save', 'Form'),
     TEXT.retiredN('utility', 7, 9),
   ]) assert.strictEqual(classifyReplyLine('browser', replies.errorReply(text)), 'refused', text);

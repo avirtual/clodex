@@ -585,28 +585,14 @@ test('page scripts: VALUE clips at the source to 200 chars', () => {
   assert.strictEqual(run('abc'), 'abc');
 });
 
-test('page scripts: VALUE_ACTIVE reads the focused text field after a key, never a password or a code; a radio, checkbox or select answers its choice', () => {
+test('page scripts: VALUE_ACTIVE reads the focused text field after a key, never a password, a code or a checkbox', () => {
   const run = (tag, type, value, attrs = {}) => new Function('document', `return ${scripts.VALUE_ACTIVE}`)({
     activeElement: { tagName: tag.toUpperCase(), type, value, isContentEditable: false, shadowRoot: null, getAttribute: (k) => attrs[k] || null } });
   assert.strictEqual(run('input', 'text', 'ab'), 'ab');
   assert.strictEqual(run('textarea', '', 'x'.repeat(500)).length, 200);
   assert.strictEqual(run('input', 'password', 'hunter2'), null);
   assert.strictEqual(run('input', 'text', '123456', { autocomplete: 'one-time-code' }), null);
-  const node = (tag, o = {}) => ({ tagName: tag.toUpperCase(), type: o.type || '', name: o.name || '', form: null, value: o.value || '', checked: !!o.checked, multiple: false,
-    isContentEditable: false, shadowRoot: null, labels: o.label ? [{ innerText: o.label }] : [], innerText: '', id: '',
-    getAttribute: () => null, querySelector: () => null, querySelectorAll: () => [], closest: () => null, getBoundingClientRect: () => ({ height: 20 }) });
-  const probe = (el) => new Function('document', `return ${scripts.VALUE_ACTIVE}`)({ activeElement: el });
-  const livrare = node('input', { type: 'radio', name: 'm', value: 'delivery', label: 'Livrare' });
-  const ridicare = node('input', { type: 'radio', name: 'm', value: 'pickup', label: 'Ridicare', checked: true });
-  const other = node('input', { type: 'radio', name: 'x', value: 'x', label: 'Other', checked: true });
-  livrare.getRootNode = () => ({ querySelectorAll: () => [other, livrare, ridicare] });
-  assert.deepStrictEqual(probe(livrare), { kind: 'choice', label: 'Ridicare', value: 'pickup' }, 'the group\'s checked radio after the key');
-  assert.deepStrictEqual(probe(node('input', { type: 'checkbox', value: 'on', label: 'Remember me', checked: true })), { kind: 'choice', label: 'Remember me [x]', value: 'on' });
-  const sel = node('select', { value: 'card', label: 'Payment method' });
-  sel.options = [{ text: 'Cash' }, { text: ' Card  bancar ' }];
-  sel.selectedIndex = 1;
-  assert.deepStrictEqual(probe(sel), { kind: 'choice', select: true, label: 'Card bancar', value: 'card' });
-  assert.match(CHILD_SRC, /else if \(value && value\.kind === 'choice' && typeof value\.label === 'string'\) \{\n\s*out\.choice = value\.label;\n\s*if \(value\.select\) out\.choiceKind = 'select';/);
+  assert.strictEqual(run('input', 'checkbox', 'on'), null);
   assert.match(scripts.INSPECT(1), /\.\.\.\(textual && !secret\(el\) \? \{ value: String\(el\.value == null \? '' : el\.value\) \} : \{\}\),/);
   assert.match(CHILD_SRC, /const out = await withChange\(svc, pre, \{ \.\.\.nav\(\), idle: idleOf\(idle\) \}, lateMsFor\(op\)\);\n\s*if \(out\.changed === '' && !wc\.isDestroyed\(\)\) \{\n\s*const value = await inIsolated\(wc, scripts\.VALUE_ACTIVE\);/);
 });
@@ -1071,7 +1057,7 @@ test('enterRefusal: Enter that would submit a consequential target is refused wi
   assert.strictEqual(down.message, 'ArrowDown on [1] would choose [2] "Transfer" which looks consequential (transfer) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(calls[calls.length - 1], scripts.SUBMIT_TARGET(null, 'ArrowDown'));
   assert.strictEqual(await enterRefusal(isolated({ ...transfer, label: 'Card', consequential: null }), null, { key: 'ArrowDown' }), null, 'a plain next radio proceeds');
-  const method = { from: 3, n: 3, press: true, choose: true, change: true, label: 'Payment method', consequential: 'payment' };
+  const method = { from: 3, n: 3, press: true, choose: true, label: 'Payment method', consequential: 'payment' };
   assert.strictEqual((await enterRefusal(isolated(method), null, { key: 'ArrowUp' })).message,
     'ArrowUp on [3] would change [3] "Payment method" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(await enterRefusal(isolated(transfer), null, { key: 'ArrowDown', confirm: true }), null);
@@ -1202,7 +1188,7 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
   const elsewhere = mk('input', 'radio', { name: 'm', form: {}, label: 'Transfer' });
   assert.deepStrictEqual(run('ArrowDown', card, [card, elsewhere], { 2: elsewhere }), { none: true }, 'same name in another form is another group');
   const method = mk('select', '', { label: 'Payment method' });
-  assert.deepStrictEqual(run('ArrowDown', method, []), { from: 1, n: 1, press: true, choose: true, change: true, label: 'Payment method', consequential: 'payment' });
+  assert.deepStrictEqual(run('ArrowDown', method, []), { from: 1, n: 1, press: true, choose: true, label: 'Payment method', consequential: 'payment' });
   assert.deepStrictEqual(run('ArrowDown', mk('select', '', { label: 'Payment method', multiple: true }), []), { none: true });
   assert.deepStrictEqual(run('ArrowDown', mk('input', 'text', { label: 'Amount' }), []), { none: true }, 'arrows move the caret');
   assert.deepStrictEqual(run('ArrowDown', mk('input', 'checkbox', { label: 'Transfer' }), []), { none: true });

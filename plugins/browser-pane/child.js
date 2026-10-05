@@ -943,10 +943,6 @@ function run(electron, ctx) {
         if (out.changed === '' && !wc.isDestroyed()) {
           const value = await inIsolated(wc, scripts.VALUE_ACTIVE);
           if (typeof value === 'string') out.value = value;
-          else if (value && value.kind === 'choice' && typeof value.label === 'string') {
-            out.choice = value.label;
-            if (value.select) out.choiceKind = 'select';
-          }
         }
         return out;
       }

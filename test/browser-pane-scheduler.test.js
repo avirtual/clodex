@@ -247,7 +247,7 @@ test('scheduler close: refused under a takeover hold, closes under a sign-in hol
   assert.deepStrictEqual(h.calls, [['hand-a', 'close', {}]]);
   assert.strictEqual(h.sched.leaseHolder('utility'), null);
   assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser services]']]), [
-    ['hand-b', '[agent:browser] services: utility — portal.example.com · sign-in was pending · closed'],
+    ['hand-b', '[agent:browser] services: utility — portal.example.com · sign-in page · closed'],
   ]);
 });
 
