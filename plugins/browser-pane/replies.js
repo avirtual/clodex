@@ -517,7 +517,7 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 const REFUSED_RES = [
   /^\S+ refused: .* matches denylist pattern /,
   /^\[\d+\] ".*" (publishes as the operator|looks consequential \(|is an ad — )/,
-  /^Enter in .+ would (press|submit) .* (publishes as the operator|looks consequential \(|is an ad — )/,
+  /^(Enter|Space) (in|on) .+ would (press|submit) .* (publishes as the operator|looks consequential \(|is an ad — )/,
   /^\[\d+\] on \S+ no longer points at one element/,
   /^\[\d+\] retired: its text changed since your read/,
 ];
