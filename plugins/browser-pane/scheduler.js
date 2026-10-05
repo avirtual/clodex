@@ -206,7 +206,7 @@ function createScheduler({
   }
 
   async function runOpen(handle, service, cmd) {
-    const r = await client.request('open', { url: cmd.url }, { service, seat: handle.name });
+    const r = await client.request('open', { url: cmd.url, ...(cmd.show ? { show: true } : {}) }, { service, seat: handle.name });
     recordOpen(service, handle.name, r, cmd.url);
     for (const st of seats.values()) delete st.feed[service];
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });

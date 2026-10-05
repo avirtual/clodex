@@ -1512,3 +1512,14 @@ test('readPage: a compact read runs FEED with the read\'s ⚠ categories after n
   assert.match(scripts.READ_INTERACTIVE(true, {}), /posts: \[\.\.\.\(mainRootOf\(\) \|\| document\)\.querySelectorAll/);
   assert.match(CHILD_SRC, /: \{ count: posts, failed: true \};/);
 });
+
+test('windows: a service window opens hidden and surfaces without focus only on open --show; operator show still raises and focuses', () => {
+  const svcFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function openService('), CHILD_SRC.indexOf('const inIsolated ='));
+  assert.ok(svcFn.includes('show: false,'));
+  assert.ok(!svcFn.includes('showInactive'));
+  assert.doesNotMatch(CHILD_SRC, /paintWhenInitiallyHidden/);
+  assert.strictEqual(CHILD_SRC.split('showInactive').length - 1, 1);
+  assert.ok(CHILD_SRC.includes("if (args.show && !svc.win.isDestroyed()) svc.win.showInactive();\n    return have ? out : { ...out, shown: !!args.show };"));
+  const opFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function operatorOp('), CHILD_SRC.indexOf('async function readPage('));
+  assert.ok(opFn.includes('svc.win.show();\n    svc.win.focus();\n    app.focus({ steal: true });'));
+});

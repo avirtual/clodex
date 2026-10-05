@@ -18,6 +18,11 @@ you the window (it lands when the current action finishes); **Hand back to
 agent** returns it. On a sign-in page the window is handed to you with one
 notification; agents are refused password and one-time-code fields.
 
+An agent's windows open in the background and never take focus: a hidden window
+still loads, runs page scripts, scrolls and screenshots. `open --show` surfaces
+one without stealing focus; the pane's **Show** button raises it. A sign-in hold
+is signalled by **browser: needs you** in the status bar, not by the window.
+
 ## Steering the window yourself
 
 The bar at the top of each window has an address field with back and reload.
@@ -183,7 +188,7 @@ ipc handlers (step 12).
 ## What the agent can do
 
 ```
-[agent:browser open <service>] <url>
+[agent:browser open <service> [--show]] <url>
 [agent:browser read [service] [--text|--links|--compact] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter] [--confirm]] <text>
