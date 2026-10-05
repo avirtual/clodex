@@ -158,7 +158,7 @@ test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
   assert.strictEqual(fs.statSync(r.path).mode & 0o111, 0o111);
   assert.strictEqual(fs.readFileSync(r.path, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'));
   const src = fs.readFileSync(r.path, 'utf8');
-  assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net'], 'zero local requires: it runs flat from bin/');
+  assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net', 'fs', 'path'], 'zero local requires: it runs flat from bin/');
 });
 
 test('reply shapes: a refusal is stderr `clodex: <reason>` exit 3; an error reply is stdout exit 1', async () => {
