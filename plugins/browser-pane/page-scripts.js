@@ -821,7 +821,10 @@ function find(n) {
     requestAnimationFrame(() => requestAnimationFrame(once));
   });
   const named = (o, hit) => {
-    const hitButtons = o.covered && o.hitN == null ? buttonsOf(overlayOf(hit)) : [];
+    let host = null;
+    for (let e = o.covered && o.hitN != null && !o.hitConsequential ? hit : null; e && !host; e = upOf(e)) if (numberOf(e) != null) host = e;
+    const hitButtons = !o.covered ? [] : o.hitN == null ? buttonsOf(overlayOf(hit))
+      : host && !host.matches(${JSON.stringify(STD_SEL)}) ? buttonsOf(host) : [];
     return hitButtons.length ? { ...o, hitButtons } : o;
   };
   const onScreen = o => o.x >= 0 && o.y >= 0 && o.x < innerWidth && o.y < innerHeight;

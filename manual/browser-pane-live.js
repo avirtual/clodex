@@ -771,6 +771,13 @@ async function coveredStep(emit, base) {
   const stickyReply = await emit(`[agent:browser click covered ${topN}]`);
   console.log(`    sticky click ${topN}: ${stickyReply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
   check('sticky.html: a link our scroll parked under the sticky header is scrolled clear and lands', gateLog.includes('/gate/sorted.html?o=top'));
+  await emit(`[agent:browser open covered] ${base}/gate/region.html`);
+  const regionRead = fileOf(await emit('[agent:browser read covered]'));
+  const [underN, bannerN, declineN, acceptN] = ['Product under', 'Cookie banner', 'Decline', 'Accept'].map((l) => numOf(regionRead, l));
+  gateLog.length = 0;
+  const regionReply = await emit(`[agent:browser click covered ${underN}]`);
+  console.log(`    region click ${underN}: ${regionReply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
+  check('region.html: a numbered cookie region lists its buttons', regionReply.includes(`[${underN}] "Product under the banner" is covered at its click point by [${bannerN}] "Cookie banner" whose buttons are [${declineN}] "Decline" · [${acceptN}] "Accept" — read again, or click one of them`));
   await emit('[agent:browser close covered]');
 }
 
