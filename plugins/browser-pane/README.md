@@ -7,8 +7,8 @@ page text plus a numbered list of links and controls, about 2,500 tokens per
 page, delivered as a file the agent reads. You watch the window, and you sign in
 yourself; the agent never types a password.
 
-This release covers `open`, `read`, `click`, `type`, `key`, `scroll`, `select`,
-`download`, `screenshot`, `inspect`, `wait`, `services` and `release`, and the take-over
+This release covers `open`, `read`, `click`, `type`, `key`, `scroll`, `back`,
+`forward`, `select`, `download`, `screenshot`, `inspect`, `wait`, `services` and `release`, and the take-over
 controls.
 
 While an agent acts, the bar at the top of the window turns amber, names the
@@ -177,6 +177,8 @@ ipc handlers (step 12).
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
 [agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]
+[agent:browser back [service]]
+[agent:browser forward [service]]
 [agent:browser select [service] <n> [--confirm]] <option text or value>
 [agent:browser download [service] [<n>] [--to=<dir>] [--as=<name>]] [<url>]
 [agent:browser screenshot [service] [--numbers] [--attach|--path-only]]
@@ -191,6 +193,13 @@ ipc handlers (step 12).
 top/bottom of page), how many feed items loaded or dropped, how much the page
 grew, and what changed. It does not number anything: `read` again to get numbers
 for the new items.
+
+`back` and `forward` walk the service's history like the pane's own buttons. The
+reply says where you landed and whether another step is possible
+(`history: back ✓ forward ✗`); with no entry in that direction the reply is
+`NO_HISTORY`. X restores the feed's scroll position, so the numbers from the
+earlier read usually survive (`numbers kept where the page repeats`). A denied
+destination is refused like `open`.
 
 `read --compact` prints a feed (any page built of `article` elements) as one line
 per post: the post's own number (its permalink, the same number a default read
