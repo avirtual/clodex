@@ -551,13 +551,24 @@ animate the scroll and let the after-measure land mid-animation.
 
 ## page-scripts.js — feedPosts
 
-A post is a top-level `article` (one not inside another); its permalink is the
-first `a[href*="/status/"]`, else the `time`'s link, the same rule `collect` uses
-to label in-article actions. The header row is the nearest ancestor of that `time`
-whose text holds an `@word`; article text lines above it carry the repost and
-pinned flags. The body is the first `[lang]` descendant (X, Mastodon and Bluesky
+A post is a top-level `article` (one not inside another). Its permalink is the
+link holding its first `time`, else a status link with no `/photo/N`, `/video/N`
+or `/analytics` suffix. X ads have no `time`, so their number is the article's
+numbered clickable wrapper (`[1020] clickable "… Ad …"`) and their path comes from
+the analytics link with the suffix stripped. X's header has two levels: the name
+link and ✓ svg sit in one div, and `@handle · time` in a sibling div. The handle
+link has path `/<handle>` and text `@handle`. The name link is the link to the same
+path that sits closest to it, because a self-repost's "Ana Lee reposted" link
+also points at `/analee`. Ads show `@handle` in a plain span. Text before the
+author row is read with a DOM Range, since `indexOf` on article text matches the
+name inside "Ana Lee reposted". X puts "Ad" below the header. The time link's
+aria-label (`10 minutes`) has the count shape, so the permalink and time units are
+skipped. The body is the first `[lang]` descendant (X, Mastodon and Bluesky
 mark post text with `lang`). Counts come from aria-labels shaped `<number> <Word>`:
 X labels `1058 Replies. Reply` with the exact value while the visible text says
 `1K`. A second `time` outside the permalink marks a quote; its block is the widest
-ancestor of that `time` that does not also hold the post's own `time`. The card
-host is the external `href`'s host, which on X is `t.co`.
+ancestor of that `time` that does not also hold the post's own `time`. That block
+can hold the outer post's `/photo/1` link, so the quote link is the one with a
+different status id. X Article quotes have no status link. Card hrefs on X are
+`t.co` or carry utm tags, while the link text shows the real domain
+(`From millerandhill.com`). X's "Parody account" label links to `help.x.com`.
