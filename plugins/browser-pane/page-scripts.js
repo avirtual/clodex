@@ -735,22 +735,48 @@ function clickPoint(el, r, doc) {
 function find(n) {
   return `(() => {${DEEP}
   ${REF(n)}
-  el.scrollIntoView({ block: 'center', inline: 'center' });
-  const r = el.getBoundingClientRect();
   ${clickPoint.toString()}
-  const at = clickPoint(el, r, document);
   ${KIND_LABEL}${CQ}${ROW}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
-  return {
-    x: at.x, y: at.y, tag, type, kind, label,
-    password: tag === 'input' && type === 'password',
-    otp: el.getAttribute('autocomplete') === 'one-time-code',
-    editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
-    href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
-    download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
-    consequential: cqOf(el),
-    row: rowOf(el),
+  const r0 = el.getBoundingClientRect();
+  if (!r0.width || !r0.height) return null;
+  const sc = scrollerOf(upOf(el));
+  const clip = sc && sc !== FIXED ? sc.getBoundingClientRect() : null;
+  const outside = r0.top < 0 || r0.bottom > innerHeight || r0.left < 0 || r0.right > innerWidth
+    || (!!clip && (r0.top < clip.top || r0.bottom > clip.bottom || r0.left < clip.left || r0.right > clip.right));
+  if (outside) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const first = clickPoint(el, el.getBoundingClientRect(), document);
+  const report = () => {
+    const r = el.getBoundingClientRect();
+    const at = r.width && r.height ? clickPoint(el, r, document) : first;
+    let hit = document.elementFromPoint ? document.elementFromPoint(at.x, at.y) : null;
+    while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+      const inner = hit.shadowRoot.elementFromPoint(at.x, at.y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };
+    const covered = !!hit && !within(el, hit) && !within(hit, el);
+    let hitN = null;
+    for (let e = covered ? hit : null; e && hitN == null; e = upOf(e)) {
+      const m = window.__cxOf && window.__cxOf.get(e);
+      if (m != null && window.__cxEls[m] && window.__cxEls[m].deref() === e) hitN = m;
+    }
+    return {
+      x: at.x, y: at.y, tag, type, kind, label,
+      password: tag === 'input' && type === 'password',
+      otp: el.getAttribute('autocomplete') === 'one-time-code',
+      editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
+      href: tag === 'a' && typeof el.href === 'string' ? el.href : '',
+      download: tag === 'a' && el.hasAttribute('download') ? el.getAttribute('download') : null,
+      consequential: cqOf(el),
+      row: rowOf(el),
+      covered,
+      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit) } : {}),
+    };
   };
+  if (!outside) return report();
+  return new Promise(res => { setTimeout(() => res(report()), 150); requestAnimationFrame(() => requestAnimationFrame(() => res(report()))); });
 })()`;
 }
 

@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, coveredRefusal, consequentialRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -1028,9 +1028,86 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   assert.strictEqual(consequentialRefusal(36, { label: 'Post', consequential: 'publish' }, false).message,
     '[36] "Post" publishes as the operator — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(3, { label: 'Avizier', consequential: null }, false), null);
-  const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
+  const act = /const el = await resolve\(svc, n\);\n\s*const coveredErr = coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
   assert.match(scripts.FIND(1), /consequential: cqOf\(el\),/);
+});
+
+test('coveredRefusal: a covered click point is refused naming what covers it, before the ⚠ gate looks at the element', () => {
+  const e = coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Delete account', hitConsequential: 'deletion' });
+  assert.strictEqual(e.code, 'COVERED');
+  assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] "Delete account" — read again, or click the element that covers it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Rezultate: 3 produse' }).message,
+    '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Rezultate: 3 produse") — read again, or click the element that covers it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: false }), null);
+  assert.ok(CHILD_SRC.indexOf('coveredRefusal(n, el)') < CHILD_SRC.indexOf('consequentialRefusal(n, el, !!args.confirm)'));
+  assert.match(CHILD_SRC, /'CONSEQUENTIAL', 'COVERED',/);
+  assert.match(CHILD_SRC, /const coveredErr = paths\.directHref\(el\.href, svc\.wc\.getURL\(\)\) \? null : coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*dispatch\(svc, \{ type: 'describe', what: `download/);
+});
+
+function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
+  const els = { 5: new WeakRef(el) };
+  const of = new WeakMap([[el, 5]]);
+  for (const [n, e] of Object.entries(numbered)) { els[n] = new WeakRef(e); of.set(e, Number(n)); }
+  const ctx = {
+    document: { elementFromPoint: under, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
+    getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
+    location: { href: 'http://x/', origin: 'http://x' }, __cxEls: els, __cxOf: of, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+    requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0,
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  return vm.runInContext(scripts.FIND(5), ctx);
+}
+
+function boxEl(tag, text, rect, parent = null) {
+  const e = {
+    tagName: tag.toUpperCase(), isConnected: true, innerText: text, textContent: text, labels: null, value: '', type: '', form: null, parentElement: parent, parentNode: parent, childNodes: [],
+    matches: (sel) => sel.split(',').some((x) => x.trim() === tag), getAttribute: () => null, setAttribute: () => {}, hasAttribute: () => false,
+    querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+    rect, getBoundingClientRect: () => e.rect, scrolls: [], scrollIntoView(o) { e.scrolls.push({ ...o }); if (e.onScroll) e.onScroll(); },
+    contains(o) { for (let x = o; x; x = x.parentElement) if (x === e) return true; return false; },
+  };
+  return e;
+}
+
+test('FIND: scrolls only an element outside the viewport, to nearest, and reports what sits under the click point', async () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const inView = boxEl('button', 'Pret crescator', box(10, 100, 100, 30));
+  const a = plain(findOn(inView, () => inView));
+  assert.deepStrictEqual(inView.scrolls, [], 'an element in view is not scrolled');
+  assert.deepStrictEqual([a.x, a.y, a.covered, a.hitN], [60, 115, false, undefined]);
+  const below = boxEl('button', 'Pret crescator', box(10, 900, 100, 30));
+  below.onScroll = () => { below.rect = box(10, 700, 100, 30); };
+  const b = plain(await findOn(below, () => below));
+  assert.deepStrictEqual(below.scrolls, [{ block: 'nearest', inline: 'nearest' }]);
+  assert.deepStrictEqual([b.x, b.y, b.covered], [60, 715, false]);
+  const del = boxEl('button', 'Delete account', box(0, 680, 260, 120));
+  const menu = boxEl('button', 'Pret crescator', box(10, 900, 100, 30));
+  menu.onScroll = () => { menu.rect = box(10, 700, 100, 30); };
+  const seen = [];
+  const c = plain(await findOn(menu, (x, y) => { seen.push([x, y]); return del; }, { numbered: { 8: del }, onFrame: () => { menu.rect = box(0, 0, 0, 0); } }));
+  assert.deepStrictEqual(seen, [[60, 715]], 'a menu the page closed on scroll is hit-tested where it was');
+  assert.deepStrictEqual([c.covered, c.hitN, c.hitLabel, c.hitConsequential], [true, 8, 'Delete account', 'deletion']);
+  const overlay = boxEl('div', 'Accept cookies', box(0, 0, 1200, 800));
+  const d = plain(findOn(inView, () => overlay));
+  assert.deepStrictEqual([d.covered, d.hitN, d.hitLabel], [true, null, 'Accept cookies']);
+  const span = boxEl('span', 'Pret', box(20, 105, 40, 20), inView);
+  assert.strictEqual(plain(findOn(inView, () => span)).covered, false, 'the element\'s own child is not a cover');
+  const label = boxEl('label', 'Email', box(0, 90, 300, 60));
+  const field = boxEl('input', '', box(10, 100, 100, 30), label);
+  assert.strictEqual(plain(findOn(field, () => label)).covered, false, 'an ancestor under the point is not a cover');
+  const list = Object.assign(boxEl('div', 'Brand', box(0, 100, 300, 150)), { scrollHeight: 600, clientHeight: 150, style: { overflowX: 'hidden', overflowY: 'auto', position: 'static' } });
+  const clipped = boxEl('a', 'Samsung', box(10, 300, 100, 30), list);
+  clipped.onScroll = () => { clipped.rect = box(10, 220, 100, 30); };
+  const e = plain(await findOn(clipped, () => clipped));
+  assert.deepStrictEqual(clipped.scrolls, [{ block: 'nearest', inline: 'nearest' }], 'an item clipped by its overflow:auto list is scrolled into the list');
+  assert.deepStrictEqual([e.x, e.y, e.covered], [60, 235, false]);
+  const backdrop = boxEl('div', '', box(0, 0, 1200, 800));
+  assert.strictEqual(plain(findOn(inView, () => backdrop)).hitLabel, 'div', 'a blank cover is named by its tag');
+  const gone = boxEl('button', 'Pret crescator', box(0, 0, 0, 0));
+  assert.strictEqual(findOn(gone, () => null), null, 'an element with no box is no longer on the page');
 });
 
 test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const R = require('../plugins/browser-pane/replies');
+const { storedLogin } = require('../plugins/browser-pane/scheduler');
 
 const ESC = String.fromCharCode(27);
 
@@ -82,6 +83,10 @@ test('replies: services line from storage plus mirror', () => {
   const pending = { t31: { lastUsedAt: 1, lastUrl: 'https://127.0.0.1/login', login: { state: 'login-page', at } } };
   assert.strictEqual(R.servicesReply(pending, new Map([['t31', 'closed']])), '[agent:browser] services: t31 — 127.0.0.1 · sign-in was pending · closed');
   assert.strictEqual(R.servicesReply(pending, new Map([['t31', 'held']])), '[agent:browser] services: t31 — 127.0.0.1 · sign-in page · window open · held');
+  const google = { g1: { lastUsedAt: 1, lastUrl: 'https://accounts.google.com/v3/signin', login: storedLogin({ idp: 'google' }, at) } };
+  assert.strictEqual(R.servicesReply(google, new Map([['g1', 'held']])), '[agent:browser] services: g1 — accounts.google.com · sign-in page · window open · held');
+  const refused = { g1: { lastUsedAt: 1, lastUrl: 'https://accounts.google.com/v3/signin/rejected', login: storedLogin({ idp: 'google', googleRejected: true }, at) } };
+  assert.strictEqual(R.servicesReply(refused, new Map([['g1', 'idle']])), '[agent:browser] services: g1 — accounts.google.com · Google sign-in refused · window open · idle');
 });
 
 function withTmp(fn) {
@@ -142,7 +147,13 @@ test('replies: the T3 refusal texts, verbatim', () => {
 test('replies: the sign-in reply and notification, password and Google, verbatim', () => {
   assert.strictEqual(R.signinReply('utility', { password: true }, 'https://portal.example.com/login'),
     '[agent:browser] sign-in needed on utility (password field at https://portal.example.com/login). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait utility] and end your turn; the reply comes when the operator hands the window back.');
-  assert.strictEqual(R.signinReply('utility', { idp: 'google' }, 'https://accounts.google.com/v3/signin'),
+  assert.strictEqual(R.signinReply('g1', { idp: 'google' }, 'https://accounts.google.com/v3/signin'),
+    '[agent:browser] sign-in needed on g1 (Google sign-in at https://accounts.google.com/v3/signin). The operator has been notified and signs in themselves in the browser window. Do not ask anyone for a password or code and do not type one. Emit [agent:browser wait g1] and end your turn; the reply comes when the operator hands the window back.');
+  assert.deepStrictEqual(R.signinNotice('g1', 'clodex-hand', 'https://accounts.google.com/v3/signin', { idp: 'google' }), {
+    title: 'Browser: sign in to g1',
+    body: 'clodex-hand opened https://accounts.google.com/v3/signin and hit a sign-in page. Click "browser: needs you" in the status bar, sign in, then press "Hand back to agent". The agent never sees what you type.',
+  });
+  assert.strictEqual(R.signinReply('utility', { idp: 'google', googleRejected: true }, 'https://accounts.google.com/v3/signin/rejected'),
     "[agent:browser] sign-in on utility goes through Google (accounts.google.com), which refuses sign-in inside embedded browsers, so the operator probably cannot log in here. Tell the operator in one line and stop: they can try the portal's own email/password login, or download the files by hand. Do not ask for credentials.");
   assert.deepStrictEqual(R.signinNotice('utility', 'clodex-hand', 'https://portal.example.com/login', { password: true }), {
     title: 'Browser: sign in to utility',

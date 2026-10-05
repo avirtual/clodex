@@ -188,12 +188,23 @@ ${['Census of Population and Housing 2022 (PDF). Retrieved 12 November 2024.', '
   '/echo': (req) => `<title>Echo</title><main><p>cookie header: ${String(req.headers.cookie || '(none)').replace(/[<>&]/g, '')}</p></main>`,
 };
 
+const gateLog = [];
+
 function server() {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       const url = new URL(req.url, 'http://x');
       const headers = { 'content-type': 'text/html; charset=utf-8' };
       if (url.pathname === '/hang') return;
+      if (url.pathname.startsWith('/gate/')) {
+        gateLog.push(req.url);
+        const low = url.pathname === '/gate/sort3-low.html';
+        const file = path.join(__dirname, 'fixtures', 'gate', low ? 'sort3.html' : path.basename(url.pathname));
+        res.writeHead(fs.existsSync(file) ? 200 : 404, headers);
+        const body = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'nope';
+        res.end(low ? body.replace('#top{height:640px', '#top{height:1000px') : body);
+        return;
+      }
       if (url.pathname === '/hidden') {
         res.writeHead(200, headers);
         res.end(fs.readFileSync(path.join(__dirname, 'fixtures', 'browser-pane-hidden.html')));
@@ -721,6 +732,41 @@ async function shownCloseStep(emit, base, host) {
   check('after close no service window is on screen', closed.onscreen === hidden.onscreen);
 }
 
+async function coveredStep(emit, base) {
+  console.log('== 17. a click whose point a menu closed on scroll no longer covers lands nowhere; the ⚠ gate is not bypassed');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const numOf = (content, label) => Number((new RegExp(`\\[(\\d+)\\][^\\n]*${label}`).exec(content) || [])[1]);
+  await emit(`[agent:browser open covered] ${base}/gate/sort3.html`);
+  const sortN = numOf(fileOf(await emit('[agent:browser read covered]')), 'Relevanta');
+  await emit(`[agent:browser click covered ${sortN}]`);
+  const ascN = numOf(fileOf(await emit('[agent:browser read covered]')), 'Pret crescator');
+  gateLog.length = 0;
+  const reply = await emit(`[agent:browser click covered ${ascN}]`);
+  const del = gateLog.filter((u) => u.startsWith('/gate/done.html'));
+  console.log(`    sort3 click ${ascN}: ${reply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
+  check('in view: the click lands on Pret crescator (or is refused as covered) and done.html is never requested', del.length === 0 && (/is covered at its click point by/.test(reply) || gateLog.includes('/gate/sorted.html?o=asc')));
+  await emit(`[agent:browser open covered] ${base}/gate/sort3-low.html`);
+  const lowSort = numOf(fileOf(await emit('[agent:browser read covered]')), 'Relevanta');
+  await emit(`[agent:browser click covered ${lowSort}]`);
+  const lowAsc = numOf(fileOf(await emit('[agent:browser read covered]')), 'Pret crescator');
+  gateLog.length = 0;
+  const lowReply = await emit(`[agent:browser click covered ${lowAsc}]`);
+  console.log(`    sort3-low click ${lowAsc}: ${lowReply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
+  check('below the fold: refused as covered, done.html never requested', /is covered at its click point by/.test(lowReply) && !gateLog.some((u) => u.startsWith('/gate/done.html')));
+  await emit(`[agent:browser open covered] ${base}/gate/sort.html`);
+  const sortN2 = numOf(fileOf(await emit('[agent:browser read covered]')), 'Relevanta');
+  await emit(`[agent:browser click covered ${sortN2}]`);
+  const ascN2 = numOf(fileOf(await emit('[agent:browser read covered]')), 'Pret crescator');
+  let second = await emit(`[agent:browser click covered ${ascN2}]`);
+  if (/is covered at its click point by/.test(second)) {
+    await emit(`[agent:browser click covered ${sortN2}]`);
+    const again = numOf(fileOf(await emit('[agent:browser read covered]')), 'Pret crescator');
+    second = await emit(`[agent:browser click covered ${again}]`);
+  }
+  check('sort.html: Pret crescator reaches sorted.html?o=asc, after reopening the menu when refused', gateLog.some((u) => u === '/gate/sorted.html?o=asc'));
+  await emit('[agent:browser close covered]');
+}
+
 async function hiddenStep(emit, base) {
   console.log('== 0. a window that was never shown still paints, runs rAF and fires IntersectionObserver');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
@@ -764,8 +810,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['shownclose', 'hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
+  if (['covered', 'shownclose', 'hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
+    else if (process.env.CXB_ONLY === 'covered') await coveredStep(emit, base);
     else if (process.env.CXB_ONLY === 'hidden') await hiddenStep(emit, base);
     else if (process.env.CXB_ONLY === 'shownclose') await shownCloseStep(emit, base, host);
     else if (process.env.CXB_ONLY === 'stable') {

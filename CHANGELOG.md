@@ -48,6 +48,8 @@ blocks a release.
 - Browser pane: `close [service]` closes a service's window and keeps its sign-in — `release` only frees the seat's lease — and a subagent gets neither; a key that moves a radio or select choice replies `checked now`, and a subagent's refusal names the verb it may not use.
 - Browser pane: service windows open in the background and never surface on their own — `open --show` or the pane's Show button raises one; agents work in hidden windows (screenshots, requestAnimationFrame and infinite scroll included); `close` removes a window that was surfaced with --show, a browser child exits with its host, and a click that checks a radio or box replies `checked now`.
 - Browser pane: the status-bar window list is a table — one line per window with its seat, whether it is hidden, Show and a Hand… button that unfolds the hand-over form.
+- Browser pane: a click is refused when something else sits under its click point (the menu a page closes on scroll, an overlay) instead of landing on whatever is there — the ⚠ gate can no longer be bypassed by a shifted layout; an element already in view is not scrolled before the click.
+- Browser pane: Google sign-in is held for the operator like any sign-in (Gmail works in the window); the agent is told to stop only when Google actually rejects the embedded browser.
 
 ## 5.112.2 — 2026-10-04
 

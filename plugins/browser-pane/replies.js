@@ -218,6 +218,7 @@ function clipUrl(url) {
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
   noElement: (service, n) => `[${n}] is no longer on this page of ${service} — read again`,
+  covered: (n, el) => `[${n}] ${JSON.stringify(String(el.label || ''))} is covered at its click point by ${el.hitN != null ? `[${el.hitN}] ${JSON.stringify(String(el.hitLabel || ''))}` : `an unnumbered element (${JSON.stringify(String(el.hitLabel || ''))})`} — read again, or click the element that covers it`,
   retiredN: (service, n, now) => `[${n}] retired: its text changed since your read${now ? ` (now [${now}]?)` : ''} — read again`,
   unknownN: (service, n) => `[${n}] was not in your read of ${service} — read again`,
   ambiguousN: (service, n, label, context) => `[${n}] on ${service} no longer points at one element (was ${JSON.stringify(String(label || ''))}${context ? ` in ${JSON.stringify(String(context))}` : ''}) — read again and use the new number`,
@@ -264,7 +265,7 @@ function operatorNav(service, url, title, inPage = false) {
 }
 
 function isGoogle(login) {
-  return !!(login && (login.idp === 'google' || login.googleRejected));
+  return !!(login && login.googleRejected);
 }
 
 function signinKind(login) {
@@ -272,6 +273,7 @@ function signinKind(login) {
   if (login.password) return 'password field';
   if (login.otp) return 'one-time code field';
   if (login.captcha) return 'captcha';
+  if (login.idp === 'google') return 'Google sign-in';
   if (login.idp) return `${login.idp} sign-in`;
   return 'sign-in page';
 }

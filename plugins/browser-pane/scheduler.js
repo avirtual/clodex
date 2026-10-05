@@ -10,7 +10,7 @@ const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]
 
 function storedLogin(login, now) {
   if (!login || typeof login !== 'object') return { state: 'unknown', at: now };
-  if (login.idp === 'google' || login.googleRejected) return { state: 'idp-refused', at: now, via: 'google' };
+  if (login.googleRejected) return { state: 'idp-refused', at: now, via: 'google' };
   if (login.password || login.otp || login.captcha || login.idp) return { state: 'login-page', at: now, via: 'password-field' };
   if (login.logoutLink) return { state: 'logged-in', at: now, via: 'logout-link' };
   if (login.loggedInHint) return { state: 'logged-in', at: now, via: 'account-ui' };
