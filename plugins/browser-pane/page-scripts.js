@@ -784,6 +784,19 @@ const ENTER_SUBMIT = `if (tag === 'button' || (tag === 'input' && ['submit', 'im
   const seg = action.split(/[?#]/)[0].split('/').filter(Boolean).pop();
   return { from, n: null, label: String(seg || 'form').slice(0, 60), consequential: hit ? hit.cat : null };`;
 
+const ARROW_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+
+const ARROW_CHOOSE = (forward) => `if (tag === 'input' && type === 'radio') {
+    const group = el.name ? [...el.getRootNode().querySelectorAll('input[type=radio]')]
+      .filter(r => r.name === el.name && r.form === el.form && (r === el || !r.disabled)) : [el];
+    if (group.length < 2) return { none: true };
+    const i = group.indexOf(el);
+    const target = group[(i + ${forward ? 1 : -1} + group.length) % group.length];
+    return { from, n: numOf(target), press: true, choose: true, label: labelOf(target).slice(0, 60), consequential: cqOf(target) };
+  }
+  if (tag === 'select' && !el.multiple) return { from, n: from, press: true, choose: true, label, consequential: cqOf(el) };
+  return { none: true };`;
+
 function submitTarget(n, key = 'Enter') {
   return `(() => {${DEEP}
   ${n == null ? ACTIVE : REF(n)}
@@ -794,7 +807,7 @@ function submitTarget(n, key = 'Enter') {
   };
   const from = numOf(el);
   const role = el.getAttribute('role');
-  ${key === 'Space' ? SPACE_PRESS : ENTER_SUBMIT}
+  ${ARROW_KEYS.includes(key) ? ARROW_CHOOSE(key === 'ArrowDown' || key === 'ArrowRight') : key === 'Space' ? SPACE_PRESS : ENTER_SUBMIT}
 })()`;
 }
 
@@ -1380,6 +1393,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

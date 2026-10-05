@@ -66,6 +66,7 @@ const DOWNLOAD_OP_MS = 450000;
 const SCREENSHOT_OP_MS = 30000;
 const N_ACTS = new Set(['click', 'type', 'select']);
 const HELD_OK = new Set(['wait', 'release']);
+const heldOk = (s, sub) => HELD_OK.has(sub) || (sub === 'close' && s.reason !== 'takeover');
 const realTimers = {
   setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t && t.unref) t.unref(); return t; },
   clearTimeout: (t) => clearTimeout(t),
@@ -375,7 +376,7 @@ function createScheduler({
   }
 
   const RUN = {
-    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, scroll: runScroll, back: runNav, forward: runNav, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
+    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, scroll: runScroll, back: runNav, forward: runNav, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect, close: runClose,
   };
 
   function fail(handle, s, text, keepWaits) {
@@ -403,7 +404,7 @@ function createScheduler({
       pump(service);
       return;
     }
-    if (s.state === 'held') p = Promise.reject(new Error(replies.TEXT.held(service, s.reason)));
+    if (s.state === 'held' && !heldOk(s, job.cmd.sub)) p = Promise.reject(new Error(replies.TEXT.held(service, s.reason)));
     else p = Promise.resolve().then(() => RUN[job.cmd.sub](job.handle, service, job.cmd));
     p
       .then((text) => job.handle.inject(text))
@@ -439,15 +440,25 @@ function createScheduler({
     return replies.servicesReply((data && data.services) || {}, mirror, (name) => (services.get(name) || {}).url || '');
   }
 
+  function dropSeat(s, seat) {
+    if (!s.lease || s.lease.seat !== seat) return;
+    s.lease = null;
+    s.queue = s.queue.filter((j) => j.handle.name !== seat);
+    for (const w of s.waiters.filter((x) => x.seat === seat)) timers.clearTimeout(w.timer);
+    s.waiters = s.waiters.filter((x) => x.seat !== seat);
+  }
+
   function release(handle, service) {
-    const s = svcState(service);
-    if (s.lease && s.lease.seat === handle.name) {
-      s.lease = null;
-      s.queue = s.queue.filter((j) => j.handle.name !== handle.name);
-      for (const w of s.waiters.filter((x) => x.seat === handle.name)) timers.clearTimeout(w.timer);
-      s.waiters = s.waiters.filter((x) => x.seat !== handle.name);
-    }
+    dropSeat(svcState(service), handle.name);
     handle.inject(replies.reply(`released ${service}`));
+  }
+
+  async function runClose(handle, service) {
+    const r = await client.request('close', {}, { service, seat: handle.name });
+    dropSeat(svcState(service), handle.name);
+    const data = storage.get() || {};
+    const rec = (data.services && data.services[service]) || {};
+    return replies.closedReply(service, rec, r.windows);
   }
 
   function submit(handle, cmd) {
@@ -464,7 +475,7 @@ function createScheduler({
     seatState(handle.name).current = service;
     if (cmd.sub === 'release') { release(handle, service); return; }
     s.lease = { seat: handle.name, lastCmdAt: now() };
-    if (s.state === 'held' && !HELD_OK.has(cmd.sub)) {
+    if (s.state === 'held' && !heldOk(s, cmd.sub)) {
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
       return;
     }

@@ -1039,8 +1039,8 @@ test('enterRefusal: Enter that would submit a consequential target is refused wi
   assert.strictEqual(await enterRefusal(isolated({ ...card, consequential: null }), 26, { enter: true }), null);
   const typeGate = /const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;\n\s*const refusedEnter = op === 'type' && args\.enter \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), n, args\) : null;\n\s*if \(refusedEnter\) throw refusedEnter;\n\s*dispatch\(svc, \{ type: 'describe'/;
   assert.match(CHILD_SRC, typeGate, 'type refuses before it types anything, and only with --enter');
-  const keyGate = /const refusedKey = args\.key === 'Enter' \|\| args\.key === 'Space' \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
-  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter and Space, before pressing');
+  const keyGate = /const refusedKey = args\.key === 'Enter' \|\| args\.key === 'Space' \|\| scripts\.ARROW_KEYS\.includes\(args\.key\) \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
+  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter, Space and the arrows, before pressing');
   const btn = { from: 2, n: 2, press: true, label: 'Card bancar', consequential: 'payment' };
   const sp = await enterRefusal(isolated(btn), null, { key: 'Space' });
   assert.strictEqual(sp.code, 'CONSEQUENTIAL');
@@ -1051,6 +1051,16 @@ test('enterRefusal: Enter that would submit a consequential target is refused wi
   assert.strictEqual((await enterRefusal(isolated(null), null, { key: 'Space' })).message,
     'could not tell what Space would press — read again, or add --confirm if the operator asked for it');
   assert.strictEqual(CHILD_SRC.match(/SUBMIT_TARGET/g).length, 1);
+  const transfer = { from: 1, n: 2, press: true, choose: true, label: 'Transfer', consequential: 'transfer' };
+  const down = await enterRefusal(isolated(transfer), null, { key: 'ArrowDown' });
+  assert.strictEqual(down.code, 'CONSEQUENTIAL');
+  assert.strictEqual(down.message, 'ArrowDown on [1] would choose [2] "Transfer" which looks consequential (transfer) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[calls.length - 1], scripts.SUBMIT_TARGET(null, 'ArrowDown'));
+  assert.strictEqual(await enterRefusal(isolated({ ...transfer, label: 'Card', consequential: null }), null, { key: 'ArrowDown' }), null, 'a plain next radio proceeds');
+  const method = { from: 3, n: 3, press: true, choose: true, label: 'Payment method', consequential: 'payment' };
+  assert.strictEqual((await enterRefusal(isolated(method), null, { key: 'ArrowUp' })).message,
+    'ArrowUp on [3] would change [3] "Payment method" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(await enterRefusal(isolated(transfer), null, { key: 'ArrowDown', confirm: true }), null);
 });
 
 test('page scripts: SUBMIT_TARGET finds the default submit of the field\'s form, or the focused element for key Enter', () => {
@@ -1148,6 +1158,47 @@ test('page scripts: SUBMIT_TARGET for Space presses a focused button, checkbox o
     assert.deepStrictEqual(run(el), { none: true }, `${el.tagName} ${el.type}`);
   }
   assert.ok(!src.includes('consequentialHit({ action }'), 'Space never submits a form');
+});
+
+test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous radio of the focused one\'s group, or changes a focused select', () => {
+  const mk = (tag, type, o = {}) => ({ tagName: tag.toUpperCase(), type, name: o.name || '', form: o.form || null, label: o.label || '', disabled: !!o.disabled, multiple: !!o.multiple,
+    getAttribute: () => null, hasAttribute: () => false });
+  const run = (key, el, tree, numbered = {}) => {
+    const src = scripts.SUBMIT_TARGET(null, key);
+    const body = src.slice(src.indexOf('  const numOf'), src.lastIndexOf('})()'));
+    el.getRootNode = () => ({ querySelectorAll: (sel) => { assert.strictEqual(sel, 'input[type=radio]'); return tree.filter((e) => e.type === 'radio'); } });
+    const els = { 1: el, ...numbered };
+    const win = { __cxEls: Object.fromEntries(Object.entries(els).map(([k, e]) => [k, { deref: () => e }])) };
+    return new Function('el', 'tag', 'type', 'label', 'labelOf', 'cqOf', 'window', body)(
+      el, el.tagName.toLowerCase(), el.type, el.label, (e) => e.label, (e) => (e.label === 'Transfer' ? 'transfer' : e.label === 'Payment method' ? 'payment' : null), win);
+  };
+  const pay = {};
+  const card = mk('input', 'radio', { name: 'm', form: pay, label: 'Card' });
+  const transfer = mk('input', 'radio', { name: 'm', form: pay, label: 'Transfer' });
+  const cash = mk('input', 'radio', { name: 'm', form: pay, label: 'Cash' });
+  const other = mk('input', 'radio', { name: 'x', form: pay, label: 'Other group' });
+  const tree = [card, other, transfer, cash];
+  const nums = { 2: transfer, 3: cash, 4: other };
+  const chose = (n, label, consequential = null) => ({ from: 1, n, press: true, choose: true, label, consequential });
+  assert.deepStrictEqual(run('ArrowDown', card, tree, nums), chose(2, 'Transfer', 'transfer'), 'next in the group, skipping another name');
+  assert.deepStrictEqual(run('ArrowRight', card, tree, nums), chose(2, 'Transfer', 'transfer'));
+  assert.deepStrictEqual(run('ArrowUp', card, tree, nums), chose(3, 'Cash'), 'previous wraps to the last');
+  assert.deepStrictEqual(run('ArrowLeft', card, tree, nums), chose(3, 'Cash'));
+  assert.deepStrictEqual(run('ArrowDown', cash, tree, { 2: card }), { from: 1, n: 2, press: true, choose: true, label: 'Card', consequential: null }, 'next wraps to the first');
+  const elsewhere = mk('input', 'radio', { name: 'm', form: {}, label: 'Transfer' });
+  assert.deepStrictEqual(run('ArrowDown', card, [card, elsewhere], { 2: elsewhere }), { none: true }, 'same name in another form is another group');
+  const method = mk('select', '', { label: 'Payment method' });
+  assert.deepStrictEqual(run('ArrowDown', method, []), { from: 1, n: 1, press: true, choose: true, label: 'Payment method', consequential: 'payment' });
+  assert.deepStrictEqual(run('ArrowDown', mk('select', '', { label: 'Payment method', multiple: true }), []), { none: true });
+  assert.deepStrictEqual(run('ArrowDown', mk('input', 'text', { label: 'Amount' }), []), { none: true }, 'arrows move the caret');
+  assert.deepStrictEqual(run('ArrowDown', mk('input', 'checkbox', { label: 'Transfer' }), []), { none: true });
+});
+
+test('child: op close closes the window and waits for closed, keeping the partition', () => {
+  const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(name)'));
+  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*return \{ closed: name, windows: services\.size \};/);
+  assert.ok(!/destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close never destroys or clears the sign-in');
+  assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {

@@ -44,7 +44,7 @@ const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
   'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED', 'NO_HISTORY']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'nav', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'nav', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'close', 'inspect', 'policy']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -383,7 +383,7 @@ function consequentialRefusal(n, el, confirm) {
 
 async function enterRefusal(isolated, n, args) {
   if (args.confirm) return null;
-  const key = args.key === 'Space' ? 'Space' : 'Enter';
+  const key = args.key === 'Space' || scripts.ARROW_KEYS.includes(args.key) ? args.key : 'Enter';
   const sub = await isolated(scripts.SUBMIT_TARGET(n, key));
   if (!sub) return codedError('INTERNAL', TEXT.submitUnknown(key));
   if (!sub.consequential) return null;
@@ -935,7 +935,7 @@ function run(electron, ctx) {
       const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download });
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
-        const refusedKey = args.key === 'Enter' || args.key === 'Space' ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
+        const refusedKey = args.key === 'Enter' || args.key === 'Space' || scripts.ARROW_KEYS.includes(args.key) ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
         if (refusedKey) throw refusedKey;
         const pre = await preAct(svc, null);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
@@ -1260,6 +1260,14 @@ function run(electron, ctx) {
     return { jpeg: img.toJPEG(SHOT_QUALITY).toString('base64'), width, height, fallback: empty };
   }
 
+  async function opClose(name) {
+    const svc = need(name);
+    const closed = new Promise((resolve) => svc.win.once('closed', resolve));
+    svc.win.close();
+    await closed;
+    return { closed: name, windows: services.size };
+  }
+
   async function opForget(name) {
     const svc = services.get(name);
     if (svc && !svc.win.isDestroyed()) svc.win.destroy();
@@ -1530,6 +1538,7 @@ function run(electron, ctx) {
           result = { open: !!svc };
         } else if (op === 'hold' || op === 'handback' || op === 'show') result = await operatorOp(op, name);
         else if (op === 'forget') result = await serial(name, () => opForget(name));
+        else if (op === 'close') result = await serial(name, () => opClose(name));
         else {
           result = await serial(name, () => {
             if (op === 'open') return args.operator ? opOperatorOpen(name, args) : opOpen(name, frame, args);

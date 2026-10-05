@@ -196,6 +196,12 @@ function servicesReply(services, mirror, urlOf = () => '') {
   return reply(`services: ${items.join(' │ ')}`);
 }
 
+function closedReply(service, rec, windows) {
+  const login = rec && rec.login && rec.login.state === 'logged-in'
+    ? ` · signed in stays (open ${service} ${rec.lastUrl || '<url>'} resumes it)` : '';
+  return reply(`closed ${service}${login} · ${Number(windows) || 0} windows open`);
+}
+
 function ago(ms) {
   const secs = Math.max(0, Math.round(ms / 1000));
   return secs < 60 ? `${secs}s` : `${Math.round(secs / 60)}m`;
@@ -222,7 +228,8 @@ const TEXT = {
   submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : 'submit'} — read again, or add --confirm if the operator asked for it`,
   consequentialSubmit: (from, sub, key = 'Enter') => {
     const label = JSON.stringify(String(sub.label || ''));
-    const what = sub.press ? `press ${sub.n == null ? '' : `[${sub.n}] `}${label}`
+    const verb = !sub.choose ? 'press' : sub.n === sub.from ? 'change' : 'choose';
+    const what = sub.press ? `${verb} ${sub.n == null ? '' : `[${sub.n}] `}${label}`
       : sub.n == null ? `submit the form ${label}` : `submit through [${sub.n}] ${label}`;
     const why = sub.consequential === 'ad' ? 'which is an ad — a paid click on the operator\'s account that leaves the site;'
       : sub.consequential === 'publish' ? 'which publishes as the operator —' : `which looks consequential (${sub.consequential}) —`;
@@ -517,7 +524,7 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 const REFUSED_RES = [
   /^\S+ refused: .* matches denylist pattern /,
   /^\[\d+\] ".*" (publishes as the operator|looks consequential \(|is an ad — )/,
-  /^(Enter|Space) (in|on) .+ would (press|submit) .* (publishes as the operator|looks consequential \(|is an ad — )/,
+  /^(Enter|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight) (in|on) .+ would (press|submit|choose|change) .* (publishes as the operator|looks consequential \(|is an ad — )/,
   /^\[\d+\] on \S+ no longer points at one element/,
   /^\[\d+\] retired: its text changed since your read/,
 ];
@@ -528,6 +535,7 @@ function classifyReply(line) {
 }
 
 module.exports = {
+  closedReply,
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
