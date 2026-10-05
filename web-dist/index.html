@@ -12878,6 +12878,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       var DESKTOP_ONLY_NOTICE = "Browser pane: desktop only \u2014 its windows open on the machine running Clodex.";
       var ATTENTION = "bp-attention";
       var HANDED_MS = 5e3;
+      var PICKER_MAX_W = 560;
       var LOGIN_TEXT = {
         "logged-in": "signed in",
         "login-page": "sign-in page",
@@ -12924,9 +12925,22 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       function pickerLabel(s) {
         return `${s.name} \xB7 ${stateLabel(s)}${s.seat ? ` \xB7 ${s.seat}` : ""}`;
       }
+      var TITLE_MAX = 40;
+      function pickerSite(s) {
+        const title = String(s.title || "");
+        const clipped = title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX - 1)}\u2026` : title;
+        return { host: s.host ? ` ${s.host}` : "", title: clipped ? ` \u2014 ${clipped}` : "" };
+      }
       function pickerName(s) {
-        const seen = typeof s.visible === "boolean" ? s.visible ? " \xB7 shown" : " \xB7 hidden" : "";
-        return `${s.name} \xB7 ${stateLabel(s)}${seen}`;
+        const site = pickerSite(s);
+        return `${s.name}${site.host}${site.title}`;
+      }
+      function pickerState(s) {
+        return `${stateLabel(s)}${s.seat ? ` \xB7 ${s.seat}` : ""}${s.visible === false ? " \xB7 hidden" : ""}`;
+      }
+      function pickerHeading(list) {
+        const hidden = list.filter((s) => s.visible === false).length;
+        return hidden ? `Browser windows \xB7 ${list.length} open \xB7 ${hidden} hidden` : "Browser windows";
       }
       function forgetText(name) {
         return `Forget the login for ${name}?
@@ -13060,10 +13074,16 @@ Its cookies and site data are deleted, so the next visit starts signed out. Down
             return;
           }
           picker.fold = null;
+          node.appendChild(el("div", "bp-picker-label", pickerHeading(list)));
           for (const s of list) {
             const r = el("div", "bp-row bp-pick-row");
-            r.appendChild(el("span", "bp-pick-name", pickerName(s)));
-            r.appendChild(el("span", "bp-pick-seat", s.seat || "\u2014"));
+            const name = el("span", "bp-pick-name");
+            const site = pickerSite(s);
+            name.appendChild(el("b", null, s.name));
+            if (site.host) name.appendChild(el("span", "bp-pick-host", site.host));
+            if (site.title) name.appendChild(el("span", "bp-pick-title", site.title));
+            r.appendChild(name);
+            r.appendChild(el("span", "bp-pick-state", pickerState(s)));
             windowControls(r, s.name, async () => {
               await pull();
               fillPicker();
@@ -13078,9 +13098,9 @@ Its cookies and site data are deleted, so the next visit starts signed out. Down
           if (rect) {
             const vw = typeof window === "undefined" ? 0 : window.innerWidth || 0;
             const vh = typeof window === "undefined" ? 0 : window.innerHeight || 0;
-            const width = vw ? Math.min(760, vw - 16) : 760;
+            const width = vw ? Math.min(PICKER_MAX_W, vw - 16) : PICKER_MAX_W;
             const bottom = Math.max(4, vh - rect.top + 4);
-            node.style.width = `${width}px`;
+            node.style.maxWidth = `${width}px`;
             node.style.left = `${vw ? Math.max(8, Math.min(rect.left, vw - 8 - width)) : Math.max(4, rect.left)}px`;
             node.style.bottom = `${bottom}px`;
             if (vh) node.style.maxHeight = `${Math.max(0, vh - bottom - 8)}px`;
@@ -13297,7 +13317,7 @@ Its cookies and site data are deleted, so the next visit starts signed out. Down
           if (typeof off === "function") off();
         };
       }
-      module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+      module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
     }
   });
 

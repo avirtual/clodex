@@ -254,7 +254,7 @@ test('engine: status redacts a seat from another workspace', async (t) => {
   assert.deepStrictEqual(theirs, {
     ok: true,
     child: 'running',
-    services: [{ name: 'utility', state: 'driving', reason: null, seat: 'another workspace', login: 'unknown', denied: 0 }],
+    services: [{ name: 'utility', state: 'driving', reason: null, seat: 'another workspace', login: 'unknown', denied: 0, host: 'portal.example.com', title: '' }],
   });
 });
 
@@ -278,7 +278,7 @@ test('engine operator.open: bad service names and bad URLs are refused, a good o
     { ok: true, service: 'utility', url: 'https://portal.example.com/home', title: 'Operator utility' });
   assert.strictEqual(frames().filter((l) => l.startsWith('open')).pop(), 'open {"url":"https://portal.example.com/home","operator":true,"policy":{"global":[],"service":[]},"known":[]}');
   const st = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
-  assert.deepStrictEqual(st.services, [{ name: 'utility', state: 'held', reason: 'takeover', seat: null, login: 'unknown', denied: 0, operator: true, visible: false }]);
+  assert.deepStrictEqual(st.services, [{ name: 'utility', state: 'held', reason: 'takeover', seat: null, login: 'unknown', denied: 0, host: '', title: '', operator: true, visible: false }]);
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['utility'], 'desktop'), { ok: true, service: 'utility' });
   const shown = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
   assert.deepStrictEqual(shown.services.map((x) => [x.name, x.visible]), [['utility', true]]);
