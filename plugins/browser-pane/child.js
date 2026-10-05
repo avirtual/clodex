@@ -1360,6 +1360,12 @@ function run(electron, ctx) {
       }
     }
     mergeNumbers(svc, el);
+    const posts = el && Number(el.posts) > 0 ? Number(el.posts) : 0;
+    let feed = posts ? { count: posts } : null;
+    if (args.compact && el) {
+      const f = await inIsolated(wc, scripts.FEED(main, el.cats || {}));
+      if (f && Array.isArray(f.posts)) feed = { count: f.posts.length, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} };
+    }
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),
       retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...ent.volatile])),
@@ -1392,6 +1398,7 @@ function run(electron, ctx) {
       loading: loadingOf(svc),
       ...(busy ? { busy } : {}),
       ...(outline ? { outline } : {}),
+      ...(feed ? { feed } : {}),
     };
   }
 

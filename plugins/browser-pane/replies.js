@@ -70,6 +70,7 @@ const DIGEST_WARN_LABEL = 40;
 const DIGEST_LABEL = 60;
 const HINT_STOP = new Set(['view', 'press', 'more', 'show', 'new', 'your', 'the', 'and', 'for', 'with', 'from', 'this', 'that', 'posts', 'page']);
 const DIGEST_TITLE = 120;
+const COMPACT_HINT_POSTS = 5;
 const WORD_RE = /[\p{L}\p{N}]{4,}/gu;
 
 function readReply(service, info, file, sessionType, attach = { attach: true }) {
@@ -97,6 +98,7 @@ function readHint(info, headings) {
   const word = topWord(headings);
   if (!info.main && info.stripped) parts.push('--main');
   else if (word) parts.push(`--filter=${word}`);
+  if (!info.compact && info.posts >= COMPACT_HINT_POSTS) parts.push('--compact');
   if (info.pages > 1) parts.push(`--page=${info.page < info.pages ? info.page + 1 : 1} (of ${info.pages})`);
   return parts.length ? [`  hint: ${parts.join(' · ')}`] : [];
 }
@@ -112,6 +114,8 @@ function digestLines(info) {
   const outline = headings.length ? [`  headings: ${headings.join(' | ')}`] : landmarks.length ? [`  landmarks: ${landmarks.join(' | ')}`] : [];
   const warn = d.warn || [];
   const row = (w) => `[${w.n}] ${JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL))}`;
+  const folded = Object.entries(d.folded || {}).filter(([, n]) => n > 0);
+  const foldLine = folded.length ? [`  ⚠ folded: ${folded.map(([k, n]) => `${k} ×${n}`).join(', ')}`] : [];
   const warnLine = !warn.length ? [] : warn.length <= DIGEST_WARN ? [`  ⚠: ${warn.map(row).join(' · ')}`] : [
     `  ⚠ ${warn.length}: ${[...warn.reduce((m, w) => m.set(w.cat, (m.get(w.cat) || 0) + 1), new Map())].map(([k, n]) => `${k} ×${n}`).join(', ')}`,
     `  ⚠ first ${DIGEST_WARN_FIRST}: ${warn.slice(0, DIGEST_WARN_FIRST).map(row).join(' · ')}`,
@@ -121,6 +125,7 @@ function digestLines(info) {
     size,
     ...outline,
     ...warnLine,
+    ...foldLine,
     ...readHint(info, headings),
   ];
 }

@@ -38,7 +38,7 @@ const ROWS = [
   ['[agent:browser read Utility]',
     { error: "bad service name 'Utility' — use a-z, 0-9 and -, starting with a letter, at most 32 chars" }],
   ['[agent:browser read utility --bogus]',
-    { error: 'unknown flag --bogus for read — valid: --text --links --main --all --filter --page --max --attach --path-only' }],
+    { error: 'unknown flag --bogus for read — valid: --text --links --compact --main --all --filter --page --max --attach --path-only' }],
   ['[agent:browser open utility --links] https://x.example/',
     { error: 'unknown flag --links for open — valid: none' }],
   ['[agent:browser frob utility 4]',
