@@ -1197,17 +1197,20 @@ function feedPosts(scope, cats, byEl, loc) {
     let quote = null;
     if (qbox) {
       const pid = statusId(path);
-      const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid; });
+      const nested = [...qbox.querySelectorAll('[role=link]')].filter((e) => !e.contains(qt));
+      const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid && !nested.some((e) => e.contains(a)); });
       const suffixed = (a) => { const p = pathOf(a); return !!p && statusPath(p) !== p; };
       const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !suffixed(a)) || null;
       let cardEl = null;
       for (let e = qt; e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
       const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
+      const qPre = qm ? '/' + qm[1].toLowerCase() + '/status/' : null;
+      const qpa = [qa, ...qas].find((a) => a && (!qPre || (statusPath(pathOf(a)) || '').toLowerCase().startsWith(qPre))) || null;
       const ql = qbox.querySelector('[lang]');
       const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !suffixed(a) && flat(a.innerText).includes('@' + qm[1])) : null;
       quote = {
         n: (qa && numOf(qa)) ?? numOf(cardEl) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
-        text: clip(ql ? ql.innerText : '', 160), path: qa || qas[0] ? statusPath(pathOf(qa || qas[0])) : null,
+        text: clip(ql ? ql.innerText : '', 160), path: qpa ? statusPath(pathOf(qpa)) : null,
         media: mediaOf(qbox, () => true, null),
       };
     }

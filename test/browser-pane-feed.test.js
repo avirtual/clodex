@@ -318,3 +318,19 @@ test('FEED: the quote box is the outermost role=link card around the quote time;
   assert.deepStrictEqual([p.media.videos, p.media.duration], [1, '1:05']);
   assert.deepStrictEqual([p.quote.media.videos, p.quote.handle, p.quote.n], [0, 'other', 1500]);
 });
+
+test('FEED: a nested quote card keeps its own status link; the quote path comes only from a link under the quote handle', () => {
+  const quoteOf = (extra) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/5/video/1' }, h('img', { w: 300, h: 200 })));
+    const card = h('div', { role: 'link' },
+      h('div', {}, h('span', {}, 'Uj'), h('span', {}, '@uj'), h('time', {}, '3h')),
+      h('div', { lang: 'en' }, 'look'), inner, ...extra);
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+    return runFeed(h('main', {}, art), { 1400: card }, {}).posts[0].quote;
+  };
+  const q1 = quoteOf([]);
+  assert.deepStrictEqual([q1.n, q1.path], [1400, null]);
+  const q2 = quoteOf([h('a', { href: '/uj/status/7' }, 'Show more')]);
+  assert.deepStrictEqual([q2.n, q2.path], [1400, '/uj/status/7']);
+});
