@@ -194,6 +194,7 @@ function scrollCommand(positional, flags, body) {
   const last = positional[positional.length - 1];
   const dir = SCROLL_DIRS.includes(last) ? last : null;
   const rest = dir ? positional.slice(0, -1) : positional;
+  if (dir && rest.length && SCROLL_DIRS.includes(rest[0])) throw new Error('scroll takes one direction: down, up, top or bottom');
   if (!dir && positional.length > 1) {
     const stray = positional.find((t) => SCROLL_DIRS.includes(t));
     if (stray) throw new Error(`unexpected '${positional[positional.length - 1]}' for scroll`);
