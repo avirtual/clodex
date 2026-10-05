@@ -222,8 +222,50 @@ test('scheduler: a non-held wait asks the child for idle, clamped to 120 s', asy
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.calls.length = 0;
-  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait --ms=999999]']]), [['hand-a', '[agent:browser] utility idle after 2.3s']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait --idle --ms=999999]']]), [['hand-a', '[agent:browser] utility idle after 2.3s']]);
   assert.deepStrictEqual(h.calls, [['hand-a', 'idle', { ms: 120000, forText: null }]]);
+});
+
+test('scheduler: a bare wait --ms without --for is a fixed pause capped at 120 s, never an idle wait', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait --ms=2500]']]), []);
+  h.advance(2499);
+  await h.settle();
+  assert.deepStrictEqual(h.out.splice(0), []);
+  h.advance(1);
+  await h.settle();
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] utility waited 2.5s']]);
+  await h.run([['hand-a', '[agent:browser wait --ms=999999]']]);
+  h.advance(120000);
+  await h.settle();
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] utility waited 120s']]);
+  assert.deepStrictEqual(h.calls, []);
+});
+
+test('scheduler: a number act carries the seat\'s read gen; after the child restarts it is refused until a read brings the new gen', async () => {
+  let gen = 111;
+  const h = harness({
+    read: () => ({ ...PAGE, contentType: 'text/html', text: 'My Bills', elements: ['[1] button View'], truncated: false, frames: [], login: {}, gen }),
+    inspect: () => ({ n: 1, tag: 'button', attrs: {}, kind: 'button' }),
+    click: (a) => { if (a.n != null && a.gen !== gen) throw coded('RESTARTED', R.TEXT.restarted('utility')); return { kind: 'button', label: 'View', navigated: false, idle: { ok: true, ms: 1200 }, ...PAGE, gen }; },
+  });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  h.calls.length = 0;
+  await h.run([['hand-a', '[agent:browser click 1]']]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'click', { n: 1, gen: 111 }]]);
+  gen = 222;
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]),
+    [['hand-a', '[agent:browser] error: numbers from before the browser restarted are void on utility — read again']]);
+  await h.run([['hand-a', '[agent:browser inspect 1]']]);
+  await h.run([['hand-a', '[agent:browser click --text="View"]']]);
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), [{ n: 1, gen: 111 }, { n: 1, gen: 111 }, { byText: 'View' }]);
+  await h.run([['hand-a', '[agent:browser read]']]);
+  h.calls.length = 0;
+  assert.match((await h.run([['hand-a', '[agent:browser click 1]']]))[0][1], /^\[agent:browser\] clicked utility \[1\]/);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'click', { n: 1, gen: 222 }]]);
 });
 
 test('scheduler: a sign-in result replies with the handoff text and drops what was queued', async () => {

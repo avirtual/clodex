@@ -67,9 +67,10 @@ function cmdLabel(cmd) {
   return cmd.sub;
 }
 
-function readGen(st, service) {
+function withGen(args, st, service) {
   const last = st.lastText[service];
-  return last && last.gen != null ? last.gen : null;
+  if (last && last.gen != null) args.gen = last.gen;
+  return args;
 }
 
 function needsRead(cmd) {
@@ -256,7 +257,7 @@ function createScheduler({
     if (cmd.sub === 'click' && cmd.to != null) ({ root, dir: args.dir } = downloadDir(handle, service, cmd.to));
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
-    else if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
+    else if (cmd.n != null) withGen(args, seatState(handle.name), service);
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
     if (cmd.confirm) args.confirm = true;
@@ -273,12 +274,17 @@ function createScheduler({
     const args = {};
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.text != null) args.byText = cmd.text;
-    else if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
+    else if (cmd.n != null) withGen(args, seatState(handle.name), service);
     const r = await client.request('inspect', args, { service, seat: handle.name });
     return replies.inspectReply(service, r);
   }
 
   async function runWait(handle, service, cmd) {
+    if (cmd.sleep) {
+      const ms = Math.min(WAIT_MAX_MS, cmd.ms);
+      await new Promise((res) => { timers.setTimeout(res, ms); });
+      return replies.reply(replies.TEXT.waited(service, ms));
+    }
     const ms = Math.min(WAIT_MAX_MS, cmd.ms == null ? WAIT_DEFAULT_MS : cmd.ms);
     const r = await client.request('idle', { ms, forText: cmd.forText }, { service, seat: handle.name, timeoutMs: ms + 10000 });
     return replies.waitReply(service, r, cmd.forText);
@@ -287,7 +293,7 @@ function createScheduler({
   async function runDownload(handle, service, cmd) {
     const { root, dir } = downloadDir(handle, service, cmd.to);
     const args = { dir, as: cmd.as, n: cmd.n, url: cmd.url };
-    if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
+    if (cmd.n != null) withGen(args, seatState(handle.name), service);
     const r = await client.request('download', args, { service, seat: handle.name, timeoutMs: DOWNLOAD_OP_MS });
     keepInside(root, r.file);
     if (r.held && !r.takeover) signin(service, r);

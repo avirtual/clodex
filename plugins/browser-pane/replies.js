@@ -153,6 +153,7 @@ const TEXT = {
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'publish' ? 'publishes as the operator' : `looks consequential (${category})`} — re-issue with --confirm if the operator asked for it`,
+  waited: (service, ms) => `${service} waited ${Number((ms / 1000).toFixed(1))}s`,
   restarted: (service) => `numbers from before the browser restarted are void on ${service} — read again`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
   notEditable: (n, kind) => `[${n}] is not a text field (${kind}) — click it, or use select for a list`,
