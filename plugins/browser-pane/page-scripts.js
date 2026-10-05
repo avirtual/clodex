@@ -467,7 +467,7 @@ function labelFrom(d) {
   const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
   const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
-  const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), flat(d.value), flat(d.title),
+  const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
     () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : '')]);
   if (named) return named;
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
@@ -494,7 +494,7 @@ const ICON = `
       aria: e.getAttribute('aria-label'),
       text: e.innerText,
       placeholder: e.getAttribute('placeholder'),
-      value: typeof e.value === 'string' && ['input', 'select', 'button'].includes(tg) && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
+      value: typeof e.value === 'string' && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
       title: e.getAttribute('title'),
       alts: [e.getAttribute('alt'), ...[...e.querySelectorAll('img')].map(i => i.getAttribute('alt'))],
       name: e.getAttribute('name'), id: e.id,
