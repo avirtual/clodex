@@ -1213,6 +1213,12 @@ function feedPosts(scope, cats, byEl, loc) {
         text: clip(ql ? ql.innerText : '', 160), path: qpa ? statusPath(pathOf(qpa)) : null,
         media: mediaOf(qbox, () => true, null),
       };
+      const qtl = String(qbox.innerText || '').split('\n').map(flat).filter(Boolean);
+      for (let i = 0; i < qtl.length && !quote.article; i++) {
+        const am = /^article(?:\s+(.+))?$/i.exec(qtl[i]);
+        const title = am && (am[1] || qtl[i + 1]);
+        if (title) quote.article = clip(title, 80);
+      }
     }
     return {
       n, path, handle, name, verified,

@@ -334,3 +334,15 @@ test('FEED: a nested quote card keeps its own status link; the quote path comes 
   const q2 = quoteOf([h('a', { href: '/uj/status/7' }, 'Show more')]);
   assert.deepStrictEqual([q2.n, q2.path], [1400, '/uj/status/7']);
 });
+
+test('FEED: an Article quote card carries its title from the line after "Article" or the rest of an "Article …" line; a bare trailing "Article" is no title', () => {
+  const quoteOf = (...body) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const card = h('div', { role: 'link' }, h('div', {}, h('span', {}, 'Jev'), h('span', {}, '@jev'), h('time', {}, 'Sep 25')), ...body);
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+    return runFeed(h('main', {}, art), {}, {}).posts[0].quote;
+  };
+  assert.strictEqual(quoteOf(h('div', {}, 'Article'), h('div', {}, '10 Projects You Should Build with Jev')).article, '10 Projects You Should Build with Jev');
+  assert.strictEqual(quoteOf(h('div', {}, 'Article 10 Projects You Should Build with Jev')).article, '10 Projects You Should Build with Jev');
+  assert.strictEqual('article' in quoteOf(h('div', { lang: 'en' }, 'plain words'), h('div', {}, 'Article')), false);
+});
