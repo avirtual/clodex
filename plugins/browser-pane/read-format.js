@@ -162,6 +162,7 @@ function feedBlocks(feed) {
     if (q) {
       const qp = [`↳ ${q.n == null ? '' : `[${q.n}] `}quoting` + (q.handle ? ` @${q.handle}` : '')];
       if (q.rel) qp.push(q.rel);
+      if (q.article) qp.push(`Article ${clipText(q.article, QUOTE_TEXT, null)}`);
       if (q.text) qp.push(clipText(q.text, QUOTE_TEXT, null));
       qp.push(...mediaParts(q.media || {}));
       if (q.path) qp.push(`→ ${q.path}`);
@@ -207,7 +208,7 @@ function sections(raw, opts) {
     const lines = blocks.flat();
     const rest = outsideFeed(elements, feed);
     const total = feed.posts.length;
-    out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} posts) ==`, lines: lines.length ? lines : ['(none)'] });
+    out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} post${total === 1 ? '' : 's'}) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
     return out;
   }

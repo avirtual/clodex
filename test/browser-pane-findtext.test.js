@@ -195,3 +195,14 @@ test('FIND_TEXT: a cell of a clickable row targets the row; a link the read fold
   assert.match(R.TEXT.manyText('x', 'Duplicat', 2, [{ n: null, loose: true, text: 'Duplicat' }, { n: null, loose: true, text: 'Duplicat' }]),
     /\(not clickable\) — read x and use a number$/);
 });
+
+test('READ_INTERACTIVE: a link label joins an https:// split from its host', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const yt = mk('a', { href: 'https://youtu.be/x' }, ['https:// youtu.be/x'], [10, 40, 200, 20]);
+  const body = mk('body', {}, [yt], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), ['[1] link https://youtu.be/x → https://youtu.be/x']);
+});

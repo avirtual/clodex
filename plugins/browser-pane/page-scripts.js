@@ -457,8 +457,13 @@ function inputLine(d) {
     + (pw ? ' (operator only)' : '');
 }
 
+function joinUrls(s) {
+  return String(s || '').replace(/(https?:\/\/)\s+/g, '$1').replace(/(https?:\/\/[\w.-]*)\s+(?=[\w.-]*\.[a-z]{2,}\/)/g, '$1');
+}
+
 function collect(main) {
   return `
+  ${joinUrls.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
   const mainRoot = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
@@ -512,7 +517,7 @@ function collect(main) {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
       if (h.startsWith('#') || h.startsWith('javascript:')) h = '';
-      full = flat(labelOf(el));
+      full = joinUrls(flat(labelOf(el)));
       const label = clip(full, 60);
       const key = label + '|' + h;
       if (seen.has(key)) continue;
@@ -1009,11 +1014,17 @@ function feedPosts(scope, cats, byEl, loc) {
     while (a && !outer(a)) a = a.parentElement.closest('article');
     return a;
   };
+  const fmtSecs = (s) => {
+    const hh = Math.floor(s / 3600);
+    const mm = Math.floor((s % 3600) / 60);
+    const ss = String(s % 60).padStart(2, '0');
+    return hh ? hh + ':' + String(mm).padStart(2, '0') + ':' + ss : mm + ':' + ss;
+  };
   const durationOf = (l) => {
-    const ms = /(\d+) minutes? (\d+) seconds?/i.exec(l);
-    if (ms) return ms[1] + ':' + ms[2].padStart(2, '0');
-    const s = /(\d+) seconds?/i.exec(l);
-    return s ? Math.floor(Number(s[1]) / 60) + ':' + String(Number(s[1]) % 60).padStart(2, '0') : null;
+    for (const m of String(l || '').matchAll(/(?:(\d+) hours?\s*)?(?:(\d+) minutes?\s*)?(?:(\d+) seconds?)?/gi)) {
+      if (m[1] || m[2] || m[3]) return fmtSecs(Number(m[1] || 0) * 3600 + Number(m[2] || 0) * 60 + Number(m[3] || 0));
+    }
+    return null;
   };
   const nearVideo = (img, art) => {
     let e = img.parentElement;
@@ -1071,9 +1082,9 @@ function feedPosts(scope, cats, byEl, loc) {
     const vids = [...box.querySelectorAll('video')].filter(keep);
     const videos = vids.length;
     const secs = vids.map((v) => Math.round(Number(v.duration))).find((d) => Number.isFinite(d) && d > 0);
-    let duration = secs ? Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') : null;
+    let duration = secs ? fmtSecs(secs) : null;
     for (const e of box.querySelectorAll('[aria-label]')) {
-      if (!videos || duration || !keep(e)) continue;
+      if (!videos || duration || !keep(e) || e.closest('time') || e.querySelector('time')) continue;
       duration = durationOf(e.getAttribute('aria-label'));
     }
     const vrects = vids.map((v) => v.getBoundingClientRect());
@@ -1109,6 +1120,9 @@ function feedPosts(scope, cats, byEl, loc) {
     if (qt && time) {
       qbox = qt;
       while (qbox.parentElement && qbox.parentElement !== art && !qbox.parentElement.contains(time)) qbox = qbox.parentElement;
+      let cardBox = null;
+      for (let e = qt; e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link') cardBox = e;
+      if (cardBox) qbox = cardBox;
     }
     const own = (e) => !inside(e, qbox);
     const ownA = [...art.querySelectorAll('a[href]')].filter(own);
@@ -1157,7 +1171,8 @@ function feedPosts(scope, cats, byEl, loc) {
     if (!body) {
       const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
       body = [...art.querySelectorAll('p,div')]
-        .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head)))
+        .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
+          && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
     const moreEl = [...art.querySelectorAll('button,[role=button]')]
@@ -1188,24 +1203,33 @@ function feedPosts(scope, cats, byEl, loc) {
     let quote = null;
     if (qbox) {
       const pid = statusId(path);
-      const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid; });
+      const nested = [...qbox.querySelectorAll('[role=link]')].filter((e) => !e.contains(qt));
+      const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid && !nested.some((e) => e.contains(a)); });
       const suffixed = (a) => { const p = pathOf(a); return !!p && statusPath(p) !== p; };
       const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !suffixed(a)) || null;
       let cardEl = null;
-      for (let e = qt; !cardEl && e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
+      for (let e = qt; e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
       const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
+      const qPre = qm ? '/' + qm[1].toLowerCase() + '/status/' : null;
+      const qpa = [qa, ...qas].find((a) => a && (!qPre || (statusPath(pathOf(a)) || '').toLowerCase().startsWith(qPre))) || null;
       const ql = qbox.querySelector('[lang]');
       const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !suffixed(a) && flat(a.innerText).includes('@' + qm[1])) : null;
       quote = {
         n: (qa && numOf(qa)) ?? numOf(cardEl) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
-        text: clip(ql ? ql.innerText : '', 160), path: qa || qas[0] ? statusPath(pathOf(qa || qas[0])) : null,
+        text: clip(joinUrls(ql ? ql.innerText : ''), 160), path: qpa ? statusPath(pathOf(qpa)) : null,
         media: mediaOf(qbox, () => true, null),
       };
+      const qtl = String(qbox.innerText || '').split('\n').map(flat).filter(Boolean);
+      for (let i = 0; i < qtl.length && !quote.article; i++) {
+        const am = /^article(?:\s+(.+))?$/i.exec(qtl[i]);
+        const title = am && (am[1] || qtl[i + 1]);
+        if (title) quote.article = clip(title, 80);
+      }
     }
     return {
       n, path, handle, name, verified,
       time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
-      text: body ? clip(String(body.innerText || '').replace(/(https?:\/\/)\s+/g, '$1').replace(/(https?:\/\/[\w.-]*)\s+(?=[\w.-]*\.[a-z]{2,}\/)/g, '$1'), 260) : '', more: numOf(moreEl), counts,
+      text: body ? clip(joinUrls(body.innerText), 260) : '', more: numOf(moreEl), counts,
       media, flags, quote,
     };
   };
@@ -1220,6 +1244,7 @@ function feedPosts(scope, cats, byEl, loc) {
 
 function feed(main, cats) {
   return `(() => {
+  ${joinUrls.toString()}
   ${feedPosts.toString()}
   const byEl = new Map();
   for (const [k, ref] of Object.entries(window.__cxEls || {})) { const e = ref && ref.deref(); if (e) byEl.set(e, Number(k)); }

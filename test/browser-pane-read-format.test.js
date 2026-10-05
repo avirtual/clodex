@@ -464,6 +464,13 @@ test('feedLines: a quote is a second indented line', () => {
   assert.strictEqual(feedLines({ posts: [nq] })[1], '  ↳ [1284] quoting @cy · 2d · "the quoted words" · video 0:12 · 2 photos · → /cy/status/2');
 });
 
+test('feedLines: an Article quote shows its title before the quote text and media', () => {
+  const aq = { ...MIN_POST, quote: { n: 12, handle: 'a', rel: 'Sep 25', article: '10 Projects You Should Build with Jev', path: null, media: { videos: 0, duration: null, photos: 1 } } };
+  assert.strictEqual(feedLines({ posts: [aq] })[1], '  ↳ [12] quoting @a · Sep 25 · Article "10 Projects You Should Build with Jev" · photo');
+  const both = { ...aq, quote: { ...aq.quote, text: 'read this' } };
+  assert.strictEqual(feedLines({ posts: [both] })[1], '  ↳ [12] quoting @a · Sep 25 · Article "10 Projects You Should Build with Jev" · "read this" · photo');
+});
+
 test('feedLines: the ISO keeps its zone, Z or offset, and drops seconds; no zone prints the minute only; a parody flag prints', () => {
   const at = (iso) => feedLines({ posts: [{ ...MIN_POST, time: { rel: '10m', iso } }] })[0].split(' · ')[1];
   assert.strictEqual(at('2026-10-05T10:22:41.000Z'), '10m (2026-10-05T10:22Z)');
@@ -498,6 +505,11 @@ test('read --compact --filter applies to feed lines, a match on the quote line k
   assert.deepStrictEqual(body.slice(0, 4), ['== feed (2 posts) ==', feedLines(FEED_RAW.feed)[0], '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
   const zed = formatRead(FEED_RAW, { service: 'x', compact: true, filter: 'zed' }).content.split('\n').slice(6, -2);
   assert.deepStrictEqual(zed, ['== feed (1 of 2 posts) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"', '== elements (outside the feed) ==', '(none)']);
+});
+
+test('read --compact: a feed of one post says (1 post)', () => {
+  const one = formatRead({ ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: [FEED_RAW.feed.posts[1]] } }, { service: 'x', compact: true }).content.split('\n').slice(6, -2);
+  assert.deepStrictEqual(one.slice(0, 3), ['== feed (1 post) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
 });
 
 test('read --compact without a feed: a failed FEED says so in the mode, no articles says no feed found; both keep the default sections', () => {

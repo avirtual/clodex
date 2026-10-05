@@ -282,3 +282,87 @@ test('FEED: a playing video keeps its duration from video.duration; the body joi
   assert.strictEqual(p.media.duration, '0:13');
   assert.strictEqual(p.text, 'read https://michaeljburry.substack.com/p/x now, https://michaeljburry.substack.com/p/y');
 });
+
+test('FEED: durations of an hour or more read h:mm:ss from video.duration and from the aria-label; a minutes-only time link is no duration', () => {
+  const durOf = (video, label, timeAttrs = {}) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/9', timeAttrs, '1h');
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'watch'), h('div', {}, video, h('div', { 'aria-label': label })));
+    return runFeed(h('main', {}, art), {}, {}).posts[0].media.duration;
+  };
+  const rows = [
+    [7007, 'Pause', '1:56:47'],
+    [null, 'Play Video. 1 hour 56 minutes 47 seconds long', '1:56:47'],
+    [null, 'Play Video. 2 hours long', '2:00:00'],
+    [null, 'Play Video. 1 minute 5 seconds long', '1:05'],
+    [null, 'Play Video. 13 seconds long', '0:13'],
+    [65, 'Pause', '1:05'],
+  ];
+  for (const [secs, label, want] of rows) {
+    const video = h('video', {});
+    if (secs != null) video.duration = secs;
+    assert.strictEqual(durOf(video, label), want, `${secs} / ${label}`);
+  }
+  assert.strictEqual(durOf(h('video', {}), 'Play Video. 13 seconds long', { 'aria-label': '10 minutes' }), '0:13');
+});
+
+test('FEED: the quote box is the outermost role=link card around the quote time; the post\'s own video and media-tags link beside it stay on the post', () => {
+  const { row } = xHeader('me', 'Me', '/me/status/1', {}, '11h');
+  const video = h('video', {});
+  video.duration = 65;
+  const card = h('div', { role: 'link' },
+    h('div', {}, h('span', {}, 'Other'), h('span', {}, '@other'), h('time', {}, '2d')),
+    h('div', { lang: 'en' }, 'quoted words'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'my words'),
+    h('div', {}, video, h('a', { href: '/me/status/1/media_tags' }, 'Leo Snow'), card));
+  const [p] = runFeed(h('main', {}, art), { 1500: card }, {}).posts;
+  assert.deepStrictEqual([p.media.videos, p.media.duration], [1, '1:05']);
+  assert.deepStrictEqual([p.quote.media.videos, p.quote.handle, p.quote.n], [0, 'other', 1500]);
+});
+
+test('FEED: a nested quote card keeps its own status link; the quote path comes only from a link under the quote handle', () => {
+  const quoteOf = (extra) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/5/video/1' }, h('img', { w: 300, h: 200 })));
+    const card = h('div', { role: 'link' },
+      h('div', {}, h('span', {}, 'Uj'), h('span', {}, '@uj'), h('time', {}, '3h')),
+      h('div', { lang: 'en' }, 'look'), inner, ...extra);
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+    return runFeed(h('main', {}, art), { 1400: card }, {}).posts[0].quote;
+  };
+  const q1 = quoteOf([]);
+  assert.deepStrictEqual([q1.n, q1.path], [1400, null]);
+  const q2 = quoteOf([h('a', { href: '/uj/status/7' }, 'Show more')]);
+  assert.deepStrictEqual([q2.n, q2.path], [1400, '/uj/status/7']);
+  const q3 = quoteOf([h('a', { href: '/pak/status/8' }, 'pak')]);
+  assert.deepStrictEqual([q3.n, q3.path], [1400, null]);
+  const own = h('div', { role: 'link' }, h('span', {}, '@uj'), h('a', { href: '/uj/status/9/video/1' }, h('img', { w: 300, h: 200 })));
+  const q4 = quoteOf([own]);
+  assert.deepStrictEqual([q4.n, q4.path], [1400, null]);
+});
+
+test('FEED: an Article quote card carries its title from the line after "Article" or the rest of an "Article …" line; a bare trailing "Article" is no title', () => {
+  const quoteOf = (...body) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const card = h('div', { role: 'link' }, h('div', {}, h('span', {}, 'Jev'), h('span', {}, '@jev'), h('time', {}, 'Sep 25')), ...body);
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+    return runFeed(h('main', {}, art), {}, {}).posts[0].quote;
+  };
+  assert.strictEqual(quoteOf(h('div', {}, 'Article'), h('div', {}, '10 Projects You Should Build with Jev')).article, '10 Projects You Should Build with Jev');
+  assert.strictEqual(quoteOf(h('div', {}, 'Article 10 Projects You Should Build with Jev')).article, '10 Projects You Should Build with Jev');
+  assert.strictEqual('article' in quoteOf(h('div', { lang: 'en' }, 'plain words'), h('div', {}, 'Article')), false);
+});
+
+test('FEED: a post with only a photo has no text; the header row is never its clip', () => {
+  const { row } = xHeader('EvanKirstel', 'Evan Kirstel', '/EvanKirstel/status/4', {}, '14h');
+  const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })));
+  const got = runFeed(h('main', {}, art), {}, {});
+  assert.strictEqual(got.posts[0].text, '');
+  assert.strictEqual(feedLines(got)[0], '[?] @EvanKirstel (Evan Kirstel ✓) · 14h (2026-10-05T10:22Z) · photo · → /EvanKirstel/status/4');
+});
+
+test('FEED: the quote text joins an https:// split from its host', () => {
+  const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+  const card = h('div', { role: 'link' }, h('div', {}, h('span', {}, '@cy'), h('time', {}, '4d')), h('div', { lang: 'en' }, 'watch ( https:// youtu.be/x)'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+  assert.strictEqual(runFeed(h('main', {}, art), {}, {}).posts[0].quote.text, 'watch ( https://youtu.be/x)');
+});
