@@ -301,17 +301,21 @@ function actReply(sub, service, cmd, r) {
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
 }
 
-function scrollPosition(after, vh) {
-  const end = after.y + vh;
-  if (after.y <= 0) return 'top of page';
-  if (end >= after.height - 2) return 'bottom of page';
+function scrollRange(after, vh) {
+  const end = Math.min(after.y + vh, after.height);
   const pct = (v) => Math.round((v / after.height) * 100);
   return `${after.y}–${end} of ${after.height} px (${pct(after.y)}–${pct(end)}%)`;
 }
 
+function scrollPosition(after, vh) {
+  if (after.y <= 0) return 'top of page';
+  if (after.y + vh >= after.height - 2) return 'bottom of page';
+  return scrollRange(after, vh);
+}
+
 function itemsLabel(a, b) {
   const d = b - a;
-  if (d === 0) return a > 0 ? 'no new items' : null;
+  if (d === 0) return a > 0 ? `no new items (${a})` : null;
   const n = Math.abs(d);
   return `${d > 0 ? '+' : '−'}${n} item${n === 1 ? '' : 's'} (${a} → ${b})`;
 }
@@ -326,11 +330,13 @@ function scrollReply(service, cmd, r) {
   }
   const parts = [head];
   if (r.navigated) parts.push(pageLabel(r));
-  parts.push(scrollPosition(after, r.vh || 0));
+  const grew = (after.height || 0) - (before.height || 0);
+  const fed = cmd.dir === 'bottom' && grew > 0;
+  if (fed) parts.push('reached bottom', `feed loaded ${grew} px more`, `now ${scrollRange(after, r.vh || 0)}`);
+  else parts.push(scrollPosition(after, r.vh || 0));
   const items = itemsLabel(before.items || 0, after.items || 0);
   if (items) parts.push(items);
-  const grew = (after.height || 0) - (before.height || 0);
-  if (grew) parts.push(`page ${grew > 0 ? 'grew' : 'shrank'} ${Math.abs(grew)} px`);
+  if (grew && !fed) parts.push(`page ${grew > 0 ? 'grew' : 'shrank'} ${Math.abs(grew)} px`);
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   let text = parts.join(' · ');
@@ -340,12 +346,14 @@ function scrollReply(service, cmd, r) {
 
 function changeTail(sub, r) {
   const target = r.target ? ` · target: ${r.target}` : '';
+  if (r.changed && sub === 'scroll' && r.changed === MOST_OF_PAGE) return ' · changed: most of the page';
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
   if (sub === 'type' && typeof r.value === 'string') {
     const v = [...r.value];
     return ` · value now ${JSON.stringify(v.length > 60 ? v.slice(0, 59).join('') + '…' : r.value)}`;
   }
+  if (sub === 'scroll') return ' · page text unchanged';
   return r.watched ? ` · no change on the target within ${Math.round((r.watched || 0) / 1000)}s` : ' · no visible change';
 }
 

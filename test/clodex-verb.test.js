@@ -163,6 +163,7 @@ test('--help lists the subagent catalog', async () => {
   for (const v of ['[agent:dm', '[agent:who]', '[agent:name]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:memory list]']) {
     assert.ok(r.out.includes(v), v);
   }
+  assert.match(r.out, /\[agent:browser <sub> …\].*\bscroll,/);
 });
 
 test('the verb is materialized as an executable `clodex` in <root>/bin', () => {

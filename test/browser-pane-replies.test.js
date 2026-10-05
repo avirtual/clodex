@@ -206,7 +206,7 @@ test('replies: scroll reports position, items loaded or dropped, page growth and
   const down = { sub: 'scroll', dir: 'down', pages: 1 };
   assert.strictEqual(R.scrollReply('x', down, {
     before: { y: 1000, height: 6300, items: 12 }, after: { y: 1868, height: 9500, items: 16 }, vh: 868, navigated: false, idle, changed: 'most of the page (menu closed?)',
-  }), '[agent:browser] scrolled x down · 1868–2736 of 9500 px (20–29%) · +4 items (12 → 16) · page grew 3200 px · idle 0.4s · changed: most of the page (menu closed?)');
+  }), '[agent:browser] scrolled x down · 1868–2736 of 9500 px (20–29%) · +4 items (12 → 16) · page grew 3200 px · idle 0.4s · changed: most of the page');
   assert.strictEqual(R.scrollReply('x', down, {
     before: { y: 8632, height: 9500, items: 16 }, after: { y: 8632, height: 9500, items: 16 }, vh: 868, navigated: false, idle, changed: '',
   }), '[agent:browser] scrolled x down · already at bottom of page');
@@ -215,10 +215,16 @@ test('replies: scroll reports position, items loaded or dropped, page growth and
   }), '[agent:browser] scrolled x down ×3 · 4472–5340 of 9500 px (47–56%) · −3 items (16 → 13) · idle 0.4s · changed: "x"');
   assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'top' }, {
     before: { y: 4472, height: 9500, items: 13 }, after: { y: 0, height: 9500, items: 13 }, vh: 868, navigated: false, idle, changed: '',
-  }), '[agent:browser] scrolled x top · top of page · no new items · idle 0.4s · no visible change');
+  }), '[agent:browser] scrolled x top · top of page · no new items (13) · idle 0.4s · page text unchanged');
   assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'bottom' }, {
     before: { y: 0, height: 900, items: 0 }, after: { y: 2000, height: 2868, items: 0 }, vh: 868, navigated: false, idle, changed: '',
-  }), '[agent:browser] scrolled x bottom · bottom of page · page grew 1968 px · idle 0.4s · no visible change');
+  }), '[agent:browser] scrolled x bottom · reached bottom · feed loaded 1968 px more · now 2000–2868 of 2868 px (70–100%) · idle 0.4s · page text unchanged');
+  assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'bottom' }, {
+    before: { y: 0, height: 13778, items: 40 }, after: { y: 15593, height: 28848, items: 39 }, vh: 868, navigated: false, idle, changed: 'x',
+  }), '[agent:browser] scrolled x bottom · reached bottom · feed loaded 15070 px more · now 15593–16461 of 28848 px (54–57%) · −1 item (40 → 39) · idle 0.4s · changed: "x"');
+  assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'bottom' }, {
+    before: { y: 0, height: 2868, items: 0 }, after: { y: 2000, height: 2868, items: 0 }, vh: 868, navigated: false, idle, changed: '',
+  }), '[agent:browser] scrolled x bottom · bottom of page · idle 0.4s · page text unchanged');
 });
 
 test('replies: the download verb names a repeat as the same as an existing file', () => {

@@ -94,6 +94,7 @@ const ROWS = [
   ['[agent:browser scroll x bottom --pages=2]', { error: '--pages only applies to up or down' }],
   ['[agent:browser scroll x sideways]', { error: 'scroll direction must be one of down up top bottom' }],
   ['[agent:browser scroll down x]', { error: "unexpected 'x' for scroll" }],
+  ['[agent:browser scroll down up]', { error: 'scroll takes one direction: down, up, top or bottom' }],
   ['[agent:browser scroll --pages=21]', { error: '--pages must be at most 20' }],
   ['[agent:browser scroll] more', { error: 'scroll takes no text after the bracket' }],
   ['[agent:browser select 3] August 2026', { sub: 'select', service: null, n: 3, option: 'August 2026' }],
