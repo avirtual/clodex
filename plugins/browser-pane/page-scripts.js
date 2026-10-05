@@ -807,10 +807,10 @@ function find(n) {
     const r = el.getBoundingClientRect();
     const c = cover && cover.getBoundingClientRect();
     let dx = 0, dy = 0;
-    if (c && c.top <= r.top && c.bottom < r.bottom) dy = -(c.bottom - r.top + 4);
-    else if (c && c.bottom >= r.bottom && c.top > r.top) dy = r.bottom - c.top + 4;
-    else if (c && c.left <= r.left && c.right < r.right) dx = -(c.right - r.left + 4);
-    else if (c && c.right >= r.right && c.left > r.left) dx = r.right - c.left + 4;
+    if (c && c.top <= r.top && c.bottom > r.top && c.bottom < innerHeight) dy = -(c.bottom - r.top + 4);
+    else if (c && c.bottom >= r.bottom && c.top < r.bottom && c.top > 0) dy = r.bottom - c.top + 4;
+    else if (c && c.left <= r.left && c.right > r.left && c.right < innerWidth) dx = -(c.right - r.left + 4);
+    else if (c && c.right >= r.right && c.left < r.right && c.left > 0) dx = r.right - c.left + 4;
     if (!dx && !dy) return el.scrollIntoView({ block: 'center', inline: 'nearest' });
     (clip ? clip.sc : window).scrollBy({ left: dx, top: dy, behavior: 'instant' });
   };
