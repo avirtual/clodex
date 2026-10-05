@@ -47,6 +47,7 @@ blocks a release.
 - Browser pane: text inside a form is read — e-bloc's debt table no longer disappears from `read`.
 - Browser pane: `close [service]` closes a service's window and keeps its sign-in — `release` only frees the seat's lease — and a subagent gets neither; a key that moves a radio or select choice replies `checked now`, and a subagent's refusal names the verb it may not use.
 - Browser pane: service windows open in the background and never surface on their own — `open --show` or the pane's Show button raises one; agents work in hidden windows (screenshots, requestAnimationFrame and infinite scroll included); `close` removes a window that was surfaced with --show, a browser child exits with its host, and a click that checks a radio or box replies `checked now`.
+- Browser pane: the status-bar window list is a table — one line per window with its seat, whether it is hidden, Show and a Hand… button that unfolds the hand-over form.
 
 ## 5.112.2 — 2026-10-04
 
