@@ -69,7 +69,7 @@ test('child: escapeEntry is the nearest earlier real entry on another host, else
   assert.ok(src, 'escapeEntry exists');
   const { hostOf } = require('../plugins/browser-pane/read-format');
   const escapeEntry = new Function('hostOf', `${src[0]}; return escapeEntry;`)(hostOf);
-  const hist = (urls, active) => ({ getActiveIndex: () => active, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
+  const hist = (urls, active) => ({ getActiveIndex: () => active, length: () => urls.length, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
   const funnel = 'https://ads.example/lp?c=1';
   assert.strictEqual(escapeEntry(hist(['about:blank', 'https://x.com/home', 'https://x.com/a/status/1', funnel, funnel], 4), funnel), 'https://x.com/a/status/1');
   assert.strictEqual(escapeEntry(hist(['https://x.com/home', 'about:blank', 'https://x.com/b'], 2), 'https://x.com/b'), 'https://x.com/home');
@@ -93,11 +93,21 @@ test('child: realEntry steps past the blank start entry in either direction and 
   const src = /const realEntry = \(h, dir\) => \{[\s\S]*?\n {2}\};\n/.exec(CHILD);
   assert.ok(src, 'realEntry exists');
   const realEntry = new Function(`${src[0]}; return realEntry;`)();
-  const hist = (urls, active) => ({ getActiveIndex: () => active, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
+  const hist = (urls, active) => ({ getActiveIndex: () => active, length: () => urls.length, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
   assert.strictEqual(realEntry(hist(['about:blank', 'https://a.example/'], 1), 'back'), null);
   assert.strictEqual(realEntry(hist(['about:blank', 'https://a.example/'], 1), 'forward'), null);
   assert.deepStrictEqual(realEntry(hist(['https://a.example/', 'about:blank', '', 'https://b.example/'], 3), 'back'), { index: 0, url: 'https://a.example/' });
   assert.deepStrictEqual(realEntry(hist(['https://a.example/', 'about:blank', 'https://b.example/'], 0), 'forward'), { index: 2, url: 'https://b.example/' });
   assert.strictEqual(realEntry(null, 'back'), null);
+  const unbounded = { getActiveIndex: () => 0, length: () => 2, getEntryAtIndex: (i) => { if (i >= 2) throw new Error(`read past the end at ${i}`); return { url: 'about:blank' }; } };
+  assert.strictEqual(realEntry(unbounded, 'forward'), null);
   assert.ok(/vm\.canBack = !svc\.wc\.isDestroyed\(\) && realEntry\(svc\.wc\.navigationHistory, 'back'\) != null;/.test(CHILD), 'the bar back button greys out on the first real page');
+});
+
+test('child: the operator bar back button goes to the real entry realEntry finds, never a bare goBack', () => {
+  const bar = /async function barNav\(svc, kind, text\) \{[\s\S]*?\n {2}\}\n/.exec(CHILD);
+  assert.ok(bar, 'barNav exists');
+  assert.ok(bar[0].includes("back = realEntry(wc.navigationHistory, 'back');"));
+  assert.ok(bar[0].includes('wc.navigationHistory.goToIndex(back.index)'));
+  assert.ok(!bar[0].includes('goBack('));
 });
