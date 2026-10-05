@@ -349,6 +349,17 @@ function scrollReply(service, cmd, r) {
   return oneLine(`${PREFIX} ${text}${tail}`, REPLY_MAX + CHANGE_MAX);
 }
 
+function navReply(service, cmd, r) {
+  const parts = [`went ${cmd.sub} on ${service}`, pageLabel(r)];
+  const idle = idleLabel(r.idle);
+  if (idle) parts.push(idle);
+  let text = parts.join(' · ');
+  if ((!r.navigated || r.inPage) && typeof r.changed === 'string') text += changeTail('nav', r);
+  text += ` · history: back ${r.canBack ? '✓' : '✗'} forward ${r.canForward ? '✓' : '✗'}`;
+  if (r.takeover) text += TEXT.takeover;
+  return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
+}
+
 function changeTail(sub, r, key) {
   const target = r.target ? ` · target: ${r.target}` : '';
   if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
@@ -500,6 +511,6 @@ module.exports = {
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
-  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, scrollReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };

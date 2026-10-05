@@ -160,6 +160,19 @@ test('scheduler: scroll reaches the child as op scroll with dir and pages, witho
   assert.deepStrictEqual(h.calls, [['hand-a', 'scroll', { dir: 'down', pages: 2 }]]);
 });
 
+test('scheduler: back and forward reach the child as op nav with dir, without a prior read', async () => {
+  const h = harness({ nav: (args) => ({
+    dir: args.dir, navigated: true, url: 'https://portal.example.com/bills', title: 'Bills', idle: { ok: true, ms: 400 }, canBack: args.dir === 'forward', canForward: args.dir === 'back',
+  }) });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser back]'], ['hand-a', '[agent:browser forward utility]']]), [
+    ['hand-a', '[agent:browser] went back on utility · navigated → https://portal.example.com/bills ("Bills") · numbers kept where the page repeats · idle 0.4s · history: back ✗ forward ✓'],
+    ['hand-a', '[agent:browser] went forward on utility · navigated → https://portal.example.com/bills ("Bills") · numbers kept where the page repeats · idle 0.4s · history: back ✓ forward ✗'],
+  ]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'nav', { dir: 'back' }], ['hand-a', 'nav', { dir: 'forward' }]]);
+});
+
 test('scheduler: a failure drops the same seat\'s queued commands and names them', async () => {
   const h = harness({ select: () => { throw coded('NO_OPTION', 'no option "Sep" in [3] — options: "August 2026"'); } });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);

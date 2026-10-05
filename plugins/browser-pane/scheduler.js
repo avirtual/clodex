@@ -292,6 +292,13 @@ function createScheduler({
     return replies.scrollReply(service, cmd, r);
   }
 
+  async function runNav(handle, service, cmd) {
+    const r = await client.request('nav', { dir: cmd.sub }, { service, seat: handle.name });
+    noteUrl(service, r.url);
+    if (r.held && !r.takeover) signin(service, r);
+    return replies.navReply(service, cmd, r);
+  }
+
   async function runInspect(handle, service, cmd) {
     const args = {};
     if (cmd.n != null) args.n = cmd.n;
@@ -329,7 +336,7 @@ function createScheduler({
   }
 
   const RUN = {
-    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, scroll: runScroll, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
+    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, scroll: runScroll, back: runNav, forward: runNav, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
   };
 
   function fail(handle, s, text, keepWaits) {
