@@ -494,7 +494,7 @@ function createScheduler({
   }
 
   function onClosed(service) {
-    for (const st of seats.values()) { delete st.hasRead[service]; delete st.lastText[service]; }
+    for (const st of seats.values()) { delete st.hasRead[service]; delete st.lastText[service]; delete st.feed[service]; }
     onState({ service, state: 'closed' });
   }
 

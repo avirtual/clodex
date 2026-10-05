@@ -736,3 +736,13 @@ test('scheduler: the feed memory starts over on a new document or another page; 
   assert.deepStrictEqual((await read([...eight, post(1, { repostedBy: 'Ana' })])).slice(0, 2),
     ['== feed (1 new · 8 already seen) ==', '[1] @a · 9h · reposted by Ana · "hi" · → /a/status/1']);
 });
+
+test('scheduler: a closed window drops the feed memory, so reopening the same URL at the same doc starts over', async () => {
+  const { h, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
+  await read(eight);
+  h.sched.onClosed('utility');
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
+});
