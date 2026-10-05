@@ -554,9 +554,11 @@ animate the scroll and let the after-measure land mid-animation.
 A post is a top-level `article` (one not inside another). Its permalink is the
 link holding its own `time`: the linked `time` whose status path starts with the
 author's path. On a status page the focal post's time link sits below the quote
-box, whose linked `time` comes first. Without one it is the first linked `time`, else a status link with no `/photo/N`, `/video/N`
-or `/analytics` suffix. X ads have no `time`, so their number is the article's
-numbered clickable wrapper (`[1020] clickable "… Ad …"`) and their path comes from
+box, whose linked `time` comes first. A post quoting its own earlier post has two
+such links; the one outside any `[role=link]` card wins, else the last. Without
+one it is the first linked `time`, else a status link with no `/photo/N`,
+`/video/N` or `/analytics` suffix. X ads have no `time`, so their number is the
+article's numbered clickable wrapper (`[1020] clickable "… Ad …"`) and their path comes from
 the analytics link with the suffix stripped. X's header has two levels: the name
 link and ✓ svg sit in one div, and `@handle · time` in a sibling div. The handle
 link has path `/<handle>` and text `@handle`. The name link is the link to the same
