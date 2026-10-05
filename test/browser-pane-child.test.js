@@ -1178,5 +1178,7 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
 test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {
   assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*let feed = posts \? \{ count: posts \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
   assert.match(CHILD_SRC, /\.\.\.\(feed \? \{ feed \} : \{\}\),/);
-  assert.match(scripts.READ_INTERACTIVE(false, {}), /posts: document\.querySelectorAll\('article'\)\.length,/);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /posts: \[\.\.\.\(document\)\.querySelectorAll\('article'\)\]\.filter\(a => !\(a\.parentElement && a\.parentElement\.closest\('article'\)\)\)\.length,/);
+  assert.match(scripts.READ_INTERACTIVE(true, {}), /posts: \[\.\.\.\(document\.querySelector\('main, \[role=main\]'\) \|\| document\)\.querySelectorAll/);
+  assert.match(CHILD_SRC, /: \{ count: posts, failed: true \};/);
 });

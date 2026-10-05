@@ -301,7 +301,7 @@ function actReply(sub, service, cmd, r) {
   if (r.download) text += downloadTail(r.download, r.popupUrl);
   else if (r.popupUrl) text += ` · → popup ${clipUrl(r.popupUrl)}`;
   else if (r.popup) text += TEXT.popup;
-  else if ((!r.navigated || r.inPage) && typeof r.changed === 'string') text += changeTail(sub, r);
+  else if ((!r.navigated || r.inPage) && typeof r.changed === 'string') text += changeTail(sub, r, cmd.key);
   if (r.takeover) text += TEXT.takeover;
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
 }
@@ -349,9 +349,9 @@ function scrollReply(service, cmd, r) {
   return oneLine(`${PREFIX} ${text}${tail}`, REPLY_MAX + CHANGE_MAX);
 }
 
-function changeTail(sub, r) {
+function changeTail(sub, r, key) {
   const target = r.target ? ` · target: ${r.target}` : '';
-  if (r.changed && sub === 'scroll' && r.changed === MOST_OF_PAGE) return ' · changed: most of the page';
+  if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
   if (sub === 'type' && typeof r.value === 'string') {
