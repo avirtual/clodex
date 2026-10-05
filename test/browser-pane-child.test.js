@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor,
+  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
