@@ -215,7 +215,7 @@ const TEXT = {
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
-  consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'publish' ? 'publishes as the operator' : `looks consequential (${category})`} — re-issue with --confirm if the operator asked for it`,
+  consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
   waited: (service, ms) => `${service} waited ${Number((ms / 1000).toFixed(1))}s`,
   restarted: (service) => `numbers from before the browser restarted are void on ${service} — read again`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
@@ -350,7 +350,9 @@ function scrollReply(service, cmd, r) {
 }
 
 function navReply(service, cmd, r) {
-  const parts = [`went ${cmd.sub} on ${service}`, pageLabel(r)];
+  const parts = [`went ${cmd.sub} on ${service}`, r.stuck
+    ? `did not leave the page (the site may block ${cmd.sub})${r.escape ? ` · way out: [agent:browser open ${service}] ${redactUrl(r.escape)}` : ''}`
+    : pageLabel(r)];
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   let text = parts.join(' · ');
@@ -497,7 +499,7 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 
 const REFUSED_RES = [
   /^\S+ refused: .* matches denylist pattern /,
-  /^\[\d+\] ".*" (publishes as the operator|looks consequential \()/,
+  /^\[\d+\] ".*" (publishes as the operator|looks consequential \(|is an ad — )/,
   /^\[\d+\] on \S+ no longer points at one element/,
   /^\[\d+\] retired: its text changed since your read/,
 ];

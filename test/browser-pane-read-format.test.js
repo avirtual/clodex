@@ -546,6 +546,7 @@ test('read --compact --all with feedSeen: every post on the page, then the store
     '[1] @a · 9h · "hi" · → /a/status/1', '[2] @a · 9h · "hi" · → /a/status/2', '[3] @a · 9h · "hi" · → /a/status/3',
     '-- seen earlier, off the page now (2) --', ...earlier,
   ]);
+  assert.strictEqual(seenBody({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }, { all: true })[0], '== feed (3 on the page) ==');
 });
 
 test('postKey: the status path, plus |rp:<who> on a repost and |rp: on an actor-less one; a path-less post keys by number', () => {

@@ -162,12 +162,22 @@ function adFixture() {
   return { doc: h('main', {}, art), art, wrapper, views, shop };
 }
 
-test('FEED: an ad (no time link) takes the clickable wrapper number, the analytics link minus /analytics, the @handle span, the Ad line under the header and the domain in the link text', () => {
+test('FEED: an ad (no time link) takes the number of its own status link, never the paid wrapper, the analytics link minus /analytics, the @handle span, the Ad line under the header and the domain in the link text', () => {
   const f = adFixture();
   const [p] = runFeed(f.doc, { 1020: f.wrapper, 1025: f.views, 1026: f.shop }, {}).posts;
-  assert.strictEqual(p.n, 1020);
+  assert.strictEqual(p.n, 1025);
   assert.strictEqual(p.path, '/marco__marsano/status/2104987795370750155');
   assert.deepStrictEqual([p.handle, p.name, p.flags.ad, p.media.card], ['marco__marsano', 'Marco Marsano Milano', true, 'millerandhill.com']);
+});
+
+test('FEED: an ad with only a numbered wrapper has no [n]; the wrapper stays inside the feed; a non-ad without a time link keeps the wrapper number', () => {
+  const f = adFixture();
+  const got = runFeed(f.doc, { 1020: f.wrapper }, {});
+  assert.strictEqual(got.posts[0].n, null);
+  assert.deepStrictEqual(got.numbers, [1020]);
+  const box = h('div', {}, h('div', {}, h('span', {}, 'Ana'), h('span', {}, '@ana')), h('div', { lang: 'en' }, 'hello'), h('a', { href: '/ana/status/7/analytics' }, '9 views'));
+  const plainDoc = h('main', {}, h('article', {}, box));
+  assert.strictEqual(runFeed(plainDoc, { 30: box }, {}).posts[0].n, 30);
 });
 
 function xHeader(handle, name, statusPath, timeAttrs, rel) {

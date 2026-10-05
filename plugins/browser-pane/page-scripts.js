@@ -120,8 +120,19 @@ const CQ = `
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
     };
   };
+  const adLines = new Map();
+  const adArticle = e => {
+    let art = null;
+    for (let a = e.closest ? e.closest('article') : null; a; a = a.parentElement ? a.parentElement.closest('article') : null) art = a;
+    if (!art) return null;
+    if (!adLines.has(art)) adLines.set(art, String(art.innerText || '').split('\\n').map(l => l.replace(/\\s+/g, ' ').trim()).find(l => /^(ad|promoted|sponsored)$/i.test(l)) || null);
+    return adLines.get(art);
+  };
   const cqHit = e => {
     const d = cqInputs(e);
+    const statusLink = e.tagName.toLowerCase() === 'a' && /\\/status\\//.test(String(e.getAttribute('href') || '').split(/[?#]/)[0]);
+    const ad = d.button || d.textual || statusLink ? null : adArticle(e);
+    if (ad) return { cat: 'ad', term: ad };
     const inner = d.button || d.textual ? [] : e.querySelectorAll(CQ_INNER);
     return consequentialHit(d, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqHit(inner[0]) : null);
   };
@@ -1131,7 +1142,12 @@ function feedPosts(scope, cats, byEl, loc) {
     const own = (e) => !inside(e, qbox);
     const ownA = [...art.querySelectorAll('a[href]')].filter(own);
     const path = statusPath(pl ? pathOf(pl) : links.length ? pathOf(links[0]) : null);
-    const n = pl ? numOf(pl) : wrapperNum(art, true);
+    const qLines = new Set(qbox ? String(qbox.innerText || '').split('\n').map(flat).filter(Boolean) : []);
+    const ownLines = String(art.innerText || '').split('\n').map(flat).filter((l) => l && !qLines.has(l));
+    const isAd = ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l));
+    const n = pl ? numOf(pl)
+      : isAd ? (ownA.map((a) => (statusPath(pathOf(a)) === path ? numOf(a) : null)).find((x) => x != null) ?? null)
+      : wrapperNum(art, true);
     const hl = ownA.find(isHandle);
     let handleEl = hl || null;
     let nameEl = null;
@@ -1160,10 +1176,8 @@ function feedPosts(scope, cats, byEl, loc) {
       range.setEndBefore(row);
       above = flat(range.toString());
     }
-    const qLines = new Set(qbox ? String(qbox.innerText || '').split('\n').map(flat).filter(Boolean) : []);
-    const ownLines = String(art.innerText || '').split('\n').map(flat).filter((l) => l && !qLines.has(l));
     const flags = {};
-    if (ownLines.some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
+    if (isAd) flags.ad = true;
     const rp = /^(.*?)\s*\b(?:reposted|retweeted)\b/i.exec(above);
     const rpBy = rp ? (/@\w+/.exec(rp[1]) || [flat(rp[1])])[0] : null;
     if (rp) flags.repostedBy = rpBy || true;

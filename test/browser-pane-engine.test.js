@@ -459,6 +459,7 @@ test('engine: browser refusals classify as refused, a plain error as error, a no
     TEXT.denied('https://x.example/a', '*.example', 'utility'),
     TEXT.consequential(4, 'Pay now', 'payment'),
     TEXT.consequential(5, 'Post', 'publish'),
+    TEXT.consequential(6, 'musclebooster Ad', 'ad'),
     TEXT.ambiguousN('utility', 6, 'Save', 'Form'),
     TEXT.retiredN('utility', 7, 9),
   ]) assert.strictEqual(classifyReplyLine('browser', replies.errorReply(text)), 'refused', text);
