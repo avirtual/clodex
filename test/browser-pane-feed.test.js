@@ -421,6 +421,18 @@ test('FEED: a text-less post has no clip — action-bar counts, a Follow descrip
   assert.strictEqual(textOf(h('div', { role: 'group' }, h('button', {}, h('span', {}, '93')), h('div', {}, h('button', {}, 'Share post')))), '');
 });
 
+test('FEED: the [lang]-less body fallback is bounded to the article and reads describedby ids from the document', () => {
+  const post = (...rest) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/4', {}, '1h');
+    return h('article', {}, h('div', {}, row), ...rest);
+  };
+  assert.strictEqual(runFeed(h('main', {}, post(h('div', {}, 'plain words'))), {}, {}).posts[0].text, 'plain words');
+  assert.strictEqual(runFeed(h('main', {}, h('div', { role: 'group' }, post(h('div', {}, 'plain words')))), {}, {}).posts[0].text, 'plain words');
+  const outsideFollow = h('button', { 'aria-describedby': 'id__f9' }, 'Follow');
+  const doc = h('main', {}, outsideFollow, post(h('div', {}, h('div', { id: 'id__f9' }, 'Click to Follow ana'))));
+  assert.strictEqual(runFeed(doc, {}, {}).posts[0].text, '');
+});
+
 test('FEED: an Article quote is detected from the card label; its title is the line after the date, whole up to 120, else clipped with … and no trailing space', () => {
   const quoteOf = (label, ...body) => {
     const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');

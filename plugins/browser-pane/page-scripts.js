@@ -1225,12 +1225,13 @@ function feedPosts(scope, cats, byEl, loc) {
     let body = [...art.querySelectorAll('[lang]')].find(own);
     if (!body) {
       const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
-      const described = new Set([...art.querySelectorAll('[aria-describedby]')].flatMap((e) => e.getAttribute('aria-describedby').split(/\s+/)).filter(Boolean));
+      const described = new Set([...document.querySelectorAll('[aria-describedby]')].flatMap((e) => e.getAttribute('aria-describedby').split(/\s+/)).filter(Boolean));
+      const inControl = (e) => { const c = e.closest('button,[role=button],[role=group]'); return !!c && art.contains(c); };
       const isDescribed = (e) => described.has(e.getAttribute('id')) || [...e.querySelectorAll('[id]')].some((x) => described.has(x.getAttribute('id')));
       body = [...art.querySelectorAll('p,div')]
         .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
           && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x))
-          && !e.closest('button,[role=button],[role=group]') && !e.querySelector('button,[role=button],[role=group]')
+          && !inControl(e) && !e.querySelector('button,[role=button],[role=group]')
           && !isDescribed(e) && !/^[\d.,\s]*[KkMm]?(\s+[\d.,]+[KkMm]?)*$/.test(flat(e.innerText)) && !/^[\s\p{P}]*$/u.test(flat(e.innerText)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
