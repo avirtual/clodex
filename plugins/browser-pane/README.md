@@ -212,9 +212,16 @@ numbers (reply, like, menu, avatar…) are folded: still valid for `click`/`insp
 just unprinted, and their ⚠ controls collapse to one `⚠ folded: publish ×N` digest
 line. Elements outside the feed follow under `== elements (outside the feed) ==`.
 Across scrolls on one page the feed section prints only posts not printed before
-and says `N new · M already seen · K dropped off the top`; `--all` replays what
-scrolled away under `-- seen earlier, no longer on the page (K) --`; a navigation
-(open, back, click into a post) starts over.
+and says `N new · M already seen · K gone since your last read`; `--all` says
+`N on the page · K seen earlier, off the page now` and replays what scrolled away
+under `-- seen earlier, off the page now (K) --`. Only a post whose line this reply
+printed counts as seen: one cut by `--filter` or left on another `--page` stays new.
+A read with nothing new prints the no-new line and folds the elements outside the
+feed into one count line (with `--filter` they print in full). The memory is kept
+per page (up to 8 per service) and survives an in-page trip such as clicking into
+a post and `back`; a real load of the page (a new doc) or any `open` starts over.
+A post with a status path dedupes like any other, ads included; only path-less
+items print every time.
 It is site-neutral: it reads only `article`/`time`/`lang` structure, aria-labels
 and hrefs. A default read of five or more posts hints `--compact`.
 
