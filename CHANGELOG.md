@@ -37,6 +37,7 @@ blocks a release.
 - Browser pane: `read --compact` prints one line per feed post — number, handle, time, text clip, labelled counts, media, flags, quote — folding each post's action numbers (still valid for click/inspect); a default read of five or more posts hints `--compact`; ads, two-level headers, zoned times, real card domains and quote numbers read correctly on X.
 - Browser pane: a `role=link` card is no longer flagged ⚠ for words deep in its text, `inspect` names the ⚠ category and the matching term, a compact quote's `[n]` is its card (not its photo) and clicking a tall card lands on its header, a playing video keeps its duration.
 - Browser pane: compact feed keeps a post's own video off its quote line, a nested quote keeps its own path, hour-long videos read h:mm:ss, an Article quote shows its title, a text-less post shows no clip, and quote clips and link labels join https:// splits.
+- Browser pane: a text-less post shows no clip (action-bar counts and the Follow description are not text), an Article quote is detected from the card's label and shows its full title, and an inline link in the post text is never reported as a card.
 
 ## 5.112.2 — 2026-10-04
 
