@@ -244,6 +244,11 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.ok(deep.endsWith(' · numbers kept where the page repeats · idle 0.8s'), deep);
   const inPage = R.actReply('click', 'bk', { sub: 'click', n: 5 }, { kind: 'link', label: 'Tab', navigated: true, inPage: true, url: `https://www.booking.com/h.html?${longQuery}`, idle });
   assert.strictEqual(inPage, '[agent:browser] clicked bk [5] link "Tab" · navigated → https://www.booking.com/h.html… (in-page) · numbers kept where the page repeats · idle 0.8s');
+  const conf = { kind: 'link', label: 'Configuration', navigated: true, inPage: true, url: 'https://docsify.js.org/#/configuration', title: 'Configuration - docsify', idle };
+  assert.strictEqual(R.actReply('click', 'spa', { sub: 'click', n: 9 }, { ...conf, titleChanged: true }),
+    '[agent:browser] clicked spa [9] link "Configuration" · navigated → ("Configuration - docsify") https://docsify.js.org/#/configuration (in-page) · numbers kept where the page repeats · idle 0.8s');
+  assert.strictEqual(R.actReply('click', 'spa', { sub: 'click', n: 9 }, conf),
+    '[agent:browser] clicked spa [9] link "Configuration" · navigated → https://docsify.js.org/#/configuration (in-page) · numbers kept where the page repeats · idle 0.8s');
 });
 
 test('replies: scroll reports position, items loaded or dropped, page growth and what changed', () => {

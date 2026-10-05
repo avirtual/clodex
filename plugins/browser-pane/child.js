@@ -264,8 +264,9 @@ function numberRefusal(service, n, stored, verdict) {
   return codedError('NO_ELEMENT', TEXT.noElement(service, n));
 }
 
-function navOf({ docBefore, docAfter, hrefBefore, hrefAfter, download = false }) {
+function navOf({ docBefore, docAfter, hrefBefore, hrefAfter, titleBefore, titleAfter, download = false }) {
   const moved = !sameUrl(hrefBefore, hrefAfter);
+  if (docAfter === docBefore && moved && titleAfter != null && titleAfter !== titleBefore) return { navigated: true, inPage: true, titleChanged: true };
   if (docAfter === docBefore) return moved ? { navigated: true, inPage: true } : { navigated: false };
   if (download && !moved) return { navigated: false };
   return { navigated: true };
@@ -944,7 +945,8 @@ function run(electron, ctx) {
       await driver.emulateFocus(wc);
       const docBefore = svc.doc;
       const hrefBefore = wc.getURL();
-      const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download });
+      const titleBefore = wc.getTitle();
+      const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), titleBefore, titleAfter: wc.isDestroyed() ? titleBefore : wc.getTitle(), download });
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
         const refusedKey = args.key === 'Enter' || args.key === 'Space' || scripts.ARROW_KEYS.includes(args.key) ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
@@ -1036,6 +1038,7 @@ function run(electron, ctx) {
       const wc = svc.wc;
       const docBefore = svc.doc;
       const hrefBefore = wc.getURL();
+      const titleBefore = wc.getTitle();
       const measure = async () => (wc.isDestroyed() ? null : inMain(wc, scripts.SCROLL_INFO));
       const before = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
       const pre = await preAct(svc, null);
@@ -1049,7 +1052,7 @@ function run(electron, ctx) {
         before: { y: before.y, height: before.height, items: before.items },
         after: { y: after.y, height: after.height, items: after.items },
         vh: after.vh,
-        ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download: false }),
+        ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), titleBefore, titleAfter: wc.isDestroyed() ? titleBefore : wc.getTitle(), download: false }),
         idle: idleOf(idle),
       };
       return withChange(svc, pre, out, 0);
@@ -1064,6 +1067,7 @@ function run(electron, ctx) {
       ensureCdp(svc);
       const docBefore = svc.doc;
       const hrefBefore = wc.getURL();
+      const titleBefore = wc.getTitle();
       const h = wc.navigationHistory;
       const noHistory = () => codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
       if (!realEntry(h, dir)) throw noHistory();
@@ -1075,7 +1079,7 @@ function run(electron, ctx) {
       if (hit) throw deniedError(svc, target, hit, dir);
       const { idle } = await driver.act(wc, () => h.goToIndex(entry.index), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
       if (wc.isDestroyed()) throw closedError(name);
-      const moved = navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), download: false });
+      const moved = navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), titleBefore, titleAfter: wc.getTitle(), download: false });
       return withChange(svc, pre, {
         dir,
         ...moved,

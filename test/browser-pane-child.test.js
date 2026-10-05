@@ -719,6 +719,19 @@ test('page scripts: the busy scan, the element list, FIND_TEXT and INSPECT all u
   assert.match(scripts.INSPECT(1), /visible: vis\(el\)/);
 });
 
+test('page scripts: the busy scan counts a spinner-sized element or an explicit aria-busy page, not a page-sized loading container', () => {
+  const make = new Function('getComputedStyle', 'document', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `${scripts.DEEP}${scripts.BUSY}\nreturn busyScan();`);
+  const el = (b, attrs = {}, innerText = '') => ({ ...b, innerText, getAttribute: (k) => (k in attrs ? attrs[k] : null) });
+  const scan = (els) => {
+    const doc = { documentElement: { scrollWidth: 1200, scrollHeight: 3000 }, querySelectorAll: () => els };
+    return make((e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', ...e.style }),
+      doc, 0, 0, 1200, 800);
+  };
+  assert.strictEqual(scan([el(box(0, 0, 1200, 3000), { class: 'content-loading' }, 'x'.repeat(400))]).count, 0);
+  assert.deepStrictEqual(scan([el(box(580, 380, 40, 40), { class: 'spinner' }, 'Loading')]), { count: 1, text: 'Loading' });
+  assert.strictEqual(scan([el(box(0, 0, 1200, 800), { 'aria-busy': 'true' }, 'x'.repeat(400))]).count, 1);
+});
+
 test('page scripts: PAGE_TEXT renders tables as cell | cell rows with the same code as READ_TEXT', () => {
   const rows = /const cellText = [\s\S]*?t\.replaceWith\(box\);\n {2}\}/;
   const a = rows.exec(scripts.PAGE_TEXT);
@@ -934,6 +947,12 @@ test('navOf: a pushState click is an in-page navigation; a popup download that e
   const at = 'https://x.com/search?q=a';
   assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: at, hrefAfter: 'https://x.com/DanKornas/status/1' }), { navigated: true, inPage: true });
   assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: at, hrefAfter: at }), { navigated: false });
+  const cover = 'https://docsify.js.org/#/cover';
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: cover, hrefAfter: 'https://docsify.js.org/#/configuration', titleBefore: 'docsify', titleAfter: 'Configuration - docsify' }),
+    { navigated: true, inPage: true, titleChanged: true });
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: cover, hrefAfter: 'https://docsify.js.org/#/configuration', titleBefore: 'docsify', titleAfter: 'docsify' }),
+    { navigated: true, inPage: true });
+  assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 3, hrefBefore: cover, hrefAfter: cover, titleBefore: 'docsify', titleAfter: 'Configuration - docsify' }), { navigated: false });
   const page4 = 'https://www.e-bloc.ro/index.php?page=4&t=1791145507';
   assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 5, hrefBefore: page4, hrefAfter: page4, download: true }), { navigated: false });
   assert.deepStrictEqual(navOf({ docBefore: 3, docAfter: 5, hrefBefore: page4, hrefAfter: page4 }), { navigated: true });

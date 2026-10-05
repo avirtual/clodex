@@ -322,6 +322,7 @@ function dropSuffix(labels) {
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
   const u = clipNavUrl(redactUrl(r.url), 120);
+  if (r.inPage && r.titleChanged) return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} (in-page) · numbers kept where the page repeats`;
   if (r.inPage) return `navigated → ${u} (in-page) · numbers kept where the page repeats`;
   return `navigated → (${JSON.stringify(String(r.title || ''))}) ${u} · numbers kept where the page repeats`;
 }
