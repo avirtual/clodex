@@ -155,7 +155,8 @@ function shellSegments(cmd) {
     if (c === "'" || c === '"') { at(i); q = c; continue; }
     if (c === '\\' && i + 1 < cmd.length) { at(i).text += cmd.charAt(i + 1); i++; continue; }
     if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
-    if (c === '<' && cmd.charAt(i + 1) === '<' && cmd.charAt(i + 2) !== '<') {
+    if (c === '<' && cmd.charAt(i + 1) === '<' && cmd.charAt(i + 2) === '<') { at(i).text += '<<<'; i += 2; continue; }
+    if (c === '<' && cmd.charAt(i + 1) === '<') {
       const h = heredocWord(cmd, i);
       if (h) { push(i); at(i).text = cmd.slice(i, h.end); push(h.end); pending.push(h); i = h.end - 1; continue; }
     }
