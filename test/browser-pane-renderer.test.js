@@ -292,3 +292,19 @@ test('Settings: the open row invokes operator.open, and an open window row hands
     await tick();
   } finally { restore(); }
 });
+
+test('settings: the attach row shows the global read budget and saves an edit through attach.set', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const f = makeRhost({ status: status('off'), 'services.list': { ok: true, services: [] }, 'attach.get': { ok: true, global: 1000, seats: {} }, 'attach.set': { ok: false, error: 'tokens must be an integer from 100 to 20000' } });
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const field = walk(root).find((n) => n.className === 'bp-attach-tokens');
+    assert.strictEqual(field.value, '1000');
+    assert.strictEqual(walk(root).find((n) => n.className === 'bp-attach-label').textContent, 'Attach reads up to ≈');
+    field.value = '2500';
+    await walk(root).find((n) => n.className === 'bp-attach-save').click();
+    assert.deepStrictEqual(f.invokes.filter((i) => i.method === 'attach.set').map((i) => i.args), [[{ tokens: 2500 }]]);
+    assert.strictEqual(walk(root).find((n) => n.className === 'bp-attach-error').textContent, 'tokens must be an integer from 100 to 20000');
+  } finally { restore(); }
+});

@@ -592,6 +592,24 @@ async function refsStep(emit, base) {
   live.slice(5).forEach((l) => console.log(`    ${l}`));
 }
 
+async function attachStep(emit, base) {
+  console.log('== 16. a big read is a plain path plus digest; a small one attaches; --attach / --path-only override');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const inline = (r) => / → @\S+ $/.test(r) && !r.includes('\n');
+  await emit(`[agent:browser open big] ${base}/links`);
+  const big = await emit('[agent:browser read big]');
+  check('unfiltered 700-link read is path-only with a digest', !big.includes('@') && /\(not attached: over ≈1\.0k tok;/.test(big) && /\n {2}headings: Seven hundred links/.test(big) && /\n {2}hint: .*--page=2/.test(big));
+  check('the plain path is readable', fileOf(big).includes('Release table 1 '));
+  check('--attach forces the @', inline(await emit('[agent:browser read big --attach]')));
+  await emit(`[agent:browser open small] ${base}/pay`);
+  const small = await emit('[agent:browser read small]');
+  check('a small read attaches', inline(small));
+  check('--path-only drops the @ on a small read', /\(not attached: --path-only;/.test(await emit('[agent:browser read small --path-only]')));
+  check('a screenshot attaches by default', inline(await emit('[agent:browser screenshot small]')));
+  const shot = await emit('[agent:browser screenshot small --path-only]');
+  check('screenshot --path-only is a plain path', / → \S+\.jpg$/.test(shot) && !shot.includes('@'));
+}
+
 async function restartStep(emit, base, host) {
   console.log('== 14. numbers survive a child restart; the first number act after it is refused until a read');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
@@ -678,7 +696,8 @@ async function payStep(emit, base) {
 }
 
 function fileOf(reply) {
-  const m = / → @(\S+) $/.exec(reply);
+  const first = String(reply).split('\n')[0];
+  const m = / → @(\S+) $/.exec(first) || / → (\S+) \(not attached: /.exec(first);
   return m ? fs.readFileSync(m[1], 'utf8') : '';
 }
 
@@ -696,13 +715,14 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart'].includes(process.env.CXB_ONLY)) {
+  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
     else if (process.env.CXB_ONLY === 'stable') {
       for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
     else if (process.env.CXB_ONLY === 'overlay') await overlayStep(emit, base);
     else if (process.env.CXB_ONLY === 'refs') await refsStep(emit, base);
+    else if (process.env.CXB_ONLY === 'attach') await attachStep(emit, base);
     else if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
     else if (process.env.CXB_ONLY === 'handover') await handoverStep(engine, emit, nextInject, base);
     else if (process.env.CXB_ONLY === 'policy') await policyStep(emit, base, engine);

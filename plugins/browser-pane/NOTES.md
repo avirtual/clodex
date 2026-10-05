@@ -266,6 +266,12 @@ same stripped text as page 1. The leading title line (`READ_TEXT` prepends
 `document.title`) is kept out of the comparison: titles differ per page and
 would otherwise end every common prefix at line 1. `--all` and `--links` skip it.
 
+## scheduler.js — attachBudget
+
+Claude Code attaches any `@path` in a reply to the agent's context; runs 12–13 cost
+≈13k tokens of reads plus ≈1.5k per screenshot, re-billed every later turn. Measured
+e-bloc pages (600–700 tok) and filtered reads (100–250 tok) fit the 1k default.
+
 ## child.js — loadingOf
 
 `svc.watch` is an `armIdle` handle armed at the first `open` and never waited
