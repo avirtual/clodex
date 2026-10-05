@@ -461,16 +461,16 @@ const SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
 const SUBAGENT_NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
 
 function pluginWords(intent) {
-  return String((intent && intent.raw) || '').trim().split(/\s+/).filter(Boolean);
+  return String((intent && intent.raw) || '').replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
 }
 
 function subagentRefusal(intent, entry) {
   if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return '';
   if (intent.type === 'browser') {
+    if (!pluginRowFor('browser') || !intentEnabledForSeat('browser', entry)) return '';
     const words = pluginWords(intent);
     if (words[0] === 'release') return SUBAGENT_NO_RELEASE;
     if (SUBAGENT_CONFIRM_SUBS.includes(words[0]) && words.some((w) => /^--confirm(=|$)/.test(w))) return SUBAGENT_NO_CONFIRM;
-    if (!pluginRowFor('browser') || !intentEnabledForSeat('browser', entry)) return '';
     return SUBAGENT_SUBS.browser.includes(words[0]) ? null : '';
   }
   if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub) ? null : '';

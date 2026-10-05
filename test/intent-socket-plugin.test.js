@@ -81,6 +81,11 @@ test('a subagent cannot --confirm a consequential action; the main agent can', (
     const r = await handle({ intent: `[agent:browser ${sub} --confirm]`, agentId: 'agent-7' }, ctl);
     assert.deepStrictEqual(r, { ok: false, error: 'a subagent cannot confirm a consequential action — ask the main agent' });
   }
+  for (const flag of ['"--confirm"', '--con"firm"']) {
+    assert.strictEqual(grammar.toCommand({ raw: `click ebloc 26 ${flag}` }).confirm, true, `the grammar reads ${flag} as --confirm`);
+    const r = await handle({ intent: `[agent:browser click ebloc 26 ${flag}]`, agentId: 'agent-7' }, ctl);
+    assert.deepStrictEqual(r, { ok: false, error: 'a subagent cannot confirm a consequential action — ask the main agent' }, flag);
+  }
   assert.deepStrictEqual(seen, []);
   const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]' }, ctl);
   assert.deepStrictEqual(main, { ok: true, reply: 'ok' });

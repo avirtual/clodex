@@ -89,7 +89,7 @@ function createIntentRequestHandler({
           const timer = setTimer(() => resolve(false), waitMs);
           wake = () => { clearTimer(timer); resolve(true); };
         });
-        if (!replied) return { ok: true, reply: lateReply(intent) };
+        if (!replied && !lines.length) return { ok: true, reply: lateReply(intent) };
       }
     } finally {
       open = false;
