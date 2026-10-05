@@ -143,7 +143,7 @@ test('Forget login confirms, naming the service and that downloads are kept, the
     await forget().click();
     assert.deepStrictEqual(seen, [bp.forgetText('utility')]);
     assert.match(seen[0], /utility/);
-    assert.strictEqual(seen[0], 'Forget the login for utility?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page and its downloads are kept.');
+    assert.strictEqual(seen[0], 'Forget the login for utility?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page, its downloads and its site notes are kept.');
     assert.ok(!f.invokes.some((i) => i.method === 'services.forget'), 'a declined confirm forgets nothing');
     answer = true;
     await forget().click();
