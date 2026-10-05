@@ -1115,6 +1115,9 @@ function feedPosts(scope, cats, byEl, loc) {
     if (qt && time) {
       qbox = qt;
       while (qbox.parentElement && qbox.parentElement !== art && !qbox.parentElement.contains(time)) qbox = qbox.parentElement;
+      let cardBox = null;
+      for (let e = qt; e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link') cardBox = e;
+      if (cardBox) qbox = cardBox;
     }
     const own = (e) => !inside(e, qbox);
     const ownA = [...art.querySelectorAll('a[href]')].filter(own);
@@ -1198,7 +1201,7 @@ function feedPosts(scope, cats, byEl, loc) {
       const suffixed = (a) => { const p = pathOf(a); return !!p && statusPath(p) !== p; };
       const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !suffixed(a)) || null;
       let cardEl = null;
-      for (let e = qt; !cardEl && e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
+      for (let e = qt; e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
       const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
       const ql = qbox.querySelector('[lang]');
       const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !suffixed(a) && flat(a.innerText).includes('@' + qm[1])) : null;

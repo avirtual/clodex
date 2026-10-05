@@ -304,3 +304,17 @@ test('FEED: durations of an hour or more read h:mm:ss from video.duration and fr
   }
   assert.strictEqual(durOf(h('video', {}), 'Play Video. 13 seconds long', { 'aria-label': '10 minutes' }), '0:13');
 });
+
+test('FEED: the quote box is the outermost role=link card around the quote time; the post\'s own video and media-tags link beside it stay on the post', () => {
+  const { row } = xHeader('me', 'Me', '/me/status/1', {}, '11h');
+  const video = h('video', {});
+  video.duration = 65;
+  const card = h('div', { role: 'link' },
+    h('div', {}, h('span', {}, 'Other'), h('span', {}, '@other'), h('time', {}, '2d')),
+    h('div', { lang: 'en' }, 'quoted words'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'my words'),
+    h('div', {}, video, h('a', { href: '/me/status/1/media_tags' }, 'Leo Snow'), card));
+  const [p] = runFeed(h('main', {}, art), { 1500: card }, {}).posts;
+  assert.deepStrictEqual([p.media.videos, p.media.duration], [1, '1:05']);
+  assert.deepStrictEqual([p.quote.media.videos, p.quote.handle, p.quote.n], [0, 'other', 1500]);
+});
