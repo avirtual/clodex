@@ -58,6 +58,7 @@ function attachBudget(data, seat) {
 
 const LEASE_MS = 5 * 60 * 1000;
 const IN_PLACE_LINES = 2;
+const FEED_PAGES = 8;
 const WAIT_DEFAULT_MS = 15000;
 const WAIT_MAX_MS = 120000;
 const HELD_WAIT_MAX_MS = 1800000;
@@ -206,6 +207,7 @@ function createScheduler({
   async function runOpen(handle, service, cmd) {
     const r = await client.request('open', { url: cmd.url }, { service, seat: handle.name });
     recordOpen(service, handle.name, r, cmd.url);
+    for (const st of seats.values()) delete st.feed[service];
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });
     if (r.held && !r.takeover) signin(service, r);
     return replies.openReply(service, r) + (r.takeover ? replies.TEXT.takeover : '');
@@ -216,14 +218,15 @@ function createScheduler({
     if (!cmd.compact || (cmd.mode && cmd.mode !== 'default') || !posts.length) return null;
     const page = pageKey(raw.url);
     const doc = raw.doc == null ? null : raw.doc;
-    let mem = st.feed[service];
-    if (!mem || mem.page !== page || mem.doc !== doc) {
-      mem = { page, doc, seen: new Map(), reads: 0, view: null };
-      st.feed[service] = mem;
-    }
-    if (cmd.page > 1 && mem.reads) return { mem, view: mem.view, commit: false };
-    if (!mem.reads) return { mem, view: null, commit: true };
+    const mems = st.feed[service] || (st.feed[service] = new Map());
+    let mem = mems.get(page);
+    if (!mem || mem.doc !== doc) mem = { doc, seen: new Map(), reads: 0, view: null };
+    mems.delete(page);
+    mems.set(page, mem);
+    while (mems.size > FEED_PAGES) mems.delete(mems.keys().next().value);
     const keys = new Set(posts.map(postKey));
+    if (cmd.page > 1 && mem.reads) return { mem, keys, view: mem.view, next: false };
+    if (!mem.reads) return { mem, keys, view: null, next: true };
     const earlier = [];
     let dropped = 0;
     for (const [key, e] of mem.seen) {
@@ -231,15 +234,18 @@ function createScheduler({
       earlier.push(e.line);
       if (e.at === mem.reads) dropped += 1;
     }
-    return { mem, view: { seen: new Set(mem.seen.keys()), dropped, earlier }, commit: true };
+    return { mem, keys, view: { seen: new Set(mem.seen.keys()), dropped, earlier }, next: true };
   }
 
   function rememberFeed(memo, feedPosts) {
-    if (!memo || !memo.commit || !feedPosts) return;
+    if (!memo || !feedPosts) return;
     const mem = memo.mem;
-    mem.reads += 1;
-    mem.view = memo.view;
-    for (const p of feedPosts) if (p.stored) mem.seen.set(p.key, { n: p.n, line: p.line, at: mem.reads });
+    if (memo.next) {
+      mem.reads += 1;
+      mem.view = memo.view;
+    }
+    for (const [key, e] of mem.seen) if (memo.keys.has(key)) e.at = mem.reads;
+    for (const p of feedPosts) if (p.stored && p.shown && !mem.seen.has(p.key)) mem.seen.set(p.key, { n: p.n, line: p.line, at: mem.reads });
   }
 
   async function runRead(handle, service, cmd) {

@@ -515,28 +515,36 @@ test('read --compact: a feed of one post says (1 post)', () => {
 const SEEN_RAW = { ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: [1, 2, 3].map((i) => ({ ...MIN_POST, n: i, path: `/a/status/${i}` })) } };
 const seenBody = (feedSeen, extra = {}) => formatRead(SEEN_RAW, { service: 'x', compact: true, feedSeen, ...extra }).content.split('\n').slice(6, -2);
 
-test('read --compact with feedSeen: only unseen posts, marker says N new · M already seen · K dropped off the top, K omitted at 0', () => {
+test('read --compact with feedSeen: only unseen posts, marker says N new · M already seen · K gone since your last read, K omitted at 0', () => {
   assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/2', '/a/status/9']), dropped: 1, earlier: [] }).slice(0, 2),
-    ['== feed (1 new · 2 already seen · 1 dropped off the top) ==', '[3] @a · 9h · "hi" · → /a/status/3']);
+    ['== feed (1 new · 2 already seen · 1 gone since your last read) ==', '[3] @a · 9h · "hi" · → /a/status/3']);
   assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }).slice(0, 3),
     ['== feed (2 new · 1 already seen) ==', '[2] @a · 9h · "hi" · → /a/status/2', '[3] @a · 9h · "hi" · → /a/status/3']);
   assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }, { filter: 'status/3' }).slice(0, 2),
     ['== feed (1 of 2 new · 1 already seen) ==', '[3] @a · 9h · "hi" · → /a/status/3']);
 });
 
-test('read --compact with feedSeen and nothing new: one line pointing at scroll and --all, then the elements section', () => {
-  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/2', '/a/status/3']), dropped: 0, earlier: [] }), [
+test('read --compact with feedSeen and nothing new: one line pointing at scroll and --all, and one line counting the elements; --filter keeps the matches', () => {
+  const allSeen = { seen: new Set(['/a/status/1', '/a/status/2', '/a/status/3']), dropped: 0, earlier: [] };
+  assert.deepStrictEqual(seenBody(allSeen), [
     '== feed (0 new · 3 already seen) ==', '(no new posts — scroll, or read --compact --all to replay the 3 seen)',
-    '== elements (outside the feed) ==', '[1] link Home → /', '[20] link Explore → /explore',
+    '== elements (outside the feed) ==', '(2 lines — read --compact --all, or read without --compact, to list them)',
   ]);
+  assert.deepStrictEqual(seenBody(allSeen, { filter: 'explore' }).slice(2), ['== elements (outside the feed) ==', '[20] link Explore → /explore']);
+});
+
+test('read --compact feedPosts: shown is true only for posts whose block this reply printed', () => {
+  const shown = (feedSeen, extra = {}) => formatRead(SEEN_RAW, { service: 'x', compact: true, feedSeen, ...extra }).feedPosts.map((p) => p.shown);
+  assert.deepStrictEqual(shown(null, { filter: 'status/2' }), [false, true, false]);
+  assert.deepStrictEqual(shown({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }), [false, true, true]);
 });
 
 test('read --compact --all with feedSeen: every post on the page, then the stored lines of posts no longer on it', () => {
   const earlier = ['[8] @a · 9h · "hi" · → /a/status/8', '[9] @a · 9h · "hi" · → /a/status/9'];
   assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/8', '/a/status/9']), dropped: 2, earlier }, { all: true }).slice(0, 7), [
-    '== feed (3 on the page · 2 seen earlier) ==',
+    '== feed (3 on the page · 2 seen earlier, off the page now) ==',
     '[1] @a · 9h · "hi" · → /a/status/1', '[2] @a · 9h · "hi" · → /a/status/2', '[3] @a · 9h · "hi" · → /a/status/3',
-    '-- seen earlier, no longer on the page (2) --', ...earlier,
+    '-- seen earlier, off the page now (2) --', ...earlier,
   ]);
 });
 

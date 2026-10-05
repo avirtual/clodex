@@ -183,9 +183,9 @@ function postKey(p) {
   return p.path + (by ? `|rp:${by === true ? '' : by}` : '');
 }
 
-function feedPosts(feed) {
+function feedPosts(feed, shownLines) {
   const blocks = feedBlocks(feed);
-  return feed.posts.map((p, i) => ({ key: postKey(p), stored: p.path != null, n: p.n, line: blocks[i][0] }));
+  return feed.posts.map((p, i) => ({ key: postKey(p), stored: p.path != null, shown: shownLines.has(blocks[i][0]), n: p.n, line: blocks[i][0] }));
 }
 
 function seenSection(feed, seen, opts) {
@@ -198,15 +198,15 @@ function seenSection(feed, seen, opts) {
     const shown = blocks.filter(keep);
     const earlier = seen.earlier.filter((l) => keep([l]));
     const lines = shown.flat();
-    if (earlier.length) lines.push(`-- seen earlier, no longer on the page (${seen.earlier.length}) --`, ...earlier);
-    return { marker: `== feed (${cut(shown.length, total)}${total} on the page · ${seen.earlier.length} seen earlier) ==`, lines: lines.length ? lines : ['(none)'] };
+    if (earlier.length) lines.push(`-- seen earlier, off the page now (${seen.earlier.length}) --`, ...earlier);
+    return { marker: `== feed (${cut(shown.length, total)}${total} on the page · ${seen.earlier.length} seen earlier, off the page now) ==`, lines: lines.length ? lines : ['(none)'] };
   }
   const fresh = blocks.filter((b, i) => !seen.seen.has(postKey(feed.posts[i])));
   const shown = fresh.filter(keep);
   const n = fresh.length;
   const m = total - n;
-  const marker = `== feed (${cut(shown.length, n)}${n} new · ${m} already seen${seen.dropped ? ` · ${seen.dropped} dropped off the top` : ''}) ==`;
-  if (!n && m) return { marker, lines: [`(no new posts — scroll, or read --compact --all to replay the ${m} seen)`] };
+  const marker = `== feed (${cut(shown.length, n)}${n} new · ${m} already seen${seen.dropped ? ` · ${seen.dropped} gone since your last read` : ''}) ==`;
+  if (!n && m) return { marker, lines: [`(no new posts — scroll, or read --compact --all to replay the ${m} seen)`], quiet: true };
   const lines = shown.flat();
   return { marker, lines: lines.length ? lines : ['(none)'] };
 }
@@ -240,8 +240,10 @@ function sections(raw, opts) {
   if (feed) {
     const rest = outsideFeed(elements, feed);
     if (opts.feedSeen) {
-      out.push(seenSection(feed, opts.feedSeen, opts));
-      out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
+      const sec = seenSection(feed, opts.feedSeen, opts);
+      out.push({ marker: sec.marker, lines: sec.lines });
+      const brief = sec.quiet && !opts.filter && rest.length;
+      out.push({ marker: '== elements (outside the feed) ==', lines: brief ? [`(${rest.length} lines — read --compact --all, or read without --compact, to list them)`] : rest.length ? rest : ['(none)'] });
       return out;
     }
     const blocks = feedMatches(feed, opts.filter);
@@ -567,7 +569,7 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed) : null };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed, new Set(body)) : null };
 }
 
 module.exports = {
