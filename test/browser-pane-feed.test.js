@@ -352,7 +352,7 @@ test('FEED: a post with only a photo has no text; the header row is never its cl
   const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })));
   const got = runFeed(h('main', {}, art), {}, {});
   assert.strictEqual(got.posts[0].text, '');
-  assert.strictEqual(feedLines(got)[0], '[?] Evan @EvanKirstel · 14h · photo · → /EvanKirstel/status/4');
+  assert.strictEqual(feedLines(got)[0], '[?] @EvanKirstel (Evan ✓) · 14h (2026-10-05T10:22Z) · photo · → /EvanKirstel/status/4');
 });
 
 test('FEED: the quote text joins an https:// split from its host', () => {
