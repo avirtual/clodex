@@ -650,6 +650,11 @@ test('storedLogin: each account-UI hint reads as logged in via account-ui; a pas
   assert.deepStrictEqual(storedLogin({ loggedInHint: null }, 5), { state: 'unknown', at: 5 });
 });
 
+test('storedLogin: a Google sign-in page is a sign-in page; only a Google rejection is idp-refused', () => {
+  assert.deepStrictEqual(storedLogin({ idp: 'google' }, 5), { state: 'login-page', at: 5, via: 'password-field' });
+  assert.deepStrictEqual(storedLogin({ idp: 'google', googleRejected: true }, 5), { state: 'idp-refused', at: 5, via: 'google' });
+});
+
 test('scheduler: services and the read header name the site a window moved to, against the host it was opened as', async () => {
   const h = harness({
     read: () => ({ ...PAGE, url: 'https://my.smartthings.com/devices', contentType: 'text/html', text: 'Devices', elements: [], truncated: false, frames: [], login: {} }),

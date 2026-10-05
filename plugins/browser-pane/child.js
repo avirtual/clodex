@@ -44,7 +44,7 @@ const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED', 'NO_HISTORY']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'COVERED', 'RESTARTED', 'NO_HISTORY']);
 const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'nav', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'close', 'inspect', 'policy']);
 
 function codedError(code, message) {
@@ -375,6 +375,10 @@ function scrollCode(dir, pages) {
 
 function lateMsFor(op) {
   return op === 'click' || op === 'select' ? LATE_CHANGE_MS : 0;
+}
+
+function coveredRefusal(n, el) {
+  return el && el.covered ? codedError('COVERED', TEXT.covered(n, el)) : null;
 }
 
 function consequentialRefusal(n, el, confirm) {
@@ -958,6 +962,8 @@ function run(electron, ctx) {
       let fresh = false;
       if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
+      const coveredErr = coveredRefusal(n, el);
+      if (coveredErr) throw coveredErr;
       const refused = consequentialRefusal(n, el, !!args.confirm);
       if (refused) throw refused;
       const refusedEnter = op === 'type' && args.enter ? await enterRefusal((code) => inIsolated(wc, code), n, args) : null;
@@ -1612,5 +1618,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

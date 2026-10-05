@@ -123,10 +123,10 @@ ipc handlers (step 12).
 
 ## Limits
 
-- **Google sign-in does not work.** Google refuses sign-in inside embedded
-  browsers ("This browser or app may not be secure"). The agent is told to stop
-  and say so; use the portal's own email/password login if it has one, or
-  download by hand.
+- **Google sign-in** is handled like any sign-in — the operator signs in in the
+  window (Gmail works); when Google rejects the embedded browser ("This browser
+  or app may not be secure") the agent is told to stop and the operator uses the
+  site's own login.
 - **iframes are not read.** The read file's header names the frames it skipped;
   the agent may open a frame's URL in the same service.
 - **Closed shadow roots are not read** (open ones are).
@@ -166,6 +166,10 @@ ipc handlers (step 12).
   focused ⚠ control, and Enter in any field of a form whose default submit is ⚠ (or whose
   action is a payment, order or deletion); `--confirm` applies. Arrow keys that would choose a
   ⚠ radio or change a ⚠ select are refused the same way.
+  A `click`, `type` or `select` whose click point is covered by another element (a menu
+  the page closed on scroll, an overlay) is refused and names what covers it, so the
+  mouse only ever lands on the element the ⚠ check ran on. An element already in view
+  is not scrolled before the click.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
