@@ -145,7 +145,7 @@ si <a id=w4 href="/form?d">Accesorii pentru casa</a> de <a id=w5 href="/form?e">
   }
   const badges = [...n.children].map((b) => b.getBoundingClientRect());
   let bl = 0; let bw = 0; const who = [];
-  badges.forEach((b, i) => { links.forEach((l, j) => { if (hit(b, l) && n.children[i].textContent !== document.getElementById('w' + (j + 1)).getAttribute('data-cx')) { bl += 1; who.push(n.children[i].textContent + '>link'); } }); words.forEach((w) => { if (hit(b, w)) { bw += 1; who.push(n.children[i].textContent + '>word'); } }); });
+  badges.forEach((b, i) => { links.forEach((l, j) => { if (hit(b, l) && n.children[i].textContent !== document.getElementById('w' + (j + 1)).getAttribute('data-cx')) { bl += 1; who.push(n.children[i].textContent + '>link'); } }); words.forEach((w) => { if (hit(b, w) && b.top < (w.top + w.bottom) / 2 && b.bottom > (w.top + w.bottom) / 2) { bw += 1; who.push(n.children[i].textContent + '>word'); } }); });
   document.getElementById('probe4').textContent = 'probe4: badges ' + badges.length + ' · badge-link hits ' + bl + ' · badge-word hits ' + bw + ' ' + who.join(',');
 } }).observe(document.body, { childList: true });</script>`,
   '/overlay3': () => `<title>Overlay3</title><main><p>Categorii: <a id=l1 href="/form">Mobil</a><a id=l2 href="/form?b">Tabletă</a><a id=l3 href="/form?c">Laptop</a> si altele.</p>
@@ -159,7 +159,7 @@ si <a id=w4 href="/form?d">Accesorii pentru casa</a> de <a id=w5 href="/form?e">
   badges.forEach((b, i) => { links.forEach((l) => { if (hit(b, l)) bl += 1; }); badges.forEach((c, j) => { if (i < j && hit(b, c)) bb += 1; }); });
   document.getElementById('probe3').textContent = 'probe3: badges ' + badges.length + ' · badge-link hits ' + bl + ' · badge-badge hits ' + bb;
 } }).observe(document.body, { childList: true });</script>`,
-  '/overlay5': () => `<title>Overlay5</title><main><p style="width:300px">Plata online cu card sau ramburs la livrare in toata tara.<br>Plata cu <img id=logo alt="" width=40 height=18 src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='18'%3E%3Crect width='40' height='18' fill='%2300f'/%3E%3C/svg%3E"><a id=v href="/form">Desktop</a> sau ramburs.</p>
+  '/overlay5': () => `<title>Overlay5</title><main><p style="width:300px;margin-bottom:40px">Plata online cu card sau ramburs la livrare in toata tara.<br>Plata cu <img id=logo alt="" width=40 height=18 src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='18'%3E%3Crect width='40' height='18' fill='%2300f'/%3E%3C/svg%3E"><a id=v href="/form">Desktop</a> sau ramburs.</p>
 <p id=probe5>probe5: none</p></main>
 <script>new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) {
   if (n.id !== '__cx_numbers') continue;
@@ -171,7 +171,7 @@ si <a id=w4 href="/form?d">Accesorii pentru casa</a> de <a id=w5 href="/form?e">
     const r = document.createRange(); r.setStart(t, w.index); r.setEnd(t, w.index + w[0].length); words.push(r.getBoundingClientRect());
   }
   const link = document.getElementById('v').getBoundingClientRect();
-  document.getElementById('probe5').textContent = 'probe5: badge-logo ' + hit(b, document.getElementById('logo').getBoundingClientRect())
+  document.getElementById('probe5').textContent = 'probe5: badge-logo ' + hit(b, ((r) => ({ left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1 }))(document.getElementById('logo').getBoundingClientRect()))
     + ' · badge-word hits ' + words.filter((w) => hit(b, w)).length + ' · covers link below its mid ' + (hit(b, link) && b.bottom > link.top + link.height / 2);
 } }).observe(document.body, { childList: true });</script>`,
   '/refs': () => `<title>Refs</title><style>.mw-linkback-text{display:none}.mw-cite-backlink a::before{content:'\\2191 '}</style><main><h2>References</h2><div class="mw-references-wrap"><ol class="references">
@@ -569,7 +569,7 @@ async function overlayStep(emit, base) {
   await emit('[agent:browser screenshot overlay --numbers]');
   const probe4 = (/probe4: [^\n]*/.exec(fileOf(await emit('[agent:browser read overlay --text]'))) || ['probe4: none'])[0];
   console.log(`    ${probe4}`);
-  check('two lines of links between " de " and " sau ": no badge covers another link or a word', /badges 6 · badge-link hits 0 · badge-word hits 0/.test(probe4));
+  check('two lines of links between " de " and " sau ": no badge covers another link or the middle of a word', /badges 6 · badge-link hits 0 · badge-word hits 0/.test(probe4));
   await emit(`[agent:browser open overlay] ${base}/overlay5`);
   await emit('[agent:browser read overlay]');
   await emit('[agent:browser screenshot overlay --numbers]');
@@ -582,7 +582,7 @@ async function refsStep(emit, base) {
   console.log('== 15. reference list items read as one bullet each; a filter returns one cite');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
   await emit(`[agent:browser open refs] ${base}/refs`);
-  const body = (c) => c.split('\n').filter((l) => /Hagstofa|Census|Peste/.test(l));
+  const body = (c) => c.split('\n').filter((l) => /^\s*•|Census|Peste/.test(l));
   const got = body(fileOf(await emit('[agent:browser read refs --text --filter=Hagstofa]')));
   got.forEach((l) => console.log(`    ${l}`));
   check('--filter=Hagstofa returns one bullet, no neighbour, no backlink', got.length === 1 && /^\s*• "The population grew/.test(got[0]) && !/↑|\^/.test(got[0]));
