@@ -155,6 +155,9 @@ ipc handlers (step 12).
   `Sponsored` line), other than its buttons and its `/status/` links, is `⚠ ad`:
   a click is a paid click on the operator's account and leaves the site, so it is
   refused unless the agent adds `--confirm`, which it should only when the operator asked.
+  An ad's profile links (@handle, name) and its card are `⚠ ad` too — any click inside a
+  promoted post is billed — so open the advertiser by URL instead. The read digest folds
+  them into one `⚠ ad: M ads (N elements)` line.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
@@ -210,8 +213,10 @@ destination is refused like `open`.
 
 `read --compact` prints a feed (any page built of `article` elements) as one line
 per post: the post's own number (its permalink, the same number a default read
-gives that link, so `click [n]` opens it; an ad's `[n]` is its own status link,
-or absent when it has none, never the paid wrapper), `@handle (Name ✓)`, relative and
+gives that link, so `click [n]` opens it; an ad's `[n]` is its own time or clean
+status link, or `[?]` when it has none, never the paid wrapper or its `/analytics`
+link — a `[?]` ad with a known path adds `(an ad's [?] has no safe number — open
+<service> <origin><path> shows the post)`), `@handle (Name ✓)`, relative and
 absolute time, flags (Ad, reposted by, pinned, reply to), the text clipped at 200
 characters with the site's own Show more as `(more [n])`, labelled counts
 (`1,058 replies`), media (`video 1:06`, `2 photos`, `card example.com`) and

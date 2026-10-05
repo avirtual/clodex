@@ -198,16 +198,19 @@ function seenSection(feed, seen, opts) {
     const shown = blocks.filter(keep);
     const earlier = seen.earlier.filter((l) => keep([l]));
     const lines = shown.flat();
+    if (shown.length) lines.push(...adHint(opts.url, feed.posts.filter((p, i) => keep(blocks[i])), opts.service));
     if (earlier.length) lines.push(`-- seen earlier, off the page now (${seen.earlier.length}) --`, ...earlier);
     return { marker: `== feed (${cut(shown.length, total)}${total} on the page${seen.earlier.length ? ` · ${seen.earlier.length} seen earlier, off the page now` : ''}) ==`, lines: lines.length ? lines : ['(none)'] };
   }
-  const fresh = blocks.filter((b, i) => !seen.seen.has(postKey(feed.posts[i])));
+  const isFresh = (i) => !seen.seen.has(postKey(feed.posts[i]));
+  const fresh = blocks.filter((b, i) => isFresh(i));
   const shown = fresh.filter(keep);
   const n = fresh.length;
   const m = total - n;
   const marker = `== feed (${cut(shown.length, n)}${n} new · ${m} already seen${seen.dropped ? ` · ${seen.dropped} gone since your last read` : ''}) ==`;
   if (!n && m) return { marker, lines: [`(no new posts — scroll, or read --compact --all to replay the ${m} seen)`], quiet: true };
   const lines = shown.flat();
+  if (lines.length) lines.push(...adHint(opts.url, feed.posts.filter((p, i) => isFresh(i) && keep(blocks[i])), opts.service));
   return { marker, lines: lines.length ? lines : ['(none)'] };
 }
 
@@ -225,6 +228,15 @@ function compactFeed(raw, opts) {
   return !!(opts.compact && opts.mode === 'default' && feed && Array.isArray(feed.posts) && feed.posts.length) ? feed : null;
 }
 
+function adHint(url, posts, service) {
+  const ad = posts.find((p) => p && p.flags && p.flags.ad && p.n == null && p.path);
+  if (!ad) return [];
+  let origin = '';
+  try { origin = new URL(String(url || '')).origin; } catch { origin = ''; }
+  if (origin === 'null') origin = '';
+  return [`(an ad's [?] has no safe number — open ${service} ${origin}${ad.path} shows the post)`];
+}
+
 function outsideFeed(elements, feed) {
   const inFeed = new Set((Array.isArray(feed.numbers) ? feed.numbers : []).map(String));
   return elements.filter((l) => {
@@ -240,14 +252,18 @@ function sections(raw, opts) {
   if (feed) {
     const rest = outsideFeed(elements, feed);
     if (opts.feedSeen) {
-      const sec = seenSection(feed, opts.feedSeen, opts);
+      const sec = seenSection(feed, opts.feedSeen, { ...opts, url: raw.url });
       out.push({ marker: sec.marker, lines: sec.lines });
       const brief = sec.quiet && !opts.filter && rest.length;
       out.push({ marker: '== elements (outside the feed) ==', lines: brief ? [`(${rest.length} lines — read --compact --all, or read without --compact, to list them)`] : rest.length ? rest : ['(none)'] });
       return out;
     }
-    const blocks = feedMatches(feed, opts.filter);
+    const needle = opts.filter ? String(opts.filter).toLowerCase() : '';
+    const all = feedBlocks(feed);
+    const kept = all.map((b, i) => i).filter((i) => !needle || all[i].some((l) => l.toLowerCase().includes(needle)));
+    const blocks = kept.map((i) => all[i]);
     const lines = blocks.flat();
+    if (lines.length) lines.push(...adHint(raw.url, kept.map((i) => feed.posts[i]), opts.service));
     const total = feed.posts.length;
     out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} post${total === 1 ? '' : 's'}) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
@@ -508,14 +524,22 @@ function digestOf(raw, feed = null) {
   const outline = raw.outline && typeof raw.outline === 'object' ? raw.outline : {};
   const list = (a) => (Array.isArray(a) ? a.map(String) : []);
   const cats = raw.cats && typeof raw.cats === 'object' ? raw.cats : null;
-  const warn = [];
+  const rows = [];
   for (const l of feed ? outsideFeed(list(raw.elements), feed) : list(raw.elements)) {
     const m = WARN_RE.exec(l);
-    if (m) warn.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
+    if (m) rows.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
+  }
+  const warn = rows.filter((w) => w.cat !== 'ad');
+  const ads = { posts: 0, elements: 0 };
+  let prevAd = false;
+  for (const w of [...rows].sort((a, b) => a.n - b.n)) {
+    const isAd = w.cat === 'ad';
+    if (isAd) { ads.elements += 1; if (!prevAd) ads.posts += 1; }
+    prevAd = isAd;
   }
   return {
     title: String(raw.title || ''), url: redactUrl(raw.url || ''), login: loginLabel(raw.login),
-    counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn,
+    counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn, ads,
     ...(feed ? { folded: { ...(feed.folded || {}) } } : {}),
   };
 }

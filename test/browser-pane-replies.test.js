@@ -488,6 +488,18 @@ test('replies: a compact digest folds in-feed ⚠ into one line and lists only t
   assert.ok(lines.includes('  ⚠ folded: publish ×6'), lines.join('\n'));
 });
 
+test('replies: the digest prints one ⚠ ad line for folded ad rows and none when there are no ads', () => {
+  const raw = {
+    ...BIG, elements: ['[1] button ⚠ publish Post', '[7] link ⚠ @shop', '[8] link ⚠ Shop', '[9] link ⚠ From shop.com', '[10] button ⚠ publish Reply', '[12] link ⚠ @brand', '[13] link ⚠ Brand'],
+    cats: { 1: 'publish', 7: 'ad', 8: 'ad', 9: 'ad', 10: 'publish', 12: 'ad', 13: 'ad' },
+  };
+  const lines = (r) => R.readReply('x', formatRead(r, { service: 'x' }), '/t/r.txt', 'claude', { attach: false }).split('\n');
+  const got = lines(raw);
+  assert.ok(got.includes('  ⚠: [1] "publish Post" · [10] "publish Reply"'), got.join('\n'));
+  assert.ok(got.includes('  ⚠ ad: 2 ads (5 elements) — clicking any of them is a paid click; the compact feed marks them Ad'), got.join('\n'));
+  assert.ok(!lines({ ...raw, cats: { 1: 'publish', 10: 'publish' } }).some((l) => l.startsWith('  ⚠ ad:')));
+});
+
 test('replies: a default read of five or more posts hints --compact; four do not, nor a compact read', () => {
   const hint = (count, compact = false) => R.readReply('x', formatRead({ ...BIG, feed: { count } }, { service: 'x', compact }), '/t/r.txt', 'claude', { attach: false })
     .split('\n').find((l) => l.startsWith('  hint:')) || '';

@@ -150,24 +150,31 @@ test('FEED: an article whose permalink was not numbered reports n null; nested a
   assert.strictEqual(runFeed(doc, {}, {}).posts.length, 1);
 });
 
-function adFixture() {
+function adFixture(...extra) {
   const views = h('a', { href: '/marco__marsano/status/2104987795370750155/analytics' }, '268,217 views');
   const shop = h('a', { href: 'https://t.co/abc' }, 'From millerandhill.com');
   const wrapper = h('div', {},
     h('div', {}, h('span', {}, 'Marco Marsano Milano'), h('span', {}, '@marco__marsano')),
     h('div', {}, 'Ad'),
     h('div', { lang: 'en' }, 'Discover our denim jacket'),
-    shop, views);
+    shop, views, ...extra);
   const art = h('article', {}, wrapper);
   return { doc: h('main', {}, art), art, wrapper, views, shop };
 }
 
-test('FEED: an ad (no time link) takes the number of its own status link, never the paid wrapper, the analytics link minus /analytics, the @handle span, the Ad line under the header and the domain in the link text', () => {
+test('FEED: an ad (no time link) with only its analytics link has no [n] — never the paid wrapper, the analytics link, the @handle span, the Ad line or the card', () => {
   const f = adFixture();
   const [p] = runFeed(f.doc, { 1020: f.wrapper, 1025: f.views, 1026: f.shop }, {}).posts;
-  assert.strictEqual(p.n, 1025);
+  assert.strictEqual(p.n, null);
   assert.strictEqual(p.path, '/marco__marsano/status/2104987795370750155');
   assert.deepStrictEqual([p.handle, p.name, p.flags.ad, p.media.card], ['marco__marsano', 'Marco Marsano Milano', true, 'millerandhill.com']);
+});
+
+test('FEED: an ad with a clean status anchor beside its analytics link takes the clean anchor\'s number', () => {
+  const post = h('a', { href: '/marco__marsano/status/2104987795370750155' }, 'Discover');
+  const f = adFixture(post);
+  const [p] = runFeed(f.doc, { 1020: f.wrapper, 1025: f.views, 1027: post }, {}).posts;
+  assert.strictEqual(p.n, 1027);
 });
 
 test('FEED: an ad with only a numbered wrapper has no [n]; the wrapper stays inside the feed; a non-ad without a time link keeps the wrapper number', () => {
