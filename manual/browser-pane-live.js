@@ -198,9 +198,11 @@ function server() {
       if (url.pathname === '/hang') return;
       if (url.pathname.startsWith('/gate/')) {
         gateLog.push(req.url);
-        const file = path.join(__dirname, 'fixtures', 'gate', path.basename(url.pathname));
+        const low = url.pathname === '/gate/sort3-low.html';
+        const file = path.join(__dirname, 'fixtures', 'gate', low ? 'sort3.html' : path.basename(url.pathname));
         res.writeHead(fs.existsSync(file) ? 200 : 404, headers);
-        res.end(fs.existsSync(file) ? fs.readFileSync(file) : 'nope');
+        const body = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'nope';
+        res.end(low ? body.replace('#top{height:640px', '#top{height:1000px') : body);
         return;
       }
       if (url.pathname === '/hidden') {
@@ -742,7 +744,15 @@ async function coveredStep(emit, base) {
   const reply = await emit(`[agent:browser click covered ${ascN}]`);
   const del = gateLog.filter((u) => u.startsWith('/gate/done.html'));
   console.log(`    sort3 click ${ascN}: ${reply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
-  check('the click is refused as covered and done.html is never requested', /is covered at its click point by/.test(reply) && del.length === 0);
+  check('in view: the click lands on Pret crescator (or is refused as covered) and done.html is never requested', del.length === 0 && (/is covered at its click point by/.test(reply) || gateLog.includes('/gate/sorted.html?o=asc')));
+  await emit(`[agent:browser open covered] ${base}/gate/sort3-low.html`);
+  const lowSort = numOf(fileOf(await emit('[agent:browser read covered]')), 'Relevanta');
+  await emit(`[agent:browser click covered ${lowSort}]`);
+  const lowAsc = numOf(fileOf(await emit('[agent:browser read covered]')), 'Pret crescator');
+  gateLog.length = 0;
+  const lowReply = await emit(`[agent:browser click covered ${lowAsc}]`);
+  console.log(`    sort3-low click ${lowAsc}: ${lowReply.split('\n')[0]} · server: ${gateLog.join(' ') || '(none)'}`);
+  check('below the fold: refused as covered, done.html never requested', /is covered at its click point by/.test(lowReply) && !gateLog.some((u) => u.startsWith('/gate/done.html')));
   await emit(`[agent:browser open covered] ${base}/gate/sort.html`);
   const sortN2 = numOf(fileOf(await emit('[agent:browser read covered]')), 'Relevanta');
   await emit(`[agent:browser click covered ${sortN2}]`);
