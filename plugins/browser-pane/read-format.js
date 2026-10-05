@@ -332,7 +332,11 @@ function loginLabel(login) {
 }
 
 const SECRET_NAME = /(^|[_.-])(token|session|sessionid|sid|auth|code|cas)([_.-]|$)/i;
-const SECRET_VALUE = /^[A-Za-z0-9_-]{20,}$/;
+function secretValue(v) {
+  if (/^[a-z0-9]+(-[a-z0-9]+)+$/.test(v)) return false;
+  if (/^[A-Za-z0-9_-]{20,}$/.test(v) && /[0-9]/.test(v) && /[a-z]/.test(v) && /[A-Z]/.test(v)) return true;
+  return /^[a-f0-9]{32,}$/i.test(v) || /^[A-Za-z0-9_-]{40,}$/.test(v);
+}
 
 function redactPairs(s) {
   return s.split('&').map((pair) => {
@@ -341,7 +345,7 @@ function redactPairs(s) {
     const dec = (x) => { try { return decodeURIComponent(x.replace(/\+/g, ' ')); } catch { return x; } };
     const name = dec(pair.slice(0, eq));
     const value = dec(pair.slice(eq + 1));
-    return SECRET_NAME.test(name) || SECRET_VALUE.test(value) ? `${pair.slice(0, eq)}=<redacted>` : pair;
+    return SECRET_NAME.test(name) || secretValue(value) ? `${pair.slice(0, eq)}=<redacted>` : pair;
   }).join('&');
 }
 

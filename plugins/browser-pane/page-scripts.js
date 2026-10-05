@@ -289,8 +289,20 @@ const SCROLL_INFO = `(() => {
   return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
 })()`;
 
+const BUSY = `
+  const busyScan = () => {
+    const small = e => {
+      if (e.getAttribute('aria-busy') === 'true') return true;
+      const r = e.getBoundingClientRect();
+      return r.width * r.height < 0.25 * innerWidth * innerHeight && (e.innerText || e.textContent || '').slice(0, 200).length <= 80;
+    };
+    const seen = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
+    const busyEls = seen.filter(small);
+    return { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
+  };`;
+
 function readText(main) {
-  return `(() => {${DEEP}
+  return `(() => {${DEEP}${BUSY}
   ${bulletItems.toString()}
   const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
@@ -308,8 +320,7 @@ function readText(main) {
     });
     root = best;
   }
-  const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
-  const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
+  const busy = busyScan();
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   if (!root) return { text: '', busy, outline };
@@ -1500,7 +1511,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

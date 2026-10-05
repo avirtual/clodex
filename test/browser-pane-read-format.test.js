@@ -351,6 +351,13 @@ test('read-format: redactUrl blanks token-shaped values and secret-named params,
   assert.strictEqual(RF.redactUrl('https://x.test/a?authuser=0&side=left&zipcode=12345'), 'https://x.test/a?authuser=0&side=left&zipcode=12345');
 });
 
+test('read-format: redactUrl keeps readable slugs whole and blanks token-shaped values', () => {
+  assert.strictEqual(RF.redactUrl('https://docsify.js.org/#/cover?id=coverpage-as-homepage'), 'https://docsify.js.org/#/cover?id=coverpage-as-homepage');
+  assert.strictEqual(RF.redactUrl('https://x.test/a?slug=the-quick-brown-fox-jumps'), 'https://x.test/a?slug=the-quick-brown-fox-jumps');
+  assert.strictEqual(RF.redactUrl('https://x.test/a?id=aB3dEfGh1jKlMnOpQrSt'), 'https://x.test/a?id=<redacted>');
+  assert.strictEqual(RF.redactUrl('https://x.test/a?h=0123456789abcdef0123456789abcdef'), 'https://x.test/a?h=<redacted>');
+});
+
 test('read-format: the url header line is redacted and names the site when it differs from the opened host', () => {
   const lines = formatRead({ ...RAW, url: 'https://my.smartthings.com/devices?sid=QWERTYUIOPASDFGHJKLZX' }, { service: 'ebloc', openedHost: 'e-bloc.ro' })
     .content.split('\n');
