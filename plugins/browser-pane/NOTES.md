@@ -85,9 +85,15 @@ into the page scripts with `toString()` (`PAGE_SOURCE`), one implementation.
 
 ## page-scripts.js — FIND_TEXT
 
-Own text only (direct text nodes, plus the value of input buttons), so the
-match is the innermost element holding the text. Every listed candidate is
-stamped, so its number clicks the text itself, not a wrapper.
+Own text only (direct text nodes, plus the value of input buttons). A hit's
+candidate is its closest `STD_SEL` element, else a plain clickable whose whole
+label is the hit text; candidates are keyed by `storedKeysOf` over the same item
+set `READ_INTERACTIVE` collects (`collect`), so a later read gives them the same
+numbers. A hit with neither (X post text inside a `tabindex` article) is listed
+as `[–] … (not clickable)` and never placed. An exact own-text match outranks
+substring matches: one exact is the target, several are the only ones listed.
+Run 13: the substring list numbered "Show more" and post text with numbers the
+next read never used.
 
 ## child.js — run
 
@@ -297,8 +303,12 @@ A text-sized box tries four slots in order: left, above, right, below. A slot is
 blocked when it leaves the viewport, overlaps another numbered box (not one that
 contains this one) or a placed badge, has text under its mid-height, or has
 media (`img,svg,canvas,video,picture` or a background image) at its centre per
-`elementFromPoint`. With all four blocked the badge is a superscript centred on
-the top-left corner, covering at most the top half of the first glyph. Block
+`elementFromPoint`. Overlaps of 1 px or less do not block, so a row wrapper that
+starts at the box's left edge a pixel higher leaves the above slot free (X ad name
+rows). With all four blocked the badge is a superscript whose bottom edge sits
+1 px above the box top, provided the line above has no text under its centre;
+otherwise it goes right of the box, shifted up to its own width to find a clear
+gap. A half-height superscript covered the top of "Mo" and "T" on e-bloc. Block
 rows and media boxes keep the inside placement nudged `BADGE_NUDGE_PX` left. Left-of placement covered the end of the previous inline link
 ("[20]Mo[21]Tabletă").
 
@@ -415,7 +425,8 @@ cap) is new when a read first lists it.
 Each origin entry (`numbers`, `nextN`, `volatile`, `listed`, `savedAt`, schema `NUMBERS_SCHEMA`)
 is saved by `saveNumbers` to `<cxb-data>/numbers/<service>/<origin slug>.json` at most
 1 s after a merge, and on window close and shutdown; `numState` loads it the first
-time it touches the origin, keeping `savedAt` as `restoredAt` so the first read
+time it touches the origin, keeping `savedAt` (else the file mtime, for files
+saved before `savedAt` existed) as `restoredAt` so the first read
 says `numbers restored (saved …)` instead of `first read of …`; at most `ORIGINS_MAX` files per service, oldest mtime
 deleted. After a host reboot e-bloc's PDF link number became the payment button's.
 Persistence only keeps numbering continuous; `genRefusal` is what voids a stale
@@ -501,3 +512,13 @@ read `<redacted>`, the fragment too when it is `k=v` pairs.
 `loggedInHint` scans without the visibility test, so a logout item inside a
 closed account menu counts. X `/home` has no visible logout link; its profile
 tab and composer are the signal. Any password field on the page suppresses it.
+
+## child.js — retiredOf
+
+`lastRead` is per origin, so returning to a page compares against the last page
+read on that origin, not the last visit to this one. `retired` lists the previous
+page's numbers whose base key is on this page under another stored key (a twin's
+block context differs); `changed` lists numbers on both pages whose line or row
+text differs (shared nav and chrome links). Nothing within an origin is evicted:
+the `numbers` map and `nextN` are unbounded, `ELEMENTS_MAX` only stops listing,
+and `ORIGINS_MAX` drops whole origins.

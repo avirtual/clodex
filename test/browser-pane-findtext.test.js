@@ -131,7 +131,7 @@ function xPage() {
   const row1 = mk('div', {}, [mk('span', {}, ['Trending in Romania'], [10, 40, 200, 20]), more1], [10, 40, 330, 20]);
   const row2 = mk('div', {}, [mk('span', {}, ['Politics Election'], [10, 140, 200, 20]), more2], [10, 140, 330, 20]);
   const body = mk('body', {}, [home, row1, row2, show, post], [0, 0, 1200, 800]);
-  mk('html', {}, [body], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
   return { page, more1, more2, show, post, home };
 }
 
@@ -144,8 +144,8 @@ test('FIND_TEXT: an exact label outranks "Show more" and post text; the candidat
   const state = { known: {}, next: 1 };
   const found = vm.runInContext(scripts.FIND_TEXT('More', state), ctx);
   assert.strictEqual(found.count, 2, 'only the two exact "More" buttons are candidates');
-  assert.deepStrictEqual(found.hits.map((h) => h.text), ['More', 'More']);
-  const ns = found.hits.map((h) => h.n);
+  assert.deepStrictEqual(Array.from(found.hits, (h) => h.text), ['More', 'More']);
+  const ns = Array.from(found.hits, (h) => h.n);
   assert.ok(ns.every((n) => Number.isInteger(n)) && ns[0] !== ns[1]);
   const read = vm.runInContext(scripts.READ_INTERACTIVE(false, merged(state, found)), ctx);
   assert.deepStrictEqual([ctx.__cxOf.get(p.more1), ctx.__cxOf.get(p.more2)], ns, 'the read numbers both buttons as FIND_TEXT did');

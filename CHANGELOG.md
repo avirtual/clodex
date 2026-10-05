@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: `--text=` names its candidates with the numbers a read would give them and prefers an exact label match, number badges no longer touch the glyphs below them (ad name rows included), X's verified badge reads `badge` instead of `avatar`, a menu opening or closing on X no longer dumps the page as `changed:`, and the restore header shows when the numbers were saved.
 - Browser pane: a held number now stays on its own row when identical buttons retire, wrappers around a listed control are no longer flagged ⚠, number badges never cover text, Wikipedia reference items read as single bullets, and a read after a restart says `numbers restored`.
 - Browser pane: a read drops menu and footer text and hides elements that repeated from the previous read of the same site (header says how many; hidden numbers still click; `read --all` shows everything), says when the page is still loading, ignores elements parked off-screen or clipped away (the usual hidden-spinner trick), lets `--text` targets through after a navigation without a re-read, and reports a change inside a table as its header row plus the changed row.
 - Browser pane: the operator can open a window from the pane's Settings, navigate or sign in by hand, and hand it to any agent in the workspace with an instruction — the agent receives one line naming the service and the page and starts with a read; with several windows open, clicking the status segment lists them to pick from.

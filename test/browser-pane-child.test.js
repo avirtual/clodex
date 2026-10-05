@@ -9,7 +9,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
-  keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
   changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
@@ -95,7 +95,7 @@ function button(label, row) {
     tagName: 'BUTTON', isConnected: true, innerText: label, labels: null, value: '', row,
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest(sel) { return this.row == null || sel === 'article' ? null : { innerText: this.row }; },
   };
 }
@@ -115,7 +115,7 @@ function xbutton(label, permalink, text = '') {
     tagName: 'BUTTON', isConnected: true, innerText: text, labels: null, value: '', id: '',
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest: (sel) => (sel === 'article' ? art : null),
   };
 }
@@ -146,7 +146,7 @@ function xarticle(text, permalink) {
     tagName: 'ARTICLE', isConnected: true, innerText: text, labels: null, value: '', id: '',
     matches: () => false,
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest: (sel) => (sel === 'article' ? art : null),
   };
 }
@@ -202,7 +202,7 @@ test('numbering: a duplicate keys by its own block, so a retired twin never hand
   assert.strictEqual(p.verify(ns[2], stored[2]), 'ambiguous', 'a changed block context is refused, never re-pointed');
 });
 
-test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loose twin with identical block text is not placed on the twin\'s number', () => {
+test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loose twin is keyed against every twin on the page, as the read keys it', () => {
   const style = { visibility: 'visible', display: 'block', opacity: '1', position: 'fixed', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', overflowY: 'visible' };
   const list = { innerText: 'Trends', parentElement: null };
   const order = [];
@@ -240,9 +240,11 @@ test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loos
   assert.strictEqual(verify(n), 'ok', 'the number FIND_TEXT placed passes the act\'s CHECK');
   twin.childNodes = [{ nodeType: 3, nodeValue: 'More Romanians' }];
   const again = vm.runInContext(scripts.FIND_TEXT('Romanians', { known: { ...state.known, ...found.assigned }, next: found.next }), ctx);
-  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [null], 'the twin sharing [1]\'s block text is not placed');
-  assert.strictEqual(ctx.__cxOf.get(a), 1);
-  assert.strictEqual(verify(1), 'ok', '[1] still points at its own caret');
+  const full = vm.runInContext(`(() => {${scripts.numbering({ known: {}, next: 1 })}
+  return storedKeysOf(__all);
+})()`, Object.assign(ctx, { __all: order }));
+  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [1], 'the twin takes the key a read over the whole page gives it, first of its block');
+  assert.strictEqual(ctx.__cxKeys[1], full[0]);
   assert.match(CHILD_SRC, /if \(found\.hits\[0\]\.n == null\) throw codedError\('AMBIGUOUS', TEXT\.twinText\(svc\.name, text\)\);/);
 });
 
@@ -265,7 +267,7 @@ function link(label, href) {
     tagName: 'A', isConnected: true, innerText: label, labels: null, value: '', href: `https://x.test${href}`,
     matches: (sel) => sel.split(',').includes('a[href]'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }), closest: () => null,
   };
 }
 
@@ -1042,4 +1044,17 @@ test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their tex
   assert.ok(src.includes(`clone.querySelectorAll(${JSON.stringify(scripts.CHROME_SEL)})`));
   assert.ok(src.includes(`t.data = ${JSON.stringify(scripts.CHROME_MARK)} + t.data`));
   assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`if (it.el.closest(${JSON.stringify(scripts.CHROME_SEL)})) chrome.push(n);`));
+});
+
+test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
+  fs.mkdirSync(path.join(dir, 'ebloc'));
+  const opened = new Set(['x']);
+  assert.strictEqual(notOpenError('nosuch', opened, dir).message, 'nosuch is not a service here — services: ebloc, x — [agent:browser open nosuch] <url> opens a new one');
+  assert.strictEqual(notOpenError('ebloc', opened, dir).message, 'ebloc is not open — [agent:browser open ebloc] <url>');
+  assert.strictEqual(notOpenError('x', opened, dir).message, 'x is not open — [agent:browser open x] <url>');
+  assert.strictEqual(notOpenError('nosuch', new Set(), path.join(dir, 'none')).code, 'NOT_OPEN');
+  assert.match(R.TEXT.twinText('x', 'More'), /— read x; the re-read numbers both$/);
+  assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\)\);/);
+  assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
 });
