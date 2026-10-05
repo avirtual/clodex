@@ -42,7 +42,7 @@ function answer(f) {
   if (f.op === 'open' && f.args.operator) {
     try { checkOpenUrl(String(f.args.url || '')); } catch (e) { return send({ id: f.id, ok: false, code: e.code, error: e.message }); }
     doc += 1;
-    send({ event: 'state', service: f.service, state: 'held', reason: 'takeover', url: 'about:blank', title: '' });
+    send({ event: 'state', service: f.service, state: 'held', reason: 'takeover', visible: false, url: 'about:blank', title: '' });
     return send({ id: f.id, ok: true, result: { url: f.args.url, title: 'Operator ' + f.service, doc, state: 'held', reason: 'takeover' } });
   }
   if (f.op === 'open' && /login/.test(f.args.url)) {
@@ -103,6 +103,10 @@ function answer(f) {
   }
   if (f.op === 'screenshot') {
     return send({ id: f.id, ok: true, result: { jpeg: Buffer.from('fake-jpeg').toString('base64'), width: 1280, height: 900, fallback: false } });
+  }
+  if (f.op === 'show') {
+    send({ event: 'visibility', service: f.service, visible: true });
+    return send({ id: f.id, ok: true, result: { state: 'held' } });
   }
   if (f.op === 'forget') return send({ id: f.id, ok: true, result: { forgotten: f.service } });
   if (f.op === 'echo') return send({ id: f.id, ok: true, result: { echo: f.args.v, pid: process.pid } });

@@ -527,7 +527,7 @@ function run(electron, ctx) {
     svc.lock = lock.reduce(prev, ev);
     render(svc);
     if (prev.state === svc.lock.state && prev.reason === svc.lock.reason) return false;
-    send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, ...pageInfo(svc), ...extra });
+    send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), ...extra });
     return true;
   };
 
@@ -673,6 +673,9 @@ function run(electron, ctx) {
     win.on('resize', layout);
     win.on('show', dockSync);
     win.on('hide', dockSync);
+    const visibility = () => { if (!win.isDestroyed()) send({ event: 'visibility', service: name, visible: win.isVisible() }); };
+    win.on('show', visibility);
+    win.on('hide', visibility);
     const wc = view.webContents;
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),

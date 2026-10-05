@@ -99,8 +99,10 @@ function activate(host) {
   const changed = () => { try { host.events.emit('changed', null, 'all'); } catch {} };
   const onState = (frame) => {
     const service = frame.service;
+    const prev = live.get(service);
     live.set(service, {
       state: frame.state, reason: frame.state === 'held' ? (frame.reason || 'login') : null, seat: frame.seat || null, url: frame.url || '', title: frame.title || '',
+      visible: typeof frame.visible === 'boolean' ? frame.visible : (prev ? prev.visible : undefined),
     });
     scheduler.onState(frame);
     if (frame.state !== 'held') { notified.delete(service); return; }
@@ -125,6 +127,7 @@ function activate(host) {
       if (!frame.service || !grammar.SERVICE_RE.test(String(frame.service))) return;
       if (frame.event === 'state') onState(frame);
       else if (frame.event === 'window-closed') { notified.delete(frame.service); live.delete(frame.service); scheduler.onClosed(frame.service); }
+      else if (frame.event === 'visibility') { const v = live.get(frame.service); if (v) v.visible = !!frame.visible; }
       else if (frame.event === 'operator-download' && host.log) host.log.info(`operator download on ${frame.service}: ${frame.file}`);
       else if (frame.event === 'operator-nav') onOperatorNav(frame);
       else if (frame.event === 'denied') {
@@ -250,6 +253,7 @@ function activate(host) {
       const login = saved[name] && saved[name].login;
       const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown', denied: denials.get(name) || 0 };
       if (v.state === 'held' && v.reason === 'takeover') entry.operator = true;
+      if (typeof v.visible === 'boolean') entry.visible = v.visible;
       return entry;
     });
     return { ok: true, child: childState(), services };
