@@ -358,6 +358,13 @@ test('read-format: redactUrl keeps readable slugs whole and blanks token-shaped 
   assert.strictEqual(RF.redactUrl('https://x.test/a?h=0123456789abcdef0123456789abcdef'), 'https://x.test/a?h=<redacted>');
 });
 
+test('read-format: redactUrl redacts a hash-route query and keeps the route whole', () => {
+  assert.strictEqual(RF.redactUrl('https://x.test/#/cb?token=xyz&state=1'), 'https://x.test/#/cb?token=<redacted>&state=1');
+  assert.strictEqual(RF.redactUrl('https://x.test/#/reset?code=abc'), 'https://x.test/#/reset?code=<redacted>');
+  assert.strictEqual(RF.redactUrl('https://docsify.js.org/#/cover?id=coverpage-as-homepage'), 'https://docsify.js.org/#/cover?id=coverpage-as-homepage');
+  assert.strictEqual(RF.redactUrl('https://x.test/#/plain/route'), 'https://x.test/#/plain/route');
+});
+
 test('read-format: the url header line is redacted and names the site when it differs from the opened host', () => {
   const lines = formatRead({ ...RAW, url: 'https://my.smartthings.com/devices?sid=QWERTYUIOPASDFGHJKLZX' }, { service: 'ebloc', openedHost: 'e-bloc.ro' })
     .content.split('\n');

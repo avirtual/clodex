@@ -356,7 +356,10 @@ function redactUrl(url) {
   const frag = h < 0 ? null : s.slice(h + 1);
   const q = head.indexOf('?');
   const out = q < 0 ? head : `${head.slice(0, q + 1)}${redactPairs(head.slice(q + 1))}`;
-  return frag == null ? out : `${out}#${frag.includes('=') ? redactPairs(frag) : frag}`;
+  if (frag == null) return out;
+  const fq = frag.indexOf('?');
+  if (fq >= 0) return `${out}#${frag.slice(0, fq + 1)}${redactPairs(frag.slice(fq + 1))}`;
+  return `${out}#${frag.includes('=') ? redactPairs(frag) : frag}`;
 }
 
 function frameLabel(url) {
