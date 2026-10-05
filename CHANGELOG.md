@@ -31,6 +31,7 @@ blocks a release.
 - Subagents: the `clodex` verb now proves who is calling (a Claude Code hook stamps the subagent's identity into the call, so a subagent can no longer release the seat's browser window or pass `--confirm`), refusals and errors exit non-zero so a script can branch on them, and long browser waits and downloads return inline instead of landing in the seat's conversation.
 - Subagents: the identity hook no longer runs a Node process for every shell command (only ones that invoke `clodex`), stamps `clodex` behind `if`, `time`, `timeout` and `nohup`, and a Codex clone's main thread is no longer refused its own privileged verbs.
 - Subagents: the identity stamp on a `clodex` call is now single-use — a token copied from a transcript or a shell's `time` output no longer lets a subagent pass as the main agent.
+- Browser pane: `aria-hidden` and disabled controls are listed in the screenshot's `not drawn:` legend instead of badged, a container taller than the viewport gets a dimmed badge that displaces nothing, an inline link with no free slot takes the badge under its line, the legend is never covered, and `new: all (first read)` appears only on a first read.
 
 ## 5.112.2 — 2026-10-04
 
