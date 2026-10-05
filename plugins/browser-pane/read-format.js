@@ -10,6 +10,8 @@ const CHROME_MAX_LINES = 40;
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
 const BLOCK_MAX = 8;
+const BULLET_RE = /^\s*[•-] /;
+const BACKREF_RE = /^(\W*?)(?:\^\s*)?(?:Jump up to:(?:\s+(?:[a-z]{1,2}|\^))*\s*|\^\s+)/;
 const WORD_BACK_MAX = 40;
 
 function filterLines(lines, filter, { blocks = false } = {}) {
@@ -19,9 +21,12 @@ function filterLines(lines, filter, { blocks = false } = {}) {
   if (!blocks) return lines.filter((_l, i) => low[i].includes(needle));
   const row = (l) => l.includes(' | ');
   const keep = lines.map(() => false);
+  const hit = lines.map(() => false);
   lines.forEach((l, i) => {
     if (!low[i].includes(needle)) return;
     keep[i] = true;
+    hit[i] = true;
+    if (BULLET_RE.test(unmark(l))) return;
     if (row(l)) {
       let h = i;
       while (h > 0 && row(lines[h - 1])) h--;
@@ -41,7 +46,7 @@ function filterLines(lines, filter, { blocks = false } = {}) {
     if (!keep[i] || !l.trim()) return;
     const tableGap = prev >= 0 && lines.slice(prev, i + 1).every(row);
     if (prev >= 0 && i > prev + 1 && !tableGap) out.push('');
-    out.push(l);
+    out.push(hit[i] ? l.replace(BACKREF_RE, '$1') : l);
     prev = i;
   });
   return out;
@@ -330,7 +335,7 @@ function formatRead(raw, opts) {
     return { pdf: true, line: `this tab shows a PDF (${redactUrl(raw.url)}) — save it with [agent:browser download ${o.service}]` };
   }
   const strip = opts.strip || { top: 0, bottom: 0 };
-  const stripped = strip.top > 0 || strip.bottom > 0;
+  const stripped = (strip.top > 0 || strip.bottom > 0) && !o.filter;
   const loading = loadingRows(raw, o.service, o.all);
   const cap = o.max * 4;
   const pages = paginate(sections(raw, o), cap);

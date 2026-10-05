@@ -472,11 +472,12 @@ function readInteractive(main, state) {
 }
 
 const PLACEHOLDER_ALTS = ['alt', 'image', 'icon', 'img', 'photo', 'picture'];
+const PLACEHOLDER_ALT_RE = 'profile picture|avatar|user image|photo of';
 const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link', 'nav', 'text', 'bg', 'is', 'has', 'js', 'ui'];
 
 function labelFrom(d) {
   const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
-  const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) ? a : ''; };
+  const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) && !new RegExp(PLACEHOLDER_ALT_RE, 'i').test(a) ? a : ''; };
   const tid = (s) => flat(s).replace(/[-_](container|wrapper|wrap|button|btn)$/i, '');
   const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase().split(/[-_]/)[0])) || '';
   const path = (h) => { try { return new URL(h, 'http://x.invalid/').pathname; } catch { return ''; } };
@@ -484,9 +485,11 @@ function labelFrom(d) {
   const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
   const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
+  const photo = d.tag === 'a' && d.href ? /\/photo\/(\d+)\/?$/.exec(path(d.href)) : null;
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
-    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : '')]);
-  if (named) return named;
+    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
+  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : named;
+  if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
     const s = segs(d.href);
     return pick([tid(d.svgTestid), flat(d.svgTitle), s.length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(s[0]) ? '@' + s[0] : '', () => last(d.href)]);
@@ -498,6 +501,7 @@ function labelFrom(d) {
 
 const ICON = `
   const PLACEHOLDER_ALTS = ${JSON.stringify(PLACEHOLDER_ALTS)};
+  const PLACEHOLDER_ALT_RE = ${JSON.stringify(PLACEHOLDER_ALT_RE)};
   const GENERIC_CLASSES = ${JSON.stringify(GENERIC_CLASSES)};
   ${labelFrom.toString()}
   const descOf = e => {
@@ -505,6 +509,7 @@ const ICON = `
     const svg = e.querySelector('svg');
     const st = e.querySelector('svg > title');
     const inner = e.querySelector('[data-testid]');
+    const btn = ['button', 'input', 'select', 'textarea'].includes(tg) ? null : e.querySelector('button,input[type=button],input[type=submit],input[type=image]');
     return {
       tag: tg,
       label: e.labels && e.labels[0] ? e.labels[0].innerText : '',
@@ -521,6 +526,7 @@ const ICON = `
       svgTitle: st ? st.textContent : '',
       classes: e.getAttribute('class'),
       src: [e.getAttribute('src') || '', ...[...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src'))].find(u => u && !/^data:/i.test(u)) || '',
+      inner: btn ? (btn.tagName === 'INPUT' ? btn.value : btn.innerText) || btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.getAttribute('name') || '' : '',
       video: !!(e.closest('video,[data-testid*=video i]') || e.querySelector('video,[data-testid*=video i]')),
     };
   };

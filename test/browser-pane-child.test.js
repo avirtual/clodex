@@ -413,7 +413,13 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'textarea', value: 'typed secret', id: 'msg' }, 'msg'],
     [{ tag: 'div', src: 'data:image/gif;base64,R0l' }, ''],
     [{ tag: 'a', href: '/karolzdeb', alts: [''] }, '@karolzdeb'],
-    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, 'Karol avatar'],
+    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, '@karolzdeb'],
+    [{ tag: 'a', href: '/karolzdeb', alts: ['Karol Zdeb profile picture'] }, '@karolzdeb'],
+    [{ tag: 'a', href: '/ana_m', alts: ['Photo of Ana'] }, '@ana_m'], [{ tag: 'a', href: '/ana_m', alts: ['User image'] }, '@ana_m'],
+    [{ tag: 'a', href: '/ana_m/status/19/photo/2', alts: ['Image'] }, 'photo 2'], [{ tag: 'a', href: '/ana_m/status/19/photo/1', text: '1' }, 'photo 1'],
+    [{ tag: 'a', href: '/ana_m/status/19/photo/1', text: 'Sunset' }, 'Sunset'],
+    [{ tag: 'label', text: '', inner: 'Informatii' }, 'Informatii'], [{ tag: 'input', value: '', name: 'Informatii' }, 'Informatii'],
+    [{ tag: 'label', text: 'Tine-ma minte', inner: 'x' }, 'Tine-ma minte'],
     [{ tag: 'a', href: '/i/bookmarks', svgTestid: 'bookmark-icon' }, 'bookmark-icon'],
     [{ tag: 'a', href: '/i/bookmarks', svgTitle: 'Bookmarks' }, 'Bookmarks'],
     [{ tag: 'a', href: '/settings/account/security' }, 'security'],
@@ -427,6 +433,7 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'div', text: ' ', id: 'ondiv' }, ''],
   ];
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
 });
 
 const svcOf = () => ({ origins: new Map(), num: null });
