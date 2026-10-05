@@ -335,6 +335,9 @@ test('FEED: a nested quote card keeps its own status link; the quote path comes 
   assert.deepStrictEqual([q2.n, q2.path], [1400, '/uj/status/7']);
   const q3 = quoteOf([h('a', { href: '/pak/status/8' }, 'pak')]);
   assert.deepStrictEqual([q3.n, q3.path], [1400, null]);
+  const own = h('div', { role: 'link' }, h('span', {}, '@uj'), h('a', { href: '/uj/status/9/video/1' }, h('img', { w: 300, h: 200 })));
+  const q4 = quoteOf([own]);
+  assert.deepStrictEqual([q4.n, q4.path], [1400, null]);
 });
 
 test('FEED: an Article quote card carries its title from the line after "Article" or the rest of an "Article …" line; a bare trailing "Article" is no title', () => {
@@ -350,11 +353,11 @@ test('FEED: an Article quote card carries its title from the line after "Article
 });
 
 test('FEED: a post with only a photo has no text; the header row is never its clip', () => {
-  const { row } = xHeader('EvanKirstel', 'Evan', '/EvanKirstel/status/4', {}, '14h');
+  const { row } = xHeader('EvanKirstel', 'Evan Kirstel', '/EvanKirstel/status/4', {}, '14h');
   const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })));
   const got = runFeed(h('main', {}, art), {}, {});
   assert.strictEqual(got.posts[0].text, '');
-  assert.strictEqual(feedLines(got)[0], '[?] @EvanKirstel (Evan ✓) · 14h (2026-10-05T10:22Z) · photo · → /EvanKirstel/status/4');
+  assert.strictEqual(feedLines(got)[0], '[?] @EvanKirstel (Evan Kirstel ✓) · 14h (2026-10-05T10:22Z) · photo · → /EvanKirstel/status/4');
 });
 
 test('FEED: the quote text joins an https:// split from its host', () => {
