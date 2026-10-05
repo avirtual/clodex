@@ -51,7 +51,8 @@ test('child: agent back/forward checks the target history entry against the agen
   assert.ok(body.includes('const entry = realEntry(h, dir);'));
   assert.ok(/policyDenies\(svc, target, 'agent'\)/.test(body));
   assert.ok(body.indexOf('mutating(svc, frame, dir') < body.indexOf("codedError('NO_HISTORY'"), 'history is checked after the quiet gate');
-  assert.ok(body.indexOf('if (!realEntry(h, dir)) throw noHistory();') < body.indexOf('preAct(svc, null)'), 'NO_HISTORY is said before the snapshot');
+  const hoist = body.indexOf('if (!realEntry(h, dir)) throw noHistory();');
+  assert.ok(hoist > -1 && hoist < body.indexOf('preAct(svc, null)'), 'NO_HISTORY is said before the snapshot');
   assert.ok(body.indexOf('preAct(svc, null)') < body.indexOf('policyDenies'), 'the policy check is the last step before the move');
   assert.ok(body.indexOf('policyDenies') < body.indexOf('h.goToIndex(entry.index)'));
   assert.ok(!body.includes('goBack(') && !body.includes('goForward('), 'a skipped blank entry is never visited');
