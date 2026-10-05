@@ -112,7 +112,7 @@ const CQ = `
       idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
-    }, CQ_RES) || (inner.length === 1 ? cqOf(inner[0]) : null);
+    }, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqOf(inner[0]) : null);
   };`;
 
 const ROW = `
@@ -200,11 +200,11 @@ const TABLES = `
     t.replaceWith(box);
   }`;
 
-function bulletItems(root, mark) {
+function bulletItems(root, mark, hidden = (e) => getComputedStyle(e).display === 'none') {
   const first = (n) => {
     for (const c of n.childNodes) {
       if (c.nodeType === 3 && c.data.trim()) return c;
-      const t = c.nodeType === 1 ? first(c) : null;
+      const t = c.nodeType === 1 && c.tagName !== 'TABLE' && !hidden(c) ? first(c) : null;
       if (t) return t;
     }
     return null;
@@ -244,10 +244,10 @@ function readText(main) {
     const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
     for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim()) t.data = ${JSON.stringify(CHROME_MARK)} + t.data;
   }
-  bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
+  bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   ${TABLES}
   const txt = clone.innerText; host.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
@@ -321,16 +321,52 @@ const numbering = (state) => {
     }
     return h ? h.innerText || h.textContent || '' : '';
   };
-  const storedKeysOf = (els, bases = els.map(baseKeyOf)) => {
-    const count = new Map();
-    for (const b of bases) count.set(b, (count.get(b) || 0) + 1);
-    const ord = new Map();
-    return bases.map((b, i) => {
-      if (count.get(b) === 1) return b;
-      const o = (ord.get(b) || 0) + 1;
-      ord.set(b, o);
-      return storedKey(b, o, contextOf(els[i]));
+  const dupContexts = els => {
+    const blockText = new Map();
+    const under = new Map();
+    for (const el of els) for (let a = el.parentElement; a; a = a.parentElement) under.set(a, (under.get(a) || 0) + 1);
+    return els.map(el => {
+      let block = null;
+      for (let a = el.parentElement; a && under.get(a) === 1; a = a.parentElement) block = a;
+      if (block && block !== document.body && block !== document.documentElement) {
+        if (!blockText.has(block)) {
+          const t = flat(block.innerText || block.textContent || '').slice(0, CONTEXT_MAX * 4);
+          blockText.set(block, counterMask(t).replace(${HMS_RE}, '#:##:##'));
+        }
+        if (blockText.get(block)) return blockText.get(block);
+      }
+      return contextOf(el);
     });
+  };
+  const dupKeys = (b, els) => {
+    const ctx = dupContexts(els);
+    const ord = new Map();
+    return els.map((_el, j) => {
+      const tie = storedKey(b, 1, ctx[j]);
+      const o = (ord.get(tie) || 0) + 1;
+      ord.set(tie, o);
+      return storedKey(b, o, ctx[j]);
+    });
+  };
+  const twinKey = (el, base) => {
+    const group = [el];
+    for (const [m, r] of Object.entries(window.__cxEls || {})) {
+      const e = r && r.deref();
+      if (!e || !e.isConnected || group.includes(e) || parseStored(window.__cxKeys[m]).base !== base) continue;
+      if (baseKeyOf(e) === base) group.push(e);
+    }
+    group.sort((a, b) => (a.compareDocumentPosition ? (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1) : 0));
+    return dupKeys(base, group)[group.indexOf(el)];
+  };
+  const storedKeysOf = (els, bases = els.map(baseKeyOf)) => {
+    const groups = new Map();
+    bases.forEach((b, i) => { if (!groups.has(b)) groups.set(b, []); groups.get(b).push(i); });
+    const out = bases.slice();
+    for (const [b, idx] of groups) {
+      if (idx.length < 2) continue;
+      dupKeys(b, idx.map(i => els[i])).forEach((k, j) => { out[idx[j]] = k; });
+    }
+    return out;
   };
   const place = (el, s, listed = true) => {
     let n = known[s];
@@ -350,8 +386,9 @@ const numbering = (state) => {
     const k = window.__cxKeys && window.__cxKeys[n];
     if (k == null || k !== expect) return 'ambiguous';
     const p = parseStored(k);
-    const now = p.ordinal ? storedKey(baseKeyOf(el), p.ordinal, contextOf(el)) : baseKeyOf(el);
-    return now === k ? 'ok' : 'ambiguous';
+    const base = baseKeyOf(el);
+    if (!p.ordinal) return base === k ? 'ok' : 'ambiguous';
+    return twinKey(el, base) === k ? 'ok' : 'ambiguous';
   };
   const resetTable = () => {
     for (const r of Object.values(window.__cxEls || {})) { const e = r && r.deref(); if (e) e.removeAttribute('data-cx'); }
@@ -389,8 +426,8 @@ function inputLine(d) {
   const clip = (s, n) => { s = flat(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
   const pw = d.type === 'password';
   const btn = d.tag === 'input' && /^(button|submit|reset|image)$/.test(d.type);
-  const lab = flat((btn && d.value) || flat(d.label) || d.aria || d.placeholder || d.name || d.id);
-  const shown = d.value && !pw && !(btn && lab === flat(d.value));
+  const lab = flat((btn && flat(d.value)) || flat(d.label) || d.aria || d.placeholder || d.name || d.id);
+  const shown = flat(d.value) && !pw && !(btn && lab === flat(d.value));
   return clip(lab, 50) + (shown ? ' = "' + clip(d.value, 30) + '"' : '')
     + (d.type === 'checkbox' || d.type === 'radio' ? (d.checked ? ' [x]' : ' [ ]') : '')
     + (pw ? ' (operator only)' : '');
@@ -519,19 +556,24 @@ function labelFrom(d) {
   const segs = (h) => path(h).split('/').filter(Boolean);
   const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
   const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
+  const human = (s) => flat(s).replace(/[_-]+/g, ' ').trim();
+  const avatar = (s) => /^[\w-]+_(bigger|normal|mini|200x200|400x400|x96)(\.(jpe?g|png|webp|gif))?$/i.test(s);
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
   const photo = d.tag === 'a' && d.href ? /\/photo\/(\d+)\/?$/.exec(path(d.href)) : null;
   const handle = d.tag === 'a' && d.href && segs(d.href).length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(segs(d.href)[0]) ? '@' + segs(d.href)[0] : '';
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
     () => (handle ? '' : (d.alts || []).map(alt).find(Boolean)), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
-  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : named;
+  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) && /\.(jpe?g|png|webp|gif)$/i.test(named) ? 'avatar' : named;
   if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
     return pick([tid(d.svgTestid), flat(d.svgTitle), handle, () => last(d.href)]);
   }
   const src = /^data:/i.test(flat(d.src)) ? '' : flat(d.src).split(/[?#]/)[0].split('/').pop() || '';
-  const icon = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid), cls(d.classes), src]);
-  return icon && icon === src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src) ? 'video' : icon;
+  const marked = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid)]);
+  if (marked) return marked;
+  if (src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src)) return 'video';
+  if (avatar(src)) return 'avatar';
+  return pick([human(src.replace(/\.\w{2,5}$/, '')), human(d.for), cls(d.classes)]);
 }
 
 const ICON = `
@@ -554,7 +596,7 @@ const ICON = `
       value: typeof e.value === 'string' && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
       title: e.getAttribute('title'),
       alts: [e.getAttribute('alt'), ...[...e.querySelectorAll('img')].map(i => i.getAttribute('alt'))],
-      name: e.getAttribute('name'), id: e.id,
+      name: e.getAttribute('name'), id: e.id, for: e.getAttribute('for'),
       href: tg === 'a' ? e.getAttribute('href') : '',
       testid: e.getAttribute('data-testid') || (inner ? inner.getAttribute('data-testid') : ''),
       svgTestid: svg ? svg.getAttribute('data-testid') : '',
@@ -586,7 +628,7 @@ function check(n, expect, state) {
 }
 
 function find(n) {
-  return `(() => {
+  return `(() => {${DEEP}
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
@@ -667,18 +709,17 @@ function findText(text, state) {
   const pageBases = new Set(Object.values(window.__cxKeys).map(k => parseStored(k).base));
   const bases = loose.map(baseKeyOf);
   const dup = bases.map(b => pageBases.has(b) || bases.filter(x => x === b).length > 1);
-  const ord = new Map();
-  const storedOf = new Map(loose.map((el, i) => {
-    if (!dup[i]) return [el, bases[i]];
-    let o = (ord.get(bases[i]) || 0) + 1;
-    while (Object.values(window.__cxKeys).some(k => parseStored(k).base === bases[i] && parseStored(k).ordinal === o)) o += 1;
-    ord.set(bases[i], o);
-    return [el, storedKey(bases[i], o, contextOf(el))];
-  }));
+  const numberOf = el => {
+    if (window.__cxOf.get(el)) return window.__cxOf.get(el);
+    const i = loose.indexOf(el);
+    if (!dup[i]) return place(el, bases[i]);
+    const s = twinKey(el, bases[i]);
+    return Object.values(window.__cxKeys).includes(s) ? null : place(el, s);
+  };
   return { count: hits.length, hits: top.map(el => {
     const t = own(el);
-    const n = window.__cxOf.get(el) || place(el, storedOf.get(el));
-    return { n, fresh: fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+    const n = numberOf(el);
+    return { n, fresh: n != null && fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
   }), assigned, next };
 })()`;
 }
@@ -791,6 +832,13 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     for (let x = left; x < right; x += 4) if (wordAt(x, y)) return true;
     return wordAt(right, y);
   };
+  const mediaAt = (x, y, el) => {
+    const e = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+    if (!e || e.nodeType !== 1) return false;
+    if (e.closest('img,svg,canvas,video,picture')) return true;
+    if (e.contains(el)) return false;
+    return /url\\(/.test(String(getComputedStyle(e).backgroundImage || ''));
+  };
   for (const { k, el, r } of items) {
     const b = document.createElement('span');
     b.textContent = k;
@@ -801,16 +849,15 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     let x = r.left - ${BADGE_NUDGE_PX};
     let y = r.top;
     if (!media && r.height <= 2 * lh + 2) {
-      const lx = r.left - bw - 2;
-      const blocked = lx < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && Math.abs(o.top - r.top) < ${BADGE_LINE_PX}
-        && o.left < r.left && o.right > lx && !(o.left <= r.left && o.right >= r.right))
-        || textUnder(lx, r.left - 2, r.top + r.height / 2);
-      const above = { left: r.left, top: r.top - ${BADGE_H_PX}, right: r.left + bw, bottom: r.top };
-      const aboveBlocked = above.top < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && hits(o, above)
-        && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom))
-        || textUnder(above.left, above.right, above.top + ${BADGE_H_PX} / 2);
-      if (!blocked) x = lx;
-      else if (!aboveBlocked) { x = r.left; y = Math.floor(r.top) - ${BADGE_H_PX}; }
+      const rects = [...items.map(i => i.r).filter(o => o !== r && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom)), ...badgeRects];
+      const blocked = q => q.left < 0 || q.top < 0 || q.right > innerWidth || q.bottom > innerHeight
+        || rects.some(o => hits(o, q))
+        || textUnder(q.left, q.right, q.top + ${BADGE_H_PX} / 2)
+        || mediaAt((q.left + q.right) / 2, q.top + ${BADGE_H_PX} / 2, el);
+      const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
+      const free = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom))].find(q => !blocked(q));
+      if (free) { x = free.left; y = free.top; }
+      else { x = r.left - bw / 2; y = r.top - ${BADGE_H_PX} / 2; }
     }
     badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'

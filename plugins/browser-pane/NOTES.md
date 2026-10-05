@@ -50,9 +50,13 @@ window close. Every read rebuilds `window.__cxEls`
 (n → WeakRef) and `window.__cxKeys` (n → stored key) in isolated world 4242, so
 the page cannot reset or forge them; `data-cx` is only a mirror, cleared from
 the previous elements first. Several live elements with one key get
-`key#<ordinal>|<context>` (row/section text or the preceding heading, 40
-chars); a reordered row yields a new key, so its old number is retired rather
-than reused. An act runs `CHECK(n, storedKey)` first: on a fresh document the
+`key#<ordinal>|<context>`: the context is the text of the element's own block,
+the highest ancestor holding no other element of that key, counters and clocks
+masked, 40 chars (row/section text or the preceding heading only when that
+block is the body or has no text); the ordinal breaks ties of identical context
+only. A retired twin therefore never hands its number to the next one, and
+`verify` reruns the same rule over the live twins, so a changed block is
+`ambiguous`, never re-pointed. An act runs `CHECK(n, storedKey)` first: on a fresh document the
 child restamps once; an element that no longer yields its stored key, or a
 vanished number whose base key is still on the page, is refused `AMBIGUOUS`.
 A clickable wrapping exactly one input/button/select/link is not listed. Open
@@ -289,10 +293,13 @@ memoised per script run.
 (`OVERLAY_ID`) with a badge per numbered element visible in the viewport,
 captures, then removes it (`OVERLAY_OFF`). It waits two animation frames,
 capped at 150 ms since a minimised window may never paint.
-A badge goes left of a text-sized box only when no other numbered box or placed
-badge on the same line (top within `BADGE_LINE_PX`) reaches into the badge width
-+ 2 px; otherwise above, or, at the top edge, inside nudged `BADGE_NUDGE_PX` left,
-like block rows. Left-of placement covered the end of the previous inline link
+A text-sized box tries four slots in order: left, above, right, below. A slot is
+blocked when it leaves the viewport, overlaps another numbered box (not one that
+contains this one) or a placed badge, has text under its mid-height, or has
+media (`img,svg,canvas,video,picture` or a background image) at its centre per
+`elementFromPoint`. With all four blocked the badge is a superscript centred on
+the top-left corner, covering at most the top half of the first glyph. Block
+rows and media boxes keep the inside placement nudged `BADGE_NUDGE_PX` left. Left-of placement covered the end of the previous inline link
 ("[20]Mo[21]Tabletă").
 
 ## page-scripts.js — TABLES
@@ -405,10 +412,11 @@ used to wipe e-bloc's numbers. A number the active origin never assigned is
 `NO_ELEMENT`, never another site's element. `listed` holds the numbers a read
 has shown, so a number first assigned unlisted (out of `--main` scope, past the
 cap) is new when a read first lists it.
-Each origin entry (`numbers`, `nextN`, `volatile`, `listed`, schema `NUMBERS_SCHEMA`)
+Each origin entry (`numbers`, `nextN`, `volatile`, `listed`, `savedAt`, schema `NUMBERS_SCHEMA`)
 is saved by `saveNumbers` to `<cxb-data>/numbers/<service>/<origin slug>.json` at most
 1 s after a merge, and on window close and shutdown; `numState` loads it the first
-time it touches the origin; at most `ORIGINS_MAX` files per service, oldest mtime
+time it touches the origin, keeping `savedAt` as `restoredAt` so the first read
+says `numbers restored (saved …)` instead of `first read of …`; at most `ORIGINS_MAX` files per service, oldest mtime
 deleted. After a host reboot e-bloc's PDF link number became the payment button's.
 Persistence only keeps numbering continuous; `genRefusal` is what voids a stale
 transcript: the child mints `gen` at start, reads and `pageInfo` carry it, and a

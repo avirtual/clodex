@@ -160,6 +160,17 @@ test('read-format: changedRegion strips the common line prefix and suffix and re
   assert.strictEqual(changedRegion('a', 'b\nc', 4), 'b /…');
 });
 
+test('read-format: a change spanning most of the page lines reads as most of the page, never the page text', () => {
+  const page = ['X', 'Home', 'Explore', 'Post one text', 'Post two text', 'Post three text', 'Trends', 'Who to follow', 'Terms', 'Footer'];
+  const menu = ['Send via Chat', 'Copy link', 'Bookmark'];
+  const before = [...page.slice(0, 3), ...menu, ...page.slice(3)].join('\n');
+  const after = [...page.slice(0, 3), ...page.slice(3).map((l) => `${l} ·`)].join('\n');
+  const { MOST_OF_PAGE } = require('../plugins/browser-pane/read-format');
+  assert.strictEqual(changedRegion(before, after, CHANGE_MAX), MOST_OF_PAGE);
+  assert.strictEqual(MOST_OF_PAGE, 'most of the page (menu closed?)');
+  assert.strictEqual(changedRegion(page.join('\n'), page.join('\n').replace('Trends', 'Trends 2'), CHANGE_MAX), 'Trends 2', 'one line of ten is still quoted');
+});
+
 const { chromeStrip, CHROME_MAX_LINES, CHROME_MARK } = require('../plugins/browser-pane/read-format');
 
 const M = (l) => CHROME_MARK + l;
@@ -339,6 +350,9 @@ test('read-format: the first read of a service says so instead of listing every 
   const head = (raw) => formatRead({ ...RAW, ...raw }, { service: 'ebloc' }).content.split('\n').find((l) => l.startsWith('doc:'));
   assert.match(head({ first: true, fresh: [1, 2, 3] }), /\(numbers: stable per site; first read of ebloc\)/);
   assert.match(head({ first: 'my.smartthings.com', fresh: [1] }), /\(numbers: stable per site; first read of my\.smartthings\.com\)/);
+  const saved = new Date(2026, 9, 4, 21, 7).toISOString();
+  assert.match(head({ restored: saved, fresh: [1, 2] }), /\(numbers: stable per site; numbers restored \(saved 2026-10-04 21:07\)\)/);
+  assert.match(head({ restored: '', fresh: [1] }), /\(numbers: stable per site; numbers restored\)/, 'a file saved before savedAt existed');
   assert.match(head({ fresh: [], changed: [10, 11] }), /new since your last read: none; changed: \[10\], \[11\]\)/);
   assert.match(head({ fresh: [23, 24, 25] }), /new since your last read: \[23\], \[24\], \[25\]\)/);
 });

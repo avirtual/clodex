@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { loginLabel, CHANGE_MAX, redactUrl, hostOf } = require('./read-format');
+const { loginLabel, CHANGE_MAX, MOST_OF_PAGE, redactUrl, hostOf } = require('./read-format');
 
 const ANSI = new RegExp('\\u001B\\[[0-9;?]*[a-zA-Z]|\\u001B\\][^\\u0007]*\\u0007', 'g');
 const CTRL = new RegExp('[\\u0000-\\u001F\\u007F]+', 'g');
@@ -161,8 +161,9 @@ const TEXT = {
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
+  twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service} and use its number`,
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
-    hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
+    hits.slice(0, 5).map((h) => `[${h.n == null ? '?' : h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
 };
 
 function operatorNav(service, url, title, inPage = false) {
@@ -237,7 +238,7 @@ function actReply(sub, service, cmd, r) {
 
 function changeTail(sub, r) {
   const target = r.target ? ` · target: ${r.target}` : '';
-  if (r.changed) return ` · changed: ${JSON.stringify(r.changed)}${target}`;
+  if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if (target) return target;
   if (sub === 'type' && typeof r.value === 'string') {
     const v = [...r.value];
