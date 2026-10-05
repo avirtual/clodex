@@ -351,6 +351,28 @@ function siteNote(url, opened) {
   return opened && host && host !== opened ? ` · site: ${host} (opened as ${opened})` : '';
 }
 
+const WARN_RE = /^\[(\d+)\] \S+ ⚠ (.*)$/;
+
+function countsOf(raw) {
+  if (raw.first || raw.restored != null || !Array.isArray(raw.fresh)) return null;
+  const len = (a) => (Array.isArray(a) ? a.length : 0);
+  return { fresh: raw.fresh.length, retired: len(raw.retired), changed: len(raw.changed) };
+}
+
+function digestOf(raw) {
+  const outline = raw.outline && typeof raw.outline === 'object' ? raw.outline : {};
+  const list = (a) => (Array.isArray(a) ? a.map(String) : []);
+  const warn = [];
+  for (const l of list(raw.elements)) {
+    const m = WARN_RE.exec(l);
+    if (m) warn.push({ n: Number(m[1]), label: m[2] });
+  }
+  return {
+    title: String(raw.title || ''), url: redactUrl(raw.url || ''), login: loginLabel(raw.login),
+    counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn,
+  };
+}
+
 function formatRead(raw, opts) {
   const o = {
     service: opts.service,
@@ -397,7 +419,7 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw) };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, digest: digestOf(raw) };
 }
 
 module.exports = {

@@ -13,13 +13,13 @@ const DEFAULT_MAX = 2500;
 
 const FLAGS = {
   open: {},
-  read: { text: 'bool', links: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value' },
+  read: { text: 'bool', links: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
   click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool' },
   key: {},
   select: { confirm: 'bool' },
   download: { to: 'value', as: 'value' },
-  screenshot: { numbers: 'bool' },
+  screenshot: { numbers: 'bool', attach: 'bool', 'path-only': 'bool' },
   inspect: { text: 'value' },
   wait: { ms: 'value', for: 'value', idle: 'bool' },
   services: {},
@@ -175,6 +175,12 @@ function downloadCommand(positional, flags, body) {
   return { sub: 'download', service, n, url: body || null, to: flags.to == null ? null : flags.to, as: flags.as == null ? null : flags.as };
 }
 
+function attachArg(flags) {
+  if (flags.attach && flags['path-only']) throw new Error('--attach and --path-only cannot be combined');
+  if (flags.attach) return { attach: true };
+  return flags['path-only'] ? { attach: false } : {};
+}
+
 function intArg(name, v, min) {
   if (!/^[0-9]+$/.test(v) || Number(v) < min) throw new Error(`--${name} must be an integer ≥ ${min}`);
   return Number(v);
@@ -207,6 +213,7 @@ function toCommand(intent) {
       filter: flags.filter == null ? null : flags.filter,
       page: flags.page == null ? 1 : intArg('page', flags.page, 1),
       max,
+      ...attachArg(flags),
     };
   }
   const body = String((intent && intent.body) || '').trim();
@@ -228,7 +235,7 @@ function toCommand(intent) {
     return { sub, service, key: body };
   }
   if (sub === 'download') return downloadCommand(positional, flags, body);
-  if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false), ...(flags.numbers ? { numbers: true } : {}) };
+  if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false), ...(flags.numbers ? { numbers: true } : {}), ...attachArg(flags) };
   if (sub === 'wait') {
     const service = serviceArg(sub, positional, false);
     if (flags.for === '') throw new Error('--for needs a value, e.g. --for="Showing 1"');

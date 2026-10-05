@@ -372,6 +372,21 @@ test('engine: denylist.set validates, stores per scope and denylist.get returns 
   assert.deepStrictEqual((await engine.dispatch('browser-pane', 'denylist.get', [], 'desktop')).services, {});
 });
 
+test('engine: attach.set stores the global budget and seat overrides, rejects non-integers and out-of-range values; attach.get reads them', async (t) => {
+  const { engine, host } = boot(t);
+  const set = (req) => engine.dispatch('browser-pane', 'attach.set', [req], 'desktop');
+  const get = () => engine.dispatch('browser-pane', 'attach.get', [], 'desktop');
+  assert.deepStrictEqual(await get(), { ok: true, global: 1000, seats: {} });
+  assert.deepStrictEqual(await set({ tokens: 1500 }), { ok: true, tokens: 1500 });
+  assert.deepStrictEqual(await set({ seat: 'clodex-hand', tokens: 4000 }), { ok: true, seat: 'clodex-hand', tokens: 4000 });
+  for (const req of [{ tokens: 99 }, { tokens: 20001 }, { tokens: 1000.5 }, { tokens: '1000' }, {}, null]) {
+    assert.deepStrictEqual(await set(req), { ok: false, error: 'tokens must be an integer from 100 to 20000' }, JSON.stringify(req));
+  }
+  assert.deepStrictEqual(await set({ seat: '../x', tokens: 1000 }), { ok: false, error: 'bad seat: ../x' });
+  assert.deepStrictEqual(await get(), { ok: true, global: 1500, seats: { 'clodex-hand': 4000 } });
+  assert.strictEqual(host.storage.get().v, 1);
+});
+
 test('engine: open carries the global and the service denylist to the child', async (t) => {
   const { emit, engine } = boot(t);
   await engine.dispatch('browser-pane', 'denylist.set', [{ scope: 'global', patterns: ['bad.example.com'] }], 'desktop');

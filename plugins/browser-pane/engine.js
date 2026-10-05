@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const grammar = require('./grammar');
 const { createClient, OP_DEADLINE_MS } = require('./client');
-const { createScheduler, WAIT_MAX_MS, DOWNLOAD_OP_MS } = require('./scheduler');
+const { createScheduler, attachBudget, WAIT_MAX_MS, DOWNLOAD_OP_MS, ATTACH_MIN, ATTACH_MAX } = require('./scheduler');
 const replies = require('./replies');
 const urlpolicy = require('./urlpolicy');
 
@@ -304,6 +304,34 @@ function activate(host) {
     }
     changed();
     return { ok: true, patterns: v.patterns };
+  });
+  const attachSeats = () => {
+    const all = host.storage.get();
+    const a = all && typeof all === 'object' && all.attach && typeof all.attach === 'object' ? all.attach : {};
+    return a.seats && typeof a.seats === 'object' ? a.seats : {};
+  };
+  host.ipc.handle('attach.get', () => {
+    const all = host.storage.get();
+    const seats = {};
+    for (const name of Object.keys(attachSeats())) seats[name] = attachBudget(all, name);
+    return { ok: true, global: attachBudget(all, null), seats };
+  });
+  host.ipc.handle('attach.set', (req) => {
+    const tokens = req && req.tokens;
+    if (!Number.isInteger(tokens) || tokens < ATTACH_MIN || tokens > ATTACH_MAX) {
+      return { ok: false, error: `tokens must be an integer from ${ATTACH_MIN} to ${ATTACH_MAX}` };
+    }
+    const seat = req.seat == null ? null : String(req.seat);
+    if (seat != null && !replies.SEAT_RE.test(seat)) return { ok: false, error: `bad seat: ${seat}` };
+    const all = host.storage.get();
+    const data = all && typeof all === 'object' && all.v === 1 ? all : { v: 1, services: {} };
+    const prev = data.attach && typeof data.attach === 'object' ? data.attach : {};
+    const attach = { ...prev, seats: { ...attachSeats() } };
+    if (seat == null) attach.global = tokens;
+    else attach.seats[seat] = tokens;
+    data.attach = attach;
+    host.storage.set(data);
+    return { ok: true, ...(seat != null ? { seat } : {}), tokens };
   });
   host.ipc.handle('downloads.dir', () => {
     try { fs.mkdirSync(downloadsDir, { recursive: true }); } catch {}

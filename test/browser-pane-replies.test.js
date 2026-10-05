@@ -332,3 +332,56 @@ test('replies: a click on a number whose text changed since the read says so', (
   assert.match(R.actReply('click', 'ebloc', { n: 10 }, r), /^\[agent:browser\] clicked ebloc \[10\] link "Lista de plată" \(text under \[10\] changed since your read\) · same page/);
   assert.ok(!R.actReply('click', 'ebloc', { n: 10 }, { ...r, textChanged: false }).includes('changed since your read'));
 });
+
+const { formatRead } = require('../plugins/browser-pane/read-format');
+
+const BIG = {
+  url: 'https://wiki.example.org/History?session=abcdefghijklmnopqrstuvwxyz0123',
+  title: 'History of\nthe Bridge',
+  doc: 1,
+  text: 'History of the Bridge\n\n' + 'The bridge history is long. '.repeat(40),
+  elements: [
+    ...Array.from({ length: 600 }, (_v, i) => `[${i + 3}] link Section ${i + 3}`),
+    '[1] button ⚠ Delete page',
+    '[2] button ⚠ Sign out',
+  ],
+  fresh: [1, 2, 3],
+  retired: [9],
+  changed: [],
+  login: { logoutLink: true },
+  outline: { headings: ['History of the Bridge', 'Early history', 'Modern history\tand repairs'], landmarks: ['Site'] },
+};
+
+test('replies: a path-only read names the path without @ and adds a digest with title, redacted url, headings, ⚠ rows and a --page hint', () => {
+  const info = formatRead(BIG, { service: 'wiki' });
+  assert.ok(info.pages > 1 && info.tokens > 1000, `${info.pages} ${info.tokens}`);
+  const lines = R.readReply('wiki', info, '/t/r-9.txt', 'claude', { attach: false, budget: 1000 }).split('\n');
+  assert.strictEqual(lines[0], `[agent:browser] read wiki · page 1/${info.pages} · 602 elements · ≈${(info.tokens / 1000).toFixed(1)}k tok → /t/r-9.txt (not attached: over ≈1.0k tok; read or grep it, or narrow with --filter=/--page=)`);
+  assert.deepStrictEqual(lines.slice(1), [
+    '  title: "History of the Bridge" · https://wiki.example.org/History?session=<redacted> · login: signed in',
+    `  size: ≈${(info.tokens / 1000).toFixed(1)}k tok · page 1/${info.pages} · 602 elements · new: 3 · retired: 1 · changed: 0`,
+    '  headings: History of the Bridge | Early history | Modern history and repairs',
+    '  ⚠: [1] "Delete page" · [2] "Sign out"',
+    `  hint: --filter=history · --page=2 (of ${info.pages})`,
+  ]);
+  assert.ok(!lines.join('\n').includes('@'));
+});
+
+test('replies: --path-only on a small read says so; the attached shape is unchanged; codex keeps its Read-tool tail', () => {
+  const info = formatRead({ ...BIG, text: 'tiny', elements: ['[1] button ⚠ Pay'], outline: { headings: [], landmarks: ['Main menu'] }, first: true }, { service: 'wiki', main: true });
+  const small = R.readReply('wiki', { ...info, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n');
+  assert.match(small[0], / → \/t\/r-1\.txt \(not attached: --path-only; read or grep it, or narrow with --filter=\/--page=\)$/);
+  assert.deepStrictEqual(small.slice(3), ['  landmarks: Main menu', '  ⚠: [1] "Pay"']);
+  assert.strictEqual(R.readReply('wiki', info, '/t/r-1.txt', 'claude', { attach: true, budget: 1000 }), R.readReply('wiki', info, '/t/r-1.txt', 'claude'));
+  assert.ok(R.readReply('wiki', info, '/t/r-1.txt', 'claude').endsWith(' → @/t/r-1.txt '));
+  const codex = R.readReply('wiki', info, '/t/r-1.txt', 'codex', { attach: false, budget: 1000 }).split('\n');
+  assert.ok(codex[0].endsWith(' → saved to /t/r-1.txt — read it with your Read tool.'), codex[0]);
+  assert.ok(codex.length > 1);
+});
+
+test('replies: a path-only screenshot is the plain path, no digest; codex keeps its tail', () => {
+  const r = { width: 1280, height: 900 };
+  assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'claude', false), '[agent:browser] screenshot ebloc 1280×900 → /tmp/s.jpg');
+  assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'claude'), '[agent:browser] screenshot ebloc 1280×900 → @/tmp/s.jpg ');
+  assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'codex', false), R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'codex'));
+});
