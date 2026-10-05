@@ -147,7 +147,7 @@ test('client: 15 min without commands sends shutdown, and that exit is not a cra
   assert.strictEqual(client.state(), 'running');
   clock.advance(1);
   const e = await exited;
-  assert.deepStrictEqual({ code: e.code, expected: e.expected }, { code: 0, expected: true });
+  assert.deepStrictEqual({ code: e.code, expected: e.expected, idleMs: e.idleMs }, { code: 0, expected: true, idleMs: 900000 });
   assert.ok(logs.includes('child: got shutdown'));
   assert.strictEqual(client.state(), 'off');
 });
@@ -199,6 +199,7 @@ test('client: a missed heartbeat kills the child and counts as a crash', async (
   await exited;
   assert.strictEqual(exits[0].signal, 'SIGKILL');
   assert.strictEqual(exits[0].expected, false);
+  assert.strictEqual(exits[0].idleMs, 0);
 });
 
 test('client: dispose sends shutdown, then SIGTERM after 3 s', { timeout: 5000 }, async (t) => {

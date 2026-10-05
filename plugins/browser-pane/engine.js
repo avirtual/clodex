@@ -31,6 +31,14 @@ function partitionDir(dataDir, name) {
   return path.join(dataDir, 'chromium', 'Partitions', name);
 }
 
+function idleStopNotice(idleMs, closed) {
+  const min = Math.round(idleMs / 60000);
+  return {
+    log: `browser child stopped after ${min} min idle; ${closed} window(s) closed, sign-ins kept`,
+    toast: closed > 0 ? `Browser: ${closed} window(s) closed after ${min} min idle — Open in the pane resumes them` : null,
+  };
+}
+
 function removePartition(dataDir, name) {
   const dir = partitionDir(dataDir, name);
   if (!fs.existsSync(dir)) return false;
@@ -92,6 +100,7 @@ function activate(host) {
   const notified = new Set();
   const denials = new Map();
   let scheduler = null;
+  let notice = null;
   const navNotifier = createNavNotifier({
     holder: (service) => scheduler.leaseHolder(service),
     session: (seat) => host.sessions.get(seat),
@@ -136,10 +145,16 @@ function activate(host) {
       }
       changed();
     },
-    onExit: () => {
+    onExit: (info) => {
+      const closed = [...live.values()].filter((v) => v.state !== 'closed').length;
       notified.clear();
       live.clear();
       scheduler.onChildExit();
+      if (info && info.idleMs) {
+        const n = idleStopNotice(info.idleMs, closed);
+        if (host.log) host.log.info(n.log);
+        if (n.toast) notice = { seq: (notice ? notice.seq : 0) + 1, text: n.toast };
+      }
       changed();
     },
   });
@@ -222,7 +237,16 @@ function activate(host) {
   host.ipc.handle('show', async (service) => {
     const name = service == null ? pickShown() : service;
     if (!name) return { ok: false, error: 'no browser window is open' };
-    await operatorOp('show')(name);
+    if (!grammar.SERVICE_RE.test(String(name))) throw new Error(`bad service name: ${name}`);
+    const notOpen = { ok: false, error: `${name} has no window open — Open it again` };
+    const v = live.get(String(name));
+    if (!v || v.state === 'closed') return notOpen;
+    try {
+      await operatorOp('show')(name);
+    } catch (e) {
+      if (e && e.code === 'NOT_OPEN') return notOpen;
+      throw e;
+    }
     return { ok: true, service: name };
   });
   const checkService = (service) => {
@@ -256,7 +280,7 @@ function activate(host) {
       if (typeof v.visible === 'boolean') entry.visible = v.visible;
       return entry;
     });
-    return { ok: true, child: childState(), services };
+    return { ok: true, child: childState(), services, ...(notice ? { notice } : {}) };
   });
   host.ipc.handle('services.list', () => {
     const saved = stored();
@@ -282,7 +306,7 @@ function activate(host) {
     else removePartition(host.paths.dataDir, name);
     const all = host.storage.get();
     if (all && all.services && all.services[name]) {
-      delete all.services[name];
+      all.services[name] = { ...all.services[name], login: { state: 'none', at: Date.now() } };
       host.storage.set(all);
     }
     changed();
@@ -354,4 +378,4 @@ function deactivate() {
   client.dispose();
 }
 
-module.exports = { activate, deactivate, handOver, PROMPT_LINES, removePartition, createNavNotifier, OPERATOR_NAV_MS };
+module.exports = { activate, deactivate, handOver, idleStopNotice, PROMPT_LINES, removePartition, createNavNotifier, OPERATOR_NAV_MS };

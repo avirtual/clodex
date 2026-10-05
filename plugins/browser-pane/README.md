@@ -23,6 +23,12 @@ still loads, runs page scripts, scrolls and screenshots. `open --show` surfaces
 one without stealing focus; the pane's **Show** button raises it. A sign-in hold
 is signalled by **browser: needs you** in the status bar, not by the window.
 
+After 15 minutes without an agent command the browser process exits and its
+windows close. Sign-ins are kept, and **Open** on the service's row in the pane
+(or the agent's next `open`) resumes it at its last page. **Forget login**
+deletes only the service's cookies and site data: the service stays in the list
+with its last page and downloads.
+
 ## Steering the window yourself
 
 The bar at the top of each window has an address field with back and reload.

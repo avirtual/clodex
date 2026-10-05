@@ -236,13 +236,33 @@ test('engine: forget with the child stopped removes only chromium/Partitions/<se
     fs.mkdirSync(d, { recursive: true });
   }
   fs.writeFileSync(path.join(data, 'downloads', 'utility', 'aug.pdf'), '%PDF-');
-  host.storage.set({ v: 1, services: { utility: { createdAt: 1 }, other: { createdAt: 2 } } });
+  host.storage.set({ v: 1, services: { utility: { createdAt: 1, lastUrl: 'https://portal.example.com/bills', login: { state: 'logged-in', at: 5 } }, other: { createdAt: 2 } } });
   const r = await engine.dispatch('browser-pane', 'services.forget', ['utility'], 'desktop');
   assert.deepStrictEqual(r, { ok: true, service: 'utility' });
   assert.ok(!fs.existsSync(path.join(parts, 'utility')), 'the partition is gone');
   assert.ok(fs.existsSync(path.join(parts, 'other')), 'the sibling partition survives');
   assert.ok(fs.existsSync(path.join(data, 'downloads', 'utility', 'aug.pdf')), 'downloads are kept');
-  assert.deepStrictEqual(Object.keys(host.storage.get().services), ['other']);
+  const kept = host.storage.get().services;
+  assert.deepStrictEqual(Object.keys(kept).sort(), ['other', 'utility']);
+  assert.strictEqual(kept.utility.login.state, 'none');
+  assert.strictEqual(kept.utility.lastUrl, 'https://portal.example.com/bills');
+  assert.strictEqual(kept.utility.createdAt, 1);
+});
+
+test('engine: show on a service with no window resolves the service\'s own refusal', async (t) => {
+  const { engine } = boot(t);
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });
+});
+
+test('engine idleStopNotice: the log line always, the toast only when windows closed', () => {
+  assert.deepStrictEqual(engineMod.idleStopNotice(900000, 2), {
+    log: 'browser child stopped after 15 min idle; 2 window(s) closed, sign-ins kept',
+    toast: 'Browser: 2 window(s) closed after 15 min idle — Open in the pane resumes them',
+  });
+  assert.deepStrictEqual(engineMod.idleStopNotice(900000, 0), {
+    log: 'browser child stopped after 15 min idle; 0 window(s) closed, sign-ins kept',
+    toast: null,
+  });
 });
 
 test('engine: status redacts a seat from another workspace', async (t) => {
