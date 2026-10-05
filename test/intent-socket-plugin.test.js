@@ -153,6 +153,10 @@ function seatHarness() {
   return { m, root, a, injected, handled, nextHandled };
 }
 
+async function turns(n) {
+  for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
+}
+
 async function withSeat(fn) {
   const h = seatHarness();
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
@@ -174,6 +178,7 @@ for (const [who, env] of [['a subagent', { CLODEX_AGENT_ID: 'agent-7' }], ['the 
     await withSeat(async (h, cred) => {
       const call = viaVerb(h, cred, ['[agent:browser read one]'], env);
       await h.nextHandled(1);
+      await turns(10);
       h.handled[0].handle.inject('[agent:browser] read one → @/tmp/r-0001.txt');
       const r = await call;
       assert.strictEqual(r.code, 0, r.err);
@@ -191,6 +196,7 @@ test('two concurrent plugin calls on one seat each get their own reply', async (
     const one = viaVerb(h, cred, ['[agent:browser read one]'], env);
     const two = viaVerb(h, cred, ['[agent:browser read two]'], { CLODEX_AGENT_ID: 'agent-8' });
     await h.nextHandled(2);
+    await turns(10);
     const by = Object.fromEntries(h.handled.map((x) => [x.raw, x.handle]));
     by['read two'].inject('reply two');
     by['read one'].inject('reply one');
