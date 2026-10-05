@@ -7,6 +7,7 @@ const { createClient, OP_DEADLINE_MS } = require('./client');
 const { createScheduler, attachBudget, WAIT_MAX_MS, DOWNLOAD_OP_MS, ATTACH_MIN, ATTACH_MAX } = require('./scheduler');
 const replies = require('./replies');
 const urlpolicy = require('./urlpolicy');
+const { hostOf } = require('./read-format');
 
 const PROMPT_LINES = [
   '  [agent:browser open <service> [--show]] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service; the window stays in the background unless --show',
@@ -251,7 +252,7 @@ function activate(host) {
         if (!h || h.workspaceId !== workspaceId) seat = 'another workspace';
       }
       const login = saved[name] && saved[name].login;
-      const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown', denied: denials.get(name) || 0 };
+      const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown', denied: denials.get(name) || 0, host: hostOf(v.url), title: v.title || '' };
       if (v.state === 'held' && v.reason === 'takeover') entry.operator = true;
       if (typeof v.visible === 'boolean') entry.visible = v.visible;
       return entry;

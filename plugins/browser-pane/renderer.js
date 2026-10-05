@@ -5,6 +5,7 @@ const DESKTOP_ONLY_SEGMENT = 'browser: desktop only';
 const DESKTOP_ONLY_NOTICE = 'Browser pane: desktop only — its windows open on the machine running Clodex.';
 const ATTENTION = 'bp-attention';
 const HANDED_MS = 5000;
+const PICKER_MAX_W = 560;
 const LOGIN_TEXT = {
   'logged-in': 'signed in',
   'login-page': 'sign-in page',
@@ -58,9 +59,26 @@ function pickerLabel(s) {
   return `${s.name} · ${stateLabel(s)}${s.seat ? ` · ${s.seat}` : ''}`;
 }
 
+const TITLE_MAX = 40;
+
+function pickerSite(s) {
+  const title = String(s.title || '');
+  const clipped = title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX - 1)}…` : title;
+  return { host: s.host ? ` ${s.host}` : '', title: clipped ? ` — ${clipped}` : '' };
+}
+
 function pickerName(s) {
-  const seen = typeof s.visible === 'boolean' ? (s.visible ? ' · shown' : ' · hidden') : '';
-  return `${s.name} · ${stateLabel(s)}${seen}`;
+  const site = pickerSite(s);
+  return `${s.name}${site.host}${site.title}`;
+}
+
+function pickerState(s) {
+  return `${stateLabel(s)}${s.seat ? ` · ${s.seat}` : ''}${s.visible === false ? ' · hidden' : ''}`;
+}
+
+function pickerHeading(list) {
+  const hidden = list.filter((s) => s.visible === false).length;
+  return hidden ? `Browser windows · ${list.length} open · ${hidden} hidden` : 'Browser windows';
 }
 
 function forgetText(name) {
@@ -182,10 +200,16 @@ function activate(rhost) {
     const list = (status && Array.isArray(status.services)) ? status.services : [];
     if (!list.length) { closePicker(); return; }
     picker.fold = null;
+    node.appendChild(el('div', 'bp-picker-label', pickerHeading(list)));
     for (const s of list) {
       const r = el('div', 'bp-row bp-pick-row');
-      r.appendChild(el('span', 'bp-pick-name', pickerName(s)));
-      r.appendChild(el('span', 'bp-pick-seat', s.seat || '—'));
+      const name = el('span', 'bp-pick-name');
+      const site = pickerSite(s);
+      name.appendChild(el('b', null, s.name));
+      if (site.host) name.appendChild(el('span', 'bp-pick-host', site.host));
+      if (site.title) name.appendChild(el('span', 'bp-pick-title', site.title));
+      r.appendChild(name);
+      r.appendChild(el('span', 'bp-pick-state', pickerState(s)));
       windowControls(r, s.name, async () => { await pull(); fillPicker(); });
       node.appendChild(r);
     }
@@ -198,9 +222,9 @@ function activate(rhost) {
     if (rect) {
       const vw = typeof window === 'undefined' ? 0 : window.innerWidth || 0;
       const vh = typeof window === 'undefined' ? 0 : window.innerHeight || 0;
-      const width = vw ? Math.min(760, vw - 16) : 760;
+      const width = vw ? Math.min(PICKER_MAX_W, vw - 16) : PICKER_MAX_W;
       const bottom = Math.max(4, vh - rect.top + 4);
-      node.style.width = `${width}px`;
+      node.style.maxWidth = `${width}px`;
       node.style.left = `${vw ? Math.max(8, Math.min(rect.left, vw - 8 - width)) : Math.max(4, rect.left)}px`;
       node.style.bottom = `${bottom}px`;
       if (vh) node.style.maxHeight = `${Math.max(0, vh - bottom - 8)}px`;
@@ -413,4 +437,4 @@ function activate(rhost) {
   };
 }
 
-module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };

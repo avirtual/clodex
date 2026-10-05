@@ -14,7 +14,7 @@ function fakeDom() {
   const make = (tag) => ({
     tag, className: '', children: [], listeners: {}, disabled: false, _text: '', style: {}, parentNode: null,
     set textContent(v) { this._text = String(v); this.children.length = 0; },
-    get textContent() { return this._text; },
+    get textContent() { return this.children.length ? this.children.map((c) => c.textContent).join('') : this._text; },
     set innerHTML(_v) { throw new Error('innerHTML used'); },
     appendChild(c) { this.children.push(c); c.parentNode = this; return c; },
     removeChild(c) { this.children.splice(this.children.indexOf(c), 1); c.parentNode = null; return c; },
@@ -215,9 +215,10 @@ test('segment click with two windows opens a picker listing both, Escape closes 
     await tick();
     assert.ok(!f.invokes.some((i) => i.method === 'show'));
     const names = walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent);
-    assert.deepStrictEqual(names, ['utility · held (operator)', 'irs · driving']);
-    const seats = walk(body).filter((n) => n.className === 'bp-pick-seat').map((n) => n.textContent);
-    assert.deepStrictEqual(seats, ['—', 'clodex-hand']);
+    assert.deepStrictEqual(names, ['utility', 'irs']);
+    const states = walk(body).filter((n) => n.className === 'bp-pick-state').map((n) => n.textContent);
+    assert.deepStrictEqual(states, ['held (operator)', 'driving · clodex-hand']);
+    assert.strictEqual(body.children[0].children[0].textContent, 'Browser windows');
     const options = walk(body).filter((n) => n.tag === 'option').map((n) => n.textContent);
     assert.deepStrictEqual(options, []);
     await walk(body).find((n) => n.className === 'bp-show bp-btn').click();
@@ -243,12 +244,14 @@ test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at 
     await tick();
     f.segment().onClick({ getBoundingClientRect: () => ({ left: 10, top: 500 }) });
     await tick();
-    const rows = body.children[0].children;
-    assert.deepStrictEqual(rows.map((r) => r.className), ['bp-row bp-pick-row', 'bp-row bp-pick-row']);
-    assert.deepStrictEqual(rows[0].children.map((c) => c.className), ['bp-pick-name', 'bp-pick-seat', 'bp-show bp-btn', 'bp-hand-open bp-btn']);
+    const rows = body.children[0].children.slice(1);
+    assert.deepStrictEqual(body.children[0].children.map((r) => r.className), ['bp-picker-label', 'bp-row bp-pick-row', 'bp-row bp-pick-row']);
+    assert.deepStrictEqual(rows[0].children.map((c) => c.className), ['bp-pick-name', 'bp-pick-state', 'bp-show bp-btn', 'bp-hand-open bp-btn']);
     assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-hand-open bp-btn').map((n) => n.textContent), ['Hand…', 'Hand…']);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
-    assert.ok(css.includes('.bp-pick-row {\n  display: grid;\n  grid-template-columns: minmax(120px, 1.4fr) auto auto auto;'));
+    assert.ok(css.includes('.bp-pick-row {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto auto auto;\n  align-items: center;\n  gap: 8px;\n  padding: 5px 8px;'));
+    assert.ok(css.includes('.bp-picker .bp-btn:not(.primary) {\n  font-size: 11px;\n  padding: 2px 8px;\n  background: transparent;\n  border: 1px solid var(--border, #444);'));
+    assert.ok(css.includes('  background: var(--surface-overlay, var(--sidebar-bg, #1e1e2a));\n'));
     assert.ok(css.includes('.bp-pick-row > .bp-hand {\n  grid-column: 1 / -1;'));
     const opens = () => walk(body).filter((n) => n.className === 'bp-hand-open bp-btn');
     const forms = () => walk(body).filter((n) => n.className === 'bp-hand');
@@ -285,23 +288,30 @@ test('segment picker: with innerWidth 600 the popover width and left keep it 8px
     f.segment().onClick({ getBoundingClientRect: () => ({ left: 500, top: 770 }) });
     await tick();
     const style = body.children[0].style;
-    assert.deepStrictEqual([style.width, style.left, style.bottom, style.maxHeight], ['584px', '8px', '34px', '758px']);
-    assert.ok(parseInt(style.left, 10) + parseInt(style.width, 10) <= 592);
+    assert.deepStrictEqual([style.width, style.maxWidth, style.left, style.bottom, style.maxHeight], [undefined, '560px', '32px', '34px', '758px']);
+    assert.ok(parseInt(style.left, 10) + parseInt(style.maxWidth, 10) <= 592);
   } finally {
     if (prevWin === undefined) delete global.window; else global.window = prevWin;
     restore();
   }
 });
 
-test('segment picker: a window reported visible:false says hidden, visible:true says shown', async () => {
+test('segment picker: a row names its site and page title, its state cell carries the seat and hidden, and the header counts the hidden', async () => {
   const { body, restore } = fakeDom();
   try {
-    const f = withSeats(makeRhost({ status: status('running', [{ ...svc('wiki', 'idle'), visible: false }, { ...svc('irs', 'idle'), visible: true }]) }), SEATS);
+    const wiki = { ...svc('wiki', 'idle', 'apometre'), visible: false, host: 'en.wikipedia.org', title: 'Water metering' };
+    const irs = { ...svc('irs', 'idle'), visible: true, host: 'irs.gov', title: 'An extremely long page title that runs on and on' };
+    const f = withSeats(makeRhost({ status: status('running', [wiki, irs]) }), SEATS);
     bp.activate(f.rhost);
     await tick();
     f.segment().onClick({});
     await tick();
-    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent), ['wiki · idle · hidden', 'irs · idle · shown']);
+    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent),
+      ['wiki en.wikipedia.org — Water metering', 'irs irs.gov — An extremely long page title that runs …']);
+    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-state').map((n) => n.textContent), ['idle · apometre · hidden', 'idle']);
+    assert.strictEqual(walk(body).find((n) => n.className === 'bp-picker-label').textContent, 'Browser windows · 2 open · 1 hidden');
+    assert.strictEqual(walk(body).find((n) => n.className === 'bp-pick-name').children[0].tag, 'b');
+    assert.strictEqual(bp.pickerName({ name: 'wiki', state: 'idle' }), 'wiki');
   } finally { restore(); }
 });
 
