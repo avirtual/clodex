@@ -112,7 +112,7 @@ function seatHarness() {
   const injected = [];
   const handled = [];
   let arrived = null;
-  const entries = { a: { intents: ['fakeplug', 'who'] } };
+  const entries = { a: { intents: ['browser', 'who'], plugins: ['browser-pane'] } };
   const logger = {};
   for (const k of ['info', 'debug', 'warn', 'error']) logger[k] = () => {};
   const m = mk({
@@ -142,13 +142,10 @@ function seatHarness() {
   const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a' };
   m.sessions.set('a', a);
   registry.registerIntent({
-    verb: 'fakeplug',
-    parse: (line) => {
-      const hit = /^\[agent:fakeplug\s+([^\]]*)\](.*)$/s.exec(line);
-      return hit ? { raw: hit[1].trim(), body: hit[2].trim() } : null;
-    },
+    verb: 'browser',
+    parse: grammar.parseLine,
     handler: (handle, intent) => { handled.push({ handle, raw: intent.raw }); if (arrived) arrived(); },
-  }, 'fake-plugin', { shipped: true });
+  }, 'browser-pane', { shipped: true });
   const nextHandled = (n) => new Promise((resolve) => {
     arrived = () => { if (handled.length >= n) resolve(); };
     arrived();
@@ -175,15 +172,15 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
 for (const [who, env] of [['a subagent', { CLODEX_AGENT_ID: 'agent-7' }], ['the main agent', {}]]) {
   test(`${who}: a plugin reply injected later, outside the call's async context, is the tool result and never reaches the PTY`, async () => {
     await withSeat(async (h, cred) => {
-      const call = viaVerb(h, cred, ['[agent:fakeplug read one]'], env);
+      const call = viaVerb(h, cred, ['[agent:browser read one]'], env);
       await h.nextHandled(1);
-      h.handled[0].handle.inject('[agent:fakeplug] read one → @/tmp/r-0001.txt');
+      h.handled[0].handle.inject('[agent:browser] read one → @/tmp/r-0001.txt');
       const r = await call;
       assert.strictEqual(r.code, 0, r.err);
-      assert.strictEqual(r.out, '[agent:fakeplug] read one → @/tmp/r-0001.txt\n');
+      assert.strictEqual(r.out, '[agent:browser] read one → @/tmp/r-0001.txt\n');
       assert.deepStrictEqual(h.injected, []);
-      h.handled[0].handle.inject('[agent:fakeplug] a second line after the reply');
-      assert.deepStrictEqual(h.injected.map((i) => i.text), ['[agent:fakeplug] a second line after the reply'], 'once the call answered, its handle falls through to the seat');
+      h.handled[0].handle.inject('[agent:browser] a second line after the reply');
+      assert.deepStrictEqual(h.injected.map((i) => i.text), ['[agent:browser] a second line after the reply'], 'once the call answered, its handle falls through to the seat');
     });
   });
 }
@@ -191,8 +188,8 @@ for (const [who, env] of [['a subagent', { CLODEX_AGENT_ID: 'agent-7' }], ['the 
 test('two concurrent plugin calls on one seat each get their own reply', async () => {
   await withSeat(async (h, cred) => {
     const env = { CLODEX_AGENT_ID: 'agent-7' };
-    const one = viaVerb(h, cred, ['[agent:fakeplug read one]'], env);
-    const two = viaVerb(h, cred, ['[agent:fakeplug read two]'], { CLODEX_AGENT_ID: 'agent-8' });
+    const one = viaVerb(h, cred, ['[agent:browser read one]'], env);
+    const two = viaVerb(h, cred, ['[agent:browser read two]'], { CLODEX_AGENT_ID: 'agent-8' });
     await h.nextHandled(2);
     const by = Object.fromEntries(h.handled.map((x) => [x.raw, x.handle]));
     by['read two'].inject('reply two');
