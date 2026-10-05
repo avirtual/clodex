@@ -112,7 +112,7 @@ const CQ = `
       idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
-    }, CQ_RES) || (inner.length === 1 && !(vis(inner[0]) && inner[0].matches(${JSON.stringify(STD_SEL)})) ? cqOf(inner[0]) : null);
+    }, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqOf(inner[0]) : null);
   };`;
 
 const ROW = `
@@ -348,6 +348,16 @@ const numbering = (state) => {
       return storedKey(b, o, ctx[j]);
     });
   };
+  const twinKey = (el, base) => {
+    const group = [el];
+    for (const [m, r] of Object.entries(window.__cxEls || {})) {
+      const e = r && r.deref();
+      if (!e || !e.isConnected || group.includes(e) || parseStored(window.__cxKeys[m]).base !== base) continue;
+      if (baseKeyOf(e) === base) group.push(e);
+    }
+    group.sort((a, b) => (a.compareDocumentPosition ? (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1) : 0));
+    return dupKeys(base, group)[group.indexOf(el)];
+  };
   const storedKeysOf = (els, bases = els.map(baseKeyOf)) => {
     const groups = new Map();
     bases.forEach((b, i) => { if (!groups.has(b)) groups.set(b, []); groups.get(b).push(i); });
@@ -378,13 +388,7 @@ const numbering = (state) => {
     const p = parseStored(k);
     const base = baseKeyOf(el);
     if (!p.ordinal) return base === k ? 'ok' : 'ambiguous';
-    const group = [el];
-    for (const r of Object.values(window.__cxEls)) {
-      const e = r && r.deref();
-      if (e && e.isConnected && !group.includes(e) && kindOf(e) === p.kind && baseKeyOf(e) === base) group.push(e);
-    }
-    group.sort((a, b) => (a.compareDocumentPosition ? (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1) : 0));
-    return dupKeys(base, group)[group.indexOf(el)] === k ? 'ok' : 'ambiguous';
+    return twinKey(el, base) === k ? 'ok' : 'ambiguous';
   };
   const resetTable = () => {
     for (const r of Object.values(window.__cxEls || {})) { const e = r && r.deref(); if (e) e.removeAttribute('data-cx'); }
@@ -559,7 +563,7 @@ function labelFrom(d) {
   const handle = d.tag === 'a' && d.href && segs(d.href).length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(segs(d.href)[0]) ? '@' + segs(d.href)[0] : '';
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
     () => (handle ? '' : (d.alts || []).map(alt).find(Boolean)), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
-  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) ? 'avatar' : named;
+  if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) && /\.(jpe?g|png|webp|gif)$/i.test(named) ? 'avatar' : named;
   if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
     return pick([tid(d.svgTestid), flat(d.svgTitle), handle, () => last(d.href)]);
@@ -705,18 +709,17 @@ function findText(text, state) {
   const pageBases = new Set(Object.values(window.__cxKeys).map(k => parseStored(k).base));
   const bases = loose.map(baseKeyOf);
   const dup = bases.map(b => pageBases.has(b) || bases.filter(x => x === b).length > 1);
-  const ord = new Map();
-  const storedOf = new Map(loose.map((el, i) => {
-    if (!dup[i]) return [el, bases[i]];
-    let o = (ord.get(bases[i]) || 0) + 1;
-    while (Object.values(window.__cxKeys).some(k => parseStored(k).base === bases[i] && parseStored(k).ordinal === o)) o += 1;
-    ord.set(bases[i], o);
-    return [el, storedKey(bases[i], o, contextOf(el))];
-  }));
+  const numberOf = el => {
+    if (window.__cxOf.get(el)) return window.__cxOf.get(el);
+    const i = loose.indexOf(el);
+    if (!dup[i]) return place(el, bases[i]);
+    const s = twinKey(el, bases[i]);
+    return Object.values(window.__cxKeys).includes(s) ? null : place(el, s);
+  };
   return { count: hits.length, hits: top.map(el => {
     const t = own(el);
-    const n = window.__cxOf.get(el) || place(el, storedOf.get(el));
-    return { n, fresh: fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
+    const n = numberOf(el);
+    return { n, fresh: n != null && fresh.includes(n), text: t.length > 60 ? t.slice(0, 59) + '…' : t };
   }), assigned, next };
 })()`;
 }
@@ -829,10 +832,11 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     for (let x = left; x < right; x += 4) if (wordAt(x, y)) return true;
     return wordAt(right, y);
   };
-  const mediaAt = (x, y) => {
+  const mediaAt = (x, y, el) => {
     const e = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
     if (!e || e.nodeType !== 1) return false;
     if (e.closest('img,svg,canvas,video,picture')) return true;
+    if (e.contains(el)) return false;
     return /url\\(/.test(String(getComputedStyle(e).backgroundImage || ''));
   };
   for (const { k, el, r } of items) {
@@ -849,7 +853,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
       const blocked = q => q.left < 0 || q.top < 0 || q.right > innerWidth || q.bottom > innerHeight
         || rects.some(o => hits(o, q))
         || textUnder(q.left, q.right, q.top + ${BADGE_H_PX} / 2)
-        || mediaAt((q.left + q.right) / 2, q.top + ${BADGE_H_PX} / 2);
+        || mediaAt((q.left + q.right) / 2, q.top + ${BADGE_H_PX} / 2, el);
       const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
       const free = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom))].find(q => !blocked(q));
       if (free) { x = free.left; y = free.top; }

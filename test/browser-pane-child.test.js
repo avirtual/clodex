@@ -202,6 +202,50 @@ test('numbering: a duplicate keys by its own block, so a retired twin never hand
   assert.strictEqual(p.verify(ns[2], stored[2]), 'ambiguous', 'a changed block context is refused, never re-pointed');
 });
 
+test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loose twin with identical block text is not placed on the twin\'s number', () => {
+  const style = { visibility: 'visible', display: 'block', opacity: '1', position: 'fixed', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', overflowY: 'visible' };
+  const list = { innerText: 'Trends', parentElement: null };
+  const order = [];
+  const caret = (block, own) => {
+    const b = Object.assign(button('More', null), {
+      parentElement: { innerText: block, parentElement: list }, childNodes: [{ nodeType: 3, nodeValue: own }],
+      getBoundingClientRect: () => ({ left: 10, top: 10, right: 30, bottom: 30, width: 20, height: 20 }),
+      compareDocumentPosition: (o) => (order.indexOf(o) > order.indexOf(b) ? 4 : 2),
+    });
+    return b;
+  };
+  const twin = caret('Trending in Romania Romanians', 'More');
+  const a = caret('Trending in Romania Romanians', 'More');
+  const b = caret('Trending #connect', 'More');
+  const c = caret('Politics Election', 'More Election');
+  order.push(twin, a, b, c);
+  const doc = { querySelectorAll: (sel) => (sel === '*' ? order : []), documentElement: {}, scrollingElement: {} };
+  const ctx = { Node: { DOCUMENT_POSITION_FOLLOWING: 4 }, document: doc, WeakRef, URL, URLSearchParams, location: { origin: 'https://x.test', href: 'https://x.test/' },
+    getComputedStyle: () => style, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0 };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  ctx.__stamp = [a, b];
+  const stamped = vm.runInContext(`(() => {${scripts.numbering({ known: {}, next: 1 })}
+  resetTable();
+  const stored = storedKeysOf(__stamp);
+  __stamp.forEach((el, i) => place(el, stored[i]));
+  return { assigned, next };
+})()`, ctx);
+  const state = { known: stamped.assigned, next: stamped.next };
+  const found = vm.runInContext(scripts.FIND_TEXT('Election', state), ctx);
+  assert.strictEqual(found.count, 1);
+  const n = found.hits[0].n;
+  assert.strictEqual(n, 3);
+  const verify = (m) => vm.runInContext(scripts.CHECK(m, ctx.__cxKeys[m], { known: { ...state.known, ...found.assigned }, next: found.next }), ctx);
+  assert.strictEqual(verify(n), 'ok', 'the number FIND_TEXT placed passes the act\'s CHECK');
+  twin.childNodes = [{ nodeType: 3, nodeValue: 'More Romanians' }];
+  const again = vm.runInContext(scripts.FIND_TEXT('Romanians', { known: { ...state.known, ...found.assigned }, next: found.next }), ctx);
+  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [null], 'the twin sharing [1]\'s block text is not placed');
+  assert.strictEqual(ctx.__cxOf.get(a), 1);
+  assert.strictEqual(verify(1), 'ok', '[1] still points at its own caret');
+  assert.match(CHILD_SRC, /if \(found\.hits\[0\]\.n == null\) throw codedError\('AMBIGUOUS', TEXT\.twinText\(svc\.name, text\)\);/);
+});
+
 test('numbering: verify refuses a number whose element no longer yields its stored key', () => {
   const a = button('Delete', 'Factura A 120 lei');
   const b = button('Delete', 'Factura B 80 lei');
@@ -248,7 +292,7 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
-function overlayRun(rects, words = [], extra = {}) {
+function overlayRun(rects, words = [], extra = {}, bg = '') {
   const els = rects.map(([left, top, width, height]) => ({
     tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
     getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
@@ -282,7 +326,7 @@ function overlayRun(rects, words = [], extra = {}) {
     },
   };
   const window = { __cxEls: Object.fromEntries(els.map((e, i) => [String(i + 1), { deref: () => e }])) };
-  const style = () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px' });
+  const style = (e) => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px', backgroundImage: e && e.bg ? bg : 'none' });
   new Function('getComputedStyle', 'document', 'window', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'setTimeout', `return ${scripts.OVERLAY}`)(
     style, document, window, 0, 0, 1200, 800, () => {}, () => {});
   return badges.map((b) => {
@@ -339,6 +383,12 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.deepStrictEqual([logo.left, logo.top], [300, 84], 'a logo image in the left slot blocks it');
   const [bare] = overlayRun([[300, 100, 40, 18]]);
   assert.deepStrictEqual([bare.left, bare.top], [284, 100]);
+  const page = { nodeType: 1, bg: true, closest: () => null, contains: () => true };
+  const [onBg] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint: () => page }, 'url("hero.jpg")');
+  assert.deepStrictEqual([onBg.left, onBg.top], [284, 100], 'a background image on an ancestor of the link is not media beside it');
+  const tile = { nodeType: 1, bg: true, closest: () => null, contains: () => false };
+  const [offTile] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint: (x) => (x < 300 ? tile : null) }, 'url("visa.png")');
+  assert.deepStrictEqual([offTile.left, offTile.top], [300, 84], 'a background-image tile beside the link blocks the slot');
 });
 
 test('page scripts: inputLine labels button-type inputs by their value once; a blank wrapping label falls through to aria, placeholder, name, id', () => {
@@ -562,6 +612,7 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'div', alts: ['OSHY3ewP_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/1/OSHY3ewP_bigger.jpg' }, 'avatar'],
     [{ tag: 'div', src: 'https://pbs.twimg.com/profile_images/1/k3Yq_400x400.png' }, 'avatar'],
     [{ tag: 'div', src: 'https://pbs.twimg.com/media/GxQ_big.jpg' }, 'GxQ big'],
+    [{ tag: 'button', text: 'john_mini' }, 'john_mini'],
     [{ tag: 'button', text: '\n ', name: 'info', id: 'b1' }, 'info'],
     [{ tag: 'button', text: ' ', id: 'b1' }, 'b1'],
     [{ tag: 'button', aria: 'Informatii', text: 'x', name: 'info' }, 'Informatii'],
@@ -925,7 +976,6 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['clickable cell around a visible button Follow', el('div', 'OpenAI @OpenAI Follow', { plain: true, inner: [el('button', 'Follow')] }), null],
     ['clickable cell around a hidden button Follow', el('div', 'OpenAI @OpenAI Follow', { plain: true, inner: [el('button', 'Follow', { hidden: true })] }), 'publish'],
     ['the Follow button itself', el('button', 'Follow'), 'publish'],
-    ['wrapper around an inner role=button that is not a standard control', el('div', '', { plain: true, inner: [el('span', 'Plătește', { attrs: { role: 'button' }, plain: true })] }), 'payment'],
     ['label around a Caută submit', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Caută', form })] }), null],
     ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
   ];

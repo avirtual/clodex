@@ -161,8 +161,9 @@ const TEXT = {
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
+  twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service} and use its number`,
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
-    hits.slice(0, 5).map((h) => `[${h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
+    hits.slice(0, 5).map((h) => `[${h.n == null ? '?' : h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
 };
 
 function operatorNav(service, url, title, inPage = false) {

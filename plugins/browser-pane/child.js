@@ -975,6 +975,7 @@ function run(electron, ctx) {
     mergeNumbers(svc, found);
     if (!found || !found.count) throw codedError('NO_ELEMENT', TEXT.noText(svc.name, text));
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
+    if (found.hits[0].n == null) throw codedError('AMBIGUOUS', TEXT.twinText(svc.name, text));
     return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
   }
 
