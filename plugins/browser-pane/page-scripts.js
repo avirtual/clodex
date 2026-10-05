@@ -16,6 +16,8 @@ const OVERLAY_ID = '__cx_numbers';
 const BADGE_CHAR_PX = 7.3;
 const BADGE_PAD_PX = 6;
 const BADGE_H_PX = 16;
+const BADGE_LINE_PX = 8;
+const BADGE_NUDGE_PX = 3;
 const BOX_SEL = 'tr,li,article,[role=row],section';
 const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
 const CHROME_MARK = '\u0001';
@@ -728,23 +730,32 @@ const OVERLAY = `(() => {${DEEP}${CQ}
   layer.id = ${JSON.stringify(OVERLAY_ID)};
   layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647';
   let drawn = 0;
+  const items = [];
   for (const [k, ref] of Object.entries(window.__cxEls || {})) {
     const el = ref && ref.deref();
     if (!el || !el.isConnected || !vis(el)) continue;
     const r = el.getBoundingClientRect();
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
+    items.push({ k, el, r });
+  }
+  const badgeRects = [];
+  for (const { k, el, r } of items) {
     const b = document.createElement('span');
     b.textContent = k;
     const st = getComputedStyle(el);
     const lh = parseFloat(st.lineHeight) || (parseFloat(st.fontSize) || 15) * 1.2;
     const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
     const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
-    let x = r.left;
+    let x = r.left - ${BADGE_NUDGE_PX};
     let y = r.top;
     if (!media && r.height <= 2 * lh + 2) {
-      if (r.left - bw - 2 >= 0) x = r.left - bw - 2;
-      else if (r.top - ${BADGE_H_PX} >= 0) y = r.top - ${BADGE_H_PX};
+      const lx = r.left - bw - 2;
+      const blocked = lx < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && Math.abs(o.top - r.top) < ${BADGE_LINE_PX}
+        && o.left < r.left && o.right > lx && !(o.left <= r.left && o.right >= r.right));
+      if (!blocked) x = lx;
+      else if (r.top - ${BADGE_H_PX} >= 0) { x = r.left; y = r.top - ${BADGE_H_PX}; }
     }
+    badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
       + (cqOf(el) ? ';background:#e00' : ';background:#111')
       + ';left:' + Math.max(0, Math.round(x)) + 'px;top:' + Math.max(0, Math.round(y)) + 'px';

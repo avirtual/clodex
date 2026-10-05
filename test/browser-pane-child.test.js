@@ -227,10 +227,44 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
-test('page scripts: overlay badges sit left of (or above) a text-sized box, inside media boxes; ⚠ badges are solid red', () => {
-  const o = scripts.OVERLAY;
-  assert.match(o, /if \(!media && r\.height <= 2 \* lh \+ 2\) \{\n\s*if \(r\.left - bw - 2 >= 0\) x = r\.left - bw - 2;\n\s*else if \(r\.top - 16 >= 0\) y = r\.top - 16;/);
-  assert.match(o, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
+function overlayRun(rects) {
+  const els = rects.map(([left, top, width, height]) => ({
+    tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
+    getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
+    getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }),
+  }));
+  const badges = [];
+  const document = {
+    getElementById: () => null, documentElement: { scrollWidth: 1200, scrollHeight: 800 },
+    createElement: (tag) => { const n = { tag, style: {}, appendChild: (c) => badges.push(c) }; return n; },
+    body: { appendChild: () => {} },
+  };
+  const window = { __cxEls: Object.fromEntries(els.map((e, i) => [String(i + 1), { deref: () => e }])) };
+  const style = () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px' });
+  new Function('getComputedStyle', 'document', 'window', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'setTimeout', `return ${scripts.OVERLAY}`)(
+    style, document, window, 0, 0, 1200, 800, () => {}, () => {});
+  return badges.map((b) => {
+    const left = Number(/left:(\d+)px/.exec(b.style.cssText)[1]);
+    const top = Number(/top:(\d+)px/.exec(b.style.cssText)[1]);
+    const w = Math.ceil(b.textContent.length * 7.3) + 6;
+    return { left, top, right: left + w, bottom: top + 16 };
+  });
+}
+
+test('page scripts: overlay badges never cover a neighbouring inline link or another badge; block rows and top-edge boxes get a 3 px nudge', () => {
+  const links = [[100, 50, 40, 18], [142, 50, 40, 18], [184, 50, 60, 18], [300, 200, 500, 60], [400, 2, 50, 18], [460, 2, 50, 18]];
+  const got = overlayRun(links);
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const rects = links.map(([l, t, w, h]) => ({ left: l, top: t, right: l + w, bottom: t + h }));
+  got.forEach((b, i) => {
+    rects.forEach((r, j) => { if (i !== j) assert.ok(!hit(b, r), `badge ${i + 1} covers link ${j + 1}`); });
+    got.forEach((c, j) => { if (i !== j) assert.ok(!hit(b, c), `badge ${i + 1} covers badge ${j + 1}`); });
+  });
+  assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'a free left gap keeps the badge left of the box');
+  assert.deepStrictEqual([got[1].left, got[1].top], [142, 34], 'a tight gap moves it above');
+  assert.deepStrictEqual([got[3].left, got[3].top], [297, 200], 'a block row is nudged 3 px left');
+  assert.deepStrictEqual([got[5].left, got[5].top], [457, 2], 'no room above: inside with the nudge');
+  assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
 });
 
 test('page scripts: look-alike long labels show a head and their distinguishing tail; unique ones keep the clip', () => {
