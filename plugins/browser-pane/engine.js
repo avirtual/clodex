@@ -10,7 +10,7 @@ const urlpolicy = require('./urlpolicy');
 
 const PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
-  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
+  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--attach|--path-only]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file; --attach forces it inline, --path-only sends the path plus a digest',
   '  A read hides navigation/header/footer/sidebar text and elements repeated from your previous read of that site (header says how many; numbers stay valid); page body text is never hidden; --all shows everything.',
   '  [agent:browser click [service] <n> [--to=<dir in your cwd>] [--confirm]]  [agent:browser click [service] --text="<visible text>" [--confirm]]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
   '  [agent:browser select [service] <n> [--confirm]] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',
@@ -157,7 +157,7 @@ function activate(host) {
   const watched = {
     request(op, args, opts) {
       const withPolicy = op === 'open' ? { ...args, policy: policyFor(opts && opts.service) } : args;
-      const p = client.request(op, withPolicy, opts);
+      const p = client.request(op, { ...withPolicy, known: Object.keys(stored()) }, opts);
       changed();
       p.then(changed, changed);
       return p;
@@ -318,16 +318,18 @@ function activate(host) {
   });
   host.ipc.handle('attach.set', (req) => {
     const tokens = req && req.tokens;
-    if (!Number.isInteger(tokens) || tokens < ATTACH_MIN || tokens > ATTACH_MAX) {
+    const seat = req && req.seat != null ? String(req.seat) : null;
+    const clear = tokens === null && seat != null;
+    if (!clear && (!Number.isInteger(tokens) || tokens < ATTACH_MIN || tokens > ATTACH_MAX)) {
       return { ok: false, error: `tokens must be an integer from ${ATTACH_MIN} to ${ATTACH_MAX}` };
     }
-    const seat = req.seat == null ? null : String(req.seat);
     if (seat != null && !replies.SEAT_RE.test(seat)) return { ok: false, error: `bad seat: ${seat}` };
     const all = host.storage.get();
     const data = all && typeof all === 'object' && all.v === 1 ? all : { v: 1, services: {} };
     const prev = data.attach && typeof data.attach === 'object' ? data.attach : {};
     const attach = { ...prev, seats: { ...attachSeats() } };
     if (seat == null) attach.global = tokens;
+    else if (clear) delete attach.seats[seat];
     else attach.seats[seat] = tokens;
     data.attach = attach;
     host.storage.set(data);

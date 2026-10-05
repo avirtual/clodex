@@ -64,8 +64,11 @@ function tokLabel(n) {
 
 const DIGEST_HEADINGS = 6;
 const DIGEST_LANDMARKS = 3;
-const DIGEST_WARN = 10;
+const DIGEST_WARN = 30;
+const DIGEST_WARN_FIRST = 10;
+const DIGEST_WARN_LABEL = 40;
 const DIGEST_LABEL = 60;
+const HINT_STOP = new Set(['view', 'press', 'more', 'show', 'new', 'your', 'the', 'and', 'for', 'with', 'from', 'this', 'that', 'posts', 'page']);
 const DIGEST_TITLE = 120;
 const WORD_RE = /[\p{L}\p{N}]{4,}/gu;
 
@@ -81,9 +84,11 @@ function readReply(service, info, file, sessionType, attach = { attach: true }) 
 
 function topWord(texts) {
   const counts = new Map();
-  for (const t of texts) for (const w of String(t).toLowerCase().match(WORD_RE) || []) counts.set(w, (counts.get(w) || 0) + 1);
+  for (const t of texts) {
+    for (const w of new Set(String(t).toLowerCase().match(WORD_RE) || [])) if (!HINT_STOP.has(w)) counts.set(w, (counts.get(w) || 0) + 1);
+  }
   let best = null;
-  for (const [w, c] of counts) if (!best || c > best[1]) best = [w, c];
+  for (const [w, c] of counts) if (c >= 2 && (!best || c > best[1])) best = [w, c];
   return best && best[0];
 }
 
@@ -100,14 +105,17 @@ function digestLines(info) {
   const d = info.digest || {};
   const c = d.counts;
   const size = `  size: ${tokLabel(info.tokens)} · page ${info.page}/${info.pages} · ${info.elements} elements`
-    + (c ? ` · new: ${c.fresh} · retired: ${c.retired} · changed: ${c.changed}` : '');
+    + (!c ? '' : c.all ? ` · new: all (${c.all})` : ` · new: ${c.fresh} · retired: ${c.retired} · changed: ${c.changed}`);
   const clip = (t) => oneLine(t, DIGEST_LABEL);
   const headings = (d.headings || []).slice(0, DIGEST_HEADINGS).map(clip).filter(Boolean);
   const landmarks = (d.landmarks || []).slice(0, DIGEST_LANDMARKS).map(clip).filter(Boolean);
   const outline = headings.length ? [`  headings: ${headings.join(' | ')}`] : landmarks.length ? [`  landmarks: ${landmarks.join(' | ')}`] : [];
   const warn = d.warn || [];
-  const warnLine = warn.length
-    ? [`  ⚠: ${warn.slice(0, DIGEST_WARN).map((w) => `[${w.n}] ${JSON.stringify(clip(w.label))}`).join(' · ')}${warn.length > DIGEST_WARN ? ` · +${warn.length - DIGEST_WARN} more` : ''}`] : [];
+  const row = (w) => `[${w.n}] ${JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL))}`;
+  const warnLine = !warn.length ? [] : warn.length <= DIGEST_WARN ? [`  ⚠: ${warn.map(row).join(' · ')}`] : [
+    `  ⚠ ${warn.length}: ${[...warn.reduce((m, w) => m.set(w.cat, (m.get(w.cat) || 0) + 1), new Map())].map(([k, n]) => `${k} ×${n}`).join(', ')}`,
+    `  ⚠ first ${DIGEST_WARN_FIRST}: ${warn.slice(0, DIGEST_WARN_FIRST).map(row).join(' · ')}`,
+  ];
   return [
     `  title: ${JSON.stringify(oneLine(d.title || '', DIGEST_TITLE))} · ${oneLine(d.url || '')} · login: ${oneLine(d.login || '')}`,
     size,

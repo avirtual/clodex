@@ -236,7 +236,7 @@ function readText(main) {
   }
   const busyEls = [...document.querySelectorAll(${JSON.stringify(BUSY_SEL)})].filter(vis);
   const busy = { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
-  const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(e => e.getClientRects().length).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
+  const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   if (!root) return { text: '', busy, outline };
   const clone = root.cloneNode(true);
@@ -515,7 +515,8 @@ function collect(main) {
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
-    items.push({ el, full, line: kind + ' ' + (cqOf(el) ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
+    const cq = cqOf(el);
+    items.push({ el, full, cq, line: kind + ' ' + (cq ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
   }
 `;
 }
@@ -532,7 +533,7 @@ function readInteractive(main, state) {
   });
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {};${ROW}
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {}; const cats = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
@@ -540,12 +541,13 @@ function readInteractive(main, state) {
     if (p.raw.includes('?')) descs.push({ kind: p.kind, label: p.label, href: p.raw });
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
+      if (it.cq) cats[n] = it.cq;
       rowsOut[n] = rowOf(it.el);
       sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, url: location.href };
 })()`;
 }
 
@@ -829,11 +831,13 @@ const OVERLAY = `(() => {${DEEP}${CQ}
   layer.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:visible;pointer-events:none;z-index:2147483647';
   let drawn = 0;
   const items = [];
+  const undrawn = [];
   for (const [k, ref] of Object.entries(window.__cxEls || {})) {
     const el = ref && ref.deref();
-    if (!el || !el.isConnected || !vis(el)) continue;
+    if (!el || !el.isConnected) continue;
     const r = el.getBoundingClientRect();
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
+    if (r.width <= 1 || r.height <= 1 || !vis(el)) { undrawn.push(Number(k)); continue; }
     items.push({ k, el, r });
   }
   const badgeRects = [];
@@ -856,6 +860,17 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     for (let x = left; x < right; x += 4) if (wordAt(x, y)) return true;
     return wordAt(right, y);
   };
+  const mediaIn = (q, el) => {
+    const y = q.top + ${BADGE_H_PX} / 2;
+    const w = q.right - q.left;
+    return [q.left + w / 6, q.left + w / 2, q.right - w / 6].some(x => mediaAt(x, y, el));
+  };
+  const below = (q) => {
+    for (let hit = badgeRects.find(o => hits(o, q)); hit; hit = badgeRects.find(o => hits(o, q))) {
+      q = { left: q.left, right: q.right, top: hit.bottom + 1, bottom: hit.bottom + 1 + ${BADGE_H_PX} };
+    }
+    return q;
+  };
   const mediaAt = (x, y, el) => {
     const e = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
     if (!e || e.nodeType !== 1) return false;
@@ -870,30 +885,36 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     const lh = parseFloat(st.lineHeight) || (parseFloat(st.fontSize) || 15) * 1.2;
     const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
     const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
-    let x = r.left - ${BADGE_NUDGE_PX};
-    let y = r.top;
+    const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
+    let at = slot(r.left - ${BADGE_NUDGE_PX}, r.top);
     if (!media && r.height <= 2 * lh + 2) {
       const rects = [...items.map(i => i.r).filter(o => o !== r && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom)), ...badgeRects];
       const blocked = q => q.left < 0 || q.top < 0 || q.right > innerWidth || q.bottom > innerHeight
         || rects.some(o => hits(o, q))
         || textUnder(q.left, q.right, q.top + ${BADGE_H_PX} / 2)
-        || mediaAt((q.left + q.right) / 2, q.top + ${BADGE_H_PX} / 2, el);
-      const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
-      const free = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom))].find(q => !blocked(q));
-      const sup = slot(r.left - bw / 2, r.top - ${BADGE_H_PX} - 1);
+        || mediaIn(q, el);
       const right = () => {
         for (let d = 0; d <= bw; d += 2) if (!blocked(slot(r.right + 2 + d, r.top))) return slot(r.right + 2 + d, r.top);
-        return slot(r.right + 2, r.top);
+        return null;
       };
-      const at = free || (sup.top >= 0 && !textUnder(sup.left, sup.right, sup.top + ${BADGE_H_PX} / 2) ? sup : right());
-      x = at.left; y = at.top;
+      const tries = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom)), slot(r.left - bw / 2, r.top - ${BADGE_H_PX} - 1)];
+      at = tries.find(q => !blocked(q)) || right() || slot(r.left, r.top);
     }
-    badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
+    at = below(at);
+    const x = at.left;
+    const y = at.top;
+    badgeRects.push(at);
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
       + (cqOf(el) ? ';background:#e00' : ';background:#111')
       + ';left:' + Math.max(0, Math.round(x)) + 'px;top:' + Math.max(0, Math.round(y)) + 'px';
     layer.appendChild(b);
     drawn += 1;
+  }
+  if (undrawn.length) {
+    const legend = document.createElement('span');
+    legend.textContent = 'not drawn: ' + undrawn.sort((a, b) => a - b).map(n => '[' + n + ']').join(' ');
+    legend.style.cssText = 'position:fixed;left:0;bottom:0;font:bold 12px/14px monospace;color:#fff;background:#111;padding:0 2px;z-index:2147483647';
+    layer.appendChild(legend);
   }
   (document.body || document.documentElement).appendChild(layer);
   return new Promise(res => { setTimeout(() => res(drawn), 150); requestAnimationFrame(() => requestAnimationFrame(() => res(drawn))); });

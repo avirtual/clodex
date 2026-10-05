@@ -308,18 +308,23 @@ memoised per script run.
 (`OVERLAY_ID`) with a badge per numbered element visible in the viewport,
 captures, then removes it (`OVERLAY_OFF`). It waits two animation frames,
 capped at 150 ms since a minimised window may never paint.
-A text-sized box tries four slots in order: left, above, right, below. A slot is
-blocked when it leaves the viewport, overlaps another numbered box (not one that
-contains this one) or a placed badge, has text under its mid-height, or has
-media (`img,svg,canvas,video,picture` or a background image) at its centre per
-`elementFromPoint`. Overlaps of 1 px or less do not block, so a row wrapper that
-starts at the box's left edge a pixel higher leaves the above slot free (X ad name
-rows). With all four blocked the badge is a superscript whose bottom edge sits
-1 px above the box top, provided the line above has no text under its centre;
-otherwise it goes right of the box, shifted up to its own width to find a clear
-gap. A half-height superscript covered the top of "Mo" and "T" on e-bloc. Block
-rows and media boxes keep the inside placement nudged `BADGE_NUDGE_PX` left. Left-of placement covered the end of the previous inline link
-("[20]Mo[21]Tabletă").
+An element whose box is 1 px or less in either direction, or that fails `vis`,
+gets no badge; its number goes in a bottom-left legend (`not drawn: [23] [41]`).
+X's hidden "New posts are available" button drew a badge over "Following".
+A text-sized box tries five slots in order: left, above, right, below, then a
+superscript whose bottom edge sits 1 px above the box top. One predicate gates
+every slot: it is blocked when it leaves the viewport, overlaps another numbered
+box (not one that contains this one) or a placed badge, has text under its
+mid-height, or has media (`img,svg,canvas,video,picture` or a background image)
+at any of three points (left third, centre, right third) per `elementFromPoint`.
+One centre sample let badges land on the MasterCard logo between glyphs. Overlaps
+of 1 px or less do not block, so a row wrapper that starts at the box's left edge
+a pixel higher leaves the above slot free (X ad name rows). With all five blocked
+it scans right of the box, shifted up to its own width; with that blocked too the
+badge sits inside the box at its top-left. Block rows and media boxes keep the
+inside placement nudged `BADGE_NUDGE_PX` left. Any final placement that hits a
+placed badge moves below it ("18 7" on apometre). Left-of placement covered the
+end of the previous inline link ("[20]Mo[21]Tabletă").
 
 ## page-scripts.js — TABLES
 

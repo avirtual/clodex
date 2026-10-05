@@ -297,6 +297,8 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
+let overlayLegend = null;
+
 function overlayRun(rects, words = [], extra = {}, bg = '') {
   const els = rects.map(([left, top, width, height]) => ({
     tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
@@ -334,7 +336,8 @@ function overlayRun(rects, words = [], extra = {}, bg = '') {
   const style = (e) => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px', backgroundImage: e && e.bg ? bg : 'none' });
   new Function('getComputedStyle', 'document', 'window', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', 'requestAnimationFrame', 'setTimeout', `return ${scripts.OVERLAY}`)(
     style, document, window, 0, 0, 1200, 800, () => {}, () => {});
-  return badges.map((b) => {
+  overlayLegend = (badges.find((b) => b.textContent.startsWith('not drawn')) || {}).textContent || null;
+  return badges.filter((b) => !b.textContent.startsWith('not drawn')).map((b) => {
     const left = Number(/left:(\d+)px/.exec(b.style.cssText)[1]);
     const top = Number(/top:(\d+)px/.exec(b.style.cssText)[1]);
     const w = Math.ceil(b.textContent.length * 7.3) + 6;
@@ -379,9 +382,9 @@ test('page scripts: overlay badges skip words between inline links and never lan
   const words4 = [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' },
     { left: 244, top: 68, width: 12, height: 18, text: 'și' }, { left: 200, top: 86, width: 30, height: 18, text: 'jos' }];
   const [noSup] = overlayRun([[200, 68, 40, 18]], words4);
-  assert.deepStrictEqual([noSup.left, noSup.top], [242, 68], 'every slot blocked and a word under the superscript centre: right of the link, never below its top');
+  assert.deepStrictEqual([noSup.left, noSup.top], [200, 68], 'every slot, the superscript and the right scan blocked: inside the link at its top-left');
   const words5 = [words4[0], words4[2], words4[3]];
-  const [sup] = overlayRun([[200, 68, 40, 18], [205, 36, 40, 18]], words5);
+  const [sup] = overlayRun([[200, 68, 40, 18], [208, 36, 40, 18]], words5);
   assert.ok(sup.top === 68 - 17 && sup.left < 200, 'every slot blocked, the line above clear at the badge centre: a superscript whose bottom clears the line box');
   assert.deepStrictEqual([sup.left, sup.top], [193, 51]);
   const [ad] = overlayRun([[112, 50, 70, 18], [112, 49, 200, 18], [60, 44, 40, 40]]);
@@ -399,6 +402,35 @@ test('page scripts: overlay badges skip words between inline links and never lan
   const tile = { nodeType: 1, bg: true, closest: () => null, contains: () => false };
   const [offTile] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint: (x) => (x < 300 ? tile : null) }, 'url("visa.png")');
   assert.deepStrictEqual([offTile.left, offTile.top], [300, 84], 'a background-image tile beside the link blocks the slot');
+});
+
+test('page scripts: overlay badges of two adjacent short links never overlap, even when both fall back inside their links', () => {
+  const xs = (n) => 'x'.repeat(n);
+  const words = [{ left: 60, top: 32, width: 100, height: 18, text: xs(25) }, { left: 60, top: 68, width: 100, height: 18, text: xs(25) },
+    { left: 70, top: 50, width: 28, height: 18, text: xs(7) }, { left: 116, top: 50, width: 60, height: 18, text: xs(15) }];
+  const got = overlayRun([[100, 50, 6, 18], [108, 50, 6, 18]], words);
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  assert.strictEqual(got.length, 2);
+  assert.deepStrictEqual([got[0].left, got[0].top], [100, 50], 'every slot blocked: inside the first link');
+  assert.ok(!hit(got[0], got[1]), `badges overlap: ${JSON.stringify(got)}`);
+  const many = overlayRun(Array.from({ length: 12 }, (_v, i) => [100 + i * 9, 50, 7, 18]), words);
+  many.forEach((b, i) => many.forEach((c, j) => { if (i < j) assert.ok(!hit(b, c), `badge ${i + 1} overlaps badge ${j + 1}`); }));
+});
+
+test('page scripts: a zero-box or hidden numbered element gets no badge and is listed in the overlay legend', () => {
+  const got = overlayRun([[100, 50, 40, 18], [300, 100, 0, 0], [400, 100, 40, 1]]);
+  assert.strictEqual(got.length, 1);
+  assert.strictEqual(overlayLegend, 'not drawn: [2] [3]');
+  overlayRun([[100, 50, 40, 18]]);
+  assert.strictEqual(overlayLegend, null);
+});
+
+test('page scripts: a logo covering only the right part of the left slot still blocks it', () => {
+  const img = { left: 292, top: 100, right: 298, bottom: 118 };
+  const elementFromPoint = (x, y) => (x >= img.left && x <= img.right && y >= img.top && y <= img.bottom
+    ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null), contains: () => false } : { nodeType: 1, closest: () => null, contains: () => false });
+  const [logo] = overlayRun([[300, 100, 40, 18]], [], { elementFromPoint });
+  assert.deepStrictEqual([logo.left, logo.top], [300, 84]);
 });
 
 test('page scripts: inputLine labels button-type inputs by their value once; a blank wrapping label falls through to aria, placeholder, name, id', () => {
@@ -958,7 +990,8 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});
-  assert.match(ri, /line: kind \+ ' ' \+ \(cqOf\(el\) \? '⚠ ' : ''\) \+ line/);
+  assert.match(ri, /const cq = cqOf\(el\);\n {4}items\.push\(\{ el, full, cq, line: kind \+ ' ' \+ \(cq \? '⚠ ' : ''\) \+ line/);
+  assert.match(ri, /if \(it\.cq\) cats\[n\] = it\.cq;/);
   assert.match(ri, /control: button && !doc && \(!!\(form \|\| e\.closest\('form'\)\) \|\| e\.hasAttribute\('formaction'\)\),/);
 });
 
@@ -1040,6 +1073,17 @@ test('page scripts: a Parsoid reference item gets its bullet past the hidden bac
   assert.strictEqual(textOf(tabled), 'cell text', 'no bullet inside a table cell');
 });
 
+test('page scripts: READ_TEXT outline headings skip a screen-reader-only 1x1 overflow-hidden h1', () => {
+  const h = (text, [l, t, w, hh], st = {}) => ({ innerText: text, textContent: text, parentElement: null, st,
+    getClientRects: () => [1], getBoundingClientRect: () => ({ left: l, top: t, width: w, height: hh, right: l + w, bottom: t + hh }) });
+  const heads = [h('To view keyboard shortcuts, press question mark', [0, 0, 1, 1], { overflow: 'hidden' }), h('Trending', [10, 100, 200, 30]), h('Trending in Romania', [10, 200, 200, 30])];
+  const document = { title: 'X', querySelector: () => null, body: null, documentElement: { scrollWidth: 1200, scrollHeight: 3000 },
+    querySelectorAll: (sel) => (sel === 'h1,h2,h3' ? heads : []) };
+  const getComputedStyle = (e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', position: 'static', ...(e.st || {}) });
+  const ctx = vm.createContext({ document, getComputedStyle, scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
+  assert.deepStrictEqual([...vm.runInContext(scripts.READ_TEXT(false), ctx).outline.headings], ['Trending', 'Trending in Romania']);
+});
+
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
   const src = scripts.READ_TEXT(false);
   const drop = /const DROP = '([^']*)'/.exec(src)[1].split(',');
@@ -1058,6 +1102,9 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
   assert.strictEqual(notOpenError('x', opened, dir).message, 'x is not open — [agent:browser open x] <url>');
   assert.strictEqual(notOpenError('nosuch', new Set(), path.join(dir, 'none')).code, 'NOT_OPEN');
   assert.match(R.TEXT.twinText('x', 'More'), /— read x; the re-read numbers both$/);
-  assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\)\);/);
+  assert.strictEqual(notOpenError('nosuch', opened, dir, ['gh', 'hn']).message, 'nosuch is not a service here — services: ebloc, gh, hn, x — [agent:browser open nosuch] <url> opens a new one');
+  assert.strictEqual(notOpenError('gh', opened, dir, ['gh']).message, 'gh is not open — [agent:browser open gh] <url>');
+  assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\), known\);/);
+  assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => SERVICE_RE\.test\(n\)\);/);
   assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
 });

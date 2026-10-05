@@ -354,7 +354,8 @@ function siteNote(url, opened) {
 const WARN_RE = /^\[(\d+)\] \S+ ⚠ (.*)$/;
 
 function countsOf(raw) {
-  if (raw.first || raw.restored != null || !Array.isArray(raw.fresh)) return null;
+  if (raw.restored != null) return { all: 'numbers restored' };
+  if (raw.first || !Array.isArray(raw.fresh)) return { all: 'first read' };
   const len = (a) => (Array.isArray(a) ? a.length : 0);
   return { fresh: raw.fresh.length, retired: len(raw.retired), changed: len(raw.changed) };
 }
@@ -362,10 +363,11 @@ function countsOf(raw) {
 function digestOf(raw) {
   const outline = raw.outline && typeof raw.outline === 'object' ? raw.outline : {};
   const list = (a) => (Array.isArray(a) ? a.map(String) : []);
+  const cats = raw.cats && typeof raw.cats === 'object' ? raw.cats : null;
   const warn = [];
   for (const l of list(raw.elements)) {
     const m = WARN_RE.exec(l);
-    if (m) warn.push({ n: Number(m[1]), label: m[2] });
+    if (m) warn.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
   }
   return {
     title: String(raw.title || ''), url: redactUrl(raw.url || ''), login: loginLabel(raw.login),

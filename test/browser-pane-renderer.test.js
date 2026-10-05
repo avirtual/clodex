@@ -293,6 +293,26 @@ test('Settings: the open row invokes operator.open, and an open window row hands
   } finally { restore(); }
 });
 
+test('settings: the attach row is built once; a refresh keeps a focused edit and updates an unfocused field', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const f = makeRhost({ status: status('off'), 'services.list': { ok: true, services: [] }, 'attach.get': { ok: true, global: 1000, seats: {} }, 'operator.open': { ok: true }, 'denylist.get': { ok: false } });
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const fields = () => walk(root).filter((n) => n.className === 'bp-attach-tokens');
+    const [field] = fields();
+    field.value = '3000';
+    global.document.activeElement = field;
+    await walk(root).find((n) => n.className === 'bp-open-go').click();
+    assert.deepStrictEqual(fields(), [field]);
+    assert.strictEqual(field.value, '3000');
+    global.document.activeElement = null;
+    await walk(root).find((n) => n.className === 'bp-open-go').click();
+    assert.deepStrictEqual(fields(), [field]);
+    assert.strictEqual(field.value, '1000');
+  } finally { restore(); }
+});
+
 test('settings: the attach row shows the global read budget and saves an edit through attach.set', async () => {
   const { root, restore } = fakeDom();
   try {

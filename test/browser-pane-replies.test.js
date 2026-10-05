@@ -379,6 +379,35 @@ test('replies: --path-only on a small read says so; the attached shape is unchan
   assert.ok(codex.length > 1);
 });
 
+test('replies: the path-only digest lists every ⚠ up to 30, then counts by category plus the first 10', () => {
+  const warnRows = (k) => Array.from({ length: k }, (_v, i) => `[${i + 1}] button ⚠ ${i < 3 ? 'Pay now' : 'Reply'} ${i + 1}`);
+  const cats = (k) => Object.fromEntries(Array.from({ length: k }, (_v, i) => [String(i + 1), i < 3 ? 'payment' : 'publish']));
+  const digest = (k) => R.readReply('wiki', formatRead({ ...BIG, elements: warnRows(k), cats: cats(k) }, { service: 'wiki' }), '/t/r.txt', 'claude', { attach: false, budget: 1000 }).split('\n');
+  const twelve = digest(12).find((l) => l.startsWith('  ⚠'));
+  assert.strictEqual(twelve, `  ⚠: ${Array.from({ length: 12 }, (_v, i) => `[${i + 1}] "${i < 3 ? 'Pay now' : 'Reply'} ${i + 1}"`).join(' · ')}`);
+  const many = digest(35).filter((l) => l.startsWith('  ⚠'));
+  assert.deepStrictEqual(many, [
+    '  ⚠ 35: payment ×3, publish ×32',
+    `  ⚠ first 10: ${Array.from({ length: 10 }, (_v, i) => `[${i + 1}] "${i < 3 ? 'Pay now' : 'Reply'} ${i + 1}"`).join(' · ')}`,
+  ]);
+  assert.strictEqual(R.readReply('wiki', formatRead({ ...BIG, elements: [`[1] button ⚠ ${'Delete '.repeat(10)}`] }, { service: 'wiki' }), '/t/r.txt', 'claude', { attach: false }).split('\n').find((l) => l.startsWith('  ⚠')),
+    `  ⚠: [1] "${'Delete '.repeat(10).slice(0, 37).trimEnd()}..."`);
+});
+
+test('replies: the size line always carries change counts; a first or restored read says new: all', () => {
+  const size = (raw) => R.readReply('wiki', formatRead({ ...BIG, ...raw }, { service: 'wiki' }), '/t/r.txt', 'claude', { attach: false }).split('\n')[2];
+  assert.match(size({}), / · new: 3 · retired: 1 · changed: 0$/);
+  assert.match(size({ first: true }), / · new: all \(first read\)$/);
+  assert.match(size({ restored: '2026-10-01T00:00:00Z' }), / · new: all \(numbers restored\)$/);
+});
+
+test('replies: the --filter hint skips stop words and needs a word shared by two headings', () => {
+  const hint = (headings) => R.readReply('wiki', formatRead({ ...BIG, outline: { headings, landmarks: [] } }, { service: 'wiki' }), '/t/r.txt', 'claude', { attach: false }).split('\n').find((l) => l.startsWith('  hint:'));
+  assert.match(hint(['View keyboard shortcuts', 'Trending', 'Trending in Romania']), /^ {2}hint: --filter=trending · /);
+  assert.doesNotMatch(hint(['View keyboard shortcuts', 'Trending now']), /--filter/);
+  assert.doesNotMatch(hint(['View posts', 'View more posts', 'Show more posts']), /--filter/);
+});
+
 test('replies: a path-only screenshot is the plain path, no digest; codex keeps its tail', () => {
   const r = { width: 1280, height: 900 };
   assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'claude', false), '[agent:browser] screenshot ebloc 1280×900 → /tmp/s.jpg');
