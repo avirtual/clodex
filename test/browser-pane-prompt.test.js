@@ -31,7 +31,7 @@ const FILL = [
   ['<n>|--text="<s>"', '3'],
   ['[service]', 'utility'], ['<service>', 'utility'], ['[<n>]', '3'], ['<n>', '3'],
   ['[--text|--links]', '--links'], ['[--main]', '--main'], ['[--all]', '--all'], ['[--filter=<s>]', '--filter=pdf'],
-  ['[--page=N]', '--page=2'], ['[--enter]', '--enter'], ['[--to=<dir in your cwd>]', '--to=bills'],
+  ['[--page=N]', '--page=2'], ['[--attach|--path-only]', '--path-only'], ['[--enter]', '--enter'], ['[--to=<dir in your cwd>]', '--to=bills'],
   ['[--as=<name>]', '--as=2026-08.pdf'], ['[--ms=N]', '--ms=5000'], ['[--for=<text>]', '--for=done'], ['[--idle]', '--idle'], ['--text="<visible text>"', '--text="Lista de plată"'], ['[--numbers]', '--numbers'], ['[--confirm]', '--confirm'],
 ];
 const BODY = {
