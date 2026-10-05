@@ -664,15 +664,16 @@ function clickPoint(el, r, doc) {
   const centre = (b) => ({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) });
   if (!(el.tagName.toLowerCase() === 'a' || el.getAttribute('role') === 'link') || r.height <= 120) return centre(r);
   const ta = [...el.querySelectorAll('time')].map((t) => t.closest('a')).find((a) => a && a !== el && el.contains(a));
+  const within = (b) => { const c = centre(b); return b.width && b.height && c.x >= r.left && c.x <= r.right && c.y >= r.top && c.y <= r.bottom; };
   const tb = ta && ta.getBoundingClientRect();
-  if (tb && tb.width && tb.height) return centre(tb);
+  if (tb && within(tb)) return centre(tb);
   const walker = doc.createTreeWalker(el, 4);
   for (let t = walker.nextNode(); t; t = walker.nextNode()) {
     if (!String(t.nodeValue || '').trim()) continue;
     const range = doc.createRange();
     range.selectNodeContents(t);
     const b = range.getBoundingClientRect();
-    if (b.width && b.height) return centre(b);
+    if (within(b)) return centre(b);
   }
   return centre(r);
 }
@@ -1188,13 +1189,15 @@ function feedPosts(scope, cats, byEl, loc) {
     if (qbox) {
       const pid = statusId(path);
       const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid; });
-      const mediaLink = (a) => /\/(?:photo|video)\/\d+\/?$/.test(String(pathOf(a)).replace(/[?#].*$/, ''));
-      const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !mediaLink(a)) || null;
+      const suffixed = (a) => { const p = pathOf(a); return !!p && statusPath(p) !== p; };
+      const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !suffixed(a)) || null;
+      let cardEl = null;
+      for (let e = qt; !cardEl && e && inside(e, qbox); e = e.parentElement) if (e.getAttribute('role') === 'link' && numOf(e) != null) cardEl = e;
       const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
       const ql = qbox.querySelector('[lang]');
-      const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !mediaLink(a) && flat(a.innerText).includes('@' + qm[1])) : null;
+      const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !suffixed(a) && flat(a.innerText).includes('@' + qm[1])) : null;
       quote = {
-        n: (qa && numOf(qa)) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
+        n: (qa && numOf(qa)) ?? numOf(cardEl) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
         text: clip(ql ? ql.innerText : '', 160), path: qa || qas[0] ? statusPath(pathOf(qa || qas[0])) : null,
         media: mediaOf(qbox, () => true, null),
       };
@@ -1202,7 +1205,7 @@ function feedPosts(scope, cats, byEl, loc) {
     return {
       n, path, handle, name, verified,
       time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
-      text: body ? clip(String(body.innerText || '').replace(/(https?:\/\/)\s+/g, '$1'), 260) : '', more: numOf(moreEl), counts,
+      text: body ? clip(String(body.innerText || '').replace(/(https?:\/\/)\s+/g, '$1').replace(/(https?:\/\/[\w.-]*)\s+(?=[\w.-]*\.[a-z]{2,}\/)/g, '$1'), 260) : '', more: numOf(moreEl), counts,
       media, flags, quote,
     };
   };

@@ -260,22 +260,25 @@ test('FEED: a quote [n] is its card, never its /photo/N link — a clean status 
   const q1 = quoteOf(h('div', { role: 'link' }, photo, head(), h('div', { lang: 'en' }, 'quoted'), clean), { 1321: photo, 1322: clean });
   assert.deepStrictEqual([q1.n, q1.path], [1322, '/cy/status/2']);
   const photo2 = h('a', { href: '/cy/status/2/photo/1' }, h('img', { w: 300, h: 200 }));
-  const box2 = h('div', { role: 'link' }, head(), photo2);
-  const q2 = quoteOf(box2, { 1320: box2, 1321: photo2 });
+  const card2 = h('div', { role: 'link' }, head(), photo2);
+  const q2 = quoteOf(h('div', {}, card2), { 1320: card2, 1321: photo2 });
   assert.deepStrictEqual([q2.n, q2.path], [1320, '/cy/status/2']);
   const photo3 = h('a', { href: '/cy/status/2/photo/1' }, h('img', { w: 300, h: 200 }));
   const hdr = h('a', { href: '/cy' }, h('span', {}, 'Cy'), h('span', {}, '@cy · 19h'));
-  const q3 = quoteOf(h('div', { role: 'link' }, hdr, h('time', {}, '19h'), photo3), { 1336: hdr, 1337: photo3 });
-  assert.deepStrictEqual([q3.n, q3.path], [1336, '/cy/status/2']);
+  const q4 = quoteOf(h('div', {}, h('div', { role: 'link' }, hdr, h('time', {}, '19h'), photo3)), { 1336: hdr, 1337: photo3 });
+  assert.deepStrictEqual([q4.n, q4.path], [1336, '/cy/status/2']);
+  const card3 = h('div', { role: 'link' }, head(), h('div', { lang: 'en' }, 'NO EVIDENCE'));
+  const q3 = quoteOf(h('div', {}, card3), { 1336: card3 });
+  assert.deepStrictEqual([q3.n, q3.path], [1336, null]);
 });
 
 test('FEED: a playing video keeps its duration from video.duration; the body joins an https:// split from its host', () => {
   const { row } = xHeader('burry', 'Burry', '/burry/status/9', {}, '1h');
   const video = h('video', {});
   video.duration = 13.2;
-  const art = h('article', {}, row, h('div', { lang: 'en' }, 'read https:// michaeljburry.substack.com/p/x now'),
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'read https:// michaeljburry.substack.com/p/x now, https://michaeljburry .substack.com/p/y'),
     h('div', {}, video, h('div', { 'aria-label': 'Pause' })));
   const [p] = runFeed(h('main', {}, art), {}, {}).posts;
   assert.strictEqual(p.media.duration, '0:13');
-  assert.strictEqual(p.text, 'read https://michaeljburry.substack.com/p/x now');
+  assert.strictEqual(p.text, 'read https://michaeljburry.substack.com/p/x now, https://michaeljburry.substack.com/p/y');
 });

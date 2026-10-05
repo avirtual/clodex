@@ -1143,6 +1143,13 @@ test('page scripts: clickPoint lands a tall role=link card on its time link, a s
   };
   const plainCard = node('div', { role: 'link' }, rect(0, 0, 500, 370), [photo]);
   assert.deepStrictEqual(scripts.clickPoint(plainCard, plainCard.getBoundingClientRect(), textDoc), { x: 60, y: 45 });
+  const hiddenDoc = {
+    createTreeWalker: () => { const q = [{ nodeValue: 'Open' }, text]; return { nextNode: () => q.shift() || null }; },
+    createRange: () => { let n = null; return { selectNodeContents: (t) => { n = t; }, getBoundingClientRect: () => (n === text ? rect(30, 40, 60, 10) : rect(-9999, 0, 60, 10)) }; },
+  };
+  assert.deepStrictEqual(scripts.clickPoint(plainCard, plainCard.getBoundingClientRect(), hiddenDoc), { x: 60, y: 45 });
+  const farTime = node('div', { role: 'link' }, rect(0, 0, 500, 370), [node('a', {}, rect(-9999, 10, 200, 20), [node('time', {}, rect(0, 0, 0, 0))])]);
+  assert.deepStrictEqual(scripts.clickPoint(farTime, farTime.getBoundingClientRect(), doc), { x: 250, y: 185 });
   assert.match(scripts.FIND(1), /x: at\.x, y: at\.y,/);
 });
 
