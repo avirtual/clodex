@@ -76,7 +76,7 @@ test('engine: open replies with one line and records the service in storage', as
   const reply = await emit('[agent:browser open utility] https://portal.example.com/home?acct=123');
   assert.strictEqual(reply,
     '[agent:browser] opened utility · 200 · "Fixture utility" · https://portal.example.com/home?acct=123 · login: signed in · idle 1.2s · next: read');
-  assert.deepStrictEqual(injected[0].opts, { parkable: true });
+  assert.deepStrictEqual(injected[0].opts, { parkable: true, ownScope: true });
   const s = host.storage.get().services.utility;
   assert.strictEqual(s.lastUrl, 'https://portal.example.com/home');
   assert.strictEqual(s.lastSeat, 'clodex-hand');

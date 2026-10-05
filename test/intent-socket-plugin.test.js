@@ -108,7 +108,7 @@ test('a plugin that never replies: the deadline answers "accepted", and a late l
 });
 
 function seatHarness() {
-  const root = mkTmpRoot('isock-plug-');
+  const root = mkTmpRoot('isock-sm-');
   const injected = [];
   const handled = [];
   let arrived = null;
