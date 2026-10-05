@@ -147,7 +147,7 @@ function feedBlocks(feed) {
     if (t.rel || iso) parts.push([t.rel, iso ? `(${iso[1]}${iso[2] || ''})` : ''].filter(Boolean).join(' '));
     const f = p.flags || {};
     if (f.ad) parts.push('Ad');
-    if (f.repostedBy) parts.push(`reposted by ${f.repostedBy}`);
+    if (f.repostedBy) parts.push(f.repostedBy === true ? 'reposted' : `reposted by ${f.repostedBy}`);
     if (f.pinned) parts.push('pinned');
     if (f.replyTo) parts.push(`reply to ${f.replyTo}`);
     if (f.parody) parts.push('parody');
