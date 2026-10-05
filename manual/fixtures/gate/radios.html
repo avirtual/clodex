@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>Check if you need a UK visa</title>
+<style>
+.radio { position: relative; display: block; margin: 12px 0; padding-left: 50px; min-height: 40px; }
+.radio input { position: absolute; left: 0; top: 0; width: 40px; height: 40px; margin: 0; opacity: 0; cursor: pointer; }
+.radio label { display: inline-block; padding: 8px 15px 5px; cursor: pointer; }
+.radio label::before { content: ""; position: absolute; left: 0; top: 0; width: 34px; height: 34px; border: 2px solid #0b0c0c; border-radius: 50%; }
+.radio input:checked + label::after { content: ""; position: absolute; left: 10px; top: 10px; width: 18px; height: 18px; border-radius: 50%; background: #0b0c0c; }
+</style>
+<main>
+<form action="/gate/done.html" method="get">
+<h1>Are you travelling as a tourist?</h1>
+<div class="radio"><input id="response-0" name="response" type="radio" value="yes"><label for="response-0">Yes</label></div>
+<div class="radio"><input id="response-1" name="response" type="radio" value="no"><label for="response-1">No</label></div>
+<button type="submit">Continue</button>
+</form>
+</main>
