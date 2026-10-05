@@ -1081,7 +1081,7 @@ test('page scripts: READ_TEXT outline headings skip a screen-reader-only 1x1 ove
     querySelectorAll: (sel) => (sel === 'h1,h2,h3' ? heads : []) };
   const getComputedStyle = (e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', position: 'static', ...(e.st || {}) });
   const ctx = vm.createContext({ document, getComputedStyle, scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
-  assert.deepStrictEqual(vm.runInContext(scripts.READ_TEXT(false), ctx).outline.headings, ['Trending', 'Trending in Romania']);
+  assert.deepStrictEqual([...vm.runInContext(scripts.READ_TEXT(false), ctx).outline.headings], ['Trending', 'Trending in Romania']);
 });
 
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
