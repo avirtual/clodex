@@ -11,6 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 - Subagents can talk to Clodex: every Claude and Codex seat now exposes a per-seat socket and a `clodex` shell verb (`clodex '[agent:dm reviewer] which file holds the pin'`) whose reply comes back as the caller's own tool result, so a subagent can dm, ask `who`, list the board and run the seat's granted commands without the main agent relaying; a subagent is refused every lead and operator verb (task add/accept, shout, reboot, spawn, team…).
+- Subagents can drive the browser pane through the `clodex` shell verb and get the reply as their tool result (read, click, type, wait, download, screenshot, inspect…); `release` and `--confirm` stay with the seat's main agent; a plugin reply that takes longer than its deadline arrives in the seat's conversation instead.
 
 ## Unreleased
 

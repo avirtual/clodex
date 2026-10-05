@@ -30824,6 +30824,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       } = require_intent_catalog();
       var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
       var { PLUGIN_GLYPH, pluginGlyphOk } = require_intent_glyphs();
+      var PLUGIN_REPLY_WAIT_MS = 30 * 1e3;
+      var PLUGIN_REPLY_WAIT_MAX_MS = 120 * 1e3;
       function parseDm(cleaned) {
         const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
         return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
@@ -31104,6 +31106,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
           label: String(spec.label || `${type} (plugin: ${src})`),
           promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
           handler: typeof spec.handler === "function" ? spec.handler : null,
+          replyWaitMs: (intent) => {
+            let ms;
+            try {
+              ms = typeof spec.replyWaitMs === "function" ? spec.replyWaitMs(intent) : null;
+            } catch {
+              ms = null;
+            }
+            return Number.isFinite(ms) && ms > 0 ? Math.min(ms, PLUGIN_REPLY_WAIT_MAX_MS) : PLUGIN_REPLY_WAIT_MS;
+          },
           source: src,
           // Both threaded by the host at register(), never read off `spec`: a plugin that
           // could declare its own scope could declare itself global, and one that could
@@ -31174,14 +31185,34 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!row) return intentEnabled(type, entry && entry.intents);
         return seatHasPlugin(row.source, entry && entry.plugins, row.shipped) && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
       }
-      var SUBAGENT_SUBS = { task: ["list"], memory: ["recall", "list"] };
+      var SUBAGENT_SUBS = {
+        task: ["list"],
+        memory: ["recall", "list"],
+        browser: ["open", "read", "click", "type", "select", "key", "wait", "download", "screenshot", "inspect", "services"]
+      };
       var SUBAGENT_TYPES = ["dm", "who", "name", "exec", ...Object.keys(SUBAGENT_SUBS)];
-      function subagentAllows(intent, entry) {
-        if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return false;
-        if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub);
-        if (intent.type !== "exec") return true;
+      var SUBAGENT_CONFIRM_SUBS = ["click", "type", "select", "key"];
+      var SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
+      var SUBAGENT_NO_CONFIRM = "a subagent cannot confirm a consequential action \u2014 ask the main agent";
+      function pluginWords(intent) {
+        return String(intent && intent.raw || "").trim().split(/\s+/).filter(Boolean);
+      }
+      function subagentRefusal(intent, entry) {
+        if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return "";
+        if (intent.type === "browser") {
+          const words = pluginWords(intent);
+          if (words[0] === "release") return SUBAGENT_NO_RELEASE;
+          if (SUBAGENT_CONFIRM_SUBS.includes(words[0]) && words.some((w) => /^--confirm(=|$)/.test(w))) return SUBAGENT_NO_CONFIRM;
+          if (!pluginRowFor("browser") || !intentEnabledForSeat("browser", entry)) return "";
+          return SUBAGENT_SUBS.browser.includes(words[0]) ? null : "";
+        }
+        if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub) ? null : "";
+        if (intent.type !== "exec") return null;
         const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
-        return grants.includes(intent.cmd);
+        return grants.includes(intent.cmd) ? null : "";
+      }
+      function subagentAllows(intent, entry) {
+        return subagentRefusal(intent, entry) === null;
       }
       function pruneForPlugins(entry, pluginsList) {
         const src = entry || {};
@@ -31260,6 +31291,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         intentEnabledFor,
         intentEnabledForSeat,
         subagentAllows,
+        subagentRefusal,
+        PLUGIN_REPLY_WAIT_MS,
+        PLUGIN_REPLY_WAIT_MAX_MS,
         SUBAGENT_SUBS,
         SUBAGENT_TYPES,
         pruneForPlugins,
