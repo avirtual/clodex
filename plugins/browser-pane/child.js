@@ -28,6 +28,10 @@ const LATE_CHANGE_MS = 3000;
 const LATE_STEP_MS = 500;
 const BASELINE_GAP_MS = 300;
 const ORIGINS_MAX = 8;
+const NUMBERS_SCHEMA = 1;
+const NUMBERS_SAVE_MS = 1000;
+const SLUG_MAX = 120;
+const GEN_OPS = new Set(['click', 'type', 'select', 'download', 'inspect']);
 const HMS = /\b\d{1,2}:\d{2}:\d{2}\b/g;
 const CLASS_NOISE = /focus|hover|ripple/i;
 const LOADING_INFLIGHT_MS = 300;
@@ -39,7 +43,7 @@ const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED']);
 const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
 function codedError(code, message) {
@@ -134,11 +138,82 @@ function originOf(url) {
   try { return new URL(url).origin; } catch { return ''; }
 }
 
+function blankNumbers(origin) {
+  return { origin, numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), lastRead: null, listed: new Set() };
+}
+
+function originSlug(origin) {
+  return String(origin).toLowerCase().replace(/[^a-z0-9.-]/g, '_').slice(0, SLUG_MAX);
+}
+
+function numbersFile(dir, origin) {
+  return path.join(dir, originSlug(origin) + '.json');
+}
+
+const persistable = (dir, origin) => !!dir && !!origin && origin !== 'null';
+
+function loadNumbers(dir, origin, now = Date.now()) {
+  if (!persistable(dir, origin)) return null;
+  const file = numbersFile(dir, origin);
+  let j;
+  try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  if (!j || j.v !== NUMBERS_SCHEMA || j.origin !== origin || !j.numbers || typeof j.numbers !== 'object' || !Number.isInteger(j.nextN)) return null;
+  const e = blankNumbers(origin);
+  for (const [k, n] of Object.entries(j.numbers)) {
+    if (!Number.isInteger(n) || n < 1) continue;
+    e.numbers.set(k, n);
+    e.byN.set(n, k);
+  }
+  e.nextN = Math.max(1, j.nextN, ...[...e.byN.keys()].map((n) => n + 1));
+  for (const v of Array.isArray(j.volatile) ? j.volatile : []) e.volatile.add(String(v));
+  for (const n of Array.isArray(j.listed) ? j.listed : []) if (Number.isInteger(n)) e.listed.add(n);
+  try { fs.utimesSync(file, now / 1000, now / 1000); } catch {}
+  return e;
+}
+
+function pruneNumbers(dir, max = ORIGINS_MAX) {
+  let names;
+  try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { return; }
+  const files = names.map((f) => {
+    const file = path.join(dir, f);
+    try { return { file, at: fs.statSync(file).mtimeMs }; } catch { return null; }
+  }).filter(Boolean).sort((a, b) => b.at - a.at);
+  for (const { file } of files.slice(max)) { try { fs.unlinkSync(file); } catch {} }
+}
+
+function saveNumbers(dir, e, now = Date.now()) {
+  if (!e || !persistable(dir, e.origin)) return false;
+  const file = numbersFile(dir, e.origin);
+  const body = {
+    v: NUMBERS_SCHEMA, origin: e.origin, numbers: Object.fromEntries(e.numbers), nextN: e.nextN, volatile: [...e.volatile], listed: [...e.listed],
+  };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(body));
+    fs.renameSync(tmp, file);
+    fs.utimesSync(file, now / 1000, now / 1000);
+  } catch { return false; }
+  pruneNumbers(dir);
+  return true;
+}
+
+function flushNumbers(svc, now = Date.now()) {
+  if (!svc.dirty) return;
+  for (const e of svc.dirty) saveNumbers(svc.numDir, e, now);
+  svc.dirty.clear();
+}
+
+function genRefusal(service, op, args, gen) {
+  if (!GEN_OPS.has(op) || !args || args.n == null || args.byText != null || args.gen === undefined) return null;
+  return Number(args.gen) === gen ? null : codedError('RESTARTED', TEXT.restarted(service));
+}
+
 function numState(svc, url) {
   const origin = originOf(url);
   let e = svc.origins.get(origin);
   if (e) svc.origins.delete(origin);
-  else e = { numbers: new Map(), byN: new Map(), nextN: 1, volatile: new Set(), lastRead: null, listed: new Set() };
+  else e = loadNumbers(svc.numDir, origin) || blankNumbers(origin);
   svc.origins.set(origin, e);
   while (svc.origins.size > ORIGINS_MAX) svc.origins.delete(svc.origins.keys().next().value);
   svc.num = e;
@@ -150,6 +225,10 @@ function mergeNumbers(svc, out) {
   if (!e || !out || !out.assigned) return;
   for (const [k, n] of Object.entries(out.assigned)) { e.numbers.set(k, Number(n)); e.byN.set(Number(n), k); }
   if (Number(out.next) > e.nextN) e.nextN = Number(out.next);
+  if (!svc.numDir) return;
+  if (!svc.dirty) svc.dirty = new Set();
+  svc.dirty.add(e);
+  if (svc.scheduleSave) svc.scheduleSave();
 }
 
 function numberRefusal(service, n, stored, verdict) {
@@ -314,6 +393,7 @@ function run(electron, ctx) {
   app.on('window-all-closed', () => {});
 
   const t0 = Date.now();
+  const gen = Number((ctx && ctx.gen) || t0);
   const quietMs = Number((ctx && ctx.quietMs) || 3000);
   const gateMaxMs = Number((ctx && ctx.gateMaxMs) || 60000);
   const services = new Map();
@@ -372,7 +452,7 @@ function run(electron, ctx) {
     setTimeout(() => render(svc), BAR_MSG_MS + 50);
   };
 
-  const pageInfo = (svc) => (svc.wc.isDestroyed() ? { url: '', title: '' } : { url: svc.wc.getURL(), title: svc.wc.getTitle() });
+  const pageInfo = (svc) => (svc.wc.isDestroyed() ? { url: '', title: '', gen } : { url: svc.wc.getURL(), title: svc.wc.getTitle(), gen });
 
   const dispatch = (svc, ev, extra = {}) => {
     const prev = svc.lock;
@@ -527,8 +607,12 @@ function run(electron, ctx) {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
       policy: null, barMsg: null, lastDenied: null, blockedNav: null,
-      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '',
+      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '', numDir: path.join(data, 'numbers', name), dirty: new Set(), saveTimer: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
+    };
+    svc.scheduleSave = () => {
+      if (svc.saveTimer) return;
+      svc.saveTimer = setTimeout(() => { svc.saveTimer = null; flushNumbers(svc); }, NUMBERS_SAVE_MS);
     };
     driver.installFilters(wc, { driving: () => svc.lock.state === 'driving', onOperator: () => { svc.lastInput = Date.now(); } });
     wc.on('did-start-navigation', (e, ...a) => {
@@ -594,6 +678,9 @@ function run(electron, ctx) {
     try { ensureCdp(svc); } catch {}
     win.on('closed', () => {
       if (services.get(name) === svc) services.delete(name);
+      if (svc.saveTimer) clearTimeout(svc.saveTimer);
+      svc.saveTimer = null;
+      flushNumbers(svc);
       if (svc.watch) { try { svc.watch.detach(); } catch {} }
       svc.lock = lock.initial();
       send({ event: 'window-closed', service: name });
@@ -1184,7 +1271,7 @@ function run(electron, ctx) {
     const wc = svc.wc;
     const main = args.scope === 'main';
     const contentType = await inMain(wc, scripts.CONTENT_TYPE);
-    const base = { url: wc.getURL(), title: wc.getTitle(), doc: svc.doc, contentType };
+    const base = { url: wc.getURL(), title: wc.getTitle(), doc: svc.doc, contentType, gen };
     if (contentType === 'application/pdf') return base;
     let got = await inMain(wc, scripts.READ_TEXT(main));
     if (got == null) got = await inMain(wc, scripts.READ_TEXT(main));
@@ -1257,6 +1344,11 @@ function run(electron, ctx) {
   function shutdown() {
     if (shuttingDown) return;
     shuttingDown = true;
+    for (const svc of services.values()) {
+      if (svc.saveTimer) clearTimeout(svc.saveTimer);
+      svc.saveTimer = null;
+      flushNumbers(svc);
+    }
     setTimeout(() => app.exit(0), QUIT_CAP_MS);
     if (!app.isReady()) { app.exit(0); return; }
     const pins = [...partitions].map((p) => driver.pinSessionCookies(session.fromPartition('persist:' + p)).catch(() => 0));
@@ -1278,6 +1370,8 @@ function run(electron, ctx) {
       else if (SERVICE_OPS.has(op)) {
         const name = String(frame.service || '');
         if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
+        const stale = genRefusal(name, op, args, gen);
+        if (stale) throw stale;
         if (op === 'policy') {
           const svc = services.get(name);
           if (svc) svc.policy = urlpolicy.compilePolicy(args.policy);
@@ -1329,5 +1423,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

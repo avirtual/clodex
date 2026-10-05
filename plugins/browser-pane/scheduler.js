@@ -67,6 +67,11 @@ function cmdLabel(cmd) {
   return cmd.sub;
 }
 
+function readGen(st, service) {
+  const last = st.lastText[service];
+  return last && last.gen != null ? last.gen : null;
+}
+
 function needsRead(cmd) {
   return N_ACTS.has(cmd.sub) || cmd.sub === 'inspect' || (cmd.sub === 'download' && cmd.n != null);
 }
@@ -220,7 +225,7 @@ function createScheduler({
       const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
-    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base };
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen };
     const rec = ((storage.get() || {}).services || {})[service] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
     const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost });
@@ -251,6 +256,7 @@ function createScheduler({
     if (cmd.sub === 'click' && cmd.to != null) ({ root, dir: args.dir } = downloadDir(handle, service, cmd.to));
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.sub === 'click' && cmd.text != null) args.byText = cmd.text;
+    else if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
     if (cmd.sub === 'type') { args.text = cmd.text; args.enter = cmd.enter; }
     if (cmd.sub === 'select') args.option = cmd.option;
     if (cmd.confirm) args.confirm = true;
@@ -267,6 +273,7 @@ function createScheduler({
     const args = {};
     if (cmd.n != null) args.n = cmd.n;
     if (cmd.text != null) args.byText = cmd.text;
+    else if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
     const r = await client.request('inspect', args, { service, seat: handle.name });
     return replies.inspectReply(service, r);
   }
@@ -280,6 +287,7 @@ function createScheduler({
   async function runDownload(handle, service, cmd) {
     const { root, dir } = downloadDir(handle, service, cmd.to);
     const args = { dir, as: cmd.as, n: cmd.n, url: cmd.url };
+    if (cmd.n != null) args.gen = readGen(seatState(handle.name), service);
     const r = await client.request('download', args, { service, seat: handle.name, timeoutMs: DOWNLOAD_OP_MS });
     keepInside(root, r.file);
     if (r.held && !r.takeover) signin(service, r);

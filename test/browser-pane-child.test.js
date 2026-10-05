@@ -448,6 +448,74 @@ test('numState: at most ORIGINS_MAX origins are kept, least recently used droppe
   assert.ok(svc.origins.has(`https://s${ORIGINS_MAX}.test`));
 });
 
+test('numbers persist: a merge marks the origin dirty, a flush saves it, and a fresh service loads the same numbers back', () => {
+  const dir = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-num-')), 'numbers', 'ebloc');
+  let scheduled = 0;
+  const svc = { ...svcOf(), numDir: dir, scheduleSave: () => { scheduled += 1; } };
+  const a = stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa', 'Lista PDF', 'Plătește']);
+  svc.num.volatile.add('t');
+  svc.num.listed.add(2);
+  assert.ok(scheduled >= 1);
+  assert.ok(!fs.existsSync(numbersFile(dir, 'https://www.e-bloc.ro')));
+  flushNumbers(svc, 5000);
+  const file = numbersFile(dir, 'https://www.e-bloc.ro');
+  assert.strictEqual(path.basename(file), 'https___www.e-bloc.ro.json');
+  const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.strictEqual(disk.v, NUMBERS_SCHEMA);
+  assert.deepStrictEqual([disk.nextN, disk.volatile, disk.listed], [4, ['t'], [2]]);
+  const again = { ...svcOf(), numDir: dir };
+  const st = numState(again, 'https://www.e-bloc.ro/contoare');
+  assert.strictEqual(st.known[a.stored[1]], 2);
+  assert.strictEqual(again.num.byN.get(3), a.stored[2]);
+  assert.deepStrictEqual([st.next, st.volatile, [...again.num.listed]], [4, ['t'], [2]]);
+  assert.strictEqual(again.num.lastRead, null);
+});
+
+test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-num-'));
+  const file = numbersFile(dir, 'https://x.com');
+  fs.writeFileSync(file, '{"v":1,"origin":"https://x.com","numbers":{');
+  assert.strictEqual(loadNumbers(dir, 'https://x.com'), null);
+  fs.writeFileSync(file, JSON.stringify({ v: NUMBERS_SCHEMA + 1, origin: 'https://x.com', numbers: { k: 9 }, nextN: 10 }));
+  assert.strictEqual(loadNumbers(dir, 'https://x.com'), null);
+  const svc = { ...svcOf(), numDir: dir };
+  const st = stampOn(svc, 'https://x.com/home', ['Home']);
+  assert.deepStrictEqual(st.ns, [1]);
+  flushNumbers(svc);
+  assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).v, NUMBERS_SCHEMA);
+  assert.strictEqual(loadNumbers(dir, 'https://x.com').byN.get(1), st.stored[0]);
+});
+
+test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-num-'));
+  const svc = { ...svcOf(), numDir: dir };
+  for (let i = 0; i <= ORIGINS_MAX; i += 1) {
+    stampOn(svc, `https://s${i}.test/`, ['X']);
+    flushNumbers(svc, 10000 + i * 1000);
+    if (i === 3) { loadNumbers(dir, 'https://s0.test', 10000 + i * 1000 + 500); }
+  }
+  const files = fs.readdirSync(dir).sort();
+  assert.strictEqual(files.length, ORIGINS_MAX);
+  assert.ok(files.includes('https___s0.test.json'));
+  assert.ok(!files.includes('https___s1.test.json'));
+  assert.strictEqual(originSlug('http://127.0.0.1:8080'), 'http___127.0.0.1_8080');
+  assert.strictEqual(originSlug(`https://${'a'.repeat(200)}.ro`).length, 120);
+});
+
+test('genRefusal: a number act or inspect carrying a read gen from another child is RESTARTED; same gen, --text and key pass', () => {
+  const e = genRefusal('ebloc', 'click', { n: 36, gen: 111 }, 222);
+  assert.strictEqual(e.code, 'RESTARTED');
+  assert.strictEqual(e.message, 'numbers from before the browser restarted are void on ebloc — read again');
+  for (const op of ['type', 'select', 'download', 'inspect']) assert.strictEqual(genRefusal('x', op, { n: 1, gen: null }, 222).code, 'RESTARTED', op);
+  assert.strictEqual(genRefusal('ebloc', 'click', { n: 36, gen: 222 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'click', { byText: 'Plata', gen: 111 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'key', { key: 'Enter', gen: 111 }, 222), null);
+  assert.strictEqual(genRefusal('ebloc', 'download', { url: 'https://x/a.pdf', n: null, gen: 111 }, 222), null);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.match(src, /const stale = genRefusal\(name, op, args, gen\);\n\s*if \(stale\) throw stale;/);
+  assert.match(src, /const base = \{ url: wc\.getURL\(\), title: wc\.getTitle\(\), doc: svc\.doc, contentType, gen \};/);
+});
+
 test('numbering: with a listed set, a number first listed now is new even when an earlier stamp assigned it unlisted', () => {
   const p = page({ known: { 'button\u0000Contor 23\u0000': 23 }, next: 24, listed: [1, 2] });
   p.place(button('Acasa'), 'button\u0000Acasa\u0000');
