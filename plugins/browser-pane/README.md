@@ -146,7 +146,8 @@ ipc handlers (step 12).
   `--confirm`. A link, a display row or a document that only names a payment
   ("Lista de plată …", "Suma de plată 335,90 Lei") is not marked. A control whose
   label is, or starts with, a publishing verb (post, reply, repost, like, follow,
-  send, share, comment, publish, tweet, and their Romanian forms) publishes as you:
+  send, send via direct message, comment, publish, tweet, and their Romanian forms; not
+  share, which only opens a menu) publishes as you:
   it is marked ⚠ and refused without `--confirm` ("Latest posts" is not marked).
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
@@ -157,7 +158,7 @@ ipc handlers (step 12).
 - **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
   a matching table row with its table's header row, or a matching line with its
   paragraph (or the line before and after it when the paragraph is long); a
-  matching bullet line comes alone, and under a filter no `stripped:` line shows.
+  matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows.
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
   hidden. `read --all` shows everything, the full text included.
