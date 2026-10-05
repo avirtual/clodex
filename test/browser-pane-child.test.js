@@ -433,14 +433,18 @@ test('page scripts: an aria-hidden, inert-wrapped or disabled control gets no ba
   assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'a normal link is still badged');
   assert.strictEqual(overlayLegend, 'not drawn: [2] [3] [4]');
   assert.match(scripts.OVERLAY, /el\.closest\('\[aria-hidden="true"\],\[inert\]'\)/, 'an ancestor counts, not only the element');
+  assert.match(scripts.OVERLAY, /el\.matches\(':disabled,\[aria-disabled="true"\]'\)/);
 });
 
 test('page scripts: a container taller than the viewport gets a dimmed badge at its clamped corner that displaces no other badge', () => {
-  const [big, link] = overlayRun([[284, -40, 600, 28000], [288, 9, 50, 16]]);
-  assert.deepStrictEqual([big.left, big.top, big.dim], [281, 0, true]);
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const [link, big] = overlayRun([[284, -40, 600, 28000], [288, 9, 50, 16]]);
   assert.deepStrictEqual([link.left, link.top, link.dim], [272, 9, false], 'the link keeps its own slot');
-  const [wide, under] = overlayRun([[0, 300, 1500, 40], [3, 300, 300, 40]]);
-  assert.deepStrictEqual([wide.dim, under.left, under.top], [true, 0, 300], 'a box wider than the viewport pushes nothing below it');
+  assert.deepStrictEqual([big.left, big.top, big.dim], [281, 26, true], 'the dimmed badge dodges the real one');
+  assert.ok(!hit(big, link));
+  const [under, wide] = overlayRun([[0, 300, 1500, 40], [3, 300, 300, 40]]);
+  assert.deepStrictEqual([under.left, under.top, wide.left, wide.top, wide.dim], [0, 300, 0, 317, true], 'a box wider than the viewport pushes nothing below it');
+  assert.ok(!hit(wide, under));
 });
 
 test('page scripts: an inline link with every slot blocked takes the badge under its line, not over its first letters', () => {
@@ -458,6 +462,8 @@ test('page scripts: the overlay legend is a badge too, and a badge chain that wo
   const chain = overlayRun([[100, 760, 200, 60], [100, 770, 200, 60], [100, 780, 200, 60]]);
   assert.deepStrictEqual(chain.map((b) => [b.left, b.top]), [[97, 760], [97, 777], [112, 780]]);
   chain.forEach((b) => assert.ok(b.bottom <= 800, `badge past the viewport: ${JSON.stringify(b)}`));
+  const [edge] = overlayRun([[2, 790, 200, 60], [300, 100, 0, 0]]);
+  assert.deepStrictEqual([edge.top, edge.bottom], [784, 800], 'a slot that already ends past the viewport is lifted into it when it goes right');
 });
 
 test('page scripts: a logo covering only the right part of the left slot still blocks it', () => {

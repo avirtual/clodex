@@ -839,7 +839,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
     if (r.width <= 1 || r.height <= 1 || !vis(el) || el.closest('[aria-hidden="true"],[inert]')
       || el.matches(':disabled,[aria-disabled="true"]')) { undrawn.push(Number(k)); continue; }
-    items.push({ k, el, r });
+    items.push({ k, el, r, huge: r.height > innerHeight || r.width > innerWidth });
   }
   const badgeRects = [];
   const legendText = undrawn.length ? 'not drawn: ' + undrawn.sort((a, b) => a - b).map(n => '[' + n + ']').join(' ') : '';
@@ -871,7 +871,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
   const below = (q) => {
     for (let hit = badgeRects.find(o => hits(o, q)); hit; hit = badgeRects.find(o => hits(o, q))) {
       q = hit.bottom + 1 + ${BADGE_H_PX} > innerHeight
-        ? { left: hit.right + 1, right: hit.right + 1 + q.right - q.left, top: q.top, bottom: q.bottom }
+        ? { left: hit.right + 1, right: hit.right + 1 + q.right - q.left, top: Math.min(q.top, innerHeight - ${BADGE_H_PX}), bottom: Math.min(q.bottom, innerHeight) }
         : { left: q.left, right: q.right, top: hit.bottom + 1, bottom: hit.bottom + 1 + ${BADGE_H_PX} };
     }
     return q;
@@ -883,7 +883,7 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     if (e.contains(el)) return false;
     return /url\\(/.test(String(getComputedStyle(e).backgroundImage || ''));
   };
-  for (const { k, el, r } of items) {
+  for (const { k, el, r, huge } of [...items.filter(i => !i.huge), ...items.filter(i => i.huge)]) {
     const b = document.createElement('span');
     b.textContent = k;
     const st = getComputedStyle(el);
@@ -891,7 +891,6 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
     const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
     const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
-    const huge = r.height > innerHeight || r.width > innerWidth;
     let at = slot(r.left - ${BADGE_NUDGE_PX}, huge ? Math.max(r.top, 0) : r.top);
     if (!huge && !media && r.height <= 2 * lh + 2) {
       const rects = [...items.map(i => i.r).filter(o => o !== r && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom)), ...badgeRects];
