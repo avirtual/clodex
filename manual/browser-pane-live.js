@@ -58,6 +58,8 @@ const PAGES = {
 <style>.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}</style>
 <label style="cursor:pointer"><input type="checkbox" class="sr-only">Tine-ma minte</label>
 <label class="uiLabelButtonSmallGreen" style="cursor:pointer"><input type="button" value="Trimite index"></label>
+<label class="btn" style="cursor:pointer;display:inline-block;width:90px;height:20px;background:#2a2"><input type="submit" class="sr-only" value="Achită online"></label>
+<label class="btn" style="cursor:pointer;display:inline-block;width:90px;height:20px;background:#2a2"><input type="submit" class="sr-only" value="Caută"></label>
 <nav><a href="/form">Carduri</a></nav>
 <div class="row" style="cursor:pointer" onclick="document.title='suma'">Suma de plată 335,90 Lei</div>
 <p><a href="/index.php?page=5">Ieşire</a></p>
@@ -128,6 +130,23 @@ const PAGES = {
   const lb = at('bil').getBoundingClientRect();
   const hit = lb.left < link.right && lb.right > link.left && lb.top < link.bottom && lb.bottom > link.top;
   document.getElementById('probe').textContent = 'probe: link badge overlaps ' + hit + ' · tagged badge ' + getComputedStyle(at('out')).backgroundColor;
+} }).observe(document.body, { childList: true });</script>`,
+  '/overlay4': () => `<title>Overlay4</title><main><p style="width:260px">Vezi lista <a id=w1 href="/form">Mobil</a> de <a id=w2 href="/form?b">Tabletă</a> sau <a id=w3 href="/form?c">Laptop</a>
+si <a id=w4 href="/form?d">Accesorii pentru casa</a> de <a id=w5 href="/form?e">Electrocasnice</a> sau <a id=w6 href="/form?f">Gradina</a> azi.</p>
+<p id=probe4>probe4: none</p></main>
+<script>new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) {
+  if (n.id !== '__cx_numbers') continue;
+  const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+  const links = ['w1', 'w2', 'w3', 'w4', 'w5', 'w6'].map((id) => document.getElementById(id).getBoundingClientRect());
+  const words = [];
+  const p = document.querySelector('p');
+  for (const t of p.childNodes) if (t.nodeType === 3) for (const m of t.data.matchAll(/\\S+/g)) {
+    const r = document.createRange(); r.setStart(t, m.index); r.setEnd(t, m.index + m[0].length); words.push(r.getBoundingClientRect());
+  }
+  const badges = [...n.children].map((b) => b.getBoundingClientRect());
+  let bl = 0; let bw = 0; const who = [];
+  badges.forEach((b, i) => { links.forEach((l, j) => { if (hit(b, l) && n.children[i].textContent !== document.getElementById('w' + (j + 1)).getAttribute('data-cx')) { bl += 1; who.push(n.children[i].textContent + '>link'); } }); words.forEach((w) => { if (hit(b, w)) { bw += 1; who.push(n.children[i].textContent + '>word'); } }); });
+  document.getElementById('probe4').textContent = 'probe4: badges ' + badges.length + ' · badge-link hits ' + bl + ' · badge-word hits ' + bw + ' ' + who.join(',');
 } }).observe(document.body, { childList: true });</script>`,
   '/overlay3': () => `<title>Overlay3</title><main><p>Categorii: <a id=l1 href="/form">Mobil</a><a id=l2 href="/form?b">Tabletă</a><a id=l3 href="/form?c">Laptop</a> si altele.</p>
 <p id=probe3>probe3: none</p></main>
@@ -282,7 +301,12 @@ async function clickablesStep(emit, base) {
   check('the Ieşire link is ⚠ (a sign-out verb) and the read says login: signed in', els.some((l) => /\] link ⚠ Ieşire → /.test(l)) && /\nlogin: signed in\n/.test(content));
   const numOf = (re) => { const l = els.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
   check('the Plătește submit and the Card bancar input:submit in the form are marked ⚠; the Carduri nav link is not',
-    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:submit ⚠ += "Card bancar"/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
+    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:submit ⚠ Card bancar$/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
+  check('a label wrapping a hidden "Achită online" submit is one ⚠ element; one wrapping "Caută" is not ⚠',
+    els.filter((l) => /Achită online/.test(l)).length === 1 && els.some((l) => /\] clickable ⚠ "Achită online"$/.test(l)) && els.some((l) => /\] clickable "Caută"$/.test(l)));
+  const wrapped = numOf(/clickable ⚠ "Achită online"/);
+  check('a click on the wrapped Achită online without --confirm is refused naming payment',
+    new RegExp(`error: \\[${wrapped}\\] "Achită online" looks consequential \\(payment\\)`).test(await emit(`[agent:browser click avizier ${wrapped}]`)));
   const pay = numOf(/button ⚠ Plătește/);
   check('a click on Plătește without --confirm is refused naming payment',
     new RegExp(`error: \\[${pay}\\] "Plătește" looks consequential \\(payment\\) — re-issue with --confirm`).test(await emit(`[agent:browser click avizier ${pay}]`)));
@@ -521,6 +545,12 @@ async function overlayStep(emit, base) {
   const probe3 = (/probe3: [^\n]*/.exec(fileOf(await emit('[agent:browser read overlay --text]'))) || ['probe3: none'])[0];
   console.log(`    ${probe3}`);
   check('three adjacent inline links: no badge covers a link or another badge', /badges 3 · badge-link hits 0 · badge-badge hits 0/.test(probe3));
+  await emit(`[agent:browser open overlay] ${base}/overlay4`);
+  await emit('[agent:browser read overlay]');
+  await emit('[agent:browser screenshot overlay --numbers]');
+  const probe4 = (/probe4: [^\n]*/.exec(fileOf(await emit('[agent:browser read overlay --text]'))) || ['probe4: none'])[0];
+  console.log(`    ${probe4}`);
+  check('two lines of links between " de " and " sau ": no badge covers another link or a word', /badges 6 · badge-link hits 0 · badge-word hits 0/.test(probe4));
 }
 
 async function restartStep(emit, base, host) {

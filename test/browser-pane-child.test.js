@@ -10,10 +10,11 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
+const RF = require('../plugins/browser-pane/read-format');
 const scripts = require('../plugins/browser-pane/page-scripts');
 
 const PDF = '%PDF-1.4 lista august';
@@ -227,10 +228,11 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
-function overlayRun(rects) {
+function overlayRun(rects, words = []) {
   const els = rects.map(([left, top, width, height]) => ({
     tagName: 'A', type: '', form: null, labels: null, innerText: 'x', isContentEditable: false, isConnected: true, style: {}, parentElement: null,
     getAttribute: (k) => (k === 'href' ? '/x' : null), hasAttribute: () => false, closest: () => null, matches: () => true, querySelector: () => null,
+    querySelectorAll: () => [],
     getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }),
   }));
   const badges = [];
@@ -238,6 +240,25 @@ function overlayRun(rects) {
     getElementById: () => null, documentElement: { scrollWidth: 1200, scrollHeight: 800 },
     createElement: (tag) => { const n = { tag, style: {}, appendChild: (c) => badges.push(c) }; return n; },
     body: { appendChild: () => {} },
+    caretRangeFromPoint: (x, y) => {
+      if (!words.length) return null;
+      const w = words.find((o) => x >= o.left && x <= o.left + o.width && y >= o.top && y <= o.top + o.height)
+        || words.reduce((a, o) => (Math.abs(o.left - x) < Math.abs(a.left - x) ? o : a));
+      const cw = w.width / w.text.length;
+      const node = { nodeType: 3, data: w.text, w };
+      return { startContainer: node, startOffset: Math.max(0, Math.min(w.text.length, Math.round((x - w.left) / cw))) };
+    },
+    createRange: () => {
+      const q = {};
+      return {
+        setStart: (n, i) => { q.n = n; q.i = i; }, setEnd: () => {},
+        getBoundingClientRect: () => {
+          const { w } = q.n;
+          const cw = w.width / w.text.length;
+          return { left: w.left + q.i * cw, right: w.left + (q.i + 1) * cw, top: w.top, bottom: w.top + w.height };
+        },
+      };
+    },
   };
   const window = { __cxEls: Object.fromEntries(els.map((e, i) => [String(i + 1), { deref: () => e }])) };
   const style = () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', lineHeight: '18px', fontSize: '15px' });
@@ -267,12 +288,54 @@ test('page scripts: overlay badges never cover a neighbouring inline link or ano
   assert.match(scripts.OVERLAY, /cqOf\(el\) \? ';background:#e00' : ';background:#111'/);
 });
 
+test('page scripts: overlay badges skip words between inline links and never land on the line above', () => {
+  const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const box = ([l, t, w, h]) => ({ left: l, top: t, right: l + w, bottom: t + h });
+  const links = [[100, 50, 40, 18], [162, 50, 50, 18], [242, 50, 50, 18]];
+  const words = [{ left: 146, top: 50, width: 12, height: 18, text: 'de' }, { left: 218, top: 50, width: 18, height: 18, text: 'sau' }];
+  const got = overlayRun(links, words);
+  const wordRects = words.map((w) => box([w.left, w.top, w.width, w.height]));
+  got.forEach((b, i) => {
+    links.map(box).forEach((r, j) => { if (i !== j) assert.ok(!hit(b, r), `badge ${i + 1} covers link ${j + 1}`); });
+    wordRects.forEach((r, j) => assert.ok(!hit(b, r), `badge ${i + 1} covers word ${words[j].text}`));
+  });
+  assert.deepStrictEqual([got[0].left, got[0].top], [84, 50], 'no word left of the first link: the badge stays left');
+  const lines = overlayRun([[100, 50, 60, 18], [162, 50, 60, 18], [100, 68, 40, 18], [142, 68, 40, 18]]);
+  assert.deepStrictEqual([lines[1].left, lines[1].top], [162, 34], 'a first-line link with a tight gap goes above');
+  assert.deepStrictEqual([lines[3].left, lines[3].top], [139, 68], 'a second-line link whose above rect holds a first-line link goes inside');
+  assert.ok(!hit(lines[1], box([100, 50, 60, 18])) && !hit(lines[3], box([100, 50, 60, 18])), 'no badge covers the first line');
+  const [inside] = overlayRun([[200, 68, 40, 18]], [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' }]);
+  assert.deepStrictEqual([inside.left, inside.top], [197, 68], 'a word left and a word above: inside with the nudge');
+});
+
+test('page scripts: inputLine labels button-type inputs by their value once; a blank wrapping label falls through to aria, placeholder, name, id', () => {
+  const info = { tag: 'input', type: 'button', value: 'Informaţii asociaţie', label: '', name: '', id: 'informatii_asociatie' };
+  assert.strictEqual(scripts.inputLine(info), 'Informaţii asociaţie');
+  assert.strictEqual(scripts.inputLine({ ...info, label: 'Informaţii asociaţie' }), 'Informaţii asociaţie', 'a label that resolves to the value reads the same');
+  assert.strictEqual(scripts.inputLine({ tag: 'input', type: 'submit', value: 'Card bancar', label: '\n ' }), 'Card bancar');
+  const rows = [
+    [{ tag: 'input', type: 'text', value: '', label: ' ', aria: 'Cauta' }, 'Cauta'],
+    [{ tag: 'input', type: 'text', value: 'abc', label: '', placeholder: 'Nume' }, 'Nume = "abc"'],
+    [{ tag: 'input', type: 'text', value: '', label: '', name: 'q', id: 'x' }, 'q'],
+    [{ tag: 'input', type: 'text', value: '', label: '', id: 'x' }, 'x'],
+    [{ tag: 'input', type: 'email', value: 'a@b', label: 'Email' }, 'Email = "a@b"'],
+    [{ tag: 'input', type: 'password', value: 'secret', label: 'Parola' }, 'Parola (operator only)'],
+    [{ tag: 'input', type: 'checkbox', value: 'on', checked: true, label: 'Tine-ma minte' }, 'Tine-ma minte = "on" [x]'],
+    [{ tag: 'input', type: 'button', value: '', label: '', name: 'go' }, 'go'],
+  ];
+  for (const [d, want] of rows) assert.strictEqual(scripts.inputLine(d), want, JSON.stringify(d));
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /line = inputLine\(\{\n\s*tag, type: el\.type, value: el\.value/);
+});
+
 test('page scripts: look-alike long labels show a head and their distinguishing tail; unique ones keep the clip', () => {
   const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna ';
   const out = scripts.distinctClips([head + '[Document generat 04 Septembrie 2026]', head + '[Document generat 03 August 2026]', 'Acasa', 'x'.repeat(80)]);
   assert.deepStrictEqual(out, ['Lista de plată pentru Bloc M4 … generat 04 Septembrie 2026]', 'Lista de plată pentru Bloc M4 … generat 03 August 2026]', null, null]);
   const mid = (m) => `${head}${m} anexa la lista de plata a lunii curente`;
   assert.deepStrictEqual(scripts.distinctClips([mid('A1'), mid('B2')]), [null, null], 'same head and tail keep the clip');
+  const sep = head + '[Document generat 04 Septembrie 2026]';
+  assert.deepStrictEqual(scripts.distinctClips([sep, sep, head + '[Document generat 03 August 2026]']),
+    [out[0], out[0], out[1]], 'two identical labels and one other: the other gets its tail, the twins stay identical');
   assert.match(scripts.READ_INTERACTIVE(false, {}), /const tails = distinctClips\(items\.map/);
 });
 
@@ -465,6 +528,9 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'input', value: 'Card bancar', title: 'Plata', name: 'card' }, 'Card bancar'],
     [{ tag: 'input', title: 'Plata', name: 'card' }, 'Plata'],
     [{ tag: 'div', text: ' ', id: 'ondiv' }, ''],
+    [{ tag: 'a', href: '/elonmusk', alts: ['OSHY3ewP_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/123/OSHY3ewP_bigger.jpg' }, '@elonmusk'],
+    [{ tag: 'a', href: '/AOC', alts: [null, 'X20dMMBa_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/9/X20dMMBa_bigger.jpg' }, '@AOC'],
+    [{ tag: 'a', href: '/photo/1', alts: ['Image'] }, 'photo 1'],
   ];
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
   assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
@@ -534,6 +600,27 @@ test('numbers persist: a merge marks the origin dirty, a flush saves it, and a f
   assert.strictEqual(again.num.byN.get(3), a.stored[2]);
   assert.deepStrictEqual([st.next, st.volatile, [...again.num.listed]], [4, ['t'], [2]]);
   assert.strictEqual(again.num.lastRead, null);
+});
+
+test('forgetNumbers: forget deletes the service numbers directory, and a flush or merge racing after it does not recreate it', () => {
+  const dir = path.join(fs.realpathSync(mkTmpRoot('clodex-bp-child-')), 'numbers', 'ebloc');
+  const svc = { ...svcOf(), numDir: dir, dirty: new Set(), saveTimer: setTimeout(() => {}, 60000).unref() };
+  stampOn(svc, 'https://www.e-bloc.ro/index.php', ['Acasa']);
+  flushNumbers(svc);
+  assert.ok(fs.existsSync(numbersFile(dir, 'https://www.e-bloc.ro')));
+  const e = svc.num;
+  svc.dirty.add(e);
+  forgetNumbers(svc, dir);
+  assert.ok(!fs.existsSync(dir));
+  assert.strictEqual(svc.saveTimer, null);
+  assert.deepStrictEqual([svc.origins.size, svc.dirty.size, svc.num], [0, 0, null]);
+  flushNumbers(svc);
+  svc.num = e;
+  mergeNumbers(svc, { assigned: { k: 9 }, next: 10 });
+  flushNumbers(svc);
+  assert.ok(!fs.existsSync(dir), 'a late flush or merge writes nothing');
+  forgetNumbers(null, dir);
+  assert.match(CHILD_SRC, /svc\.win\.destroy\(\);\n\s*forgetNumbers\(svc, path\.join\(data, 'numbers', name\)\);/);
 });
 
 test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
@@ -745,7 +832,10 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Lista de plată', capped: true }, null], [{ label: 'Plati online', capped: true }, null],
     [{ label: 'Ordin de plată 12/2026', capped: true }, null], [{ label: 'Suma de plată 335,90 Lei', capped: true }, null],
     [{ label: 'Post' }, 'publish'], [{ label: 'Repost' }, 'publish'], [{ label: 'Like' }, 'publish'], [{ label: 'Follow @OpenAI' }, 'publish'],
-    [{ label: 'Follow back' }, 'publish'], [{ label: 'Send' }, 'publish'], [{ aria: 'Share' }, 'publish'], [{ aria: '84 Likes. Like' }, 'publish'],
+    [{ label: 'Follow back' }, 'publish'], [{ label: 'Send' }, 'publish'], [{ aria: 'Share' }, null], [{ aria: '84 Likes. Like' }, 'publish'],
+    [{ aria: 'Share post' }, null], [{ label: 'Distribuie' }, null], [{ aria: 'Send via Direct Message' }, 'publish'], [{ label: 'Trimite mesaj' }, 'publish'],
+    [{ label: 'Caută', formaction: 'post.php', action: 'post.php', control: true }, null], [{ label: 'Caută', formaction: 'send.php' }, null],
+    [{ label: 'Continuă', formaction: '/pay', action: '/pay', control: true }, 'payment'],
     [{ label: 'Trimite' }, 'publish'], [{ label: 'Latest posts', capped: true }, null], [{ label: 'Postal code', textual: true }, null],
     [{ label: 'Like-minded people', capped: true }, null], [{ label: 'Read the latest post' }, null],
   ];
@@ -762,7 +852,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     const attrs = { ...(o.attrs || {}) };
     return {
       tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false,
-      getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs,
+      getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, querySelectorAll: () => o.inner || [],
       closest: (sel) => (sel === 'form' && o.inForm ? {} : null),
       matches: (sel) => !o.plain && sel.split(',').some((x) => x === tag || x.startsWith(tag + '[') || x.startsWith(tag + ':')),
     };
@@ -782,8 +872,34 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['download link in a form', el('a', 'Plata', { attrs: { href: '/f', download: '' }, inForm: true }), null],
     ['link Ieşire (a verb) anywhere', el('a', 'Ieşire', { attrs: { href: 'index.php?page=5' } }), 'sign-out'],
     ['clickable Plătește (a verb)', el('div', 'Plătește', { plain: true }), 'payment'],
+    ['label.btn around an input:submit Plătește', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Plătește' })] }), 'payment'],
+    ['div onclick around the Card bancar submit in a form', el('div', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Card bancar', form })] }), 'payment'],
+    ['label around a Caută submit', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Caută', form })] }), null],
+    ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
   ];
   for (const [name, e, want] of rows) assert.strictEqual(cqOf(e), want, name);
+});
+
+test('page scripts: bulletItems marks each list item once so a filter on a reference returns that item alone, without its backref', () => {
+  const t = (data) => ({ nodeType: 3, data });
+  const e = (...childNodes) => ({ nodeType: 1, childNodes });
+  const textOf = (n) => (n.nodeType === 3 ? n.data : n.childNodes.map(textOf).join(''));
+  const ref = (back, body) => e(e(e(e(t(back)))), t(' '), e(t(body)));
+  const lis = [ref('^ Jump up to: a b', 'Smith, J. (2020). Bucharest housing survey.'), ref('^', 'Ionescu, A. (2019). Bloc M4.'), ref('^', 'Doe 2001')];
+  const nested = e(t('\n'), e(t('Inner item')));
+  const chrome = e(t(`${scripts.CHROME_MARK}Acasa`));
+  let asked = '';
+  scripts.bulletItems({ querySelectorAll: (sel) => { asked = sel; return [...lis, nested, nested.childNodes[1], chrome]; } }, scripts.CHROME_MARK);
+  assert.strictEqual(asked, 'ul > li:not([role=menuitem]), ol > li:not([role=menuitem])');
+  assert.strictEqual(textOf(nested), '\n• Inner item', 'a nested item is marked once');
+  assert.strictEqual(textOf(chrome), `${scripts.CHROME_MARK}Acasa`, 'chrome items keep their mark only');
+  const lines = ['References', ...lis.map(textOf), '', 'External links'];
+  assert.deepStrictEqual(lines.slice(1, 4), ['• ^ Jump up to: a b Smith, J. (2020). Bucharest housing survey.', '• ^ Ionescu, A. (2019). Bloc M4.', '• ^ Doe 2001']);
+  assert.deepStrictEqual(RF.filterLines(lines, 'ionescu', { blocks: true }), ['• Ionescu, A. (2019). Bloc M4.']);
+  assert.deepStrictEqual(RF.filterLines(lines, 'housing', { blocks: true }), ['• Smith, J. (2020). Bucharest housing survey.']);
+  assert.deepStrictEqual(RF.filterLines(['• First item', 'continues here', '• Second', 'more of it', '', 'Tail'], 'second', { blocks: true }), ['• Second', 'more of it'],
+    'an item runs to the next bullet or blank');
+  assert.ok(scripts.READ_TEXT(false).includes(`bulletItems(clone, ${JSON.stringify(scripts.CHROME_MARK)});`));
 });
 
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
