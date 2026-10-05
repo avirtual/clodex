@@ -206,3 +206,22 @@ test('READ_INTERACTIVE: a link label joins an https:// split from its host', () 
   const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
   assert.deepStrictEqual(Array.from(read.lines), ['[1] link https://youtu.be/x → https://youtu.be/x']);
 });
+
+test('READ_INTERACTIVE: a label whose radio is visually hidden is listed as that radio with its state; a visible wrapped checkbox stays one line; a label with no control stays clickable', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const no = Object.assign(mk('input', { type: 'radio', id: 'r1' }, [], [10, 40, 20, 20]), { css: { opacity: '0' }, name: 'q', value: 'no', checked: true });
+  const noLab = Object.assign(mk('label', { for: 'r1' }, ['No'], [40, 40, 100, 20]), { css: { cursor: 'pointer' }, control: no });
+  const terms = Object.assign(mk('input', { type: 'checkbox' }, [], [10, 80, 20, 20]), { name: 't' });
+  const termsLab = Object.assign(mk('label', {}, [terms, 'Terms'], [10, 80, 200, 20]), { css: { cursor: 'pointer' }, control: terms });
+  terms.labels = [termsLab];
+  const loose = Object.assign(mk('label', {}, ['Plain'], [10, 120, 100, 20]), { css: { cursor: 'pointer' }, control: null });
+  const body = mk('body', {}, [no, noLab, termsLab, loose], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const base = ctx.getComputedStyle();
+  ctx.getComputedStyle = (e) => ({ ...base, ...(e && e.css) });
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), ['[1] input:radio No = "no" [x]', '[2] input:checkbox Terms [ ]', '[3] clickable "Plain"']);
+  assert.strictEqual(ctx.__cxOf.get(noLab), 1, 'the number maps to the label');
+});

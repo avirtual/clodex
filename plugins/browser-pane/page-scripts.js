@@ -565,9 +565,11 @@ function collect(main) {
   for (const el of cands) {
     if (!vis(el)) continue;
     const tag = el.tagName.toLowerCase();
-    const plain = !std.has(el);
-    const kind = plain ? 'clickable' : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
-    const disabled = el.disabled === true || el.getAttribute('aria-disabled') === 'true';
+    const ctl = tag === 'label' && !std.has(el) ? el.control : null;
+    const hid = !!ctl && ctl.tagName === 'INPUT' && /^(radio|checkbox)$/.test(ctl.type) && !vis(ctl);
+    const plain = !std.has(el) && !hid;
+    const kind = hid ? 'input:' + ctl.type : plain ? 'clickable' : el.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'input' ? 'input:' + (el.type || 'text') : tag);
+    const disabled = (hid ? ctl : el).disabled === true || el.getAttribute('aria-disabled') === 'true';
     let line = '';
     let sig = null;
     let full = null;
@@ -597,6 +599,11 @@ function collect(main) {
       const cur = el.selectedOptions[0] ? el.selectedOptions[0].text : '';
       const shown = opts.length <= 40 ? opts.join('|') : opts.slice(0, 20).join('|') + '|…(+' + (opts.length - 20) + ' more)';
       line = clip(labelOf(el) === el.value ? (el.name || el.id) : labelOf(el), 40) + ' = "' + clip(cur, 30) + '" {' + shown + '}';
+    } else if (hid) {
+      line = inputLine({
+        tag: 'input', type: ctl.type, value: ctl.value, checked: ctl.checked, label: el.innerText,
+        aria: ctl.getAttribute('aria-label'), placeholder: ctl.placeholder, name: ctl.name, id: ctl.id,
+      });
     } else if (tag === 'input' || tag === 'textarea') {
       line = inputLine({
         tag, type: el.type, value: el.value, checked: el.checked, label: el.labels && el.labels[0] ? el.labels[0].innerText : '',
@@ -1027,17 +1034,18 @@ function value(n) {
 })()`;
 }
 
-const CHOICE_OF = `const tag = el.tagName.toLowerCase();
-  const type = (el.type || '').toLowerCase();
+const CHOICE_OF = `const ch = el.tagName === 'LABEL' && el.control && el.control.tagName === 'INPUT' && /^(radio|checkbox)$/.test(el.control.type) ? el.control : el;
+  const tag = ch.tagName.toLowerCase();
+  const type = (ch.type || '').toLowerCase();
   if (tag === 'input' && type === 'radio') {
-    const group = el.name ? [...el.getRootNode().querySelectorAll('input[type=radio]')].filter(r => r.name === el.name && r.form === el.form) : [el];
+    const group = ch.name ? [...ch.getRootNode().querySelectorAll('input[type=radio]')].filter(r => r.name === ch.name && r.form === ch.form) : [ch];
     const on = group.find(r => r.checked);
     return on ? { kind: 'choice', label: labelOf(on).slice(0, 60), value: String(on.value) } : null;
   }
-  if (tag === 'input' && type === 'checkbox') return { kind: 'choice', label: labelOf(el).slice(0, 60) + (el.checked ? ' [x]' : ' [ ]'), value: String(el.value) };
-  if (tag === 'select' && !el.multiple) {
-    const opt = el.options[el.selectedIndex];
-    return opt ? { kind: 'choice', select: true, label: String(opt.text).replace(/\\s+/g, ' ').trim().slice(0, 60), value: String(el.value) } : null;
+  if (tag === 'input' && type === 'checkbox') return { kind: 'choice', label: labelOf(ch).slice(0, 60) + (ch.checked ? ' [x]' : ' [ ]'), value: String(ch.value) };
+  if (tag === 'select' && !ch.multiple) {
+    const opt = ch.options[ch.selectedIndex];
+    return opt ? { kind: 'choice', select: true, label: String(opt.text).replace(/\\s+/g, ' ').trim().slice(0, 60), value: String(ch.value) } : null;
   }`;
 
 const VALUE_ACTIVE = `(() => {${ICON}
@@ -1232,7 +1240,9 @@ function targetState(n) {
     return o;
   };
   const up = el.parentElement || (el.parentNode && el.parentNode.host) || null;
-  return { el: of(el), tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})) };
+  const own = of(el);
+  if (el.tagName === 'LABEL' && el.control && el.control.tagName === 'INPUT' && /^(radio|checkbox)$/.test(el.control.type)) own.checked = el.control.checked;
+  return { el: own, tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})) };
 })()`;
 }
 

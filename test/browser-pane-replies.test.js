@@ -450,6 +450,8 @@ test('replies: a target attribute flip is reported, and a watched target with no
   const radio = { kind: 'radio', label: 'Ridicare', navigated: false, idle };
   assert.strictEqual(R.actReply('click', 't36', { sub: 'click', n: 7 }, { ...radio, changed: '', watched: 3000, choice: 'Ridicare' }),
     '[agent:browser] clicked t36 [7] radio "Ridicare" · same page · idle 0.8s · checked now "Ridicare"');
+  assert.strictEqual(R.actReply('click', 'gov', { sub: 'click', n: 62 }, { ...radio, label: 'No', changed: '', target: 'checked "false" → "true"', choice: 'No' }),
+    '[agent:browser] clicked gov [62] radio "No" · same page · idle 0.8s · checked now "No"');
   assert.strictEqual(R.actReply('click', 't36', { sub: 'click', n: 8 }, { ...radio, label: 'Plata', changed: '', choice: 'Card bancar', choiceKind: 'select' }),
     '[agent:browser] clicked t36 [8] radio "Plata" · same page · idle 0.8s · selected now "Card bancar"');
 });

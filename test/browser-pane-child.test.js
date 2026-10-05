@@ -1425,6 +1425,22 @@ test('page scripts: VALUE_ACTIVE and VALUE_CHOICE share CHOICE_OF; VALUE_CHOICE 
   assert.strictEqual(new Function('window', 'document', `return ${scripts.VALUE_CHOICE(8)}`)(win, {}), null);
 });
 
+test('page scripts: VALUE_CHOICE and TARGET_STATE on a label read its radio or checkbox control', () => {
+  const radio = (label, value, checked) => ({ tagName: 'INPUT', type: 'radio', name: 'q', form: null, value, checked, isConnected: true, labels: [{ innerText: label }], innerText: '', id: '',
+    getAttribute: () => null, querySelector: () => null, querySelectorAll: () => [], closest: () => null, getBoundingClientRect: () => ({ height: 20 }) });
+  const yes = radio('Yes', 'yes', false);
+  const no = radio('No', 'no', true);
+  no.getRootNode = () => ({ querySelectorAll: () => [yes, no] });
+  const label = { tagName: 'LABEL', control: no, isConnected: true, getAttribute: () => null, parentElement: null };
+  const plain = { tagName: 'LABEL', control: null, isConnected: true, getAttribute: () => null, parentElement: null };
+  const win = { __cxEls: { 3: { deref: () => label }, 4: { deref: () => plain } } };
+  const run = (code) => new Function('window', 'document', `return ${code}`)(win, {});
+  assert.deepStrictEqual(run(scripts.VALUE_CHOICE(3)), { kind: 'choice', label: 'No', value: 'no' });
+  assert.strictEqual(run(scripts.VALUE_CHOICE(4)), null);
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(3)), { el: { checked: true }, tile: null });
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(4)), { el: {}, tile: null });
+});
+
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
   assert.deepStrictEqual(scripts.consequentialHit({ action: '/account/checkout' }, []), { cat: 'payment', term: 'checkout' });
   assert.strictEqual(scripts.consequentialHit({ action: '/cauta' }, []), null);

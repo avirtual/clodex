@@ -413,8 +413,8 @@ function changeTail(sub, r, key) {
   const target = r.target ? ` · target: ${r.target}` : '';
   if (r.changed === MOST_OF_PAGE && !(sub === 'key' && key === 'Escape')) return ` · changed: most of the page${sub === 'scroll' ? '' : target}`;
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
-  if (target) return target;
   if ((sub === 'key' || sub === 'click') && typeof r.choice === 'string') return ` · ${r.choiceKind === 'select' ? 'selected' : 'checked'} now ${JSON.stringify(clip60(r.choice))}`;
+  if (target) return target;
   if ((sub === 'type' || sub === 'key') && typeof r.value === 'string') {
     return ` · value now ${JSON.stringify(clip60(r.value))}`;
   }
