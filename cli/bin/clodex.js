@@ -4,7 +4,7 @@
 const net = require('net');
 
 const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
-const CLIENT_TIMEOUT_MS = 480 * 1000;
+const CLIENT_TIMEOUT_MS = 500 * 1000;
 
 const HELP = [
   'usage: clodex \'<[agent:…] intent line>\' [more words…]',
@@ -27,14 +27,17 @@ const HELP = [
   '                                  download, screenshot, inspect, services — as the',
   '                                  seat, when the seat has the browser plugin; not',
   '                                  release, and never --confirm',
+  '    e.g. clodex \'[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland\'',
+  '    the URL follows the closing bracket, never inside it',
   'Everything else (task add/accept/…, shout, spawn, reboot, term, team, context,',
   'remind, memory remember/forget, scratch, file) is refused to a subagent.',
   '',
   'A browser wait or download answers here when it ends (up to ~8 min): give the',
   'calling tool a timeout that covers it (Claude Code\'s Bash tool defaults to 120 s).',
   '',
-  'exit codes: 0 ok, 1 error, 2 usage, 3 refused/unauthorized/not available, 4 no socket, 5 timeout',
-  'The reply text is printed either way.',
+  'stdout: the intent\'s reply. stderr: this verb\'s own lines, each `clodex: <reason>`.',
+  'exit codes: 0 ok, 1 the reply is an error, 2 usage, 3 refused (stderr `clodex: …`),',
+  '            4 no socket, 5 timeout',
 ].join('\n');
 
 function hasEnd(text) {
@@ -122,4 +125,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { EXIT, HELP, buildIntentText, agentIdFrom, exitFor, request, main };
+module.exports = { EXIT, CLIENT_TIMEOUT_MS, HELP, buildIntentText, agentIdFrom, exitFor, request, main };

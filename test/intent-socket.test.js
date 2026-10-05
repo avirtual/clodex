@@ -14,7 +14,7 @@ const { subagentAllows } = require('../intent-registry');
 const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
-  createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread,
+  createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand,
 } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -336,7 +336,7 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const seen = [];
   const handle = createIntentRequestHandler({
-    seat: 'cx', parse, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
   const main = await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false });
@@ -346,11 +346,38 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: 'not available to a subagent: shout' });
 });
 
+test('a Codex clone (no persistence entry) keeps its main thread: isCodex comes from the session, not entryOf', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const handle = createIntentRequestHandler({
+    seat: 'cx', parse, isCodex: true, entryOf: () => undefined, sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    dispatch: async () => {},
+  });
+  assert.strictEqual((await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false })).ok, true);
+  const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
+  assert.strictEqual(sub.status, 'refused');
+});
+
+test('_startIntentSocket marks a codex session as Codex even with no persistence entry', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const h = seatHarness();
+  h.a.agentType = 'codex';
+  h.a.type = 'codex';
+  h.a.sessionId = `rollout-2026-10-05T01-00-00-${uuid}`;
+  fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
+  const cred = mintIntentCredential(crypto);
+  await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
+  try {
+    const main = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid });
+    assert.strictEqual(main.code, 0, main.err);
+    assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a', body: 'hi' }]);
+  } finally { h.a.intentSocket.stop(); }
+});
+
 test('a Codex seat with no session id yet treats every caller as a subagent', async () => {
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   for (const sid of [null, undefined]) {
     const handle = createIntentRequestHandler({
-      seat: 'cx', parse, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => sid, allows: subagentAllows,
+      seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => sid, allows: subagentAllows,
       dispatch: async () => {},
     });
     for (const r of [{ intent: '[agent:shout] x', agentId: uuid }, { intent: '[agent:shout] x' }]) {
@@ -438,4 +465,37 @@ test('the reply sink closes when the reply is built, so a late acknowledgement f
   const r = await handle({ intent: '[agent:who]' }, { closed: () => false });
   assert.deepStrictEqual(r, { ok: true, status: 'ok', reply: 'now' });
   assert.strictEqual(late('later'), false, 'the late text goes to _injectText\'s normal path');
+});
+
+test('stamp: clodex behind a reserved word or a prefix command is stamped; CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex as an argument is not', () => {
+  const T = 'CLODEX_HOOK_IDENT=t';
+  for (const [cmd, want] of [
+    ['if clodex x; then :; fi', `if ${T} clodex x; then :; fi`],
+    ['if a; then clodex x; fi', `if a; then ${T} clodex x; fi`],
+    ['if a; then b; else clodex x; fi', `if a; then b; else ${T} clodex x; fi`],
+    ['if a; then b; elif clodex x; then c; fi', `if a; then b; elif ${T} clodex x; then c; fi`],
+    ['for i in 1; do clodex x; done', `for i in 1; do ${T} clodex x; done`],
+    ['while clodex x; do :; done', `while ${T} clodex x; do :; done`],
+    ['until clodex x; do :; done', `until ${T} clodex x; do :; done`],
+    ['! clodex x', `! ${T} clodex x`],
+    ['{ CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex x; }', `{ ${T} clodex x; }`],
+    ['(CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex x)', `(${T} clodex x)`],
+    ['time clodex x', `time ${T} clodex x`],
+    ['time -p clodex x', `time -p ${T} clodex x`],
+    ['timeout 300 clodex x', `${T} timeout 300 clodex x`],
+    ['timeout 1.5m clodex x', `${T} timeout 1.5m clodex x`],
+    ['nohup clodex x', `${T} nohup clodex x`],
+    ['nice clodex x', `${T} nice clodex x`],
+    ['nice -n 5 clodex x', `${T} nice -n 5 clodex x`],
+    ['builtin command clodex x', `${T} builtin command clodex x`],
+    ['exec clodex x', `${T} exec clodex x`],
+    ['env FOO=1 clodex x', `${T} env FOO=1 clodex x`],
+    ["cd x && timeout 300 clodex '[agent:name]' | head", `cd x && ${T} timeout 300 clodex '[agent:name]' | head`],
+    ['if CLODEX_HOOK_IDENT=main.f clodex x; then :; fi', `if ${T} clodex x; then :; fi`],
+    ['echo clodex', null],
+    ['which clodex', null],
+    ['grep clodex f', null],
+  ]) {
+    assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
+  }
 });

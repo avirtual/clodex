@@ -11,7 +11,9 @@ const IDENT_ENV = 'CLODEX_HOOK_IDENT';
 const IDENT_HEX = 16;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const CMD_PREFIX = ['command', 'exec', 'env'];
+const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup', 'time'];
+const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', '(', 'time'];
+const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
 const SEPARATORS = ';&|(){}\n';
 const SUBAGENT_BRIEF = "This seat's browser pane and Clodex intents are reachable from Bash as `clodex '[agent:browser …]'`; run `clodex --help` for the subagent catalog.";
 
@@ -64,8 +66,8 @@ function identIsMain(crypto, cred, ident, sessionId) {
   return credMatches(crypto, identToken(crypto, cred, null, null, sessionId), ident);
 }
 
-function callerIsSubagent({ req, entry, sessionId, cred, crypto }) {
-  if (entry && entry.type === 'codex') {
+function callerIsSubagent({ req, isCodex, sessionId, cred, crypto }) {
+  if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
     if (!sessionId) return true;
     return !!agentId && !isMainThread(agentId, sessionId);
@@ -106,10 +108,25 @@ function stampClodexCommand(cmd, token) {
   const edits = [];
   for (const seg of shellSegments(cmd)) {
     let i = 0;
+    const word = (k) => (seg[k] ? seg[k].text : undefined);
+    while (SHELL_KEYWORDS.includes(word(i))) i += word(i) === 'time' && word(i + 1) === '-p' ? 2 : 1;
+    const at = i;
     const forged = [];
-    while (i < seg.length && (ASSIGN_RE.test(seg[i].text) || CMD_PREFIX.includes(seg[i].text))) {
-      if (seg[i].text.startsWith(`${IDENT_ENV}=`)) forged.push(seg[i]);
-      i++;
+    for (;;) {
+      const w = word(i);
+      if (w === undefined) break;
+      if (ASSIGN_RE.test(w)) {
+        if (w.startsWith(`${IDENT_ENV}=`)) forged.push(seg[i]);
+        i++;
+      } else if (CMD_PREFIX.includes(w)) {
+        i += w === 'time' && word(i + 1) === '-p' ? 2 : 1;
+      } else if (w === 'timeout' && DURATION_RE.test(word(i + 1) || '')) {
+        i += 2;
+      } else if (w === 'nice') {
+        i += word(i + 1) === '-n' && word(i + 2) !== undefined ? 3 : 1;
+      } else {
+        break;
+      }
     }
     if (!seg[i] || !isClodexWord(seg[i].text)) continue;
     for (const f of forged) {
@@ -117,7 +134,7 @@ function stampClodexCommand(cmd, token) {
       while (end < cmd.length && (cmd.charAt(end) === ' ' || cmd.charAt(end) === '\t')) end++;
       edits.push({ start: f.start, end, text: '' });
     }
-    edits.push({ start: seg[0].start, end: seg[0].start, text: `${IDENT_ENV}=${token} ` });
+    edits.push({ start: seg[at].start, end: seg[at].start, text: `${IDENT_ENV}=${token} ` });
   }
   if (!edits.length) return null;
   edits.sort((a, b) => b.start - a.start || (b.end - b.start) - (a.end - a.start));
@@ -158,7 +175,7 @@ function lateReply(intent) {
 }
 
 function createIntentRequestHandler({
-  seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred,
+  seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
   crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout,
 }) {
   return async function handleIntentRequest(req, ctl) {
@@ -169,7 +186,7 @@ function createIntentRequestHandler({
     if (intents.length > 1) return { ok: false, error: 'one intent per call' };
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
-    const subagent = callerIsSubagent({ req, entry: entryOf(), sessionId: sessionIdOf(), cred, crypto });
+    const subagent = callerIsSubagent({ req, isCodex, sessionId: sessionIdOf(), cred, crypto });
     if (subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
       if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)}` };
