@@ -457,8 +457,13 @@ function inputLine(d) {
     + (pw ? ' (operator only)' : '');
 }
 
+function joinUrls(s) {
+  return String(s || '').replace(/(https?:\/\/)\s+/g, '$1').replace(/(https?:\/\/[\w.-]*)\s+(?=[\w.-]*\.[a-z]{2,}\/)/g, '$1');
+}
+
 function collect(main) {
   return `
+  ${joinUrls.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
   const mainRoot = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
@@ -512,7 +517,7 @@ function collect(main) {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
       if (h.startsWith('#') || h.startsWith('javascript:')) h = '';
-      full = flat(labelOf(el));
+      full = joinUrls(flat(labelOf(el)));
       const label = clip(full, 60);
       const key = label + '|' + h;
       if (seen.has(key)) continue;
@@ -1211,7 +1216,7 @@ function feedPosts(scope, cats, byEl, loc) {
       const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !suffixed(a) && flat(a.innerText).includes('@' + qm[1])) : null;
       quote = {
         n: (qa && numOf(qa)) ?? numOf(cardEl) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
-        text: clip(ql ? ql.innerText : '', 160), path: qpa ? statusPath(pathOf(qpa)) : null,
+        text: clip(joinUrls(ql ? ql.innerText : ''), 160), path: qpa ? statusPath(pathOf(qpa)) : null,
         media: mediaOf(qbox, () => true, null),
       };
       const qtl = String(qbox.innerText || '').split('\n').map(flat).filter(Boolean);
@@ -1224,7 +1229,7 @@ function feedPosts(scope, cats, byEl, loc) {
     return {
       n, path, handle, name, verified,
       time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
-      text: body ? clip(String(body.innerText || '').replace(/(https?:\/\/)\s+/g, '$1').replace(/(https?:\/\/[\w.-]*)\s+(?=[\w.-]*\.[a-z]{2,}\/)/g, '$1'), 260) : '', more: numOf(moreEl), counts,
+      text: body ? clip(joinUrls(body.innerText), 260) : '', more: numOf(moreEl), counts,
       media, flags, quote,
     };
   };
@@ -1239,6 +1244,7 @@ function feedPosts(scope, cats, byEl, loc) {
 
 function feed(main, cats) {
   return `(() => {
+  ${joinUrls.toString()}
   ${feedPosts.toString()}
   const byEl = new Map();
   for (const [k, ref] of Object.entries(window.__cxEls || {})) { const e = ref && ref.deref(); if (e) byEl.set(e, Number(k)); }

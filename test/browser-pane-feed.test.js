@@ -354,3 +354,10 @@ test('FEED: a post with only a photo has no text; the header row is never its cl
   assert.strictEqual(got.posts[0].text, '');
   assert.strictEqual(feedLines(got)[0], '[?] Evan @EvanKirstel · 14h · photo · → /EvanKirstel/status/4');
 });
+
+test('FEED: the quote text joins an https:// split from its host', () => {
+  const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+  const card = h('div', { role: 'link' }, h('div', {}, h('span', {}, '@cy'), h('time', {}, '4d')), h('div', { lang: 'en' }, 'watch ( https:// youtu.be/x)'));
+  const art = h('article', {}, row, h('div', { lang: 'en' }, 'my take'), card);
+  assert.strictEqual(runFeed(h('main', {}, art), {}, {}).posts[0].quote.text, 'watch ( https://youtu.be/x)');
+});
