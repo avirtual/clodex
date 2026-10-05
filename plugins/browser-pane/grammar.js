@@ -106,6 +106,9 @@ function splitArgs(sub, toks) {
 }
 
 function serviceArg(sub, positional, required) {
+  if (positional.length > 1 && sub === 'open' && /^https?:\/\//i.test(positional[1])) {
+    throw new Error(`unexpected '${positional[1]}' for open — the URL goes after the closing bracket: [agent:browser open ${positional[0]}] ${positional[1]}`);
+  }
   if (positional.length > 1) throw new Error(`unexpected '${positional[1]}' for ${sub}`);
   const s = positional[0];
   if (s == null) {

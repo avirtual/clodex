@@ -51,9 +51,11 @@ const CONSEQUENTIAL = [
   ['sign-out', SIGN_OUT, []],
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
-  ['transfer', ['transfer', 'send money', 'wire'], []],
+  ['transfer', ['transfer', 'send money', 'wire', 'deposit', 'add funds', 'withdraw', 'withdrawal', 'fund', 'top up', 'depune', 'retrage', 'create wallet'], []],
+  ['trading', ['trade', 'sell', 'close position', 'close all', 'close trade', 'invest', 'copy trader', 'stake', 'unstake', 'swap', 'vinde', 'tranzactioneaza'], [],
+    ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions']],
   ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
-    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], []],
+    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
 ];
 const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
@@ -68,9 +70,10 @@ function termRe(t, lead) {
 
 function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
-  for (const [cat, verbs, nouns] of table) {
+  for (const [cat, verbs, nouns, idOnly = []] of table) {
     for (const t of verbs) out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
     for (const t of nouns) out.push({ cat, t, id: false, noun: true, re: termRe(t) });
+    for (const t of idOnly) out.push({ cat, t, id: true, idOnly: true, noun: false, lead: false, re: termRe(t) });
   }
   return out;
 }
@@ -91,7 +94,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
   for (const r of res) {
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
-    if (!((r.lead ? hay : hayAll).some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
+    if (!((!r.idOnly && (r.lead ? hay : hayAll).some((h) => r.re.test(h))) || (r.id && idClass && r.re.test(idClass)))) continue;
     if (!r.lead) return { cat: r.cat, term: r.t };
     lead = { cat: r.cat, term: r.t };
   }
@@ -136,7 +139,7 @@ const CQ = `
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
       value: tg === 'input' && ty !== 'password' ? e.value : '',
       aria: e.getAttribute('aria-label'),
-      idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
+      idClass: [e.id, e.getAttribute('class'), e.getAttribute('data-automation-id'), e.getAttribute('data-testid'), e.getAttribute('data-test')].filter(Boolean).join(' '),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
     };
