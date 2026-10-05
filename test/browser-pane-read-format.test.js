@@ -365,6 +365,10 @@ test('read-format: --filter on a table row keeps the table header; on a text lin
   assert.deepStrictEqual(filterLines(x, 'in romania', { blocks: true }), ['14.2K posts', 'Trending in Romania', '#Simona']);
   assert.deepStrictEqual(filterLines(['Factura', 'Suma 120', '', 'Altceva'], 'suma', { blocks: true }), ['Factura', 'Suma 120']);
   assert.deepStrictEqual(filterLines(x, 'in romania'), ['Trending in Romania']);
+  const nav = [`${CHROME_MARK}Asociația de proprietari ${CHROME_MARK}Bloc M4`, '', 'Factura iulie', '', 'Factura august'];
+  assert.deepStrictEqual(filterLines(nav, 'proprietari bloc', { blocks: true }), [nav[0]], 'a match across a chrome mark');
+  assert.deepStrictEqual(filterLines(nav, 'proprietari bloc'), [nav[0]]);
+  assert.deepStrictEqual(filterLines(nav, 'factura', { blocks: true }), ['Factura iulie', '', 'Factura august'], 'one blank between kept runs');
 });
 
 test('read-format: the text head is cut on a word boundary and marked chrome lines do not count against it', () => {
@@ -379,6 +383,10 @@ test('read-format: the text head is cut on a word boundary and marked chrome lin
   assert.strictEqual(mixed.cut, false);
   assert.strictEqual(mixed.lines.length, 31);
   assert.ok(!mixed.lines.some((l) => l.includes(CHROME_MARK)));
+  const aside = Array.from({ length: 200 }, (_, i) => `${CHROME_MARK}Who to follow ${i}`);
+  const capped = textHead([...aside, 'Corpul paginii']);
+  assert.strictEqual(capped.cut, true, 'chrome past CHROME_MAX_LINES is charged to the budget');
+  assert.ok(capped.lines.length < 120 && !capped.lines.some((l) => l.includes(CHROME_MARK)));
   const out = formatRead({ ...RAW, text: words }, { service: 'ebloc', mode: 'default' }).content;
   assert.match(out, /== text \(first 1,200 of [\d,]+ chars; read --text for all\) ==\nData: 28 August/);
   assert.doesNotMatch(out, /Augu\n/);

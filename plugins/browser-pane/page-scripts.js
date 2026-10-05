@@ -339,6 +339,7 @@ function distinctClips(labels, max = 60, part = 30) {
       if (s[s.length - part - 1] !== ' ' && tail.indexOf(' ') >= 0) tail = tail.slice(tail.indexOf(' ') + 1);
       out[i] = head.trim() + ' … ' + tail.trim();
     }
+    if (new Set(idx.map((i) => out[i])).size < idx.length) for (const i of idx) out[i] = null;
   }
   return out;
 }
@@ -454,13 +455,13 @@ function readInteractive(main, state) {
 }
 
 const PLACEHOLDER_ALTS = ['alt', 'image', 'icon', 'img', 'photo', 'picture'];
-const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link'];
+const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link', 'nav', 'text', 'bg', 'is', 'has', 'js', 'ui'];
 
 function labelFrom(d) {
   const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) ? a : ''; };
   const tid = (s) => flat(s).replace(/[-_](container|wrapper|wrap|button|btn)$/i, '');
-  const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase())) || '';
+  const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase().split(/[-_]/)[0])) || '';
   const path = (h) => { try { return new URL(h, 'http://x.invalid/').pathname; } catch { return ''; } };
   const segs = (h) => path(h).split('/').filter(Boolean);
   const last = (h) => { const s = segs(h).pop() || ''; try { return decodeURIComponent(s); } catch { return s; } };
@@ -493,7 +494,7 @@ const ICON = `
       aria: e.getAttribute('aria-label'),
       text: e.innerText,
       placeholder: e.getAttribute('placeholder'),
-      value: typeof e.value === 'string' && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
+      value: typeof e.value === 'string' && ['input', 'select', 'button'].includes(tg) && !(tg === 'input' && String(e.type).toLowerCase() === 'password') ? e.value : '',
       title: e.getAttribute('title'),
       alts: [e.getAttribute('alt'), ...[...e.querySelectorAll('img')].map(i => i.getAttribute('alt'))],
       name: e.getAttribute('name'), id: e.id,

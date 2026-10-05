@@ -188,7 +188,7 @@ test('numbering: CHECK verifies a link with a learned volatile param under the s
   assert.match(scripts.CHECK(1, stored[0], state), /const learned = \["sess"\];/);
 });
 
-test('numberVerdict: a stale number whose label head is listed is retired naming its successor; absent is gone; present in chrome is hidden', () => {
+test('numberVerdict: a stale number whose label head is listed is retired naming its successor; absent is gone; never assigned was not read', () => {
   const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna ';
   const stored = K.keyOf({ kind: 'link', label: head + '[Document generat 03.07.2026]', href: '/l.pdf' });
   const now = K.keyOf({ kind: 'link', label: head + '[Document generat 03.08.2026]', href: '/l.pdf' });
@@ -198,12 +198,9 @@ test('numberVerdict: a stale number whose label head is listed is retired naming
   const gone = numberVerdict(null, stored, { 3: K.keyOf({ kind: 'link', label: 'Acasa', href: '/' }) });
   assert.strictEqual(gone, 'gone');
   assert.strictEqual(numberRefusal('ebloc', 10, stored, gone).message, '[10] is no longer on this page of ebloc — read again');
-  const nav = K.keyOf({ kind: 'link', label: 'Avizier', href: '/avizier' });
-  const hidden = numberVerdict(null, nav, { 4: nav }, [4]);
-  assert.strictEqual(hidden, 'hidden');
-  assert.match(numberRefusal('ebloc', 4, nav, hidden).message, /hidden as a repeated header element/);
+  assert.strictEqual(numberRefusal('ebloc', 99, undefined, 'ok').message, '[99] was not in your read of ebloc — read again');
   assert.strictEqual(numberVerdict(null, stored, { 23: K.keyOf({ kind: 'button', label: head + 'x', href: '' }) }), 'gone', 'another kind is not a successor');
-  assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys, page && page\.chrome\)/);
+  assert.match(CHILD_SRC, /numberVerdict\(verdict, stored, page && page\.keys\)/);
 });
 
 test('page scripts: overlay badges sit left of (or above) a text-sized box, inside media boxes; ⚠ badges are solid red', () => {
@@ -216,6 +213,8 @@ test('page scripts: look-alike long labels show a head and their distinguishing 
   const head = 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna ';
   const out = scripts.distinctClips([head + '[Document generat 04 Septembrie 2026]', head + '[Document generat 03 August 2026]', 'Acasa', 'x'.repeat(80)]);
   assert.deepStrictEqual(out, ['Lista de plată pentru Bloc M4 … generat 04 Septembrie 2026]', 'Lista de plată pentru Bloc M4 … generat 03 August 2026]', null, null]);
+  const mid = (m) => `${head}${m} anexa la lista de plata a lunii curente`;
+  assert.deepStrictEqual(scripts.distinctClips([mid('A1'), mid('B2')]), [null, null], 'same head and tail keep the clip');
   assert.match(scripts.READ_INTERACTIVE(false, {}), /const tails = distinctClips\(items\.map/);
 });
 
@@ -386,6 +385,8 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'div', alts: ['image'], testid: 'power-icon-container' }, 'power-icon'],
     [{ tag: 'div', alts: ['Logo'] }, 'Logo'],
     [{ tag: 'div', alts: ['photo'], classes: 'css-1dbjc4n wrapper device-tile' }, 'device-tile'],
+    [{ tag: 'div', classes: 'btn-primary nav-link col-md-3' }, ''],
+    [{ tag: 'textarea', value: 'typed secret', id: 'msg' }, 'msg'],
     [{ tag: 'div', src: 'data:image/gif;base64,R0l' }, ''],
     [{ tag: 'a', href: '/karolzdeb', alts: [''] }, '@karolzdeb'],
     [{ tag: 'a', href: '/karolzdeb', alts: ['Karol avatar'] }, 'Karol avatar'],
@@ -431,7 +432,7 @@ test('numberRefusal: a number only the other site has is no element; a stale num
   numState(svc, 'https://www.e-bloc.ro/');
   const gone = numberRefusal('ebloc', 5, svc.num.byN.get(5), 'gone');
   assert.strictEqual(gone.code, 'NO_ELEMENT');
-  assert.strictEqual(gone.message, R.TEXT.noElement('ebloc', 5));
+  assert.strictEqual(gone.message, R.TEXT.unknownN('ebloc', 5));
   assert.doesNotMatch(gone.message, /\(was /);
   const amb = numberRefusal('ebloc', 2, svc.num.byN.get(2), 'ambiguous');
   assert.strictEqual(amb.code, 'AMBIGUOUS');

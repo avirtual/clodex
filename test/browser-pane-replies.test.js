@@ -112,7 +112,7 @@ test('replies: writing 55 keeps the 50 newest, and a file older than 24 h is pru
 test('replies: the T3 refusal texts, verbatim', () => {
   assert.strictEqual(R.TEXT.noElement('utility', 12), '[12] is no longer on this page of utility — read again');
   assert.strictEqual(R.TEXT.retiredN('utility', 10, 23), '[10] retired: its text changed since your read (now [23]?) — read again');
-  assert.strictEqual(R.TEXT.hiddenN('utility', 10), 'no element [10] on utility on this page (hidden as a repeated header element) — read --all or use --text');
+  assert.strictEqual(R.TEXT.unknownN('utility', 10), '[10] was not in your read of utility — read again');
   assert.strictEqual(R.TEXT.ambiguousN('utility', 7, 'Delete', 'Factura 08 | 120 lei'),
     '[7] on utility no longer points at one element (was "Delete" in "Factura 08 | 120 lei") — read again and use the new number');
   assert.strictEqual(R.TEXT.held('utility', 'login'),

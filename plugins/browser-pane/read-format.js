@@ -15,11 +15,12 @@ const WORD_BACK_MAX = 40;
 function filterLines(lines, filter, { blocks = false } = {}) {
   if (!filter) return lines;
   const needle = filter.toLowerCase();
-  if (!blocks) return lines.filter((l) => l.toLowerCase().includes(needle));
+  const low = lines.map((l) => unmark(l).toLowerCase());
+  if (!blocks) return lines.filter((_l, i) => low[i].includes(needle));
   const row = (l) => l.includes(' | ');
   const keep = lines.map(() => false);
   lines.forEach((l, i) => {
-    if (!l.toLowerCase().includes(needle)) return;
+    if (!low[i].includes(needle)) return;
     keep[i] = true;
     if (row(l)) {
       let h = i;
@@ -34,7 +35,16 @@ function filterLines(lines, filter, { blocks = false } = {}) {
     if (e - s + 1 > BLOCK_MAX) { s = Math.max(s, i - 1); e = Math.min(e, i + 1); }
     for (let k = s; k <= e; k++) keep[k] = true;
   });
-  return lines.filter((l, i) => keep[i] && l.trim());
+  const out = [];
+  let prev = -1;
+  lines.forEach((l, i) => {
+    if (!keep[i] || !l.trim()) return;
+    const tableGap = prev >= 0 && lines.slice(prev, i + 1).every(row);
+    if (prev >= 0 && i > prev + 1 && !tableGap) out.push('');
+    out.push(l);
+    prev = i;
+  });
+  return out;
 }
 
 function wordCut(line, room) {
@@ -48,8 +58,11 @@ function wordCut(line, room) {
 function textHead(lines, budget = TEXT_HEAD) {
   const out = [];
   let used = 0;
-  for (const l of lines) {
-    if (marked(l)) { out.push(unmark(l)); continue; }
+  let free = 0;
+  for (const raw of lines) {
+    const chrome = marked(raw);
+    if (chrome && free < CHROME_MAX_LINES) { free += 1; out.push(unmark(raw)); continue; }
+    const l = chrome ? unmark(raw) : raw;
     const need = l.length + (used ? 1 : 0);
     if (used + need <= budget) { out.push(l); used += need; continue; }
     const room = budget - used - (used ? 1 : 0);

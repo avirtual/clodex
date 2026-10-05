@@ -271,7 +271,7 @@ async function clickablesStep(emit, base) {
   check('the Ieşire link is ⚠ (a sign-out verb) and the read says login: signed in', els.some((l) => /\] link ⚠ Ieşire → /.test(l)) && /\nlogin: signed in\n/.test(content));
   const numOf = (re) => { const l = els.find((x) => re.test(x)); return l ? /^\[(\d+)\]/.exec(l)[1] : '0'; };
   check('the Plătește submit and the Card bancar input:submit in the form are marked ⚠; the Carduri nav link is not',
-    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:submit ⚠ .*Card bancar/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
+    els.some((l) => /\] button ⚠ Plătește$/.test(l)) && els.some((l) => /\] input:submit ⚠ += "Card bancar"/.test(l)) && els.some((l) => /\] link Carduri → /.test(l)));
   const pay = numOf(/button ⚠ Plătește/);
   check('a click on Plătește without --confirm is refused naming payment',
     new RegExp(`error: \\[${pay}\\] "Plătește" looks consequential \\(payment\\) — re-issue with --confirm`).test(await emit(`[agent:browser click avizier ${pay}]`)));
