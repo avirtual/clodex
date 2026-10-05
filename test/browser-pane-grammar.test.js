@@ -10,7 +10,7 @@ const run = (line) => {
   try { return toCommand(intent); } catch (e) { return { error: e.message }; }
 };
 
-const READ = { sub: 'read', service: null, mode: 'default', main: false, all: false, filter: null, page: 1, max: 2500 };
+const READ = { sub: 'read', service: null, mode: 'default', main: false, all: false, compact: false, filter: null, page: 1, max: 2500 };
 
 const ROWS = [
   ['[agent:browser open utility] https://portal.example.com/bills',
@@ -26,6 +26,10 @@ const ROWS = [
   ['[agent:browser read utility --filter="sep 2026"]', { ...READ, service: 'utility', filter: 'sep 2026' }],
   ['[agent:browser read "utility" --max=100]', { ...READ, service: 'utility', max: 500 }],
   ['[agent:browser read --max=99999]', { ...READ, max: 8000 }],
+  ['[agent:browser read x --compact]', { ...READ, service: 'x', compact: true }],
+  ['[agent:browser read x --compact --filter=@a]', { ...READ, service: 'x', compact: true, filter: '@a' }],
+  ['[agent:browser read --compact --text]', { error: '--compact is a mode of the default read; drop --text/--links' }],
+  ['[agent:browser read x --links --compact]', { error: '--compact is a mode of the default read; drop --text/--links' }],
   ['[agent:browser services]', { sub: 'services' }],
   ['[agent:browser release]', { sub: 'release', service: null }],
   ['[agent:browser release irs]', { sub: 'release', service: 'irs' }],
@@ -95,6 +99,7 @@ const ROWS = [
   ['[agent:browser scroll x sideways]', { error: 'scroll direction must be one of down up top bottom' }],
   ['[agent:browser scroll down x]', { error: "unexpected 'x' for scroll" }],
   ['[agent:browser scroll down up]', { error: 'scroll takes one direction: down, up, top or bottom' }],
+  ['[agent:browser scroll x down up]', { error: 'scroll takes one direction: down, up, top or bottom' }],
   ['[agent:browser scroll --pages=21]', { error: '--pages must be at most 20' }],
   ['[agent:browser scroll] more', { error: 'scroll takes no text after the bracket' }],
   ['[agent:browser select 3] August 2026', { sub: 'select', service: null, n: 3, option: 'August 2026' }],
