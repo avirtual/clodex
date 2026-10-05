@@ -93,16 +93,36 @@
   z-index: 1000;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   box-sizing: border-box;
-  width: min(760px, 100vw - 16px);
+  width: auto;
+  min-width: 320px;
+  max-width: min(560px, 100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
-  padding: 8px;
-  background: var(--bg-elevated, #1e1e2a);
+  padding: var(--sp-1, 4px);
+  background: var(--surface-overlay, var(--sidebar-bg, #1e1e2a));
+  border: 1px solid var(--border-strong, transparent);
+  border-radius: var(--radius-lg, 6px);
+  box-shadow: var(--shadow-overlay, 0 6px 24px rgba(0, 0, 0, 0.45));
+}
+
+.bp-picker-label {
+  font-size: var(--fs-xs, 10px);
+  color: var(--text-tertiary, var(--text-dim, #888));
+  padding: 4px 6px 2px;
+}
+
+.bp-picker .bp-btn:not(.primary) {
+  font-size: 11px;
+  padding: 2px 8px;
+  background: transparent;
   border: 1px solid var(--border, #444);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.bp-picker .bp-btn:not(.primary):hover:not(:disabled) {
+  filter: none;
+  background: var(--surface-hover, var(--active-bg, rgba(255, 255, 255, 0.06)));
 }
 
 .bp-denylist {
@@ -130,20 +150,32 @@
 
 .bp-pick-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.4fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
-  gap: 6px 10px;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--fs-sm, 12px);
+}
+
+.bp-pick-row:hover {
+  background: var(--surface-hover, var(--active-bg, rgba(255, 255, 255, 0.06)));
 }
 
 .bp-pick-name,
-.bp-pick-seat {
+.bp-pick-state {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.bp-pick-seat {
-  opacity: 0.8;
+.bp-pick-name {
+  min-width: 0;
+}
+
+.bp-pick-host,
+.bp-pick-state {
+  color: var(--text-tertiary, var(--text-dim, #888));
 }
 
 .bp-pick-row > .bp-hand {
