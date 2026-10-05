@@ -156,7 +156,7 @@ test('--help documents the streams, the exit codes and the URL-after-the-bracket
   assert.ok(r.out.includes("clodex '[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland'"), r.out);
   assert.match(r.out, /the URL follows the closing bracket/);
   assert.match(r.out, /stdout: the intent's reply\. stderr: this verb's own lines, each `clodex: <reason>`/);
-  assert.match(r.out, /exit codes: 0 ok, 1 the reply is an error, 2 usage, 3 refused \(stderr `clodex: …`\),\n\s+4 no socket, 5 timeout/);
+  assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex: …`\), 2 usage,\n\s+3 refused \(stderr `clodex: …`\), 4 no socket, 5 timeout/);
 });
 
 test('the client outlives the largest server-side plugin wait by more than the socket slack', () => {

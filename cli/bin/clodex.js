@@ -36,8 +36,8 @@ const HELP = [
   'calling tool a timeout that covers it (Claude Code\'s Bash tool defaults to 120 s).',
   '',
   'stdout: the intent\'s reply. stderr: this verb\'s own lines, each `clodex: <reason>`.',
-  'exit codes: 0 ok, 1 the reply is an error, 2 usage, 3 refused (stderr `clodex: …`),',
-  '            4 no socket, 5 timeout',
+  'exit codes: 0 ok, 1 error (the reply, or stderr `clodex: …`), 2 usage,',
+  '            3 refused (stderr `clodex: …`), 4 no socket, 5 timeout',
 ].join('\n');
 
 function hasEnd(text) {

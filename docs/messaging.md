@@ -631,10 +631,11 @@ seats get a request/response channel whose reply is the caller's own tool result
 - **Identity (Claude):** the PreToolUse Bash hook `run/<name>/hook-ident.sh` prefixes every
   `clodex` segment of the command with `CLODEX_HOOK_IDENT=<token>` through `updatedInput`
   (a pre-existing `CLODEX_HOOK_IDENT=` in the segment is removed). The shell wrapper exits
-  before starting the interpreter unless the hook input contains `clodex` or `SubagentStart`.
+  before starting the interpreter unless `clodex` appears after the input's `"command"` key, or the input is `SubagentStart`
+  (`transcript_path` and `cwd` come first and may contain `.clodex`).
   The stamp also reaches a `clodex` behind `if then else elif do while until !` and `time`
-  (stamped after those), and behind `command exec env builtin nohup`, `timeout <duration>`
-  and `nice [-n <n>]` (stamped before them, so the assignment reaches `clodex`'s env).
+  (stamped after those), and behind `command exec env builtin nohup`, `timeout [flags] <duration>`
+  and `nice [-n <n> | -<n>]` (stamped before them, so the assignment reaches `clodex`'s env).
   A `clodex` that is an argument (`echo clodex`, `which clodex`) is not stamped. The token is
   `main.<hmac16>` with no `agent_id` in the hook input, else `sub.<agent_id>.<agent_type>.<hmac16>`;
   the HMAC-SHA256 is keyed by the seat credential (env, else `run/<name>/intent.cred`, 0600)
@@ -653,8 +654,8 @@ seats get a request/response channel whose reply is the caller's own tool result
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
   agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident`. stdout carries
   the intent's reply; the verb's own lines (refusals, unauthorized, no socket, timeout)
-  go to stderr as `clodex: <reason>`. Exit 0 ok, 1 the reply is an error, 2 usage,
-  3 refused (stderr `clodex: …`), 4 no socket, 5 timeout. The client waits up to 500 s,
+  go to stderr as `clodex: <reason>`. Exit 0 ok, 1 error (the reply, or stderr `clodex: …`),
+  2 usage, 3 refused (stderr `clodex: …`), 4 no socket, 5 timeout. The client waits up to 500 s,
   30 s past the registry's 470 s plugin-wait cap, so a browser `wait` or `download`
   answers inline and the server always times out first. A browser URL follows the
   closing bracket: `clodex '[agent:browser open wiki] https://…'`.

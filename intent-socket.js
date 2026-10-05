@@ -11,8 +11,9 @@ const IDENT_ENV = 'CLODEX_HOOK_IDENT';
 const IDENT_HEX = 16;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup', 'time'];
-const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!', '{', '(', 'time'];
+const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup'];
+const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!'];
+const TIMEOUT_ARG_FLAGS = ['-s', '-k', '--signal', '--kill-after'];
 const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
 const SEPARATORS = ';&|(){}\n';
 const SUBAGENT_BRIEF = "This seat's browser pane and Clodex intents are reachable from Bash as `clodex '[agent:browser …]'`; run `clodex --help` for the subagent catalog.";
@@ -104,12 +105,32 @@ function isClodexWord(w) {
   return typeof w === 'string' && (w === 'clodex' || w.endsWith('/clodex'));
 }
 
+function prefixLength(word, i) {
+  const w = word(i);
+  if (w === 'time') return word(i + 1) === '-p' ? 2 : 1;
+  if (CMD_PREFIX.includes(w)) return 1;
+  if (w === 'timeout') {
+    let j = i + 1;
+    while (typeof word(j) === 'string' && word(j).startsWith('-')) j += TIMEOUT_ARG_FLAGS.includes(word(j)) ? 2 : 1;
+    return DURATION_RE.test(word(j) || '') ? j + 1 - i : 0;
+  }
+  if (w === 'nice') {
+    if (word(i + 1) === '-n') return 3;
+    return /^-[0-9]+$/.test(word(i + 1) || '') ? 2 : 1;
+  }
+  return 0;
+}
+
 function stampClodexCommand(cmd, token) {
   const edits = [];
   for (const seg of shellSegments(cmd)) {
     let i = 0;
     const word = (k) => (seg[k] ? seg[k].text : undefined);
-    while (SHELL_KEYWORDS.includes(word(i))) i += word(i) === 'time' && word(i + 1) === '-p' ? 2 : 1;
+    for (;;) {
+      if (SHELL_KEYWORDS.includes(word(i))) i++;
+      else if (word(i) === 'time') i += prefixLength(word, i);
+      else break;
+    }
     const at = i;
     const forged = [];
     for (;;) {
@@ -118,12 +139,8 @@ function stampClodexCommand(cmd, token) {
       if (ASSIGN_RE.test(w)) {
         if (w.startsWith(`${IDENT_ENV}=`)) forged.push(seg[i]);
         i++;
-      } else if (CMD_PREFIX.includes(w)) {
-        i += w === 'time' && word(i + 1) === '-p' ? 2 : 1;
-      } else if (w === 'timeout' && DURATION_RE.test(word(i + 1) || '')) {
-        i += 2;
-      } else if (w === 'nice') {
-        i += word(i + 1) === '-n' && word(i + 2) !== undefined ? 3 : 1;
+      } else if (prefixLength(word, i) > 0) {
+        i += prefixLength(word, i);
       } else {
         break;
       }

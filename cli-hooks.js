@@ -198,7 +198,7 @@ exit 0
     const identScriptPath = pathFor(REGISTRY_DIR, name, 'identScript');
     fs.writeFileSync(identScriptPath, `#!/bin/bash
 IN=$(cat)
-case "$IN" in *clodex*|*SubagentStart*) ;; *) exit 0;; esac
+case "$IN" in *'"command"'*clodex*|*SubagentStart*) ;; *) exit 0;; esac
 IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const fs = require("fs");
