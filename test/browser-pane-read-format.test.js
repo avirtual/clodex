@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatRead, changedRegion, CHANGE_MAX } = require('../plugins/browser-pane/read-format');
+const { formatRead, changedRegion, CHANGE_MAX, postKey } = require('../plugins/browser-pane/read-format');
 
 const RAW = {
   url: 'https://portal.example.com/bills',
@@ -510,6 +510,44 @@ test('read --compact --filter applies to feed lines, a match on the quote line k
 test('read --compact: a feed of one post says (1 post)', () => {
   const one = formatRead({ ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: [FEED_RAW.feed.posts[1]] } }, { service: 'x', compact: true }).content.split('\n').slice(6, -2);
   assert.deepStrictEqual(one.slice(0, 3), ['== feed (1 post) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
+});
+
+const SEEN_RAW = { ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: [1, 2, 3].map((i) => ({ ...MIN_POST, n: i, path: `/a/status/${i}` })) } };
+const seenBody = (feedSeen, extra = {}) => formatRead(SEEN_RAW, { service: 'x', compact: true, feedSeen, ...extra }).content.split('\n').slice(6, -2);
+
+test('read --compact with feedSeen: only unseen posts, marker says N new · M already seen · K dropped off the top, K omitted at 0', () => {
+  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/2', '/a/status/9']), dropped: 1, earlier: [] }).slice(0, 2),
+    ['== feed (1 new · 2 already seen · 1 dropped off the top) ==', '[3] @a · 9h · "hi" · → /a/status/3']);
+  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }).slice(0, 3),
+    ['== feed (2 new · 1 already seen) ==', '[2] @a · 9h · "hi" · → /a/status/2', '[3] @a · 9h · "hi" · → /a/status/3']);
+  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1']), dropped: 0, earlier: [] }, { filter: 'status/3' }).slice(0, 2),
+    ['== feed (1 of 2 new · 1 already seen) ==', '[3] @a · 9h · "hi" · → /a/status/3']);
+});
+
+test('read --compact with feedSeen and nothing new: one line pointing at scroll and --all, then the elements section', () => {
+  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/2', '/a/status/3']), dropped: 0, earlier: [] }), [
+    '== feed (0 new · 3 already seen) ==', '(no new posts — scroll, or read --compact --all to replay the 3 seen)',
+    '== elements (outside the feed) ==', '[1] link Home → /', '[20] link Explore → /explore',
+  ]);
+});
+
+test('read --compact --all with feedSeen: every post on the page, then the stored lines of posts no longer on it', () => {
+  const earlier = ['[8] @a · 9h · "hi" · → /a/status/8', '[9] @a · 9h · "hi" · → /a/status/9'];
+  assert.deepStrictEqual(seenBody({ seen: new Set(['/a/status/1', '/a/status/8', '/a/status/9']), dropped: 2, earlier }, { all: true }).slice(0, 7), [
+    '== feed (3 on the page · 2 seen earlier) ==',
+    '[1] @a · 9h · "hi" · → /a/status/1', '[2] @a · 9h · "hi" · → /a/status/2', '[3] @a · 9h · "hi" · → /a/status/3',
+    '-- seen earlier, no longer on the page (2) --', ...earlier,
+  ]);
+});
+
+test('postKey: the status path, plus |rp:<who> on a repost and |rp: on an actor-less one; a path-less post keys by number', () => {
+  assert.deepStrictEqual([
+    postKey(MIN_POST), postKey({ ...MIN_POST, flags: { repostedBy: 'Ana' } }), postKey({ ...MIN_POST, flags: { repostedBy: true } }), postKey({ ...MIN_POST, path: null }),
+  ], ['/a/status/1', '/a/status/1|rp:Ana', '/a/status/1|rp:', 'n:12']);
+});
+
+test('feedLines: an actor-less repost prints reposted', () => {
+  assert.strictEqual(feedLines({ posts: [{ ...MIN_POST, flags: { repostedBy: true } }] })[0], '[12] @a · 9h · reposted · "hi" · → /a/status/1');
 });
 
 test('read --compact without a feed: a failed FEED says so in the mode, no articles says no feed found; both keep the default sections', () => {

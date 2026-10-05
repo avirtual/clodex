@@ -177,6 +177,40 @@ function feedMatches(feed, filter = null) {
   return feedBlocks(feed).filter((b) => !needle || b.some((l) => l.toLowerCase().includes(needle)));
 }
 
+function postKey(p) {
+  if (p.path == null) return `n:${p.n}`;
+  const by = p.flags && p.flags.repostedBy;
+  return p.path + (by ? `|rp:${by === true ? '' : by}` : '');
+}
+
+function feedPosts(feed) {
+  const blocks = feedBlocks(feed);
+  return feed.posts.map((p, i) => ({ key: postKey(p), stored: p.path != null, n: p.n, line: blocks[i][0] }));
+}
+
+function seenSection(feed, seen, opts) {
+  const needle = opts.filter ? String(opts.filter).toLowerCase() : '';
+  const keep = (b) => !needle || b.some((l) => l.toLowerCase().includes(needle));
+  const blocks = feedBlocks(feed);
+  const total = feed.posts.length;
+  const cut = (shown, n) => (shown < n ? `${shown} of ` : '');
+  if (opts.all) {
+    const shown = blocks.filter(keep);
+    const earlier = seen.earlier.filter((l) => keep([l]));
+    const lines = shown.flat();
+    if (earlier.length) lines.push(`-- seen earlier, no longer on the page (${seen.earlier.length}) --`, ...earlier);
+    return { marker: `== feed (${cut(shown.length, total)}${total} on the page · ${seen.earlier.length} seen earlier) ==`, lines: lines.length ? lines : ['(none)'] };
+  }
+  const fresh = blocks.filter((b, i) => !seen.seen.has(postKey(feed.posts[i])));
+  const shown = fresh.filter(keep);
+  const n = fresh.length;
+  const m = total - n;
+  const marker = `== feed (${cut(shown.length, n)}${n} new · ${m} already seen${seen.dropped ? ` · ${seen.dropped} dropped off the top` : ''}) ==`;
+  if (!n && m) return { marker, lines: [`(no new posts — scroll, or read --compact --all to replay the ${m} seen)`] };
+  const lines = shown.flat();
+  return { marker, lines: lines.length ? lines : ['(none)'] };
+}
+
 function feedLines(feed, filter = null) {
   return feedMatches(feed, filter).flat();
 }
@@ -204,9 +238,14 @@ function sections(raw, opts) {
   const out = [];
   const feed = compactFeed(raw, opts);
   if (feed) {
+    const rest = outsideFeed(elements, feed);
+    if (opts.feedSeen) {
+      out.push(seenSection(feed, opts.feedSeen, opts));
+      out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
+      return out;
+    }
     const blocks = feedMatches(feed, opts.filter);
     const lines = blocks.flat();
-    const rest = outsideFeed(elements, feed);
     const total = feed.posts.length;
     out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} post${total === 1 ? '' : 's'}) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
@@ -489,6 +528,7 @@ function formatRead(raw, opts) {
     filter: opts.filter || null,
     page: opts.page || 1,
     max: opts.max || 2500,
+    feedSeen: opts.feedSeen || null,
   };
   if (raw && raw.contentType === 'application/pdf') {
     return { pdf: true, line: `this tab shows a PDF (${redactUrl(raw.url)}) — save it with [agent:browser download ${o.service}]` };
@@ -527,10 +567,10 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, digest: digestOf(raw, compactFeed(raw, o)) };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed) : null };
 }
 
 module.exports = {
   redactUrl, frameLabel, hostOf, framesLabel,
-  formatRead, feedLines, paginate, loginLabel, filterLines, wordCut, textHead, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, MOST_OF_PAGE, MOST_MIN_LINES, CHROME_MIN_LINES, CHROME_MAX_LINES,
+  formatRead, feedLines, postKey, paginate, loginLabel, filterLines, wordCut, textHead, changedRegion, chromeStrip, elementStrip, unmark, CHROME_MARK, elementKey, TEXT_HEAD, CHANGE_MAX, MOST_OF_PAGE, MOST_MIN_LINES, CHROME_MIN_LINES, CHROME_MAX_LINES,
 };
