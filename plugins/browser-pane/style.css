@@ -4,10 +4,31 @@
 }
 
 .bp-services {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+  align-items: center;
   margin-bottom: 8px;
+}
+
+.bp-services > .bp-row {
+  display: contents;
+}
+
+.bp-services > .bp-th,
+.bp-services > .bp-row > * {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bp-th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary, var(--text-dim, #888));
 }
 
 .bp-row {
@@ -18,7 +39,6 @@
 
 .bp-name {
   font-weight: 600;
-  min-width: 90px;
 }
 
 .bp-login,
@@ -26,8 +46,52 @@
   opacity: 0.8;
 }
 
-.bp-window {
+.bp-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bp-services > .bp-row > .bp-hand {
+  grid-column: 1 / -1;
+  display: flex;
+  overflow: visible;
+}
+
+.bp-services > .bp-empty {
+  grid-column: 1 / -1;
+}
+
+.bp-sect {
+  border-top: 1px solid var(--border, #333);
+  margin-top: 8px;
+}
+
+.bp-sect:empty {
+  display: none;
+}
+
+.bp-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary, var(--text-dim, #888));
+  margin: 12px 0 4px;
+}
+
+.bp-open-label {
+  font-size: 12px;
+  color: var(--text-tertiary, var(--text-dim, #888));
+  white-space: nowrap;
+}
+
+.bp-open-service {
+  width: 140px;
+}
+
+.bp-open-url {
   flex: 1;
+  min-width: 0;
 }
 
 .bp-empty,
@@ -66,6 +130,17 @@
 .bp-hand-text:focus-visible {
   outline: 2px solid var(--accent, #e94560);
   outline-offset: 1px;
+}
+
+.bp-btn.quiet {
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--text-tertiary, var(--text-dim, #888));
+}
+
+.bp-btn.quiet:hover:not(:disabled) {
+  filter: none;
+  color: var(--accent, #e94560);
 }
 
 .bp-btn:disabled {
@@ -129,11 +204,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-top: 12px;
 }
 
 .bp-deny-title {
-  font-weight: 600;
+  opacity: 0.8;
 }
 
 .bp-deny-text {
