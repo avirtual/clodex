@@ -1073,6 +1073,17 @@ test('page scripts: a Parsoid reference item gets its bullet past the hidden bac
   assert.strictEqual(textOf(tabled), 'cell text', 'no bullet inside a table cell');
 });
 
+test('page scripts: READ_TEXT outline headings skip a screen-reader-only 1x1 overflow-hidden h1', () => {
+  const h = (text, [l, t, w, hh], st = {}) => ({ innerText: text, textContent: text, parentElement: null, st,
+    getClientRects: () => [1], getBoundingClientRect: () => ({ left: l, top: t, width: w, height: hh, right: l + w, bottom: t + hh }) });
+  const heads = [h('To view keyboard shortcuts, press question mark', [0, 0, 1, 1], { overflow: 'hidden' }), h('Trending', [10, 100, 200, 30]), h('Trending in Romania', [10, 200, 200, 30])];
+  const document = { title: 'X', querySelector: () => null, body: null, documentElement: { scrollWidth: 1200, scrollHeight: 3000 },
+    querySelectorAll: (sel) => (sel === 'h1,h2,h3' ? heads : []) };
+  const getComputedStyle = (e) => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', position: 'static', ...(e.st || {}) });
+  const ctx = vm.createContext({ document, getComputedStyle, scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
+  assert.deepStrictEqual(vm.runInContext(scripts.READ_TEXT(false), ctx).outline.headings, ['Trending', 'Trending in Romania']);
+});
+
 test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their text nodes for chromeStrip', () => {
   const src = scripts.READ_TEXT(false);
   const drop = /const DROP = '([^']*)'/.exec(src)[1].split(',');
