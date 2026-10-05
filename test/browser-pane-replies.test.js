@@ -261,6 +261,8 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(evil[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable" html: <evil> "Factura iulie"');
   assert.strictEqual(lines({ listeners: { types: ['x\nhtml: <evil>'] } }).length, 6);
   assert.strictEqual(lines({ fresh: true })[0], '[agent:browser] inspect ebloc [12] (numbered now): div#prow.row.pay · clickable "Factura iulie"');
+  assert.strictEqual(lines({ warn: { cat: 'purchase', term: 'buy' } })[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie" · ⚠ purchase ("buy")');
+  assert.strictEqual(lines({ warn: null })[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie"');
   assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, [{ n: 1, text: 'PDF' }, { n: 2, text: 'PDF' }], 'inspect'),
     '"PDF" matches 2 visible elements on ebloc: [1] "PDF", [2] "PDF" — inspect one by number');
 });

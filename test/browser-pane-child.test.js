@@ -1097,8 +1097,53 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['the Follow button itself', el('button', 'Follow'), 'publish'],
     ['label around a Caută submit', el('label', '', { plain: true, inner: [el('input', '', { type: 'submit', value: 'Caută', form })] }), null],
     ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
+    ['role=link quote card with buy deep in 300 chars of text', { ...el('div', ('Markets moved today and traders weigh buy/sell decisions ' + 'x'.repeat(300)).slice(0, 300), { attrs: { role: 'link' } }), matches: () => true }, null],
+    ['role=link Buy now', { ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }, 'purchase'],
   ];
   for (const [name, e, want] of rows) assert.strictEqual(cqOf(e), want, name);
+  const cqHit = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqHit;`)((e) => !e.hidden);
+  assert.deepStrictEqual(cqHit({ ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }), { cat: 'purchase', term: 'buy' });
+  assert.deepStrictEqual(cqHit(el('button', 'Go', { form: { getAttribute: () => '/orders/new' } })), { cat: 'purchase', term: 'order' });
+  assert.match(scripts.INSPECT(1), /warn: cqHit\(el\),/);
+});
+
+test('page scripts: consequentialHit names the category and the source term; consequentialOf stays the bare category', () => {
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Go', action: '/orders/new' }), { cat: 'purchase', term: 'order' });
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Log out' }), { cat: 'sign-out', term: 'log out' });
+  assert.strictEqual(scripts.consequentialOf({ label: 'Log out' }), 'sign-out');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
+});
+
+test('page scripts: clickPoint lands a tall role=link card on its time link, a short one or a plain element at its centre', () => {
+  const rect = (left, top, width, height) => ({ left, top, width, height });
+  const node = (tag, attrs, r, kids = []) => {
+    const e = { tagName: tag.toUpperCase(), parentElement: null, kids, getAttribute: (k) => (k in attrs ? attrs[k] : null), getBoundingClientRect: () => r };
+    for (const k of kids) k.parentElement = e;
+    e.contains = (o) => { for (let x = o; x; x = x.parentElement) if (x === e) return true; return false; };
+    e.closest = (sel) => { for (let x = e; x; x = x.parentElement) if (x.tagName.toLowerCase() === sel) return x; return null; };
+    const all = () => e.kids.flatMap((k) => [k, ...(k.all ? k.all() : [])]);
+    e.all = all;
+    e.querySelectorAll = (sel) => all().filter((k) => k.tagName.toLowerCase() === sel);
+    return e;
+  };
+  const doc = { createTreeWalker: () => ({ nextNode: () => null }) };
+  const time = node('time', {}, rect(0, 0, 0, 0));
+  const head = node('a', { href: '/cy/status/2' }, rect(20, 10, 200, 20), [time]);
+  const photo = node('a', { href: '/cy/status/2/photo/1' }, rect(0, 100, 500, 270));
+  const card = node('div', { role: 'link' }, rect(0, 0, 500, 370), [head, photo]);
+  assert.deepStrictEqual(scripts.clickPoint(card, card.getBoundingClientRect(), doc), { x: 120, y: 20 });
+  const short = node('div', { role: 'link' }, rect(0, 0, 500, 100), [node('a', {}, rect(20, 10, 200, 20), [node('time', {}, rect(0, 0, 0, 0))])]);
+  assert.deepStrictEqual(scripts.clickPoint(short, short.getBoundingClientRect(), doc), { x: 250, y: 50 });
+  const tallDiv = node('div', {}, rect(0, 0, 500, 370), [node('a', {}, rect(20, 10, 200, 20), [node('time', {}, rect(0, 0, 0, 0))])]);
+  assert.deepStrictEqual(scripts.clickPoint(tallDiv, tallDiv.getBoundingClientRect(), doc), { x: 250, y: 185 });
+  const text = { nodeValue: 'Cy @cy', parentElement: null };
+  const textDoc = {
+    createTreeWalker: () => { const q = [{ nodeValue: '  ' }, text]; return { nextNode: () => q.shift() || null }; },
+    createRange: () => ({ selectNodeContents: () => {}, getBoundingClientRect: () => rect(30, 40, 60, 10) }),
+  };
+  const plainCard = node('div', { role: 'link' }, rect(0, 0, 500, 370), [photo]);
+  assert.deepStrictEqual(scripts.clickPoint(plainCard, plainCard.getBoundingClientRect(), textDoc), { x: 60, y: 45 });
+  assert.match(scripts.FIND(1), /x: at\.x, y: at\.y,/);
 });
 
 test('page scripts: bulletItems marks each list item once so a filter on a reference returns that item alone, without its backref', () => {
