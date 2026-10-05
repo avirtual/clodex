@@ -169,5 +169,7 @@ test('grammar: type and key take --confirm', () => {
   assert.deepStrictEqual(run('[agent:browser key utility --confirm] Enter'), { sub: 'key', service: 'utility', key: 'Enter', confirm: true });
   assert.strictEqual(run('[agent:browser key utility] Enter').confirm, undefined);
   assert.match(run('[agent:browser type utility 4 --bogus] x').error, /unknown flag --bogus for type — valid: .*--confirm/);
+  assert.strictEqual(run('[agent:browser key x Enter]').error, 'the key goes after the bracket: [agent:browser key [service]] Enter');
+  assert.strictEqual(run('[agent:browser key Space]').error, 'the key goes after the bracket: [agent:browser key [service]] Space');
   assert.match(run('[agent:browser key utility --bogus] Enter').error, /unknown flag --bogus for key — valid: .*--confirm/);
 });

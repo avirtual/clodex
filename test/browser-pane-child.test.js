@@ -585,6 +585,18 @@ test('page scripts: VALUE clips at the source to 200 chars', () => {
   assert.strictEqual(run('abc'), 'abc');
 });
 
+test('page scripts: VALUE_ACTIVE reads the focused text field after a key, never a password, a code or a checkbox', () => {
+  const run = (tag, type, value, attrs = {}) => new Function('document', `return ${scripts.VALUE_ACTIVE}`)({
+    activeElement: { tagName: tag.toUpperCase(), type, value, isContentEditable: false, shadowRoot: null, getAttribute: (k) => attrs[k] || null } });
+  assert.strictEqual(run('input', 'text', 'ab'), 'ab');
+  assert.strictEqual(run('textarea', '', 'x'.repeat(500)).length, 200);
+  assert.strictEqual(run('input', 'password', 'hunter2'), null);
+  assert.strictEqual(run('input', 'text', '123456', { autocomplete: 'one-time-code' }), null);
+  assert.strictEqual(run('input', 'checkbox', 'on'), null);
+  assert.match(scripts.INSPECT(1), /\.\.\.\(textual && !secret\(el\) \? \{ value: String\(el\.value == null \? '' : el\.value\) \} : \{\}\),/);
+  assert.match(CHILD_SRC, /const out = await withChange\(svc, pre, \{ \.\.\.nav\(\), idle: idleOf\(idle\) \}, lateMsFor\(op\)\);\n\s*if \(out\.changed === '' && !wc\.isDestroyed\(\)\) \{\n\s*const value = await inIsolated\(wc, scripts\.VALUE_ACTIVE\);/);
+});
+
 test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then li under the read root, with y/height/vh', () => {
   const run = ({ article = 0, listitem = 0, li = 0, root = true }) => {
     const rootEl = { querySelectorAll: (sel) => ({ length: sel === '[role=listitem]' ? listitem : sel === 'li' ? li : 0 }) };
