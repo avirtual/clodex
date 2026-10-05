@@ -222,8 +222,9 @@ const TEXT = {
     const label = JSON.stringify(String(el.hitLabel || ''));
     const head = `[${n}] ${JSON.stringify(String(el.label || ''))} is covered at its click point by`;
     if (el.hitN != null && el.hitConsequential) return `${head} [${el.hitN}] ⚠ ${label} (${el.hitConsequential}) — read again, or click it with --confirm if the operator asked for it`;
-    if (el.hitN != null) return `${head} [${el.hitN}] ${label} — read again, or click the element that covers it`;
     const buttons = (el.hitButtons || []).map((b) => `[${b.n}] ${JSON.stringify(String(b.label || ''))}`).join(' · ');
+    if (el.hitN != null && buttons) return `${head} [${el.hitN}] ${label} whose buttons are ${buttons} — read again, or click one of them`;
+    if (el.hitN != null) return `${head} [${el.hitN}] ${label} — read again, or click the element that covers it`;
     if (buttons) return `${head} an unnumbered element (${label}) whose buttons are ${buttons} — read again, or click one of them`;
     return `${head} an unnumbered element (${label}) — read again, or click the element that covers it`;
   },

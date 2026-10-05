@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>numbered cookie region over a product link</title>
+<style>
+body{margin:0;font:16px sans-serif;min-height:100vh} ul{margin:20px} li{margin:8px 0}
+#under{position:fixed;left:40px;bottom:100px} #banner{position:fixed;left:0;right:0;bottom:0;height:260px;background:#eef;z-index:10;display:flex;justify-content:flex-end;align-items:flex-start;gap:12px;padding:20px;box-sizing:border-box}
+</style></head><body>
+<ul>
+<li><a href="sorted.html?o=p1">Product one</a></li>
+<li><a href="sorted.html?o=p2">Product two</a></li>
+<li><a href="sorted.html?o=p3">Product three</a></li>
+</ul>
+<a id="under" href="sorted.html?o=under">Product under the banner</a>
+<div id="banner" role="region" aria-label="Cookie banner" tabindex="0"><button>Decline</button><button>Accept</button></div>
+</body></html>

@@ -1039,6 +1039,8 @@ test('coveredRefusal: a covered click point is refused naming what covers it, be
   assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] ⚠ "Delete account" (deletion) — read again, or click it with --confirm if the operator asked for it');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Sterge filtre', hitConsequential: null }).message,
     '[5] "Pret crescator" is covered at its click point by [8] "Sterge filtre" — read again, or click the element that covers it');
+  assert.strictEqual(coveredRefusal(311, { label: 'Friday, October 16, 2026', covered: true, hitN: 274, hitLabel: 'Cookie banner', hitConsequential: null, hitButtons: [{ n: 277, label: 'Decline' }, { n: 278, label: 'Accept' }] }).message,
+    '[311] "Friday, October 16, 2026" is covered at its click point by [274] "Cookie banner" whose buttons are [277] "Decline" · [278] "Accept" — read again, or click one of them');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Prin apăsarea „Accept toate”', hitButtons: [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }] }).message,
     '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Prin apăsarea „Accept toate”") whose buttons are [208] "Accept toate" · [209] "Refuză toate" — read again, or click one of them');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Rezultate: 3 produse' }).message,
@@ -1174,6 +1176,23 @@ test('FIND: a target our scroll parked under a sticky header is scrolled clear o
   const text = boxEl('p', 'Prin apăsarea Accept toate', box(10, 610, 800, 60), layer);
   const h = plain(findOn(inView, () => text, { numbered: { 208: accept, 209: refuse } }));
   assert.deepStrictEqual(h.hitButtons, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }], 'a big z-indexed layer with no positioned ancestor names its buttons');
+  const roled = (role, text, kids) => Object.assign(boxEl('div', text, box(0, 540, 1200, 260)), { style: { ...shown, position: 'fixed' }, getAttribute: (a) => (a === 'role' ? role : null), querySelectorAll: () => kids });
+  const decline = boxEl('button', 'Decline', box(900, 560, 100, 40));
+  const agree = boxEl('button', 'Accept', box(1010, 560, 100, 40));
+  const region = roled('region', 'Cookie banner', [decline, agree]);
+  const i = plain(findOn(inView, () => region, { numbered: { 274: region, 277: decline, 278: agree } }));
+  assert.deepStrictEqual([i.covered, i.hitN, i.hitButtons], [true, 274, [{ n: 277, label: 'Decline' }, { n: 278, label: 'Accept' }]], 'a numbered tabindexed region names its own buttons');
+  const realBtn = boxEl('button', 'Sterge filtre', box(0, 600, 1200, 200));
+  const j = plain(findOn(inView, () => realBtn, { numbered: { 8: realBtn, 277: decline } }));
+  assert.deepStrictEqual([j.covered, j.hitN, j.hitButtons], [true, 8, undefined], 'a numbered real control is its own answer');
+  const del = boxEl('button', 'Delete account', box(900, 560, 100, 40));
+  const keep = boxEl('button', 'Cancel', box(1010, 560, 100, 40));
+  const dialog = roled('dialog', 'Your account', [del, keep]);
+  del.parentElement = del.parentNode = dialog;
+  const k = plain(findOn(inView, () => del, { numbered: { 30: dialog, 31: del, 32: keep } }));
+  assert.deepStrictEqual([k.hitN, k.hitConsequential, k.hitButtons], [31, 'deletion', undefined], 'a ⚠ hit keeps the --confirm reply');
+  const l = plain(findOn(inView, () => dialog, { numbered: { 30: dialog, 31: del, 32: keep } }));
+  assert.deepStrictEqual([l.hitN, l.hitConsequential, l.hitButtons], [30, null, [{ n: 31, label: 'Delete account' }, { n: 32, label: 'Cancel' }]], 'a numbered dialog lists its buttons, ⚠ ones included');
 });
 
 test('page scripts: FIND and INSPECT share one clipOf from DEEP', () => {
