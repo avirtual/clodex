@@ -216,7 +216,7 @@ per post: the post's own number (its permalink, the same number a default read
 gives that link, so `click [n]` opens it; an ad's `[n]` is its own time or clean
 status link, or `[?]` when it has none, never the paid wrapper or its `/analytics`
 link — a `[?]` ad with a known path adds `(an ad's [?] has no safe number — open
-<service> <origin><path> shows the post)`, and several name every printed `[?]` ad
+<service> <origin><path> shows the post)`, when several ads print `[?]`, one line names them all
 on one line: `(N ads' [?] have no safe number — open <service> <url> · <url> shows
 each post)`), `@handle (Name ✓)`, relative and
 absolute time, flags (Ad, reposted by, pinned, reply to), the text clipped at 200

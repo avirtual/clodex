@@ -356,12 +356,16 @@ test('FEED: the quote box is the outermost role=link card around the quote time;
   const [p] = runFeed(h('main', {}, art), { 1500: card }, {}).posts;
   assert.deepStrictEqual([p.media.videos, p.media.duration], [1, '1:05']);
   assert.deepStrictEqual([p.quote.media.videos, p.quote.handle, p.quote.n], [0, 'other', 1500]);
+  const head = h('div', { role: 'link' }, h('span', {}, 'Other'), h('span', {}, '@other'), h('time', {}, '2d'));
+  const outer = h('div', { role: 'link' }, head, h('div', { lang: 'en' }, 'quoted words'));
+  const art2 = h('article', {}, xHeader('me', 'Me', '/me/status/1', {}, '11h').row, h('div', { lang: 'en' }, 'my words'), outer);
+  assert.strictEqual(runFeed(h('main', {}, art2), { 1500: outer, 1501: head }, {}).posts[0].quote.n, 1500);
 });
 
 test('FEED: a nested quote card keeps its own status link; the quote path comes only from a link under the quote handle', () => {
   const quoteOf = (extra) => {
     const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
-    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/5/video/1' }, h('img', { w: 300, h: 200 })));
+    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/6/video/1' }, h('img', { w: 300, h: 200 })));
     const card = h('div', { role: 'link' },
       h('div', {}, h('span', {}, 'Uj'), h('span', {}, '@uj'), h('time', {}, '3h')),
       h('div', { lang: 'en' }, 'look'), inner, ...extra);
@@ -468,6 +472,8 @@ test('FEED: a link card\'s host comes from its "From host" line or the card labe
   const img = () => h('a', { href: 'https://t.co/x', 'aria-label': 'euobserver.com Death of the euro' }, h('img', { w: 300, h: 200 }));
   assert.strictEqual(cardOf(img(), h('a', { href: 'https://t.co/x' }, 'From euobserver.com')), 'euobserver.com');
   assert.strictEqual(cardOf(img()), 'euobserver.com');
+  const relabelled = h('a', { href: 'https://t.co/x', 'aria-label': 'Read it on substack.com' }, h('img', { w: 300, h: 200 }));
+  assert.strictEqual(cardOf(relabelled, h('a', { href: 'https://t.co/x' }, 'From euobserver.com')), 'euobserver.com');
   assert.strictEqual(cardOf(h('a', { href: 'https://t.co/x' }, h('img', { w: 300, h: 200 }))), null);
 });
 

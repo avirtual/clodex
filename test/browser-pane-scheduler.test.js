@@ -775,7 +775,7 @@ test('scheduler: the feed memory survives an in-page trip to a post and back; an
   assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
 });
 
-test('scheduler: the feed memory keeps 8 pages per service; a ninth drops the oldest', async () => {
+test('scheduler: the feed memory keeps 8 pages per service; a ninth drops the least recently read', async () => {
   const { h, cur, post, read } = feedHarness();
   await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
   const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
