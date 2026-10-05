@@ -407,3 +407,25 @@ test('FEED: an inline link in the post text is never the card', () => {
   const art = h('article', {}, row, h('div', { lang: 'en' }, 'see ', h('a', { href: 'https://t.co/x' }, 'https://github.com/foo/bar'), ' now'));
   assert.strictEqual(runFeed(h('main', {}, art), {}, {}).posts[0].media.card, null);
 });
+
+test('FEED: a link card\'s host comes from its "From host" line or the card label, never a shortener href', () => {
+  const cardOf = (...anchors) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const art = h('article', {}, row, h('div', { lang: 'en' }, 'read this'), ...anchors);
+    return runFeed(h('main', {}, art), {}, {}).posts[0].media.card;
+  };
+  const img = () => h('a', { href: 'https://t.co/x', 'aria-label': 'euobserver.com Death of the euro' }, h('img', { w: 300, h: 200 }));
+  assert.strictEqual(cardOf(img(), h('a', { href: 'https://t.co/x' }, 'From euobserver.com')), 'euobserver.com');
+  assert.strictEqual(cardOf(img()), 'euobserver.com');
+  assert.strictEqual(cardOf(h('a', { href: 'https://t.co/x' }, h('img', { w: 300, h: 200 }))), null);
+});
+
+test('FEED: a punctuation-only candidate is no clip; an emoji-only one is', () => {
+  const textOf = (s) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
+    const art = h('article', {}, h('div', {}, row), h('div', {}, h('img', { w: 300, h: 200 })), h('div', {}, s));
+    return runFeed(h('main', {}, art), {}, {}).posts[0].text;
+  };
+  assert.strictEqual(textOf('·'), '');
+  assert.strictEqual(textOf('😭😭😭'), '😭😭😭');
+});

@@ -1073,6 +1073,8 @@ function feedPosts(scope, cats, byEl, loc) {
   };
   const HOST_RE = /\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b/i;
   const LABEL_RE = /^(parody|fan|commentary) account$/i;
+  const FROM_RE = new RegExp('^from\\s+(' + HOST_RE.source + ')', 'i');
+  const SHORT_HOSTS = new Set(['t.co', 'bit.ly', 'lnkd.in', 'buff.ly']);
   const overlap = (a, b) => {
     const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
     const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
@@ -1176,7 +1178,7 @@ function feedPosts(scope, cats, byEl, loc) {
         .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
           && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x))
           && !e.closest('button,[role=button],[role=group]') && !e.querySelector('button,[role=button],[role=group]')
-          && !isDescribed(e) && !/^[\d.,\s]*[KkMm]?(\s+[\d.,]+[KkMm]?)*$/.test(flat(e.innerText)))
+          && !isDescribed(e) && !/^[\d.,\s]*[KkMm]?(\s+[\d.,]+[KkMm]?)*$/.test(flat(e.innerText)) && !/^[\s\p{P}]*$/u.test(flat(e.innerText)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
     const moreEl = [...art.querySelectorAll('button,[role=button]')]
@@ -1193,17 +1195,14 @@ function feedPosts(scope, cats, byEl, loc) {
       counts.push({ num: hit[1], word });
     }
     const media = mediaOf(art, own, handle ? '/' + handle.toLowerCase() : null);
-    let card = null;
-    for (const a of ownA) {
-      const t = flat(a.innerText);
-      const h = host(a.getAttribute('href'));
-      if (card || !h || LABEL_RE.test(t) || inside(a, body)) continue;
-      const tok = HOST_RE.exec(t);
-      const big = [...a.querySelectorAll('img')].some((img) => { const r = img.getBoundingClientRect(); return r.width >= 100 && r.height >= 100; });
-      if (tok) card = tok[0].toLowerCase().replace(/^www\./, '');
-      else if (big) card = h;
-    }
-    media.card = card;
+    const cardAs = ownA.filter((a) => host(a.getAttribute('href')) && !LABEL_RE.test(flat(a.innerText)) && !inside(a, body));
+    const tokOf = (s) => { const m = HOST_RE.exec(flat(s)); return m ? m[0].toLowerCase().replace(/^www\./, '') : null; };
+    const fromA = cardAs.map((a) => FROM_RE.exec(flat(a.innerText))).find(Boolean);
+    const bigA = cardAs.find((a) => !SHORT_HOSTS.has(host(a.getAttribute('href')))
+      && [...a.querySelectorAll('img')].some((img) => { const r = img.getBoundingClientRect(); return r.width >= 100 && r.height >= 100; }));
+    media.card = (fromA && tokOf(fromA[1]))
+      || cardAs.map((a) => tokOf(a.innerText) || tokOf(a.getAttribute('aria-label'))).find(Boolean)
+      || (bigA ? host(bigA.getAttribute('href')) : null);
     let quote = null;
     if (qbox) {
       const pid = statusId(path);
