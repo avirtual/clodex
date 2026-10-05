@@ -199,7 +199,7 @@ function seenSection(feed, seen, opts) {
     const earlier = seen.earlier.filter((l) => keep([l]));
     const lines = shown.flat();
     if (earlier.length) lines.push(`-- seen earlier, off the page now (${seen.earlier.length}) --`, ...earlier);
-    return { marker: `== feed (${cut(shown.length, total)}${total} on the page · ${seen.earlier.length} seen earlier, off the page now) ==`, lines: lines.length ? lines : ['(none)'] };
+    return { marker: `== feed (${cut(shown.length, total)}${total} on the page${seen.earlier.length ? ` · ${seen.earlier.length} seen earlier, off the page now` : ''}) ==`, lines: lines.length ? lines : ['(none)'] };
   }
   const fresh = blocks.filter((b, i) => !seen.seen.has(postKey(feed.posts[i])));
   const shown = fresh.filter(keep);

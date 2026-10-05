@@ -463,6 +463,19 @@ function run(electron, ctx) {
     return null;
   };
 
+  const escapeEntry = (h, url) => {
+    const host = hostOf(url);
+    let near = null;
+    for (let i = h.getActiveIndex() - 1; i >= 0; i--) {
+      const e = h.getEntryAtIndex(i);
+      if (!e) break;
+      if (!e.url || e.url === 'about:blank') continue;
+      if (hostOf(e.url) !== host) return e.url;
+      if (near == null) near = e.url;
+    }
+    return near;
+  };
+
   const render = (svc) => {
     if (svc.win.isDestroyed()) return;
     const vm = lock.barView(svc.lock, { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL() });
@@ -1018,9 +1031,11 @@ function run(electron, ctx) {
       if (hit) throw deniedError(svc, target, hit, dir);
       const { idle } = await driver.act(wc, () => h.goToIndex(entry.index), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
       if (wc.isDestroyed()) throw closedError(name);
+      const moved = navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), download: false });
       return withChange(svc, pre, {
         dir,
-        ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), download: false }),
+        ...moved,
+        ...(moved.navigated ? {} : { stuck: true, escape: escapeEntry(h, wc.getURL()) }),
         url: wc.getURL(),
         title: wc.getTitle(),
         idle: idleOf(idle),

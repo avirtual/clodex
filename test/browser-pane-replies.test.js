@@ -245,6 +245,21 @@ test('replies: back and forward say where they landed and whether another step i
   assert.strictEqual(R.errorReply('NO_HISTORY: nothing to go back to on x'), '[agent:browser] error: NO_HISTORY: nothing to go back to on x');
 });
 
+test('replies: a back that did not leave the page says so and names the way out when history has one', () => {
+  const r = { dir: 'back', navigated: false, stuck: true, url: 'https://funnel.example/lp', title: 'Offer', idle: { ok: true, ms: 700 }, changed: '', canBack: true, canForward: false };
+  assert.strictEqual(R.navReply('x', { sub: 'back', service: 'x' }, { ...r, escape: 'https://x.com/home?token=abc' }),
+    '[agent:browser] went back on x · did not leave the page (the site may block back) · way out: [agent:browser open x] https://x.com/home?token=<redacted> · idle 0.7s · no visible change · history: back ✓ forward ✗');
+  assert.strictEqual(R.navReply('x', { sub: 'back', service: 'x' }, { ...r, escape: null }),
+    '[agent:browser] went back on x · did not leave the page (the site may block back) · idle 0.7s · no visible change · history: back ✓ forward ✗');
+});
+
+test('replies: an ad click without --confirm is refused as a paid click that leaves the site', () => {
+  assert.strictEqual(R.TEXT.consequential(5121, 'musclebooster @musclebooster_ Ad', 'ad'),
+    '[5121] "musclebooster @musclebooster_ Ad" is an ad — clicking it is a paid click on the operator\'s account and leaves the site; re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequential(5, 'Post', 'publish'), '[5] "Post" publishes as the operator — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequential(4, 'Pay now', 'payment'), '[4] "Pay now" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+});
+
 test('replies: the download verb names a repeat as the same as an existing file', () => {
   assert.strictEqual(R.downloadReply('ebloc', { n: 4 }, { file: '/w/bills/lista.pdf', bytes: 120, mime: 'application/pdf', magic: 'pdf', ms: 400, same: true }),
     '[agent:browser] downloaded ebloc [4] → /w/bills/lista.pdf · same as an existing file · 120 B · application/pdf · %PDF ok · 0.4s');

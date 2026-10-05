@@ -1104,6 +1104,14 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   const cqHit = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqHit;`)((e) => !e.hidden);
   assert.deepStrictEqual(cqHit({ ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }), { cat: 'purchase', term: 'buy' });
   assert.deepStrictEqual(cqHit(el('button', 'Go', { form: { getAttribute: () => '/orders/new' } })), { cat: 'purchase', term: 'order' });
+  const article = (line) => ({ tagName: 'ARTICLE', innerText: `musclebooster\n@musclebooster_\n${line}\nNo gym. No complicated equipment`, parentElement: null });
+  const inside = (e, art) => ({ ...e, closest: (sel) => (sel === 'article' ? art : e.closest(sel)) });
+  const wrapper = () => el('div', 'musclebooster @musclebooster_ Ad No gym. No complicated equi', { plain: true });
+  assert.deepStrictEqual(cqHit(inside(wrapper(), article('Ad'))), { cat: 'ad', term: 'Ad' });
+  assert.strictEqual(cqOf(inside(wrapper(), article('Promoted'))), 'ad');
+  assert.strictEqual(cqHit(inside(wrapper(), article('Admittedly'))), null);
+  assert.strictEqual(cqOf(inside(el('button', 'Like'), article('Ad'))), 'publish');
+  assert.strictEqual(cqHit(inside(el('a', '268K views', { attrs: { href: '/x/status/1/analytics' } }), article('Ad'))), null);
   assert.match(scripts.INSPECT(1), /warn: cqHit\(el\),/);
 });
 

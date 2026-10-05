@@ -41,6 +41,7 @@ blocks a release.
 - Browser pane: a link card's host comes from its "From host" line or the card's label, never from a t.co link, and a post whose only text is punctuation shows no clip.
 - Browser pane: `back` and `forward` verbs walk the service's history and say where you landed and whether another step is possible, so an agent can open a post from a feed and return to the same place; the window's blank start page is never a destination.
 - Browser pane: `read --compact` remembers which posts it printed on a page, so after a scroll it prints only the new ones and says `N new · M already seen · K gone since your last read`; `--all` replays the ones that scrolled away. Only posts actually printed count as seen (a filtered or paged read leaves the rest new), the memory survives `back`/`forward`, and a read with nothing new is one line.
+- Browser pane: an ad is a ⚠ click (`ad`) refused without --confirm, its compact `[n]` is its status link or absent, and a `back` that did not leave the page says so and names the way out.
 
 ## 5.112.2 — 2026-10-04
 

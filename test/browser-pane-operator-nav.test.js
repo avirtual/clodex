@@ -61,6 +61,19 @@ test('child: agent back/forward checks the target history entry against the agen
   assert.ok(body.includes("codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`)"));
   assert.ok(/if \(op === 'nav'\) return opNav\(name, frame, args\);/.test(CHILD));
   assert.ok(/'NO_HISTORY'\]\);/.test(CHILD), 'NO_HISTORY is a code the child passes through');
+  assert.ok(body.includes('...(moved.navigated ? {} : { stuck: true, escape: escapeEntry(h, wc.getURL()) }),'), 'a step that did not leave the page is stuck and names the way out');
+});
+
+test('child: escapeEntry is the nearest earlier real entry on another host, else the nearest earlier real entry, else null', () => {
+  const src = /const escapeEntry = \(h, url\) => \{[\s\S]*?\n {2}\};\n/.exec(CHILD);
+  assert.ok(src, 'escapeEntry exists');
+  const { hostOf } = require('../plugins/browser-pane/read-format');
+  const escapeEntry = new Function('hostOf', `${src[0]}; return escapeEntry;`)(hostOf);
+  const hist = (urls, active) => ({ getActiveIndex: () => active, getEntryAtIndex: (i) => (i >= 0 && i < urls.length ? { url: urls[i] } : null) });
+  const funnel = 'https://ads.example/lp?c=1';
+  assert.strictEqual(escapeEntry(hist(['about:blank', 'https://x.com/home', 'https://x.com/a/status/1', funnel, funnel], 4), funnel), 'https://x.com/a/status/1');
+  assert.strictEqual(escapeEntry(hist(['https://x.com/home', 'about:blank', 'https://x.com/b'], 2), 'https://x.com/b'), 'https://x.com/home');
+  assert.strictEqual(escapeEntry(hist(['about:blank', funnel], 1), funnel), null);
 });
 
 test('scheduler: leaseHolder names the seat holding the lease and null after release', async () => {

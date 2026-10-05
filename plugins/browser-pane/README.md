@@ -151,6 +151,10 @@ ipc handlers (step 12).
   send, send via direct message, comment, publish, tweet, and their Romanian forms; not
   share, which only opens a menu) publishes as you:
   it is marked ⚠ and refused without `--confirm` ("Latest posts" is not marked).
+  Anything clickable inside an ad (an `article` with its own `Ad`, `Promoted` or
+  `Sponsored` line), other than its buttons and its `/status/` links, is `⚠ ad`:
+  a click is a paid click on the operator's account and leaves the site, so it is
+  refused unless the agent adds `--confirm`, which it should only when the operator asked.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
@@ -197,13 +201,17 @@ for the new items.
 `back` and `forward` walk the service's history like the pane's own buttons. The
 reply says where you landed and whether another step is possible
 (`history: back ✓ forward ✗`); with no entry in that direction the reply is
-`NO_HISTORY`. X restores the feed's scroll position, so the numbers from the
+`NO_HISTORY`. A step that did not leave the page (an ad funnel can push entries
+that resolve to the same URL) says `did not leave the page (the site may block back)`
+and, when history holds an earlier page, `way out: [agent:browser open x] <url>` —
+the nearest earlier page on another host, else the nearest earlier page. X restores the feed's scroll position, so the numbers from the
 earlier read usually survive (`numbers kept where the page repeats`). A denied
 destination is refused like `open`.
 
 `read --compact` prints a feed (any page built of `article` elements) as one line
 per post: the post's own number (its permalink, the same number a default read
-gives that link, so `click [n]` opens it), `@handle (Name ✓)`, relative and
+gives that link, so `click [n]` opens it; an ad's `[n]` is its own status link,
+or absent when it has none, never the paid wrapper), `@handle (Name ✓)`, relative and
 absolute time, flags (Ad, reposted by, pinned, reply to), the text clipped at 200
 characters with the site's own Show more as `(more [n])`, labelled counts
 (`1,058 replies`), media (`video 1:06`, `2 photos`, `card example.com`) and
@@ -213,7 +221,7 @@ just unprinted, and their ⚠ controls collapse to one `⚠ folded: publish ×N`
 line. Elements outside the feed follow under `== elements (outside the feed) ==`.
 Across scrolls on one page the feed section prints only posts not printed before
 and says `N new · M already seen · K gone since your last read`; `--all` says
-`N on the page · K seen earlier, off the page now` and replays what scrolled away
+`N on the page · K seen earlier, off the page now` (the second part only when K > 0) and replays what scrolled away
 under `-- seen earlier, off the page now (K) --`. Only a post whose line this reply
 printed counts as seen: one cut by `--filter` or left on another `--page` stays new.
 A read with nothing new prints the no-new line and folds the elements outside the
