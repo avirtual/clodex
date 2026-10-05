@@ -229,12 +229,13 @@ function compactFeed(raw, opts) {
 }
 
 function adHint(url, posts, service) {
-  const ad = posts.find((p) => p && p.flags && p.flags.ad && p.n == null && p.path);
-  if (!ad) return [];
+  const paths = [...new Set(posts.filter((p) => p && p.flags && p.flags.ad && p.n == null && p.path).map((p) => p.path))];
+  if (!paths.length) return [];
   let origin = '';
   try { origin = new URL(String(url || '')).origin; } catch { origin = ''; }
   if (origin === 'null') origin = '';
-  return [`(an ad's [?] has no safe number — open ${service} ${origin}${ad.path} shows the post)`];
+  if (paths.length === 1) return [`(an ad's [?] has no safe number — open ${service} ${origin}${paths[0]} shows the post)`];
+  return [`(${paths.length} ads' [?] have no safe number — open ${service} ${paths.map((p) => origin + p).join(' · ')} shows each post)`];
 }
 
 function outsideFeed(elements, feed) {
@@ -530,13 +531,19 @@ function digestOf(raw, feed = null) {
     if (m) rows.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
   }
   const warn = rows.filter((w) => w.cat !== 'ad');
+  const adKeys = raw.adKeys && typeof raw.adKeys === 'object' ? raw.adKeys : {};
   const ads = { posts: 0, elements: 0 };
+  const keyed = new Set();
   let prevAd = false;
   for (const w of [...rows].sort((a, b) => a.n - b.n)) {
     const isAd = w.cat === 'ad';
-    if (isAd) { ads.elements += 1; if (!prevAd) ads.posts += 1; }
+    const key = isAd && adKeys[w.n] != null ? String(adKeys[w.n]) : null;
+    if (isAd) ads.elements += 1;
+    if (key != null) keyed.add(key);
+    else if (isAd && !prevAd) ads.posts += 1;
     prevAd = isAd;
   }
+  ads.posts += keyed.size;
   return {
     title: String(raw.title || ''), url: redactUrl(raw.url || ''), login: loginLabel(raw.login),
     counts: countsOf(raw), headings: list(outline.headings), landmarks: list(outline.landmarks), warn, ads,

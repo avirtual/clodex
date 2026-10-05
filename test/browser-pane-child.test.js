@@ -1112,6 +1112,20 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   assert.strictEqual(cqHit(inside(wrapper(), article('Admittedly'))), null);
   assert.strictEqual(cqOf(inside(el('button', 'Like'), article('Ad'))), 'publish');
   assert.strictEqual(cqHit(inside(el('a', '268K views', { attrs: { href: '/x/status/1/analytics' } }), article('Ad'))), null);
+  const adKeyOf = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn adKeyOf;`)((e) => !e.hidden);
+  const outer = article('Ad');
+  const nested = { tagName: 'ARTICLE', innerText: 'quoted', parentElement: { closest: (sel) => (sel === 'article' ? outer : null) } };
+  const other = article('Promoted');
+  const link = inside(el('a', '@musclebooster_', { attrs: { href: '/musclebooster_' } }), nested);
+  assert.strictEqual(adKeyOf(inside(wrapper(), outer)), 0);
+  assert.strictEqual(adKeyOf(link), 0);
+  assert.strictEqual(adKeyOf(inside(wrapper(), other)), 1);
+  assert.strictEqual(adKeyOf(inside(wrapper(), article('Admittedly'))), null);
+  assert.strictEqual(adKeyOf(wrapper()), null);
+  const ri = scripts.READ_INTERACTIVE(false, {});
+  assert.match(ri, /if \(it\.cq === 'ad'\) \{ const k = adKeyOf\(it\.el\); if \(k != null\) adKeys\[n\] = k; \}/);
+  assert.match(ri, /chrome, cats, adKeys, posts:/);
+  assert.match(CHILD_SRC, /cats: el\.cats \|\| \{\},\n\s*adKeys: el\.adKeys \|\| \{\},/);
   assert.match(scripts.INSPECT(1), /warn: cqHit\(el\),/);
 });
 

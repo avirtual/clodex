@@ -1429,6 +1429,7 @@ function run(electron, ctx) {
       changed: changedOf(prev && prev.sigs, el.sigs),
       chrome: el.chrome || [],
       cats: el.cats || {},
+      adKeys: el.adKeys || {},
       keys: el.keys || {},
       ...(first && ent.restoredAt != null ? { restored: ent.restoredAt } : first ? { first: firstHost || true } : {}),
     } : {};

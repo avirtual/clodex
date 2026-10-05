@@ -587,6 +587,29 @@ test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', 
   assert.deepStrictEqual(formatRead({ ...raw, cats: {} }, { service: 'x' }).digest.ads, { posts: 0, elements: 0 });
 });
 
+test('read digest: ad rows sharing an adKeys article count as one post, distinct keys as distinct posts', () => {
+  const raw = {
+    ...RAW, url: 'https://x.com/home',
+    elements: ['[40] button ⚠ publish Post', '[172] link ⚠ @FTMO_com', '[173] link ⚠ FTMO.com', '[175] link ⚠ From ftmo.com', '[6277] link ⚠ Ad wrapper'],
+    cats: { 172: 'ad', 173: 'ad', 175: 'ad', 40: 'publish', 6277: 'ad' },
+    adKeys: { 172: 0, 173: 0, 175: 0, 6277: 0 },
+  };
+  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.ads, { posts: 1, elements: 4 });
+  assert.deepStrictEqual(formatRead({ ...raw, adKeys: { 172: 0, 173: 0, 175: 0, 6277: 1 } }, { service: 'x' }).digest.ads, { posts: 2, elements: 4 });
+});
+
+test('read --compact: two [?] ads get one hint naming both posts in page order, under --all too', () => {
+  const ad1 = { ...POST, n: null, handle: 'shop', flags: { ad: true }, path: '/shop/status/77' };
+  const ad2 = { ...POST, n: null, handle: 'brand', flags: { ad: true }, path: '/brand/status/88' };
+  const raw = { ...FEED_RAW, url: 'https://x.com/home', feed: { ...FEED_RAW.feed, posts: [POST, ad1, ad2] } };
+  const hint = "(2 ads' [?] have no safe number — open x https://x.com/shop/status/77 · https://x.com/brand/status/88 shows each post)";
+  const first = formatRead(raw, { service: 'x', compact: true }).content.split('\n');
+  assert.ok(first.includes(hint), first.join('\n'));
+  assert.strictEqual(first.filter((l) => /no safe number/.test(l)).length, 1);
+  const all = formatRead(raw, { service: 'x', compact: true, all: true, feedSeen: { seen: new Set(['/shop/status/77']), dropped: 0, earlier: [] } }).content.split('\n');
+  assert.ok(all.includes(hint), all.join('\n'));
+});
+
 test('read --compact: an ad with no number gets a [?] hint naming the page origin and its path; none when every ad has a number', () => {
   const ad = { ...POST, n: null, handle: 'shop', flags: { ad: true }, path: '/shop/status/77' };
   const raw = { ...FEED_RAW, url: 'https://x.com/home', feed: { ...FEED_RAW.feed, posts: [POST, ad] } };
