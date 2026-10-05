@@ -959,6 +959,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     hooks: [
       { type: 'command', command: scriptPath },
       { type: 'command', command: guardPath },
+      { type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') },
     ],
   }], 'a matcher-less entry here would run this before EVERY tool call, not just Bash');
 
@@ -1422,4 +1423,87 @@ test('pending drain (hook): an unwritable spool still delivers and consumes — 
   assert.strictEqual(JSON.parse(out).hookSpecificOutput.additionalContext, 'still arrives');
   assert.ok(!fs.existsSync(pendDir));
   assert.ok(!fs.existsSync(pathFor(REGISTRY_DIR, 'dlv3', 'delivered')));
+});
+
+const crypto = require('crypto');
+const { identToken, identIsMain } = require('../intent-socket');
+const ICRED = 'f'.repeat(64);
+
+function runIdent(REGISTRY_DIR, payload, env = { CLODEX_INTENT_CRED: ICRED }) {
+  const base = { ...process.env };
+  delete base.CLODEX_INTENT_CRED;
+  const r = cp.spawnSync('bash', [pathFor(REGISTRY_DIR, 'agent1', 'identScript')], {
+    ...HOOK_SPAWN, input: JSON.stringify(payload), encoding: 'utf-8', env: { ...base, ...env },
+  });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return r.stdout;
+}
+
+function identSeat() {
+  const REGISTRY_DIR = tmp();
+  mk(REGISTRY_DIR).setupClaudeHook('agent1');
+  return REGISTRY_DIR;
+}
+
+const bashCall = (command, extra = {}) => ({
+  hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', tool_input: { command, timeout: 300000 }, ...extra,
+});
+
+test('ident hook: a main-agent clodex call is stamped main.<hmac> that verifies with the seat credential', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall("clodex '[agent:browser release wiki]'")));
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'PreToolUse');
+  const want = identToken(crypto, ICRED, null, null, 'sess-1');
+  assert.match(want, /^main\.[0-9a-f]{16}$/);
+  assert.deepStrictEqual(out.hookSpecificOutput.updatedInput, {
+    command: `CLODEX_HOOK_IDENT=${want} clodex '[agent:browser release wiki]'`, timeout: 300000,
+  });
+  assert.strictEqual(identIsMain(crypto, ICRED, want, 'sess-1'), true);
+});
+
+test('ident hook: with no credential in env it reads run/<name>/intent.cred', () => {
+  const REGISTRY_DIR = identSeat();
+  fs.writeFileSync(pathFor(REGISTRY_DIR, 'agent1', 'intentCred'), ICRED, { mode: 0o600 });
+  const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x'), {}));
+  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} clodex x`);
+});
+
+test('ident hook: a subagent call is stamped sub.<agent_id>.<agent_type>.<hmac>', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall('clodex x', { agent_id: 'a1b2', agent_type: 'general-purpose' })));
+  const cmd = out.hookSpecificOutput.updatedInput.command;
+  assert.match(cmd, /^CLODEX_HOOK_IDENT=sub\.a1b2\.general-purpose\.[0-9a-f]{16} clodex x$/);
+  assert.strictEqual(cmd, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, 'a1b2', 'general-purpose', 'sess-1')} clodex x`);
+});
+
+test('ident hook: a non-clodex command gets no output and exit 0', () => {
+  const REGISTRY_DIR = identSeat();
+  for (const c of ['ls -la', 'echo clodex', "grep clodex file | head", 'clodexify x']) {
+    assert.strictEqual(runIdent(REGISTRY_DIR, bashCall(c)), '', c);
+  }
+});
+
+test('ident hook: only the clodex segments are prefixed; cd and the pipe stay byte-identical', () => {
+  const REGISTRY_DIR = identSeat();
+  const tok = identToken(crypto, ICRED, null, null, 'sess-1');
+  const cmd = (c) => JSON.parse(runIdent(REGISTRY_DIR, bashCall(c))).hookSpecificOutput.updatedInput.command;
+  assert.strictEqual(cmd("cd x && clodex '[agent:name]' | head"), `cd x && CLODEX_HOOK_IDENT=${tok} clodex '[agent:name]' | head`);
+  assert.strictEqual(cmd('~/.clodex/bin/clodex a; clodex b'), `CLODEX_HOOK_IDENT=${tok} ~/.clodex/bin/clodex a; CLODEX_HOOK_IDENT=${tok} clodex b`);
+});
+
+test('ident hook: a forged CLODEX_HOOK_IDENT in the command is replaced by the hook value', () => {
+  const REGISTRY_DIR = identSeat();
+  const tok = identToken(crypto, ICRED, 'a1', 'gp', 'sess-1');
+  const cmd = (c) => JSON.parse(runIdent(REGISTRY_DIR, bashCall(c, { agent_id: 'a1', agent_type: 'gp' }))).hookSpecificOutput.updatedInput.command;
+  assert.strictEqual(cmd('CLODEX_HOOK_IDENT=main.deadbeef clodex x'), `CLODEX_HOOK_IDENT=${tok} clodex x`);
+  assert.strictEqual(cmd('FOO=1 env CLODEX_HOOK_IDENT=main.deadbeef clodex x'), `CLODEX_HOOK_IDENT=${tok} FOO=1 env clodex x`);
+});
+
+test('ident hook: SubagentStart is registered and briefs the subagent in one additionalContext line', () => {
+  const REGISTRY_DIR = identSeat();
+  const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'settings'), 'utf-8'));
+  assert.deepStrictEqual(settings.hooks.SubagentStart, [{ matcher: '', hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }] }]);
+  const out = JSON.parse(runIdent(REGISTRY_DIR, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'gp', session_id: 'sess-1' }));
+  assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SubagentStart');
+  assert.match(out.hookSpecificOutput.additionalContext, /^This seat's browser pane and Clodex intents are reachable from Bash as `clodex '\[agent:browser …\]'`; run `clodex --help` for the subagent catalog\.$/);
 });
