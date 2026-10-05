@@ -301,6 +301,43 @@ function actReply(sub, service, cmd, r) {
   return oneLine(`${PREFIX} ${text}`, REPLY_MAX + CHANGE_MAX);
 }
 
+function scrollPosition(after, vh) {
+  const end = after.y + vh;
+  if (after.y <= 0) return 'top of page';
+  if (end >= after.height - 2) return 'bottom of page';
+  const pct = (v) => Math.round((v / after.height) * 100);
+  return `${after.y}–${end} of ${after.height} px (${pct(after.y)}–${pct(end)}%)`;
+}
+
+function itemsLabel(a, b) {
+  const d = b - a;
+  if (d === 0) return a > 0 ? 'no new items' : null;
+  const n = Math.abs(d);
+  return `${d > 0 ? '+' : '−'}${n} item${n === 1 ? '' : 's'} (${a} → ${b})`;
+}
+
+function scrollReply(service, cmd, r) {
+  const before = r.before || {};
+  const after = r.after || {};
+  const head = `scrolled ${service} ${cmd.dir}${cmd.pages > 1 ? ` ×${cmd.pages}` : ''}`;
+  const tail = r.takeover ? TEXT.takeover : '';
+  if ((cmd.dir === 'down' || cmd.dir === 'up') && !r.navigated && after.y === before.y) {
+    return oneLine(`${PREFIX} ${head} · already at ${cmd.dir === 'down' ? 'bottom' : 'top'} of page${tail}`, REPLY_MAX);
+  }
+  const parts = [head];
+  if (r.navigated) parts.push(pageLabel(r));
+  parts.push(scrollPosition(after, r.vh || 0));
+  const items = itemsLabel(before.items || 0, after.items || 0);
+  if (items) parts.push(items);
+  const grew = (after.height || 0) - (before.height || 0);
+  if (grew) parts.push(`page ${grew > 0 ? 'grew' : 'shrank'} ${Math.abs(grew)} px`);
+  const idle = idleLabel(r.idle);
+  if (idle) parts.push(idle);
+  let text = parts.join(' · ');
+  if ((!r.navigated || r.inPage) && typeof r.changed === 'string') text += changeTail('scroll', r);
+  return oneLine(`${PREFIX} ${text}${tail}`, REPLY_MAX + CHANGE_MAX);
+}
+
 function changeTail(sub, r) {
   const target = r.target ? ` · target: ${r.target}` : '';
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
@@ -450,6 +487,6 @@ module.exports = {
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
-  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, scrollReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };

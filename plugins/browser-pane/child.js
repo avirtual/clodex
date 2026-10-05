@@ -44,7 +44,7 @@ const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
   'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -360,6 +360,16 @@ const SIGNIN_REASONS = new Set(['login', 'otp', 'captcha', 'idp']);
 
 function signinHold(svc) {
   return !!svc && !!svc.lock && svc.lock.state === 'held' && SIGNIN_REASONS.has(svc.lock.reason);
+}
+
+const SCROLL_DIRS = new Set(['down', 'up', 'top', 'bottom']);
+const SCROLL_OVERLAP_PX = 40;
+
+function scrollCode(dir, pages) {
+  if (dir === 'top') return 'window.scrollTo(0, 0)';
+  if (dir === 'bottom') return 'window.scrollTo(0, (document.scrollingElement || document.documentElement).scrollHeight)';
+  const sign = dir === 'up' ? '-' : '';
+  return `window.scrollBy(0, ${sign}(window.innerHeight - ${SCROLL_OVERLAP_PX}) * ${pages})`;
 }
 
 function lateMsFor(op) {
@@ -949,6 +959,35 @@ function run(electron, ctx) {
     });
   }
 
+  async function opScroll(name, frame, args) {
+    const svc = need(name);
+    const dir = SCROLL_DIRS.has(args.dir) ? args.dir : 'down';
+    const pages = Math.max(1, Math.min(20, Number(args.pages) || 1));
+    return mutating(svc, frame, `scroll ${dir}`, async () => {
+      ensureCdp(svc);
+      const wc = svc.wc;
+      const docBefore = svc.doc;
+      const hrefBefore = wc.getURL();
+      const measure = async () => (wc.isDestroyed() ? null : inMain(wc, scripts.SCROLL_INFO));
+      const before = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
+      const pre = await preAct(svc, null);
+      const { idle } = await driver.act(wc, async () => {
+        await inMain(wc, scrollCode(dir, pages));
+        await driver.sleep(0);
+      }, actOpts(svc));
+      const after = (await measure()) || before;
+      const out = {
+        dir, pages,
+        before: { y: before.y, height: before.height, items: before.items },
+        after: { y: after.y, height: after.height, items: after.items },
+        vh: after.vh,
+        ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download: false }),
+        idle: idleOf(idle),
+      };
+      return withChange(svc, pre, out, 0);
+    });
+  }
+
   const targetOf = (svc, n) => driver.withTimeout(
     svc.wc.executeJavaScriptInIsolatedWorld(scripts.ISOLATED_WORLD, [{ code: scripts.TARGET_STATE(n) }]).catch(() => null), SNAP_MS, null);
 
@@ -1416,6 +1455,7 @@ function run(electron, ctx) {
             if (op === 'idle') return opIdle(name, args);
             if (op === 'download') return opDownload(name, frame, args);
             if (op === 'screenshot') return opScreenshot(name, args);
+            if (op === 'scroll') return opScroll(name, frame, args);
             return opAct(name, frame, args);
           });
         }
@@ -1452,6 +1492,6 @@ function run(electron, ctx) {
 }
 
 module.exports = {
-  run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
+  run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
   numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

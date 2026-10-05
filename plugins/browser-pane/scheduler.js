@@ -75,6 +75,7 @@ function cmdLabel(cmd) {
   if (cmd.sub === 'inspect') return `inspect ${cmd.n}`;
   if (N_ACTS.has(cmd.sub)) return `${cmd.sub} ${cmd.n}`;
   if (cmd.sub === 'key') return `key ${cmd.key}`;
+  if (cmd.sub === 'scroll') return `scroll ${cmd.dir}${cmd.pages > 1 ? ` ×${cmd.pages}` : ''}`;
   if (cmd.sub === 'download' && cmd.n != null) return `download ${cmd.n}`;
   return cmd.sub;
 }
@@ -284,6 +285,13 @@ function createScheduler({
     return replies.actReply(cmd.sub, service, cmd, r);
   }
 
+  async function runScroll(handle, service, cmd) {
+    const r = await client.request('scroll', { dir: cmd.dir, pages: cmd.pages || 1 }, { service, seat: handle.name });
+    noteUrl(service, r.url);
+    if (r.held && !r.takeover) signin(service, r);
+    return replies.scrollReply(service, cmd, r);
+  }
+
   async function runInspect(handle, service, cmd) {
     const args = {};
     if (cmd.n != null) args.n = cmd.n;
@@ -321,7 +329,7 @@ function createScheduler({
   }
 
   const RUN = {
-    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
+    open: runOpen, read: runRead, click: runAct, type: runAct, select: runAct, key: runAct, scroll: runScroll, wait: runWait, download: runDownload, screenshot: runScreenshot, inspect: runInspect,
   };
 
   function fail(handle, s, text, keepWaits) {
