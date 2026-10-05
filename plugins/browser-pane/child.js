@@ -452,12 +452,23 @@ function run(electron, ctx) {
     else if (!busy && blockerId != null) { powerSaveBlocker.stop(blockerId); blockerId = null; }
   };
 
+  const realEntry = (h, dir) => {
+    if (!h) return null;
+    const step = dir === 'back' ? -1 : 1;
+    for (let i = h.getActiveIndex() + step; i >= 0; i += step) {
+      const e = h.getEntryAtIndex(i);
+      if (!e) return null;
+      if (e.url && e.url !== 'about:blank') return { index: i, url: e.url };
+    }
+    return null;
+  };
+
   const render = (svc) => {
     if (svc.win.isDestroyed()) return;
     const vm = lock.barView(svc.lock, { service: svc.name, url: svc.wc.isDestroyed() ? '' : svc.wc.getURL() });
     if (svc.flash && Date.now() < svc.flash.until) vm.text = svc.flash.text;
     vm.editable = svc.lock.state === 'idle' || svc.lock.state === 'held';
-    vm.canBack = !svc.wc.isDestroyed() && !!(svc.wc.navigationHistory && svc.wc.navigationHistory.canGoBack());
+    vm.canBack = !svc.wc.isDestroyed() && realEntry(svc.wc.navigationHistory, 'back') != null;
     if (svc.barMsg && Date.now() < svc.barMsg.until) vm.msg = svc.barMsg.text;
     svc.win.webContents.executeJavaScript(`window.cxbRender && window.cxbRender(${JSON.stringify(vm)})`).catch(() => {});
   };
@@ -996,14 +1007,16 @@ function run(electron, ctx) {
       ensureCdp(svc);
       const docBefore = svc.doc;
       const hrefBefore = wc.getURL();
-      const pre = await preAct(svc, null);
       const h = wc.navigationHistory;
-      if (!h || !(dir === 'back' ? h.canGoBack() : h.canGoForward())) throw codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
-      const entry = h.getEntryAtIndex(h.getActiveIndex() + (dir === 'back' ? -1 : 1));
-      const target = entry && entry.url;
-      const hit = target ? policyDenies(svc, target, 'agent') : null;
+      const noHistory = () => codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
+      if (!realEntry(h, dir)) throw noHistory();
+      const pre = await preAct(svc, null);
+      const entry = realEntry(h, dir);
+      if (!entry) throw noHistory();
+      const target = entry.url;
+      const hit = policyDenies(svc, target, 'agent');
       if (hit) throw deniedError(svc, target, hit, dir);
-      const { idle } = await driver.act(wc, () => (dir === 'back' ? h.goBack() : h.goForward()), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
+      const { idle } = await driver.act(wc, () => h.goToIndex(entry.index), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
       if (wc.isDestroyed()) throw closedError(name);
       return withChange(svc, pre, {
         dir,
@@ -1011,8 +1024,8 @@ function run(electron, ctx) {
         url: wc.getURL(),
         title: wc.getTitle(),
         idle: idleOf(idle),
-        canBack: h.canGoBack(),
-        canForward: h.canGoForward(),
+        canBack: realEntry(h, 'back') != null,
+        canForward: realEntry(h, 'forward') != null,
       }, 0);
     });
   }

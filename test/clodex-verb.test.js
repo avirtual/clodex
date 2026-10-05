@@ -164,6 +164,7 @@ test('--help lists the subagent catalog', async () => {
     assert.ok(r.out.includes(v), v);
   }
   assert.match(r.out, /\[agent:browser <sub> …\].*\bscroll,/);
+  assert.ok(r.out.includes('scroll,\n                                  back, forward, wait, download, screenshot,\n                                  inspect, services\n'), r.out);
 });
 
 test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
