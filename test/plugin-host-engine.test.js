@@ -123,7 +123,7 @@ test('SessionHandle exposes only the frozen five-method surface', () => {
   // No raw session object, no pty, no persistence entry ever crosses.
   assert.equal(h.pty, undefined);
   h.inject('hello');
-  assert.deepEqual(manager.injected, [{ name: 'a', text: 'hello', opts: { parkable: true } }],
+  assert.deepEqual(manager.injected, [{ name: 'a', text: 'hello', opts: { parkable: true, ownScope: true } }],
     'inject defaults to parkable:true, the exec reply convention');
   assert.equal(host.sessions.get('nope'), null, 'unknown session mints no handle');
 });

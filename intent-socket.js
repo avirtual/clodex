@@ -49,7 +49,14 @@ function defaultReply(intent) {
   return `${intentLabel(intent)} accepted; ${RESULT_TAIL}`;
 }
 
-function createIntentRequestHandler({ seat, parse, entryOf, sessionIdOf, allows, dispatch }) {
+function lateReply(intent) {
+  return `${intent.type} accepted; its reply will arrive in the seat's main conversation`;
+}
+
+function createIntentRequestHandler({
+  seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs,
+  setTimer = setTimeout, clearTimer = clearTimeout,
+}) {
   return async function handleIntentRequest(req, ctl) {
     const text = req && typeof req.intent === 'string' ? req.intent : '';
     if (!text.trim()) return { ok: false, error: 'empty intent' };
@@ -60,18 +67,30 @@ function createIntentRequestHandler({ seat, parse, entryOf, sessionIdOf, allows,
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
     const subagent = !!agentId && !isMainThread(agentId, sessionIdOf());
-    if (subagent && !allows(intent, entryOf())) {
-      return { ok: false, error: `not available to a subagent: ${intentLabel(intent)}` };
+    if (subagent) {
+      const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
+      if (why !== null) return { ok: false, error: why || `not available to a subagent: ${intentLabel(intent)}` };
     }
     const lines = [];
     let open = true;
+    let wake = null;
     const replyTo = (t) => {
       if (!open || (ctl && ctl.closed())) return false;
       lines.push(String(t));
+      if (wake) wake();
       return true;
     };
     try {
       await dispatch(intent, { replyTo, fromLabel: subagent ? subagentTag(seat) : null });
+      const waitMs = !lines.length && replyWaitMs ? replyWaitMs(intent) : 0;
+      if (waitMs > 0 && !(ctl && ctl.closed())) {
+        if (ctl && ctl.extend) ctl.extend(waitMs + INTENT_SOCKET_TIMEOUT_MS);
+        const replied = await new Promise((resolve) => {
+          const timer = setTimer(() => resolve(false), waitMs);
+          wake = () => { clearTimer(timer); resolve(true); };
+        });
+        if (!replied) return { ok: true, reply: lateReply(intent) };
+      }
     } finally {
       open = false;
     }
@@ -124,10 +143,12 @@ function createIntentSocketServer({
       try { req = JSON.parse(buf.subarray(0, nl).toString('utf8')); } catch { req = null; }
       if (!req || typeof req !== 'object') { end({ ok: false, error: 'bad request' }); return; }
       if (!credMatches(crypto, cred, req.cred)) { end({ ok: false, error: 'unauthorized' }); return; }
-      const timer = setTimer(() => end({ ok: false, error: 'timeout' }), timeoutMs);
+      const expire = () => end({ ok: false, error: 'timeout' });
+      let timer = setTimer(expire, timeoutMs);
+      const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
       const request = { intent: req.intent, agentId: req.agentId, agentType: req.agentType };
       Promise.resolve()
-        .then(() => handle(request, { closed: () => done }))
+        .then(() => handle(request, { closed: () => done, extend }))
         .then((r) => end(r && typeof r === 'object' ? r : { ok: false, error: 'no reply' }),
           (e) => {
             if (log) log.warn('intent-socket', `request failed: ${(e && e.message) || e}`);

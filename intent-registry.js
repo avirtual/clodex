@@ -11,6 +11,8 @@ const {
 } = require('./intent-catalog');
 const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
 const { PLUGIN_GLYPH, pluginGlyphOk } = require('./intent-glyphs');
+const PLUGIN_REPLY_WAIT_MS = 30 * 1000;
+const PLUGIN_REPLY_WAIT_MAX_MS = 120 * 1000;
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
@@ -347,6 +349,11 @@ function registerIntent(spec, source, opts = {}) {
     label: String(spec.label || `${type} (plugin: ${src})`),
     promptLines: spec.promptLines != null ? String(spec.promptLines) : null,
     handler: typeof spec.handler === 'function' ? spec.handler : null,
+    replyWaitMs: (intent) => {
+      let ms;
+      try { ms = typeof spec.replyWaitMs === 'function' ? spec.replyWaitMs(intent) : null; } catch { ms = null; }
+      return Number.isFinite(ms) && ms > 0 ? Math.min(ms, PLUGIN_REPLY_WAIT_MAX_MS) : PLUGIN_REPLY_WAIT_MS;
+    },
     source: src,
 // Both threaded by the host at register(), never read off `spec`: a plugin that
 // could declare its own scope could declare itself global, and one that could
@@ -443,15 +450,37 @@ function intentEnabledForSeat(type, entry) {
     && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
 }
 
-const SUBAGENT_SUBS = { task: ['list'], memory: ['recall', 'list'] };
+const SUBAGENT_SUBS = {
+  task: ['list'],
+  memory: ['recall', 'list'],
+  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'wait', 'download', 'screenshot', 'inspect', 'services'],
+};
 const SUBAGENT_TYPES = ['dm', 'who', 'name', 'exec', ...Object.keys(SUBAGENT_SUBS)];
+const SUBAGENT_CONFIRM_SUBS = ['click', 'type', 'select', 'key'];
+const SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
+const SUBAGENT_NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
+
+function pluginWords(intent) {
+  return String((intent && intent.raw) || '').trim().split(/\s+/).filter(Boolean);
+}
+
+function subagentRefusal(intent, entry) {
+  if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return '';
+  if (intent.type === 'browser') {
+    const words = pluginWords(intent);
+    if (words[0] === 'release') return SUBAGENT_NO_RELEASE;
+    if (SUBAGENT_CONFIRM_SUBS.includes(words[0]) && words.some((w) => /^--confirm(=|$)/.test(w))) return SUBAGENT_NO_CONFIRM;
+    if (!pluginRowFor('browser') || !intentEnabledForSeat('browser', entry)) return '';
+    return SUBAGENT_SUBS.browser.includes(words[0]) ? null : '';
+  }
+  if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub) ? null : '';
+  if (intent.type !== 'exec') return null;
+  const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
+  return grants.includes(intent.cmd) ? null : '';
+}
 
 function subagentAllows(intent, entry) {
-  if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return false;
-  if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub);
-  if (intent.type !== 'exec') return true;
-  const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
-  return grants.includes(intent.cmd);
+  return subagentRefusal(intent, entry) === null;
 }
 
 // The write-time half: drop from a seat's allowlist and grants everything owned
@@ -556,6 +585,9 @@ module.exports = {
   intentEnabledFor,
   intentEnabledForSeat,
   subagentAllows,
+  subagentRefusal,
+  PLUGIN_REPLY_WAIT_MS,
+  PLUGIN_REPLY_WAIT_MAX_MS,
   SUBAGENT_SUBS,
   SUBAGENT_TYPES,
   pruneForPlugins,

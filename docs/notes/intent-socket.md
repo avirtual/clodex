@@ -4,6 +4,10 @@
 
 Until ticket B's PreToolUse hook stamps `agentId`, the subagent filter trusts the caller's claim. A main agent that claims to be a subagent only loses rights; a subagent that omits the id gets the seat's catalog.
 
+A subagent drives the browser as its seat; two subagents of one seat share the seat's lease and queue, its held windows, downloads dir and read-file dir. That is why `release` is refused to a subagent.
+
+A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this call, not from AsyncLocalStorage: the browser scheduler replies from timers and child IPC, and a queued job starts in the previous job's async context.
+
 ## isMainThread
 
 Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while a Codex seat's `sessionId` is the rollout basename `rollout-<ts>-<uuid>`; so the main agent is an `agentId` equal to the `sessionId` or to its `-<uuid>` tail.
