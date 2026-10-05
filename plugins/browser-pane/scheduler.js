@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const replies = require('./replies');
 const paths = require('./paths');
-const { formatRead, chromeStrip, elementStrip, hostOf } = require('./read-format');
+const { formatRead, chromeStrip, elementStrip, hostOf, postKey } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -97,7 +97,7 @@ function createScheduler({
   const seats = new Map();
 
   const seatState = (name) => {
-    if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {} });
+    if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {}, feed: {} });
     return seats.get(name);
   };
 
@@ -211,6 +211,37 @@ function createScheduler({
     return replies.openReply(service, r) + (r.takeover ? replies.TEXT.takeover : '');
   }
 
+  function feedMemory(st, service, raw, cmd) {
+    const posts = raw && raw.feed && Array.isArray(raw.feed.posts) ? raw.feed.posts : [];
+    if (!cmd.compact || (cmd.mode && cmd.mode !== 'default') || !posts.length) return null;
+    const page = pageKey(raw.url);
+    const doc = raw.doc == null ? null : raw.doc;
+    let mem = st.feed[service];
+    if (!mem || mem.page !== page || mem.doc !== doc) {
+      mem = { page, doc, seen: new Map(), reads: 0, view: null };
+      st.feed[service] = mem;
+    }
+    if (cmd.page > 1 && mem.reads) return { mem, view: mem.view, commit: false };
+    if (!mem.reads) return { mem, view: null, commit: true };
+    const keys = new Set(posts.map(postKey));
+    const earlier = [];
+    let dropped = 0;
+    for (const [key, e] of mem.seen) {
+      if (keys.has(key)) continue;
+      earlier.push(e.line);
+      if (e.at === mem.reads) dropped += 1;
+    }
+    return { mem, view: { seen: new Set(mem.seen.keys()), dropped, earlier }, commit: true };
+  }
+
+  function rememberFeed(memo, feedPosts) {
+    if (!memo || !memo.commit || !feedPosts) return;
+    const mem = memo.mem;
+    mem.reads += 1;
+    mem.view = memo.view;
+    for (const p of feedPosts) if (p.stored) mem.seen.set(p.key, { n: p.n, line: p.line, at: mem.reads });
+  }
+
   async function runRead(handle, service, cmd) {
     const raw = await client.request('read', { scope: cmd.main ? 'main' : 'all', ...(cmd.compact ? { compact: true } : {}) }, { service, seat: handle.name });
     if (raw && raw.held) signin(service, raw);
@@ -242,7 +273,9 @@ function createScheduler({
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen };
     const rec = ((storage.get() || {}).services || {})[service] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost });
+    const memo = feedMemory(st, service, raw, cmd);
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost, feedSeen: memo && memo.view });
+    rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);

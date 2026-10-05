@@ -687,3 +687,52 @@ test('scheduler: read --compact asks the child for the feed; a plain read does n
   await h.run([['hand-a', '[agent:browser read --compact]'], ['hand-a', '[agent:browser read]']]);
   assert.deepStrictEqual(h.calls.map((c) => c.slice(1)), [['read', { scope: 'all', compact: true }], ['read', { scope: 'all' }]]);
 });
+
+function feedHarness() {
+  const post = (i, flags = {}) => ({ n: i, path: i == null ? null : `/a/status/${i}`, handle: 'a', name: null, verified: false, time: { rel: '9h', iso: null }, text: 'hi', more: null, counts: [], media: {}, flags, quote: null });
+  const cur = { url: 'https://x.example.com/home', doc: 1, posts: [] };
+  const h = harness({ read: () => ({ ...DEFAULTS.read(), url: cur.url, doc: cur.doc, feed: { count: cur.posts.length, posts: cur.posts, numbers: [], folded: {} } }) });
+  const hd = h.seat('hand-a');
+  const inject = hd.inject;
+  const feeds = [];
+  hd.inject = (text) => {
+    const m = / → @?(\S+\.txt)/.exec(text);
+    if (m) feeds.push(fs.readFileSync(m[1], 'utf8').split('\n').filter((l) => /^(==|--) |^\[|^\(no new/.test(l) && !/^\[1\] button/.test(l)).slice(0, -1));
+    inject(text);
+  };
+  const read = async (posts, line = '[agent:browser read --compact]') => { cur.posts = posts; await h.run([['hand-a', line]]); return feeds.pop(); };
+  return { h, cur, post, read };
+}
+
+const lineOf = (i) => `[${i}] @a · 9h · "hi" · → /a/status/${i}`;
+
+test('scheduler: read --compact after a scroll prints only new posts and counts the seen and the dropped; a path-less post is never seen', async () => {
+  const { h, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const first = await read([post(null), ...[1, 2, 3, 4, 5, 6, 7].map((i) => post(i))]);
+  assert.strictEqual(first[0], '== feed (8 posts) ==');
+  const second = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))]);
+  assert.deepStrictEqual(second, [
+    '== feed (3 new · 5 already seen · 2 dropped off the top) ==', '[?] @a · 9h · "hi"', lineOf(8), lineOf(9), '== elements (outside the feed) ==',
+  ]);
+  const all = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))], '[agent:browser read --compact --all]');
+  assert.deepStrictEqual(all.slice(0, 1).concat(all.slice(9, 12)), [
+    '== feed (8 on the page · 2 seen earlier) ==', '-- seen earlier, no longer on the page (2) --', lineOf(1), lineOf(2),
+  ]);
+  const again = await read([post(null), ...[3, 4, 5, 6, 7, 8, 9].map((i) => post(i))]);
+  assert.strictEqual(again[0], '== feed (1 new · 7 already seen) ==');
+});
+
+test('scheduler: the feed memory starts over on a new document or another page; a repost of a seen status is new', async () => {
+  const { h, cur, post, read } = feedHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
+  const eight = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => post(i));
+  await read(eight);
+  assert.strictEqual((await read(eight))[0], '== feed (0 new · 8 already seen) ==');
+  cur.doc = 2;
+  assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
+  cur.url = 'https://x.example.com/a/status/1';
+  assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
+  assert.deepStrictEqual((await read([...eight, post(1, { repostedBy: 'Ana' })])).slice(0, 2),
+    ['== feed (1 new · 8 already seen) ==', '[1] @a · 9h · reposted by Ana · "hi" · → /a/status/1']);
+});
