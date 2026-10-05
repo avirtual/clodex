@@ -1150,6 +1150,30 @@ test('FIND: a target our scroll parked under a sticky header is scrolled clear o
   const inView = boxEl('button', 'Pret crescator', box(10, 620, 100, 30));
   const d = plain(findOn(inView, () => para, { numbered: { 208: accept, 209: refuse } }));
   assert.deepStrictEqual([d.covered, d.hitN, d.hitButtons], [true, null, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }]]);
+  const parkedLow = (cover, move) => {
+    const t = boxEl('button', 'Pret crescator', box(10, 900, 100, 40));
+    t.onScroll = () => { t.rect = box(10, 760, 100, 40); };
+    const bys = [];
+    const scrollBy = (o) => { bys.push({ ...o }); t.rect = move(t.rect, o); };
+    const under = (x, y) => (y >= 800 ? null : y >= cover.rect.top && y < cover.rect.bottom ? cover : t);
+    return { t, bys, run: () => findOn(t, under, { numbered: { 208: accept, 209: refuse }, extra: { scrollBy } }) };
+  };
+  const card = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 584, 1200, 200)), { style: { ...shown, position: 'fixed' }, querySelectorAll: () => [accept, refuse] });
+  const lifted = parkedLow(card, (r, o) => box(10, r.top - o.top, 100, 40));
+  const e = plain(await lifted.run());
+  assert.deepStrictEqual(lifted.bys, [{ left: 0, top: 220, behavior: 'instant' }], 'a floating card near the bottom scrolls the target up past it');
+  assert.deepStrictEqual([e.covered, e.y], [false, 560]);
+  const away = parkedLow(card, () => box(10, 788, 100, 40));
+  const f = plain(await away.run());
+  assert.deepStrictEqual([f.covered, f.y, f.hitButtons], [true, 780, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }]], 'a retry that lands off the viewport keeps the first refusal');
+  const bar = Object.assign(boxEl('div', 'Cos', box(0, 720, 1200, 80)), { style: { ...shown, position: 'fixed' } });
+  const barred = parkedLow(bar, (r, o) => box(10, r.top - o.top, 100, 40));
+  const g = plain(await barred.run());
+  assert.deepStrictEqual([barred.bys, g.covered, g.y], [[{ left: 0, top: 84, behavior: 'instant' }], false, 696]);
+  const layer = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 0, 1200, 800)), { style: { ...shown, position: 'static', zIndex: '5' }, querySelectorAll: () => [accept, refuse] });
+  const text = boxEl('p', 'Prin apăsarea Accept toate', box(10, 610, 800, 60), layer);
+  const h = plain(findOn(inView, () => text, { numbered: { 208: accept, 209: refuse } }));
+  assert.deepStrictEqual(h.hitButtons, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }], 'a big z-indexed layer with no positioned ancestor names its buttons');
 });
 
 test('page scripts: FIND and INSPECT share one clipOf from DEEP', () => {

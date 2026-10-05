@@ -788,7 +788,6 @@ function find(n) {
     lastHit = covered ? hit : null;
     let hitN = null;
     for (let e = covered ? hit : null; e && hitN == null; e = upOf(e)) hitN = numberOf(e);
-    const hitButtons = covered && hitN == null ? buttonsOf(overlayOf(hit)) : [];
     return {
       x: at.x, y: at.y, tag, type, kind, label,
       password: tag === 'input' && type === 'password',
@@ -799,7 +798,7 @@ function find(n) {
       consequential: cqOf(el),
       row: rowOf(el),
       covered,
-      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit), ...(hitButtons.length ? { hitButtons } : {}) } : {}),
+      ...(covered ? { hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit) } : {}),
     };
   };
   const clear = () => {
@@ -807,12 +806,13 @@ function find(n) {
     const r = el.getBoundingClientRect();
     const c = cover && cover.getBoundingClientRect();
     let dx = 0, dy = 0;
-    if (c && c.top <= r.top && c.bottom > r.top && c.bottom < innerHeight) dy = -(c.bottom - r.top + 4);
-    else if (c && c.bottom >= r.bottom && c.top < r.bottom && c.top > 0) dy = r.bottom - c.top + 4;
-    else if (c && c.left <= r.left && c.right > r.left && c.right < innerWidth) dx = -(c.right - r.left + 4);
-    else if (c && c.right >= r.right && c.left < r.right && c.left > 0) dx = r.right - c.left + 4;
+    if (c && c.height < innerHeight && c.top < r.bottom && c.bottom > r.top) dy = c.top <= innerHeight - c.bottom ? -(c.bottom - r.top + 4) : r.bottom - c.top + 4;
+    else if (c && c.width < innerWidth && c.left < r.right && c.right > r.left) dx = c.left <= innerWidth - c.right ? -(c.right - r.left + 4) : r.right - c.left + 4;
     if (!dx && !dy) return el.scrollIntoView({ block: 'center', inline: 'nearest' });
-    (clip ? clip.sc : window).scrollBy({ left: dx, top: dy, behavior: 'instant' });
+    const by = { left: dx, top: dy, behavior: 'instant' };
+    (clip ? clip.sc : window).scrollBy(by);
+    const moved = el.getBoundingClientRect();
+    if (clip && moved.top === r.top && moved.left === r.left) window.scrollBy(by);
   };
   const settle = f => new Promise(res => {
     let done = false;
@@ -820,13 +820,22 @@ function find(n) {
     setTimeout(once, 150);
     requestAnimationFrame(() => requestAnimationFrame(once));
   });
-  if (!outside) return report();
+  const named = (o, hit) => {
+    const hitButtons = o.covered && o.hitN == null ? buttonsOf(overlayOf(hit)) : [];
+    return hitButtons.length ? { ...o, hitButtons } : o;
+  };
+  const onScreen = o => o.x >= 0 && o.y >= 0 && o.x < innerWidth && o.y < innerHeight;
+  if (!outside) return named(report(), lastHit);
   return settle(() => {
     const out = report();
+    const hit = lastHit;
     const r = el.getBoundingClientRect();
-    if (!out.covered || !r.width || !r.height) return out;
+    if (!out.covered || !r.width || !r.height) return named(out, hit);
     clear();
-    return settle(report);
+    return settle(() => {
+      const again = report();
+      return onScreen(again) ? named(again, lastHit) : named(out, hit);
+    });
   });
 })()`;
 }
