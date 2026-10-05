@@ -379,6 +379,7 @@ test('FEED: a text-less post has no clip — action-bar counts, a Follow descrip
   assert.strictEqual(textOf(h('button', { 'aria-describedby': 'id__x id__f2' }), h('div', {}, h('div', { id: 'id__f2' }, 'Click to Follow EvanKirstel'))), '');
   assert.strictEqual(textOf(h('div', {}, '93 570 27K')), '');
   assert.strictEqual(textOf(bar()), '');
+  assert.strictEqual(textOf(h('div', { role: 'group' }, h('button', {}, h('span', {}, '93')), h('div', {}, h('button', {}, 'Share post')))), '');
 });
 
 test('FEED: an Article quote is detected from the card label; its title is the line after the date, whole up to 120, else clipped with … and no trailing space', () => {
