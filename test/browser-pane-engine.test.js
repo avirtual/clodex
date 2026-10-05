@@ -446,6 +446,7 @@ test('engine: wait and download hold the socket call for their own ceilings, ins
   assert.strictEqual(row.replyWaitMs({ raw: 'scroll utility down' }), 115000);
   assert.strictEqual(row.replyWaitMs({ raw: 'back utility' }), 115000);
   assert.strictEqual(row.replyWaitMs({ raw: 'forward' }), 115000);
+  assert.strictEqual(row.replyWaitMs({ raw: 'close t31' }), 115000);
   assert.ok(DOWNLOAD_OP_MS + 10000 <= PLUGIN_REPLY_WAIT_MAX_MS);
   assert.strictEqual(PLUGIN_REPLY_WAIT_MAX_MS, 470 * 1000);
 });
@@ -465,9 +466,12 @@ test('engine: browser refusals classify as refused, a plain error as error, a no
     TEXT.consequentialSubmit(null, { n: 5, press: true, label: 'Post', consequential: 'publish' }),
     TEXT.consequentialSubmit(8, { n: 9, label: 'Shop now', consequential: 'ad' }),
     TEXT.consequentialSubmit(2, { n: 2, press: true, label: 'Card bancar', consequential: 'payment' }, 'Space'),
+    TEXT.consequentialSubmit(1, { from: 1, n: 2, press: true, choose: true, label: 'Transfer', consequential: 'transfer' }, 'ArrowDown'),
+    TEXT.consequentialSubmit(3, { from: 3, n: 3, press: true, choose: true, label: 'Payment method', consequential: 'payment' }, 'ArrowLeft'),
     TEXT.ambiguousN('utility', 6, 'Save', 'Form'),
     TEXT.retiredN('utility', 7, 9),
   ]) assert.strictEqual(classifyReplyLine('browser', replies.errorReply(text)), 'refused', text);
   assert.strictEqual(classifyReplyLine('browser', replies.errorReply(TEXT.readFirst('utility'))), 'error');
   assert.strictEqual(classifyReplyLine('browser', replies.reply('released utility')), 'ok');
+  assert.strictEqual(classifyReplyLine('browser', replies.reply('closed utility · 2 windows open')), 'ok');
 });

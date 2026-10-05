@@ -228,6 +228,40 @@ test('scheduler: a held service refuses everything but wait, services and releas
   assert.deepStrictEqual(h.calls, []);
 });
 
+test('scheduler close: refused under a takeover hold, closes under a sign-in hold, then drops the seat\'s lease', async () => {
+  let sched = null;
+  const h = harness({ close: () => { sched.onClosed('utility'); return { closed: 'utility', windows: 2 }; } });
+  sched = h.sched;
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.sched.onState({ ...HELD_STATE, reason: 'takeover' });
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close utility]']]), [
+    ['hand-a', '[agent:browser] error: the operator has control of utility (takeover). Emit [agent:browser wait utility] and end your turn.'],
+  ]);
+  assert.deepStrictEqual(h.calls, []);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle' });
+  h.sched.onState(HELD_STATE);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close utility]']]), [
+    ['hand-a', '[agent:browser] closed utility · 2 windows open'],
+  ]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'close', {}]]);
+  assert.strictEqual(h.sched.leaseHolder('utility'), null);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser services]']]), [
+    ['hand-b', '[agent:browser] services: utility — portal.example.com · sign-in page · closed'],
+  ]);
+});
+
+test('scheduler close: a signed-in service says the sign-in stays and how to resume it', async () => {
+  const h = harness({
+    open: (a) => ({ status: 200, url: a.url, title: 'Bills', doc: 1, idle: { ok: true, ms: 1000 }, login: { logoutLink: true } }),
+    close: () => ({ closed: 'utility', windows: 0 }),
+  });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close]']]), [
+    ['hand-a', '[agent:browser] closed utility · signed in stays (open utility https://portal.example.com/bills resumes it) · 0 windows open'],
+  ]);
+});
+
 test('scheduler: a held wait times out at --ms, and a closed window answers the rest', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);

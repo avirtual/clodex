@@ -29,7 +29,7 @@ const HELP = [
   '                                  back, forward, wait, download, screenshot,',
   '                                  inspect, services',
   '                                  — as the seat, when the seat has the browser',
-  '                                  plugin; not release, and never --confirm',
+  '                                  plugin; not release or close, and never --confirm',
   '    e.g. clodex \'[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland\'',
   '    the URL follows the closing bracket, never inside it',
   'Everything else (task add/accept/…, shout, spawn, reboot, term, team, context,',

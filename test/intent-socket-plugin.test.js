@@ -69,6 +69,13 @@ for (const [args, allowed] of BROWSER_TABLE) {
   }));
 }
 
+test('subagent browser close is refused: the subagent allowlist does not carry it', () => withBrowserVerb(async () => {
+  const { handle, seen } = browserHandler();
+  const r = await handle({ intent: '[agent:browser close ebloc]', agentId: 'agent-7' }, ctl);
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
+  assert.deepStrictEqual(seen, []);
+}));
+
 test('subagent browser is refused when the seat lacks the plugin, and when no plugin registered the verb', () => withBrowserVerb(async () => {
   const noPlugin = browserHandler({ intents: ['browser'], plugins: [] });
   const r = await noPlugin.handle({ intent: '[agent:browser read ebloc]', agentId: 'agent-7' }, ctl);

@@ -160,7 +160,8 @@ ipc handlers (step 12).
   them into one `⚠ ad: M ads (N elements)` line.
   `type --enter`, `key Enter` and `key Space` are refused the same way: Enter or Space on a
   focused ⚠ control, and Enter in any field of a form whose default submit is ⚠ (or whose
-  action is a payment, order or deletion); `--confirm` applies.
+  action is a payment, order or deletion); `--confirm` applies. Arrow keys that would choose a
+  ⚠ radio or change a ⚠ select are refused the same way.
 - **Numbers survive a restart**: numbers are saved per site, so after a Clodex
   restart an element gets its old number back; an act or inspect by a number from
   a read made before the restart is refused until the agent reads again.
@@ -197,6 +198,7 @@ ipc handlers (step 12).
 [agent:browser wait [service] [--ms=N] [--for=<text>] [--idle]]
 [agent:browser services]
 [agent:browser release [service]]
+[agent:browser close [service]]
 ```
 
 `scroll` moves the page by viewports (default `down`, `--pages=N` up to 20 for
@@ -281,7 +283,9 @@ show host and path only.
 
 `<n>` comes from the seat's latest `read` of that page. One seat holds a service
 at a time; it frees after 5 min without commands, on `release`, or when the
-seat's session ends.
+seat's session ends. `release` frees the seat's lease and leaves the window;
+`close` closes the window and keeps the sign-in (the next `open` resumes it); a
+subagent gets neither.
 
 Omitting `[service]` means the last service that seat opened or read. Only
 `http:` and `https:` URLs open, and a URL carrying `user:pass@` is refused.

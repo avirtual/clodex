@@ -275,6 +275,17 @@ test('replies: Enter that would submit a consequential form is refused naming th
     'Enter in [10] would submit through [11] "Place order" which looks consequential (purchase) — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(R.TEXT.consequentialSubmit(8, { n: 9, label: 'Shop now', consequential: 'ad' }),
     'Enter in [8] would submit through [9] "Shop now" which is an ad — a paid click on the operator\'s account that leaves the site; re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(1, { from: 1, n: 2, press: true, choose: true, label: 'Transfer', consequential: 'transfer' }, 'ArrowDown'),
+    'ArrowDown on [1] would choose [2] "Transfer" which looks consequential (transfer) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(3, { from: 3, n: 3, press: true, choose: true, label: 'Payment method', consequential: 'payment' }, 'ArrowDown'),
+    'ArrowDown on [3] would change [3] "Payment method" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+});
+
+test('replies: close names the window count, and the sign-in that stays when the record has one', () => {
+  assert.strictEqual(R.closedReply('t31', { login: { state: 'logged-in', at: 1 }, lastUrl: 'https://127.0.0.1/app' }, 2),
+    '[agent:browser] closed t31 · signed in stays (open t31 https://127.0.0.1/app resumes it) · 2 windows open');
+  assert.strictEqual(R.closedReply('t31', {}, 0), '[agent:browser] closed t31 · 0 windows open');
+  assert.strictEqual(R.closedReply('t31', { login: { state: 'login-page', at: 1 } }, 1), '[agent:browser] closed t31 · 1 windows open');
 });
 
 test('replies: the download verb names a repeat as the same as an existing file', () => {

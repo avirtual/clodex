@@ -2,7 +2,7 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
 const SCROLL_DIRS = ['down', 'up', 'top', 'bottom'];
 const SCROLL_PAGES_MAX = 20;
@@ -29,6 +29,7 @@ const FLAGS = {
   wait: { ms: 'value', for: 'value', idle: 'bool' },
   services: {},
   release: {},
+  close: {},
 };
 
 function parseLine(line) {
