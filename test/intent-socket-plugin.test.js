@@ -46,6 +46,7 @@ const BROWSER_TABLE = [
   ['type ebloc 3', true],
   ['select ebloc 4', true],
   ['key ebloc Enter', true],
+  ['scroll ebloc down', true],
   ['wait ebloc', true],
   ['download ebloc 7', true],
   ['screenshot ebloc', true],

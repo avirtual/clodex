@@ -2,8 +2,10 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
+const SCROLL_DIRS = ['down', 'up', 'top', 'bottom'];
+const SCROLL_PAGES_MAX = 20;
 const WAIT_MS_MAX = 1800000;
 const N_MAX = 1000000;
 const URL_MAX = 4096;
@@ -17,6 +19,7 @@ const FLAGS = {
   click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool' },
   key: {},
+  scroll: { pages: 'value' },
   select: { confirm: 'bool' },
   download: { to: 'value', as: 'value' },
   screenshot: { numbers: 'bool', attach: 'bool', 'path-only': 'bool' },
@@ -186,6 +189,23 @@ function intArg(name, v, min) {
   return Number(v);
 }
 
+function scrollCommand(positional, flags, body) {
+  if (body) throw new Error('scroll takes no text after the bracket');
+  const last = positional[positional.length - 1];
+  const dir = SCROLL_DIRS.includes(last) ? last : null;
+  const rest = dir ? positional.slice(0, -1) : positional;
+  if (!dir && positional.length > 1) throw new Error(`scroll direction must be one of ${SCROLL_DIRS.join(' ')}`);
+  const service = serviceArg('scroll', rest, false);
+  const d = dir || 'down';
+  if (d === 'top' || d === 'bottom') {
+    if (flags.pages != null) throw new Error('--pages only applies to up or down');
+    return { sub: 'scroll', service, dir: d };
+  }
+  const pages = flags.pages == null ? 1 : intArg('pages', flags.pages, 1);
+  if (pages > SCROLL_PAGES_MAX) throw new Error(`--pages must be at most ${SCROLL_PAGES_MAX}`);
+  return { sub: 'scroll', service, dir: d, pages };
+}
+
 function toCommand(intent) {
   const qt = tokenizeQ(String((intent && intent.raw) || ''));
   const sub = qt.length ? qt[0].t : undefined;
@@ -234,6 +254,7 @@ function toCommand(intent) {
     if (!KEY_NAMES.includes(body)) throw new Error(`key needs one of ${KEY_NAMES.join(' ')} after the bracket`);
     return { sub, service, key: body };
   }
+  if (sub === 'scroll') return scrollCommand(positional, flags, body);
   if (sub === 'download') return downloadCommand(positional, flags, body);
   if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false), ...(flags.numbers ? { numbers: true } : {}), ...attachArg(flags) };
   if (sub === 'wait') {
@@ -254,4 +275,4 @@ function toCommand(intent) {
   return { sub, service: serviceArg(sub, positional, false) };
 }
 
-module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, SUBCOMMANDS, KEY_NAMES, DEFAULT_MAX, WAIT_MS_MAX };
+module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, SUBCOMMANDS, KEY_NAMES, SCROLL_DIRS, DEFAULT_MAX, WAIT_MS_MAX };
