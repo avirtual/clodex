@@ -31,6 +31,7 @@ blocks a release.
 - Subagents: the `clodex` verb now proves who is calling (a Claude Code hook stamps the subagent's identity into the call, so a subagent can no longer release the seat's browser window or pass `--confirm`), refusals and errors exit non-zero so a script can branch on them, and long browser waits and downloads return inline instead of landing in the seat's conversation.
 - Subagents: the identity hook no longer runs a Node process for every shell command (only ones that invoke `clodex`), stamps `clodex` behind `if`, `time`, `timeout` and `nohup`, and a Codex clone's main thread is no longer refused its own privileged verbs.
 - Subagents: the identity stamp on a `clodex` call is now single-use — a token copied from a transcript or a shell's `time` output no longer lets a subagent pass as the main agent.
+- Subagent intent channel: the identity hook no longer stamps `clodex` words inside heredoc bodies, accepts `nice -n5`, sweeps stamp files older than ten minutes, and treats an empty stamp file as missing; a looped `clodex` call is main only on its first run (documented).
 
 ## 5.112.2 — 2026-10-04
 

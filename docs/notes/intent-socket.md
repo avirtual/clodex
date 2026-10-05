@@ -32,6 +32,8 @@ The seen-nonce set is bounded FIFO at `IDENT_SEEN_MAX` (512) and drops entries o
 
 Measured on Claude Code 2.1.289: a PreToolUse `updatedInput` with no `permissionDecision` rewrites the Bash command, and replaces the whole `tool_input` — so the output spreads the original input to keep `timeout` and `run_in_background`.
 
+A stamp file is consumed by its first read, so one stamped segment the shell runs more than once (a loop body, a function) is main only on its first run; later runs go unstamped as a subagent.
+
 ## createIntentSocketServer
 
 The socket is chmod 0600 right after `listen`; the credential, not the mode, is the gate during that window.
