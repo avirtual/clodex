@@ -265,15 +265,15 @@ function activate(rhost) {
     return box;
   }
 
-  function attachRow(tokens) {
+  function attachRow() {
     const r = el('div', 'bp-row bp-attach');
+    r.style.display = 'none';
     r.appendChild(el('span', 'bp-attach-label', 'Attach reads up to ≈'));
     const field = el('input', 'bp-attach-tokens');
     field.type = 'number';
     field.min = '100';
     field.max = '20000';
     field.step = '100';
-    field.value = String(tokens);
     r.appendChild(field);
     r.appendChild(el('span', 'bp-attach-unit', 'tokens'));
     const save = el('button', 'bp-attach-save', 'Save');
@@ -290,7 +290,11 @@ function activate(rhost) {
     });
     r.appendChild(save);
     r.appendChild(err);
-    return r;
+    const show = (tokens) => {
+      r.style.display = '';
+      if (document.activeElement !== field) field.value = String(tokens);
+    };
+    return { row: r, show };
   }
 
   function openRow(refill) {
@@ -328,6 +332,8 @@ function activate(rhost) {
       bodyEl.appendChild(openRow(() => fill().then(fillDeny)));
       bodyEl.appendChild(list);
       const attach = el('div', 'bp-attach-box');
+      const budget = attachRow();
+      attach.appendChild(budget.row);
       bodyEl.appendChild(attach);
       const reveal = el('button', 'bp-reveal', 'Reveal downloads');
       reveal.addEventListener('click', async () => {
@@ -350,8 +356,7 @@ function activate(rhost) {
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
         for (const s of services) list.appendChild(row(s, fill));
         const a = await call('attach.get');
-        attach.textContent = '';
-        if (a && a.ok && Number.isInteger(a.global)) attach.appendChild(attachRow(a.global));
+        if (a && a.ok && Number.isInteger(a.global)) budget.show(a.global);
         return services;
       };
       const fillDeny = async (services) => {

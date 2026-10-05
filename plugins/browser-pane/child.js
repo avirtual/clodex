@@ -174,11 +174,11 @@ function loadNumbers(dir, origin, now = Date.now()) {
   return e;
 }
 
-function notOpenError(name, opened, numbersDir) {
+function notOpenError(name, opened, numbersDir, known = []) {
   let saved = [];
   try { saved = fs.readdirSync(numbersDir).filter((f) => !f.startsWith('.')); } catch {}
-  if (opened.has(name) || saved.includes(name)) return codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
-  return codedError('NOT_OPEN', TEXT.notService(name, [...new Set([...opened, ...saved])].sort()));
+  if (opened.has(name) || saved.includes(name) || known.includes(name)) return codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
+  return codedError('NOT_OPEN', TEXT.notService(name, [...new Set([...opened, ...saved, ...known])].sort()));
 }
 
 function pruneNumbers(dir, max = ORIGINS_MAX) {
@@ -420,6 +420,7 @@ function run(electron, ctx) {
   const gateMaxMs = Number((ctx && ctx.gateMaxMs) || 60000);
   const services = new Map();
   const opened = new Set();
+  let known = [];
   const chains = new Map();
   const partitions = new Set();
   const routers = new Map();
@@ -729,7 +730,7 @@ function run(electron, ctx) {
 
   const need = (name) => {
     const svc = services.get(name);
-    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) throw notOpenError(name, opened, path.join(data, 'numbers'));
+    if (!svc || svc.win.isDestroyed() || svc.wc.isDestroyed()) throw notOpenError(name, opened, path.join(data, 'numbers'), known);
     return svc;
   };
 
@@ -1325,6 +1326,7 @@ function run(electron, ctx) {
       retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...ent.volatile])),
       changed: changedOf(prev && prev.sigs, el.sigs),
       chrome: el.chrome || [],
+      cats: el.cats || {},
       keys: el.keys || {},
       ...(first && ent.restoredAt != null ? { restored: ent.restoredAt } : first ? { first: firstHost || true } : {}),
     } : {};
@@ -1385,6 +1387,7 @@ function run(electron, ctx) {
   async function handle(frame) {
     const { id, op } = frame;
     const args = (frame.args && typeof frame.args === 'object') ? frame.args : {};
+    if (Array.isArray(args.known)) known = args.known.map(String).filter((n) => SERVICE_RE.test(n));
     try {
       if (op === 'shutdown') {
         send({ id, ok: true, result: {} });
