@@ -9,7 +9,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
-  keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
   changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
@@ -95,7 +95,7 @@ function button(label, row) {
     tagName: 'BUTTON', isConnected: true, innerText: label, labels: null, value: '', row,
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: () => false, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest(sel) { return this.row == null || sel === 'article' ? null : { innerText: this.row }; },
   };
 }
@@ -115,7 +115,7 @@ function xbutton(label, permalink, text = '') {
     tagName: 'BUTTON', isConnected: true, innerText: text, labels: null, value: '', id: '',
     matches: (sel) => sel.split(',').includes('button'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest: (sel) => (sel === 'article' ? art : null),
   };
 }
@@ -146,7 +146,7 @@ function xarticle(text, permalink) {
     tagName: 'ARTICLE', isConnected: true, innerText: text, labels: null, value: '', id: '',
     matches: () => false,
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [],
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }),
     closest: (sel) => (sel === 'article' ? art : null),
   };
 }
@@ -202,7 +202,7 @@ test('numbering: a duplicate keys by its own block, so a retired twin never hand
   assert.strictEqual(p.verify(ns[2], stored[2]), 'ambiguous', 'a changed block context is refused, never re-pointed');
 });
 
-test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loose twin with identical block text is not placed on the twin\'s number', () => {
+test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a twin whose page key another connected element holds is not placed', () => {
   const style = { visibility: 'visible', display: 'block', opacity: '1', position: 'fixed', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', overflowY: 'visible' };
   const list = { innerText: 'Trends', parentElement: null };
   const order = [];
@@ -240,7 +240,12 @@ test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a loos
   assert.strictEqual(verify(n), 'ok', 'the number FIND_TEXT placed passes the act\'s CHECK');
   twin.childNodes = [{ nodeType: 3, nodeValue: 'More Romanians' }];
   const again = vm.runInContext(scripts.FIND_TEXT('Romanians', { known: { ...state.known, ...found.assigned }, next: found.next }), ctx);
-  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [null], 'the twin sharing [1]\'s block text is not placed');
+  const full = vm.runInContext(`(() => {${scripts.numbering({ known: {}, next: 1 })}
+  return storedKeysOf(__all);
+})()`, Object.assign(ctx, { __all: order }));
+  assert.strictEqual(K.parseStored(full[0]).base, K.parseStored(ctx.__cxKeys[1]).base);
+  assert.strictEqual(full[0], ctx.__cxKeys[1], 'a read over the whole page keys the twin as [1]\'s key');
+  assert.deepStrictEqual(Array.from(again.hits, (h) => h.n), [null], 'the twin is not placed on a number another connected element holds');
   assert.strictEqual(ctx.__cxOf.get(a), 1);
   assert.strictEqual(verify(1), 'ok', '[1] still points at its own caret');
   assert.match(CHILD_SRC, /if \(found\.hits\[0\]\.n == null\) throw codedError\('AMBIGUOUS', TEXT\.twinText\(svc\.name, text\)\);/);
@@ -265,7 +270,7 @@ function link(label, href) {
     tagName: 'A', isConnected: true, innerText: label, labels: null, value: '', href: `https://x.test${href}`,
     matches: (sel) => sel.split(',').includes('a[href]'),
     getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
-    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+    hasAttribute: (k) => k in attrs, querySelector: () => null, querySelectorAll: () => [], getBoundingClientRect: () => ({ height: 20 }), closest: () => null,
   };
 }
 
@@ -373,9 +378,14 @@ test('page scripts: overlay badges skip words between inline links and never lan
   assert.deepStrictEqual([inside.left, inside.top], [242, 68], 'a word left and a word above: right of the link when the right is clear');
   const words4 = [{ left: 186, top: 68, width: 12, height: 18, text: 'de' }, { left: 200, top: 50, width: 30, height: 18, text: 'casa' },
     { left: 244, top: 68, width: 12, height: 18, text: 'și' }, { left: 200, top: 86, width: 30, height: 18, text: 'jos' }];
-  const [sup] = overlayRun([[200, 68, 40, 18]], words4);
-  assert.deepStrictEqual([sup.left, sup.top], [193, 60], 'every slot blocked: a superscript at the corner, half a badge up and left');
-  assert.ok(sup.top === 68 - 8 && sup.left < 200);
+  const [noSup] = overlayRun([[200, 68, 40, 18]], words4);
+  assert.deepStrictEqual([noSup.left, noSup.top], [242, 68], 'every slot blocked and a word under the superscript centre: right of the link, never below its top');
+  const words5 = [words4[0], words4[2], words4[3]];
+  const [sup] = overlayRun([[200, 68, 40, 18], [205, 36, 40, 18]], words5);
+  assert.ok(sup.top === 68 - 17 && sup.left < 200, 'every slot blocked, the line above clear at the badge centre: a superscript whose bottom clears the line box');
+  assert.deepStrictEqual([sup.left, sup.top], [193, 51]);
+  const [ad] = overlayRun([[112, 50, 70, 18], [112, 49, 200, 18], [60, 44, 40, 40]]);
+  assert.deepStrictEqual([ad.left, ad.top], [112, 34], 'an ad name row: a wrapper sharing the left edge and an avatar left of the slot leave the above slot free');
   const img = { left: 270, top: 100, right: 298, bottom: 118 };
   const elementFromPoint = (x, y) => (x >= img.left && x <= img.right && y >= img.top && y <= img.bottom
     ? { nodeType: 1, closest: (sel) => (sel.split(',').includes('img') ? {} : null), contains: () => false } : { nodeType: 1, closest: () => null, contains: () => false });
@@ -622,9 +632,14 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'a', href: '/elonmusk', alts: ['OSHY3ewP_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/123/OSHY3ewP_bigger.jpg' }, '@elonmusk'],
     [{ tag: 'a', href: '/AOC', alts: [null, 'X20dMMBa_bigger.jpg'], src: 'https://pbs.twimg.com/profile_images/9/X20dMMBa_bigger.jpg' }, '@AOC'],
     [{ tag: 'a', href: '/photo/1', alts: ['Image'] }, 'photo 1'],
+    [{ tag: 'div', role: 'link', src: 'x_bigger.jpg', h: 16, inLink: true }, 'badge'],
+    [{ tag: 'div', role: 'link', alts: ['x_bigger.jpg'], h: 16, inLink: true }, 'badge'],
+    [{ tag: 'a', href: '/elonmusk', alts: ['x_bigger.jpg'], h: 40 }, '@elonmusk'],
+    [{ tag: 'div', role: 'link', src: 'x_bigger.jpg', h: 40, inLink: false }, 'avatar'],
   ];
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
   assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /h: e\.getBoundingClientRect\(\)\.height,\n\s*inLink: !!e\.closest\('a\[href\] \*'\),/);
 });
 
 const svcOf = () => ({ origins: new Map(), num: null });
@@ -732,7 +747,12 @@ test('numbers persist: a corrupt or other-schema file is ignored and overwritten
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).v, NUMBERS_SCHEMA);
   assert.strictEqual(loadNumbers(dir, 'https://x.com').byN.get(1), st.stored[0]);
   fs.writeFileSync(file, JSON.stringify({ v: NUMBERS_SCHEMA, origin: 'https://x.com', numbers: { k: 9 }, nextN: 10 }));
-  assert.strictEqual(loadNumbers(dir, 'https://x.com').restoredAt, '', 'an old file without savedAt still loads as restored');
+  const mtime = new Date(2026, 9, 5, 8, 21);
+  fs.utimesSync(file, mtime, mtime);
+  const old = loadNumbers(dir, 'https://x.com');
+  assert.strictEqual(old.restoredAt, mtime.toISOString(), 'an old file without savedAt dates its restore by the file mtime');
+  const head = RF.formatRead({ url: 'https://x.com/home', title: 'X', text: 'Home', elements: [], restored: old.restoredAt, fresh: [] }, { service: 'x' }).content.split('\n').find((l) => l.startsWith('doc:'));
+  assert.match(head, /numbers restored \(saved 2026-10-05 08:21\)/);
 });
 
 test('numbers persist: at most ORIGINS_MAX origin files per service, least recently used deleted; a slug keeps [a-z0-9.-] and 120 chars', () => {
@@ -1027,4 +1047,17 @@ test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their tex
   assert.ok(src.includes(`clone.querySelectorAll(${JSON.stringify(scripts.CHROME_SEL)})`));
   assert.ok(src.includes(`t.data = ${JSON.stringify(scripts.CHROME_MARK)} + t.data`));
   assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`if (it.el.closest(${JSON.stringify(scripts.CHROME_SEL)})) chrome.push(n);`));
+});
+
+test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {
+  const dir = fs.realpathSync(mkTmpRoot('clodex-bp-child-'));
+  fs.mkdirSync(path.join(dir, 'ebloc'));
+  const opened = new Set(['x']);
+  assert.strictEqual(notOpenError('nosuch', opened, dir).message, 'nosuch is not a service here — services: ebloc, x — [agent:browser open nosuch] <url> opens a new one');
+  assert.strictEqual(notOpenError('ebloc', opened, dir).message, 'ebloc is not open — [agent:browser open ebloc] <url>');
+  assert.strictEqual(notOpenError('x', opened, dir).message, 'x is not open — [agent:browser open x] <url>');
+  assert.strictEqual(notOpenError('nosuch', new Set(), path.join(dir, 'none')).code, 'NOT_OPEN');
+  assert.match(R.TEXT.twinText('x', 'More'), /— read x; the re-read numbers both$/);
+  assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\)\);/);
+  assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
 });

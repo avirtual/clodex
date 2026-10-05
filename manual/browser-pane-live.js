@@ -342,7 +342,7 @@ async function clickablesStep(emit, base) {
   check('a table row with an empty cell is one line', text.split('\n').includes('Index precedent | | 19,486'));
   check('click --text unique', /clicked avizier \[\d+\] clickable "Lista de plată 08\/2026"/.test(await emit('[agent:browser click avizier --text="plată 08/2026"]')));
   check('click --text none', /no visible element with the text "Nimic aici"/.test(await emit('[agent:browser click avizier --text="Nimic aici"]')));
-  check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[\d+\] "Duplicat", \[\d+\] "Duplicat"/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
+  check('click --text ambiguous', /"Duplicat" matches 2 visible elements on avizier: \[–\] "Duplicat" \(not clickable\), \[–\] "Duplicat" \(not clickable\)/.test(await emit('[agent:browser click avizier --text=Duplicat]')));
   await emit('[agent:browser read avizier]');
   check('a window.open PDF is saved, not rendered', /→ download \S+\.pdf · \d+ B · application\/pdf · from \S+ \(PDF popup\)/.test(await emit('[agent:browser click avizier --text="07/2026 PDF"]')));
 }

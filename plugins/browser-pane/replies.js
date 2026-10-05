@@ -161,10 +161,17 @@ const TEXT = {
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
   noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
-  twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service} and use its number`,
+  twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service}; the re-read numbers both`,
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
-    hits.slice(0, 5).map((h) => `[${h.n == null ? '?' : h.n}] ${JSON.stringify(String(h.text || ''))}`).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${verb} one by number`,
+    hits.slice(0, 5).map(textHit).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${hits.every((h) => h.loose) ? `read ${service} and use a number` : `${verb} one by number`}`,
+  looseText: (service, text, hit) => `${JSON.stringify(String(text))} on ${service} is only text: ${textHit(hit)} — read ${service} and use a number`,
+  notService: (name, names) => `${name} is not a service here — services: ${names.length ? names.join(', ') : 'none'} — [agent:browser open ${name}] <url> opens a new one`,
 };
+
+function textHit(h) {
+  if (h.loose) return `[–] ${JSON.stringify(String(h.text || ''))} (not clickable)`;
+  return `[${h.n == null ? '?' : h.n}] ${JSON.stringify(String(h.text || ''))}`;
+}
 
 function operatorNav(service, url, title, inPage = false) {
   return reply(`the operator navigated ${service} to ${redactUrl(url)}${inPage ? ' (in-page)' : ''} (${JSON.stringify(oneLine(title || '', 120))}) — read before using numbers`);
