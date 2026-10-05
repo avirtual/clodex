@@ -1115,7 +1115,7 @@ test('page scripts: consequentialHit names the category and the source term; con
 });
 
 test('page scripts: clickPoint lands a tall role=link card on its time link, a short one or a plain element at its centre', () => {
-  const rect = (left, top, width, height) => ({ left, top, width, height });
+  const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
   const node = (tag, attrs, r, kids = []) => {
     const e = { tagName: tag.toUpperCase(), parentElement: null, kids, getAttribute: (k) => (k in attrs ? attrs[k] : null), getBoundingClientRect: () => r };
     for (const k of kids) k.parentElement = e;
