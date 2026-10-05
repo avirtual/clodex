@@ -781,6 +781,22 @@ async function coveredStep(emit, base) {
   await emit('[agent:browser close covered]');
 }
 
+async function radiosStep(emit, base) {
+  console.log('== radios. a label whose radio is visually hidden is listed as that radio, and clicking it replies checked now');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  const lineOf = (content, label) => content.split('\n').find((l) => new RegExp(`^\\[\\d+\\] input:radio ${label}\\b`).test(l)) || '';
+  await emit(`[agent:browser open radios] ${base}/gate/radios.html`);
+  const before = lineOf(fileOf(await emit('[agent:browser read radios]')), 'No');
+  const n = Number((/^\[(\d+)\]/.exec(before) || [])[1]);
+  const reply = (await emit(`[agent:browser click radios ${n}]`)).split('\n')[0];
+  const after = lineOf(fileOf(await emit('[agent:browser read radios]')), 'No');
+  console.log(`    read: ${before}\n    click: ${reply}\n    re-read: ${after}`);
+  check('the label is listed as an unchecked radio', / \[ \]$/.test(before));
+  check('the click replies checked now "No"', reply.includes('checked now "No"'));
+  check('the re-read shows it checked', / \[x\]$/.test(after));
+  await emit('[agent:browser close radios]');
+}
+
 async function hiddenStep(emit, base) {
   console.log('== 0. a window that was never shown still paints, runs rAF and fires IntersectionObserver');
   const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
@@ -824,7 +840,7 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['covered', 'shownclose', 'hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
+  if (['covered', 'shownclose', 'hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach', 'radios'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
     else if (process.env.CXB_ONLY === 'covered') await coveredStep(emit, base);
     else if (process.env.CXB_ONLY === 'hidden') await hiddenStep(emit, base);
@@ -835,6 +851,7 @@ async function main() {
     else if (process.env.CXB_ONLY === 'overlay') await overlayStep(emit, base);
     else if (process.env.CXB_ONLY === 'refs') await refsStep(emit, base);
     else if (process.env.CXB_ONLY === 'attach') await attachStep(emit, base);
+    else if (process.env.CXB_ONLY === 'radios') await radiosStep(emit, base);
     else if (process.env.CXB_ONLY === 'offscreen') await offscreenStep(emit, base);
     else if (process.env.CXB_ONLY === 'handover') await handoverStep(engine, emit, nextInject, base);
     else if (process.env.CXB_ONLY === 'policy') await policyStep(emit, base, engine);
