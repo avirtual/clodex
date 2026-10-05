@@ -80,7 +80,7 @@ const TITLE_MAX = 40;
 
 function pickerSite(s) {
   const title = String(s.title || '');
-  const clipped = title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX - 1)}…` : title;
+  const clipped = title.length > TITLE_MAX ? `${title.slice(0, TITLE_MAX - 1).trimEnd()}…` : title;
   return { host: s.host ? ` ${s.host}` : '', title: clipped ? ` — ${clipped}` : '' };
 }
 
@@ -157,7 +157,7 @@ function activate(rhost) {
     const pick = el('select', 'bp-hand-seat');
     const text = el('input', 'bp-hand-text');
     text.placeholder = 'what should it do?';
-    const go = el('button', 'bp-hand-go bp-btn primary', 'Hand over');
+    const go = el('button', 'bp-hand-go bp-btn primary', 'Give control');
     box.appendChild(pick);
     box.appendChild(text);
     box.appendChild(go);
@@ -194,7 +194,7 @@ function activate(rhost) {
     show.addEventListener('click', () => showIt(name));
     r.appendChild(show);
     const owner = () => opts.owner || picker;
-    const open = el('button', 'bp-hand-open bp-btn', 'Hand…');
+    const open = el('button', 'bp-hand-open bp-btn', 'Hand over');
     let form = null;
     const fold = () => {
       if (form && form.parentNode) form.parentNode.removeChild(form);
@@ -253,7 +253,8 @@ function activate(rhost) {
       const width = vw ? Math.min(PICKER_MAX_W, vw - 16) : PICKER_MAX_W;
       const bottom = Math.max(4, vh - rect.top + 4);
       node.style.maxWidth = `${width}px`;
-      node.style.left = `${vw ? Math.max(8, Math.min(rect.left, vw - 8 - width)) : Math.max(4, rect.left)}px`;
+      if (vw && rect.left + width > vw - 8) node.style.right = '8px';
+      else node.style.left = `${vw ? Math.max(8, rect.left) : Math.max(4, rect.left)}px`;
       node.style.bottom = `${bottom}px`;
       if (vh) node.style.maxHeight = `${Math.max(0, vh - bottom - 8)}px`;
     }

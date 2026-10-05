@@ -233,7 +233,7 @@ test('segment click with two windows opens a picker listing both, Escape closes 
   } finally { restore(); }
 });
 
-test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at a time from one seat lookup, a second click or Escape folds it', async () => {
+test('segment picker: rows are grid rows; Hand over unfolds one hand-over form at a time from one seat lookup, a second click or Escape folds it', async () => {
   const { body, fire, restore } = fakeDom();
   try {
     const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
@@ -247,7 +247,7 @@ test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at 
     const rows = body.children[0].children.slice(1);
     assert.deepStrictEqual(body.children[0].children.map((r) => r.className), ['bp-picker-label', 'bp-row bp-pick-row', 'bp-row bp-pick-row']);
     assert.deepStrictEqual(rows[0].children.map((c) => c.className), ['bp-pick-name', 'bp-pick-state', 'bp-show bp-btn', 'bp-hand-open bp-btn']);
-    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-hand-open bp-btn').map((n) => n.textContent), ['Hand…', 'Hand…']);
+    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-hand-open bp-btn').map((n) => n.textContent), ['Hand over', 'Hand over']);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
     assert.ok(css.includes('.bp-pick-row {\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) auto auto auto;\n  align-items: center;\n  gap: 8px;\n  padding: 5px 8px;'));
     assert.ok(css.includes('.bp-picker .bp-btn:not(.primary) {\n  font-size: 11px;\n  padding: 2px 8px;\n  background: transparent;\n  border: 1px solid var(--border, #444);'));
@@ -260,7 +260,7 @@ test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at 
     assert.deepStrictEqual(forms().map((n) => n.parentNode), [rows[0]]);
     assert.strictEqual(rows[0].children[4].className, 'bp-hand');
     assert.deepStrictEqual(walk(body).filter((n) => n.tag === 'option').map((n) => n.textContent), ['clodex-hand', 'cx']);
-    assert.strictEqual(walk(body).find((n) => n.className === 'bp-hand-go bp-btn primary').textContent, 'Hand over');
+    assert.strictEqual(walk(body).find((n) => n.className === 'bp-hand-go bp-btn primary').textContent, 'Give control');
     await opens()[1].click();
     await tick();
     assert.deepStrictEqual(forms().map((n) => n.parentNode), [rows[1]]);
@@ -277,7 +277,7 @@ test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at 
   } finally { restore(); }
 });
 
-test('segment picker: with innerWidth 600 the popover width and left keep it 8px inside the window, and its height is capped', async () => {
+test('segment picker: with innerWidth 600 an anchor near the right edge pins the popover 8px from the right, and its height is capped', async () => {
   const { body, restore } = fakeDom();
   const prevWin = global.window;
   global.window = { innerWidth: 600, innerHeight: 800 };
@@ -288,8 +288,25 @@ test('segment picker: with innerWidth 600 the popover width and left keep it 8px
     f.segment().onClick({ getBoundingClientRect: () => ({ left: 500, top: 770 }) });
     await tick();
     const style = body.children[0].style;
-    assert.deepStrictEqual([style.width, style.maxWidth, style.left, style.bottom, style.maxHeight], [undefined, '560px', '32px', '34px', '758px']);
-    assert.ok(parseInt(style.left, 10) + parseInt(style.maxWidth, 10) <= 592);
+    assert.deepStrictEqual([style.width, style.maxWidth, style.left, style.right, style.bottom, style.maxHeight], [undefined, '560px', undefined, '8px', '34px', '758px']);
+  } finally {
+    if (prevWin === undefined) delete global.window; else global.window = prevWin;
+    restore();
+  }
+});
+
+test('segment picker: with innerWidth 600 an anchor at 20 sets left to the anchor and no right', async () => {
+  const { body, restore } = fakeDom();
+  const prevWin = global.window;
+  global.window = { innerWidth: 600, innerHeight: 800 };
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({ getBoundingClientRect: () => ({ left: 20, top: 770 }) });
+    await tick();
+    const style = body.children[0].style;
+    assert.deepStrictEqual([style.left, style.right], ['20px', undefined]);
   } finally {
     if (prevWin === undefined) delete global.window; else global.window = prevWin;
     restore();
@@ -307,7 +324,7 @@ test('segment picker: a row names its site and page title, its state cell carrie
     f.segment().onClick({});
     await tick();
     assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent),
-      ['wiki en.wikipedia.org — Water metering', 'irs irs.gov — An extremely long page title that runs …']);
+      ['wiki en.wikipedia.org — Water metering', 'irs irs.gov — An extremely long page title that runs…']);
     assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-state').map((n) => n.textContent), ['idle · apometre · hidden', 'idle']);
     assert.strictEqual(walk(body).find((n) => n.className === 'bp-picker-label').textContent, 'Browser windows · 2 open · 1 hidden');
     assert.strictEqual(walk(body).find((n) => n.className === 'bp-pick-name').children[0].tag, 'b');
@@ -485,7 +502,7 @@ test('stampShort: time only on the same day, else month day time', () => {
   assert.strictEqual(bp.stampShort(0, now), '');
 });
 
-test('Settings: services are a grid table with a header; each row is one line of cells, Hand… unfolds a full-width form from one seat lookup', async () => {
+test('Settings: services are a grid table with a header; each row is one line of cells, Hand over unfolds a full-width form from one seat lookup', async () => {
   const { root, restore } = fakeDom();
   try {
     const loginAt = new Date(2020, 9, 5, 23, 27).getTime();
@@ -509,7 +526,7 @@ test('Settings: services are a grid table with a header; each row is one line of
     const rows = table.children.slice(5);
     const cells = (r) => r.children.map((c) => [c.className, c.textContent]);
     assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-login', 'signed in · Oct 5 23:27'],
-      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand…'], ['bp-forget bp-btn quiet', 'Forget login']]);
+      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login']]);
     assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-login', 'login unknown'],
       ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login']]);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
