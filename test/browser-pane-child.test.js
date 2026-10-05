@@ -1114,6 +1114,51 @@ test('FIND: scrolls only an element outside the viewport, to nearest, and report
   assert.strictEqual(findOn(gone, () => null), null, 'an element with no box is no longer on the page');
 });
 
+test('FIND: a target our scroll parked under a sticky header is scrolled clear once; a modal cover is retried once at centre and still refused; an overlay names its numbered buttons', async () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const shown = { visibility: 'visible', display: 'block', opacity: '1' };
+  const header = Object.assign(boxEl('header', 'Site header', box(0, 0, 1200, 80)), { style: { ...shown, position: 'sticky' } });
+  const parked = (moves) => {
+    const top = boxEl('a', 'Top link under the header', box(20, -500, 200, 40));
+    top.onScroll = () => { top.rect = box(20, 0, 200, 40); };
+    const scrollBys = [];
+    const scrollBy = (o) => { scrollBys.push({ ...o }); if (moves) top.rect = box(20, top.rect.top - o.top, 200, 40); };
+    return { top, scrollBys, run: () => findOn(top, (x, y) => (y < 80 ? header : top), { extra: { scrollBy } }) };
+  };
+  const ok = parked(true);
+  const a = plain(await ok.run());
+  assert.deepStrictEqual(ok.top.scrolls, [{ block: 'nearest', inline: 'nearest' }]);
+  assert.deepStrictEqual(ok.scrollBys, [{ left: 0, top: -84, behavior: 'instant' }]);
+  assert.deepStrictEqual([a.covered, a.x, a.y], [false, 120, 104]);
+  const stuck = parked(false);
+  const b = plain(await stuck.run());
+  assert.strictEqual(stuck.scrollBys.length, 1, 'one retry, not a loop');
+  assert.deepStrictEqual([b.covered, b.hitN, b.hitLabel], [true, null, 'Site header']);
+  const modal = Object.assign(boxEl('div', 'Confirm', box(0, 0, 1200, 800)), { style: { ...shown, position: 'fixed' } });
+  const below = boxEl('button', 'Pret crescator', box(10, 900, 100, 30));
+  below.onScroll = () => { below.rect = box(10, 700, 100, 30); };
+  const modalBys = [];
+  const c = plain(await findOn(below, () => modal, { extra: { scrollBy: (o) => modalBys.push(o) } }));
+  assert.deepStrictEqual(below.scrolls, [{ block: 'nearest', inline: 'nearest' }, { block: 'center', inline: 'nearest' }]);
+  assert.deepStrictEqual([modalBys.length, c.covered, c.hitLabel], [0, true, 'Confirm']);
+  const accept = boxEl('button', 'Accept toate', box(900, 700, 100, 40));
+  const refuse = boxEl('button', 'Refuză toate', box(1010, 700, 100, 40));
+  const more = boxEl('a', 'Detalii', box(10, 700, 60, 20));
+  const banner = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 600, 1200, 200)), { style: { ...shown, position: 'fixed' }, querySelectorAll: () => [accept, more, refuse] });
+  const para = boxEl('p', 'Prin apăsarea Accept toate', box(10, 610, 800, 60), banner);
+  const inView = boxEl('button', 'Pret crescator', box(10, 620, 100, 30));
+  const d = plain(findOn(inView, () => para, { numbered: { 208: accept, 209: refuse } }));
+  assert.deepStrictEqual([d.covered, d.hitN, d.hitButtons], [true, null, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }]]);
+});
+
+test('page scripts: FIND and INSPECT share one clipOf from DEEP', () => {
+  for (const src of [scripts.FIND(1), scripts.INSPECT(1)]) assert.strictEqual(src.split('const clipOf = ').length, 2);
+  assert.match(scripts.FIND(1), /const clip = clipOf\(el\);\n\s*const outside = outOf\(r0, /);
+  assert.match(scripts.INSPECT(1), /const list = clipOf\(el\);/);
+  assert.match(scripts.INSPECT(1), /clipped: !!list && outOf\(r, list\.rect\),/);
+});
+
 test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {
   const card = { from: 26, n: 27, label: 'Card bancar', consequential: 'payment' };
   const calls = [];
