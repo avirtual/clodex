@@ -397,7 +397,7 @@ function inspectReply(service, r) {
   const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
   const rect = r.rect || {};
   const lines = [
-    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}`,
+    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}`,
     `  attrs: ${attrs || 'none'}`,
     `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
     `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,

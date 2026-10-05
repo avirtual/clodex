@@ -48,13 +48,18 @@ function termRe(t, lead) {
 function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
   for (const [cat, verbs, nouns] of table) {
-    for (const t of verbs) out.push({ cat, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
-    for (const t of nouns) out.push({ cat, id: false, noun: true, re: termRe(t) });
+    for (const t of verbs) out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
+    for (const t of nouns) out.push({ cat, t, id: false, noun: true, re: termRe(t) });
   }
   return out;
 }
 
 function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)) {
+  const hit = consequentialHit(d, res);
+  return hit ? hit.cat : null;
+}
+
+function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)) {
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
@@ -66,11 +71,11 @@ function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS))
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
     if (!((r.lead ? hay : hayAll).some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
-    if (!r.lead) return r.cat;
-    lead = r.cat;
+    if (!r.lead) return { cat: r.cat, term: r.t };
+    lead = { cat: r.cat, term: r.t };
   }
   const action = fold(d.action);
-  if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return cat;
+  if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return { cat, term: w };
   return lead;
 }
 
@@ -89,9 +94,10 @@ const CQ = `
   ${termRe.toString()}
   ${cqCompile.toString()}
   ${consequentialOf.toString()}
+  ${consequentialHit.toString()}
   const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS);
   const CQ_INNER = 'input[type=submit],input[type=button],input[type=image],button,[role=button]';
-  const cqOf = e => {
+  const cqInputs = e => {
     const tg = e.tagName.toLowerCase();
     const ty = String(e.type || '').toLowerCase();
     const textual = tg === 'textarea' || e.isContentEditable
@@ -101,19 +107,25 @@ const CQ = `
     const href = tg === 'a' ? String(e.getAttribute('href') || '').split(/[?#]/)[0] : '';
     const doc = tg === 'a' && (e.hasAttribute('download') || /\\.(pdf|xlsx?|docx?)$/i.test(href));
     const button = tg === 'button' || (tg === 'input' && ['submit', 'button', 'image'].includes(ty)) || e.getAttribute('role') === 'button';
-    const inner = button || textual ? [] : e.querySelectorAll(CQ_INNER);
-    return consequentialOf({
+    return {
       textual,
+      button,
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
-      capped: tg === 'a' || !e.matches(${JSON.stringify(STD_SEL)}),
+      capped: tg === 'a' || e.getAttribute('role') === 'link' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
       value: tg === 'input' && ty !== 'password' ? e.value : '',
       aria: e.getAttribute('aria-label'),
       idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
-    }, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqOf(inner[0]) : null);
-  };`;
+    };
+  };
+  const cqHit = e => {
+    const d = cqInputs(e);
+    const inner = d.button || d.textual ? [] : e.querySelectorAll(CQ_INNER);
+    return consequentialHit(d, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqHit(inner[0]) : null);
+  };
+  const cqOf = e => { const hit = cqHit(e); return hit ? hit.cat : null; };`;
 
 const ROW = `
   const rowText = new Map();
@@ -648,15 +660,34 @@ function check(n, expect, state) {
 })()`;
 }
 
+function clickPoint(el, r, doc) {
+  const centre = (b) => ({ x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) });
+  if (!(el.tagName.toLowerCase() === 'a' || el.getAttribute('role') === 'link') || r.height <= 120) return centre(r);
+  const ta = [...el.querySelectorAll('time')].map((t) => t.closest('a')).find((a) => a && a !== el && el.contains(a));
+  const tb = ta && ta.getBoundingClientRect();
+  if (tb && tb.width && tb.height) return centre(tb);
+  const walker = doc.createTreeWalker(el, 4);
+  for (let t = walker.nextNode(); t; t = walker.nextNode()) {
+    if (!String(t.nodeValue || '').trim()) continue;
+    const range = doc.createRange();
+    range.selectNodeContents(t);
+    const b = range.getBoundingClientRect();
+    if (b.width && b.height) return centre(b);
+  }
+  return centre(r);
+}
+
 function find(n) {
   return `(() => {${DEEP}
   ${REF(n)}
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
+  ${clickPoint.toString()}
+  const at = clickPoint(el, r, document);
   ${KIND_LABEL}${CQ}${ROW}
   const textual = tag === 'textarea' || (tag === 'input' && !['button', 'submit', 'reset', 'checkbox', 'radio', 'file', 'image', 'range', 'color', 'hidden'].includes(type));
   return {
-    x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), tag, type, kind, label,
+    x: at.x, y: at.y, tag, type, kind, label,
     password: tag === 'input' && type === 'password',
     otp: el.getAttribute('autocomplete') === 'one-time-code',
     editable: (textual && !el.disabled && !el.readOnly) || el.isContentEditable,
@@ -671,7 +702,7 @@ function find(n) {
 function inspect(n) {
   return `(() => {${DEEP}
   ${REF(n)}
-  ${KIND_LABEL}
+  ${KIND_LABEL}${CQ}
   const clip = (s, k) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
   const secret = e => e.tagName === 'INPUT' && (e.type === 'password' || e.getAttribute('autocomplete') === 'one-time-code');
   const FIRST = ['href', 'onclick', 'role', 'tabindex', 'type', 'name', 'value'];
@@ -695,7 +726,7 @@ function inspect(n) {
     cursor: getComputedStyle(el).cursor,
     marked: el.matches(${JSON.stringify(X_SEL)}),
     rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
-    visible: vis(el), ancestors, html: clip(clone.outerHTML, 300),
+    visible: vis(el), ancestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
   };
 })()`;
 }
@@ -1038,7 +1069,8 @@ function feedPosts(scope, cats, byEl, loc) {
   const mediaOf = (box, keep, authorPath) => {
     const vids = [...box.querySelectorAll('video')].filter(keep);
     const videos = vids.length;
-    let duration = null;
+    const secs = vids.map((v) => Math.round(Number(v.duration))).find((d) => Number.isFinite(d) && d > 0);
+    let duration = secs ? Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') : null;
     for (const e of box.querySelectorAll('[aria-label]')) {
       if (!videos || duration || !keep(e)) continue;
       duration = durationOf(e.getAttribute('aria-label'));
@@ -1156,19 +1188,21 @@ function feedPosts(scope, cats, byEl, loc) {
     if (qbox) {
       const pid = statusId(path);
       const qas = [...qbox.querySelectorAll('a[href*="/status/"]')].filter((a) => { const id = statusId(pathOf(a)); return id && id !== pid; });
-      const qa = qas.find((a) => a.contains(qt)) || qas[0] || null;
+      const mediaLink = (a) => /\/(?:photo|video)\/\d+\/?$/.test(String(pathOf(a)).replace(/[?#].*$/, ''));
+      const qa = qas.find((a) => a.contains(qt)) || qas.find((a) => !mediaLink(a)) || null;
       const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
       const ql = qbox.querySelector('[lang]');
+      const byHandle = qm ? [...qbox.querySelectorAll('a')].find((a) => numOf(a) != null && !mediaLink(a) && flat(a.innerText).includes('@' + qm[1])) : null;
       quote = {
-        n: qa ? numOf(qa) : wrapperNum(qbox, false), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
-        text: clip(ql ? ql.innerText : '', 160), path: qa ? statusPath(pathOf(qa)) : null,
+        n: (qa && numOf(qa)) ?? wrapperNum(qbox, false) ?? numOf(byHandle), handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null,
+        text: clip(ql ? ql.innerText : '', 160), path: qa || qas[0] ? statusPath(pathOf(qa || qas[0])) : null,
         media: mediaOf(qbox, () => true, null),
       };
     }
     return {
       n, path, handle, name, verified,
       time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
-      text: body ? clip(body.innerText, 260) : '', more: numOf(moreEl), counts,
+      text: body ? clip(String(body.innerText || '').replace(/(https?:\/\/)\s+/g, '$1'), 260) : '', more: numOf(moreEl), counts,
       media, flags, quote,
     };
   };
@@ -1196,5 +1230,5 @@ const CONTENT_TYPE = 'document.contentType';
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
-  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
