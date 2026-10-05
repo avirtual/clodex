@@ -1050,7 +1050,8 @@ test('page scripts: SUBMIT_TARGET picks what Enter activates — the default sub
   const body = src.slice(src.indexOf('  const numOf'), src.lastIndexOf('})()'));
   const SEL = 'button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]';
   const mk = (tag, o = {}) => ({ tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, label: o.label || '', isContentEditable: !!o.editable, attrs: o.attrs || {},
-    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; } });
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; },
+    matches(sel) { assert.strictEqual(sel, SEL); return defaultSubmit(this); } });
   const defaultSubmit = (e) => (e.tagName === 'BUTTON' && !['button', 'reset'].includes(e.type)) || (e.tagName === 'INPUT' && ['submit', 'image'].includes(e.type));
   const run = (el, page, cq = {}) => {
     const els = { 26: el, ...page.numbered };
