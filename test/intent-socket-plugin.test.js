@@ -11,7 +11,8 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { scanIntentLines } = require('../intent-segments');
 const registry = require('../intent-registry');
 const grammar = require('../plugins/browser-pane/grammar');
-const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler } = require('../intent-socket');
+const replies = require('../plugins/browser-pane/replies');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, identToken } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
 function parse(text) {
@@ -25,11 +26,13 @@ function withBrowserVerb(fn) {
 
 const SEAT = { intents: ['browser'], plugins: ['browser-pane'] };
 const ctl = { closed: () => false };
+const HCRED = 'h'.repeat(64);
+const MAIN = identToken(crypto, HCRED, null, null, 'main-thread');
 
 function browserHandler(entry = SEAT) {
   const seen = [];
   const handle = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread',
+    seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: HCRED,
     refusal: registry.subagentRefusal,
     dispatch: async (intent, opts) => { seen.push(intent.raw); opts.replyTo('ok'); },
   });
@@ -56,10 +59,10 @@ for (const [args, allowed] of BROWSER_TABLE) {
     const { handle, seen } = browserHandler();
     const r = await handle({ intent: `[agent:browser ${args}]`, agentId: 'agent-7' }, ctl);
     if (allowed) {
-      assert.deepStrictEqual(r, { ok: true, reply: 'ok' });
+      assert.deepStrictEqual(r, { ok: true, status: 'ok', reply: 'ok' });
       assert.deepStrictEqual(seen, [args]);
     } else {
-      assert.deepStrictEqual(r, { ok: false, error: "release is for the seat's main agent" });
+      assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "release is for the seat's main agent" });
       assert.deepStrictEqual(seen, []);
     }
   }));
@@ -68,7 +71,7 @@ for (const [args, allowed] of BROWSER_TABLE) {
 test('subagent browser is refused when the seat lacks the plugin, and when no plugin registered the verb', () => withBrowserVerb(async () => {
   const noPlugin = browserHandler({ intents: ['browser'], plugins: [] });
   const r = await noPlugin.handle({ intent: '[agent:browser read ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(r, { ok: false, error: 'not available to a subagent: browser' });
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
   assert.deepStrictEqual(noPlugin.seen, []);
   assert.strictEqual(registry.subagentAllows({ type: 'browser', raw: 'read ebloc' }, SEAT), true);
   registry._resetPluginRows();
@@ -79,16 +82,16 @@ test('a subagent cannot --confirm a consequential action; the main agent can', (
   const { handle, seen } = browserHandler();
   for (const sub of ['click ebloc 26', 'type ebloc 3', 'select ebloc 4', 'key ebloc Enter']) {
     const r = await handle({ intent: `[agent:browser ${sub} --confirm]`, agentId: 'agent-7' }, ctl);
-    assert.deepStrictEqual(r, { ok: false, error: 'a subagent cannot confirm a consequential action — ask the main agent' });
+    assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action — ask the main agent' });
   }
   for (const flag of ['"--confirm"', '--con"firm"']) {
     assert.strictEqual(grammar.toCommand({ raw: `click ebloc 26 ${flag}` }).confirm, true, `the grammar reads ${flag} as --confirm`);
     const r = await handle({ intent: `[agent:browser click ebloc 26 ${flag}]`, agentId: 'agent-7' }, ctl);
-    assert.deepStrictEqual(r, { ok: false, error: 'a subagent cannot confirm a consequential action — ask the main agent' }, flag);
+    assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action — ask the main agent' }, flag);
   }
   assert.deepStrictEqual(seen, []);
-  const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]' }, ctl);
-  assert.deepStrictEqual(main, { ok: true, reply: 'ok' });
+  const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN }, ctl);
+  assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(seen, ['click ebloc 26 --confirm']);
 }));
 
@@ -108,7 +111,7 @@ test('a plugin that never replies: the deadline answers "accepted", and a late l
   assert.strictEqual(timers[0].ms, 25000);
   assert.ok(extended > 25000, 'the socket timer outlives the plugin deadline');
   timers[0].fn();
-  assert.deepStrictEqual(await pending, { ok: true, reply: "who accepted; its reply will arrive in the seat's main conversation" });
+  assert.deepStrictEqual(await pending, { ok: true, status: 'ok', reply: "who accepted; its reply will arrive in the seat's main conversation" });
   assert.strictEqual(late('later'), false, 'the late line goes to the seat');
 });
 
@@ -150,6 +153,7 @@ function seatHarness() {
     verb: 'browser',
     parse: grammar.parseLine,
     handler: (handle, intent) => { handled.push({ handle, raw: intent.raw }); if (arrived) arrived(); },
+    classifyReply: replies.classifyReply,
   }, 'browser-pane', { shipped: true });
   const nextHandled = (n) => new Promise((resolve) => {
     arrived = () => { if (handled.length >= n) resolve(); };
@@ -178,10 +182,14 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
   return { code, out, err };
 }
 
-for (const [who, env] of [['a subagent', { CLODEX_AGENT_ID: 'agent-7' }], ['the main agent', {}]]) {
+function mainStamp(cred, sessionId = 'sess-a') {
+  return { CLODEX_HOOK_IDENT: identToken(crypto, cred, null, null, sessionId) };
+}
+
+for (const [who, envOf] of [['a subagent', () => ({ CLODEX_AGENT_ID: 'agent-7' })], ['the main agent', mainStamp]]) {
   test(`${who}: a plugin reply injected later, outside the call's async context, is the tool result and never reaches the PTY`, async () => {
     await withSeat(async (h, cred) => {
-      const call = viaVerb(h, cred, ['[agent:browser read one]'], env);
+      const call = viaVerb(h, cred, ['[agent:browser read one]'], envOf(cred));
       await h.nextHandled(1);
       await turns(10);
       h.handled[0].handle.inject('[agent:browser] read one → @/tmp/r-0001.txt');
@@ -209,5 +217,51 @@ test('two concurrent plugin calls on one seat each get their own reply', async (
     assert.strictEqual(r1.out, 'reply one\n');
     assert.strictEqual(r2.out, 'reply two\n');
     assert.deepStrictEqual(h.injected, []);
+  });
+});
+
+test('a Claude seat without the hook stamp: release and --confirm exit 3 and dispatch nothing, read goes through', async () => {
+  await withSeat(async (h, cred) => {
+    const rel = await viaVerb(h, cred, ['[agent:browser release one]']);
+    assert.deepStrictEqual(rel, { code: verb.EXIT.DENIED, out: '', err: "clodex: release is for the seat's main agent\n" });
+    const conf = await viaVerb(h, cred, ['[agent:browser click one 3 --confirm]']);
+    assert.strictEqual(conf.code, verb.EXIT.DENIED);
+    assert.strictEqual(conf.err, 'clodex: a subagent cannot confirm a consequential action — ask the main agent\n');
+    for (const env of [mainStamp('e'.repeat(64)), mainStamp(cred, 'sess-other'), { CLODEX_HOOK_IDENT: 'main.deadbeefdeadbeef' }]) {
+      const r = await viaVerb(h, cred, ['[agent:browser release one]'], env);
+      assert.strictEqual(r.code, verb.EXIT.DENIED, env.CLODEX_HOOK_IDENT);
+    }
+    assert.deepStrictEqual(h.handled, [], 'no refused call reached the plugin');
+    const read = viaVerb(h, cred, ['[agent:browser read one]']);
+    await h.nextHandled(1);
+    await turns(10);
+    h.handled[0].handle.inject('[agent:browser] read one → @/tmp/r-0002.txt');
+    assert.strictEqual((await read).code, 0);
+  });
+});
+
+test('a verified main stamp releases the window', async () => {
+  await withSeat(async (h, cred) => {
+    const call = viaVerb(h, cred, ['[agent:browser release one]'], mainStamp(cred));
+    await h.nextHandled(1);
+    await turns(10);
+    assert.deepStrictEqual(h.handled.map((x) => x.raw), ['release one']);
+    h.handled[0].handle.inject(replies.reply('released one'));
+    assert.deepStrictEqual(await call, { code: 0, out: '[agent:browser] released one\n', err: '' });
+  });
+});
+
+test('a browser error reply exits 1 and a browser refusal exits 3, the text on stdout either way', async () => {
+  await withSeat(async (h, cred) => {
+    for (const [line, code, n] of [
+      [replies.errorReply('x'), verb.EXIT.ERROR, 1],
+      [replies.errorReply(replies.TEXT.consequential(3, 'Pay', 'payment')), verb.EXIT.DENIED, 2],
+    ]) {
+      const call = viaVerb(h, cred, ['[agent:browser click one 3]'], mainStamp(cred));
+      await h.nextHandled(n);
+      await turns(10);
+      h.handled[n - 1].handle.inject(line);
+      assert.deepStrictEqual(await call, { code, out: `${line}\n`, err: '' });
+    }
   });
 });

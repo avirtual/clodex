@@ -25,6 +25,7 @@ blocks a release.
 - Browser pane: a wrapper around a consequential button is ⚠ too; button-type inputs are labelled by their value; avatar links read as @handle; Share is no longer ⚠ (Send via Direct Message is); number badges avoid neighbouring text and the line above; list-item filter matches return only the item; forget also deletes the saved element numbers.
 - Subagents can talk to Clodex: every Claude and Codex seat now exposes a per-seat socket and a `clodex` shell verb (`clodex '[agent:dm reviewer] which file holds the pin'`) whose reply comes back as the caller's own tool result, so a subagent can dm, ask `who`, list the board and run the seat's granted commands without the main agent relaying; a subagent is refused every lead and operator verb (task add/accept, shout, reboot, spawn, team…).
 - Subagents can drive the browser pane through the `clodex` shell verb and get the reply as their tool result (read, click, type, wait, download, screenshot, inspect…); `release` and `--confirm` stay with the seat's main agent; a plugin reply that takes longer than its deadline arrives in the seat's conversation instead.
+- Subagents: the `clodex` verb now proves who is calling (a Claude Code hook stamps the subagent's identity into the call, so a subagent can no longer release the seat's browser window or pass `--confirm`), refusals and errors exit non-zero so a script can branch on them, and long browser waits and downloads return inline instead of landing in the seat's conversation.
 
 ## 5.112.2 — 2026-10-04
 

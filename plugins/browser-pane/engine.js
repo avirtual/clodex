@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const grammar = require('./grammar');
 const { createClient, OP_DEADLINE_MS } = require('./client');
-const { createScheduler } = require('./scheduler');
+const { createScheduler, WAIT_MAX_MS, DOWNLOAD_OP_MS } = require('./scheduler');
 const replies = require('./replies');
 const urlpolicy = require('./urlpolicy');
 
@@ -184,8 +184,11 @@ function activate(host) {
     },
     replyWaitMs(intent) {
       const sub = String((intent && intent.raw) || '').trim().split(/\s+/)[0];
+      if (sub === 'wait') return WAIT_MAX_MS + 10000;
+      if (sub === 'download') return DOWNLOAD_OP_MS + 10000;
       return Object.hasOwn(OP_DEADLINE_MS, sub) ? OP_DEADLINE_MS[sub] + 5000 : null;
     },
+    classifyReply: replies.classifyReply,
   });
   host.sessions.onExit((h) => scheduler.onSessionExit(h));
   const operatorOp = (op) => (service) => {

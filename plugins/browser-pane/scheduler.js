@@ -473,4 +473,4 @@ function createScheduler({
   };
 }
 
-module.exports = { createScheduler, storedLogin, NO_SERVICE };
+module.exports = { createScheduler, storedLogin, NO_SERVICE, WAIT_MAX_MS, DOWNLOAD_OP_MS };

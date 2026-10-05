@@ -14,7 +14,7 @@ const { subagentAllows } = require('../intent-registry');
 const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
-  createIntentRequestHandler, createIntentSocketServer,
+  createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread,
 } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -165,7 +165,7 @@ for (const [line, label, allowed] of TABLE) {
     assert.strictEqual(subagentAllows(intents[0], GRANTED), allowed);
     const seen = [];
     const handle = createIntentRequestHandler({
-      seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => 'main-thread', allows: subagentAllows,
+      seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => 'main-thread', allows: subagentAllows, cred: CRED,
       dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
     });
     const r = await handle({ intent: line, agentId: 'agent-7' }, { closed: () => false });
@@ -173,13 +173,11 @@ for (const [line, label, allowed] of TABLE) {
       assert.strictEqual(r.ok, true);
       assert.deepStrictEqual(seen, ['h1/agent']);
     } else {
-      assert.deepStrictEqual(r, { ok: false, error: `not available to a subagent: ${label}` });
+      assert.deepStrictEqual(r, { ok: false, status: 'refused', error: `not available to a subagent: ${label}` });
       assert.deepStrictEqual(seen, [], 'a refusal dispatches nothing');
     }
-    const main = await handle({ intent: line }, { closed: () => false });
-    assert.strictEqual(main.ok, true, 'no agentId: the seat\'s full catalog');
-    const mainThread = await handle({ intent: line, agentId: 'main-thread' }, { closed: () => false });
-    assert.strictEqual(mainThread.ok, true, 'the seat\'s own thread id is the main agent');
+    const main = await handle({ intent: line, ident: identToken(crypto, CRED, null, null, 'main-thread') }, { closed: () => false });
+    assert.strictEqual(main.ok, true, 'a verified main stamp: the seat\'s full catalog');
   });
 }
 
@@ -234,6 +232,10 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
   return { code, out: out.buf, err: err.buf };
 }
 
+function mainEnv(cred, sessionId = 'sess-a') {
+  return { CLODEX_HOOK_IDENT: identToken(crypto, cred, null, null, sessionId) };
+}
+
 async function withSeat(fn, opts) {
   const h = seatHarness(opts);
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
@@ -260,7 +262,7 @@ test('an async verb says where its answer arrives, and a subagent dm is sent as 
     assert.strictEqual(r.code, 0, r.err);
     assert.strictEqual(r.out, "sent to b; a reply arrives in the seat's main conversation\n");
     assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a/agent', body: 'which file' }]);
-    const main = await viaVerb(h, cred, ['[agent:dm b] hi']);
+    const main = await viaVerb(h, cred, ['[agent:dm b] hi'], mainEnv(cred));
     assert.strictEqual(main.code, 0);
     assert.strictEqual(h.delivered[1].tag, 'a', 'the main agent still sends as the seat');
     assert.deepStrictEqual(h.injected, []);
@@ -334,14 +336,97 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const seen = [];
   const handle = createIntentRequestHandler({
-    seat: 'cx', parse, entryOf: () => ({}), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    seat: 'cx', parse, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
   const main = await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false });
   assert.strictEqual(main.ok, true, 'CODEX_THREAD_ID of the main thread is the main agent');
   assert.deepStrictEqual(seen, [null], 'and its dm would go out as the seat');
   const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
-  assert.deepStrictEqual(sub, { ok: false, error: 'not available to a subagent: shout' });
+  assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: 'not available to a subagent: shout' });
+});
+
+test('a Codex seat with no session id yet treats every caller as a subagent', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  for (const sid of [null, undefined]) {
+    const handle = createIntentRequestHandler({
+      seat: 'cx', parse, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => sid, allows: subagentAllows,
+      dispatch: async () => {},
+    });
+    for (const r of [{ intent: '[agent:shout] x', agentId: uuid }, { intent: '[agent:shout] x' }]) {
+      assert.deepStrictEqual(await handle(r, { closed: () => false }), { ok: false, status: 'refused', error: 'not available to a subagent: shout' });
+    }
+  }
+});
+
+test('the Codex uuid-tail match needs a uuid-shaped agent id', () => {
+  assert.strictEqual(isMainThread('0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee', 'rollout-x-0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), true);
+  assert.strictEqual(isMainThread('eeeeeeeeeeee', 'rollout-x-0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), false);
+  assert.strictEqual(isMainThread('dddd-eeeeeeeeeeee', 'rollout-x-0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), false);
+  assert.strictEqual(isMainThread('main-thread', 'main-thread'), true, 'an exact match needs no shape');
+});
+
+test('a Claude seat: only a main stamp keyed by this seat\'s credential and session is the main agent', async () => {
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({ type: 'claude' }), sessionIdOf: () => 'sess-1', allows: subagentAllows, cred: CRED,
+    dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
+  });
+  const ctl = { closed: () => false };
+  const refused = { ok: false, status: 'refused', error: 'not available to a subagent: shout' };
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x' }, ctl), refused, 'no stamp');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', agentId: 'sess-1' }, ctl), refused, 'an agentId claim is not a stamp');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, 'd'.repeat(64), null, null, 'sess-1') }, ctl), refused, 'wrong cred');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, null, null, 'sess-0') }, ctl), refused, 'another session');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: 'main.deadbeefdeadbeef' }, ctl), refused, 'forged');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, 'ag1', 'gp', 'sess-1') }, ctl), refused, 'a sub stamp');
+  assert.deepStrictEqual(seen, []);
+  const ok = await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, null, null, 'sess-1') }, ctl);
+  assert.deepStrictEqual(ok.ok, true);
+  assert.deepStrictEqual(seen, [null], 'the main agent acts as the seat');
+});
+
+test('a client that hangs up before the reply closes the sink, so the late reply reaches the PTY', async () => {
+  let captured = null;
+  let arrived = null;
+  const dispatched = new Promise((r) => { arrived = r; });
+  let ctlRef = null;
+  const inner = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
+    replyWaitMs: () => 60000,
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  const { srv, sockPath } = await server({
+    handle: (r, ctl) => { ctlRef = ctl; return inner(r, ctl); },
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  try {
+    const c = net.createConnection(sockPath);
+    c.on('error', () => {});
+    c.on('connect', () => c.write(req({ cred: CRED, intent: '[agent:who]' })));
+    await dispatched;
+    c.destroy();
+    for (let i = 0; i < 500 && !ctlRef.closed(); i++) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(ctlRef.closed(), true, 'the server saw the hang-up');
+    const pty = [];
+    const inject = (t) => { if (captured(t) !== false) return; pty.push(t); };
+    inject('[agent:browser] waited 60s');
+    assert.deepStrictEqual(pty, ['[agent:browser] waited 60s']);
+  } finally { srv.stop(); }
+});
+
+test('the socket writes the credential file 0600 beside it and removes it on stop', async () => {
+  const root = mkTmpRoot('isock-');
+  const sockPath = sockIn(root);
+  const credPath = pathFor(root, 's1', 'intentCred');
+  const srv = createIntentSocketServer({ net, fs, crypto, sockPath, cred: CRED, credPath, handle: async () => ({ ok: true }) });
+  await srv.start();
+  try {
+    assert.strictEqual(fs.readFileSync(credPath, 'utf8'), CRED);
+    assert.strictEqual(fs.statSync(credPath).mode & 0o777, 0o600);
+  } finally { srv.stop(); }
+  assert.strictEqual(fs.existsSync(credPath), false);
 });
 
 test('the reply sink closes when the reply is built, so a late acknowledgement falls through to the seat', async () => {
@@ -351,6 +436,6 @@ test('the reply sink closes when the reply is built, so a late acknowledgement f
     dispatch: async (intent, opts) => { opts.replyTo('now'); late = opts.replyTo; },
   });
   const r = await handle({ intent: '[agent:who]' }, { closed: () => false });
-  assert.deepStrictEqual(r, { ok: true, reply: 'now' });
+  assert.deepStrictEqual(r, { ok: true, status: 'ok', reply: 'now' });
   assert.strictEqual(late('later'), false, 'the late text goes to _injectText\'s normal path');
 });

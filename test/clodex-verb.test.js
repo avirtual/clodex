@@ -61,7 +61,30 @@ test('the request carries the cred, the joined intent and the forwarded agent id
     await run(seat, ['[agent:who]'], { env: { CLODEX_AGENT_ID: 'ag-2', CODEX_THREAD_ID: 'th-1' } });
     assert.strictEqual(seat.got[1].agentId, 'ag-2');
     await run(seat, ['[agent:who]']);
-    assert.ok(!('agentId' in seat.got[2]), 'no id in env: the main agent');
+    assert.ok(!('agentId' in seat.got[2]), 'no id in env: none sent');
+    assert.ok(!('ident' in seat.got[2]), 'no hook stamp in env: none sent');
+    await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: 'main.0123456789abcdef' } });
+    assert.strictEqual(seat.got[3].ident, 'main.0123456789abcdef', 'the hook stamp rides as ident');
+  } finally { await seat.close(); }
+});
+
+test('a reply status of error exits 1 and refused exits 3, with the reply text printed unchanged', async () => {
+  for (const [answer, code] of [
+    [{ ok: true, status: 'error', reply: '[agent:browser] error: x' }, verb.EXIT.ERROR],
+    [{ ok: true, status: 'refused', reply: '[agent:browser] error: [4] "Pay" looks consequential (payment) — re-issue with --confirm if the operator asked for it' }, verb.EXIT.DENIED],
+    [{ ok: true, status: 'ok', reply: '[agent:browser] released x' }, verb.EXIT.OK],
+  ]) {
+    const seat = await fakeSeat(() => answer);
+    try {
+      const r = await run(seat, ['[agent:browser read x]']);
+      assert.deepStrictEqual(r, { code, out: `${answer.reply}\n`, err: '' }, answer.status);
+    } finally { await seat.close(); }
+  }
+  const seat = await fakeSeat(() => ({ ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action — ask the main agent' }));
+  try {
+    const r = await run(seat, ['[agent:browser click x 3 --confirm]']);
+    assert.strictEqual(r.code, verb.EXIT.DENIED);
+    assert.strictEqual(r.err, 'clodex: a subagent cannot confirm a consequential action — ask the main agent\n');
   } finally { await seat.close(); }
 });
 
@@ -99,6 +122,7 @@ test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', as
 test('--help lists the subagent catalog', async () => {
   const r = await run(null, ['--help']);
   assert.strictEqual(r.code, 0);
+  assert.match(r.out, /timeout that covers it/);
   for (const v of ['[agent:dm', '[agent:who]', '[agent:name]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:memory list]']) {
     assert.ok(r.out.includes(v), v);
   }

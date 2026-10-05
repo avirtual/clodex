@@ -487,7 +487,7 @@ const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
-const { subagentRefusal } = require('./intent-registry');
+const { subagentRefusal, classifyReplyLine } = require('./intent-registry');
 
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
@@ -5583,7 +5583,10 @@ function createSessionManager(deps) {
         parse: (text) => this._extractIntents(text, { receiptsFor: name }),
         entryOf: () => getPersistence().get(name),
         sessionIdOf: () => session.sessionId || null,
+        cred: channel.cred,
+        crypto: nodeCrypto,
         refusal: subagentRefusal,
+        classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
         replyWaitMs: (intent) => {
           const row = pluginRowFor(intent.type);
@@ -5591,7 +5594,8 @@ function createSessionManager(deps) {
         },
       });
       const server = createIntentSocketServer({
-        net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred, handle, log,
+        net: nodeNet, fs, crypto: nodeCrypto, sockPath: channel.sockPath, cred: channel.cred,
+        credPath: pathFor(REGISTRY_DIR, name, 'intentCred'), handle, log,
       });
       session.intentSocket = server;
       return server.start().catch((e) => {

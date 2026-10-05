@@ -12,7 +12,8 @@ const {
 const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
 const { PLUGIN_GLYPH, pluginGlyphOk } = require('./intent-glyphs');
 const PLUGIN_REPLY_WAIT_MS = 30 * 1000;
-const PLUGIN_REPLY_WAIT_MAX_MS = 120 * 1000;
+const PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1000;
+const REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
@@ -354,6 +355,11 @@ function registerIntent(spec, source, opts = {}) {
       try { ms = typeof spec.replyWaitMs === 'function' ? spec.replyWaitMs(intent) : null; } catch { ms = null; }
       return Number.isFinite(ms) && ms > 0 ? Math.min(ms, PLUGIN_REPLY_WAIT_MAX_MS) : PLUGIN_REPLY_WAIT_MS;
     },
+    classifyReply: (line) => {
+      let c = null;
+      try { c = typeof spec.classifyReply === 'function' ? spec.classifyReply(line) : null; } catch { c = null; }
+      return c === 'refused' || c === 'error' ? c : defaultReplyStatus(line);
+    },
     source: src,
 // Both threaded by the host at register(), never read off `spec`: a plugin that
 // could declare its own scope could declare itself global, and one that could
@@ -479,6 +485,15 @@ function subagentRefusal(intent, entry) {
   return grants.includes(intent.cmd) ? null : '';
 }
 
+function defaultReplyStatus(line) {
+  return REPLY_ERROR_RE.test(String(line || '')) ? 'error' : 'ok';
+}
+
+function classifyReplyLine(type, line) {
+  const row = pluginRowFor(type);
+  return row && row.classifyReply ? row.classifyReply(line) : defaultReplyStatus(line);
+}
+
 function subagentAllows(intent, entry) {
   return subagentRefusal(intent, entry) === null;
 }
@@ -586,6 +601,7 @@ module.exports = {
   intentEnabledForSeat,
   subagentAllows,
   subagentRefusal,
+  classifyReplyLine,
   PLUGIN_REPLY_WAIT_MS,
   PLUGIN_REPLY_WAIT_MAX_MS,
   SUBAGENT_SUBS,

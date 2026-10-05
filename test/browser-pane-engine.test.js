@@ -401,3 +401,31 @@ test('engine: a burst of operator navigations within 5 s tells the lease holder 
   mock.timers.tick(engineMod.OPERATOR_NAV_MS);
   assert.strictEqual(injected.length, before, 'no seat holds the other lease: no injection');
 });
+
+test('engine: wait and download hold the socket call for their own ceilings, inside the registry cap', (t) => {
+  boot(t);
+  const { WAIT_MAX_MS, DOWNLOAD_OP_MS } = require('../plugins/browser-pane/scheduler');
+  const { PLUGIN_REPLY_WAIT_MAX_MS } = require('../intent-registry');
+  const row = pluginRowFor('browser');
+  assert.strictEqual(row.replyWaitMs({ raw: 'wait utility --ms=60000' }), WAIT_MAX_MS + 10000);
+  assert.strictEqual(row.replyWaitMs({ raw: 'download utility 7' }), DOWNLOAD_OP_MS + 10000);
+  assert.strictEqual(row.replyWaitMs({ raw: 'read utility' }), 25000);
+  assert.ok(DOWNLOAD_OP_MS + 10000 <= PLUGIN_REPLY_WAIT_MAX_MS);
+  assert.strictEqual(PLUGIN_REPLY_WAIT_MAX_MS, 470 * 1000);
+});
+
+test('engine: browser refusals classify as refused, a plain error as error, a normal reply as ok', (t) => {
+  boot(t);
+  const replies = require('../plugins/browser-pane/replies');
+  const { classifyReplyLine } = require('../intent-registry');
+  const { TEXT } = replies;
+  for (const text of [
+    TEXT.denied('https://x.example/a', '*.example', 'utility'),
+    TEXT.consequential(4, 'Pay now', 'payment'),
+    TEXT.consequential(5, 'Post', 'publish'),
+    TEXT.ambiguousN('utility', 6, 'Save', 'Form'),
+    TEXT.retiredN('utility', 7, 9),
+  ]) assert.strictEqual(classifyReplyLine('browser', replies.errorReply(text)), 'refused', text);
+  assert.strictEqual(classifyReplyLine('browser', replies.errorReply(TEXT.readFirst('utility'))), 'error');
+  assert.strictEqual(classifyReplyLine('browser', replies.reply('released utility')), 'ok');
+});
