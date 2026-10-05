@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const bp = require('../plugins/browser-pane/renderer');
 
@@ -213,10 +215,12 @@ test('segment click with two windows opens a picker listing both, Escape closes 
     await tick();
     assert.ok(!f.invokes.some((i) => i.method === 'show'));
     const names = walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent);
-    assert.deepStrictEqual(names, ['utility · held (operator)', 'irs · driving · clodex-hand']);
+    assert.deepStrictEqual(names, ['utility · held (operator)', 'irs · driving']);
+    const seats = walk(body).filter((n) => n.className === 'bp-pick-seat').map((n) => n.textContent);
+    assert.deepStrictEqual(seats, ['—', 'clodex-hand']);
     const options = walk(body).filter((n) => n.tag === 'option').map((n) => n.textContent);
-    assert.deepStrictEqual(options, ['clodex-hand', 'cx', 'clodex-hand', 'cx']);
-    await walk(body).find((n) => n.className === 'bp-show').click();
+    assert.deepStrictEqual(options, []);
+    await walk(body).find((n) => n.className === 'bp-show bp-btn').click();
     assert.deepStrictEqual(f.invokes.filter((i) => i.method === 'show'), [{ method: 'show', args: ['utility'] }]);
     fire('keydown', { key: 'Escape' });
     assert.strictEqual(body.children.length, 0);
@@ -225,6 +229,79 @@ test('segment click with two windows opens a picker listing both, Escape closes 
     fire('mousedown', { target: {} });
     assert.strictEqual(body.children.length, 0);
     await tick();
+  } finally { restore(); }
+});
+
+test('segment picker: rows are grid rows; Hand… unfolds one hand-over form at a time from one seat lookup, a second click or Escape folds it', async () => {
+  const { body, fire, restore } = fakeDom();
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
+    let lookups = 0;
+    const list = f.rhost.sessions.listWorkspace;
+    f.rhost.sessions.listWorkspace = (id) => { lookups += 1; return list(id); };
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({ getBoundingClientRect: () => ({ left: 10, top: 500 }) });
+    await tick();
+    const rows = body.children[0].children;
+    assert.deepStrictEqual(rows.map((r) => r.className), ['bp-row bp-pick-row', 'bp-row bp-pick-row']);
+    assert.deepStrictEqual(rows[0].children.map((c) => c.className), ['bp-pick-name', 'bp-pick-seat', 'bp-show bp-btn', 'bp-hand-open bp-btn']);
+    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-hand-open bp-btn').map((n) => n.textContent), ['Hand…', 'Hand…']);
+    const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
+    assert.ok(css.includes('.bp-pick-row {\n  display: grid;\n  grid-template-columns: minmax(120px, 1.4fr) auto auto auto;'));
+    assert.ok(css.includes('.bp-pick-row > .bp-hand {\n  grid-column: 1 / -1;'));
+    const opens = () => walk(body).filter((n) => n.className === 'bp-hand-open bp-btn');
+    const forms = () => walk(body).filter((n) => n.className === 'bp-hand');
+    await opens()[0].click();
+    await tick();
+    assert.deepStrictEqual(forms().map((n) => n.parentNode), [rows[0]]);
+    assert.strictEqual(rows[0].children[4].className, 'bp-hand');
+    assert.deepStrictEqual(walk(body).filter((n) => n.tag === 'option').map((n) => n.textContent), ['clodex-hand', 'cx']);
+    assert.strictEqual(walk(body).find((n) => n.className === 'bp-hand-go bp-btn primary').textContent, 'Hand over');
+    await opens()[1].click();
+    await tick();
+    assert.deepStrictEqual(forms().map((n) => n.parentNode), [rows[1]]);
+    await opens()[1].click();
+    assert.deepStrictEqual(forms(), []);
+    await opens()[0].click();
+    await tick();
+    fire('keydown', { key: 'Escape' });
+    assert.deepStrictEqual(forms(), []);
+    assert.strictEqual(body.children.length, 1);
+    assert.strictEqual(lookups, 1);
+    fire('keydown', { key: 'Escape' });
+    assert.strictEqual(body.children.length, 0);
+  } finally { restore(); }
+});
+
+test('segment picker: with innerWidth 600 the popover width and left keep it 8px inside the window, and its height is capped', async () => {
+  const { body, restore } = fakeDom();
+  const prevWin = global.window;
+  global.window = { innerWidth: 600, innerHeight: 800 };
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [op('utility'), svc('irs', 'driving', 'clodex-hand')]) }), SEATS);
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({ getBoundingClientRect: () => ({ left: 500, top: 770 }) });
+    await tick();
+    const style = body.children[0].style;
+    assert.deepStrictEqual([style.width, style.left, style.bottom, style.maxHeight], ['584px', '8px', '34px', '758px']);
+    assert.ok(parseInt(style.left, 10) + parseInt(style.width, 10) <= 592);
+  } finally {
+    if (prevWin === undefined) delete global.window; else global.window = prevWin;
+    restore();
+  }
+});
+
+test('segment picker: a window reported visible:false says hidden, visible:true says shown', async () => {
+  const { body, restore } = fakeDom();
+  try {
+    const f = withSeats(makeRhost({ status: status('running', [{ ...svc('wiki', 'idle'), visible: false }, { ...svc('irs', 'idle'), visible: true }]) }), SEATS);
+    bp.activate(f.rhost);
+    await tick();
+    f.segment().onClick({});
+    await tick();
+    assert.deepStrictEqual(walk(body).filter((n) => n.className === 'bp-pick-name').map((n) => n.textContent), ['wiki · idle · hidden', 'irs · idle · shown']);
   } finally { restore(); }
 });
 
@@ -278,10 +355,12 @@ test('Settings: the open row invokes operator.open, and an open window row hands
     assert.deepStrictEqual(f.invokes.find((i) => i.method === 'operator.open').args, [{ service: 'gas', url: 'https://gas.example.com/' }]);
     assert.strictEqual(find('bp-window').textContent, 'window open · held (operator)');
     assert.strictEqual(find('bp-hand-text').placeholder, 'what should it do?');
+    assert.strictEqual(find('bp-show bp-btn').textContent, 'Show');
+    assert.strictEqual(find('bp-hand-open bp-btn'), undefined);
     await tick();
     find('bp-hand-seat').value = 'cx';
     find('bp-hand-text').value = 'pay it';
-    await find('bp-hand-go').click();
+    await find('bp-hand-go bp-btn primary').click();
     assert.deepStrictEqual(f.invokes.find((i) => i.method === 'operator.handover').args, [{ service: 'utility', seat: 'cx', instruction: 'pay it' }]);
     assert.strictEqual(find('bp-handed').textContent, 'handed to cx');
     assert.deepStrictEqual(f.timers.map((x) => x[1]), [5000]);

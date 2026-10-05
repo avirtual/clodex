@@ -1549,3 +1549,9 @@ test('windows: a service window opens hidden and surfaces without focus only on 
   const opFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function operatorOp('), CHILD_SRC.indexOf('async function readPage('));
   assert.ok(opFn.includes('svc.win.show();\n    svc.win.focus();\n    app.focus({ steal: true });'));
 });
+
+test('windows: a show or hide sends a visibility frame and every state frame carries visible', () => {
+  const svcFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function openService('), CHILD_SRC.indexOf('const inIsolated ='));
+  assert.ok(svcFn.includes("const visibility = () => { if (!win.isDestroyed()) send({ event: 'visibility', service: name, visible: win.isVisible() }); };\n    win.on('show', visibility);\n    win.on('hide', visibility);"));
+  assert.ok(CHILD_SRC.includes("send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), ...extra });"));
+});

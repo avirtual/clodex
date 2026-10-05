@@ -58,6 +58,11 @@ function pickerLabel(s) {
   return `${s.name} · ${stateLabel(s)}${s.seat ? ` · ${s.seat}` : ''}`;
 }
 
+function pickerName(s) {
+  const seen = typeof s.visible === 'boolean' ? (s.visible ? ' · shown' : ' · hidden') : '';
+  return `${s.name} · ${stateLabel(s)}${seen}`;
+}
+
 function forgetText(name) {
   return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. Downloaded files are kept.`;
 }
@@ -102,17 +107,17 @@ function activate(rhost) {
     return (Array.isArray(all) ? all : []).filter((x) => x && (x.type === 'claude' || x.type === 'codex'));
   }
 
-  function handControl(name, refill) {
+  function handControl(name, refill, seatList) {
     const box = el('span', 'bp-hand');
     box.appendChild(el('span', 'bp-hand-label', 'Hand to agent…'));
     const pick = el('select', 'bp-hand-seat');
     const text = el('input', 'bp-hand-text');
     text.placeholder = 'what should it do?';
-    const go = el('button', 'bp-hand-go', 'Hand over');
+    const go = el('button', 'bp-hand-go bp-btn primary', 'Hand over');
     box.appendChild(pick);
     box.appendChild(text);
     box.appendChild(go);
-    const ready = agentSeats().then((seats) => {
+    const ready = (seatList || agentSeats()).then((seats) => {
       for (const x of seats) {
         const o = el('option', null, x.name);
         o.value = x.name;
@@ -138,14 +143,28 @@ function activate(rhost) {
     return box;
   }
 
-  function windowControls(r, name, refill) {
-    const show = el('button', 'bp-show', 'Show');
+  let picker = null;
+
+  function windowControls(r, name, refill, opts = {}) {
+    const show = el('button', 'bp-show bp-btn', 'Show');
     show.addEventListener('click', () => { call('show', name); });
     r.appendChild(show);
-    r.appendChild(handControl(name, refill));
+    if (opts.inline) { r.appendChild(handControl(name, refill)); return; }
+    const open = el('button', 'bp-hand-open bp-btn', 'Hand…');
+    let form = null;
+    const fold = () => {
+      if (form && form.parentNode) form.parentNode.removeChild(form);
+      form = null;
+      if (picker && picker.fold === fold) picker.fold = null;
+    };
+    open.addEventListener('click', () => {
+      if (form) { fold(); return; }
+      if (picker && picker.fold) picker.fold();
+      form = r.appendChild(handControl(name, refill, picker ? picker.seats : null));
+      if (picker) picker.fold = fold;
+    });
+    r.appendChild(open);
   }
-
-  let picker = null;
 
   function closePicker() {
     if (!picker) return;
@@ -162,9 +181,11 @@ function activate(rhost) {
     node.textContent = '';
     const list = (status && Array.isArray(status.services)) ? status.services : [];
     if (!list.length) { closePicker(); return; }
+    picker.fold = null;
     for (const s of list) {
       const r = el('div', 'bp-row bp-pick-row');
-      r.appendChild(el('span', 'bp-pick-name', pickerLabel(s)));
+      r.appendChild(el('span', 'bp-pick-name', pickerName(s)));
+      r.appendChild(el('span', 'bp-pick-seat', s.seat || '—'));
       windowControls(r, s.name, async () => { await pull(); fillPicker(); });
       node.appendChild(r);
     }
@@ -175,14 +196,23 @@ function activate(rhost) {
     const node = el('div', 'bp-picker');
     const rect = anchorEl && typeof anchorEl.getBoundingClientRect === 'function' ? anchorEl.getBoundingClientRect() : null;
     if (rect) {
-      node.style.left = `${Math.max(4, rect.left)}px`;
-      node.style.bottom = `${Math.max(4, (typeof window === 'undefined' ? 0 : window.innerHeight || 0) - rect.top + 4)}px`;
+      const vw = typeof window === 'undefined' ? 0 : window.innerWidth || 0;
+      const vh = typeof window === 'undefined' ? 0 : window.innerHeight || 0;
+      const width = vw ? Math.min(760, vw - 16) : 760;
+      const bottom = Math.max(4, vh - rect.top + 4);
+      node.style.width = `${width}px`;
+      node.style.left = `${vw ? Math.max(8, Math.min(rect.left, vw - 8 - width)) : Math.max(4, rect.left)}px`;
+      node.style.bottom = `${bottom}px`;
+      if (vh) node.style.maxHeight = `${Math.max(0, vh - bottom - 8)}px`;
     }
     const act = anchorEl && typeof anchorEl.getAttribute === 'function' ? anchorEl.getAttribute('data-act') : null;
     const onAnchor = (t) => (act && t && typeof t.closest === 'function' ? !!t.closest(`[data-act="${act}"]`) : t === anchorEl);
     const onDown = (e) => { if (picker && !picker.node.contains(e.target) && !onAnchor(e.target)) closePicker(); };
-    const onKey = (e) => { if (e.key === 'Escape') closePicker(); };
-    picker = { node, onDown, onKey };
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      if (picker && picker.fold) picker.fold(); else closePicker();
+    };
+    picker = { node, onDown, onKey, fold: null, seats: agentSeats() };
     document.body.appendChild(node);
     document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey, true);
@@ -218,9 +248,9 @@ function activate(rhost) {
     const when = s.loginAt ? ` (${stamp(s.loginAt)})` : '';
     r.appendChild(el('span', 'bp-login', `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when}`));
     r.appendChild(el('span', 'bp-window', s.windowOpen ? `window open · ${stateLabel(s)}` : 'closed'));
-    if (s.windowOpen) windowControls(r, s.name, refill);
+    if (s.windowOpen) windowControls(r, s.name, refill, { inline: true });
     else {
-      const show = el('button', 'bp-show', 'Show');
+      const show = el('button', 'bp-show bp-btn', 'Show');
       show.addEventListener('click', () => { call('show', s.name); });
       r.appendChild(show);
     }
@@ -383,4 +413,4 @@ function activate(rhost) {
   };
 }
 
-module.exports = { activate, segmentFor, clickActionFor, pickerLabel, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+module.exports = { activate, segmentFor, clickActionFor, pickerLabel, pickerName, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
