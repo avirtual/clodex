@@ -1208,10 +1208,10 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
   assert.deepStrictEqual(run('ArrowDown', mk('input', 'checkbox', { label: 'Transfer' }), []), { none: true });
 });
 
-test('child: op close hides the window before closing it and waits for closed, keeping the partition', () => {
+test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
   const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(name)'));
-  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*return \{ closed: name, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
-  assert.ok(!/destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close never destroys or clears the sign-in');
+  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*return \{ closed: name, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
 });
 

@@ -1283,6 +1283,10 @@ function run(electron, ctx) {
     svc.win.hide();
     svc.win.close();
     await closed;
+    const owned = new Set([...services.values()].map((s) => s.win));
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed() && !owned.has(w) && w.getTitle() === `${name} — Clodex Browser`) w.destroy();
+    }
     return { closed: name, windows: services.size, electron: BrowserWindow.getAllWindows().length };
   }
 
