@@ -754,9 +754,8 @@ test('scheduler: a paged read marks only its page seen; --page=2 marks the rest'
   const twelve = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((i) => post(i, {}, long));
   await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
   const first = await read(twelve, '[agent:browser read --compact --max=500]');
-  const onPage1 = first.filter((l) => l.startsWith('[')).length;
-  assert.ok(onPage1 > 0 && onPage1 < 12);
-  assert.strictEqual((await read(twelve))[0], `== feed (${12 - onPage1} new · ${onPage1} already seen) ==`);
+  assert.deepStrictEqual(first.map((l) => l.slice(0, 4)), ['== f', '[1] ', '[2] ', '[3] ', '[4] ', '[5] ', '[6] ', '[7] ', '[8] ']);
+  assert.strictEqual((await read(twelve))[0], '== feed (4 new · 8 already seen) ==');
   await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
   await read(twelve, '[agent:browser read --compact --max=500]');
   await read(twelve, '[agent:browser read --compact --max=500 --page=2]');
