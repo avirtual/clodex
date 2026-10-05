@@ -356,12 +356,16 @@ test('FEED: the quote box is the outermost role=link card around the quote time;
   const [p] = runFeed(h('main', {}, art), { 1500: card }, {}).posts;
   assert.deepStrictEqual([p.media.videos, p.media.duration], [1, '1:05']);
   assert.deepStrictEqual([p.quote.media.videos, p.quote.handle, p.quote.n], [0, 'other', 1500]);
+  const head = h('div', { role: 'link' }, h('span', {}, 'Other'), h('span', {}, '@other'), h('time', {}, '2d'));
+  const outer = h('div', { role: 'link' }, head, h('div', { lang: 'en' }, 'quoted words'));
+  const art2 = h('article', {}, xHeader('me', 'Me', '/me/status/1', {}, '11h').row, h('div', { lang: 'en' }, 'my words'), outer);
+  assert.strictEqual(runFeed(h('main', {}, art2), { 1500: outer, 1501: head }, {}).posts[0].quote.n, 1500);
 });
 
 test('FEED: a nested quote card keeps its own status link; the quote path comes only from a link under the quote handle', () => {
   const quoteOf = (extra) => {
     const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
-    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/5/video/1' }, h('img', { w: 300, h: 200 })));
+    const inner = h('div', { role: 'link' }, h('span', {}, '@pak'), h('a', { href: '/pak/status/6/video/1' }, h('img', { w: 300, h: 200 })));
     const card = h('div', { role: 'link' },
       h('div', {}, h('span', {}, 'Uj'), h('span', {}, '@uj'), h('time', {}, '3h')),
       h('div', { lang: 'en' }, 'look'), inner, ...extra);
@@ -421,6 +425,18 @@ test('FEED: a text-less post has no clip — action-bar counts, a Follow descrip
   assert.strictEqual(textOf(h('div', { role: 'group' }, h('button', {}, h('span', {}, '93')), h('div', {}, h('button', {}, 'Share post')))), '');
 });
 
+test('FEED: the [lang]-less body fallback is bounded to the article and reads describedby ids from the document', () => {
+  const post = (...rest) => {
+    const { row } = xHeader('ana', 'Ana', '/ana/status/4', {}, '1h');
+    return h('article', {}, h('div', {}, row), ...rest);
+  };
+  assert.strictEqual(runFeed(h('main', {}, post(h('div', {}, 'plain words'))), {}, {}).posts[0].text, 'plain words');
+  assert.strictEqual(runFeed(h('main', {}, h('div', { role: 'group' }, post(h('div', {}, 'plain words')))), {}, {}).posts[0].text, 'plain words');
+  const outsideFollow = h('button', { 'aria-describedby': 'id__f9' }, 'Follow');
+  const doc = h('main', {}, outsideFollow, post(h('div', {}, h('div', { id: 'id__f9' }, 'Click to Follow ana'))));
+  assert.strictEqual(runFeed(doc, {}, {}).posts[0].text, '');
+});
+
 test('FEED: an Article quote is detected from the card label; its title is the line after the date, whole up to 120, else clipped with … and no trailing space', () => {
   const quoteOf = (label, ...body) => {
     const { row } = xHeader('ana', 'Ana', '/ana/status/5', {}, '2h');
@@ -456,6 +472,8 @@ test('FEED: a link card\'s host comes from its "From host" line or the card labe
   const img = () => h('a', { href: 'https://t.co/x', 'aria-label': 'euobserver.com Death of the euro' }, h('img', { w: 300, h: 200 }));
   assert.strictEqual(cardOf(img(), h('a', { href: 'https://t.co/x' }, 'From euobserver.com')), 'euobserver.com');
   assert.strictEqual(cardOf(img()), 'euobserver.com');
+  const relabelled = h('a', { href: 'https://t.co/x', 'aria-label': 'Read it on substack.com' }, h('img', { w: 300, h: 200 }));
+  assert.strictEqual(cardOf(relabelled, h('a', { href: 'https://t.co/x' }, 'From euobserver.com')), 'euobserver.com');
   assert.strictEqual(cardOf(h('a', { href: 'https://t.co/x' }, h('img', { w: 300, h: 200 }))), null);
 });
 
@@ -483,4 +501,20 @@ test('feed: mainRootOf narrows --main to the column holding the articles', () =>
   const none = h('main', {}, h('div', {}, 'text'));
   assert.strictEqual(rootOf(h('body', {}, none)), none);
   assert.strictEqual(rootOf(h('body', {}, h('div', {}, 'no main'))), null);
+  const withBody = (b) => Object.assign(b, { body: b });
+  const column = h('section', {}, h('article', {}, 'one'), h('article', {}, 'two'), h('article', {}, 'three'));
+  assert.strictEqual(rootOf(withBody(h('body', {}, h('div', {}, column, h('aside', { 'aria-label': 'Who to follow' }, 'Ana'))))), column);
+  const lone = h('article', {}, 'a');
+  assert.strictEqual(rootOf(withBody(h('body', {}, lone))), lone);
+  assert.strictEqual(rootOf(withBody(h('body', {}, h('div', {}, 'no article')))), null);
+});
+
+test('feed: --main on a page without a main landmark still reads every post', () => {
+  const posts = (doc) => runFeed(doc, {}, {}, true).posts.length;
+  const page = () => {
+    const arts = ['/ana/status/1', '/bo/status/2'].map((p) => h('article', {}, h('a', { href: p }, h('time', {}, '1h')), h('div', { lang: 'en' }, 'words')));
+    const b = h('body', {}, h('div', {}, h('section', {}, ...arts), h('aside', { 'aria-label': 'Who to follow' }, 'Ana')));
+    return Object.assign(b, { body: b });
+  };
+  assert.strictEqual(posts(page()), 2);
 });

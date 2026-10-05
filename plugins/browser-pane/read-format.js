@@ -172,9 +172,15 @@ function feedBlocks(feed) {
   });
 }
 
-function feedMatches(feed, filter = null) {
+function feedKept(feed, filter = null) {
   const needle = filter ? String(filter).toLowerCase() : '';
-  return feedBlocks(feed).filter((b) => !needle || b.some((l) => l.toLowerCase().includes(needle)));
+  const blocks = feedBlocks(feed);
+  return { blocks, kept: blocks.map((b, i) => i).filter((i) => !needle || blocks[i].some((l) => l.toLowerCase().includes(needle))) };
+}
+
+function feedMatches(feed, filter = null) {
+  const { blocks, kept } = feedKept(feed, filter);
+  return kept.map((i) => blocks[i]);
 }
 
 function postKey(p) {
@@ -188,29 +194,28 @@ function feedPosts(feed, shownLines) {
   return feed.posts.map((p, i) => ({ key: postKey(p), stored: p.path != null, shown: shownLines.has(blocks[i][0]), n: p.n, line: blocks[i][0] }));
 }
 
-function seenSection(feed, seen, opts) {
+function seenSection(feed, seen, fk, opts) {
   const needle = opts.filter ? String(opts.filter).toLowerCase() : '';
-  const keep = (b) => !needle || b.some((l) => l.toLowerCase().includes(needle));
-  const blocks = feedBlocks(feed);
+  const { blocks, kept } = fk;
   const total = feed.posts.length;
   const cut = (shown, n) => (shown < n ? `${shown} of ` : '');
   if (opts.all) {
-    const shown = blocks.filter(keep);
-    const earlier = seen.earlier.filter((l) => keep([l]));
+    const shown = kept.map((i) => blocks[i]);
+    const earlier = seen.earlier.filter((l) => !needle || l.toLowerCase().includes(needle));
     const lines = shown.flat();
-    if (shown.length) lines.push(...adHint(opts.url, feed.posts.filter((p, i) => keep(blocks[i])), opts.service));
+    if (shown.length) lines.push(...adHint(opts.url, kept.map((i) => feed.posts[i]), opts.service));
     if (earlier.length) lines.push(`-- seen earlier, off the page now (${seen.earlier.length}) --`, ...earlier);
     return { marker: `== feed (${cut(shown.length, total)}${total} on the page${seen.earlier.length ? ` · ${seen.earlier.length} seen earlier, off the page now` : ''}) ==`, lines: lines.length ? lines : ['(none)'] };
   }
   const isFresh = (i) => !seen.seen.has(postKey(feed.posts[i]));
-  const fresh = blocks.filter((b, i) => isFresh(i));
-  const shown = fresh.filter(keep);
-  const n = fresh.length;
+  const freshKept = kept.filter(isFresh);
+  const shown = freshKept.map((i) => blocks[i]);
+  const n = blocks.filter((b, i) => isFresh(i)).length;
   const m = total - n;
   const marker = `== feed (${cut(shown.length, n)}${n} new · ${m} already seen${seen.dropped ? ` · ${seen.dropped} gone since your last read` : ''}) ==`;
   if (!n && m) return { marker, lines: [`(no new posts — scroll, or read --compact --all to replay the ${m} seen)`], quiet: true };
   const lines = shown.flat();
-  if (lines.length) lines.push(...adHint(opts.url, feed.posts.filter((p, i) => isFresh(i) && keep(blocks[i])), opts.service));
+  if (lines.length) lines.push(...adHint(opts.url, freshKept.map((i) => feed.posts[i]), opts.service));
   return { marker, lines: lines.length ? lines : ['(none)'] };
 }
 
@@ -252,17 +257,16 @@ function sections(raw, opts) {
   const feed = compactFeed(raw, opts);
   if (feed) {
     const rest = outsideFeed(elements, feed);
+    const fk = feedKept(feed, opts.filter);
     if (opts.feedSeen) {
-      const sec = seenSection(feed, opts.feedSeen, { ...opts, url: raw.url });
+      const sec = seenSection(feed, opts.feedSeen, fk, { ...opts, url: raw.url });
       out.push({ marker: sec.marker, lines: sec.lines });
       const brief = sec.quiet && !opts.filter && rest.length;
-      out.push({ marker: '== elements (outside the feed) ==', lines: brief ? [`(${rest.length} lines — read --compact --all, or read without --compact, to list them)`] : rest.length ? rest : ['(none)'] });
+      out.push({ marker: '== elements (outside the feed) ==', lines: brief ? [`(${rest.length} line${rest.length === 1 ? '' : 's'} — read --compact --all, or read without --compact, to list them)`] : rest.length ? rest : ['(none)'] });
       return out;
     }
-    const needle = opts.filter ? String(opts.filter).toLowerCase() : '';
-    const all = feedBlocks(feed);
-    const kept = all.map((b, i) => i).filter((i) => !needle || all[i].some((l) => l.toLowerCase().includes(needle)));
-    const blocks = kept.map((i) => all[i]);
+    const { kept } = fk;
+    const blocks = kept.map((i) => fk.blocks[i]);
     const lines = blocks.flat();
     if (lines.length) lines.push(...adHint(raw.url, kept.map((i) => feed.posts[i]), opts.service));
     const total = feed.posts.length;

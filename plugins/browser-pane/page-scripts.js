@@ -24,16 +24,19 @@ const CHROME_MARK = '\u0001';
 const SIDE_SEL = 'aside, [role=complementary], [aria-label*="Trending" i], [aria-label*="Who to follow" i]';
 const MAIN_ROOT = `
   const mainRootOf = () => {
-    const root = document.querySelector(${JSON.stringify(MAIN_SEL)});
+    const outerArts = r => [...r.querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')));
+    const body = document.body;
+    const root = document.querySelector('main, [role=main]')
+      || (body && outerArts(body).length > 1 ? body : document.querySelector(${JSON.stringify(MAIN_SEL)}));
     if (!root) return null;
-    const arts = [...root.querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')));
+    const arts = outerArts(root);
     if (arts.length < 2) return root;
     let lca = arts[0];
     while (lca !== root && !arts.every(a => lca.contains(a))) lca = lca.parentElement;
     const outside = (p, n, sel) => [...p.querySelectorAll(sel)].some(e => !n.contains(e));
     while (lca !== root && lca.parentElement) {
       const p = lca.parentElement;
-      if (outside(p, lca, ${JSON.stringify(SIDE_SEL)}) || outside(p, lca, 'article')) break;
+      if (outside(p, lca, ${JSON.stringify(SIDE_SEL)})) break;
       lca = p;
     }
     return lca;
@@ -145,23 +148,26 @@ const CQ = `
     for (let a = e.closest ? e.closest('article') : null; a; a = a.parentElement ? a.parentElement.closest('article') : null) art = a;
     return art;
   };
-  const adArticle = e => {
-    const art = outerArticle(e);
-    if (!art) return null;
-    if (!adLines.has(art)) adLines.set(art, String(art.innerText || '').split('\\n').map(l => l.replace(/\\s+/g, ' ').trim()).find(l => /^(ad|promoted|sponsored)$/i.test(l)) || null);
+  const adArticle = art => {
+    if (!adLines.has(art)) {
+      const linesOf = n => String(n.innerText || '').split('\\n').map(l => l.replace(/\\s+/g, ' ').trim());
+      const quoted = new Set([...art.querySelectorAll('[role=link]')].flatMap(linesOf));
+      adLines.set(art, linesOf(art).find(l => !quoted.has(l) && /^(ad|promoted|sponsored)$/i.test(l)) || null);
+    }
     return adLines.get(art);
   };
   const cqHit = e => {
     const d = cqInputs(e);
     const statusLink = e.tagName.toLowerCase() === 'a' && /\\/status\\//.test(String(e.getAttribute('href') || '').split(/[?#]/)[0]);
-    const ad = d.button || d.textual || statusLink ? null : adArticle(e);
+    const art = d.button || d.textual || statusLink ? null : outerArticle(e);
+    const ad = art ? adArticle(art) : null;
     if (ad) return { cat: 'ad', term: ad };
     const inner = d.button || d.textual ? [] : e.querySelectorAll(CQ_INNER);
     return consequentialHit(d, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqHit(inner[0]) : null);
   };
   const adKeyOf = e => {
-    const art = adArticle(e) ? outerArticle(e) : null;
-    if (!art) return null;
+    const art = outerArticle(e);
+    if (!art || !adArticle(art)) return null;
     if (!adArts.includes(art)) adArts.push(art);
     return adArts.indexOf(art);
   };
@@ -287,7 +293,7 @@ function readText(main) {
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
     return t - 2 * l;
   };
-  ${MAIN_ROOT}
+  ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
   if (!forced && (!root || (root.innerText || '').length < 200)) {
@@ -507,7 +513,7 @@ function collect(main) {
   ${joinUrls.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
-  ${MAIN_ROOT}
+  ${main ? MAIN_ROOT : ''}
   const mainRoot = ${main ? 'mainRootOf()' : 'null'};
   const inScope = el => {
     if (!mainRoot) return true;
@@ -1219,12 +1225,13 @@ function feedPosts(scope, cats, byEl, loc) {
     let body = [...art.querySelectorAll('[lang]')].find(own);
     if (!body) {
       const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
-      const described = new Set([...art.querySelectorAll('[aria-describedby]')].flatMap((e) => e.getAttribute('aria-describedby').split(/\s+/)).filter(Boolean));
+      const described = new Set([...document.querySelectorAll('[aria-describedby]')].flatMap((e) => e.getAttribute('aria-describedby').split(/\s+/)).filter(Boolean));
+      const inControl = (e) => { const c = e.closest('button,[role=button],[role=group]'); return !!c && art.contains(c); };
       const isDescribed = (e) => described.has(e.getAttribute('id')) || [...e.querySelectorAll('[id]')].some((x) => described.has(x.getAttribute('id')));
       body = [...art.querySelectorAll('p,div')]
         .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
           && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x))
-          && !e.closest('button,[role=button],[role=group]') && !e.querySelector('button,[role=button],[role=group]')
+          && !inControl(e) && !e.querySelector('button,[role=button],[role=group]')
           && !isDescribed(e) && !/^[\d.,\s]*[KkMm]?(\s+[\d.,]+[KkMm]?)*$/.test(flat(e.innerText)) && !/^[\s\p{P}]*$/u.test(flat(e.innerText)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
@@ -1307,7 +1314,7 @@ function feed(main, cats) {
   ${feedPosts.toString()}
   const byEl = new Map();
   for (const [k, ref] of Object.entries(window.__cxEls || {})) { const e = ref && ref.deref(); if (e) byEl.set(e, Number(k)); }
-  ${MAIN_ROOT}
+  ${main ? MAIN_ROOT : ''}
   const scope = ${main ? 'mainRootOf() || document' : 'document'};
   return feedPosts(scope, ${JSON.stringify(cats || {})}, byEl, location);
 })()`;

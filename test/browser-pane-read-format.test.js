@@ -531,6 +531,8 @@ test('read --compact with feedSeen and nothing new: one line pointing at scroll 
     '== elements (outside the feed) ==', '(2 lines — read --compact --all, or read without --compact, to list them)',
   ]);
   assert.deepStrictEqual(seenBody(allSeen, { filter: 'explore' }).slice(2), ['== elements (outside the feed) ==', '[20] link Explore → /explore']);
+  const oneRest = formatRead({ ...SEEN_RAW, elements: ['[20] link Explore → /explore'] }, { service: 'x', compact: true, feedSeen: allSeen }).content.split('\n');
+  assert.ok(oneRest.includes('(1 line — read --compact --all, or read without --compact, to list them)'), oneRest.join('\n'));
 });
 
 test('read --compact feedPosts: shown is true only for posts whose block this reply printed', () => {
@@ -590,8 +592,8 @@ test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', 
 test('read digest: ad rows sharing an adKeys article count as one post, distinct keys as distinct posts', () => {
   const raw = {
     ...RAW, url: 'https://x.com/home',
-    elements: ['[40] button ⚠ publish Post', '[172] link ⚠ @FTMO_com', '[173] link ⚠ FTMO.com', '[175] link ⚠ From ftmo.com', '[6277] link ⚠ Ad wrapper'],
-    cats: { 172: 'ad', 173: 'ad', 175: 'ad', 40: 'publish', 6277: 'ad' },
+    elements: ['[40] button ⚠ publish Post', '[172] link ⚠ @FTMO_com', '[173] link ⚠ FTMO.com', '[175] link ⚠ From ftmo.com', '[400] button ⚠ publish Like', '[6277] link ⚠ Ad wrapper'],
+    cats: { 172: 'ad', 173: 'ad', 175: 'ad', 40: 'publish', 400: 'publish', 6277: 'ad' },
     adKeys: { 172: 0, 173: 0, 175: 0, 6277: 0 },
   };
   assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.ads, { posts: 1, elements: 4 });
@@ -628,4 +630,5 @@ test('read --compact after a scroll: a new [?] ad gets the hint, a seen one or o
   assert.ok(!read(['/shop/status/77']).includes(hint));
   assert.ok(read(['/shop/status/77'], { all: true }).includes(hint));
   assert.ok(!formatRead(raw, { service: 'x', compact: true, filter: '@ana' }).content.split('\n').includes(hint));
+  assert.ok(!read(['/ana/status/111'], { filter: '@ana' }).includes(hint));
 });

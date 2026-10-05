@@ -1114,7 +1114,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   const cqHit = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqHit;`)((e) => !e.hidden);
   assert.deepStrictEqual(cqHit({ ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }), { cat: 'purchase', term: 'buy' });
   assert.deepStrictEqual(cqHit(el('button', 'Go', { form: { getAttribute: () => '/orders/new' } })), { cat: 'purchase', term: 'order' });
-  const article = (line) => ({ tagName: 'ARTICLE', innerText: `musclebooster\n@musclebooster_\n${line}\nNo gym. No complicated equipment`, parentElement: null });
+  const article = (line, cards = []) => ({ tagName: 'ARTICLE', innerText: `musclebooster\n@musclebooster_\n${line}\nNo gym. No complicated equipment`, parentElement: null, querySelectorAll: (sel) => (sel === '[role=link]' ? cards : []) });
   const inside = (e, art) => ({ ...e, closest: (sel) => (sel === 'article' ? art : e.closest(sel)) });
   const wrapper = () => el('div', 'musclebooster @musclebooster_ Ad No gym. No complicated equi', { plain: true });
   assert.deepStrictEqual(cqHit(inside(wrapper(), article('Ad'))), { cat: 'ad', term: 'Ad' });
@@ -1122,9 +1122,12 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   assert.strictEqual(cqHit(inside(wrapper(), article('Admittedly'))), null);
   assert.strictEqual(cqOf(inside(el('button', 'Like'), article('Ad'))), 'publish');
   assert.strictEqual(cqHit(inside(el('a', '268K views', { attrs: { href: '/x/status/1/analytics' } }), article('Ad'))), null);
+  const quoteCard = { tagName: 'DIV', innerText: 'Jev\n@jev\nAd\nquoted words' };
+  assert.strictEqual(cqHit(inside(wrapper(), article('Jev\n@jev\nAd\nquoted words', [quoteCard]))), null);
+  assert.deepStrictEqual(cqHit(inside(wrapper(), article('Ad\nJev\n@jev\nquoted words', [{ tagName: 'DIV', innerText: 'Jev\n@jev\nquoted words' }]))), { cat: 'ad', term: 'Ad' });
   const adKeyOf = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn adKeyOf;`)((e) => !e.hidden);
   const outer = article('Ad');
-  const nested = { tagName: 'ARTICLE', innerText: 'quoted', parentElement: { closest: (sel) => (sel === 'article' ? outer : null) } };
+  const nested = { tagName: 'ARTICLE', innerText: 'quoted', parentElement: { closest: (sel) => (sel === 'article' ? outer : null) }, querySelectorAll: () => [] };
   const other = article('Promoted');
   const link = inside(el('a', '@musclebooster_', { attrs: { href: '/musclebooster_' } }), nested);
   assert.strictEqual(adKeyOf(inside(wrapper(), outer)), 0);
