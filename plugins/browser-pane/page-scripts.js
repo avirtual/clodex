@@ -754,6 +754,41 @@ function find(n) {
 })()`;
 }
 
+const DEFAULT_SUBMIT_SEL = 'button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]';
+
+const ACTIVE = `let el = document.activeElement;
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return { none: true };`;
+
+function submitTarget(n) {
+  return `(() => {${DEEP}
+  ${n == null ? ACTIVE : REF(n)}
+  ${KIND_LABEL}${CQ}
+  const numOf = e => {
+    for (const [k, r] of Object.entries(window.__cxEls || {})) if (r && r.deref() === e) return Number(k);
+    return null;
+  };
+  const from = numOf(el);
+  const role = el.getAttribute('role');
+  if (tag === 'button' || (tag === 'input' && ['submit', 'image', 'button'].includes(type))
+    || (tag === 'a' && el.hasAttribute('href')) || role === 'button' || role === 'link') {
+    return { from, n: from, press: true, label, consequential: cqOf(el) };
+  }
+  if (tag === 'textarea' || el.isContentEditable) return { none: true };
+  const textualIn = e => e.tagName.toLowerCase() === 'input'
+    && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file', 'range', 'color', 'hidden'].includes((e.type || '').toLowerCase());
+  if (!textualIn(el) || !el.form) return { none: true };
+  const form = el.form;
+  const btn = [...form.getRootNode().querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
+  if (btn) return { from, n: numOf(btn), label: labelOf(btn).slice(0, 60), consequential: cqOf(btn) };
+  if ([...form.elements].filter(textualIn).length !== 1) return { none: true };
+  const action = form.getAttribute('action') || '';
+  const hit = consequentialHit({ action }, []);
+  const seg = action.split(/[?#]/)[0].split('/').filter(Boolean).pop();
+  return { from, n: null, label: String(seg || 'form').slice(0, 60), consequential: hit ? hit.cat : null };
+})()`;
+}
+
 function inspect(n) {
   return `(() => {${DEEP}
   ${REF(n)}
@@ -1324,6 +1359,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, consequentialRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -1005,6 +1005,101 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
   assert.match(scripts.FIND(1), /consequential: cqOf\(el\),/);
+});
+
+test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {
+  const card = { from: 26, n: 27, label: 'Card bancar', consequential: 'payment' };
+  const calls = [];
+  const isolated = (target) => async (code) => { calls.push(code); return target; };
+  const e = await enterRefusal(isolated(card), 26, { enter: true });
+  assert.strictEqual(e.code, 'CONSEQUENTIAL');
+  assert.strictEqual(e.message, 'Enter in [26] would submit through [27] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[0], scripts.SUBMIT_TARGET(26));
+  const k = await enterRefusal(isolated(card), null, { key: 'Enter' });
+  assert.strictEqual(k.message, 'Enter in [26] would submit through [27] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[1], scripts.SUBMIT_TARGET(null));
+  assert.strictEqual(await enterRefusal(isolated(card), 26, { enter: true, confirm: true }), null);
+  assert.strictEqual(calls.length, 2, '--confirm skips the probe');
+  const lost = await enterRefusal(isolated(null), 26, { enter: true });
+  assert.strictEqual(lost.code, 'INTERNAL', 'a probe that failed or timed out refuses instead of letting Enter through');
+  assert.strictEqual(lost.message, 'could not tell what Enter would submit — read again, or add --confirm if the operator asked for it');
+  assert.strictEqual(await enterRefusal(isolated({ none: true }), 26, { enter: true }), null);
+  assert.strictEqual(await enterRefusal(isolated({ ...card, consequential: null }), 26, { enter: true }), null);
+  const typeGate = /const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;\n\s*const refusedEnter = op === 'type' && args\.enter \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), n, args\) : null;\n\s*if \(refusedEnter\) throw refusedEnter;\n\s*dispatch\(svc, \{ type: 'describe'/;
+  assert.match(CHILD_SRC, typeGate, 'type refuses before it types anything, and only with --enter');
+  const keyGate = /const refusedKey = args\.key === 'Enter' \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
+  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter, before pressing');
+  assert.strictEqual(CHILD_SRC.match(/SUBMIT_TARGET/g).length, 1);
+});
+
+test('page scripts: SUBMIT_TARGET finds the default submit of the field\'s form, or the focused element for key Enter', () => {
+  const byN = scripts.SUBMIT_TARGET(26);
+  assert.ok(byN.includes(JSON.stringify('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]')));
+  assert.match(byN, /window\.__cxEls\[26\]/);
+  assert.ok(!byN.includes('document.activeElement'));
+  const focused = scripts.SUBMIT_TARGET(null);
+  assert.match(focused, /let el = document\.activeElement;\n\s*while \(el && el\.shadowRoot && el\.shadowRoot\.activeElement\) el = el\.shadowRoot\.activeElement;/);
+  assert.match(focused, /const hit = consequentialHit\(\{ action \}, \[\]\);/);
+  assert.match(focused, /consequential: cqOf\(btn\)/);
+  assert.doesNotThrow(() => new Function(byN));
+  assert.doesNotThrow(() => new Function(focused));
+});
+
+test('page scripts: SUBMIT_TARGET picks what Enter activates — the default submit in tree order (image buttons too), else the lone-field form, else nothing', () => {
+  const src = scripts.SUBMIT_TARGET(26);
+  const body = src.slice(src.indexOf('  const numOf'), src.lastIndexOf('})()'));
+  const SEL = 'button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]';
+  const mk = (tag, o = {}) => ({ tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, label: o.label || '', isContentEditable: !!o.editable, attrs: o.attrs || {},
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }, hasAttribute(k) { return k in this.attrs; } });
+  const defaultSubmit = (e) => (e.tagName === 'BUTTON' && !['button', 'reset'].includes(e.type)) || (e.tagName === 'INPUT' && ['submit', 'image'].includes(e.type));
+  let rooted = [];
+  const root = { querySelectorAll: (sel) => { assert.strictEqual(sel, SEL); return rooted.filter(defaultSubmit); } };
+  const run = (el, page, cq = {}) => {
+    rooted = page.tree;
+    const els = { 26: el, ...page.numbered };
+    const win = { __cxEls: Object.fromEntries(Object.entries(els).map(([k, e]) => [k, { deref: () => e }])) };
+    const doc = { querySelectorAll: () => [] };
+    const tag = el.tagName.toLowerCase();
+    return new Function('el', 'tag', 'type', 'label', 'labelOf', 'cqOf', 'consequentialHit', 'document', 'window', body)(
+      el, tag, el.type, el.label, (e) => e.label, (e) => cq[e.label] || null, scripts.consequentialHit, doc, win);
+  };
+  const form = (action, fields = []) => ({ getAttribute: () => action, elements: fields, getRootNode: () => root });
+  const shop = form('/cart');
+  const amount = mk('input', { type: 'text', form: shop, label: 'Amount' });
+  const qty = mk('input', { type: 'text', form: shop, label: 'Qty' });
+  const buy = mk('input', { type: 'image', form: shop, label: 'Buy now' });
+  shop.elements = [amount, qty];
+  assert.deepStrictEqual(run(amount, { tree: [amount, qty, buy], numbered: { 27: buy } }, { 'Buy now': 'purchase' }),
+    { from: 26, n: 27, label: 'Buy now', consequential: 'purchase' }, 'an image button is the default submit though form.elements omits it');
+  const lit = form('/x');
+  const card = mk('input', { type: 'submit', form: lit, label: 'Card bancar' });
+  const cardNo = mk('input', { type: 'text', form: lit, label: 'Card' });
+  lit.elements = [cardNo, mk('input', { type: 'text', form: lit, label: 'CVV' }), card];
+  assert.deepStrictEqual(run(cardNo, { tree: [cardNo, card], numbered: { 29: card } }, { 'Card bancar': 'payment' }),
+    { from: 26, n: 29, label: 'Card bancar', consequential: 'payment' }, 'a form inside a shadow root finds its submit through the form\'s root, not document');
+  const other = mk('button', { form: form('/delete'), label: 'Delete' });
+  const pay = mk('button', { form: shop, label: 'Plata' });
+  assert.deepStrictEqual(run(amount, { tree: [other, amount, pay], numbered: { 28: pay } }, { Delete: 'deletion', Plata: 'payment' }),
+    { from: 26, n: 28, label: 'Plata', consequential: 'payment' }, 'a submit owned by another form is skipped');
+  const plata = form('/checkout/pay');
+  const sum = mk('input', { type: 'text', form: plata, label: 'Suma' });
+  plata.elements = [sum, mk('input', { type: 'hidden', form: plata })];
+  const tree = [sum, mk('input', { type: 'reset', form: plata }), mk('button', { type: 'button', form: plata, label: 'Back' })];
+  assert.deepStrictEqual(run(sum, { tree, numbered: {} }), { from: 26, n: null, label: 'pay', consequential: 'payment' }, 'reset and type=button are not submits; implicit submission judges the action');
+  plata.elements = [sum, mk('input', { type: 'email', form: plata })];
+  assert.deepStrictEqual(run(sum, { tree, numbered: {} }), { none: true }, 'two fields and no submit: Enter submits nothing');
+  assert.deepStrictEqual(run(mk('textarea', { form: shop }), { tree: [buy], numbered: {} }), { none: true });
+  assert.deepStrictEqual(run(mk('div', { editable: true }), { tree: [], numbered: {} }), { none: true });
+  assert.deepStrictEqual(run(mk('input', { type: 'text' }), { tree: [buy], numbered: {} }), { none: true }, 'no form');
+  const focusedBtn = mk('button', { form: shop, label: 'Card bancar' });
+  assert.deepStrictEqual(run(focusedBtn, { tree: [focusedBtn], numbered: {} }, { 'Card bancar': 'payment' }),
+    { from: 26, n: 26, press: true, label: 'Card bancar', consequential: 'payment' });
+});
+
+test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
+  assert.deepStrictEqual(scripts.consequentialHit({ action: '/account/checkout' }, []), { cat: 'payment', term: 'checkout' });
+  assert.strictEqual(scripts.consequentialHit({ action: '/cauta' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Pay', action: '' }, []), null);
 });
 
 test('signinHold: operator-nav stays quiet while a sign-in hold is up, not during a takeover or when idle', () => {

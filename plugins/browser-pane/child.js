@@ -381,6 +381,14 @@ function consequentialRefusal(n, el, confirm) {
   return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential));
 }
 
+async function enterRefusal(isolated, n, args) {
+  if (args.confirm) return null;
+  const sub = await isolated(scripts.SUBMIT_TARGET(n));
+  if (!sub) return codedError('INTERNAL', TEXT.submitUnknown);
+  if (!sub.consequential) return null;
+  return codedError('CONSEQUENTIAL', TEXT.consequentialSubmit(n == null ? sub.from : n, sub));
+}
+
 function rowChanged(lastRead, n, row) {
   const before = lastRead && lastRead.rows ? lastRead.rows[n] : null;
   return before != null && row != null && before !== row;
@@ -926,6 +934,8 @@ function run(electron, ctx) {
       const nav = (download = false) => navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), download });
       if (op === 'key') {
         if (!driver.KEYS[args.key]) throw codedError('INTERNAL', `unknown key ${args.key}`);
+        const refusedKey = args.key === 'Enter' ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
+        if (refusedKey) throw refusedKey;
         const pre = await preAct(svc, null);
         const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
         return withChange(svc, pre, { ...nav(), idle: idleOf(idle) }, lateMsFor(op));
@@ -935,6 +945,8 @@ function run(electron, ctx) {
       const el = await resolve(svc, n);
       const refused = consequentialRefusal(n, el, !!args.confirm);
       if (refused) throw refused;
+      const refusedEnter = op === 'type' && args.enter ? await enterRefusal((code) => inIsolated(wc, code), n, args) : null;
+      if (refusedEnter) throw refusedEnter;
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
       const pre = await preAct(svc, op === 'click' ? n : null);
       if (op === 'click') {
@@ -1559,5 +1571,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

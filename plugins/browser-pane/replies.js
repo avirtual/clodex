@@ -219,6 +219,15 @@ const TEXT = {
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
+  submitUnknown: 'could not tell what Enter would submit — read again, or add --confirm if the operator asked for it',
+  consequentialSubmit: (from, sub) => {
+    const label = JSON.stringify(String(sub.label || ''));
+    const what = sub.press ? `press ${sub.n == null ? '' : `[${sub.n}] `}${label}`
+      : sub.n == null ? `submit the form ${label}` : `submit through [${sub.n}] ${label}`;
+    const why = sub.consequential === 'ad' ? 'which is an ad — a paid click on the operator\'s account that leaves the site;'
+      : sub.consequential === 'publish' ? 'which publishes as the operator —' : `which looks consequential (${sub.consequential}) —`;
+    return `Enter in ${from == null ? 'the focused field' : `[${from}]`} would ${what} ${why} re-issue with --confirm if the operator asked for it`;
+  },
   waited: (service, ms) => `${service} waited ${Number((ms / 1000).toFixed(1))}s`,
   restarted: (service) => `numbers from before the browser restarted are void on ${service} — read again`,
   notSelect: (n) => `[${n}] is not a native select — click it, read, then click the option`,
@@ -503,6 +512,7 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 const REFUSED_RES = [
   /^\S+ refused: .* matches denylist pattern /,
   /^\[\d+\] ".*" (publishes as the operator|looks consequential \(|is an ad — )/,
+  /^Enter in .+ would (press|submit) .* (publishes as the operator|looks consequential \(|is an ad — )/,
   /^\[\d+\] on \S+ no longer points at one element/,
   /^\[\d+\] retired: its text changed since your read/,
 ];

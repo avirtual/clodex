@@ -260,6 +260,17 @@ test('replies: an ad click without --confirm is refused as a paid click that lea
   assert.strictEqual(R.TEXT.consequential(4, 'Pay now', 'payment'), '[4] "Pay now" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
 });
 
+test('replies: Enter that would submit a consequential form is refused naming the field and the target', () => {
+  assert.strictEqual(R.TEXT.consequentialSubmit(26, { n: 27, label: 'Card bancar', consequential: 'payment' }),
+    'Enter in [26] would submit through [27] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(26, { n: null, label: 'plata', consequential: 'payment' }),
+    'Enter in [26] would submit the form "plata" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(null, { n: 5, press: true, label: 'Post', consequential: 'publish' }),
+    'Enter in the focused field would press [5] "Post" which publishes as the operator — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(R.TEXT.consequentialSubmit(8, { n: 9, label: 'Shop now', consequential: 'ad' }),
+    'Enter in [8] would submit through [9] "Shop now" which is an ad — a paid click on the operator\'s account that leaves the site; re-issue with --confirm if the operator asked for it');
+});
+
 test('replies: the download verb names a repeat as the same as an existing file', () => {
   assert.strictEqual(R.downloadReply('ebloc', { n: 4 }, { file: '/w/bills/lista.pdf', bytes: 120, mime: 'application/pdf', magic: 'pdf', ms: 400, same: true }),
     '[agent:browser] downloaded ebloc [4] → /w/bills/lista.pdf · same as an existing file · 120 B · application/pdf · %PDF ok · 0.4s');

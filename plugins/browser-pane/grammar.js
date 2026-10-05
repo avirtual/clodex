@@ -17,8 +17,8 @@ const FLAGS = {
   open: {},
   read: { text: 'bool', links: 'bool', compact: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
   click: { text: 'value', to: 'value', confirm: 'bool' },
-  type: { enter: 'bool' },
-  key: {},
+  type: { enter: 'bool', confirm: 'bool' },
+  key: { confirm: 'bool' },
   scroll: { pages: 'value' },
   back: {},
   forward: {},
@@ -119,7 +119,7 @@ function serviceArg(sub, positional, required) {
 }
 
 function serviceAndN(sub, positional) {
-  const usage = sub === 'type' ? '[agent:browser type [service] <n> [--enter]] <text>'
+  const usage = sub === 'type' ? '[agent:browser type [service] <n> [--enter] [--confirm]] <text>'
     : sub === 'select' ? '[agent:browser select [service] <n>] <option>'
       : sub === 'inspect' ? '[agent:browser inspect [service] <n>]' : '[agent:browser click [service] <n>]';
   if (positional.length > 2) throw new Error(`unexpected '${positional[2]}' for ${sub}`);
@@ -256,8 +256,8 @@ function toCommand(intent) {
   if (sub === 'inspect') return flags.text == null ? { sub, ...serviceAndN(sub, positional) } : byText(sub, positional, flags.text);
   if (sub === 'type') {
     const sn = serviceAndN(sub, positional);
-    if (!body && !flags.enter) throw new Error('type needs text after the bracket — [agent:browser type [service] <n> [--enter]] <text>');
-    return { sub, ...sn, text: body, enter: !!flags.enter };
+    if (!body && !flags.enter) throw new Error('type needs text after the bracket — [agent:browser type [service] <n> [--enter] [--confirm]] <text>');
+    return { sub, ...sn, text: body, enter: !!flags.enter, ...(flags.confirm ? { confirm: true } : {}) };
   }
   if (sub === 'select') {
     const sn = serviceAndN(sub, positional);
@@ -267,7 +267,7 @@ function toCommand(intent) {
   if (sub === 'key') {
     const service = serviceArg(sub, positional, false);
     if (!KEY_NAMES.includes(body)) throw new Error(`key needs one of ${KEY_NAMES.join(' ')} after the bracket`);
-    return { sub, service, key: body };
+    return { sub, service, key: body, ...(flags.confirm ? { confirm: true } : {}) };
   }
   if (sub === 'scroll') return scrollCommand(positional, flags, body);
   if (sub === 'back' || sub === 'forward') return historyCommand(sub, positional, body);

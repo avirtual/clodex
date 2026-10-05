@@ -85,7 +85,7 @@ const ROWS = [
   ['[agent:browser type 6] hello world', { sub: 'type', service: null, n: 6, text: 'hello world', enter: false }],
   ['[agent:browser type irs 30 --enter] Form 1040', { sub: 'type', service: 'irs', n: 30, text: 'Form 1040', enter: true }],
   ['[agent:browser type 6 --enter]', { sub: 'type', service: null, n: 6, text: '', enter: true }],
-  ['[agent:browser type 6]', { error: 'type needs text after the bracket — [agent:browser type [service] <n> [--enter]] <text>' }],
+  ['[agent:browser type 6]', { error: 'type needs text after the bracket — [agent:browser type [service] <n> [--enter] [--confirm]] <text>' }],
   ['[agent:browser type 6 --enter=yes] x', { error: '--enter takes no value' }],
   ['[agent:browser key] Enter', { sub: 'key', service: null, key: 'Enter' }],
   ['[agent:browser key irs] ArrowDown', { sub: 'key', service: 'irs', key: 'ArrowDown' }],
@@ -160,5 +160,14 @@ test('grammar: click and select take --confirm; other subcommands refuse it', ()
   assert.strictEqual(run('[agent:browser click utility 27]').confirm, undefined);
   assert.strictEqual(run('[agent:browser click utility --text="Plătește" --confirm]').confirm, true);
   assert.strictEqual(run('[agent:browser select utility 4 --confirm] Card').confirm, true);
-  assert.match(run('[agent:browser type utility 4 --confirm] x').error, /unknown flag --confirm for type/);
+  assert.match(run('[agent:browser scroll utility --confirm]').error, /unknown flag --confirm for scroll/);
+});
+
+test('grammar: type and key take --confirm', () => {
+  assert.deepStrictEqual(run('[agent:browser type utility 26 --enter --confirm] 100'), { sub: 'type', service: 'utility', n: 26, text: '100', enter: true, confirm: true });
+  assert.strictEqual(run('[agent:browser type utility 26 --enter] 100').confirm, undefined);
+  assert.deepStrictEqual(run('[agent:browser key utility --confirm] Enter'), { sub: 'key', service: 'utility', key: 'Enter', confirm: true });
+  assert.strictEqual(run('[agent:browser key utility] Enter').confirm, undefined);
+  assert.match(run('[agent:browser type utility 4 --bogus] x').error, /unknown flag --bogus for type — valid: .*--confirm/);
+  assert.match(run('[agent:browser key utility --bogus] Enter').error, /unknown flag --bogus for key — valid: .*--confirm/);
 });
