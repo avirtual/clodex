@@ -384,7 +384,8 @@ function consequentialRefusal(n, el, confirm) {
 async function enterRefusal(isolated, n, args) {
   if (args.confirm) return null;
   const sub = await isolated(scripts.SUBMIT_TARGET(n));
-  if (!sub || !sub.consequential) return null;
+  if (!sub) return codedError('INTERNAL', TEXT.submitUnknown);
+  if (!sub.consequential) return null;
   return codedError('CONSEQUENTIAL', TEXT.consequentialSubmit(n == null ? sub.from : n, sub));
 }
 
@@ -944,6 +945,8 @@ function run(electron, ctx) {
       const el = await resolve(svc, n);
       const refused = consequentialRefusal(n, el, !!args.confirm);
       if (refused) throw refused;
+      const refusedEnter = op === 'type' && args.enter ? await enterRefusal((code) => inIsolated(wc, code), n, args) : null;
+      if (refusedEnter) throw refusedEnter;
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
       const pre = await preAct(svc, op === 'click' ? n : null);
       if (op === 'click') {
@@ -959,8 +962,6 @@ function run(electron, ctx) {
           throw e;
         }
         if (!el.editable) throw codedError('NOT_EDITABLE', TEXT.notEditable(n, el.kind));
-        const refusedEnter = args.enter ? await enterRefusal((code) => inIsolated(wc, code), n, args) : null;
-        if (refusedEnter) throw refusedEnter;
         const text = String(args.text || '');
         const { idle } = await driver.act(wc, async () => {
           driver.click(wc, el);

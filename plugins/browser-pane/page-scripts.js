@@ -758,7 +758,7 @@ const DEFAULT_SUBMIT_SEL = 'button:not([type=button]):not([type=reset]), input[t
 
 const ACTIVE = `let el = document.activeElement;
   while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-  if (!el || el === document.body || el === document.documentElement) return null;`;
+  if (!el || el === document.body || el === document.documentElement) return { none: true };`;
 
 function submitTarget(n) {
   return `(() => {${DEEP}
@@ -774,15 +774,14 @@ function submitTarget(n) {
     || (tag === 'a' && el.hasAttribute('href')) || role === 'button' || role === 'link') {
     return { from, n: from, press: true, label, consequential: cqOf(el) };
   }
-  if (tag === 'textarea' || el.isContentEditable) return null;
+  if (tag === 'textarea' || el.isContentEditable) return { none: true };
   const textualIn = e => e.tagName.toLowerCase() === 'input'
     && !['button', 'submit', 'reset', 'checkbox', 'radio', 'image', 'file', 'range', 'color', 'hidden'].includes((e.type || '').toLowerCase());
-  if (!textualIn(el) || !el.form) return null;
+  if (!textualIn(el) || !el.form) return { none: true };
   const form = el.form;
-  const fields = [...form.elements];
-  const btn = fields.find(e => e.matches(${JSON.stringify(DEFAULT_SUBMIT_SEL)}));
+  const btn = [...document.querySelectorAll(${JSON.stringify(DEFAULT_SUBMIT_SEL)})].find(b => b.form === form);
   if (btn) return { from, n: numOf(btn), label: labelOf(btn).slice(0, 60), consequential: cqOf(btn) };
-  if (fields.filter(textualIn).length !== 1) return null;
+  if ([...form.elements].filter(textualIn).length !== 1) return { none: true };
   const action = form.getAttribute('action') || '';
   const hit = consequentialHit({ action }, []);
   const seg = action.split(/[?#]/)[0].split('/').filter(Boolean).pop();

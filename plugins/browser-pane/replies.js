@@ -219,6 +219,7 @@ const TEXT = {
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
   consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
+  submitUnknown: 'could not tell what Enter would submit — read again, or add --confirm if the operator asked for it',
   consequentialSubmit: (from, sub) => {
     const label = JSON.stringify(String(sub.label || ''));
     const what = sub.press ? `press ${sub.n == null ? '' : `[${sub.n}] `}${label}`
