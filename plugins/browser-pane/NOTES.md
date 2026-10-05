@@ -86,11 +86,14 @@ into the page scripts with `toString()` (`PAGE_SOURCE`), one implementation.
 ## page-scripts.js — FIND_TEXT
 
 Own text only (direct text nodes, plus the value of input buttons). A hit's
-candidate is its closest `STD_SEL` element, else a plain clickable whose whole
-label is the hit text; candidates are keyed by `storedKeysOf` over the same item
+candidate is its closest `STD_SEL` element, else its nearest plain clickable when
+that is a row or its whole label is the hit text; a control the read folded into
+an identical link is skipped. Candidates are keyed by `storedKeysOf` over the same item
 set `READ_INTERACTIVE` collects (`collect`), so a later read gives them the same
 numbers. A hit with neither (X post text inside a `tabindex` article) is listed
-as `[–] … (not clickable)` and never placed. An exact own-text match outranks
+as `[–] … (not clickable)` and never placed. A candidate whose key's number is
+still stamped on another connected element is returned unnumbered (`twinText`):
+re-pointing it would let an ordinal shift aim an old number at the next row. An exact own-text match outranks
 substring matches: one exact is the target, several are the only ones listed.
 Run 13: the substring list numbered "Show more" and post text with numbers the
 next read never used.
