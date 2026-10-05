@@ -574,3 +574,9 @@ can hold the outer post's `/photo/1` link, so the quote link is the one with a
 different status id. X Article quotes have no status link. Card hrefs on X are
 `t.co` or carry utm tags, while the link text shows the real domain
 (`From millerandhill.com`). X's "Parody account" label links to `help.x.com`.
+
+## page-scripts.js — clickPoint
+
+X's quote card is a ~500×370 `div[role=link]` with the quoted photo at its centre (run 20):
+a geometric-centre click opened the photo viewer. Above 120 px tall, the card is clicked
+on its time link or first text line instead.

@@ -35,6 +35,7 @@ blocks a release.
 - Browser pane: `aria-hidden` and disabled controls are listed in the screenshot's `not drawn:` legend instead of badged, a container taller than the viewport gets a dimmed badge that displaces nothing, an inline link with no free slot takes the badge under its line, the legend is never covered, and `new: all (first read)` appears only on a first read.
 - Browser pane: `[agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]` scrolls by viewports and reports the position, how many feed items loaded or dropped, how much the page grew, and what changed; open to subagents; `bottom` on a growing feed reports `reached bottom · feed loaded N px more`, and the change tail is worded for scrolling.
 - Browser pane: `read --compact` prints one line per feed post — number, handle, time, text clip, labelled counts, media, flags, quote — folding each post's action numbers (still valid for click/inspect); a default read of five or more posts hints `--compact`; ads, two-level headers, zoned times, real card domains and quote numbers read correctly on X.
+- Browser pane: a `role=link` card is no longer flagged ⚠ for words deep in its text, `inspect` names the ⚠ category and the matching term, a compact quote's `[n]` is its card (not its photo) and clicking a tall card lands on its header, a playing video keeps its duration.
 
 ## 5.112.2 — 2026-10-04
 
