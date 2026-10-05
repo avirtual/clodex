@@ -1174,3 +1174,9 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
   assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => SERVICE_RE\.test\(n\)\);/);
   assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
 });
+
+test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {
+  assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*let feed = posts \? \{ count: posts \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
+  assert.match(CHILD_SRC, /\.\.\.\(feed \? \{ feed \} : \{\}\),/);
+  assert.match(scripts.READ_INTERACTIVE(false, {}), /posts: document\.querySelectorAll\('article'\)\.length,/);
+});

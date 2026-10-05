@@ -666,3 +666,11 @@ test('scheduler: a seat override in storage wins over the global attach budget; 
   h.storage.set({ v: 1, services: {}, attach: { global: 5000, seats: { 'hand-c': 50 } } });
   assert.deepStrictEqual(await first([['hand-c', '[agent:browser read utility]']]), [['hand-c', true]]);
 });
+
+test('scheduler: read --compact asks the child for the feed; a plain read does not', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  h.calls.length = 0;
+  await h.run([['hand-a', '[agent:browser read --compact]'], ['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(h.calls.map((c) => c.slice(1)), [['read', { scope: 'all', compact: true }], ['read', { scope: 'all' }]]);
+});

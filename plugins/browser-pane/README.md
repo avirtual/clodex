@@ -172,7 +172,7 @@ ipc handlers (step 12).
 
 ```
 [agent:browser open <service>] <url>
-[agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
+[agent:browser read [service] [--text|--links|--compact] [--main] [--all] [--filter=<s>] [--page=N] [--max=<tokens>] [--attach|--path-only]]
 [agent:browser click [service] <n>|--text="<visible text>" [--to=<dir in your cwd>] [--confirm]]
 [agent:browser type [service] <n> [--enter]] <text>
 [agent:browser key [service]] <Enter|Tab|Escape|Backspace|Delete|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|PageUp|PageDown|Home|End|Space>
@@ -191,6 +191,19 @@ ipc handlers (step 12).
 top/bottom of page), how many feed items loaded or dropped, how much the page
 grew, and what changed. It does not number anything: `read` again to get numbers
 for the new items.
+
+`read --compact` prints a feed (any page built of `article` elements) as one line
+per post: the post's own number (its permalink, the same number a default read
+gives that link, so `click [n]` opens it), `@handle (Name ✓)`, relative and
+absolute time, flags (Ad, reposted by, pinned, reply to), the text clipped at 200
+characters with the site's own Show more as `(more [n])`, labelled counts
+(`1,058 replies`), media (`video 1:06`, `2 photos`, `card example.com`) and
+`→ /path`, plus an indented `↳ quoting` line for a nested quote. The posts' action
+numbers (reply, like, menu, avatar…) are folded: still valid for `click`/`inspect`,
+just unprinted, and their ⚠ controls collapse to one `⚠ folded: publish ×N` digest
+line. Elements outside the feed follow under `== elements (outside the feed) ==`.
+It is site-neutral: it reads only `article`/`time`/`lang` structure, aria-labels
+and hrefs. A default read of five or more posts hints `--compact`.
 
 A read reply ends in `→ @<path>`, which a Claude seat attaches to its context, only
 when the page is at or under the seat's budget (default ≈1,000 tokens, set under

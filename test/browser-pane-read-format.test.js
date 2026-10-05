@@ -432,3 +432,67 @@ test('read-format: the text head is cut on a word boundary and marked chrome lin
   assert.match(out, /== text \(first 1,200 of [\d,]+ chars; read --text for all\) ==\nData: 28 August/);
   assert.doesNotMatch(out, /Augu\n/);
 });
+
+const { feedLines } = require('../plugins/browser-pane/read-format');
+
+const POST = {
+  n: 11, path: '/ana/status/111', handle: 'ana', name: 'Ana Lee', verified: true,
+  time: { rel: '9h', iso: '2026-10-05T04:12:00.000Z' }, text: 'Hello world', more: 12,
+  counts: [{ num: '1058', word: 'replies' }, { num: '621', word: 'reposts' }, { num: '3.1K', word: 'likes' }, { num: '1.2M', word: 'views' }],
+  media: { videos: 1, duration: '1:06', photos: 2, card: 'example.com' },
+  flags: { ad: true, repostedBy: '@bo', pinned: true, replyTo: '@x' }, quote: null,
+};
+const MIN_POST = { n: 12, path: '/a/status/1', handle: 'a', name: null, verified: false, time: { rel: '9h', iso: null }, text: 'hi', more: null, counts: [], media: {}, flags: {}, quote: null };
+
+test('feedLines: a full line carries every part in order; text is JSON-quoted with the Show more number', () => {
+  assert.deepStrictEqual(feedLines({ posts: [POST] }), [
+    '[11] @ana (Ana Lee ✓) · 9h (2026-10-05T04:12) · Ad · reposted by @bo · pinned · reply to @x · "Hello world… (more [12])" · 1,058 replies · 621 reposts · 3.1K likes · 1.2M views · video 1:06 · 2 photos · card example.com · → /ana/status/111',
+  ]);
+});
+
+test('feedLines: absent parts leave no empty separators; an unnumbered post prints [?]; long text is word-cut at 200', () => {
+  assert.deepStrictEqual(feedLines({ posts: [MIN_POST] }), ['[12] @a · 9h · "hi" · → /a/status/1']);
+  assert.deepStrictEqual(feedLines({ posts: [{ ...MIN_POST, n: null, path: null }] }), ['[?] @a · 9h · "hi"']);
+  const long = feedLines({ posts: [{ ...MIN_POST, text: 'word '.repeat(60).trim() }] })[0];
+  assert.strictEqual(JSON.parse(long.split(' · ')[2]), `${'word '.repeat(40).trim()}…`);
+});
+
+test('feedLines: a quote is a second indented line', () => {
+  const q = { ...MIN_POST, quote: { handle: 'cy', rel: '2d', text: 'the quoted words', path: '/cy/status/2' } };
+  assert.deepStrictEqual(feedLines({ posts: [q] }), ['[12] @a · 9h · "hi" · → /a/status/1', '  ↳ quoting @cy · 2d · "the quoted words" · → /cy/status/2']);
+});
+
+const FEED_RAW = {
+  ...RAW,
+  elements: ['[1] link Home → /', '[11] link 9h → /ana/status/111', '[13] button ⚠ publish Reply', '[20] link Explore → /explore'],
+  feed: { count: 2, posts: [POST, { ...MIN_POST, handle: 'zed', quote: { handle: 'ana', rel: '1d', text: 'q', path: null } }], numbers: [11, 12, 13], folded: { publish: 1 } },
+};
+
+test('read --compact: feed section then elements outside the feed only; posts: N in the header; the more-page command keeps --compact', () => {
+  const out = formatRead(FEED_RAW, { service: 'x', compact: true });
+  const lines = out.content.split('\n');
+  assert.match(lines[3], / · posts: 2 · mode: default --compact · /);
+  const body = lines.slice(6, -2);
+  assert.deepStrictEqual(body, [
+    '== feed (2 posts) ==', feedLines(FEED_RAW.feed)[0], '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"',
+    '== elements (outside the feed) ==', '[1] link Home → /', '[20] link Explore → /explore',
+  ]);
+  assert.strictEqual(out.compact, true);
+  assert.strictEqual(out.posts, 2);
+  const paged = formatRead({ ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: Array(20).fill(POST) } }, { service: 'x', compact: true, max: 500 });
+  assert.match(paged.content, /more: `\[agent:browser read x --compact --max=500 --page=2\]`/);
+});
+
+test('read --compact --filter applies to feed lines, a match on the quote line keeps its post', () => {
+  const body = formatRead(FEED_RAW, { service: 'x', compact: true, filter: '@ANA' }).content.split('\n').slice(6, -2);
+  assert.deepStrictEqual(body.slice(0, 4), ['== feed (2 posts) ==', feedLines(FEED_RAW.feed)[0], '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
+  const zed = formatRead(FEED_RAW, { service: 'x', compact: true, filter: 'zed' }).content.split('\n').slice(6, -2);
+  assert.deepStrictEqual(zed, ['== feed (2 posts) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"', '== elements (outside the feed) ==', '(none)']);
+});
+
+test('read without --compact keeps the text and full elements sections and reports posts: N', () => {
+  const out = formatRead(FEED_RAW, { service: 'x' });
+  assert.match(out.content, /\n== elements ==\n\[1\] link Home → \/\n\[11\] link 9h/);
+  assert.doesNotMatch(out.content, /== feed/);
+  assert.match(out.content.split('\n')[3], / · posts: 2 · mode: default · /);
+});

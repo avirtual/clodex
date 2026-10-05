@@ -548,3 +548,16 @@ else `li`, the latter two under `READ_ROOT_SEL` (the read root), else `body`.
 viewport stays visible.
 `behavior: 'instant'` overrides a page's CSS `scroll-behavior: smooth`, which would
 animate the scroll and let the after-measure land mid-animation.
+
+## page-scripts.js — feedPosts
+
+A post is a top-level `article` (one not inside another); its permalink is the
+first `a[href*="/status/"]`, else the `time`'s link, the same rule `collect` uses
+to label in-article actions. The header row is the nearest ancestor of that `time`
+whose text holds an `@word`; article text lines above it carry the repost and
+pinned flags. The body is the first `[lang]` descendant (X, Mastodon and Bluesky
+mark post text with `lang`). Counts come from aria-labels shaped `<number> <Word>`:
+X labels `1058 Replies. Reply` with the exact value while the visible text says
+`1K`. A second `time` outside the permalink marks a quote; its block is the widest
+ancestor of that `time` that does not also hold the post's own `time`. The card
+host is the external `href`'s host, which on X is `t.co`.

@@ -557,7 +557,7 @@ function readInteractive(main, state) {
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, posts: document.querySelectorAll('article').length, url: location.href };
 })()`;
 }
 
@@ -960,10 +960,150 @@ function targetState(n) {
 }
 
 
+function feedPosts(scope, cats, byEl, loc) {
+  const flat = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+  const clip = (s, n) => { const t = flat(s); return t.length > n ? t.slice(0, n) : t; };
+  const inside = (e, box) => !!box && (e === box || box.contains(e));
+  const pathOf = (a) => {
+    const h = a && a.getAttribute('href');
+    if (!h) return null;
+    try { return new URL(h, loc.href).pathname; } catch { return null; }
+  };
+  const numOf = (e) => (e && byEl.has(e) ? byEl.get(e) : null);
+  const outer = (a) => !(a.parentElement && a.parentElement.closest('article'));
+  const arts = [...scope.querySelectorAll('article')].filter(outer);
+  const topOf = (e) => {
+    let a = e.closest('article');
+    while (a && !outer(a)) a = a.parentElement.closest('article');
+    return a;
+  };
+  const durationOf = (l) => {
+    const ms = /(\d+) minutes? (\d+) seconds?/i.exec(l);
+    if (ms) return ms[1] + ':' + ms[2].padStart(2, '0');
+    const s = /(\d+) seconds?/i.exec(l);
+    return s ? Math.floor(Number(s[1]) / 60) + ':' + String(Number(s[1]) % 60).padStart(2, '0') : null;
+  };
+  const nearVideo = (img, art) => {
+    let e = img.parentElement;
+    for (let i = 0; e && e !== art && i < 4; i++, e = e.parentElement) if (e.querySelector('video')) return true;
+    return false;
+  };
+  const post = (art) => {
+    const times = [...art.querySelectorAll('time')];
+    const pl = art.querySelector('a[href*="/status/"]') || (times[0] && times[0].closest('a'));
+    const time = (pl && pl.querySelector('time')) || times[0] || null;
+    const qt = times.find((t) => t !== time && !(pl && pl.contains(t)));
+    let qbox = null;
+    if (qt && time) {
+      qbox = qt;
+      while (qbox.parentElement && qbox.parentElement !== art && !qbox.parentElement.contains(time)) qbox = qbox.parentElement;
+    }
+    const own = (e) => !inside(e, qbox);
+    let row = time;
+    while (row && row !== art && !/@\w/.test(row.innerText || '')) row = row.parentElement;
+    if (row === art) row = null;
+    const rowText = row ? String(row.innerText || '') : '';
+    const hm = /@(\w+)/.exec(rowText);
+    const handle = hm ? hm[1] : null;
+    const name = hm ? flat(rowText.slice(0, hm.index)).replace(/[\s·]+$/, '') || null : null;
+    const verified = !!row && [...row.querySelectorAll('svg[aria-label]')].some((s) => /verified/i.test(s.getAttribute('aria-label')));
+    const artText = String(art.innerText || '');
+    const rowLines = rowText.split('\n').map(flat).filter(Boolean);
+    const at = rowLines.length ? artText.indexOf(rowLines[0]) : -1;
+    const above = (at > 0 ? artText.slice(0, at) : '').split('\n').map(flat).filter(Boolean);
+    const flags = {};
+    if ([...above, ...rowLines].some((l) => /^(ad|promoted|sponsored)$/i.test(l))) flags.ad = true;
+    const rp = above.find((l) => /reposted|retweeted/i.test(l));
+    if (rp) {
+      const m = /@\w+/.exec(rp);
+      flags.repostedBy = m ? m[0] : flat(rp.replace(/\s*(reposted|retweeted)\b.*$/i, '')) || rp;
+    }
+    if (above.some((l) => /pinned/i.test(l))) flags.pinned = true;
+    const rt = artText.split('\n').map((l) => /^replying to (@\S+)/i.exec(flat(l))).find(Boolean);
+    if (rt) flags.replyTo = rt[1];
+    let body = [...art.querySelectorAll('[lang]')].find(own);
+    if (!body) {
+      const head = rowLines[0] || '';
+      body = [...art.querySelectorAll('p,div')]
+        .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head)))
+        .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
+    }
+    const moreEl = [...art.querySelectorAll('button,[role=button]')]
+      .find((e) => own(e) && (/^(show|see) more$/i.test(flat(e.innerText)) || /^(show|see) more$/i.test(flat(e.getAttribute('aria-label')))));
+    const counts = [];
+    const seen = new Set();
+    for (const e of art.querySelectorAll('button,a,[role=button]')) {
+      if (!own(e)) continue;
+      const hit = /^([\d.,]+[KkMm]?)\s+([A-Za-z]+)/.exec(flat(e.getAttribute('aria-label'))) || /^([\d.,]+[KkMm]?)\s*(views?)$/i.exec(flat(e.innerText));
+      if (!hit) continue;
+      const word = hit[2].toLowerCase();
+      if (seen.has(word)) continue;
+      seen.add(word);
+      counts.push({ num: hit[1], word });
+    }
+    const videos = [...art.querySelectorAll('video')].filter(own).length;
+    let duration = null;
+    for (const e of art.querySelectorAll('[aria-label]')) {
+      if (!videos || duration || !own(e)) continue;
+      duration = durationOf(e.getAttribute('aria-label'));
+    }
+    const authorPath = handle ? '/' + handle.toLowerCase() : null;
+    const photos = [...art.querySelectorAll('img')].filter((img) => {
+      if (!own(img)) return false;
+      const r = img.getBoundingClientRect();
+      if (r.width < 100 || r.height < 100) return false;
+      const p = pathOf(img.closest('a'));
+      return !(authorPath && p && p.toLowerCase() === authorPath) && !nearVideo(img, art);
+    }).length;
+    let card = null;
+    for (const a of art.querySelectorAll('a[href]')) {
+      if (card || !own(a) || !flat(a.innerText)) continue;
+      try {
+        const u = new URL(a.getAttribute('href'), loc.href);
+        if (u.origin !== loc.origin) card = u.hostname.replace(/^www\./, '');
+      } catch {}
+    }
+    const path = pathOf(pl);
+    let quote = null;
+    if (qbox) {
+      const qa = qbox.querySelector('a[href*="/status/"]') || qt.closest('a');
+      const qp = qa && inside(qa, qbox) ? pathOf(qa) : null;
+      if (qp == null || qp !== path) {
+        const qm = /@(\w+)/.exec(String(qbox.innerText || ''));
+        const ql = qbox.querySelector('[lang]');
+        quote = { handle: qm ? qm[1] : null, rel: flat(qt.innerText) || null, text: clip(ql ? ql.innerText : '', 160), path: qp };
+      }
+    }
+    return {
+      n: numOf(pl), path, handle, name, verified,
+      time: time ? { rel: flat(time.innerText) || null, iso: time.getAttribute('datetime') || null } : null,
+      text: body ? clip(body.innerText, 260) : '', more: numOf(moreEl), counts,
+      media: { videos, duration, photos, card }, flags, quote,
+    };
+  };
+  const set = new Set(arts);
+  const numbers = [];
+  for (const [e, n] of byEl) if (set.has(topOf(e))) numbers.push(n);
+  numbers.sort((a, b) => a - b);
+  const folded = {};
+  for (const n of numbers) if (cats[n]) folded[cats[n]] = (folded[cats[n]] || 0) + 1;
+  return { posts: arts.map(post), numbers, folded };
+}
+
+function feed(main, cats) {
+  return `(() => {
+  ${feedPosts.toString()}
+  const byEl = new Map();
+  for (const [k, ref] of Object.entries(window.__cxEls || {})) { const e = ref && ref.deref(); if (e) byEl.set(e, Number(k)); }
+  const scope = ${main ? `document.querySelector('main, [role=main]') || document` : 'document'};
+  return feedPosts(scope, ${JSON.stringify(cats || {})}, byEl, location);
+})()`;
+}
+
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

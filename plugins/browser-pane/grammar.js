@@ -15,7 +15,7 @@ const DEFAULT_MAX = 2500;
 
 const FLAGS = {
   open: {},
-  read: { text: 'bool', links: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
+  read: { text: 'bool', links: 'bool', compact: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
   click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool' },
   key: {},
@@ -194,7 +194,7 @@ function scrollCommand(positional, flags, body) {
   const last = positional[positional.length - 1];
   const dir = SCROLL_DIRS.includes(last) ? last : null;
   const rest = dir ? positional.slice(0, -1) : positional;
-  if (dir && rest.length && SCROLL_DIRS.includes(rest[0])) throw new Error('scroll takes one direction: down, up, top or bottom');
+  if (dir && rest.some((t) => SCROLL_DIRS.includes(t))) throw new Error('scroll takes one direction: down, up, top or bottom');
   if (!dir && positional.length > 1) {
     const stray = positional.find((t) => SCROLL_DIRS.includes(t));
     if (stray) throw new Error(`unexpected '${positional[positional.length - 1]}' for scroll`);
@@ -226,6 +226,7 @@ function toCommand(intent) {
   if (sub === 'read') {
     const service = serviceArg(sub, positional, false);
     if (flags.text && flags.links) throw new Error('--text and --links cannot be combined');
+    if (flags.compact && (flags.text || flags.links)) throw new Error('--compact is a mode of the default read; drop --text/--links');
     if (flags.filter === '') throw new Error('--filter needs a value, e.g. --filter=pdf');
     const max = flags.max == null ? DEFAULT_MAX
       : Math.min(MAX_MAX, Math.max(MAX_MIN, intArg('max', flags.max, 1)));
@@ -235,6 +236,7 @@ function toCommand(intent) {
       mode: flags.text ? 'text' : flags.links ? 'links' : 'default',
       main: !!flags.main,
       all: !!flags.all,
+      compact: !!flags.compact,
       filter: flags.filter == null ? null : flags.filter,
       page: flags.page == null ? 1 : intArg('page', flags.page, 1),
       max,

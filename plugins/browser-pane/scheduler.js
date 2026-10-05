@@ -212,7 +212,7 @@ function createScheduler({
   }
 
   async function runRead(handle, service, cmd) {
-    const raw = await client.request('read', { scope: cmd.main ? 'main' : 'all' }, { service, seat: handle.name });
+    const raw = await client.request('read', { scope: cmd.main ? 'main' : 'all', ...(cmd.compact ? { compact: true } : {}) }, { service, seat: handle.name });
     if (raw && raw.held) signin(service, raw);
     if (raw) noteUrl(service, raw.url);
     const st = seatState(handle.name);
@@ -242,7 +242,7 @@ function createScheduler({
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen };
     const rec = ((storage.get() || {}).services || {})[service] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost });
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost });
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
     const file = replies.writeReplyFile(handle.name, out.content);

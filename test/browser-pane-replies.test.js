@@ -442,3 +442,21 @@ test('replies: a path-only screenshot is the plain path, no digest; codex keeps 
   assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'claude'), '[agent:browser] screenshot ebloc 1280×900 → @/tmp/s.jpg ');
   assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'codex', false), R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'codex'));
 });
+
+test('replies: a compact digest folds in-feed ⚠ into one line and lists only the ⚠ outside the feed', () => {
+  const raw = {
+    ...BIG, elements: ['[1] button ⚠ publish Post', '[5] button ⚠ publish Reply', '[6] button ⚠ publish Like'],
+    feed: { count: 1, posts: [{ n: 4, handle: 'a', time: { rel: '1h' }, text: 'hi', counts: [], media: {}, flags: {} }], numbers: [4, 5, 6], folded: { publish: 6 } },
+  };
+  const lines = R.readReply('x', formatRead(raw, { service: 'x', compact: true }), '/t/r.txt', 'claude', { attach: false }).split('\n');
+  assert.ok(lines.includes('  ⚠: [1] "publish Post"'), lines.join('\n'));
+  assert.ok(lines.includes('  ⚠ folded: publish ×6'), lines.join('\n'));
+});
+
+test('replies: a default read of five or more posts hints --compact; four do not, nor a compact read', () => {
+  const hint = (count, compact = false) => R.readReply('x', formatRead({ ...BIG, feed: { count } }, { service: 'x', compact }), '/t/r.txt', 'claude', { attach: false })
+    .split('\n').find((l) => l.startsWith('  hint:')) || '';
+  assert.match(hint(5), /^ {2}hint: (.* · )?--compact( · |$)/);
+  assert.doesNotMatch(hint(4), /--compact/);
+  assert.doesNotMatch(hint(5, true), /--compact/);
+});
