@@ -837,10 +837,13 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     if (!el || !el.isConnected) continue;
     const r = el.getBoundingClientRect();
     if (!(r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight)) continue;
-    if (r.width <= 1 || r.height <= 1 || !vis(el)) { undrawn.push(Number(k)); continue; }
+    if (r.width <= 1 || r.height <= 1 || !vis(el) || el.closest('[aria-hidden="true"],[inert]')
+      || el.matches(':disabled,[aria-disabled="true"]')) { undrawn.push(Number(k)); continue; }
     items.push({ k, el, r });
   }
   const badgeRects = [];
+  const legendText = undrawn.length ? 'not drawn: ' + undrawn.sort((a, b) => a - b).map(n => '[' + n + ']').join(' ') : '';
+  if (legendText) badgeRects.push({ left: 0, top: innerHeight - 14, right: ${BADGE_CHAR_PX} * legendText.length + 4, bottom: innerHeight });
   const hits = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
   const wordAt = (x, y) => {
     const c = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
@@ -867,7 +870,9 @@ const OVERLAY = `(() => {${DEEP}${CQ}
   };
   const below = (q) => {
     for (let hit = badgeRects.find(o => hits(o, q)); hit; hit = badgeRects.find(o => hits(o, q))) {
-      q = { left: q.left, right: q.right, top: hit.bottom + 1, bottom: hit.bottom + 1 + ${BADGE_H_PX} };
+      q = hit.bottom + 1 + ${BADGE_H_PX} > innerHeight
+        ? { left: hit.right + 1, right: hit.right + 1 + q.right - q.left, top: q.top, bottom: q.bottom }
+        : { left: q.left, right: q.right, top: hit.bottom + 1, bottom: hit.bottom + 1 + ${BADGE_H_PX} };
     }
     return q;
   };
@@ -886,33 +891,35 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     const media = el.tagName === 'IMG' || !!el.querySelector('img,video,canvas');
     const bw = Math.ceil(k.length * ${BADGE_CHAR_PX}) + ${BADGE_PAD_PX};
     const slot = (left, top) => ({ left, top, right: left + bw, bottom: top + ${BADGE_H_PX} });
-    let at = slot(r.left - ${BADGE_NUDGE_PX}, r.top);
-    if (!media && r.height <= 2 * lh + 2) {
+    const huge = r.height > innerHeight || r.width > innerWidth;
+    let at = slot(r.left - ${BADGE_NUDGE_PX}, huge ? Math.max(r.top, 0) : r.top);
+    if (!huge && !media && r.height <= 2 * lh + 2) {
       const rects = [...items.map(i => i.r).filter(o => o !== r && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom)), ...badgeRects];
-      const blocked = q => q.left < 0 || q.top < 0 || q.right > innerWidth || q.bottom > innerHeight
+      const clash = q => q.left < 0 || q.top < 0 || q.right > innerWidth || q.bottom > innerHeight
         || rects.some(o => hits(o, q))
-        || textUnder(q.left, q.right, q.top + ${BADGE_H_PX} / 2)
         || mediaIn(q, el);
+      const blocked = q => clash(q) || textUnder(q.left, q.right, q.top + ${BADGE_H_PX} / 2);
       const right = () => {
         for (let d = 0; d <= bw; d += 2) if (!blocked(slot(r.right + 2 + d, r.top))) return slot(r.right + 2 + d, r.top);
         return null;
       };
       const tries = [slot(r.left - bw - 2, r.top), slot(r.left, Math.floor(r.top) - ${BADGE_H_PX}), slot(r.right + 2, r.top), slot(r.left, Math.ceil(r.bottom)), slot(r.left - bw / 2, r.top - ${BADGE_H_PX} - 1)];
-      at = tries.find(q => !blocked(q)) || right() || slot(r.left, r.top);
+      const under = slot(r.left, Math.ceil(r.bottom) + 1);
+      at = tries.find(q => !blocked(q)) || right() || (clash(under) ? null : under) || slot(r.left, r.top);
     }
     at = below(at);
     const x = at.left;
     const y = at.top;
-    badgeRects.push(at);
+    if (!huge) badgeRects.push(at);
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
-      + (cqOf(el) ? ';background:#e00' : ';background:#111')
+      + (cqOf(el) ? ';background:#e00' : ';background:#111') + (huge ? ';opacity:.6' : '')
       + ';left:' + Math.max(0, Math.round(x)) + 'px;top:' + Math.max(0, Math.round(y)) + 'px';
     layer.appendChild(b);
     drawn += 1;
   }
-  if (undrawn.length) {
+  if (legendText) {
     const legend = document.createElement('span');
-    legend.textContent = 'not drawn: ' + undrawn.sort((a, b) => a - b).map(n => '[' + n + ']').join(' ');
+    legend.textContent = legendText;
     legend.style.cssText = 'position:fixed;left:0;bottom:0;font:bold 12px/14px monospace;color:#fff;background:#111;padding:0 2px;z-index:2147483647';
     layer.appendChild(legend);
   }

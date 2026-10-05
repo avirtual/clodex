@@ -355,7 +355,8 @@ const WARN_RE = /^\[(\d+)\] \S+ ⚠ (.*)$/;
 
 function countsOf(raw) {
   if (raw.restored != null) return { all: 'numbers restored' };
-  if (raw.first || !Array.isArray(raw.fresh)) return { all: 'first read' };
+  if (raw.first) return { all: 'first read' };
+  if (!Array.isArray(raw.fresh)) return { unknown: 'elements unavailable' };
   const len = (a) => (Array.isArray(a) ? a.length : 0);
   return { fresh: raw.fresh.length, retired: len(raw.retired), changed: len(raw.changed) };
 }
