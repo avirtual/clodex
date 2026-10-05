@@ -1182,9 +1182,9 @@ test('FIND: a target our scroll parked under a sticky header is scrolled clear o
   const region = roled('region', 'Cookie banner', [decline, agree]);
   const i = plain(findOn(inView, () => region, { numbered: { 274: region, 277: decline, 278: agree } }));
   assert.deepStrictEqual([i.covered, i.hitN, i.hitButtons], [true, 274, [{ n: 277, label: 'Decline' }, { n: 278, label: 'Accept' }]], 'a numbered tabindexed region names its own buttons');
-  const realBtn = Object.assign(boxEl('button', 'Sterge filtre', box(0, 600, 1200, 200)), { querySelectorAll: () => [decline] });
+  const realBtn = Object.assign(boxEl('button', 'Filtre', box(0, 600, 1200, 200)), { querySelectorAll: () => [decline] });
   const j = plain(findOn(inView, () => realBtn, { numbered: { 8: realBtn, 277: decline } }));
-  assert.deepStrictEqual([j.covered, j.hitN, j.hitButtons], [true, 8, undefined], 'a numbered real control is its own answer');
+  assert.deepStrictEqual([j.covered, j.hitN, j.hitConsequential, j.hitButtons], [true, 8, null, undefined], 'a numbered real control is its own answer');
   const del = boxEl('button', 'Delete account', box(900, 560, 100, 40));
   const keep = boxEl('button', 'Cancel', box(1010, 560, 100, 40));
   const dialog = roled('dialog', 'Your account', [del, keep]);
