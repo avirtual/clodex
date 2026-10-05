@@ -26,7 +26,10 @@ function filterLines(lines, filter, { blocks = false } = {}) {
     if (!low[i].includes(needle)) return;
     keep[i] = true;
     hit[i] = true;
-    if (BULLET_RE.test(unmark(l))) return;
+    if (BULLET_RE.test(unmark(l))) {
+      for (let k = i + 1; k < lines.length && k <= i + BLOCK_MAX && lines[k].trim() && !BULLET_RE.test(unmark(lines[k])); k++) keep[k] = true;
+      return;
+    }
     if (row(l)) {
       let h = i;
       while (h > 0 && row(lines[h - 1])) h--;

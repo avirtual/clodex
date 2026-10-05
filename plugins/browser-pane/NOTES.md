@@ -429,8 +429,8 @@ retired [98]). A bare amount ("19,486") is not a counter. A button or link in an
 `article` whose label is only counter words and counts is keyed by its action
 word and the post's permalink (`a[href*="/status/"]`, else the `time` link), so
 "Like" and "1 Like. Like" share a number. The article itself, or a clickable in one
-with no action word, keys as `article <permalink path>`; without a permalink every
-number in the key label of an element inside an article reads `#`: X article labels
+with no action word, keys as `article <permalink path>`; every other element inside an
+article (neither the action nor the permalink branch) has every number in its key label read `#`: X article labels
 carry bare counts ("84 587 3K 88K") that ticked into fresh numbers. `changed:` signatures are masked the same way.
 
 ## page-scripts.js — consequentialOf

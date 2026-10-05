@@ -31,8 +31,8 @@ const CONSEQUENTIAL = [
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
   ['transfer', ['transfer', 'send money', 'wire'], []],
-  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'share', 'comment', 'publish', 'tweet',
-    'submit review', 'posteaza', 'trimite', 'urmareste', 'distribuie', 'apreciaza'], []],
+  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
+    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], []],
 ];
 const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
@@ -58,13 +58,14 @@ function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS))
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
-  const hay = [text(d.label), text(d.value), text(d.aria), fold(d.formaction)].filter(Boolean);
+  const hay = [text(d.label), text(d.value), text(d.aria)].filter(Boolean);
+  const hayAll = [...hay, fold(d.formaction)].filter(Boolean);
   const idClass = fold(d.idClass);
   let lead = null;
   for (const r of res) {
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
-    if (!(hay.some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
+    if (!((r.lead ? hay : hayAll).some((h) => r.re.test(h)) || (r.id && idClass && r.re.test(idClass)))) continue;
     if (!r.lead) return r.cat;
     lead = r.cat;
   }
@@ -89,6 +90,7 @@ const CQ = `
   ${cqCompile.toString()}
   ${consequentialOf.toString()}
   const CQ_RES = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS);
+  const CQ_INNER = 'input[type=submit],input[type=button],input[type=image],button,[role=button]';
   const cqOf = e => {
     const tg = e.tagName.toLowerCase();
     const ty = String(e.type || '').toLowerCase();
@@ -99,6 +101,7 @@ const CQ = `
     const href = tg === 'a' ? String(e.getAttribute('href') || '').split(/[?#]/)[0] : '';
     const doc = tg === 'a' && (e.hasAttribute('download') || /\\.(pdf|xlsx?|docx?)$/i.test(href));
     const button = tg === 'button' || (tg === 'input' && ['submit', 'button', 'image'].includes(ty)) || e.getAttribute('role') === 'button';
+    const inner = button || textual ? [] : e.querySelectorAll(CQ_INNER);
     return consequentialOf({
       textual,
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
@@ -109,7 +112,7 @@ const CQ = `
       idClass: (e.id || '') + ' ' + (e.getAttribute('class') || ''),
       formaction: e.getAttribute('formaction'),
       action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
-    }, CQ_RES);
+    }, CQ_RES) || (inner.length === 1 ? cqOf(inner[0]) : null);
   };`;
 
 const ROW = `
@@ -197,8 +200,25 @@ const TABLES = `
     t.replaceWith(box);
   }`;
 
+function bulletItems(root, mark) {
+  const first = (n) => {
+    for (const c of n.childNodes) {
+      if (c.nodeType === 3 && c.data.trim()) return c;
+      const t = c.nodeType === 1 ? first(c) : null;
+      if (t) return t;
+    }
+    return null;
+  };
+  for (const li of root.querySelectorAll('ul > li:not([role=menuitem]), ol > li:not([role=menuitem])')) {
+    const t = first(li);
+    if (!t || t.data.startsWith(mark) || t.data.trimStart().startsWith('• ')) continue;
+    t.data = '• ' + t.data.trimStart();
+  }
+}
+
 function readText(main) {
   return `(() => {${DEEP}
+  ${bulletItems.toString()}
   const DROP = 'script,style,noscript,select,svg,form,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
     const t = (el.innerText || '').length;
@@ -224,6 +244,7 @@ function readText(main) {
     const w = document.createTreeWalker(c, NodeFilter.SHOW_TEXT);
     for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim()) t.data = ${JSON.stringify(CHROME_MARK)} + t.data;
   }
+  bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
   host.appendChild(clone); document.body.appendChild(host);
@@ -358,14 +379,27 @@ function distinctClips(labels, max = 60, part = 30) {
       if (s[s.length - part - 1] !== ' ' && tail.indexOf(' ') >= 0) tail = tail.slice(tail.indexOf(' ') + 1);
       out[i] = head.trim() + ' … ' + tail.trim();
     }
-    if (new Set(idx.map((i) => out[i])).size < idx.length) for (const i of idx) out[i] = null;
+    if (new Set(idx.map((i) => out[i])).size < new Set(idx.map((i) => labels[i])).size) for (const i of idx) out[i] = null;
   }
   return out;
+}
+
+function inputLine(d) {
+  const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  const clip = (s, n) => { s = flat(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+  const pw = d.type === 'password';
+  const btn = d.tag === 'input' && /^(button|submit|reset|image)$/.test(d.type);
+  const lab = flat((btn && d.value) || flat(d.label) || d.aria || d.placeholder || d.name || d.id);
+  const shown = d.value && !pw && !(btn && lab === flat(d.value));
+  return clip(lab, 50) + (shown ? ' = "' + clip(d.value, 30) + '"' : '')
+    + (d.type === 'checkbox' || d.type === 'radio' ? (d.checked ? ' [x]' : ' [ ]') : '')
+    + (pw ? ' (operator only)' : '');
 }
 
 function readInteractive(main, state) {
   return `(() => {${DEEP}${numbering(state)}
   ${distinctClips.toString()}
+  ${inputLine.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
   resetTable();
@@ -434,11 +468,10 @@ function readInteractive(main, state) {
       const shown = opts.length <= 40 ? opts.join('|') : opts.slice(0, 20).join('|') + '|…(+' + (opts.length - 20) + ' more)';
       line = clip(labelOf(el) === el.value ? (el.name || el.id) : labelOf(el), 40) + ' = "' + clip(cur, 30) + '" {' + shown + '}';
     } else if (tag === 'input' || tag === 'textarea') {
-      const lab = el.labels && el.labels[0] ? el.labels[0].innerText : (el.getAttribute('aria-label') || el.placeholder || el.name || el.id);
-      const pw = el.type === 'password';
-      line = clip(lab, 50) + (el.value && !pw ? ' = "' + clip(el.value, 30) + '"' : '')
-        + (el.type === 'checkbox' || el.type === 'radio' ? (el.checked ? ' [x]' : ' [ ]') : '')
-        + (pw ? ' (operator only)' : '');
+      line = inputLine({
+        tag, type: el.type, value: el.value, checked: el.checked, label: el.labels && el.labels[0] ? el.labels[0].innerText : '',
+        aria: el.getAttribute('aria-label'), placeholder: el.placeholder, name: el.name, id: el.id,
+      });
     } else {
       full = flat(labelOf(el));
       line = clip(full, 60);
@@ -488,13 +521,13 @@ function labelFrom(d) {
   const pick = (xs) => { for (const x of xs) { const v = typeof x === 'function' ? x() : x; if (v) return v; } return ''; };
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
   const photo = d.tag === 'a' && d.href ? /\/photo\/(\d+)\/?$/.exec(path(d.href)) : null;
+  const handle = d.tag === 'a' && d.href && segs(d.href).length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(segs(d.href)[0]) ? '@' + segs(d.href)[0] : '';
   const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
-    () => (d.alts || []).map(alt).find(Boolean), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
+    () => (handle ? '' : (d.alts || []).map(alt).find(Boolean)), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
   if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : named;
   if (photo) return 'photo ' + photo[1];
   if (d.tag === 'a' && d.href && path(d.href) !== '/') {
-    const s = segs(d.href);
-    return pick([tid(d.svgTestid), flat(d.svgTitle), s.length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(s[0]) ? '@' + s[0] : '', () => last(d.href)]);
+    return pick([tid(d.svgTestid), flat(d.svgTitle), handle, () => last(d.href)]);
   }
   const src = /^data:/i.test(flat(d.src)) ? '' : flat(d.src).split(/[?#]/)[0].split('/').pop() || '';
   const icon = pick([flat(d.svgTitle), tid(d.testid), tid(d.svgTestid), cls(d.classes), src]);
@@ -739,6 +772,25 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     items.push({ k, el, r });
   }
   const badgeRects = [];
+  const hits = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  const wordAt = (x, y) => {
+    const c = document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+    const t = c && c.startContainer;
+    if (!t || t.nodeType !== 3) return false;
+    for (const i of [c.startOffset - 1, c.startOffset]) {
+      if (i < 0 || i >= t.data.length || !/\S/.test(t.data[i])) continue;
+      const q = document.createRange();
+      q.setStart(t, i);
+      q.setEnd(t, i + 1);
+      const b = q.getBoundingClientRect();
+      if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) return true;
+    }
+    return false;
+  };
+  const textUnder = (left, right, y) => {
+    for (let x = left; x < right; x += 4) if (wordAt(x, y)) return true;
+    return wordAt(right, y);
+  };
   for (const { k, el, r } of items) {
     const b = document.createElement('span');
     b.textContent = k;
@@ -751,9 +803,13 @@ const OVERLAY = `(() => {${DEEP}${CQ}
     if (!media && r.height <= 2 * lh + 2) {
       const lx = r.left - bw - 2;
       const blocked = lx < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && Math.abs(o.top - r.top) < ${BADGE_LINE_PX}
-        && o.left < r.left && o.right > lx && !(o.left <= r.left && o.right >= r.right));
+        && o.left < r.left && o.right > lx && !(o.left <= r.left && o.right >= r.right))
+        || textUnder(lx, r.left - 2, r.top + r.height / 2);
+      const above = { left: r.left, top: r.top - ${BADGE_H_PX}, right: r.left + bw, bottom: r.top };
+      const aboveBlocked = above.top < 0 || [...items.map(i => i.r), ...badgeRects].some(o => o !== r && hits(o, above)
+        && !(o.left <= r.left && o.right >= r.right && o.top <= r.top && o.bottom >= r.bottom));
       if (!blocked) x = lx;
-      else if (r.top - ${BADGE_H_PX} >= 0) { x = r.left; y = r.top - ${BADGE_H_PX}; }
+      else if (!aboveBlocked) { x = r.left; y = r.top - ${BADGE_H_PX}; }
     }
     badgeRects.push({ left: x, top: y, right: x + bw, bottom: y + ${BADGE_H_PX} });
     b.style.cssText = 'position:fixed;font:bold 12px/14px monospace;color:#fff;padding:0 2px;border-radius:2px;border:1px solid #fff;z-index:2147483647'
@@ -795,5 +851,5 @@ const CONTENT_TYPE = 'document.contentType';
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
-  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips,
+  TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

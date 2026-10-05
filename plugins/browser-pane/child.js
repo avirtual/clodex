@@ -204,6 +204,18 @@ function flushNumbers(svc, now = Date.now()) {
   svc.dirty.clear();
 }
 
+function forgetNumbers(svc, dir) {
+  if (svc) {
+    if (svc.saveTimer) clearTimeout(svc.saveTimer);
+    svc.saveTimer = null;
+    if (svc.dirty) svc.dirty.clear();
+    if (svc.origins) svc.origins.clear();
+    svc.num = null;
+    svc.numDir = null;
+  }
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+}
+
 function genRefusal(service, op, args, gen) {
   if (!GEN_OPS.has(op) || !args || args.n == null || args.byText != null || args.gen === undefined) return null;
   return Number(args.gen) === gen ? null : codedError('RESTARTED', TEXT.restarted(service));
@@ -1124,6 +1136,7 @@ function run(electron, ctx) {
   async function opForget(name) {
     const svc = services.get(name);
     if (svc && !svc.win.isDestroyed()) svc.win.destroy();
+    forgetNumbers(svc, path.join(data, 'numbers', name));
     const ses = session.fromPartition('persist:' + name);
     await ses.clearStorageData();
     await ses.clearCache();
@@ -1423,5 +1436,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, consequentialRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };
