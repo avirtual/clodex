@@ -69,11 +69,14 @@ for (const [args, allowed] of BROWSER_TABLE) {
   }));
 }
 
-test('subagent browser close is refused: the subagent allowlist does not carry it', () => withBrowserVerb(async () => {
+test('subagent browser close is refused naming the verb; a word that is no verb keeps the generic label', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
   const r = await handle({ intent: '[agent:browser close ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser close (a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services)' });
+  const odd = await handle({ intent: '[agent:browser frobnicate ebloc]', agentId: 'agent-7' }, ctl);
+  assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
   assert.deepStrictEqual(seen, []);
+  assert.deepStrictEqual(registry.BROWSER_VERBS, require('../plugins/browser-pane/grammar').SUBCOMMANDS);
 }));
 
 test('subagent browser is refused when the seat lacks the plugin, and when no plugin registered the verb', () => withBrowserVerb(async () => {
