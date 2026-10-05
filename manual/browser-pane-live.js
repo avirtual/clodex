@@ -720,6 +720,7 @@ async function hiddenStep(emit, base) {
   const sm = / → @(\S+) $/.exec(shot);
   if (sm) console.log(`    ${sm[1]} · ${fs.statSync(sm[1]).size} B`);
   check('a screenshot of the hidden window has pixels', !!sm && !/ 0×0/.test(shot) && fs.statSync(sm[1]).size > 0);
+  await emit('[agent:browser close hidden]');
 }
 
 function fileOf(reply) {
