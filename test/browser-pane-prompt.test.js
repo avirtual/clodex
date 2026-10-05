@@ -14,7 +14,7 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 
 const DESIGN_PROMPT_LINES = [
   '  [agent:browser open <service>] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service',
-  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file',
+  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--attach|--path-only]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file; --attach forces it inline, --path-only sends the path plus a digest',
   '  A read hides navigation/header/footer/sidebar text and elements repeated from your previous read of that site (header says how many; numbers stay valid); page body text is never hidden; --all shows everything.',
   '  [agent:browser click [service] <n> [--to=<dir in your cwd>] [--confirm]]  [agent:browser click [service] --text="<visible text>" [--confirm]]  [agent:browser type [service] <n> [--enter]] <text>  [agent:browser key [service]] <Enter|Tab|Escape|…>',
   '  [agent:browser select [service] <n> [--confirm]] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',

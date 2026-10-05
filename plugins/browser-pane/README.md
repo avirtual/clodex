@@ -135,7 +135,8 @@ ipc handlers (step 12).
   `clickable`; when nothing is numbered, `click --text=` targets visible text.
   `--text="…"` quotes the text; unquoted, the rest of the bracket is the text.
 - **Stable numbers**: an element keeps its number across pages of one site;
-  `screenshot --numbers` draws each visible number on the image. A number is
+  `screenshot --numbers` draws each visible number on the image, and lists a
+  numbered element with no visible box in a `not drawn: [n]` corner line. A number is
   keyed on the element's full label, so two documents whose names differ only
   past the shown 60 characters never share one.
 - **Consequential controls**: an element whose label is an action verb (pay,
@@ -186,11 +187,14 @@ ipc handlers (step 12).
 A read reply ends in `→ @<path>`, which a Claude seat attaches to its context, only
 when the page is at or under the seat's budget (default ≈1,000 tokens, set under
 "Attach reads up to ≈N tokens" in the pane's Settings; a per-seat override is set
-through the `attach.set` call with `{ seat, tokens }`, 100–20,000). A larger page
-comes back as the plain path with `(not attached: over ≈N tok; …)` and a digest
-of at most a dozen lines: title, url and sign-in state; size, page and
-new/retired/changed counts; the first headings (or landmark labels); every ⚠
-element with its number; and a `--main`/`--filter=`/`--page=` hint. `--attach`
+through the `attach.set` call with `{ seat, tokens }`, 100–20,000; `tokens: null`
+clears it). A larger page comes back as the plain path with `(not attached: over
+≈N tok; …)` and a digest of at most a dozen lines: title, url and sign-in state;
+size, page and new/retired/changed counts (`new: all (first read)` or `new: all
+(numbers restored)` on a first read); the first visible headings (or landmark
+labels); every ⚠ element with its number (above 30, counts per category plus the
+first 10); and a `--main`/`--filter=`/`--page=` hint, where `--filter=` names a
+word shared by at least two headings. `--attach`
 forces the `@`, `--path-only` drops it. A screenshot attaches unless `--path-only`
 is given. A Codex seat gets its "read it with your Read tool" line either way.
 

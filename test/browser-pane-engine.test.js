@@ -276,7 +276,7 @@ test('engine operator.open: bad service names and bad URLs are refused, a good o
   }
   assert.deepStrictEqual(await open({ service: 'utility', url: 'https://portal.example.com/home' }),
     { ok: true, service: 'utility', url: 'https://portal.example.com/home', title: 'Operator utility' });
-  assert.strictEqual(frames().filter((l) => l.startsWith('open')).pop(), 'open {"url":"https://portal.example.com/home","operator":true,"policy":{"global":[],"service":[]}}');
+  assert.strictEqual(frames().filter((l) => l.startsWith('open')).pop(), 'open {"url":"https://portal.example.com/home","operator":true,"policy":{"global":[],"service":[]},"known":[]}');
   const st = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
   assert.deepStrictEqual(st.services, [{ name: 'utility', state: 'held', reason: 'takeover', seat: null, login: 'unknown', denied: 0, operator: true }]);
   const list = await engine.dispatch('browser-pane', 'services.list', [], 'desktop');
@@ -385,6 +385,24 @@ test('engine: attach.set stores the global budget and seat overrides, rejects no
   assert.deepStrictEqual(await set({ seat: '../x', tokens: 1000 }), { ok: false, error: 'bad seat: ../x' });
   assert.deepStrictEqual(await get(), { ok: true, global: 1500, seats: { 'clodex-hand': 4000 } });
   assert.strictEqual(host.storage.get().v, 1);
+});
+
+test('engine: attach.set with tokens null and a seat clears that seat override; null without a seat is refused', async (t) => {
+  const { engine } = boot(t);
+  const set = (req) => engine.dispatch('browser-pane', 'attach.set', [req], 'desktop');
+  const get = () => engine.dispatch('browser-pane', 'attach.get', [], 'desktop');
+  await set({ seat: 'clodex-hand', tokens: 4000 });
+  await set({ seat: 'clodex-two', tokens: 2000 });
+  assert.deepStrictEqual(await set({ seat: 'clodex-hand', tokens: null }), { ok: true, seat: 'clodex-hand', tokens: null });
+  assert.deepStrictEqual(await get(), { ok: true, global: 1000, seats: { 'clodex-two': 2000 } });
+  assert.deepStrictEqual(await set({ tokens: null }), { ok: false, error: 'tokens must be an integer from 100 to 20000' });
+});
+
+test('engine: every child request carries the stored service names so a not-a-service refusal lists what services lists', async (t) => {
+  const { engine, emit, frames } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/home');
+  await engine.dispatch('browser-pane', 'operator.open', [{ service: 'other', url: 'https://portal.example.com/x' }], 'desktop');
+  assert.strictEqual(frames().filter((l) => l.startsWith('open {')).pop(), 'open {"url":"https://portal.example.com/x","operator":true,"policy":{"global":[],"service":[]},"known":["utility"]}');
 });
 
 test('engine: open carries the global and the service denylist to the child', async (t) => {

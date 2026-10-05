@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: a path-only read digest now lists every ⚠ control, always shows what changed, and draws its headings and `--filter` hint from visible text only; number badges no longer land on each other, on logos, or on hidden controls; a seat's attach budget can be cleared; the agent prompt names `--attach`/`--path-only`.
 - Browser pane: a read lands in the agent's context only when it is small (default ≈1k tokens, set per seat in the pane's Settings); a larger page comes back as a plain path plus a digest — title, size, what changed, headings, every ⚠ control with its number and a `--filter`/`--page` hint — so the agent decides what to open; `--attach` and `--path-only` override either way, and screenshots still attach by default.
 - Browser pane: `--text=` names its candidates with the numbers a read would give them and prefers an exact label match, number badges no longer touch the glyphs below them (ad name rows included), X's verified badge reads `badge` instead of `avatar`, a menu opening or closing on X no longer dumps the page as `changed:`, and the restore header shows when the numbers were saved.
 - Browser pane: a held number now stays on its own row when identical buttons retire, wrappers around a listed control are no longer flagged ⚠, number badges never cover text, Wikipedia reference items read as single bullets, and a read after a restart says `numbers restored`.
