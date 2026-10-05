@@ -467,7 +467,7 @@ test('the reply sink closes when the reply is built, so a late acknowledgement f
   assert.strictEqual(late('later'), false, 'the late text goes to _injectText\'s normal path');
 });
 
-test('stamp: clodex behind a reserved word or a prefix command is stamped; CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex as an argument is not', () => {
+test('stamp: clodex behind a reserved word or a prefix command is stamped; clodex as an argument is not', () => {
   const T = 'CLODEX_HOOK_IDENT=t';
   for (const [cmd, want] of [
     ['if clodex x; then :; fi', `if ${T} clodex x; then :; fi`],
@@ -478,8 +478,8 @@ test('stamp: clodex behind a reserved word or a prefix command is stamped; CLODE
     ['while clodex x; do :; done', `while ${T} clodex x; do :; done`],
     ['until clodex x; do :; done', `until ${T} clodex x; do :; done`],
     ['! clodex x', `! ${T} clodex x`],
-    ['{ CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex x; }', `{ ${T} clodex x; }`],
-    ['(CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex x)', `(${T} clodex x)`],
+    ['{ clodex x; }', `{ ${T} clodex x; }`],
+    ['(clodex x)', `(${T} clodex x)`],
     ['time clodex x', `time ${T} clodex x`],
     ['time -p clodex x', `time -p ${T} clodex x`],
     ['timeout 300 clodex x', `${T} timeout 300 clodex x`],

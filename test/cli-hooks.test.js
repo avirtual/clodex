@@ -1533,5 +1533,5 @@ test('ident hook: a non-clodex call never starts the interpreter; a clodex call 
   assert.strictEqual(fs.existsSync(marker), true);
   const real = identSeat();
   const out = JSON.parse(runIdent(real, bashCall('clodex x')));
-  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} CLODEX_HOOK_IDENT=main.6376c726d1ee358d clodex x`);
+  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} clodex x`);
 });
