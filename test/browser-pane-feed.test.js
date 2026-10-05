@@ -333,6 +333,8 @@ test('FEED: a nested quote card keeps its own status link; the quote path comes 
   assert.deepStrictEqual([q1.n, q1.path], [1400, null]);
   const q2 = quoteOf([h('a', { href: '/uj/status/7' }, 'Show more')]);
   assert.deepStrictEqual([q2.n, q2.path], [1400, '/uj/status/7']);
+  const q3 = quoteOf([h('a', { href: '/pak/status/8' }, 'pak')]);
+  assert.deepStrictEqual([q3.n, q3.path], [1400, null]);
 });
 
 test('FEED: an Article quote card carries its title from the line after "Article" or the rest of an "Article …" line; a bare trailing "Article" is no title', () => {
