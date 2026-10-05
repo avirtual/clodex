@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, consequentialRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, consequentialRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -1005,6 +1005,47 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   const act = /const el = await resolve\(svc, n\);\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
   assert.match(scripts.FIND(1), /consequential: cqOf\(el\),/);
+});
+
+test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {
+  const card = { from: 26, n: 27, label: 'Card bancar', consequential: 'payment' };
+  const calls = [];
+  const isolated = (target) => async (code) => { calls.push(code); return target; };
+  const e = await enterRefusal(isolated(card), 26, { enter: true });
+  assert.strictEqual(e.code, 'CONSEQUENTIAL');
+  assert.strictEqual(e.message, 'Enter in [26] would submit through [27] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[0], scripts.SUBMIT_TARGET(26));
+  const k = await enterRefusal(isolated(card), null, { key: 'Enter' });
+  assert.strictEqual(k.message, 'Enter in [26] would submit through [27] "Card bancar" which looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  assert.strictEqual(calls[1], scripts.SUBMIT_TARGET(null));
+  assert.strictEqual(await enterRefusal(isolated(card), 26, { enter: true, confirm: true }), null);
+  assert.strictEqual(calls.length, 2, '--confirm skips the probe');
+  assert.strictEqual(await enterRefusal(isolated(null), 26, { enter: true }), null);
+  assert.strictEqual(await enterRefusal(isolated({ ...card, consequential: null }), 26, { enter: true }), null);
+  const typeGate = /if \(!el\.editable\) throw codedError\('NOT_EDITABLE', TEXT\.notEditable\(n, el\.kind\)\);\n\s*const refusedEnter = args\.enter \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), n, args\) : null;\n\s*if \(refusedEnter\) throw refusedEnter;\n\s*const text = String\(args\.text \|\| ''\);\n\s*const \{ idle \} = await driver\.act\(/;
+  assert.match(CHILD_SRC, typeGate, 'type refuses before it types anything, and only with --enter');
+  const keyGate = /const refusedKey = args\.key === 'Enter' \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
+  assert.match(CHILD_SRC, keyGate, 'key probes only for Enter, before pressing');
+  assert.strictEqual(CHILD_SRC.match(/SUBMIT_TARGET/g).length, 1);
+});
+
+test('page scripts: SUBMIT_TARGET finds the default submit of the field\'s form, or the focused element for key Enter', () => {
+  const byN = scripts.SUBMIT_TARGET(26);
+  assert.ok(byN.includes(JSON.stringify('button:not([type=button]):not([type=reset]), input[type=submit], input[type=image]')));
+  assert.match(byN, /window\.__cxEls\[26\]/);
+  assert.ok(!byN.includes('document.activeElement'));
+  const focused = scripts.SUBMIT_TARGET(null);
+  assert.match(focused, /let el = document\.activeElement;\n\s*while \(el && el\.shadowRoot && el\.shadowRoot\.activeElement\) el = el\.shadowRoot\.activeElement;/);
+  assert.match(focused, /const hit = consequentialHit\(\{ action \}, \[\]\);/);
+  assert.match(focused, /consequential: cqOf\(btn\)/);
+  assert.doesNotThrow(() => new Function(byN));
+  assert.doesNotThrow(() => new Function(focused));
+});
+
+test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
+  assert.deepStrictEqual(scripts.consequentialHit({ action: '/account/checkout' }, []), { cat: 'payment', term: 'checkout' });
+  assert.strictEqual(scripts.consequentialHit({ action: '/cauta' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Pay', action: '' }, []), null);
 });
 
 test('signinHold: operator-nav stays quiet while a sign-in hold is up, not during a takeover or when idle', () => {
