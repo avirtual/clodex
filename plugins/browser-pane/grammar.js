@@ -2,7 +2,7 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
 const SCROLL_DIRS = ['down', 'up', 'top', 'bottom'];
 const SCROLL_PAGES_MAX = 20;
@@ -20,6 +20,8 @@ const FLAGS = {
   type: { enter: 'bool' },
   key: {},
   scroll: { pages: 'value' },
+  back: {},
+  forward: {},
   select: { confirm: 'bool' },
   download: { to: 'value', as: 'value' },
   screenshot: { numbers: 'bool', attach: 'bool', 'path-only': 'bool' },
@@ -211,6 +213,12 @@ function scrollCommand(positional, flags, body) {
   return { sub: 'scroll', service, dir: d, pages };
 }
 
+function historyCommand(sub, positional, body) {
+  if (body) throw new Error(`${sub} takes no text after the bracket`);
+  if (positional.some((t) => /^[0-9]+$/.test(t))) throw new Error(`${sub} takes no count`);
+  return { sub, service: serviceArg(sub, positional, false) };
+}
+
 function toCommand(intent) {
   const qt = tokenizeQ(String((intent && intent.raw) || ''));
   const sub = qt.length ? qt[0].t : undefined;
@@ -262,6 +270,7 @@ function toCommand(intent) {
     return { sub, service, key: body };
   }
   if (sub === 'scroll') return scrollCommand(positional, flags, body);
+  if (sub === 'back' || sub === 'forward') return historyCommand(sub, positional, body);
   if (sub === 'download') return downloadCommand(positional, flags, body);
   if (sub === 'screenshot') return { sub, service: serviceArg(sub, positional, false), ...(flags.numbers ? { numbers: true } : {}), ...attachArg(flags) };
   if (sub === 'wait') {

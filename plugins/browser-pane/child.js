@@ -43,8 +43,8 @@ const DENY_DEDUPE_MS = 1000;
 const SHOT_WIDTH = 1280;
 const SHOT_QUALITY = 80;
 const CODES = new Set(['NOT_OPEN', 'NO_ELEMENT', 'HELD', 'OPERATOR_BUSY', 'PASSWORD_FIELD', 'NOT_SELECT', 'NO_OPTION',
-  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED']);
-const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
+  'NOT_EDITABLE', 'BAD_URL', 'NAV_FAILED', 'TOO_MANY_WINDOWS', 'CLOSED', 'TIMEOUT', 'INTERNAL', 'DOWNLOAD_TIMEOUT', 'DOWNLOAD_FAILED', 'AMBIGUOUS', 'DENIED', 'CONSEQUENTIAL', 'RESTARTED', 'NO_HISTORY']);
+const SERVICE_OPS = new Set(['open', 'read', 'click', 'type', 'key', 'scroll', 'nav', 'select', 'idle', 'hold', 'handback', 'show', 'download', 'screenshot', 'forget', 'inspect', 'policy']);
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -988,6 +988,35 @@ function run(electron, ctx) {
     });
   }
 
+  async function opNav(name, frame, args) {
+    const svc = need(name);
+    const dir = args.dir === 'forward' ? 'forward' : 'back';
+    const wc = svc.wc;
+    return mutating(svc, frame, dir, async () => {
+      ensureCdp(svc);
+      const docBefore = svc.doc;
+      const hrefBefore = wc.getURL();
+      const pre = await preAct(svc, null);
+      const h = wc.navigationHistory;
+      if (!h || !(dir === 'back' ? h.canGoBack() : h.canGoForward())) throw codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`);
+      const entry = h.getEntryAtIndex(h.getActiveIndex() + (dir === 'back' ? -1 : 1));
+      const target = entry && entry.url;
+      const hit = target ? policyDenies(svc, target, 'agent') : null;
+      if (hit) throw deniedError(svc, target, hit, dir);
+      const { idle } = await driver.act(wc, () => (dir === 'back' ? h.goBack() : h.goForward()), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
+      if (wc.isDestroyed()) throw closedError(name);
+      return withChange(svc, pre, {
+        dir,
+        ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), download: false }),
+        url: wc.getURL(),
+        title: wc.getTitle(),
+        idle: idleOf(idle),
+        canBack: h.canGoBack(),
+        canForward: h.canGoForward(),
+      }, 0);
+    });
+  }
+
   const targetOf = (svc, n) => driver.withTimeout(
     svc.wc.executeJavaScriptInIsolatedWorld(scripts.ISOLATED_WORLD, [{ code: scripts.TARGET_STATE(n) }]).catch(() => null), SNAP_MS, null);
 
@@ -1463,6 +1492,7 @@ function run(electron, ctx) {
             if (op === 'download') return opDownload(name, frame, args);
             if (op === 'screenshot') return opScreenshot(name, args);
             if (op === 'scroll') return opScroll(name, frame, args);
+            if (op === 'nav') return opNav(name, frame, args);
             return opAct(name, frame, args);
           });
         }

@@ -459,7 +459,7 @@ function intentEnabledForSeat(type, entry) {
 const SUBAGENT_SUBS = {
   task: ['list'],
   memory: ['recall', 'list'],
-  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'wait', 'download', 'screenshot', 'inspect', 'services'],
+  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services'],
 };
 const SUBAGENT_TYPES = ['dm', 'who', 'name', 'exec', ...Object.keys(SUBAGENT_SUBS)];
 const SUBAGENT_CONFIRM_SUBS = ['click', 'type', 'select', 'key'];

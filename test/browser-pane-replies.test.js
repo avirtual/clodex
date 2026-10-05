@@ -231,6 +231,20 @@ test('replies: scroll reports position, items loaded or dropped, page growth and
   }), '[agent:browser] scrolled x bottom · bottom of page · idle 0.4s · page text unchanged');
 });
 
+test('replies: back and forward say where they landed and whether another step is possible', () => {
+  const idle = { ok: true, ms: 1200 };
+  assert.strictEqual(R.navReply('x', { sub: 'back', service: null }, {
+    dir: 'back', navigated: true, url: 'https://x.com/home', title: 'Home / X', idle, canBack: true, canForward: true,
+  }), '[agent:browser] went back on x · navigated → https://x.com/home ("Home / X") · numbers kept where the page repeats · idle 1.2s · history: back ✓ forward ✓');
+  assert.strictEqual(R.navReply('x', { sub: 'back', service: 'x' }, {
+    dir: 'back', navigated: true, inPage: true, url: 'https://x.com/home', title: 'Home / X', idle, changed: 'most of the page (menu closed?)', canBack: false, canForward: true,
+  }), '[agent:browser] went back on x · navigated → https://x.com/home (in-page) · numbers kept where the page repeats · idle 1.2s · changed: most of the page · history: back ✗ forward ✓');
+  assert.strictEqual(R.navReply('x', { sub: 'forward', service: null }, {
+    dir: 'forward', navigated: false, url: 'https://x.com/home#top', title: 'Home / X', idle, changed: '', canBack: true, canForward: false,
+  }), '[agent:browser] went forward on x · same page · idle 1.2s · no visible change · history: back ✓ forward ✗');
+  assert.strictEqual(R.errorReply('NO_HISTORY: nothing to go back to on x'), '[agent:browser] error: NO_HISTORY: nothing to go back to on x');
+});
+
 test('replies: the download verb names a repeat as the same as an existing file', () => {
   assert.strictEqual(R.downloadReply('ebloc', { n: 4 }, { file: '/w/bills/lista.pdf', bytes: 120, mime: 'application/pdf', magic: 'pdf', ms: 400, same: true }),
     '[agent:browser] downloaded ebloc [4] → /w/bills/lista.pdf · same as an existing file · 120 B · application/pdf · %PDF ok · 0.4s');

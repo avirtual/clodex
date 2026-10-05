@@ -18,7 +18,7 @@ const DEFAULTS = {
 
 const OP_DEADLINE_MS = {
   ping: 10000, open: 110000, read: 20000, inspect: 30000, shutdown: 5000,
-  click: 110000, type: 110000, key: 110000, scroll: 110000, select: 110000, handback: 15000, show: 5000,
+  click: 110000, type: 110000, key: 110000, scroll: 110000, nav: 110000, select: 110000, handback: 15000, show: 5000,
 };
 const STDERR_KEEP = 20;
 const HEADLESS = 'browser unavailable — this Clodex host has no Electron (headless); the browser pane needs the desktop app.';

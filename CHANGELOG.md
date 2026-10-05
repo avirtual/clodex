@@ -39,6 +39,7 @@ blocks a release.
 - Browser pane: compact feed keeps a post's own video off its quote line, a nested quote keeps its own path, hour-long videos read h:mm:ss, an Article quote shows its title, a text-less post shows no clip, and quote clips and link labels join https:// splits.
 - Browser pane: a text-less post shows no clip (action-bar counts and the Follow description are not text), an Article quote is detected from the card's label and shows its full title, and an inline link in the post text is never reported as a card.
 - Browser pane: a link card's host comes from its "From host" line or the card's label, never from a t.co link, and a post whose only text is punctuation shows no clip.
+- Browser pane: `back` and `forward` verbs walk the service's history and say where you landed and whether another step is possible, so an agent can open a post from a feed and return to the same place.
 
 ## 5.112.2 — 2026-10-04
 

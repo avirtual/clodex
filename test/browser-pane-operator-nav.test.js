@@ -25,8 +25,8 @@ test('replies: denylist refusals name the url, the pattern and the list', () => 
   assert.strictEqual(R.TEXT.deniedBar('x.com', null), 'Refused: matches denylist pattern "x.com" (global)');
 });
 
-test('child: policyDenies is the one check referenced from every navigation site (8 call sites)', () => {
-  assert.strictEqual(count(/policyDenies\(/g), 8, 'open, operator open, address bar, block, main popup handler, guarded popup handler, viaUrl, will-download');
+test('child: policyDenies is the one check referenced from every navigation site (9 call sites)', () => {
+  assert.strictEqual(count(/policyDenies\(/g), 9, 'open, operator open, address bar, agent back/forward, block, main popup handler, guarded popup handler, viaUrl, will-download');
   assert.strictEqual(count(/(?<!down)loadURL\(/g), 5, 'a new loadURL site must run policyDenies first; then bump this count');
   assert.strictEqual(count(/downloadURL\(/g), 2, 'a new downloadURL site must run policyDenies first; then bump this count');
   assert.strictEqual(count(/'will-download'/g), 1);
@@ -42,6 +42,20 @@ test('child: policyDenies is the one check referenced from every navigation site
   for (const body of opens) assert.ok(/policyDenies\(svc, url, 'page'\)/.test(body) || /^\(\) => \(\{ action: 'deny' \}\)/.test(body), body);
   const router = /ses\.on\('will-download', [\s\S]*?item\.setSavePath/.exec(CHILD);
   assert.ok(router && /policyDenies\(owner, u,/.test(router[0]) && router[0].indexOf('policyDenies') < router[0].indexOf('setSavePath'));
+});
+
+test('child: agent back/forward checks the target history entry against the agent policy after the quiet gate, right before it moves, and says NO_HISTORY at either end', () => {
+  const nav = /async function opNav\([\s\S]*?\n {2}\}\n/.exec(CHILD);
+  assert.ok(nav, 'opNav exists');
+  const body = nav[0];
+  assert.ok(/h\.getEntryAtIndex\(h\.getActiveIndex\(\) \+ \(dir === 'back' \? -1 : 1\)\)/.test(body));
+  assert.ok(/policyDenies\(svc, target, 'agent'\)/.test(body));
+  assert.ok(body.indexOf('mutating(svc, frame, dir') < body.indexOf("codedError('NO_HISTORY'"), 'history is checked after the quiet gate');
+  assert.ok(body.indexOf('preAct(svc, null)') < body.indexOf('policyDenies'), 'the policy check is the last step before the move');
+  assert.ok(body.indexOf('policyDenies') < body.indexOf('h.goBack()'));
+  assert.ok(body.includes("codedError('NO_HISTORY', `NO_HISTORY: nothing to go ${dir} to on ${name}`)"));
+  assert.ok(/if \(op === 'nav'\) return opNav\(name, frame, args\);/.test(CHILD));
+  assert.ok(/'NO_HISTORY'\]\);/.test(CHILD), 'NO_HISTORY is a code the child passes through');
 });
 
 test('scheduler: leaseHolder names the seat holding the lease and null after release', async () => {
