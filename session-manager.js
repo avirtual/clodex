@@ -5589,6 +5589,7 @@ function createSessionManager(deps) {
         refusal: subagentRefusal,
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+        log,
         replyWaitMs: (intent) => {
           const row = pluginRowFor(intent.type);
           return row && row.handler ? row.replyWaitMs(intent) : 0;

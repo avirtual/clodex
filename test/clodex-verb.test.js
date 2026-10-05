@@ -68,6 +68,29 @@ test('the request carries the cred, the joined intent and the forwarded agent id
   } finally { await seat.close(); }
 });
 
+test('an @<nonce> stamp resolves to its run/<seat>/ident file, which is consumed on read', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, reply: 'ok' }));
+  try {
+    const dir = path.join(path.dirname(seat.sockPath), 'ident');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, '0123456789abcdef');
+    fs.writeFileSync(file, 'main.0123456789abcdef.fedcba9876543210', { mode: 0o600 });
+    const r = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: '@0123456789abcdef' } });
+    assert.deepStrictEqual(r, { code: 0, out: 'ok\n', err: '' });
+    assert.strictEqual(seat.got[0].ident, 'main.0123456789abcdef.fedcba9876543210');
+    assert.strictEqual(fs.existsSync(file), false, 'the stamp file is unlinked');
+    const again = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: '@0123456789abcdef' } });
+    assert.strictEqual(again.err, 'clodex: identity stamp missing (hook not installed?)\n');
+    assert.ok(!('ident' in seat.got[1]), 'a consumed stamp sends no ident');
+    for (const bad of ['@../i.sock', '@0123']) {
+      const b = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: bad } });
+      assert.strictEqual(b.err, 'clodex: identity stamp missing (hook not installed?)\n', bad);
+    }
+    assert.ok(seat.got.slice(1).every((g) => !('ident' in g)));
+    assert.ok(fs.existsSync(seat.sockPath), 'a path-shaped nonce reads nothing outside ident/');
+  } finally { await seat.close(); }
+});
+
 test('a reply status of error exits 1 and refused exits 3, with the reply text printed unchanged', async () => {
   for (const [answer, code] of [
     [{ ok: true, status: 'error', reply: '[agent:browser] error: x' }, verb.EXIT.ERROR],

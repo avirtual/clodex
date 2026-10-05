@@ -14,7 +14,7 @@ const { subagentAllows } = require('../intent-registry');
 const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
-  createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand,
+  createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
 } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -411,6 +411,73 @@ test('a Claude seat: only a main stamp keyed by this seat\'s credential and sess
   const ok = await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, null, null, 'sess-1') }, ctl);
   assert.deepStrictEqual(ok.ok, true);
   assert.deepStrictEqual(seen, [null], 'the main agent acts as the seat');
+});
+
+function stampHarness({ sessionId = 'sess-1', now = () => 1000 } = {}) {
+  const warns = [];
+  const seen = [];
+  const identSeen = new Map();
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({ type: 'claude' }), sessionIdOf: () => sessionId, allows: subagentAllows, cred: CRED,
+    dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
+    log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen, now,
+  });
+  const shout = async (ident) => (await handle({ intent: '[agent:shout] x', ident }, { closed: () => false })).ok;
+  return { shout, warns, seen, identSeen };
+}
+
+test('identity stamp: a fresh valid main stamp is the main agent', async () => {
+  const h = stampHarness();
+  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.deepStrictEqual(h.seen, [null]);
+  assert.deepStrictEqual(h.warns, []);
+});
+
+test('identity stamp: the same stamp twice — the replay is a subagent and is logged', async () => {
+  const h = stampHarness();
+  const stamp = identToken(crypto, CRED, null, null, 'sess-1');
+  assert.strictEqual(await h.shout(stamp), true);
+  assert.strictEqual(await h.shout(stamp), false);
+  assert.deepStrictEqual(h.seen, [null]);
+  assert.deepStrictEqual(h.warns, ['intent-socket: h1: replayed identity stamp refused']);
+});
+
+test('identity stamp: two different stamps from the same session are both the main agent', async () => {
+  const h = stampHarness();
+  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.deepStrictEqual(h.seen, [null, null]);
+});
+
+test('identity stamp: the old per-session shape main.<mac> is a subagent even when its mac is right', async () => {
+  const h = stampHarness();
+  const oldMac = crypto.createHmac('sha256', CRED).update('mainsess-1').digest('hex').slice(0, 16);
+  assert.strictEqual(await h.shout(`main.${oldMac}`), false);
+  const fresh = identToken(crypto, CRED, null, null, 'sess-1');
+  assert.strictEqual(await h.shout(fresh.replace(/^main\.[0-9a-f]{16}\./, 'main.')), false, 'the mac without its nonce');
+  assert.deepStrictEqual(h.seen, []);
+});
+
+test('identity stamp: the nonce set is capped FIFO at IDENT_SEEN_MAX and ages out after IDENT_SEEN_MS', async () => {
+  let t = 1000;
+  const h = stampHarness({ now: () => t });
+  const stamps = [];
+  for (let i = 0; i <= IDENT_SEEN_MAX; i++) stamps.push(identToken(crypto, CRED, null, null, 'sess-1'));
+  for (const s of stamps) assert.strictEqual(await h.shout(s), true);
+  assert.strictEqual(h.identSeen.size, IDENT_SEEN_MAX);
+  assert.strictEqual(h.identSeen.has(stamps[0].split('.')[1]), false, 'the first nonce is forgotten');
+  assert.strictEqual(await h.shout(stamps[IDENT_SEEN_MAX]), false, 'a replay inside the window is refused');
+  t += IDENT_SEEN_MS;
+  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(h.identSeen.size, 1, 'entries older than the window are dropped');
+});
+
+test('identity stamp: a Claude seat with no session id is a subagent even with a would-be-valid stamp', async () => {
+  for (const sid of [null, '']) {
+    const h = stampHarness({ sessionId: sid });
+    for (const s of ['', 'null', 'undefined']) assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, s)), false, String(sid));
+    assert.deepStrictEqual(h.seen, []);
+  }
 });
 
 test('a client that hangs up before the reply closes the sink, so the late reply reaches the PTY', async () => {

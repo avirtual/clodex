@@ -204,10 +204,10 @@ try {
   const fs = require("fs");
   let cred = process.env.CLODEX_INTENT_CRED || "";
   if (!cred) { try { cred = fs.readFileSync(process.argv[3], "utf8").trim(); } catch (e) {} }
-  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred));
+  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred, undefined, { identDir: process.argv[4] }));
 } catch (e) {}
 JSEOF
-printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" 2>/dev/null
+printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" "${path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'ident')}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
