@@ -53,6 +53,7 @@ function createClient(opts) {
   let exits = [];
   let refusedUntil = 0;
   let expectExit = false;
+  let idleExit = false;
   let disposed = false;
   let lastActivity = clock.now();
   let idleTimer = null;
@@ -141,7 +142,9 @@ function createClient(opts) {
     idleTimer = clear(idleTimer);
     const expected = expectExit || disposed;
     const quit = !expected && code === 0 && !signal;
+    const idleMs = idleExit ? o.idleStopMs : 0;
     expectExit = false;
+    idleExit = false;
     for (const [id, req] of pending) {
       pending.delete(id);
       clear(req.timer);
@@ -160,7 +163,7 @@ function createClient(opts) {
         state = 'unavailable';
       }
     }
-    onExit({ code, signal, expected, quit });
+    onExit({ code, signal, expected, quit, idleMs });
     const waiters = exitWaiters;
     exitWaiters = [];
     for (const w of waiters) w();
@@ -194,6 +197,7 @@ function createClient(opts) {
       if (!proc || state !== 'running') return;
       const busy = [...pending.values()].some((r) => !r.quiet);
       if (busy || clock.now() - lastActivity < o.idleStopMs) { scheduleIdle(); return; }
+      idleExit = true;
       stop();
     }, Math.max(0, lastActivity + o.idleStopMs - clock.now()));
   }

@@ -9,6 +9,7 @@ const LOGIN_TEXT = {
   'logged-in': 'signed in',
   'login-page': 'sign-in page',
   'idp-refused': 'Google sign-in refused',
+  none: 'signed out',
   unknown: 'login unknown',
 };
 
@@ -64,7 +65,7 @@ function pickerName(s) {
 }
 
 function forgetText(name) {
-  return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. Downloaded files are kept.`;
+  return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page and its downloads are kept.`;
 }
 
 function el(tag, cls, text) {
@@ -87,16 +88,25 @@ function activate(rhost) {
     try { return await rhost.invoke(method, ...args); } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
   };
 
+  let noticeSeen = null;
+
   async function pull() {
     const res = await call('status', rhost.workspaceId);
     if (!alive) return;
     if (refused(res)) status = { desktopOnly: true };
     else if (res && res.ok) status = res;
     else status = null;
+    const seq = status && status.notice ? status.notice.seq : 0;
+    if (noticeSeen !== null && seq > noticeSeen) toast(status.notice.text, 'info');
+    if (noticeSeen === null || seq > noticeSeen) noticeSeen = seq;
     relayout();
   }
 
-  const toast = (msg) => { if (rhost.ui.showToast) rhost.ui.showToast(msg, { kind: 'error' }); };
+  const toast = (msg, kind = 'error') => { if (rhost.ui.showToast) rhost.ui.showToast(msg, { kind }); };
+  const showIt = async (name) => {
+    const res = await call('show', name);
+    if (!res || res.ok === false) toast(`Could not show ${name}: ${(res && res.error) || 'unknown error'}`);
+  };
   const later = (fn, ms) => (typeof rhost.setTimeout === 'function' ? rhost.setTimeout(fn, ms) : setTimeout(fn, ms));
 
   async function agentSeats() {
@@ -147,7 +157,7 @@ function activate(rhost) {
 
   function windowControls(r, name, refill, opts = {}) {
     const show = el('button', 'bp-show bp-btn', 'Show');
-    show.addEventListener('click', () => { call('show', name); });
+    show.addEventListener('click', () => showIt(name));
     r.appendChild(show);
     if (opts.inline) { r.appendChild(handControl(name, refill)); return; }
     const open = el('button', 'bp-hand-open bp-btn', 'Hand…');
@@ -249,10 +259,20 @@ function activate(rhost) {
     r.appendChild(el('span', 'bp-login', `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when}`));
     r.appendChild(el('span', 'bp-window', s.windowOpen ? `window open · ${stateLabel(s)}` : 'closed'));
     if (s.windowOpen) windowControls(r, s.name, refill, { inline: true });
-    else {
-      const show = el('button', 'bp-show bp-btn', 'Show');
-      show.addEventListener('click', () => { call('show', s.name); });
-      r.appendChild(show);
+    else if (s.lastUrl) {
+      const reopen = el('button', 'bp-reopen bp-btn', 'Open');
+      reopen.addEventListener('click', async () => {
+        if (reopen.disabled) return;
+        reopen.disabled = true;
+        try {
+          const res = await call('operator.open', { service: s.name, url: s.lastUrl });
+          if (!res || res.ok === false) toast(`Could not open ${s.name}: ${(res && res.error) || 'unknown error'}`);
+          await refill();
+        } finally {
+          reopen.disabled = false;
+        }
+      });
+      r.appendChild(reopen);
     }
     if (s.state === 'held') {
       const hb = el('button', 'bp-handback', 'Hand back');

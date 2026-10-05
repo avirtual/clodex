@@ -143,7 +143,7 @@ test('Forget login confirms, naming the service and that downloads are kept, the
     await forget().click();
     assert.deepStrictEqual(seen, [bp.forgetText('utility')]);
     assert.match(seen[0], /utility/);
-    assert.match(seen[0], /Downloaded files are kept/);
+    assert.strictEqual(seen[0], 'Forget the login for utility?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page and its downloads are kept.');
     assert.ok(!f.invokes.some((i) => i.method === 'services.forget'), 'a declined confirm forgets nothing');
     answer = true;
     await forget().click();
@@ -370,6 +370,65 @@ test('Settings: the open row invokes operator.open, and an open window row hands
     await tick();
     await tick();
   } finally { restore(); }
+});
+
+test('Settings: a closed service with a last URL offers Open at it and no Show; without one it offers neither', async () => {
+  const { root, restore } = fakeDom();
+  const toasts = [];
+  try {
+    const list = { ok: true, services: [
+      { name: 'wiki', login: 'logged-in', loginAt: 0, lastUrl: 'https://wiki.example.com/page', windowOpen: false, state: 'closed' },
+      { name: 'gas', login: 'unknown', loginAt: 0, lastUrl: '', windowOpen: false, state: 'closed' },
+    ] };
+    const f = makeRhost({ status: status('off'), 'services.list': list, 'operator.open': { ok: false, error: 'boom' } });
+    f.rhost.ui.showToast = (msg) => toasts.push(msg);
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const rows = walk(root).filter((n) => n.className === 'bp-row');
+    const classes = (r) => walk(r).map((n) => n.className);
+    assert.strictEqual(rows.length, 2);
+    assert.ok(!classes(rows[0]).includes('bp-show bp-btn'));
+    assert.ok(!classes(rows[1]).includes('bp-show bp-btn'));
+    assert.ok(!classes(rows[1]).includes('bp-reopen bp-btn'));
+    const reopen = walk(rows[0]).find((n) => n.className === 'bp-reopen bp-btn');
+    assert.strictEqual(reopen.textContent, 'Open');
+    await reopen.click();
+    await tick();
+    assert.deepStrictEqual(f.invokes.filter((i) => i.method === 'operator.open').map((i) => i.args), [[{ service: 'wiki', url: 'https://wiki.example.com/page' }]]);
+    assert.deepStrictEqual(toasts, ['Could not open wiki: boom']);
+  } finally { restore(); }
+});
+
+test('Settings: a Show that fails toasts the service and the reason', async () => {
+  const { root, restore } = fakeDom();
+  const toasts = [];
+  try {
+    const list = { ok: true, services: [{ name: 'wiki', login: 'logged-in', loginAt: 0, lastUrl: 'https://wiki.example.com/', windowOpen: true, state: 'idle' }] };
+    const f = withSeats(makeRhost({ status: status('off'), 'services.list': list, show: { ok: false, error: 'x' } }), SEATS);
+    f.rhost.ui.showToast = (msg, opts) => toasts.push([msg, opts.kind]);
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    await walk(root).find((n) => n.className === 'bp-show bp-btn').click();
+    await tick();
+    assert.deepStrictEqual(toasts, [['Could not show wiki: x', 'error']]);
+    await tick();
+  } finally { restore(); }
+});
+
+test('status notice: a notice already up at the first pull is not toasted; a newer one is, once, as info', async () => {
+  let notice = { seq: 1, text: 'old' };
+  const toasts = [];
+  const f = makeRhost({ status: () => ({ ...status('off'), notice }) });
+  f.rhost.ui.showToast = (msg, opts) => toasts.push([msg, opts.kind]);
+  bp.activate(f.rhost);
+  await tick();
+  assert.deepStrictEqual(toasts, []);
+  notice = { seq: 2, text: 'Browser: 2 window(s) closed after 15 min idle — Open in the pane resumes them' };
+  f.changed();
+  await tick();
+  f.changed();
+  await tick();
+  assert.deepStrictEqual(toasts, [['Browser: 2 window(s) closed after 15 min idle — Open in the pane resumes them', 'info']]);
 });
 
 test('settings: the attach row is built once; a refresh keeps a focused edit and updates an unfocused field', async () => {
