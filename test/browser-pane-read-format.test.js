@@ -507,6 +507,11 @@ test('read --compact --filter applies to feed lines, a match on the quote line k
   assert.deepStrictEqual(zed, ['== feed (1 of 2 posts) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"', '== elements (outside the feed) ==', '(none)']);
 });
 
+test('read --compact: a feed of one post says (1 post)', () => {
+  const one = formatRead({ ...FEED_RAW, feed: { ...FEED_RAW.feed, posts: [FEED_RAW.feed.posts[1]] } }, { service: 'x', compact: true }).content.split('\n').slice(6, -2);
+  assert.deepStrictEqual(one.slice(0, 3), ['== feed (1 post) ==', '[12] @zed · 9h · "hi" · → /a/status/1', '  ↳ quoting @ana · 1d · "q"']);
+});
+
 test('read --compact without a feed: a failed FEED says so in the mode, no articles says no feed found; both keep the default sections', () => {
   const failed = formatRead({ ...FEED_RAW, feed: { count: 2, failed: true } }, { service: 'x', compact: true }).content;
   assert.match(failed.split('\n')[3], / · posts: 2 · mode: default --compact \(feed unavailable — default sections\) · /);

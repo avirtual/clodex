@@ -208,7 +208,7 @@ function sections(raw, opts) {
     const lines = blocks.flat();
     const rest = outsideFeed(elements, feed);
     const total = feed.posts.length;
-    out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} posts) ==`, lines: lines.length ? lines : ['(none)'] });
+    out.push({ marker: `== feed (${blocks.length < total ? `${blocks.length} of ` : ''}${total} post${total === 1 ? '' : 's'}) ==`, lines: lines.length ? lines : ['(none)'] });
     out.push({ marker: '== elements (outside the feed) ==', lines: rest.length ? rest : ['(none)'] });
     return out;
   }
