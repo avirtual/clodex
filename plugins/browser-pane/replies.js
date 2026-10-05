@@ -55,6 +55,7 @@ function openReply(service, r) {
   const idle = idleLabel(r.idle);
   if (idle) parts.push(idle);
   parts.push('next: read');
+  if (r.shown === false) parts.push('window hidden (open --show or the pane\'s Show button raises it)');
   return reply(parts.join(' · '));
 }
 

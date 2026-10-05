@@ -194,6 +194,11 @@ function server() {
       const url = new URL(req.url, 'http://x');
       const headers = { 'content-type': 'text/html; charset=utf-8' };
       if (url.pathname === '/hang') return;
+      if (url.pathname === '/hidden') {
+        res.writeHead(200, headers);
+        res.end(fs.readFileSync(path.join(__dirname, 'fixtures', 'browser-pane-hidden.html')));
+        return;
+      }
       if (url.pathname.startsWith('/img/')) {
         res.writeHead(200, { 'content-type': 'image/gif' });
         res.end(Buffer.from('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64'));
@@ -695,6 +700,29 @@ async function payStep(emit, base) {
   await emit('[agent:browser wait pay --ms=15000 --for="Payment done"]');
 }
 
+async function hiddenStep(emit, base) {
+  console.log('== 0. a window that was never shown still paints, runs rAF and fires IntersectionObserver');
+  const check = (name, ok) => console.log(`    ${ok ? 'PASS' : 'FAIL'} ${name}`);
+  await emit(`[agent:browser open hidden] ${base}/hidden`);
+  await sleep(1500);
+  const first = fileOf(await emit('[agent:browser read hidden --text]'));
+  await emit('[agent:browser scroll hidden down --pages=3]');
+  await sleep(500);
+  const second = fileOf(await emit('[agent:browser read hidden --text]'));
+  const vis = (/visibility: (\w+)/.exec(first) || [])[1];
+  const raf = Number((/rAF after 1 s: (\d+)/.exec(first) || [])[1]);
+  const more = /LOADED MORE/.test(second);
+  console.log(`    visibilityState=${vis} · rAF after 1 s=${raf} · LOADED MORE=${more}`);
+  check('the hidden page reports visible', vis === 'visible');
+  check('rAF runs in the hidden window', raf > 10);
+  check('the IntersectionObserver sentinel loaded more after scrolling 3 pages', more);
+  const shot = await emit('[agent:browser screenshot hidden]');
+  const sm = / → @(\S+) $/.exec(shot);
+  if (sm) console.log(`    ${sm[1]} · ${fs.statSync(sm[1]).size} B`);
+  check('a screenshot of the hidden window has pixels', !!sm && !/ 0×0/.test(shot) && fs.statSync(sm[1]).size > 0);
+  await emit('[agent:browser close hidden]');
+}
+
 function fileOf(reply) {
   const first = String(reply).split('\n')[0];
   const m = / → @(\S+) $/.exec(first) || / → (\S+) \(not attached: /.exec(first);
@@ -715,8 +743,9 @@ async function main() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cxb-live-tmp-'));
   process.env.TMPDIR = tmp;
   let { engine, emit, host, nextInject } = bootEngine(userData, tmp);
-  if (['pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
+  if (['hidden', 'pay', 'clickables', 'effects', 'opnav', 'chrome', 'offscreen', 'handover', 'policy', 'rows', 'overlay', 'refs', 'stable', 'restart', 'attach'].includes(process.env.CXB_ONLY)) {
     if (process.env.CXB_ONLY === 'restart') await restartStep(emit, base, host);
+    else if (process.env.CXB_ONLY === 'hidden') await hiddenStep(emit, base);
     else if (process.env.CXB_ONLY === 'stable') {
       for (const step of [clickablesStep, (e, b) => effectsStep(e, b, tmp), chromeStep, offscreenStep, rowsStep]) await step(emit, base);
     } else if (process.env.CXB_ONLY === 'rows') await rowsStep(emit, base);
@@ -736,6 +765,8 @@ async function main() {
     srv.close();
     return;
   }
+
+  await hiddenStep(emit, base);
 
   console.log('== 1. 700 links');
   await emit(`[agent:browser open fixture] ${base}/links`);

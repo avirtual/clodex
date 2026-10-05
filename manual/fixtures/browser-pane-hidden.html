@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><title>Hidden window fixture</title></head>
+<body><main>
+<h1>Hidden window fixture</h1>
+<p data-k="vis">visibility: unknown</p>
+<p data-k="raf1">rAF after 1 s: pending</p>
+<div style="height:300vh"></div>
+<p data-k="sentinel">sentinel three screens down</p>
+<div id="more"></div>
+</main>
+<script>
+let frames = 0;
+const tick = () => { frames += 1; requestAnimationFrame(tick); };
+requestAnimationFrame(tick);
+setTimeout(() => {
+  document.querySelector('[data-k=raf1]').textContent = 'rAF after 1 s: ' + frames;
+  document.title = 'Hidden window fixture · visibility: ' + document.visibilityState + ' · rAF after 1 s: ' + frames;
+}, 1000);
+const vis = () => { document.querySelector('[data-k=vis]').textContent = 'visibility: ' + document.visibilityState; };
+vis();
+document.addEventListener('visibilitychange', vis);
+new IntersectionObserver((entries) => {
+  if (!entries.some((e) => e.isIntersecting)) return;
+  const p = document.createElement('p');
+  p.textContent = 'LOADED MORE';
+  document.getElementById('more').appendChild(p);
+}).observe(document.querySelector('[data-k=sentinel]'));
+</script>
+</body></html>

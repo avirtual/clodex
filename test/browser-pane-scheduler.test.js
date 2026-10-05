@@ -89,6 +89,16 @@ test('scheduler lease: acquire, then a second seat is refused with the holder na
   assert.deepStrictEqual(h.calls.map((c) => [c[0], c[1]]), [['hand-a', 'open']]);
 });
 
+test('scheduler: open --show asks the child to show the window; a plain open does not', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open utility --show] https://portal.example.com/bills']]);
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
+  assert.deepStrictEqual(h.calls.map((c) => c[2]), [
+    { url: 'https://portal.example.com/bills', show: true },
+    { url: 'https://portal.example.com/bills' },
+  ]);
+});
+
 test('scheduler lease: expires at 5 min without commands, not before', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);

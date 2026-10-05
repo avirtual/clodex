@@ -757,7 +757,6 @@ function run(electron, ctx) {
     });
     services.set(name, svc);
     dockSync();
-    win.showInactive();
     send({ event: 'state', service: name, state: 'idle', reason: null, url: '', title: '' });
     return svc;
   }
@@ -872,7 +871,7 @@ function run(electron, ctx) {
     const svc = openService(name);
     svc.policy = policy;
     await svc.blank;
-    return mutating(svc, frame, `open ${url.slice(0, 80)}`, async () => {
+    const out = await mutating(svc, frame, `open ${url.slice(0, 80)}`, async () => {
       let status = null;
       const onNav = (_e, _url, code) => { status = code; };
       svc.wc.on('did-navigate', onNav);
@@ -892,6 +891,8 @@ function run(electron, ctx) {
         if (!svc.wc.isDestroyed()) svc.wc.removeListener('did-navigate', onNav);
       }
     });
+    if (args.show && !svc.win.isDestroyed()) svc.win.showInactive();
+    return have ? out : { ...out, shown: !!args.show };
   }
 
   async function opOperatorOpen(name, args) {

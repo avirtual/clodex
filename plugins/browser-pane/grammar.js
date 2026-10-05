@@ -14,7 +14,7 @@ const MAX_MAX = 8000;
 const DEFAULT_MAX = 2500;
 
 const FLAGS = {
-  open: {},
+  open: { show: 'bool' },
   read: { text: 'bool', links: 'bool', compact: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
   click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool', confirm: 'bool' },
@@ -230,7 +230,7 @@ function toCommand(intent) {
   const { flags, positional } = splitArgs(sub, toks);
   if (sub === 'open') {
     const service = serviceArg(sub, positional, true);
-    return { sub, service, url: checkUrl(String((intent && intent.body) || '').trim()) };
+    return { sub, service, url: checkUrl(String((intent && intent.body) || '').trim()), ...(flags.show ? { show: true } : {}) };
   }
   if (sub === 'read') {
     const service = serviceArg(sub, positional, false);

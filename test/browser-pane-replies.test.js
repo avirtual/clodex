@@ -51,6 +51,16 @@ test('replies: a long reply is capped at 600 chars but the path is never cut', (
   assert.strictEqual(open.length, 600);
 });
 
+test('replies: the open that created a hidden window says so once; a shown or existing window adds nothing', () => {
+  const r = { status: 200, title: 'Bills', url: 'https://x/', login: {}, idle: { ok: true, ms: 1000 } };
+  assert.strictEqual(R.openReply('utility', { ...r, shown: false }),
+    '[agent:browser] opened utility · 200 · "Bills" · https://x/ · login: none · idle 1.0s · next: read · window hidden (open --show or the pane\'s Show button raises it)');
+  assert.strictEqual(R.openReply('utility', { ...r, shown: true }),
+    '[agent:browser] opened utility · 200 · "Bills" · https://x/ · login: none · idle 1.0s · next: read');
+  assert.strictEqual(R.openReply('utility', r),
+    '[agent:browser] opened utility · 200 · "Bills" · https://x/ · login: none · idle 1.0s · next: read');
+});
+
 test('replies: open reply shape', () => {
   assert.strictEqual(
     R.openReply('utility', { status: 200, title: 'My Bills — Example Utility', url: 'https://portal.example.com/bills?x=1', login: { password: false }, idle: { ok: true, ms: 1900 } }),
