@@ -218,7 +218,15 @@ function clipUrl(url) {
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
   noElement: (service, n) => `[${n}] is no longer on this page of ${service} — read again`,
-  covered: (n, el) => `[${n}] ${JSON.stringify(String(el.label || ''))} is covered at its click point by ${el.hitN != null ? `[${el.hitN}] ${JSON.stringify(String(el.hitLabel || ''))}` : `an unnumbered element (${JSON.stringify(String(el.hitLabel || ''))})`} — read again, or click the element that covers it`,
+  covered: (n, el) => {
+    const label = JSON.stringify(String(el.hitLabel || ''));
+    const head = `[${n}] ${JSON.stringify(String(el.label || ''))} is covered at its click point by`;
+    if (el.hitN != null && el.hitConsequential) return `${head} [${el.hitN}] ⚠ ${label} (${el.hitConsequential}) — read again, or click it with --confirm if the operator asked for it`;
+    if (el.hitN != null) return `${head} [${el.hitN}] ${label} — read again, or click the element that covers it`;
+    const buttons = (el.hitButtons || []).map((b) => `[${b.n}] ${JSON.stringify(String(b.label || ''))}`).join(' · ');
+    if (buttons) return `${head} an unnumbered element (${label}) whose buttons are ${buttons} — read again, or click one of them`;
+    return `${head} an unnumbered element (${label}) — read again, or click the element that covers it`;
+  },
   retiredN: (service, n, now) => `[${n}] retired: its text changed since your read${now ? ` (now [${now}]?)` : ''} — read again`,
   unknownN: (service, n) => `[${n}] was not in your read of ${service} — read again`,
   ambiguousN: (service, n, label, context) => `[${n}] on ${service} no longer points at one element (was ${JSON.stringify(String(label || ''))}${context ? ` in ${JSON.stringify(String(context))}` : ''}) — read again and use the new number`,
@@ -443,7 +451,7 @@ function inspectReply(service, r) {
     `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}${typeof r.value === 'string' ? ` · value ${JSON.stringify(clip60(r.value))}` : ''}`,
     `  attrs: ${attrs || 'none'}`,
     `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
-    `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? 'visible' : 'hidden'}`,
+    `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? (r.clipped ? 'clipped (scroll its list)' : 'visible') : 'hidden'}`,
     `  in: ${(r.ancestors || []).slice().reverse().map((a) => oneLine(a)).join(' > ') || '(none)'}`,
     `  html: ${oneLine(r.html || '')}`,
   ];

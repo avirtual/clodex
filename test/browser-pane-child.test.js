@@ -1036,7 +1036,11 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
 test('coveredRefusal: a covered click point is refused naming what covers it, before the ⚠ gate looks at the element', () => {
   const e = coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Delete account', hitConsequential: 'deletion' });
   assert.strictEqual(e.code, 'COVERED');
-  assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] "Delete account" — read again, or click the element that covers it');
+  assert.strictEqual(e.message, '[5] "Pret crescator" is covered at its click point by [8] ⚠ "Delete account" (deletion) — read again, or click it with --confirm if the operator asked for it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: 8, hitLabel: 'Sterge filtre', hitConsequential: null }).message,
+    '[5] "Pret crescator" is covered at its click point by [8] "Sterge filtre" — read again, or click the element that covers it');
+  assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Prin apăsarea „Accept toate”', hitButtons: [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }] }).message,
+    '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Prin apăsarea „Accept toate”") whose buttons are [208] "Accept toate" · [209] "Refuză toate" — read again, or click one of them');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: true, hitN: null, hitLabel: 'Rezultate: 3 produse' }).message,
     '[5] "Pret crescator" is covered at its click point by an unnumbered element ("Rezultate: 3 produse") — read again, or click the element that covers it');
   assert.strictEqual(coveredRefusal(5, { label: 'Pret crescator', covered: false }), null);
@@ -1045,7 +1049,7 @@ test('coveredRefusal: a covered click point is refused naming what covers it, be
   assert.match(CHILD_SRC, /const coveredErr = paths\.directHref\(el\.href, svc\.wc\.getURL\(\)\) \? null : coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*dispatch\(svc, \{ type: 'describe', what: `download/);
 });
 
-function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
+function findOn(el, under, { numbered = {}, onFrame = () => {}, extra = {} } = {}) {
   const els = { 5: new WeakRef(el) };
   const of = new WeakMap([[el, 5]]);
   for (const [n, e] of Object.entries(numbered)) { els[n] = new WeakRef(e); of.set(e, Number(n)); }
@@ -1053,7 +1057,7 @@ function findOn(el, under, { numbered = {}, onFrame = () => {} } = {}) {
     document: { elementFromPoint: under, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
     getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
     location: { href: 'http://x/', origin: 'http://x' }, __cxEls: els, __cxOf: of, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
-    requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0,
+    requestAnimationFrame: (f) => { onFrame(); f(); }, setTimeout: () => 0, ...extra,
   };
   ctx.window = ctx;
   vm.createContext(ctx);
@@ -1108,6 +1112,75 @@ test('FIND: scrolls only an element outside the viewport, to nearest, and report
   assert.strictEqual(plain(findOn(inView, () => backdrop)).hitLabel, 'div', 'a blank cover is named by its tag');
   const gone = boxEl('button', 'Pret crescator', box(0, 0, 0, 0));
   assert.strictEqual(findOn(gone, () => null), null, 'an element with no box is no longer on the page');
+});
+
+test('FIND: a target our scroll parked under a sticky header is scrolled clear once; a modal cover is retried once at centre and still refused; an overlay names its numbered buttons', async () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const shown = { visibility: 'visible', display: 'block', opacity: '1' };
+  const header = Object.assign(boxEl('header', 'Site header', box(0, 0, 1200, 80)), { style: { ...shown, position: 'sticky' } });
+  const parked = (moves) => {
+    const top = boxEl('a', 'Top link under the header', box(20, -500, 200, 40));
+    top.onScroll = () => { top.rect = box(20, 0, 200, 40); };
+    const scrollBys = [];
+    const scrollBy = (o) => { scrollBys.push({ ...o }); if (moves) top.rect = box(20, top.rect.top - o.top, 200, 40); };
+    return { top, scrollBys, run: () => findOn(top, (x, y) => (y < 80 ? header : top), { extra: { scrollBy } }) };
+  };
+  const ok = parked(true);
+  const a = plain(await ok.run());
+  assert.deepStrictEqual(ok.top.scrolls, [{ block: 'nearest', inline: 'nearest' }]);
+  assert.deepStrictEqual(ok.scrollBys, [{ left: 0, top: -84, behavior: 'instant' }]);
+  assert.deepStrictEqual([a.covered, a.x, a.y], [false, 120, 104]);
+  const stuck = parked(false);
+  const b = plain(await stuck.run());
+  assert.strictEqual(stuck.scrollBys.length, 1, 'one retry, not a loop');
+  assert.deepStrictEqual([b.covered, b.hitN, b.hitLabel], [true, null, 'Site header']);
+  const modal = Object.assign(boxEl('div', 'Confirm', box(0, 0, 1200, 800)), { style: { ...shown, position: 'fixed' } });
+  const below = boxEl('button', 'Pret crescator', box(10, 900, 100, 30));
+  below.onScroll = () => { below.rect = box(10, 700, 100, 30); };
+  const modalBys = [];
+  const c = plain(await findOn(below, () => modal, { extra: { scrollBy: (o) => modalBys.push(o) } }));
+  assert.deepStrictEqual(below.scrolls, [{ block: 'nearest', inline: 'nearest' }, { block: 'center', inline: 'nearest' }]);
+  assert.deepStrictEqual([modalBys.length, c.covered, c.hitLabel], [0, true, 'Confirm']);
+  const accept = boxEl('button', 'Accept toate', box(900, 700, 100, 40));
+  const refuse = boxEl('button', 'Refuză toate', box(1010, 700, 100, 40));
+  const more = boxEl('a', 'Detalii', box(10, 700, 60, 20));
+  const banner = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 600, 1200, 200)), { style: { ...shown, position: 'fixed' }, querySelectorAll: () => [accept, more, refuse] });
+  const para = boxEl('p', 'Prin apăsarea Accept toate', box(10, 610, 800, 60), banner);
+  const inView = boxEl('button', 'Pret crescator', box(10, 620, 100, 30));
+  const d = plain(findOn(inView, () => para, { numbered: { 208: accept, 209: refuse } }));
+  assert.deepStrictEqual([d.covered, d.hitN, d.hitButtons], [true, null, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }]]);
+  const parkedLow = (cover, move) => {
+    const t = boxEl('button', 'Pret crescator', box(10, 900, 100, 40));
+    t.onScroll = () => { t.rect = box(10, 760, 100, 40); };
+    const bys = [];
+    const scrollBy = (o) => { bys.push({ ...o }); t.rect = move(t.rect, o); };
+    const under = (x, y) => (y >= 800 ? null : y >= cover.rect.top && y < cover.rect.bottom ? cover : t);
+    return { t, bys, run: () => findOn(t, under, { numbered: { 208: accept, 209: refuse }, extra: { scrollBy } }) };
+  };
+  const card = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 584, 1200, 200)), { style: { ...shown, position: 'fixed' }, querySelectorAll: () => [accept, refuse] });
+  const lifted = parkedLow(card, (r, o) => box(10, r.top - o.top, 100, 40));
+  const e = plain(await lifted.run());
+  assert.deepStrictEqual(lifted.bys, [{ left: 0, top: 220, behavior: 'instant' }], 'a floating card near the bottom scrolls the target up past it');
+  assert.deepStrictEqual([e.covered, e.y], [false, 560]);
+  const away = parkedLow(card, () => box(10, 788, 100, 40));
+  const f = plain(await away.run());
+  assert.deepStrictEqual([f.covered, f.y, f.hitButtons], [true, 780, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }]], 'a retry that lands off the viewport keeps the first refusal');
+  const bar = Object.assign(boxEl('div', 'Cos', box(0, 720, 1200, 80)), { style: { ...shown, position: 'fixed' } });
+  const barred = parkedLow(bar, (r, o) => box(10, r.top - o.top, 100, 40));
+  const g = plain(await barred.run());
+  assert.deepStrictEqual([barred.bys, g.covered, g.y], [[{ left: 0, top: 84, behavior: 'instant' }], false, 696]);
+  const layer = Object.assign(boxEl('div', 'Prin apăsarea Accept toate', box(0, 0, 1200, 800)), { style: { ...shown, position: 'static', zIndex: '5' }, querySelectorAll: () => [accept, refuse] });
+  const text = boxEl('p', 'Prin apăsarea Accept toate', box(10, 610, 800, 60), layer);
+  const h = plain(findOn(inView, () => text, { numbered: { 208: accept, 209: refuse } }));
+  assert.deepStrictEqual(h.hitButtons, [{ n: 208, label: 'Accept toate' }, { n: 209, label: 'Refuză toate' }], 'a big z-indexed layer with no positioned ancestor names its buttons');
+});
+
+test('page scripts: FIND and INSPECT share one clipOf from DEEP', () => {
+  for (const src of [scripts.FIND(1), scripts.INSPECT(1)]) assert.strictEqual(src.split('const clipOf = ').length, 2);
+  assert.match(scripts.FIND(1), /const clip = clipOf\(el\);\n\s*const outside = outOf\(r0, /);
+  assert.match(scripts.INSPECT(1), /const list = clipOf\(el\);/);
+  assert.match(scripts.INSPECT(1), /clipped: !!list && outOf\(r, list\.rect\),/);
 });
 
 test('enterRefusal: Enter that would submit a consequential target is refused without --confirm; type and key gate before acting', async () => {
