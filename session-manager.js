@@ -5584,6 +5584,7 @@ function createSessionManager(deps) {
         entryOf: () => getPersistence().get(name),
         sessionIdOf: () => session.sessionId || null,
         cred: channel.cred,
+        isCodex: session.agentType === 'codex',
         crypto: nodeCrypto,
         refusal: subagentRefusal,
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),

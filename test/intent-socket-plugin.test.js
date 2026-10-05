@@ -265,3 +265,23 @@ test('a browser error reply exits 1 and a browser refusal exits 3, the text on s
     }
   });
 });
+
+test('end to end: a caller that hangs up before the plugin replies: the reply lands at the seat PTY', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withSeat(async (h, cred) => {
+    const sock = require('node:net').createConnection(pathFor(h.root, 'a', 'intentSocket'));
+    await new Promise((resolve) => sock.on('connect', resolve));
+    sock.write(JSON.stringify({ cred, intent: '[agent:browser read one]', ident: mainStamp(cred).CLODEX_HOOK_IDENT }) + '\n');
+    await h.nextHandled(1);
+    assert.strictEqual(h.a.intentSocket.activeCount(), 1);
+    sock.destroy();
+    for (let i = 0; i < 1000 && h.a.intentSocket.activeCount() > 0; i++) await turns(1);
+    assert.strictEqual(h.a.intentSocket.activeCount(), 0, 'the server saw the hang-up');
+    h.handled[0].handle.inject('[agent:browser] read one → @/tmp/r-0003.txt');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), ['[agent:browser] read one → @/tmp/r-0003.txt']);
+    t.mock.timers.tick(registry.PLUGIN_REPLY_WAIT_MAX_MS + 60 * 1000);
+    await turns(10);
+    assert.strictEqual(h.a.intentSocket.activeCount(), 0);
+    assert.strictEqual(h.injected.length, 1, 'the expired wait adds nothing to the PTY');
+  });
+});

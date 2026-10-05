@@ -1507,3 +1507,37 @@ test('ident hook: SubagentStart is registered and briefs the subagent in one add
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SubagentStart');
   assert.match(out.hookSpecificOutput.additionalContext, /^This seat's browser pane and Clodex intents are reachable from Bash as `clodex '\[agent:browser …\]'`; run `clodex --help` for the subagent catalog\.$/);
 });
+
+test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {
+  const REGISTRY_DIR = identSeat();
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
+  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*) ;; *) exit 0;; esac`);
+  const interp = src.indexOf('ELECTRON_RUN_AS_NODE=1');
+  assert.ok(gate > 0 && interp > gate, src);
+  assert.match(src, /printf '%s' "\$IN" \| ELECTRON_RUN_AS_NODE=1 /);
+});
+
+test('ident hook: a non-clodex call never starts the interpreter; a clodex call does and is stamped', () => {
+  const REGISTRY_DIR = tmp();
+  const marker = path.join(REGISTRY_DIR, 'interp-ran');
+  const fake = path.join(REGISTRY_DIR, 'fake-interp');
+  fs.writeFileSync(fake, `#!/bin/bash\ntouch "${marker}"\necho interp-ran\n`, { mode: 0o700 });
+  createCliHooks({
+    REGISTRY_DIR, memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: fake,
+  }).setupClaudeHook('agent1');
+  assert.strictEqual(runIdent(REGISTRY_DIR, { tool_input: { command: 'ls' } }), '');
+  assert.strictEqual(fs.existsSync(marker), false);
+  const realistic = {
+    session_id: 'sess-1', transcript_path: '/Users/x/.clodex/accounts/opsguru/projects/-x/s.jsonl', cwd: '/Users/x/.clodex/w',
+    permission_mode: 'bypassPermissions', hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' },
+  };
+  assert.strictEqual(runIdent(REGISTRY_DIR, realistic), '');
+  assert.strictEqual(fs.existsSync(marker), false, 'a clodex in transcript_path or cwd does not open the gate');
+  assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('clodex x')), 'interp-ran\n');
+  assert.strictEqual(fs.existsSync(marker), true);
+  const real = identSeat();
+  const out = JSON.parse(runIdent(real, bashCall('clodex x')));
+  assert.strictEqual(out.hookSpecificOutput.updatedInput.command, `CLODEX_HOOK_IDENT=${identToken(crypto, ICRED, null, null, 'sess-1')} clodex x`);
+});

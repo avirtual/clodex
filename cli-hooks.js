@@ -197,6 +197,8 @@ exit 0
 
     const identScriptPath = pathFor(REGISTRY_DIR, name, 'identScript');
     fs.writeFileSync(identScriptPath, `#!/bin/bash
+IN=$(cat)
+case "$IN" in *'"command"'*clodex*|*SubagentStart*) ;; *) exit 0;; esac
 IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const fs = require("fs");
@@ -205,7 +207,7 @@ try {
   process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred));
 } catch (e) {}
 JSEOF
-${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" 2>/dev/null
+printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 

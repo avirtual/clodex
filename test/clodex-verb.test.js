@@ -137,3 +137,31 @@ test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
   const src = fs.readFileSync(r.path, 'utf8');
   assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net'], 'zero local requires: it runs flat from bin/');
 });
+
+test('reply shapes: a refusal is stderr `clodex: <reason>` exit 3; an error reply is stdout exit 1', async () => {
+  for (const [answer, code, out, err] of [
+    [{ ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action' }, 3, '', 'clodex: a subagent cannot confirm a consequential action\n'],
+    [{ ok: true, status: 'error', reply: '[agent:browser] error: no such service' }, 1, '[agent:browser] error: no such service\n', ''],
+  ]) {
+    const seat = await fakeSeat(() => answer);
+    try {
+      const r = await run(seat, ['[agent:browser open wiki] https://x']);
+      assert.deepStrictEqual([r.code, r.out, r.err], [code, out, err]);
+    } finally { await seat.close(); }
+  }
+});
+
+test('--help documents the streams, the exit codes and the URL-after-the-bracket browser form', async () => {
+  const r = await run(null, ['--help']);
+  assert.ok(r.out.includes("clodex '[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland'"), r.out);
+  assert.match(r.out, /the URL follows the closing bracket/);
+  assert.match(r.out, /stdout: the intent's reply\. stderr: this verb's own lines, each `clodex: <reason>`/);
+  assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex: …`\), 2 usage,\n\s+3 refused \(stderr `clodex: …`\), 4 no socket, 5 timeout/);
+});
+
+test('the client outlives the largest server-side plugin wait by more than the socket slack', () => {
+  const { PLUGIN_REPLY_WAIT_MAX_MS } = require('../intent-registry');
+  const { INTENT_SOCKET_TIMEOUT_MS } = require('../intent-socket');
+  assert.ok(verb.CLIENT_TIMEOUT_MS > PLUGIN_REPLY_WAIT_MAX_MS + INTENT_SOCKET_TIMEOUT_MS,
+    `${verb.CLIENT_TIMEOUT_MS} vs ${PLUGIN_REPLY_WAIT_MAX_MS} + ${INTENT_SOCKET_TIMEOUT_MS}`);
+});
