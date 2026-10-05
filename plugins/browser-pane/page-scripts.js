@@ -1170,9 +1170,13 @@ function feedPosts(scope, cats, byEl, loc) {
     let body = [...art.querySelectorAll('[lang]')].find(own);
     if (!body) {
       const head = row ? String(row.innerText || '').split('\n').map(flat).filter(Boolean)[0] || '' : '';
+      const described = new Set([...art.querySelectorAll('[aria-describedby]')].flatMap((e) => e.getAttribute('aria-describedby').split(/\s+/)).filter(Boolean));
+      const isDescribed = (e) => described.has(e.getAttribute('id')) || [...e.querySelectorAll('[id]')].some((x) => described.has(x.getAttribute('id')));
       body = [...art.querySelectorAll('p,div')]
         .filter((e) => own(e) && !(head && String(e.innerText || '').includes(head))
-          && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x)))
+          && !(row && (inside(e, row) || e.contains(row))) && ![handleEl, nameEl, time].some((x) => x && e.contains(x))
+          && !e.closest('button,[role=button],[role=group]') && !e.querySelector('button,[role=button],[role=group]')
+          && !isDescribed(e) && !/^[\d.,\s]*[KkMm]?(\s+[\d.,]+[KkMm]?)*$/.test(flat(e.innerText)))
         .reduce((b, e) => (!b || flat(e.innerText).length > flat(b.innerText).length ? e : b), null);
     }
     const moreEl = [...art.querySelectorAll('button,[role=button]')]
@@ -1193,7 +1197,7 @@ function feedPosts(scope, cats, byEl, loc) {
     for (const a of ownA) {
       const t = flat(a.innerText);
       const h = host(a.getAttribute('href'));
-      if (card || !h || LABEL_RE.test(t)) continue;
+      if (card || !h || LABEL_RE.test(t) || inside(a, body)) continue;
       const tok = HOST_RE.exec(t);
       const big = [...a.querySelectorAll('img')].some((img) => { const r = img.getBoundingClientRect(); return r.width >= 100 && r.height >= 100; });
       if (tok) card = tok[0].toLowerCase().replace(/^www\./, '');
@@ -1220,10 +1224,19 @@ function feedPosts(scope, cats, byEl, loc) {
         media: mediaOf(qbox, () => true, null),
       };
       const qtl = String(qbox.innerText || '').split('\n').map(flat).filter(Boolean);
+      const titleOf = (t) => clip(t, 160).trimEnd();
+      const label = flat((cardEl || qbox).getAttribute('aria-label'));
+      if (/\bArticle\b/.test(label)) {
+        const at = quote.rel ? qtl.indexOf(quote.rel) : -1;
+        const hi = quote.handle ? qtl.indexOf('@' + quote.handle) : -1;
+        const skip = new Set(['Quote', '·', ...(hi >= 0 ? [qtl[hi], qtl[hi - 1]] : [])]);
+        const title = (at >= 0 && qtl.slice(at + 1).find((l) => !skip.has(l))) || (/\bArticle\s+(.+)$/.exec(label) || [])[1];
+        if (title) quote.article = titleOf(title);
+      }
       for (let i = 0; i < qtl.length && !quote.article; i++) {
         const am = /^article(?:\s+(.+))?$/i.exec(qtl[i]);
         const title = am && (am[1] || qtl[i + 1]);
-        if (title) quote.article = clip(title, 80);
+        if (title) quote.article = titleOf(title);
       }
     }
     return {
