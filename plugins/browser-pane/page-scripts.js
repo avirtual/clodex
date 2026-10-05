@@ -121,9 +121,14 @@ const CQ = `
     };
   };
   const adLines = new Map();
-  const adArticle = e => {
+  const adArts = [];
+  const outerArticle = e => {
     let art = null;
     for (let a = e.closest ? e.closest('article') : null; a; a = a.parentElement ? a.parentElement.closest('article') : null) art = a;
+    return art;
+  };
+  const adArticle = e => {
+    const art = outerArticle(e);
     if (!art) return null;
     if (!adLines.has(art)) adLines.set(art, String(art.innerText || '').split('\\n').map(l => l.replace(/\\s+/g, ' ').trim()).find(l => /^(ad|promoted|sponsored)$/i.test(l)) || null);
     return adLines.get(art);
@@ -135,6 +140,12 @@ const CQ = `
     if (ad) return { cat: 'ad', term: ad };
     const inner = d.button || d.textual ? [] : e.querySelectorAll(CQ_INNER);
     return consequentialHit(d, CQ_RES) || (inner.length === 1 && !vis(inner[0]) ? cqHit(inner[0]) : null);
+  };
+  const adKeyOf = e => {
+    const art = adArticle(e) ? outerArticle(e) : null;
+    if (!art) return null;
+    if (!adArts.includes(art)) adArts.push(art);
+    return adArts.indexOf(art);
   };
   const cqOf = e => { const hit = cqHit(e); return hit ? hit.cat : null; };`;
 
@@ -571,7 +582,7 @@ function readInteractive(main, state) {
   });
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {}; const cats = {};${ROW}
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
@@ -580,12 +591,13 @@ function readInteractive(main, state) {
     if (it.line != null) {
       out.push('[' + n + '] ' + it.line);
       if (it.cq) cats[n] = it.cq;
+      if (it.cq === 'ad') { const k = adKeyOf(it.el); if (k != null) adKeys[n] = k; }
       rowsOut[n] = rowOf(it.el);
       sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, posts: [...(${main ? `document.querySelector('main, [role=main]') || document` : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? `document.querySelector('main, [role=main]') || document` : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, url: location.href };
 })()`;
 }
 
