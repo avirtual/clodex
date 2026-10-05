@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>sort dropdown over a delete button</title>
+<style>
+body{margin:0;font:16px sans-serif} #top{height:640px;background:#eef}
+#bar{position:relative;height:40px} #menu{display:none;position:absolute;top:40px;left:20px;z-index:5;background:#fff;border:1px solid #888;width:260px}
+#menu a{display:block;padding:14px 10px} .card{display:block;margin:0 0 0 20px;width:260px;height:120px;background:#fdd;border:1px solid #c88}
+#rest{height:1600px}
+</style></head><body>
+<div id="top">Rezultate: 3 produse</div>
+<div id="bar"><button type="button" id="sort">Relevanta</button>
+  <div id="menu"><a href="sorted.html?o=pop">Cele mai populare</a><a href="sorted.html?o=asc">Pret crescator</a><a href="sorted.html?o=desc">Pret descrescator</a><a href="sorted.html?o=new">Cele mai noi</a></div>
+</div>
+<form action="done.html" method="get" style="margin-left:20px"><button type="submit" name="x" value="del" style="width:260px;height:120px">Delete account</button></form>
+<a class="card" href="product.html?pos=1">Produs 2 — SSD 1TB</a>
+<div id="rest"></div>
+<script>
+const m=document.getElementById('menu');
+document.getElementById('sort').addEventListener('click',e=>{m.style.display=m.style.display==='block'?'none':'block';e.stopPropagation();});
+window.addEventListener('scroll',()=>{m.style.display='none';});
+</script>
+</body></html>
