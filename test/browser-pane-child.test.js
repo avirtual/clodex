@@ -603,6 +603,16 @@ test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then
   assert.ok(scripts.READ_TEXT(false).includes(JSON.stringify(scripts.READ_ROOT_SEL)));
 });
 
+test('child: every --main scope resolves through mainRootOf', () => {
+  assert.match(scripts.READ_TEXT(true), /const forced = mainRootOf\(\);/);
+  const ri = scripts.READ_INTERACTIVE(true, {});
+  assert.match(ri, /const mainRoot = mainRootOf\(\);/);
+  assert.match(ri, /posts: \[\.\.\.\(mainRootOf\(\) \|\| document\)\.querySelectorAll\('article'\)\]/);
+  assert.match(scripts.FEED(true, {}), /const scope = mainRootOf\(\) \|\| document;/);
+  assert.ok(scripts.MAIN_ROOT.includes('document.querySelector("main, article, [role=main]")'));
+  assert.ok(!scripts.READ_TEXT(false).includes('const forced = mainRootOf'));
+});
+
 test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', () => {
   assert.strictEqual(scrollCode('down', 3), "window.scrollBy({ top: (window.innerHeight - 40) * 3, behavior: 'instant' })");
   assert.strictEqual(scrollCode('up', 1), "window.scrollBy({ top: -(window.innerHeight - 40) * 1, behavior: 'instant' })");

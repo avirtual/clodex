@@ -21,6 +21,24 @@ const BADGE_NUDGE_PX = 3;
 const BOX_SEL = 'tr,li,article,[role=row],section';
 const CHROME_SEL = 'nav,header,footer,aside,[role=banner],[role=navigation],[role=contentinfo],[role=complementary]';
 const CHROME_MARK = '\u0001';
+const SIDE_SEL = 'aside, [role=complementary], [aria-label*="Trending" i], [aria-label*="Who to follow" i]';
+const MAIN_ROOT = `
+  const mainRootOf = () => {
+    const root = document.querySelector(${JSON.stringify(MAIN_SEL)});
+    if (!root) return null;
+    const arts = [...root.querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')));
+    if (arts.length < 2) return root;
+    let lca = arts[0];
+    while (lca !== root && !arts.every(a => lca.contains(a))) lca = lca.parentElement;
+    const outside = (p, n, sel) => [...p.querySelectorAll(sel)].some(e => !n.contains(e));
+    while (lca !== root && lca.parentElement) {
+      const p = lca.parentElement;
+      if (outside(p, lca, ${JSON.stringify(SIDE_SEL)}) || outside(p, lca, 'article')) break;
+      lca = p;
+    }
+    return lca;
+  };
+`;
 
 const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abmelden', 'deconnexion', 'cerrar sesion', 'uitloggen', 'esci', 'sair'];
 const CONSEQUENTIAL = [
@@ -269,7 +287,8 @@ function readText(main) {
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
     return t - 2 * l;
   };
-  const forced = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
+  ${MAIN_ROOT}
+  const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
   if (!forced && (!root || (root.innerText || '').length < 200)) {
     let best = document.body, bs = -1;
@@ -488,7 +507,8 @@ function collect(main) {
   ${joinUrls.toString()}
   const sel = ${JSON.stringify(STD_SEL)};
   const xsel = ${JSON.stringify(X_SEL)};
-  const mainRoot = ${main ? `document.querySelector(${JSON.stringify(MAIN_SEL)})` : 'null'};
+  ${MAIN_ROOT}
+  const mainRoot = ${main ? 'mainRootOf()' : 'null'};
   const inScope = el => {
     if (!mainRoot) return true;
     let n = el;
@@ -597,7 +617,7 @@ function readInteractive(main, state) {
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? `document.querySelector('main, [role=main]') || document` : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, url: location.href };
 })()`;
 }
 
@@ -1287,7 +1307,8 @@ function feed(main, cats) {
   ${feedPosts.toString()}
   const byEl = new Map();
   for (const [k, ref] of Object.entries(window.__cxEls || {})) { const e = ref && ref.deref(); if (e) byEl.set(e, Number(k)); }
-  const scope = ${main ? `document.querySelector('main, [role=main]') || document` : 'document'};
+  ${MAIN_ROOT}
+  const scope = ${main ? 'mainRootOf() || document' : 'document'};
   return feedPosts(scope, ${JSON.stringify(cats || {})}, byEl, location);
 })()`;
 }
@@ -1295,7 +1316,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

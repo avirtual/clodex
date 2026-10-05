@@ -250,7 +250,8 @@ size, page and new/retired/changed counts (`new: all (first read)` or `new: all
 (numbers restored)` on a first read); the first visible headings (or landmark
 labels); every ⚠ element with its number (above 30, counts per category plus the
 first 10); and a `--main`/`--filter=`/`--page=` hint, where `--filter=` names a
-word shared by at least two headings. `--attach`
+word shared by at least two headings. `--main` picks the column holding the page's
+articles (on X: the timeline, not the Trending / Who to follow sidebar). `--attach`
 forces the `@`, `--path-only` drops it. A screenshot attaches unless `--path-only`
 is given. A Codex seat gets its "read it with your Read tool" line either way.
 
