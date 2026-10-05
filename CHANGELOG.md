@@ -43,7 +43,8 @@ blocks a release.
 - Browser pane: `read --compact` remembers which posts it printed on a page, so after a scroll it prints only the new ones and says `N new · M already seen · K gone since your last read`; `--all` replays the ones that scrolled away. Only posts actually printed count as seen (a filtered or paged read leaves the rest new), the memory survives `back`/`forward`, and a read with nothing new is one line.
 - Browser pane: an ad is a ⚠ click (`ad`) refused without --confirm, its compact `[n]` is its status link or absent, and a `back` that did not leave the page says so and names the way out; the read digest folds them into one `⚠ ad` line, and an ad's compact `[n]` is never its analytics link; the digest counts ads by post, not by element number, and one hint names every printed `[?]` ad; an `Ad` line inside a quoted post no longer marks the quoting post.
 - Browser pane: `--main` scopes a read to the column that holds the page's posts — on X the timeline, no longer the Trending / Who to follow sidebar (a page without a `<main>` landmark still reads its whole feed).
-- Browser pane: `type --enter` and `key Enter` are refused without --confirm when Enter would press a ⚠ control or submit a payment, order or deletion form — the same gate a click gets.
+- Browser pane: `type --enter`, `key Enter` and `key Space` are refused without --confirm when the key would press a ⚠ control or submit a payment, order or deletion form from any of its fields — the same gate a click gets; `key` and `inspect` report a field's live value.
+- Browser pane: text inside a form is read — e-bloc's debt table no longer disappears from `read`.
 
 ## 5.112.2 — 2026-10-04
 
