@@ -128,6 +128,8 @@ const ROWS = [
   ['[agent:browser read --filter="sep 2026]', { error: 'unbalanced double quote in the bracket' }],
   ['[agent:browser open utility]',
     { error: 'open needs a URL after the bracket — [agent:browser open <service>] <url>' }],
+  ['[agent:browser open etoro https://www.etoro.com/markets/btc]',
+    { error: "unexpected 'https://www.etoro.com/markets/btc' for open — the URL goes after the closing bracket: [agent:browser open etoro] https://www.etoro.com/markets/btc" }],
   ['[agent:browser open] https://x.example/',
     { error: 'open needs a service — [agent:browser open <service>] <url>' }],
   ['[agent:browser open utility] https://user:pw@portal.example.com/',

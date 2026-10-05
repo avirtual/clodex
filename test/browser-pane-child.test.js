@@ -1487,11 +1487,18 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Continuă', formaction: '/pay', action: '/pay', control: true }, 'payment'],
     [{ label: 'Trimite' }, 'publish'], [{ label: 'Latest posts', capped: true }, null], [{ label: 'Postal code', textual: true }, null],
     [{ label: 'Like-minded people', capped: true }, null], [{ label: 'Read the latest post' }, null],
+    [{ label: 'Copy link' }, null], [{ label: 'Copy', idClass: 'btn-copy-user-from-search' }, 'trading'], [{ label: 'Copy', idClass: 'copy-btn' }, null],
+    [{ label: 'Close' }, null], [{ label: 'Close', idClass: 'portfolio-position-list-button-close-position' }, 'trading'], [{ label: 'Close All' }, 'trading'],
+    [{ label: 'Sell' }, 'trading'], [{ label: 'Sell your crypto' }, 'trading'], [{ label: 'Bestseller' }, null],
+    [{ label: 'Trade' }, 'trading'], [{ label: 'Trade-in' }, 'trading'],
+    [{ label: 'Deposit' }, 'transfer'], [{ label: 'Add Funds to USD' }, 'transfer'], [{ label: 'Withdraw' }, 'transfer'], [{ label: 'Create Wallet' }, 'transfer'],
+    [{ label: '36', idClass: 'social-likes ets-icon-like' }, 'publish'], [{ label: '36', idClass: 'likely-list' }, null],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.match(ri, /const cq = cqOf\(el\);\n {4}items\.push\(\{ el, full, cq, line: kind \+ ' ' \+ \(cq \? '⚠ ' : ''\) \+ line/);
   assert.match(ri, /if \(it\.cq\) cats\[n\] = it\.cq;/);
+  assert.ok(ri.includes("e.getAttribute('data-automation-id'), e.getAttribute('data-testid'), e.getAttribute('data-test')"));
   assert.match(ri, /control: button && !doc && \(!!\(form \|\| e\.closest\('form'\)\) \|\| e\.hasAttribute\('formaction'\)\),/);
 });
 
