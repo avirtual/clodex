@@ -1621,8 +1621,8 @@ function createSessionManager(deps) {
           if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          const userMcp = args.includes('--mcp-config');
-          const userStrict = args.includes('--strict-mcp-config');
+          const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
+          const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
           const disableDesign = !!getUiSettings().get().disableClaudeDesignMcp;
           let reason = null;
           if (disableDesign && !userStrict && !userMcp) {

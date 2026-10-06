@@ -48,14 +48,16 @@ function toIntent({ verb, service, bracket = [], body = '' }) {
 }
 
 class InvalidParams extends Error {}
+class InvalidRequest extends Error {}
 
 function validate(params) {
-  if (!params || params.name !== 'browser') throw new InvalidParams(`unknown tool: ${params && params.name}`);
+  if (!params || params.name !== 'browser') throw new InvalidRequest(`unknown tool: ${params && params.name}`);
   const args = params.arguments == null ? {} : params.arguments;
-  if (typeof args !== 'object' || Array.isArray(args)) throw new InvalidParams('arguments must be an object');
+  if (typeof args !== 'object' || Array.isArray(args)) throw new InvalidRequest('arguments must be an object');
   const extra = Object.keys(args).find((k) => !ARG_KEYS.includes(k));
   if (extra) throw new InvalidParams(`unknown argument: ${extra} (use ${ARG_KEYS.join(', ')})`);
   const { verb, service } = args;
+  if (verb === 'release' || verb === 'close') throw new InvalidParams(verb === 'release' ? "release is for the seat's main agent" : 'close is for the seat\'s main agent — a subagent may ' + SUBAGENT_BROWSER_VERBS.join(', '));
   if (!SUBAGENT_BROWSER_VERBS.includes(verb)) throw new InvalidParams(`verb must be one of ${SUBAGENT_BROWSER_VERBS.join(', ')}`);
   if (service != null && (typeof service !== 'string' || !SERVICE_RE.test(service))) throw new InvalidParams(`service must match ${SERVICE_PATTERN}`);
   const bracket = args.bracket == null ? [] : args.bracket;
@@ -112,10 +114,11 @@ function createServer({
     try {
       args = validate(params);
     } catch (e) {
+      if (e instanceof InvalidRequest) return { error: { code: -32602, message: e.message } };
       if (!(e instanceof InvalidParams)) throw e;
       if (e.message === 'body must be one line') errOut.write(LIMITS + '\n');
       log(a.verb, a.service, 'invalid', now() - start);
-      return { error: { code: -32602, message: e.message } };
+      return { result: { content: [{ type: 'text', text: e.message }], isError: true } };
     }
     if (!env.CLODEX_INTENT_SOCK || !env.CLODEX_INTENT_CRED) {
       return { error: { code: -32603, message: 'no seat channel (CLODEX_INTENT_SOCK / CLODEX_INTENT_CRED unset)' } };

@@ -167,7 +167,7 @@ test('the healthy strip-capable wire produces NO reason, and therefore no signal
 // ungated one added) and would not catch a subtler logic change.
 test('session-manager pushes the plan and logs ONLY on the plan notice', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const from = src.indexOf("const userMcp = args.includes('--mcp-config');");
+  const from = src.indexOf('const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));');
   assert.ok(from > 0, 'the user --mcp-config is no longer sampled');
   const to = src.indexOf('const userPluginDir', from);
   assert.ok(to > from, 'the MCP block no longer ends before the plugin-dir sample');

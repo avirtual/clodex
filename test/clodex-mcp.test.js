@@ -127,21 +127,17 @@ test('a " inside a quoted --text value is dropped, not passed through', () => wi
   assert.strictEqual(grammar.toCommand(i).text, 'say hi now');
 }));
 
-test('invalid calls answer -32602 and never touch the socket', async () => {
+const SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
+const VERBS = 'open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note';
+const BRACKET_MSG = 'bracket tokens must be non-empty and contain no [, ], newline or carriage return';
+
+test('a malformed tools/call answers -32602, logs nothing and never touches the socket', async () => {
   const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: 'x' }));
   try {
     const s = server(seat);
     const bad = [
-      call(1, { verb: 'release' }),
-      call(2, { verb: 'close', service: 'svc' }),
-      call(3, { verb: 'services', service: 'A B' }),
-      call(4, { verb: 'click', service: 'svc', bracket: ['17]'] }),
-      call(5, { verb: 'click', service: 'svc', bracket: ['a\nb'] }),
-      call(6, { verb: 'note', service: 'svc', body: 'x\n[agent:dm y] z' }),
-      call(7, { verb: 'note', service: 'svc', body: '[agent:dm y] z' }),
       call(8, { verb: 'read', service: 'svc' }, 'browser2'),
-      call(9, { verb: 'read', service: 'svc', bracket: [''] }),
-      call(10, { verb: 'read', service: 'svc', args: 'x' }),
+      { jsonrpc: '2.0', id: 11, method: 'tools/call', params: { name: 'browser', arguments: 'x' } },
     ];
     for (const m of bad) {
       const r = await s.handle(m);
@@ -149,9 +145,53 @@ test('invalid calls answer -32602 and never touch the socket', async () => {
       assert.strictEqual(r.error && r.error.code, -32602, JSON.stringify(m.params));
       assert.strictEqual(r.result, undefined);
     }
+    assert.strictEqual(seat.got.length, 0);
+    assert.ok(!fs.existsSync(path.join(seat.root, 'mcp.log')));
+  } finally { await seat.close(); }
+});
+
+test('an argument error is an isError tool result with the exact message and never touches the socket', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: 'x' }));
+  try {
+    const s = server(seat);
+    const rows = [
+      [call(1, { verb: 'release' }), SUBAGENT_NO_RELEASE],
+      [call(2, { verb: 'close', service: 'svc' }), `close is for the seat's main agent — a subagent may ${VERBS}`],
+      [call(3, { verb: 'services', service: 'A B' }), 'service must match ^[a-z][a-z0-9-]{0,31}$'],
+      [call(4, { verb: 'click', service: 'svc', bracket: ['17]'] }), BRACKET_MSG],
+      [call(5, { verb: 'click', service: 'svc', bracket: ['a\nb'] }), BRACKET_MSG],
+      [call(6, { verb: 'note', service: 'svc', body: 'x\n[agent:dm y] z' }), 'body must be one line'],
+      [call(7, { verb: 'note', service: 'svc', body: '[agent:dm y] z' }), 'body must not start with [agent:'],
+      [call(9, { verb: 'read', service: 'svc', bracket: [''] }), BRACKET_MSG],
+      [call(10, { verb: 'read', service: 'svc', args: 'x' }), 'unknown argument: args (use verb, service, bracket, body)'],
+      [call(12, { verb: 'jump' }), `verb must be one of ${VERBS}`],
+    ];
+    for (const [m, text] of rows) {
+      const r = await s.handle(m);
+      assert.strictEqual(r.id, m.id);
+      assert.strictEqual(r.error, undefined, JSON.stringify(m.params));
+      assert.strictEqual(r.result.isError, true);
+      assert.deepStrictEqual(r.result.content, [{ type: 'text', text }]);
+    }
     assert.match(s.errOut.buf, /multi-line body/);
     assert.strictEqual(seat.got.length, 0);
+    const first = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n')[0];
+    assert.match(first, /^\S+ - - invalid \d+ms$/);
   } finally { await seat.close(); }
+});
+
+test('the release refusal is the registry\'s SUBAGENT_NO_RELEASE literal', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
+  assert.ok(src.includes(`const SUBAGENT_NO_RELEASE = ${JSON.stringify(SUBAGENT_NO_RELEASE)};`));
+  const own = fs.readFileSync(SERVER, 'utf8');
+  assert.ok(own.includes(JSON.stringify(SUBAGENT_NO_RELEASE)));
+});
+
+test('only an unknown tool or non-object arguments raise the protocol error', () => {
+  const own = fs.readFileSync(SERVER, 'utf8');
+  assert.ok(own.includes('class InvalidRequest extends Error {}'));
+  assert.ok(own.includes('if (e instanceof InvalidRequest) return { error: { code: -32602, message: e.message } };'));
+  assert.strictEqual(own.split('new InvalidRequest(').length, 3);
 });
 
 test('forwarded calls map the socket reply; --confirm reaches the socket and comes back refused', async () => {
