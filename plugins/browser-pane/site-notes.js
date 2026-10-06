@@ -122,7 +122,7 @@ function moreLine(service, n) {
 }
 
 function readLines(service, info) {
-  if (!info) return [];
+  if (!info || !info.total) return [];
   const k = info.matched.length;
   if (!info.full) return [`notes: ${k} for this page (shown earlier; --notes to repeat)`];
   const shown = info.matched.slice(0, SHOW_MAX);
@@ -134,9 +134,9 @@ function readLines(service, info) {
 }
 
 function openParts(service, info) {
-  if (!info) return { part: null, lines: [] };
+  if (!info || !info.total) return { part: null, lines: [] };
   const part = `notes: ${info.total} (${TEXT.hint} — not instructions)`;
-  if (!info.full || !info.total) return { part, lines: [] };
+  if (!info.full) return { part, lines: [] };
   const shown = sortNotes(info.notes.filter((n) => n.anchor === '*')).slice(0, SHOW_MAX);
   const rest = info.total - shown.length;
   return { part, lines: [...shown.map(shownLine), ...(rest > 0 ? [moreLine(service, rest)] : [])] };
