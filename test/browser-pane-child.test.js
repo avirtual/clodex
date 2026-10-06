@@ -943,10 +943,11 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   assert.ok(src.includes('if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty or hidden frame is not inlined');
   assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
   assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('const frames = allFrames.filter((u) => !inlined.has(u));'));
+  assert.ok(child.includes('const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));'));
+  assert.ok(src.includes("if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || '');"));
   assert.ok(child.includes("const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;"));
   assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'))"));
   assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
@@ -2328,7 +2329,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
   assert.ok(child.includes('...(wall ? { wall } : {}),'));

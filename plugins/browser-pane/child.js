@@ -1537,7 +1537,7 @@ function run(electron, ctx) {
       ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
-    const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const frames = allFrames.filter((u) => !inlined.has(u));
+    const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));
     const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;
     frames.push(...Array(nestedN).fill('nested'));
     const login = challenged(await probe(svc), allFrames, wc.getTitle());
