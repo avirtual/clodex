@@ -612,10 +612,13 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };"));
   assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };"));
   assert.ok(src.includes("const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };"));
-  assert.ok(src.includes("const rest = norm(bt).replace(own.trim(), ' ');"));
-  assert.ok(src.includes('return bt && (re.test(rest) || /\\b(sign in|log in|subscribe)\\b/i.test(rest) && /\\b(start a free trial|create (a free )?account)\\b/i.test(own)) ? { text: quote(authored(b), b, re), b } : null;'));
-  assert.ok(src.includes('return bt && re.test(bt) ? { text: quote(authored(b), b, re), b } : null;'));
-  assert.ok(src.includes('const authored = b => norm(b.textContent).trim();'));
+  assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
+  assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
+  assert.ok(src.includes('return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));'));
+  assert.ok(src.includes('return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  const authored = new Function('norm', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '));
+  assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', textContent: 'to read this story, Sign in.' }), 'to read this story, Sign in.');
+  assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', textContent: 'Create an account.The author' }), 'Create an account. The author');
   assert.ok(src.includes('return blockText(blk) ? clip(authored(blk)) : sentence(s, re);'));
   assert.ok(src.includes("const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');"));
   assert.ok(src.includes("if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }"));

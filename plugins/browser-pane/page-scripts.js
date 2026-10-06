@@ -324,7 +324,15 @@ const WALL = `
       if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }
       return blockTexts.get(b);
     };
-    const authored = b => norm(b.textContent).trim();
+    const authored = b => {
+      const tc = norm(b.textContent);
+      let j = 0;
+      return [...norm(b.innerText).trim()].map(ch => {
+        if (/\\s/.test(ch)) return ch;
+        while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
+        return j < tc.length ? tc[j++] : ch;
+      }).join('');
+    };
     const quote = (s, el, re) => {
       if (norm(s).trim().length >= 20) return sentence(s, re);
       const blk = el && el.closest(${JSON.stringify(WALL_BLOCK)});
@@ -334,6 +342,12 @@ const WALL = `
     const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };
     const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };
     const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };
+    const gated = (b, bt, re) => {
+      const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));
+      let rest = norm(bt);
+      for (const l of labels) rest = rest.replace(l, ' ');
+      return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));
+    };
     let all = [];
     let endIdx = -1;
     const hitOf = (t, re) => {
@@ -342,12 +356,9 @@ const WALL = `
       const own = norm(t.data);
       if (re.test(own)) {
         if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
-        const bt = blockText(b);
-        const rest = norm(bt).replace(own.trim(), ' ');
-        return bt && (re.test(rest) || /\\b(sign in|log in|subscribe)\\b/i.test(rest) && /\\b(start a free trial|create (a free )?account)\\b/i.test(own)) ? { text: quote(authored(b), b, re), b } : null;
       }
       const bt = blockText(b);
-      return bt && re.test(bt) ? { text: quote(authored(b), b, re), b } : null;
+      return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
     };
     const pick = (re) => {
       let before = null;
