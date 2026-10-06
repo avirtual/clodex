@@ -958,7 +958,7 @@ function readSessionMeta(file) {
 // scripts never depend on PATH or an ambient python3 (packaged .app).
 const { createCliHooks } = require('./cli-hooks');
 const {
-  writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
+  writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig,
   cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
 // composeRoster reaches `manager` lazily and inside a try: this runs before the
 // const is declared, so a bare reference at boot is a TDZ throw.
@@ -1223,6 +1223,7 @@ const SessionManager = createSessionManager({
     scheduleTrayRefresh,
     setupClaudeHook,
     setupCodexHook,
+    writeMcpConfig,
     shadowIntentKey,
     shouldHoldDm,
     spillToFile,

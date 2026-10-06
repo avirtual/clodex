@@ -165,40 +165,47 @@ test('the healthy strip-capable wire produces NO reason, and therefore no signal
 // the SHAPE of the call site, not its behaviour. It would catch the specific
 // regression that matters (a broadcast moved outside the guard, or a second
 // ungated one added) and would not catch a subtler logic change.
-test('session-manager pushes the flag and logs ONLY inside the reason guard', () => {
+test('session-manager pushes the plan and logs ONLY on the plan notice', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const at = src.indexOf('const reason = strictMcpReason(');
+  const from = src.indexOf("const userMcp = args.includes('--mcp-config');");
+  assert.ok(from > 0, 'the user --mcp-config is no longer sampled');
+  const to = src.indexOf('const userPluginDir', from);
+  assert.ok(to > from, 'the MCP block no longer ends before the plugin-dir sample');
+  const block = src.slice(from, to);
+
+  const at = block.indexOf('reason = strictMcpReason(');
   assert.ok(at > 0, 'the gate no longer calls strictMcpReason — this guard needs updating');
+  const planAt = block.indexOf('mcpArgvPlan(');
+  assert.ok(planAt > at, 'the reason is no longer fed to mcpArgvPlan');
+  const pushAt = block.indexOf('args.push(...plan.push);');
+  assert.ok(pushAt > planAt, 'the plan argv is not pushed after the plan');
 
-  // The block from the call to the end of its `if (reason) { … }`.
-  const open = src.indexOf('if (reason) {', at);
-  assert.ok(open > at, 'the reason is no longer used as the guard');
+  const open = block.indexOf('if (plan.notice) {');
+  assert.ok(open > planAt, 'the notice is no longer the broadcast guard');
   let close = -1;
-  for (let i = src.indexOf('{', open), depth = 0; i < src.length; i++) {
-    if (src[i] === '{') depth++;
-    else if (src[i] === '}' && --depth === 0) { close = i + 1; break; }
+  for (let i = block.indexOf('{', open), depth = 0; i < block.length; i++) {
+    if (block[i] === '{') depth++;
+    else if (block[i] === '}' && --depth === 0) { close = i + 1; break; }
   }
-  assert.ok(close > open, 'could not find the end of the reason guard');
-  const guarded = src.slice(open, close);
-  assert.ok(!guarded.includes('const userPluginDir'), 'the walked region runs past the reason guard');
-
-  // Both effects live INSIDE the guard.
-  assert.ok(guarded.includes("args.push('--strict-mcp-config')"), 'the flag is not pushed inside the guard');
+  assert.ok(close > open, 'could not find the end of the notice guard');
+  const guarded = block.slice(open, close);
   assert.ok(guarded.includes("this._broadcast('ipc-message'"), 'the log line is not broadcast inside the guard');
-  assert.ok(guarded.includes('STRICT_MCP_EXPLANATION[reason]'), 'the log line does not carry the reason explanation');
-  // The row leads with the CONSEQUENCE and carries the flag in parentheses. The
-  // earlier shape led with `--strict-mcp-config (${reason})`, i.e. two pieces of
-  // Clodex jargon before anything the reader could act on, and the reason key it
-  // opened with is not a term that appears anywhere in the UI. `MCP: ` stays as
-  // the greppable handle in an ipc log full of other system rows.
-  assert.ok(guarded.includes('body: `MCP: '), 'the row no longer opens with the greppable MCP: prefix');
-  assert.ok(guarded.includes('MCP: all MCP servers disabled for this session (--strict-mcp-config) —'),
-    'the row no longer leads with the consequence, with the flag in parentheses');
-  assert.ok(!/MCP: --strict-mcp-config/.test(guarded), 'the row leads with the flag again');
+  assert.ok(guarded.includes('body: plan.notice'), 'the log line does not carry the plan notice');
 
-  // And nothing between the call and the guard emits anything — i.e. there is
-  // no second, ungated line that would fire on the healthy path.
-  const between = src.slice(at, open);
-  assert.ok(!between.includes('_broadcast'), 'a broadcast sits between the reason and its guard — it would fire on the healthy path');
-  assert.ok(!between.includes("args.push('--strict-mcp-config')"), 'the flag is pushed before the guard');
+  const outside = block.slice(0, open) + block.slice(close);
+  assert.ok(!outside.includes('_broadcast'), 'a broadcast sits outside the notice guard — it would fire on the healthy path');
+  assert.ok(!block.includes("args.push('--strict-mcp-config'"), 'the strict flag is pushed outside the plan');
+  assert.ok(!block.includes("args.push('--mcp-config'"), 'the config flag is pushed outside the plan');
+  assert.strictEqual(src.split("args.push('--strict-mcp-config'").length, 1);
+  assert.strictEqual(src.split("args.push('--mcp-config'").length, 1);
+});
+
+test('the fallback notice leads with the consequence, with the flag in parentheses', () => {
+  const { mcpArgvPlan } = require('../proxy-util');
+  for (const reason of Object.keys(STRICT_MCP_EXPLANATION)) {
+    const { notice } = mcpArgvPlan({ userMcp: false, userStrict: false, disableDesign: true, reason, mcpPath: '/m.json' });
+    assert.ok(notice.startsWith('MCP: all MCP servers disabled for this session (--strict-mcp-config) — '));
+    assert.ok(notice.includes(STRICT_MCP_EXPLANATION[reason]));
+    assert.ok(!/MCP: --strict-mcp-config/.test(notice));
+  }
 });

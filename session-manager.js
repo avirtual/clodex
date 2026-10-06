@@ -120,7 +120,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
-const { pasteModeSignal, strictMcpReason, STRICT_MCP_EXPLANATION, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
@@ -693,6 +693,8 @@ function createSessionManager(deps) {
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
+  const writeMcpConfig = deps.writeMcpConfig
+    || ((n) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n));
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
   const streamFor = deps.streamFor || adapterStreamFor;
   const loadStreamCodec = deps.loadStreamCodec || ((id) => require(`./${id}`));
@@ -1619,21 +1621,22 @@ function createSessionManager(deps) {
           if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          if (getUiSettings().get().disableClaudeDesignMcp
-              && !args.includes('--strict-mcp-config')
-              && !args.includes('--mcp-config')) {
+          const userMcp = args.includes('--mcp-config');
+          const userStrict = args.includes('--strict-mcp-config');
+          const disableDesign = !!getUiSettings().get().disableClaudeDesignMcp;
+          let reason = null;
+          if (disableDesign && !userStrict && !userMcp) {
             let probe = null;
             if (proxyBase) {
               try { probe = await ProxyClient.probe(proxyBase); } catch {}
             }
-            const reason = strictMcpReason(proxyBase, probe);
-            if (reason) {
-              args.push('--strict-mcp-config');
-              this._broadcast('ipc-message', {
-                type: 'system', from: name, to: name,
-                body: `MCP: all MCP servers disabled for this session (--strict-mcp-config) — ${STRICT_MCP_EXPLANATION[reason]}.`,
-              });
-            }
+            reason = strictMcpReason(proxyBase, probe);
+          }
+          const plan = mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
+          if (plan.writeConfig) writeMcpConfig(name);
+          args.push(...plan.push);
+          if (plan.notice) {
+            this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: plan.notice });
           }
           // Sample before the agents block pushes its own --plugin-dir, or the skills gate reads our push as the user's
           // and drops every injected skill; a user plugin dir replaces the skills scaffold but must not drop the agent library.

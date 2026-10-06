@@ -40,8 +40,6 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
-// --strict-mcp-config is passed with no --mcp-config, i.e. the empty set: on
-// this fallback path the user's real project/user MCP servers are dropped too.
 // The surgical alternative is a strip-capable wire removing only claude_design.
 // The reasons are kept distinct because their remedies differ.
 // `probe` is null when unreachable or unrecognized (caller owns the try/catch).
@@ -59,6 +57,24 @@ const STRICT_MCP_EXPLANATION = {
   'wire-no-strip': 'the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings ▸ Disable claude_design MCP',
   'probe-failed': 'wirescope did not answer when the session started; restart the session to retry, or turn off Settings ▸ Disable claude_design MCP',
 };
+
+function mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath }) {
+  const unavailable = 'MCP: the clodex browser tool is not available to this session — ';
+  if (userMcp) {
+    return { push: [], notice: `${unavailable}the seat's extra args carry their own --mcp-config.`, writeConfig: false };
+  }
+  if (userStrict) {
+    return { push: [], notice: `${unavailable}the seat's extra args carry --strict-mcp-config with no config, which is the empty set.`, writeConfig: false };
+  }
+  if (disableDesign && reason) {
+    return {
+      push: ['--strict-mcp-config', '--mcp-config', mcpPath],
+      notice: `MCP: all MCP servers disabled for this session (--strict-mcp-config) — ${STRICT_MCP_EXPLANATION[reason]}. The clodex browser tool stays available.`,
+      writeConfig: true,
+    };
+  }
+  return { push: ['--mcp-config', mcpPath], notice: null, writeConfig: true };
+}
 
 // The owner's proxyBase is on their loopback and unreachable from a viewer; a
 // box's CLODEX_WIRESCOPE_PUBLIC_URL is host-reachable, so only that may be
@@ -678,7 +694,7 @@ module.exports = {
   stampServedAge, proxyReceivedAt,
   shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, fmtQuotaResetTight, QUOTA_STALE_S, QUOTA_429_RECENT_S,
   QUOTA_WINDOW_LABEL,
-  boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION,
+  boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION, mcpArgvPlan,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,
   draftChunkSignal, isDraftOpen, pasteModeSignal, PASTE_START, PASTE_END,
   versionSeverity, updateApplies, releaseAgeInfo,
