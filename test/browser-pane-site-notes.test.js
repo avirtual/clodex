@@ -157,5 +157,8 @@ test('readLines: a page-anchored note surfaces before three origin-wide cautions
   const matched = N.matching(notes, '/portfolio/btc');
   const lines = N.readLines('svc', { matched, total: notes.length, full: true });
   assert.ok(lines.slice(1, 4).some((l) => l.includes('dddd')), lines.join('\n'));
+  assert.deepStrictEqual(matched.map((n) => n.id), ['dddd', 'cccc', 'bbbb', 'aaaa']);
   assert.deepStrictEqual(N.sortNotes(notes).map((n) => n.id), ['cccc', 'bbbb', 'aaaa', 'dddd']);
+  const pageCaution = mk('eeee', '/portfolio/*', 'caution', '2025-01-01');
+  assert.deepStrictEqual(N.matching([...notes, pageCaution], '/portfolio/btc').map((n) => n.id), ['eeee', 'dddd', 'cccc', 'bbbb', 'aaaa']);
 });

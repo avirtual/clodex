@@ -117,8 +117,8 @@ function validAnchor(anchor) {
 function sortNotes(notes, pageFirst = false) {
   const order = notes.map((n, i) => ({ n, i }));
   const tier = (n) => (pageFirst && n.anchor === '*' ? 1 : 0);
-  order.sort((x, y) => (x.n.kind === 'caution' ? 0 : 1) - (y.n.kind === 'caution' ? 0 : 1)
-    || tier(x.n) - tier(y.n)
+  order.sort((x, y) => tier(x.n) - tier(y.n)
+    || (x.n.kind === 'caution' ? 0 : 1) - (y.n.kind === 'caution' ? 0 : 1)
     || (x.n.date < y.n.date ? 1 : x.n.date > y.n.date ? -1 : 0)
     || y.i - x.i);
   return order.map((o) => o.n);
