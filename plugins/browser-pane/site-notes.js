@@ -216,6 +216,11 @@ const nodeFiles = {
     fs.writeFileSync(file, data, { mode: 0o600 });
   },
   rename(from, to) { fs.renameSync(from, to); },
+  unlink(file) {
+    try { fs.unlinkSync(file); } catch (e) {
+      if (!e || e.code !== 'ENOENT') throw e;
+    }
+  },
 };
 
 function randomId(taken) {
@@ -282,7 +287,15 @@ function createStore({ dir, files = nodeFiles, now = () => Date.now(), newId = r
     });
   }
 
-  return { load, add, forget, fileFor };
+  function removeOrigin(origin) {
+    return serial(origin, () => {
+      const cur = load(origin);
+      files.unlink(fileFor(origin));
+      return cur.notes.length;
+    });
+  }
+
+  return { load, add, forget, removeOrigin, fileFor };
 }
 
 module.exports = {

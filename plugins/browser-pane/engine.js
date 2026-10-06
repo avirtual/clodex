@@ -42,14 +42,17 @@ function idleStopNotice(idleMs, closed) {
   };
 }
 
-function removePartition(dataDir, name) {
-  const dir = partitionDir(dataDir, name);
+function removeUnder(rootDir, name, dir = path.join(rootDir, name)) {
   if (!fs.existsSync(dir)) return false;
   const real = fs.realpathSync(dir);
-  const root = fs.realpathSync(dataDir);
+  const root = fs.realpathSync(rootDir);
   if (!real.startsWith(root + path.sep) || path.basename(real) !== name) throw new Error(`refusing to remove ${real}: not under ${root}`);
   fs.rmSync(real, { recursive: true, force: true });
   return true;
+}
+
+function removePartition(dataDir, name) {
+  return removeUnder(dataDir, name, partitionDir(dataDir, name));
 }
 
 async function handOver({ scheduler, live, request, session }, req) {
@@ -126,6 +129,7 @@ function activate(host) {
   const childScript = path.join(__dirname, 'child.js');
   const dataDir = path.join(host.paths.dataDir, 'chromium');
   const downloadsDir = path.join(host.paths.dataDir, 'downloads');
+  const notes = siteNotes.createStore({ dir: path.join(host.paths.dataDir, 'sites') });
   const client = createClient({
     spawnSpec: () => {
       const spec = host.runtime.electronChild(childScript, ['--cxb-data=' + dataDir, '--cxb-downloads=' + downloadsDir, '--cxb-proto=1']);
@@ -191,7 +195,7 @@ function activate(host) {
     log: host.log,
     fsScope: (seat) => host.sessions.fsScope(seat),
     downloadsDir,
-    notes: siteNotes.createStore({ dir: path.join(host.paths.dataDir, 'sites') }),
+    notes,
   });
   host.intents.register({
     verb: 'browser',
@@ -286,6 +290,10 @@ function activate(host) {
     });
     return { ok: true, child: childState(), services, ...(notice ? { notice } : {}) };
   });
+  const noteCount = (url) => {
+    const origin = siteNotes.originKey(url);
+    return origin ? notes.load(origin).notes.length : 0;
+  };
   host.ipc.handle('services.list', () => {
     const saved = stored();
     const services = Object.keys(saved).sort().map((name) => {
@@ -296,6 +304,8 @@ function activate(host) {
         login: (s.login && s.login.state) || 'unknown',
         loginAt: (s.login && s.login.at) || null,
         lastUrl: s.lastUrl || '',
+        host: hostOf(s.lastUrl),
+        notes: noteCount(s.lastUrl),
         windowOpen: !!(v && v.state !== 'closed'),
         state: v ? v.state : 'closed',
         ...(v && v.state === 'held' && v.reason === 'takeover' ? { operator: true } : {}),
@@ -315,6 +325,25 @@ function activate(host) {
     }
     changed();
     return { ok: true, service: name };
+  });
+  host.ipc.handle('services.remove', async (req) => {
+    const name = req && req.name;
+    if (!grammar.SERVICE_RE.test(String(name || ''))) throw new Error(`bad service name: ${name}`);
+    const v = live.get(name);
+    if (v && v.state !== 'closed') return { ok: false, error: 'window open — close it first' };
+    const st = client.state();
+    if (st === 'running' || st === 'starting') await client.request('forget', {}, { service: name, timeoutMs: FORGET_OP_MS });
+    else removePartition(host.paths.dataDir, name);
+    removeUnder(downloadsDir, name);
+    const all = host.storage.get();
+    const origin = siteNotes.originKey(all && all.services && all.services[name] && all.services[name].lastUrl);
+    if (all && all.services && all.services[name]) {
+      delete all.services[name];
+      host.storage.set(all);
+    }
+    const removed = req.notes === true && origin ? await notes.removeOrigin(origin) : 0;
+    changed();
+    return { ok: true, service: name, notes: removed };
   });
   host.ipc.handle('denylist.get', () => ({ ok: true, ...denylist() }));
   host.ipc.handle('denylist.set', async (req) => {

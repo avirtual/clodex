@@ -249,6 +249,37 @@ test('engine: forget with the child stopped removes only chromium/Partitions/<se
   assert.strictEqual(kept.utility.createdAt, 1);
 });
 
+test('engine services.remove: drops the service, its partition and downloads; site notes only on request; refused while open', async (t) => {
+  const { engine, host } = boot(t);
+  const data = host.paths.dataDir;
+  const parts = path.join(data, 'chromium', 'Partitions');
+  const origin = 'https://portal.example.com';
+  const store = require('../plugins/browser-pane/site-notes').createStore({ dir: path.join(data, 'sites') });
+  const seed = async () => {
+    for (const d of [path.join(parts, 'utility', 'Cookies-dir'), path.join(parts, 'other'), path.join(data, 'downloads', 'utility')]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(data, 'downloads', 'utility', 'aug.pdf'), '%PDF-');
+    host.storage.set({ v: 1, services: { utility: { createdAt: 1, lastUrl: `${origin}/bills`, login: { state: 'logged-in', at: 5 } }, other: { createdAt: 2 } } });
+    if (!store.load(origin).notes.length) await store.add(origin, { anchor: '*', kind: 'path', text: 'Facturi first', seat: 'a' });
+  };
+  await seed();
+  const listed = await engine.dispatch('browser-pane', 'services.list', [], 'desktop');
+  assert.deepStrictEqual(listed.services.filter((s) => s.name === 'utility').map((s) => [s.host, s.notes]), [['portal.example.com', 1]]);
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'services.remove', [{ name: 'utility', notes: false }], 'desktop'), { ok: true, service: 'utility', notes: 0 });
+  assert.ok(!fs.existsSync(path.join(parts, 'utility')), 'the partition is gone');
+  assert.ok(fs.existsSync(path.join(parts, 'other')), 'the sibling partition survives');
+  assert.ok(!fs.existsSync(path.join(data, 'downloads', 'utility')), 'the downloads are gone');
+  assert.deepStrictEqual(Object.keys(host.storage.get().services), ['other']);
+  assert.ok(fs.existsSync(store.fileFor(origin)), 'the site notes are kept');
+  await seed();
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'services.remove', [{ name: 'utility', notes: true }], 'desktop'), { ok: true, service: 'utility', notes: 1 });
+  assert.ok(!fs.existsSync(store.fileFor(origin)), 'the site notes are deleted');
+  await refuses(engine.dispatch('browser-pane', 'services.remove', [{ name: '../x' }], 'desktop'), /bad service name/);
+  await engine.dispatch('browser-pane', 'operator.open', [{ service: 'utility', url: `${origin}/home` }], 'desktop');
+  const before = JSON.stringify(host.storage.get());
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'services.remove', [{ name: 'utility', notes: true }], 'desktop'), { ok: false, error: 'window open — close it first' });
+  assert.strictEqual(JSON.stringify(host.storage.get()), before);
+});
+
 test('engine: show on a service with no window resolves the service\'s own refusal', async (t) => {
   const { engine } = boot(t);
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });

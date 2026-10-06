@@ -155,6 +155,69 @@ test('Forget login confirms, naming the service and that downloads are kept, the
   }
 });
 
+test('hostText: the last URL\'s hostname without www., empty when absent or unparseable', () => {
+  assert.strictEqual(bp.hostText({ lastUrl: 'https://www.e-bloc.ro/index.php?page=1' }), 'e-bloc.ro');
+  assert.strictEqual(bp.hostText({ lastUrl: '' }), '');
+  assert.strictEqual(bp.hostText({ lastUrl: 'not a url' }), '');
+});
+
+test('a service row shows its host, and the name and host carry the full last URL as a tooltip', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const list = { ok: true, services: [
+      { name: 't31', login: 'unknown', loginAt: 0, lastUrl: 'http://127.0.0.1:8765/login.html', windowOpen: false, state: 'closed' },
+      { name: 't32', login: 'unknown', loginAt: 0, lastUrl: '', windowOpen: false, state: 'closed' },
+    ] };
+    const f = makeRhost({ status: status('off'), 'services.list': list });
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const rows = walk(root).filter((n) => n.className === 'bp-row');
+    const cell = (r, cls) => r.children.find((n) => n.className === cls);
+    assert.strictEqual(cell(rows[0], 'bp-host').textContent, '127.0.0.1');
+    assert.strictEqual(cell(rows[0], 'bp-name').title, 'http://127.0.0.1:8765/login.html');
+    assert.strictEqual(cell(rows[0], 'bp-host').title, 'http://127.0.0.1:8765/login.html');
+    assert.strictEqual(cell(rows[1], 'bp-name').title, 'no page yet');
+    assert.strictEqual(cell(rows[1], 'bp-host').textContent, '');
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-th').map((n) => n.textContent), ['Service', 'Site', 'Sign-in', 'Window', '', '', '']);
+  } finally { restore(); }
+});
+
+test('Remove is disabled on an open window, confirms the service then its site notes, and invokes services.remove', async () => {
+  const { root, restore } = fakeDom();
+  const prevConfirm = global.confirm;
+  const seen = [];
+  global.confirm = (msg) => { seen.push(msg); return true; };
+  try {
+    const base = { name: 'utility', login: 'logged-in', loginAt: 0, lastUrl: 'https://portal.example.com/bills', host: 'portal.example.com', state: 'closed', windowOpen: false };
+    const render = async (svc) => {
+      const f = makeRhost({ status: status('off'), 'services.list': { ok: true, services: [svc] }, 'services.remove': { ok: true, service: 'utility', notes: 0 } });
+      bp.activate(f.rhost);
+      root.textContent = '';
+      await f.section().render(root);
+      return { f, rm: walk(root).find((n) => n.className === 'bp-remove bp-btn quiet') };
+    };
+    const open = await render({ ...base, windowOpen: true, state: 'idle', notes: 2 });
+    assert.strictEqual(open.rm.disabled, true);
+    assert.strictEqual(open.rm.title, 'close its window first');
+    const two = await render({ ...base, notes: 2 });
+    await two.rm.click();
+    await tick();
+    assert.deepStrictEqual(seen, [bp.removeText('utility'), bp.removeNotesText('portal.example.com', 2)]);
+    assert.strictEqual(seen[0], 'Remove utility?\n\nIts login, last page and downloads are deleted and it leaves this list.');
+    assert.strictEqual(seen[1], 'Also delete the 2 site notes for portal.example.com? Other services on portal.example.com lose them too.');
+    assert.deepStrictEqual(two.f.invokes.filter((i) => i.method === 'services.remove'), [{ method: 'services.remove', args: [{ name: 'utility', notes: true }] }]);
+    seen.length = 0;
+    const none = await render({ ...base, notes: 0 });
+    await none.rm.click();
+    await tick();
+    assert.deepStrictEqual(seen, [bp.removeText('utility')]);
+    assert.deepStrictEqual(none.f.invokes.filter((i) => i.method === 'services.remove'), [{ method: 'services.remove', args: [{ name: 'utility', notes: false }] }]);
+  } finally {
+    restore();
+    if (prevConfirm === undefined) delete global.confirm; else global.confirm = prevConfirm;
+  }
+});
+
 test('Reveal downloads opens the engine-reported folder', async () => {
   const { root, restore } = fakeDom();
   try {
@@ -521,17 +584,18 @@ test('Settings: services are a grid table with a header; each row is one line of
     await f.section().render(root);
     assert.strictEqual(f.section().title, undefined);
     const table = walk(root).find((n) => n.className === 'bp-services');
-    assert.deepStrictEqual(table.children.slice(0, 5).map((c) => [c.className, c.textContent]),
-      [['bp-th', 'Service'], ['bp-th', 'Sign-in'], ['bp-th', 'Window'], ['bp-th', ''], ['bp-th', '']]);
-    const rows = table.children.slice(5);
+    assert.deepStrictEqual(table.children.slice(0, 7).map((c) => [c.className, c.textContent]),
+      [['bp-th', 'Service'], ['bp-th', 'Site'], ['bp-th', 'Sign-in'], ['bp-th', 'Window'], ['bp-th', ''], ['bp-th', ''], ['bp-th', '']]);
+    const rows = table.children.slice(7);
     const cells = (r) => r.children.map((c) => [c.className, c.textContent]);
-    assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-login', 'signed in · Oct 5 23:27'],
-      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login']]);
-    assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-login', 'login unknown'],
-      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login']]);
+    assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-host', 'g.example'], ['bp-login', 'signed in · Oct 5 23:27'],
+      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
+    assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-host', 'u.example'], ['bp-login', 'login unknown'],
+      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
-    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
+    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(0, 1fr) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
     assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));
+    assert.ok(css.includes('.bp-services > .bp-row > .bp-login {\n  min-width: 11ch;\n}'));
     assert.ok(css.includes('.bp-services > .bp-th,\n.bp-services > .bp-row > * {\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}'));
     assert.ok(css.includes('.bp-services > .bp-row > .bp-hand {\n  grid-column: 1 / -1;'));
     assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-section').map((n) => n.textContent), ['Windows', 'Reads', 'Denylist']);
@@ -539,7 +603,7 @@ test('Settings: services are a grid table with a header; each row is one line of
     const opens = () => walk(root).filter((n) => n.className === 'bp-hand-open bp-btn');
     await opens()[0].click();
     await tick();
-    assert.strictEqual(rows[0].children[5].className, 'bp-hand');
+    assert.strictEqual(rows[0].children[7].className, 'bp-hand');
     assert.deepStrictEqual(walk(root).filter((n) => n.tag === 'option').map((n) => n.textContent), ['Plugins', 'cx']);
     await opens()[1].click();
     await tick();

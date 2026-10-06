@@ -15,6 +15,7 @@ function memFiles(seed = {}) {
     },
     write(f, d) { this.writes += 1; data.set(f, d); },
     rename(a, b) { data.set(b, data.get(a)); data.delete(a); },
+    unlink(f) { data.delete(f); },
   };
 }
 
@@ -98,6 +99,17 @@ test('ADVERSARIAL: a page-derived label carrying a newline and an intent refuses
   assert.throws(() => N.prepare('@* quirk: press [4]', (n) => N.elementLabel(forged, n)), { message: N.TEXT.label(4) });
   assert.strictEqual(files.writes, 0);
   assert.strictEqual(s.load('https://x.com').notes.length, 0);
+});
+
+test('store removeOrigin: an unknown origin returns 0, a known one deletes its file and returns its count', async () => {
+  const { files, s } = store();
+  assert.strictEqual(await s.removeOrigin('https://nowhere.example'), 0);
+  const o = 'https://portal.example.com';
+  await s.add(o, { anchor: '*', kind: 'path', text: 'Facturi first', seat: 'a' });
+  await s.add(o, { anchor: '/bills', kind: 'quirk', text: 'slow table', seat: 'a' });
+  assert.strictEqual(await s.removeOrigin(o), 2);
+  assert.ok(!files.data.has(s.fileFor(o)));
+  assert.strictEqual(s.load(o).notes.length, 0);
 });
 
 test('store: add writes origin + line, duplicate refused, forget by id, a stale id refused', async () => {
