@@ -1467,6 +1467,7 @@ function run(electron, ctx) {
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
     const outline = got && got.outline && typeof got.outline === 'object' ? got.outline : null;
+    const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;
     const state = numOf(svc);
     const ent = svc.num;
     const first = !ent.lastRead;
@@ -1523,6 +1524,7 @@ function run(electron, ctx) {
       loading: loadingOf(svc),
       ...(busy ? { busy } : {}),
       ...(outline ? { outline } : {}),
+      ...(wall ? { wall } : {}),
       ...(feed ? { feed } : {}),
     };
   }
