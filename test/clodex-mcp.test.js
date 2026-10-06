@@ -358,8 +358,8 @@ test('the same failing call is stopped at the third try within a minute; a succe
     await s.handle(call(6, a));
     assert.strictEqual(seat.got.length, 4);
     const lines = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean);
-    assert.match(lines[2], /^\S+ browser looped \d+ms$/);
-    assert.match(lines[3], /^\S+ browser looped \d+ms$/);
+    assert.match(lines[2], /^\S+ browser click svc looped \d+ms$/);
+    assert.match(lines[3], /^\S+ browser click svc looped \d+ms$/);
   } finally { await seat.close(); }
   const answers = [{ ok: false, status: 'refused', error: 'no' }, { ok: true, status: 'ok', reply: 'yes' }];
   const ok = await fakeSeat((r, c, i) => answers[i === 1 ? 1 : 0]);
