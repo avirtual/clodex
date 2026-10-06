@@ -687,3 +687,10 @@ test('read-format: --filter keeps only a real count line — prose mentioning "s
   assert.deepStrictEqual(filterLines(prose, 'iasi', { blocks: true }), ['Name | City', 'Ion | Iasi']);
   assert.deepStrictEqual(filterLines(['Ion | Iasi', '', '1–10 of 57'], 'iasi', { blocks: true }), ['Ion | Iasi', '', '1–10 of 57']);
 });
+
+test('read-format: --filter count line must carry numbers — "Showing off…" is prose, "Showing 1 to 3 of 3" and "Afișare 1-10 din 57" are kept', () => {
+  const dt = ['Name | City', 'Ion | Iasi', '', 'Showing off is not our style.', 'Showing 1 to 3 of 3 entries'];
+  assert.deepStrictEqual(filterLines(dt, 'iasi', { blocks: true }), ['Name | City', 'Ion | Iasi', '', 'Showing 1 to 3 of 3 entries']);
+  assert.deepStrictEqual(filterLines(['Name | City', 'Ion | Iasi', '', 'Showing off is not our style.'], 'iasi', { blocks: true }), ['Name | City', 'Ion | Iasi']);
+  assert.deepStrictEqual(filterLines(['Ion | Iasi', '', 'Afișare 1-10 din 57'], 'iasi', { blocks: true }), ['Ion | Iasi', '', 'Afișare 1-10 din 57']);
+});

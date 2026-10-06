@@ -61,6 +61,7 @@ blocks a release.
 - Browser pane: a sort button's third state (`remove sorting`) keeps its number and is not flagged ⚠; site notes accept `@/path?key=value` anchors (query-routed sites like e-bloc) and notes written for the current page surface before origin-wide ones.
 - Browser pane site notes: re-anchoring a note to another path is no longer refused as a duplicate (`already noted` now names the anchor); the `noted` reply says `as <seat>/agent` when the note was stamped from a subagent identity; a site-wide caution keeps one line on a page that has three notes of its own.
 - Browser pane: a label with dotted dates (`01.08.2026 - 31.08.2026`) keeps its number (dates are not live values); `--filter` keeps only a real count line; `[role=columnheader]` grids show `[sorted ↑/↓]`; site notes: no `notes: 0` line, `Continue`/`content` no longer trip the account-number filter, and a failed paged read does not mark notes as shown.
+- Browser pane: a password-change form on a signed-in page (e-bloc Setări) no longer triggers a sign-in hold (`signed in (password-change form)`); a short flat page reads its whole body instead of one row; a `--filter` count line must carry numbers (`Showing off…` is prose); a bare `Sort` button inside a column header is listed as `<Column>: Sort` (those buttons renumber once).
 
 ## 5.112.2 — 2026-10-04
 

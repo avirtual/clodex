@@ -238,6 +238,19 @@ test('READ_INTERACTIVE: an ARIA grid [role=columnheader] with aria-sort prints [
   assert.deepStrictEqual(Array.from(read.lines), ['[1] button Age [sorted ↑]']);
 });
 
+test('READ_INTERACTIVE: a bare Sort button inside a column header is listed as <Column>: Sort; one outside any header stays Sort', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const sortBtn = mk('button', { 'aria-label': 'Sort' }, [], [90, 10, 20, 20]);
+  const head = mk('div', { role: 'columnheader', 'aria-sort': 'descending' }, ['Rating', sortBtn], [10, 10, 100, 20]);
+  const loose = mk('button', {}, ['Sort'], [10, 60, 60, 20]);
+  const body = mk('body', {}, [head, loose], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), ['[1] button Rating: Sort [sorted ↓]', '[2] button Sort']);
+});
+
 test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓], the current pagination link [current]; a header whose sort label flips keeps its number', () => {
   const page = mkPage();
   const { mk } = page;
