@@ -53,7 +53,8 @@ function codedError(code, message) {
   return e;
 }
 
-const CHALLENGE_RE = /challenges\.cloudflare\.com|recaptcha|hcaptcha/;
+const CHALLENGE_RE = /^https:\/\/challenges\.cloudflare\.com\/cdn-cgi\/challenge-platform\//;
+const CHALLENGE_TITLE_RE = /^just a moment|checking your browser|verify you are human|attention required/i;
 
 function framesOf(wc) {
   try {
@@ -63,8 +64,8 @@ function framesOf(wc) {
   }
 }
 
-function challenged(login, frames) {
-  if (login && !login.captcha && frames.some((u) => CHALLENGE_RE.test(u))) login.captcha = true;
+function challenged(login, frames, title) {
+  if (login && !login.captcha && CHALLENGE_TITLE_RE.test(String(title || '')) && frames.some((u) => CHALLENGE_RE.test(u))) login.captcha = true;
   return login;
 }
 
@@ -878,7 +879,7 @@ function run(electron, ctx) {
         svc.wc.stop();
         out.idle.stopped = true;
       }
-      const login = challenged(await probe(svc), framesOf(svc.wc));
+      const login = challenged(await probe(svc), framesOf(svc.wc), svc.wc.getTitle());
       const takeover = svc.lock.takeover;
       dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });
       const result = { ...out, ...pageInfo(svc), doc: svc.doc, login, takeover };
@@ -1522,7 +1523,7 @@ function run(electron, ctx) {
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const frames = framesOf(wc);
-    const login = challenged(await probe(svc), frames);
+    const login = challenged(await probe(svc), frames, wc.getTitle());
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
     return {
       ...base,

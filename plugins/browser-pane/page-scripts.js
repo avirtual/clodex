@@ -961,6 +961,7 @@ function find(n) {
       const r = d.getBoundingClientRect();
       if (!r.width || !r.height || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) continue;
       const s = getComputedStyle(d);
+      if (!positioned(d) && !d.matches('dialog,[role=dialog],[aria-modal=true]')) continue;
       if (s.visibility === 'hidden' || s.display === 'none' || !buttonsOf(d).length) continue;
       const z = Number(s.zIndex) || 0;
       let nested = false;
@@ -1024,7 +1025,7 @@ function find(n) {
     if (hitButtons.length) return { ...o, hitButtons };
     const dialog = o.covered && o.hitN == null ? dialogOf() : null;
     if (!dialog) return o;
-    return { ...o, hitButtons: buttonsOf(dialog), hitDialog: dialog.id || String(dialog.getAttribute('class') || '').trim().split(/\s+/)[0] || dialog.tagName.toLowerCase() };
+    return { ...o, hitButtons: buttonsOf(dialog), hitDialog: dialog.id || String(dialog.getAttribute('class') || '').trim().split(/\\s+/)[0] || dialog.tagName.toLowerCase() };
   };
   const onScreen = o => o.x >= 0 && o.y >= 0 && o.x < innerWidth && o.y < innerHeight;
   if (!outside) return named(report(), lastHit);
