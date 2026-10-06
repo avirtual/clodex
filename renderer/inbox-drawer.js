@@ -125,6 +125,18 @@ function createInboxDrawer({ openFilePeek, showToast }) {
         ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ''}
         <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
       `;
+      const del = document.createElement('button');
+      del.className = 'inbox-delete';
+      del.type = 'button';
+      del.title = 'Delete this note';
+      del.textContent = '×';
+      del.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        try { await window.api.removeNotification(note.id); } catch { return; }
+        await renderList();
+        await refreshBadge();
+      });
+      head.appendChild(del);
       el.appendChild(head);
       el.appendChild(renderBody(note));
       // Click a row to mark it read (idempotent main-side). Repaint + rebadge so

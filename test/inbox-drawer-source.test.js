@@ -18,3 +18,11 @@ test('the drawer offers a Load older row that grows the window by 30', () => {
   assert.ok(/inbox-load-older/.test(SRC), 'the row carries the class the stylesheet targets');
   assert.ok(/loaded \+= 30/.test(SRC), 'a click grows the window by 30');
 });
+
+test('each note has an × that removes it', () => {
+  assert.ok(/inbox-delete/.test(SRC), 'the button carries the class the stylesheet targets');
+  assert.ok(/removeNotification\(note\.id\)/.test(SRC), 'a click removes the note main-side');
+  assert.ok(/stopPropagation\(\)/.test(SRC), 'the row mark-read handler must not fire');
+  assert.ok(/createElement\('button'\)[\s\S]*?textContent = '×'/.test(SRC), 'the × is built as a DOM node');
+  assert.ok(!/<button[^>]*inbox-delete/.test(SRC), 'the head innerHTML must not gain a button');
+});

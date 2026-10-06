@@ -3656,6 +3656,21 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   white-space: nowrap;
 }
 
+.inbox-delete {
+  margin-left: 6px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.inbox-delete:hover {
+  color: var(--text);
+}
+
 .inbox-body {
   font-size: 12px;
   color: var(--text-dim);

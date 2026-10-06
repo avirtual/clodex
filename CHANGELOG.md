@@ -84,6 +84,7 @@ blocks a release.
 - Browser pane: a hidden (`display:none`) block can no longer become what a read returns — the short-root fallback scores only rendered text and a non-rendered subtree is cut from the text (GitLab's hidden AI-instruction block was being read as the page); a timed-out wait names the requests that held it (`still busy after 15s (network: 14 req in 2 s — POST /api/graphql ×8, …)`) and polls of any method across up to three paths are ignored like a ticker; cloaked Discourse posts rendered as divs count toward `N not rendered`; "3 reactions" is not a publish action; a `(hidden)` block ends with `(end hidden)` and badges under three characters are not tagged.
 - Browser pane: a page that replaces `Promise` (Angular/zone.js, e.g. Ghostfolio) no longer pins the wait at `still busy after 15s` with a quiet network — the idle probe runs in the pane's isolated world; a timed-out held line says `64+ req` when the completion ring is full.
 - Clodex MCP: the browser plugin now declares its own MCP tool and subagent policy (`tools` and `subagent` on `host.intents.register`); the intent registry keeps only the generic rules — default-deny for subagents, tool-name uniqueness, a tool maps only to its own plugin's intent. No behaviour change for a granted seat.
+- Operator inbox: each note has an × that deletes it (immediate, no undo); the row's mark-read click is not triggered by the delete.
 
 ## 5.112.2 — 2026-10-04
 
