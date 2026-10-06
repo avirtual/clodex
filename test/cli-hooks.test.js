@@ -68,8 +68,8 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   const submitCmds = settings.hooks.UserPromptSubmit[0].hooks.map((h) => h.command);
   const pendingCmd = submitCmds.find((c) => c.endsWith('pending.sh'));
   assert.ok(pendingCmd, 'the pending drain must be registered under UserPromptSubmit');
-  assert.deepStrictEqual(postCmds, [pendingCmd],
-    'the matcher-less PostToolUse entry must drain pending only');
+  assert.deepStrictEqual(postCmds, [pendingCmd, pendingCmd.replace(/pending\.sh$/, 'subq.sh')],
+    'the matcher-less PostToolUse entry drains pending, then the subagent queue');
   assert.match(pendingCmd, /pending/); // the pending drain script, not acks/ctxwarn
 
   // The pending drain runs under BOTH events, so its output hookEventName must be
@@ -1374,7 +1374,7 @@ test('every bash hook spawn in this file carries HOOK_SPAWN, so a stalled child 
   const src = fs.readFileSync(__filename, 'utf8');
   const calls = src.match(/(?:spawn|spawnSync|execFileSync)\('bash'/g) || [];
   const guarded = src.match(/(?:spawn|spawnSync|execFileSync)\('bash',[^{]*\{\s*\.\.\.HOOK_SPAWN\b/g) || [];
-  assert.strictEqual(calls.length, 21);
+  assert.strictEqual(calls.length, 22);
   assert.strictEqual(guarded.length, calls.length);
   assert.deepStrictEqual(HOOK_SPAWN, { timeout: 30000, killSignal: 'SIGKILL' });
 });
@@ -1604,8 +1604,8 @@ test('ident hook: SubagentStart with no catalog file and no agent_id emits nothi
 test('ident hook: the interpreter line hands the seat catalog path to the hook', () => {
   const REGISTRY_DIR = identSeat();
   const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
-  assert.ok(src.includes(`"${pathFor(REGISTRY_DIR, 'agent1', 'mcpCatalog')}" 2>/dev/null`), src);
-  assert.ok(src.includes('catalogPath: process.argv[5]'), src);
+  assert.ok(src.includes(`"${pathFor(REGISTRY_DIR, 'agent1', 'mcpCatalog')}" "${subqOf(REGISTRY_DIR)}" 2>/dev/null`), src);
+  assert.ok(src.includes('catalogPath: process.argv[5], subqDir: process.argv[6]'), src);
 });
 
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {
