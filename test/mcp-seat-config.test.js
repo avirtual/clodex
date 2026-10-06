@@ -64,7 +64,7 @@ test('mcpArgvPlan: the 32-row matrix of user flags × reason × claude_design se
 });
 
 test('writeMcpConfig: one clodex server under the hooks interpreter, mode 0600, no seat env', () => {
-  const root = mkTmpRoot('clodex-mcpcfg-');
+  const root = mkTmpRoot('clodex-hooks-');
   const prev = process.env.CLODEX_INTENT_CRED;
   process.env.CLODEX_INTENT_CRED = 'sentinel-cred-7f3a';
   try {

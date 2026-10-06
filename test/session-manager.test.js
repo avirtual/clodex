@@ -22299,6 +22299,7 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
     ...STREAM_HEAD, '--session-id', '<uuid>', '--permission-prompt-tool', 'stdio',
     '--settings', require('node:path').join(h.root, 'settings.json'),
     '--add-dir', require('node:path').join(h.root, 'messages'),
+    '--mcp-config', require('node:path').join(h.root, 'run', 'st1', 'mcp.json'),
     '--append-system-prompt-file', promptPath,
   ]);
   assert.deepStrictEqual(h.hookCalls.map((c) => c.slice(0, 3)), [['st1', 'http://127.0.0.1:9999', 'agent-x']]);
