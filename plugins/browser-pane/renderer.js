@@ -35,6 +35,11 @@ function loginText(s, now) {
   return `${LOGIN_TEXT[s.login] || LOGIN_TEXT.unknown}${when ? ` · ${when}` : ''}`;
 }
 
+function hostText(s) {
+  if (!s || !s.lastUrl) return '';
+  try { return new URL(s.lastUrl).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
 function windowText(s) {
   if (!s.windowOpen) return 'closed';
   const state = s.operator ? `${s.state} by operator` : String(s.state);
@@ -100,6 +105,14 @@ function pickerHeading(list) {
 
 function forgetText(name) {
   return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page, its downloads and its site notes are kept.`;
+}
+
+function removeText(name) {
+  return `Remove ${name}?\n\nIts login, last page and downloads are deleted and it leaves this list.`;
+}
+
+function removeNotesText(host, n) {
+  return `Also delete the ${n} site notes for ${host}? Other services on ${host} lose them too.`;
 }
 
 function el(tag, cls, text) {
@@ -295,9 +308,28 @@ function activate(rhost) {
     }
   }
 
+  async function remove(s, btn, refill) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    try {
+      if (!confirm(removeText(s.name))) return;
+      const notes = s.notes > 0 ? confirm(removeNotesText(s.host || hostText(s), s.notes)) : false;
+      const res = await call('services.remove', { name: s.name, notes });
+      if (!res || res.ok === false) toast(`Could not remove ${s.name}: ${(res && res.error) || 'unknown error'}`);
+      refill();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   function row(s, refill, hands) {
     const r = el('div', 'bp-row');
-    r.appendChild(el('span', 'bp-name', s.name));
+    const nm = el('span', 'bp-name', s.name);
+    nm.title = s.lastUrl || 'no page yet';
+    r.appendChild(nm);
+    const hs = el('span', 'bp-host', hostText(s));
+    if (s.lastUrl) hs.title = s.lastUrl;
+    r.appendChild(hs);
     r.appendChild(el('span', 'bp-login', loginText(s)));
     r.appendChild(el('span', 'bp-window', windowText(s)));
     const acts = el('span', 'bp-actions');
@@ -326,6 +358,12 @@ function activate(rhost) {
     const fg = el('button', 'bp-forget bp-btn quiet', 'Forget login');
     fg.addEventListener('click', () => forget(s.name, fg, refill));
     r.appendChild(fg);
+    const rm = el('button', 'bp-remove bp-btn quiet', 'Remove');
+    if (s.windowOpen) {
+      rm.disabled = true;
+      rm.title = 'close its window first';
+    } else rm.addEventListener('click', () => remove(s, rm, refill));
+    r.appendChild(rm);
     return r;
   }
 
@@ -454,7 +492,7 @@ function activate(rhost) {
         list.textContent = '';
         const services = (res && res.ok && Array.isArray(res.services)) ? res.services : [];
         if (!services.length) list.appendChild(el('div', 'bp-empty', 'No services yet.'));
-        else for (const h of ['Service', 'Sign-in', 'Window', '', '']) list.appendChild(el('span', 'bp-th', h));
+        else for (const h of ['Service', 'Site', 'Sign-in', 'Window', '', '', '']) list.appendChild(el('span', 'bp-th', h));
         for (const s of services) list.appendChild(row(s, fill, hands));
         const a = await call('attach.get');
         if (a && a.ok && Number.isInteger(a.global)) {
@@ -488,4 +526,4 @@ function activate(rhost) {
   };
 }
 
-module.exports = { activate, stampShort, loginText, windowText, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };
+module.exports = { activate, stampShort, loginText, hostText, windowText, segmentFor, clickActionFor, pickerLabel, pickerName, pickerState, pickerHeading, forgetText, removeText, removeNotesText, DESKTOP_ONLY_NOTICE, NOT_ON_SURFACE };

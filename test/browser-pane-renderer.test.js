@@ -155,6 +155,69 @@ test('Forget login confirms, naming the service and that downloads are kept, the
   }
 });
 
+test('hostText: the last URL\'s hostname without www., empty when absent or unparseable', () => {
+  assert.strictEqual(bp.hostText({ lastUrl: 'https://www.e-bloc.ro/index.php?page=1' }), 'e-bloc.ro');
+  assert.strictEqual(bp.hostText({ lastUrl: '' }), '');
+  assert.strictEqual(bp.hostText({ lastUrl: 'not a url' }), '');
+});
+
+test('a service row shows its host, and the name and host carry the full last URL as a tooltip', async () => {
+  const { root, restore } = fakeDom();
+  try {
+    const list = { ok: true, services: [
+      { name: 't31', login: 'unknown', loginAt: 0, lastUrl: 'http://127.0.0.1:8765/login.html', windowOpen: false, state: 'closed' },
+      { name: 't32', login: 'unknown', loginAt: 0, lastUrl: '', windowOpen: false, state: 'closed' },
+    ] };
+    const f = makeRhost({ status: status('off'), 'services.list': list });
+    bp.activate(f.rhost);
+    await f.section().render(root);
+    const rows = walk(root).filter((n) => n.className === 'bp-row');
+    const cell = (r, cls) => r.children.find((n) => n.className === cls);
+    assert.strictEqual(cell(rows[0], 'bp-host').textContent, '127.0.0.1');
+    assert.strictEqual(cell(rows[0], 'bp-name').title, 'http://127.0.0.1:8765/login.html');
+    assert.strictEqual(cell(rows[0], 'bp-host').title, 'http://127.0.0.1:8765/login.html');
+    assert.strictEqual(cell(rows[1], 'bp-name').title, 'no page yet');
+    assert.strictEqual(cell(rows[1], 'bp-host').textContent, '');
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-th').map((n) => n.textContent), ['Service', 'Site', 'Sign-in', 'Window', '', '', '']);
+  } finally { restore(); }
+});
+
+test('Remove is disabled on an open window, confirms the service then its site notes, and invokes services.remove', async () => {
+  const { root, restore } = fakeDom();
+  const prevConfirm = global.confirm;
+  const seen = [];
+  global.confirm = (msg) => { seen.push(msg); return true; };
+  try {
+    const base = { name: 'utility', login: 'logged-in', loginAt: 0, lastUrl: 'https://portal.example.com/bills', host: 'portal.example.com', state: 'closed', windowOpen: false };
+    const render = async (svc) => {
+      const f = makeRhost({ status: status('off'), 'services.list': { ok: true, services: [svc] }, 'services.remove': { ok: true, service: 'utility', notes: 0 } });
+      bp.activate(f.rhost);
+      root.textContent = '';
+      await f.section().render(root);
+      return { f, rm: walk(root).find((n) => n.className === 'bp-remove bp-btn quiet') };
+    };
+    const open = await render({ ...base, windowOpen: true, state: 'idle', notes: 2 });
+    assert.strictEqual(open.rm.disabled, true);
+    assert.strictEqual(open.rm.title, 'close its window first');
+    const two = await render({ ...base, notes: 2 });
+    await two.rm.click();
+    await tick();
+    assert.deepStrictEqual(seen, [bp.removeText('utility'), bp.removeNotesText('portal.example.com', 2)]);
+    assert.strictEqual(seen[0], 'Remove utility?\n\nIts login, last page and downloads are deleted and it leaves this list.');
+    assert.strictEqual(seen[1], 'Also delete the 2 site notes for portal.example.com? Other services on portal.example.com lose them too.');
+    assert.deepStrictEqual(two.f.invokes.filter((i) => i.method === 'services.remove'), [{ method: 'services.remove', args: [{ name: 'utility', notes: true }] }]);
+    seen.length = 0;
+    const none = await render({ ...base, notes: 0 });
+    await none.rm.click();
+    await tick();
+    assert.deepStrictEqual(seen, [bp.removeText('utility')]);
+    assert.deepStrictEqual(none.f.invokes.filter((i) => i.method === 'services.remove'), [{ method: 'services.remove', args: [{ name: 'utility', notes: false }] }]);
+  } finally {
+    restore();
+    if (prevConfirm === undefined) delete global.confirm; else global.confirm = prevConfirm;
+  }
+});
+
 test('Reveal downloads opens the engine-reported folder', async () => {
   const { root, restore } = fakeDom();
   try {
