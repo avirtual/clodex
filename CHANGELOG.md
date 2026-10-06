@@ -65,6 +65,7 @@ blocks a release.
 - Browser pane: typing into a password field on a signed-in page (password-change form) is refused without holding the service or notifying the operator; a countdown written `19 : 49 : 05` keeps its number; `click --text` finds a suggestion whose text is split by highlight spans; `transfer`/`swap` are ⚠ only with a money or token word (`self-transfer flights`, `Airport transfer`, `swap-stations` are free).
 - Browser pane: a label with a ticking `19 : 49 : 05` countdown keeps its element number; a read whose article stops at a registration or pay wall says so (`wall: "Create an account to read the full story."`) instead of ending silently.
 - Browser pane: the `wall:` line quotes the gate sentence, ignores scripts and never fires on a page whose body class merely contains `meter`/`gate`; `login: signed in` is not claimed while a visible Sign in link is on the page; `Clear all filters` is not ⚠; a struck-through old price reads `(was 87,98 Lei)`.
+- Browser pane: the `wall:` line ignores hidden text and quotes the gate sentence from a metered wrapper or a 0×0 toast wrapper; a hidden Sign out or a product title containing `deconectare` no longer makes `login: signed in`; `Sterge toate filtrele` with a `has-delete` class is not ⚠; superscript cents read `89,99`; unread mail rows carry `[unread]`.
 
 ## 5.112.2 — 2026-10-04
 
