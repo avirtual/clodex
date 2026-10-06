@@ -1138,7 +1138,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     const drawer = (style, rect) => modalBy(node(body, { role: true, style, rect }));
     const docked = { left: 720, right: 1200, top: 0, bottom: 800, width: 480, height: 800 };
     assert.strictEqual(drawer({ position: 'fixed' }, docked), 'drawer');
-    assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 300, width: 900 }), '');
+    assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 280, width: 920 }), '');
     assert.strictEqual(drawer({ position: 'absolute' }, docked), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 100, right: 580 }), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
@@ -1146,11 +1146,16 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     const bare = (rect, opts) => modalBy(node(body, { style: { position: 'fixed' }, rect, controls: ['Close panel'], ...opts }));
     assert.strictEqual(bare(paneled), 'drawer', 'a role-less fixed docked panel with a close control is a drawer');
     assert.strictEqual(bare({ ...paneled, left: 645, right: 1185 }), 'drawer', 'a classic scrollbar does not undock it');
+    const inset = { left: 417, right: 1177, top: 48, bottom: 800, width: 760, height: 752 };
+    assert.strictEqual(bare(inset), 'drawer', 'an 8 px inset, 0.63 vw panel is a drawer');
+    assert.strictEqual(bare({ ...inset, left: 405, right: 1165 }), '', 'a 20 px inset is not docked');
+    assert.strictEqual(bare({ ...inset, left: 272, width: 920 }), '', 'over 0.75 vw is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'has' }), '', 'a panel holding a nav is not a drawer');
     assert.strictEqual(bare(paneled, { controls: ['Save'] }), '', 'a panel with no close control is not a drawer');
     assert.strictEqual(drawer({ position: 'fixed' }, paneled), 'drawer', 'a role=dialog drawer needs no close control');
   }
+  assert.ok(scripts.READ_TEXT(false).includes('r.right >= w - 16') && scripts.READ_TEXT(false).includes('innerWidth * 0.75'));
   assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };");
 });
 
@@ -1344,6 +1349,10 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
     [{ tag: 'div', alts: ['Logo'] }, 'Logo'],
     [{ tag: 'div', alts: ['photo'], classes: 'css-1dbjc4n wrapper device-tile' }, 'device-tile'],
     [{ tag: 'div', classes: 'btn-primary nav-link col-md-3' }, ''],
+    [{ tag: 'button', text: '', classes: 'mdc-button mdc-ripple' }, ''],
+    [{ tag: 'button', text: '', classes: 'mdc-button', tooltip: 'Add account' }, 'Add account'],
+    [{ tag: 'button', text: '', svgAria: 'Delete' }, 'Delete'],
+    [{ tag: 'button', text: '', title: 'Edit', tooltip: 'x' }, 'Edit'],
     [{ tag: 'textarea', value: 'typed secret', id: 'msg' }, 'msg'],
     [{ tag: 'div', src: 'data:image/gif;base64,R0l' }, ''],
     [{ tag: 'a', href: '/karolzdeb', alts: [''] }, '@karolzdeb'],
@@ -1383,6 +1392,10 @@ test('page scripts: labelFrom skips placeholder alts and falls back to test id, 
   for (const [d, want] of rows) assert.strictEqual(L(d), want, JSON.stringify(d));
   assert.match(scripts.READ_INTERACTIVE(false, {}), /inner: btn \? \(btn\.tagName === 'INPUT' \? btn\.value : btn\.innerText\)/);
   assert.match(scripts.READ_INTERACTIVE(false, {}), /h: e\.getBoundingClientRect\(\)\.height,\n\s*inLink: !!e\.closest\('a\[href\] \*'\),/);
+  const ri = scripts.READ_INTERACTIVE(false, {});
+  assert.ok(ri.includes("svgAria: svg ? svg.getAttribute('aria-label') : '',"));
+  assert.ok(ri.includes("tooltip: e.getAttribute('data-tooltip') || e.getAttribute('data-original-title') || '',"));
+  assert.ok(ri.includes("line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags,"));
 });
 
 const svcOf = () => ({ origins: new Map(), num: null });

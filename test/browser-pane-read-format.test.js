@@ -336,6 +336,7 @@ test('read-format: a hidden count rides in the elements header and the result', 
   assert.ok(r.content.includes('\ndoc: 4 · elements: 5 (2 repeated, hidden — still clickable by number; read --all lists them; numbers: stable per site; new since your last read: none) · mode: default'));
   assert.strictEqual(fmt({}).hidden, 0);
   assert.ok(!fmt({}).content.includes('repeated'));
+  assert.strictEqual(fmt({ hidden: 3, covered: 2 }).under, 2);
 });
 
 test('read-format: changedRegion inside a table prepends the header row once', () => {

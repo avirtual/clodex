@@ -42,6 +42,8 @@ test('replies: a read reply says chrome stripped and still loading', () => {
     '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · 2 elements hidden → @/t/r-1.txt ');
   assert.strictEqual(R.readReply('utility', { ...info, stripped: true, hidden: 2 }, '/t/r-1.txt', 'claude'),
     '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · chrome stripped · 2 elements hidden → @/t/r-1.txt ');
+  assert.strictEqual(R.readReply('utility', { ...info, hidden: 2, under: 1 }, '/t/r-1.txt', 'claude'),
+    '[agent:browser] read utility · page 1/1 · 3 elements · ≈900 tok · 2 elements hidden (1 under the dialog) → @/t/r-1.txt ');
 });
 
 test('replies: a long reply is capped at 600 chars but the path is never cut', () => {
@@ -81,6 +83,8 @@ test('replies: services line from storage plus mirror', () => {
     '[agent:browser] services: utility — signed in (10-04 15:40) · window open · idle │ irs — unknown · closed');
   assert.strictEqual(R.servicesReply(services, new Map([['utility', 'idle']]), () => '', (p) => (p === 'utility' ? [{ tab: 'riot', state: 'idle' }, { tab: 'm', state: 'driving' }] : [])),
     '[agent:browser] services: utility — signed in (10-04 15:40) · window open · idle · tabs: riot (idle), m (driving) │ irs — unknown · closed');
+  assert.strictEqual(R.servicesReply(services, new Map([['utility', 'idle']]), () => '', (p) => (p === 'utility' ? [{ tab: 'riot', state: 'idle', openedBy: 'apometre/agent' }, { tab: 'm', state: 'driving', openedBy: 'apometre' }] : [])),
+    '[agent:browser] services: utility — signed in (10-04 15:40) · window open · idle · tabs: riot (idle, by apometre/agent), m (driving) │ irs — unknown · closed');
   assert.strictEqual(R.servicesReply({}, new Map()), '[agent:browser] no services yet — [agent:browser open <service>] <url>');
   const pending = { t31: { lastUsedAt: 1, lastUrl: 'https://127.0.0.1/login', login: { state: 'login-page', at } } };
   assert.strictEqual(R.servicesReply(pending, new Map([['t31', 'closed']])), '[agent:browser] services: t31 — 127.0.0.1 · sign-in was pending · closed');
