@@ -68,5 +68,3 @@ test('release and close render (policy refuses them downstream)', () => {
   assert.strictEqual(TOOL.toIntent({ verb: 'close', service: 'svc' }), '[agent:browser close svc]\n[agent:end]');
   assert.deepStrictEqual(TOOL.inputSchema.properties.verb.enum, require('../plugins/browser-pane/subagent').SUBS);
 });
-  assert.throws(() => TOOL.toIntent({ verb: 'close' }), { message: "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note" });
-});

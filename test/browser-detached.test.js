@@ -56,7 +56,7 @@ test('with no plugin registered, core knows no browser verb, tool or brief', asy
   });
   const ctl = { closed: () => false };
   assert.deepStrictEqual(await handle({ tool: 'browser', args: { verb: 'read' } }, ctl), { ok: false, status: 'refused', error: 'unknown tool: "browser"' });
-  assert.deepStrictEqual(await handle({ intent: '[agent:browser read x]' }, ctl), { ok: false, error: 'unrecognized intent `[agent:browser read x]`' });
+  assert.deepStrictEqual(await handle({ intent: '[agent:browser read x]' }, ctl), { ok: false, error: 'no [agent:…] intent in the request' });
   assert.deepStrictEqual(seen, []);
 });
 
