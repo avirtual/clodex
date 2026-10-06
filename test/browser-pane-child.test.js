@@ -10,7 +10,7 @@ const { EventEmitter } = require('node:events');
 const vm = require('node:vm');
 const {
   keepOrFold, settleDownload, wireHost, numberVerdict, inspectKind, retiredOf, numState, mergeNumbers, numberRefusal, notOpenError, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
-  changedOf, rowChanged, coveredRefusal, consequentialRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
+  changedOf, rowChanged, coveredRefusal, consequentialRefusal, passwordRefusal, enterRefusal, scrollCode, signinHold, lateMsFor, loadNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA,
 } = require('../plugins/browser-pane/child');
 const K = require('../plugins/browser-pane/keys');
 const R = require('../plugins/browser-pane/replies');
@@ -1823,4 +1823,41 @@ test('windows: a show or hide sends a visibility frame and every state frame car
   const svcFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function openService('), CHILD_SRC.indexOf('const inIsolated ='));
   assert.ok(svcFn.includes("const visibility = () => { if (!win.isDestroyed()) send({ event: 'visibility', service: name, visible: win.isVisible() }); };\n    win.on('show', visibility);\n    win.on('hide', visibility);"));
   assert.ok(CHILD_SRC.includes("send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), ...extra });"));
+});
+
+test('passwordRefusal: a password-change form on a signed-in page refuses without a handoff; a sign-in page still hands off', () => {
+  const pw = { password: true, otp: false };
+  const change = passwordRefusal('ebloc', 7, pw, { password: false, passwordChange: true, logoutLink: true });
+  assert.strictEqual(change.code, 'PASSWORD_FIELD');
+  assert.strictEqual(change.handoff, undefined);
+  assert.strictEqual(change.message, R.TEXT.passwordFieldSignedIn('ebloc', 7));
+  assert.strictEqual(change.message,
+    '[7] is a password field — credentials never pass through agents; this is a password-change form on a signed-in page, so nothing to wait for. Leave it to the operator.');
+  const login = passwordRefusal('ebloc', 7, pw, { password: true });
+  assert.strictEqual(login.code, 'PASSWORD_FIELD');
+  assert.deepStrictEqual(login.handoff, { password: true, otp: false });
+  assert.strictEqual(login.message, R.TEXT.passwordField('ebloc', 7));
+  assert.deepStrictEqual(passwordRefusal('ebloc', 7, pw, {}).handoff, { password: true, otp: false }, 'a probe that answered nothing still hands off');
+  assert.deepStrictEqual(passwordRefusal('ebloc', 3, { password: false, otp: true }, { password: false, otp: true }).handoff, { password: false, otp: true });
+});
+
+test('page scripts: a countdown with spaced colons masks like an unspaced one', () => {
+  const ri = scripts.READ_INTERACTIVE(false, {});
+  const lit = /\.replace\((\/[^\n]*?\/g), '#:##:##'\)/.exec(ri)[1];
+  const re = new Function(`return ${lit};`)();
+  const mask = (t) => t.replace(re, '#:##:##');
+  assert.strictEqual(mask('Promotion is live 19 : 49 : 05'), mask('Promotion is live 19 : 49 : 06'));
+  assert.strictEqual(mask('live 19 : 49 : 05'), 'live #:##:##');
+  assert.strictEqual(mask('live 7:56:12'), 'live #:##:##');
+});
+
+test('page scripts: transfer and swap are consequential only with a money or token word', () => {
+  const c = scripts.consequentialOf;
+  assert.strictEqual(c({ label: 'Include self-transfer flights' }), null);
+  assert.strictEqual(c({ label: 'Airport transfer' }), null);
+  assert.strictEqual(c({ label: 'Transfer funds' }), 'transfer');
+  assert.strictEqual(c({ label: 'Transfer €100' }), 'transfer');
+  assert.strictEqual(c({ label: 'swap-stations' }), null);
+  assert.strictEqual(c({ label: 'Swap ETH for USDT' }), 'trading');
+  assert.strictEqual(c({ formaction: '/transfer' }), 'transfer');
 });

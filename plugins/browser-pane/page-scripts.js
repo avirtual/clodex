@@ -51,9 +51,11 @@ const CONSEQUENTIAL = [
   ['sign-out', SIGN_OUT, []],
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
-  ['transfer', ['transfer', 'send money', 'wire', 'deposit', 'add funds', 'withdraw', 'withdrawal', 'fund', 'top up', 'depune', 'retrage', 'create wallet'], []],
+  ['transfer', ['transfer', 'send money', 'wire', 'deposit', 'add funds', 'withdraw', 'withdrawal', 'fund', 'top up', 'depune', 'retrage', 'create wallet'], [], [],
+    { transfer: '(^|[^a-z0-9])(money|funds|bani|balance|amount|lei|eur|usd)(?![a-z0-9])|[€$]' }],
   ['trading', ['trade', 'sell', 'close position', 'close all', 'close trade', 'invest', 'copy trader', 'stake', 'unstake', 'swap', 'vinde', 'tranzactioneaza'], [],
-    ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions']],
+    ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
+    { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
   ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
     'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
 ];
@@ -62,7 +64,7 @@ const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sig
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
-const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
+const HMS_RE = '/\\b\\d{1,2}\\s?:\\s?\\d{2}\\s?:\\s?\\d{2}\\b/g';
 
 function termRe(t, lead) {
   const body = t.split(' ').join('[\\s_-]?');
@@ -71,8 +73,10 @@ function termRe(t, lead) {
 
 function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
-  for (const [cat, verbs, nouns, idOnly = []] of table) {
-    for (const t of verbs) out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)) });
+  for (const [cat, verbs, nouns, idOnly = [], withs = {}] of table) {
+    for (const t of verbs) {
+      out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)), with: withs[t] ? new RegExp(withs[t]) : null });
+    }
     for (const t of nouns) out.push({ cat, t, id: false, noun: true, re: termRe(t) });
     for (const t of idOnly) out.push({ cat, t, id: true, idOnly: true, noun: false, lead: false, re: termRe(t) });
   }
@@ -90,13 +94,15 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
   const bare = (x) => text(x).replace(CQ_STATE_SUFFIX, '');
   const hay = [bare(d.label), text(d.value), bare(d.aria)].filter(Boolean);
-  const hayAll = [...hay, fold(d.formaction)].filter(Boolean);
+  const fa = fold(d.formaction);
   const idClass = fold(d.idClass);
   let lead = null;
   for (const r of res) {
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
-    if (!((!r.idOnly && (r.lead ? hay : hayAll).some((h) => r.re.test(h))) || (r.id && idClass && r.re.test(idClass)))) continue;
+    const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h));
+    const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
+    if (!(byText || (r.id && idClass && r.re.test(idClass)))) continue;
     if (!r.lead) return { cat: r.cat, term: r.t };
     lead = { cat: r.cat, term: r.t };
   }
@@ -1010,11 +1016,18 @@ function findText(text, state) {
     for (const c of el.childNodes) if (c.nodeType === 3) t += c.nodeValue;
     return t.replace(/\\s+/g, ' ').trim();
   };
-  const hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
+  const flatOf = el => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+  let textOf = own;
+  let hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
+  if (!hits.length) {
+    const spans = el => { const t = flatOf(el); return t.length <= 400 && t.toLowerCase().includes(want); };
+    textOf = flatOf;
+    hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && spans(el) && ![...el.children].some(spans)).filter(vis);
+  }
   const found = [];
   const loose = [];
   for (const el of hits) {
-    const t = own(el);
+    const t = textOf(el);
     const ctl = el.matches(sel) ? el : el.closest(sel);
     if (ctl && !keyed.has(ctl)) continue;
     const c = ctl || plainOf(el, t);
