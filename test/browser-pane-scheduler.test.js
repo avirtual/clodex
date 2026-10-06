@@ -568,6 +568,7 @@ test('scheduler: controls under a dialog\'s backdrop are hidden from a first def
   assert.ok(first.file.includes('\n== elements ==\n[3] button Close\n'));
   assert.ok(!first.file.includes('Portfolio app'));
   assert.ok(first.file.includes('(2 hidden (2 under the dialog, 0 repeated) — read --all lists them; numbers: stable per site;'));
+  assert.match(first.reply, / · 2 elements hidden \(2 under the dialog\) → @FILE$/);
   const all = await read(page, '[agent:browser read --all]');
   assert.ok(all.file.includes('\n== elements ==\n[1] link Portfolio app → /\n[2] link Accounts → /accounts\n[3] button Close\n'));
   assert.ok(!/hidden/.test(all.file));
@@ -696,6 +697,25 @@ test('scheduler: services and the read header name the site a window moved to, a
   assert.match((await h.run([['hand-a', '[agent:browser services]']]))[0][1], /services: ebloc — my\.smartthings\.com \(was e-bloc\.ro\) · unknown · window open · idle/);
   h.sched.noteUrl('ebloc', 'https://www.e-bloc.ro/index.php');
   assert.match((await h.run([['hand-a', '[agent:browser services]']]))[0][1], /services: ebloc — e-bloc\.ro · unknown/);
+});
+
+test('scheduler: a later open of a profile re-stamps the host it was opened as', async () => {
+  const h = harness({
+    read: () => ({ ...PAGE, url: 'https://ghostfol.io/', contentType: 'text/html', text: 'Portfolio', elements: [], truncated: false, frames: [], login: {} }),
+  });
+  await h.run([['hand-a', '[agent:browser open gh] https://github.com/x']]);
+  h.sched.onState({ service: 'gh', state: 'idle', url: 'https://github.com/x' });
+  await h.run([['hand-a', '[agent:browser open gh] https://ghostfol.io/']]);
+  assert.strictEqual(h.storage.get().services.gh.openedHost, 'ghostfol.io');
+  h.sched.onState({ service: 'gh', state: 'idle', url: 'https://ghostfol.io/' });
+  await h.run([['hand-a', '[agent:browser release gh]']]);
+  const seat = `hand-gh-${process.pid}`;
+  await h.run([[seat, '[agent:browser read gh]']]);
+  const dir = R.replyDir(seat);
+  const newest = fs.readdirSync(dir).filter((f) => f.startsWith('r-')).sort().at(-1);
+  const line = fs.readFileSync(path.join(dir, newest), 'utf8').split('\n')[1];
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.strictEqual(line, 'url: https://ghostfol.io/');
 });
 
 test('scheduler replies through the handle each submit was given, even two of one seat', async () => {
@@ -928,6 +948,10 @@ test('scheduler tabs: services lists a profile\'s open named tabs', async () => 
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser services]']]), [
     ['hand-a', '[agent:browser] services: x — x.com · unknown · window open · idle · tabs: riot (idle)'],
   ]);
+  h.sched.onState({ event: 'state', service: 'x:riot', state: 'idle', openedBy: 'hand-a/agent' });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser services]']]), [
+    ['hand-a', '[agent:browser] services: x — x.com · unknown · window open · idle · tabs: riot (idle, by hand-a/agent)'],
+  ]);
 });
 
 const asSub = (h, from = 'seat/agent') => ({ name: 'seat', from, type: 'claude', inject: (text) => h.out.push([from, text]) });
@@ -950,11 +974,15 @@ test('scheduler subagent tabs: a subagent closes only the tab its own identity o
   h.sched.onState({ event: 'state', service: 'x:two', state: 'idle', openedBy: 'seat' });
   h.calls.length = 0;
   assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:two]'), [['seat/agent', R.errorReply('x:two was opened by seat — a subagent closes only a tab it opened')]]);
-  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:three]'), [['seat/agent', R.errorReply('x:three was opened by the main agent — a subagent closes only a tab it opened')]]);
+  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:three]'), [['seat/agent', R.errorReply('x:three is not open — [agent:browser open x:three] <url>')]]);
   assert.deepStrictEqual(h.calls, []);
   await runAs(h, asSub(h), '[agent:browser close x:riot]');
   await h.run([['seat', '[agent:browser close x:two]']]);
   assert.deepStrictEqual(h.calls.map((c) => [c[0], c[1]]), [['seat/agent', 'close'], ['seat', 'close']]);
+  h.calls.length = 0;
+  h.sched.onState({ service: 'x:riot', state: 'closed' });
+  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:riot]'), [['seat/agent', R.errorReply('x:riot is not open — [agent:browser open x:riot] <url>')]]);
+  assert.deepStrictEqual(h.calls, []);
 });
 
 test('scheduler tabs: a close x queued behind an inflight op is refused at pump once a sibling tab is taken over', async () => {

@@ -84,7 +84,7 @@ const WORD_RE = /[\p{L}\p{N}]{4,}/gu;
 
 function readReply(service, info, file, sessionType, attach = { attach: true }) {
   const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`
-    + (info.stripped ? ' · chrome stripped' : '') + (info.hidden > 0 ? ` · ${info.hidden} elements hidden` : '') + (info.loading ? ' · still loading' : '');
+    + (info.stripped ? ' · chrome stripped' : '') + (info.hidden > 0 ? ` · ${info.hidden} elements hidden${info.under ? ` (${info.under} under the dialog)` : ''}` : '') + (info.loading ? ' · still loading' : '');
   if (attach.attach) return withPath(head, fileTail(file, sessionType));
   const why = attach.budget == null ? '--path-only' : `over ${tokLabel(attach.budget)}`;
   const tail = sessionType === 'claude'
@@ -205,7 +205,7 @@ function servicesReply(services, mirror, urlOf = () => '', tabsOf = () => []) {
     const site = host ? `${host}${opened && opened !== host ? ` (was ${opened})` : ''} · ` : '';
     const sign = !open && rec.login && rec.login.state === 'login-page' ? 'sign-in was pending' : loginState(rec.login);
     const tabs = tabsOf(n);
-    return `${n} — ${site}${sign} · ${win}${tabs.length ? ` · tabs: ${tabs.map((t) => `${t.tab} (${t.state})`).join(', ')}` : ''}`;
+    return `${n} — ${site}${sign} · ${win}${tabs.length ? ` · tabs: ${tabs.map((t) => `${t.tab} (${t.state}${t.openedBy && t.openedBy.includes('/') ? `, by ${t.openedBy}` : ''})`).join(', ')}` : ''}`;
   });
   return reply(`services: ${items.join(' │ ')}`);
 }
@@ -255,6 +255,7 @@ const TEXT = {
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
   passwordFieldSignedIn: (service, n) => `[${n}] is a password field — credentials never pass through agents; this is a password-change form on a signed-in page, so nothing to wait for. Leave it to the operator.`,
+  notOpen: (service) => `${service} is not open — [agent:browser open ${service}] <url>`,
   notYourTab: (service, openedBy) => `${service} was opened by ${openedBy || 'the main agent'} — a subagent closes only a tab it opened`,
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,

@@ -661,7 +661,7 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, cutHeading, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed, new Set(body)) : null };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, under, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, cutHeading, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed, new Set(body)) : null };
 }
 
 module.exports = {
