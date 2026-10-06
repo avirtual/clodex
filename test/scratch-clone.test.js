@@ -112,7 +112,7 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false, poller
   const begin = (body = 'read the poller and say where strip levels live') =>
     m._handleScratchIntent(s, { type: 'scratch', sub: 'begin', label: null, replay: false, body });
   return {
-    m, s, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed, passive, sent,
+    m, s, team, root, record, store, seq, creates, injected, delivered, parked, kills, strips, hints, removed, passive, sent,
     replies, cloneName, clone, begin,
   };
 }
@@ -272,11 +272,12 @@ test('t1539 mute: a roster push, a reminder and a dm addressed to the clone neve
 test('t1539 the composition notice skips a clone, so the lead never hears it spawn or retire', async () => {
   const f = mkClone();
   await f.begin();
-  const clone = f.clone();
-  f.m._notifyComposition(clone, 'spawned');
-  f.m._notifyComposition(clone, 'retired');
+  f.team.roles = { hand: { instantiate: 'session', brief: 'a hand' } };
+  const placed = { ...f.clone(), name: 'clodex-hand-2' };
+  f.m._notifyComposition(placed, 'spawned');
+  f.m._notifyComposition(placed, 'retired');
   assert.deepStrictEqual(f.parked.filter((p) => p.name === 'lead'), []);
-  f.m._notifyComposition(f.s, 'retired');
+  f.m._notifyComposition({ ...placed, clone: null }, 'retired');
   assert.strictEqual(f.parked.filter((p) => p.name === 'lead').length, 1, 'the rig does deliver a real seat\'s notice');
 });
 
