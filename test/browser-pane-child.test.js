@@ -549,6 +549,10 @@ test('page scripts: LOGIN_PROBE ignores a hidden Sign out and a long product tit
   const kettle = run([link('Fierbator apa Bosch TWK70B03, 1.7 l, 2400 W, Deconectare automata', '/fierbator/pd/X1')]);
   assert.strictEqual(kettle.loggedInHint, null);
   assert.strictEqual(kettle.logoutLink, false);
+  assert.strictEqual(run([link('Fierbator apa Bosch …', '/fierbator-apa-bosch-2400-w-1-7-l-cana-sticla-filtru-anticalcar-deconectare-automata-inox-twk70b03/pd/DTXYTCBBM/')]).logoutLink, false);
+  assert.strictEqual(run([link('', '/account/logout')]).logoutLink, true);
+  assert.strictEqual(run([link('Sign out', '/signout'), link('Contul meu', '/user/login')]).logoutLink, false);
+  assert.strictEqual(run([link('Sign out', '/signout')]).logoutLink, true);
   const ebloc = run([link('Ieşire', 'index.php?page=5')]);
   assert.strictEqual(ebloc.loggedInHint, 'logout');
   assert.strictEqual(loginLabel(ebloc), 'signed in');
@@ -588,15 +592,29 @@ test('page scripts: wallScan skips script text, quotes the gate sentence and nev
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes('const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","TEMPLATE"]);'));
   assert.ok(src.includes('if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);'));
-  assert.ok(src.includes("(vis(e) || [...e.querySelectorAll('*')].slice(0, 50).some(vis))"));
-  assert.ok(src.includes('if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t), n: null };'));
+  assert.ok(src.includes('(vis(e) || boxVis(e))'));
+  assert.ok(src.includes('if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };'));
   assert.ok(src.includes('return { text: clip(box.innerText), n: null };'));
-  assert.ok(src.includes('return { text: quote(t), n: null };'));
+  assert.ok(src.includes('return { text: quote(t, re), n: null };'));
   assert.ok(src.includes('const TOKEN = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;'));
   assert.ok(src.includes('[...e.classList].some(c => TOKEN.test(c))'));
   assert.ok(src.includes('e !== document.body && e !== document.documentElement'));
   assert.ok(src.includes("(WALL.test(e.innerText) || String(e.innerText).trim().length <= 300)"));
   assert.ok(src.includes('[id*=gate-toast i]'));
+});
+
+test('page scripts: wallScan ranks the Member-only badge last, walks the box text for visibility and finds a fixed bar before the badge', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(!scripts.WALL_RE.source.includes('members?-only story'));
+  assert.ok(!scripts.WALL_RE.test('Member-only story'));
+  assert.ok(scripts.WALL_WEAK_RE.test('Member-only story'));
+  assert.ok(src.includes("const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };"));
+  assert.ok(src.includes("['fixed', 'sticky'].includes(getComputedStyle(e).position)"));
+  assert.ok(src.includes("[...document.querySelectorAll('div,section,aside,footer,[role=dialog],[role=alert],[role=region]')].slice(0, 400)"));
+  const strong = src.indexOf('const strong = scan(WALL);');
+  const fixed = src.indexOf('return fixedBar() || scan(WEAK);');
+  assert.ok(strong > 0 && fixed > strong);
+  assert.ok(src.indexOf('scan(WEAK)') > src.indexOf('fixedBar()', src.indexOf('const box =')));
 });
 
 test('page scripts: READ_TEXT gives two-digit superscript cents a decimal separator', () => {
@@ -1613,6 +1631,7 @@ test('page scripts: TILE_SEL shares BOX_SEL with contextOf and no longer matches
 });
 
 test('page scripts: consequentialOf tags one label per category, diacritic- and case-insensitive; Carduri nav does not match', () => {
+  const BADGE = "This property is part of our Preferred Partner Programme. It's committed to providing a great experience for guests, and it might pay Booking.com a little more to be in this programme.";
   const c = scripts.consequentialOf;
   const rows = [
     [{ label: 'Card bancar', control: true }, 'payment'], [{ label: 'Plătește' }, 'payment'], [{ label: 'Pay now' }, 'payment'],
@@ -1647,6 +1666,8 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Trade' }, 'trading'], [{ label: 'Trade-in' }, 'trading'],
     [{ label: 'Deposit' }, 'transfer'], [{ label: 'Add Funds to USD' }, 'transfer'], [{ label: 'Withdraw' }, 'transfer'], [{ label: 'Create Wallet' }, 'transfer'],
     [{ label: '36', idClass: 'social-likes ets-icon-like' }, 'publish'], [{ label: '36', idClass: 'likely-list' }, null],
+    [{ label: BADGE, control: true, capped: false }, null], [{ label: 'Pay now', control: true, capped: false }, 'payment'],
+    [{ label: 'Review your basket details and then confirm payment to finish', control: true, capped: false }, 'payment'],
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});

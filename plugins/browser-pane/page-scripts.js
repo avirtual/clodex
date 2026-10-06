@@ -679,8 +679,9 @@ function collect(main) {
     if (says(el.getAttribute('aria-label') || '')) return true;
     const kids = [...el.querySelectorAll('*')].slice(0, 60);
     if (kids.some(e => says(e.getAttribute('aria-label') || '') || (!e.children.length && says(e.textContent || '') && !vis(e)))) return true;
-    const all = [...el.querySelectorAll('td,th,[role=gridcell],[role=cell]')];
-    const outer = all.filter(c => !all.some(o => o !== c && o.contains(c)));
+    const CELL = 'td,th,[role=gridcell],[role=cell]';
+    const all = [...el.querySelectorAll(CELL)];
+    const outer = all.filter(c => { const up = c.parentElement && c.parentElement.closest(CELL); return !up || !all.includes(up); });
     const cells = outer.length ? outer : el.children.length ? [...el.children] : [el];
     const heavy = e => parseInt(getComputedStyle(e).fontWeight, 10) >= 600;
     const owned = c => [c, ...[...c.querySelectorAll('*')].slice(0, 20)].filter(ownText);
@@ -1689,7 +1690,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
