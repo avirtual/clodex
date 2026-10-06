@@ -2,51 +2,45 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const mcp = require('../cli/bin/clodex-mcp.js');
 const subagent = require('../plugins/browser-pane/subagent');
 const { TOOL } = require('../plugins/browser-pane/mcp-tool');
 
-test('TOOL is the server\'s BROWSER_TOOL as JSON', () => {
-  const { name, description, inputSchema } = TOOL;
-  assert.deepStrictEqual(JSON.parse(JSON.stringify({ name, description, inputSchema })), JSON.parse(JSON.stringify(mcp.BROWSER_TOOL)));
-});
-
-test('the verb enum and the server list are the plugin\'s SUBS', () => {
+test('the verb enum is the plugin\'s SUBS', () => {
   assert.deepStrictEqual(TOOL.inputSchema.properties.verb.enum, subagent.SUBS);
-  assert.deepStrictEqual(mcp.SUBAGENT_BROWSER_VERBS, subagent.SUBS);
 });
 
 const ROWS = [
-  { verb: 'read', service: 'svc' },
-  { verb: 'read', service: 'svc', bracket: ['--text', '--filter=pdf', '--page=2'] },
-  { verb: 'click', service: 'svc', bracket: ['17'] },
-  { verb: 'click', service: 'svc', bracket: ['--text=Lista de plată'] },
-  { verb: 'inspect', bracket: ['3'] },
-  { verb: 'type', service: 'svc', bracket: ['3', '--enter'], body: 'hello world' },
-  { verb: 'select', service: 'svc', bracket: ['4'], body: 'Option B' },
-  { verb: 'key', service: 'svc', body: 'Enter' },
-  { verb: 'scroll', service: 'svc', bracket: ['down', '--pages=3'] },
-  { verb: 'scroll', service: 'svc', body: 'x' },
-  { verb: 'back', service: 'svc' },
-  { verb: 'forward', service: 'svc' },
-  { verb: 'services' },
-  { verb: 'screenshot', service: 'svc', bracket: ['--numbers'] },
-  { verb: 'wait', service: 'svc', bracket: ['--for=Showing 1'] },
-  { verb: 'download', service: 'svc', bracket: ['5', '--to=bills', '--as=a.pdf'] },
-  { verb: 'read', service: 'svc', bracket: ['--filter=Showing 1'] },
-  { verb: 'download', service: 'svc', bracket: ['5', '--to=my bills', '--as=a b.pdf'] },
-  { verb: 'download', service: 'svc', body: 'https://x/y.pdf' },
-  { verb: 'open', service: 'svc', bracket: ['--show'], body: 'https://example.com/' },
-  { verb: 'note', service: 'svc', body: '@* caution: popup on page 2' },
-  { verb: 'click', service: 'svc', bracket: ['17', '--confirm'] },
-  { verb: 'note', service: 'svc', bracket: ['--forget=ab3k'] },
-  { verb: 'type', service: 'svc', bracket: ['3', '--confirm'], body: 'x' },
+  [{ verb: 'read', service: 'svc' }, '[agent:browser read svc]'],
+  [{ verb: 'read', service: 'svc', bracket: ['--text', '--filter=pdf', '--page=2'] }, '[agent:browser read svc --text --filter=pdf --page=2]'],
+  [{ verb: 'click', service: 'svc', bracket: ['17'] }, '[agent:browser click svc 17]'],
+  [{ verb: 'click', service: 'svc', bracket: ['--text=Lista de plată'] }, '[agent:browser click svc --text="Lista de plată"]'],
+  [{ verb: 'inspect', bracket: ['3'] }, '[agent:browser inspect 3]'],
+  [{ verb: 'type', service: 'svc', bracket: ['3', '--enter'], body: 'hello world' }, '[agent:browser type svc 3 --enter] hello world'],
+  [{ verb: 'select', service: 'svc', bracket: ['4'], body: 'Option B' }, '[agent:browser select svc 4] Option B'],
+  [{ verb: 'key', service: 'svc', body: 'Enter' }, '[agent:browser key svc] Enter'],
+  [{ verb: 'scroll', service: 'svc', bracket: ['down', '--pages=3'] }, '[agent:browser scroll svc down --pages=3]'],
+  [{ verb: 'scroll', service: 'svc', body: 'x' }, '[agent:browser scroll svc] x'],
+  [{ verb: 'back', service: 'svc' }, '[agent:browser back svc]'],
+  [{ verb: 'forward', service: 'svc' }, '[agent:browser forward svc]'],
+  [{ verb: 'services' }, '[agent:browser services]'],
+  [{ verb: 'screenshot', service: 'svc', bracket: ['--numbers'] }, '[agent:browser screenshot svc --numbers]'],
+  [{ verb: 'wait', service: 'svc', bracket: ['--for=Showing 1'] }, '[agent:browser wait svc --for="Showing 1"]'],
+  [{ verb: 'download', service: 'svc', bracket: ['5', '--to=bills', '--as=a.pdf'] }, '[agent:browser download svc 5 --to=bills --as=a.pdf]'],
+  [{ verb: 'read', service: 'svc', bracket: ['--filter=Showing 1'] }, '[agent:browser read svc --filter="Showing 1"]'],
+  [{ verb: 'download', service: 'svc', bracket: ['5', '--to=my bills', '--as=a b.pdf'] }, '[agent:browser download svc 5 --to="my bills" --as="a b.pdf"]'],
+  [{ verb: 'download', service: 'svc', body: 'https://x/y.pdf' }, '[agent:browser download svc] https://x/y.pdf'],
+  [{ verb: 'open', service: 'svc', bracket: ['--show'], body: 'https://example.com/' }, '[agent:browser open svc --show] https://example.com/'],
+  [{ verb: 'note', service: 'svc', body: '@* caution: popup on page 2' }, '[agent:browser note svc] @* caution: popup on page 2'],
+  [{ verb: 'click', service: 'svc', bracket: ['17', '--confirm'] }, '[agent:browser click svc 17 --confirm]'],
+  [{ verb: 'note', service: 'svc', bracket: ['--forget=ab3k'] }, '[agent:browser note svc --forget=ab3k]'],
+  [{ verb: 'type', service: 'svc', bracket: ['3', '--confirm'], body: 'x' }, '[agent:browser type svc 3 --confirm] x'],
 ];
 
-test('toIntent is byte-equal to the server\'s over every row', () => {
-  for (const args of ROWS) {
+test('toIntent renders the CLI line over every row', () => {
+  for (const [args, line] of ROWS) {
     const full = { bracket: [], body: '', ...args };
-    assert.strictEqual(TOOL.toIntent(full), mcp.toIntent(full), JSON.stringify(args));
+    assert.strictEqual(TOOL.toIntent(full), `${line}
+[agent:end]`, JSON.stringify(args));
   }
 });
 

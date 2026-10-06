@@ -6,77 +6,36 @@ const path = require('path');
 const readline = require('readline');
 const { request, CLIENT_TIMEOUT_MS } = require('./clodex.js');
 
-const SUBAGENT_BROWSER_VERBS = ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services', 'note'];
-const SERVICE_PATTERN = '^[a-z][a-z0-9-]{0,31}$';
-const SERVICE_RE = new RegExp(SERVICE_PATTERN);
-const DEFAULT_PROTOCOL = '2025-06-18';
+const PROTOCOLS = ['2025-06-18', '2025-03-26', '2024-11-05'];
 const PPID_POLL_MS = 5000;
+const CATALOG_POLL_MS = 2000;
 const LOOP_WINDOW_MS = 60 * 1000;
 const LOOP_RING = 12;
 const LOOP_MAX = 3;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
-const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a --flag value (it is dropped)';
-const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
+const TOOL_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 
-const BROWSER_TOOL = {
-  name: 'browser',
-  description: [
-    "Drive this seat's browser pane. Same verbs, replies and refusals as `clodex '[agent:browser …]'`.",
-    'A call waits up to 500 s; a browser `wait` may take up to 30 min server-side, so a result starting `completion unknown — do not retry` means the action may still have run: read the page before repeating a click, type or download.',
-    'A refusal or error comes back as text, not as a tool error; the same call will fail the same way — do not retry it, return and let the seat\'s main agent decide.',
-    '`bracket` holds the tokens that go INSIDE the intent bracket after the service (element number, direction, --flag, --flag=value; for click/inspect --text=<text> as ONE item); `body` is the one-line text AFTER the bracket (the URL for open/download, the text for type, the option for select, the key name for key, the note text for note).',
-    'A " inside a --flag value is dropped. No release, no close, no --confirm, no note --forget: those are the main agent\'s.',
-  ].join(' '),
-  inputSchema: {
-    type: 'object',
-    properties: {
-      verb: { type: 'string', enum: SUBAGENT_BROWSER_VERBS },
-      service: { type: 'string', pattern: SERVICE_PATTERN },
-      bracket: { type: 'array', items: { type: 'string' }, default: [] },
-      body: { type: 'string', default: '' },
-    },
-    required: ['verb'],
-    additionalProperties: false,
-  },
-};
-
-function tok(t) {
-  const m = /^(--[^=\s"]+=)([\s\S]*)$/.exec(t);
-  if (!m || !/[\s"]/.test(m[2])) return t;
-  return `${m[1]}"${m[2].replace(/"/g, '')}"`;
-}
-
-function toIntent({ verb, service, bracket = [], body = '' }) {
-  const toks = bracket.map(tok).join(' ');
-  return `[agent:browser ${verb}${service ? ' ' + service : ''}${toks ? ' ' + toks : ''}]${body ? ' ' + body : ''}\n[agent:end]`;
-}
-
-class InvalidParams extends Error {}
 class InvalidRequest extends Error {}
 
-function validate(params) {
-  if (!params || params.name !== 'browser') throw new InvalidRequest(`unknown tool: ${params && params.name}`);
-  const args = params.arguments == null ? {} : params.arguments;
-  if (typeof args !== 'object' || Array.isArray(args)) throw new InvalidRequest('arguments must be an object');
-  const extra = Object.keys(args).find((k) => !ARG_KEYS.includes(k));
-  if (extra) throw new InvalidParams(`unknown argument: ${extra} (use ${ARG_KEYS.join(', ')})`);
-  const { verb, service } = args;
-  if (verb === 'release' || verb === 'close') throw new InvalidParams(verb === 'release' ? "release is for the seat's main agent" : 'close is for the seat\'s main agent — a subagent may ' + SUBAGENT_BROWSER_VERBS.join(', '));
-  if (!SUBAGENT_BROWSER_VERBS.includes(verb)) throw new InvalidParams(`verb must be one of ${SUBAGENT_BROWSER_VERBS.join(', ')}`);
-  if (service != null && (typeof service !== 'string' || !SERVICE_RE.test(service))) throw new InvalidParams(`service must match ${SERVICE_PATTERN}`);
-  const bracket = args.bracket == null ? [] : args.bracket;
-  if (!Array.isArray(bracket) || bracket.some((t) => typeof t !== 'string')) throw new InvalidParams('bracket must be an array of strings');
-  if (bracket.some((t) => t === '' || /[[\]\n\r]/.test(t))) throw new InvalidParams('bracket tokens must be non-empty and contain no [, ], newline or carriage return');
-  const body = args.body == null ? '' : args.body;
-  if (typeof body !== 'string') throw new InvalidParams('body must be a string');
-  if (/[\n\r]/.test(body)) throw new InvalidParams('body must be one line');
-  if (body.trim().startsWith('[agent:')) throw new InvalidParams('body must not start with [agent:');
-  return { verb, service: service || '', bracket, body };
+function readCatalog(env, fsImpl = fs) {
+  if (!env.CLODEX_INTENT_SOCK) return { rev: null, tools: [] };
+  try {
+    const c = JSON.parse(fsImpl.readFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp-tools.json'), 'utf8'));
+    if (!c || c.v !== 1 || !Array.isArray(c.tools)) return { rev: null, tools: [] };
+    return { rev: typeof c.rev === 'string' ? c.rev : null, tools: c.tools.filter((t) => t && typeof t.name === 'string').map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+  } catch { return { rev: null, tools: [] }; }
+}
+
+function canon(v) {
+  if (Array.isArray(v)) return v.map(canon);
+  if (!v || typeof v !== 'object') return v;
+  return Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]));
 }
 
 function toolResult(r) {
   const text = (t) => ({ content: [{ type: 'text', text: t }] });
   if (r.res && r.res.ok) return text(String(r.res.reply ?? ''));
+  if (r.res && r.res.status === 'invalid') return text(`invalid: ${r.res.error}`);
   if (r.res) return text(r.res.error || 'failed');
   if (r.transport === 'timeout') return text(`${COMPLETION_UNKNOWN}: the seat did not answer within 500 s; the action may still have run — read the page before repeating it`);
   if (r.transport === 'no-socket') return text(`no seat channel: ${r.message}`);
@@ -85,53 +44,57 @@ function toolResult(r) {
 
 function statusOf(r) {
   if (r.res && r.res.ok) return ['ok', 'error', 'refused'].includes(r.res.status) ? r.res.status : 'error';
-  if (r.res) return r.res.status === 'refused' ? 'refused' : 'error';
+  if (r.res) return r.res.status === 'refused' || r.res.status === 'invalid' ? r.res.status : 'error';
   return r.transport || 'bad-reply';
 }
 
 function createServer({
   env = process.env, input = process.stdin, output = process.stdout, errOut = process.stderr,
-  connect, now = Date.now, setInterval = globalThis.setInterval, timeoutMs = CLIENT_TIMEOUT_MS,
-  onExit = () => {}, fsImpl = fs,
+  connect, now = Date.now, setInterval = globalThis.setInterval, clearInterval = globalThis.clearInterval, timeoutMs = CLIENT_TIMEOUT_MS,
+  onExit = () => {}, fsImpl = fs, catalogPollMs = CATALOG_POLL_MS,
 } = {}) {
   let logFailed = false;
   let stopped = false;
+  let initialized = false;
+  let lastRev = readCatalog(env, fsImpl).rev;
   const fails = new Map();
-  const keyOf = (a) => JSON.stringify([a.verb, a.service, a.bracket, a.body]);
   const failed = (key, text) => { const t = now(); const f = fails.get(key); const n = f && t - f.at < LOOP_WINDOW_MS ? f.n + 1 : 1; fails.set(key, { n, at: t, text }); if (fails.size > LOOP_RING) fails.delete(fails.keys().next().value); return n; };
 
   const send = (msg) => { if (!stopped) output.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n'); };
 
-  const log = (verb, service, status, ms) => {
+  const log = (name, status, ms) => {
     if (!env.CLODEX_INTENT_SOCK) return;
-    const v = SUBAGENT_BROWSER_VERBS.includes(verb) ? verb : '-';
-    const s = typeof service === 'string' && SERVICE_RE.test(service) ? service.replace(/[^a-z0-9-]/g, '') : '-';
+    const n = typeof name === 'string' && TOOL_RE.test(name) ? name : '-';
     try {
-      fsImpl.appendFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp.log'), `${new Date(now()).toISOString()} ${v} ${s} ${status} ${ms}ms\n`);
+      fsImpl.appendFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp.log'), `${new Date(now()).toISOString()} ${n} ${status} ${ms}ms\n`);
     } catch (e) {
       if (!logFailed) errOut.write(`clodex-mcp: cannot write mcp.log (${e.message})\n`);
       logFailed = true;
     }
   };
 
+  function argsOf(params) {
+    if (!params || typeof params.name !== 'string') throw new InvalidRequest('tool name must be a string');
+    const args = params.arguments == null ? {} : params.arguments;
+    if (typeof args !== 'object' || Array.isArray(args)) throw new InvalidRequest('arguments must be an object');
+    return args;
+  }
+
   async function callTool(params) {
     const start = now();
-    const a = (params && params.arguments) || {};
     let args;
     try {
-      args = validate(params);
+      args = argsOf(params);
     } catch (e) {
       if (e instanceof InvalidRequest) return { error: { code: -32602, message: e.message } };
-      if (!(e instanceof InvalidParams)) throw e;
-      if (e.message === 'body must be one line') errOut.write(LIMITS + '\n');
-      log(a.verb, a.service, 'invalid', now() - start);
-      return { result: { content: [{ type: 'text', text: `invalid: ${e.message}` }] } };
+      throw e;
     }
-    const key = keyOf(args);
+    const name = params.name;
+    const key = JSON.stringify([name, canon(args)]);
     const f = fails.get(key);
     if (f && f.n >= LOOP_MAX - 1 && now() - f.at < LOOP_WINDOW_MS) {
       fails.set(key, { ...f, n: f.n + 1, at: now() });
-      log(args.verb, args.service, 'looped', now() - start);
+      log(name, 'looped', now() - start);
       return { result: { content: [{ type: 'text', text: `the same call failed ${LOOP_MAX} times — stop retrying: ${f.text}` }] } };
     }
     if (!env.CLODEX_INTENT_SOCK || !env.CLODEX_INTENT_CRED) {
@@ -139,13 +102,13 @@ function createServer({
     }
     const r = await request({
       sockPath: env.CLODEX_INTENT_SOCK,
-      payload: { cred: env.CLODEX_INTENT_CRED, intent: toIntent(args) },
+      payload: { cred: env.CLODEX_INTENT_CRED, tool: name, args },
       timeoutMs,
       ...(connect ? { connect } : {}),
     });
     const st = statusOf(r);
-    log(args.verb, args.service, st, now() - start);
-    if (st === 'ok') fails.delete(key); else failed(key, toolResult(r).content[0].text);
+    log(name, st, now() - start);
+    if (st === 'ok') fails.delete(key); else if (st !== 'invalid') failed(key, toolResult(r).content[0].text);
     return { result: toolResult(r) };
   }
 
@@ -156,11 +119,12 @@ function createServer({
     if (!('id' in msg)) return null;
     const { id, method, params } = msg;
     if (method === 'initialize') {
-      const pv = params && typeof params.protocolVersion === 'string' ? params.protocolVersion : DEFAULT_PROTOCOL;
-      return { id, result: { protocolVersion: pv, capabilities: { tools: {} }, serverInfo: { name: 'clodex', version: env.CLODEX_VERSION || '0' } } };
+      const asked = params && params.protocolVersion;
+      initialized = true;
+      return { id, result: { protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0], capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'clodex', version: env.CLODEX_VERSION || '0' } } };
     }
     if (method === 'ping') return { id, result: {} };
-    if (method === 'tools/list') return { id, result: { tools: [BROWSER_TOOL] } };
+    if (method === 'tools/list') return { id, result: { tools: readCatalog(env, fsImpl).tools } };
     if (method === 'tools/call') return { id, ...(await callTool(params)) };
     return { id, error: { code: -32601, message: `method not found: ${method}` } };
   }
@@ -178,13 +142,23 @@ function createServer({
     });
   }
 
+  function pollCatalog() {
+    const { rev } = readCatalog(env, fsImpl);
+    if (rev !== lastRev) {
+      lastRev = rev;
+      if (initialized) send({ method: 'notifications/tools/list_changed' });
+    }
+  }
+
   const parent = process.ppid;
   const poll = setInterval(() => { if (process.ppid !== parent) stop(); }, PPID_POLL_MS);
+  const catalogPoll = setInterval(pollCatalog, catalogPollMs);
 
   function stop() {
     if (stopped) return;
     stopped = true;
     clearInterval(poll);
+    clearInterval(catalogPoll);
     onExit(0);
   }
 
@@ -195,7 +169,7 @@ function createServer({
   }
   if (output && output.on) output.on('error', stop);
 
-  return { handle, stop };
+  return { handle, stop, pollCatalog };
 }
 
 if (require.main === module) {
@@ -205,4 +179,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { SUBAGENT_BROWSER_VERBS, BROWSER_TOOL, toIntent, createServer };
+module.exports = { createServer, readCatalog, PROTOCOLS };
