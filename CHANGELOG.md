@@ -100,6 +100,7 @@ blocks a release.
 - Browser pane: a service can have several windows on one login — `open x:riot <url>` opens a second window on x's cookie store (profile `x`, tab `riot`); every verb takes `x:riot`, the read state and the lease are per tab, element numbers and site notes stay per profile, `services` lists a profile's open tabs, and `close x` closes every x window while `close x:riot` closes that one.
 - Browser pane: a subagent can open its own tab (`open x:riot <url>`) on a profile the seat already has open and close only that tab, so two subagents can read one signed-in site in parallel; Settings → Browser Pane lists each profile's open tabs (tabs are never saved), and the README documents tabs and the subagent rules.
 - Browser pane: a side drawer may be inset up to 16 px from the edge and 75 % of the viewport wide (GitLab's work-item panel), the read head counts hidden elements under the dialog, `open` on an open profile refreshes its "opened as" host, a nameless button never takes its CSS class as a name, `services` names a tab's subagent opener, and a subagent closing a closed tab is told it is not open.
+- Browser pane: a nameless consequential button (`[n] button ⚠`) now reaches the ⚠ digest and `note`'s `[n]` resolver, a tab open (`open gh:riot <url>`) no longer re-stamps the profile's "opened as" host, Settings' Show and Hand over fall back to a profile's live tab when its window is closed and the row reads `open · tabs: …`, and the subagent tab rule says the pane (any seat) must have the profile open.
 
 ## 5.112.2 — 2026-10-04
 
