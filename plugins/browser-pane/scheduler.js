@@ -182,7 +182,7 @@ function createScheduler({
     noteUrl(service, r.url);
     updateStorage(service, (prev) => ({
       ...prev,
-      openedHost: hostOf(asked) || prev.openedHost || hostOf(prev.lastUrl) || hostOf(r.url),
+      openedHost: (tabOf(service) ? '' : hostOf(asked)) || prev.openedHost || hostOf(prev.lastUrl) || hostOf(r.url),
       createdAt: prev.createdAt || t,
       lastUsedAt: t,
       lastSeat: seat,

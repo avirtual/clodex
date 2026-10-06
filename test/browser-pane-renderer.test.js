@@ -583,6 +583,7 @@ test('Settings: services are a grid table with a header; each row is one line of
       { name: 'utility', login: 'unknown', loginAt: 0, lastUrl: 'https://u.example/', windowOpen: false, state: 'closed' },
       { name: 'gas', login: 'none', loginAt: 0, lastUrl: '', windowOpen: true, state: 'idle' },
       { name: 'x', login: 'logged-in', loginAt: 0, lastUrl: '', windowOpen: true, state: 'idle', tabs: [{ name: 'x:riot', state: 'idle', openedBy: 'Plugins/agent' }, { name: 'x:two', state: 'driving', openedBy: 'Plugins' }] },
+      { name: 'y', login: 'unknown', loginAt: 0, lastUrl: '', windowOpen: true, state: 'closed', tabs: [{ name: 'y:riot', state: 'idle', openedBy: 'Plugins/agent' }] },
     ] };
     const f = withSeats(makeRhost({ status: status('off'), 'services.list': list }), [
       { name: 'Plugins', type: 'claude' }, { name: 'term', type: 'bash' }, { name: 'cx', type: 'codex' }, { name: 'web', type: 'browser' },
@@ -603,7 +604,8 @@ test('Settings: services are a grid table with a header; each row is one line of
     assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-host', 'u.example'], ['bp-login', 'login unknown'],
       ['bp-window', ''], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     assert.deepStrictEqual(cells(rows[3]).slice(3, 5), [['bp-window', 'open · idle · tabs: riot (idle), two (driving)'], ['bp-actions', 'ShowHand over']]);
-    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-tabs').map((n) => n.textContent), ['tabs: riot (idle), two (driving)']);
+    assert.deepStrictEqual(cells(rows[4]).slice(3, 5), [['bp-window', 'open · tabs: riot (idle)'], ['bp-actions', 'ShowHand over']]);
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-tabs').map((n) => n.textContent), ['tabs: riot (idle), two (driving)', 'tabs: riot (idle)']);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
     assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(12ch, auto) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
     assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));

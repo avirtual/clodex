@@ -644,6 +644,11 @@ test('read header says how many posts are cloaked placeholders', () => {
   assert.match(head({ count: 9 }), / · posts: 9 · mode: default · /);
 });
 
+test('read digest: a nameless consequential button reaches warn', () => {
+  const raw = { ...RAW, elements: ['[3] button ⚠'], cats: { 3: 'delete' } };
+  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, [{ n: 3, label: '', cat: 'delete' }]);
+});
+
 test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
   const raw = {
     ...RAW, url: 'https://x.com/home',

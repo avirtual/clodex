@@ -18,7 +18,7 @@ test('the four refusal literals', () => {
   assert.strictEqual(subagent.NO_CLOSE, NO_CLOSE);
   assert.strictEqual(subagent.NO_CONFIRM, 'a subagent cannot confirm a consequential action — ask the main agent');
   assert.strictEqual(subagent.NO_FORGET, 'a subagent cannot forget a site note — ask the main agent');
-  assert.strictEqual(subagent.NO_TAB_OPEN, 'a subagent may open a tab only on a profile this seat already has open — ask the main agent to open <profile> first');
+  assert.strictEqual(subagent.NO_TAB_OPEN, 'a subagent may open a tab only on a profile the pane already has open — ask the main agent to open <profile> first');
 });
 
 const REFUSE_ROWS = [
