@@ -153,7 +153,7 @@ ipc handlers (step 12).
   keyed on the element's full label, so two documents whose names differ only
   past the shown 60 characters never share one.
 - **Consequential controls**: an element whose label is an action verb (pay,
-  buy, delete, sign out, arm, unsubscribe, transfer, and their Romanian forms),
+  buy, reserve/book, delete, sign out, arm, unsubscribe, transfer, and their Romanian forms),
   or a form's button or submit named by a payment noun (payment, plată, card),
   is listed with `⚠ ` before its label (a solid red badge in `screenshot
   --numbers`); `click` or `select` on it is refused unless the agent adds

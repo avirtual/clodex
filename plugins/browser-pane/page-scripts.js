@@ -47,6 +47,7 @@ const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abm
 const CONSEQUENTIAL = [
   ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
   ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], []],
+  ['booking', ['reserve', "i'll reserve", 'book now', 'complete booking', 'confirm booking', 'rezerva', 'rezerva acum', 'finalizeaza rezervarea'], []],
   ['deletion', ['delete', 'sterge', 'remove', 'elimina'], [], [], {}, '\\b(filtr|filter|selection|selectie|search|cautare|sort)'],
   ['sign-out', SIGN_OUT, []],
   ['alarm', ['arm', 'disarm'], []],
@@ -60,8 +61,8 @@ const CONSEQUENTIAL = [
     'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
 ];
 const LEAD_CATS = ['publish'];
-const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
-const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
+const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm', 'reserve'];
+const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete'], ['booking', 'book']];
 const CQ_LABEL_MAX = 40;
 const CQ_CONTROL_MAX = 100;
 const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
@@ -101,6 +102,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
   for (const r of res) {
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
+    if (r.cat === 'deletion' && d.clearer) continue;
     const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h)) && (!r.unless || !r.unless.test(h));
     const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
     if (!(byText || (r.id && idClass && r.re.test(idClass) && !(r.unless && hay.some(h => r.unless.test(h)))))) continue;
@@ -145,6 +147,7 @@ const CQ = `
     return {
       textual,
       button,
+      clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
       capped: tg === 'a' || e.getAttribute('role') === 'link' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
@@ -317,44 +320,29 @@ const WALL = `
       return bt && bt.length <= 300 ? clip(bt) : sentence(t, re);
     };
     const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };
-    const fixedBar = () => {
-      for (const e of [...document.querySelectorAll('div,section,aside,footer,[role=dialog],[role=alert],[role=region]')].slice(0, 400)) {
-        if (!['fixed', 'sticky'].includes(getComputedStyle(e).position) || !vis(e)) continue;
-        const len = String(e.innerText).trim().length;
-        if (len < 1 || len > 600) continue;
-        const fw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
-        for (let t = fw.nextNode(); t; t = fw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };
+    const chrome = t => !!(t.parentElement && t.parentElement.closest('header,nav,[role=banner],[role=navigation]'));
+    const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };
+    const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };
+    let all = [];
+    let endIdx = -1;
+    const pick = (re) => {
+      let before = null;
+      for (let i = 0; i < all.length; i++) {
+        const t = all[i];
+        if (!re.test(t.data) || chrome(t) || (wholeLabel(t) && !floating(t))) continue;
+        if (i > endIdx) return { text: quote(t, re), n: null };
+        before = t;
       }
-      return null;
-    };
-    let tail = [];
-    let after = [];
-    const scan = (re) => {
-      for (const t of tail.concat(after)) {
-        const el = t.parentElement;
-        if (el && re.test(t.data) && vis(el)) return { text: quote(t, re), n: null };
-      }
-      return null;
+      return before ? { text: quote(before, re), n: null } : null;
     };
     try {
       if (root && document.body) {
-        const all = [];
         const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);
         const inRoot = all.filter(t => root.contains(t));
-        const last = inRoot[inRoot.length - 1];
-        let n = 0;
-        for (let i = inRoot.length - 1; i >= 0 && n < 600; i--) { tail.unshift(inRoot[i]); n += inRoot[i].data.length; }
-        let m = 0;
-        for (const t of all) {
-          if (m >= 2000) break;
-          if (last && root.contains(t)) continue;
-          if (last && !(last.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-          if (!last && !(root.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-          after.push(t); m += t.data.length;
-        }
+        endIdx = inRoot.length ? all.lastIndexOf(inRoot[inRoot.length - 1]) : -1;
       }
-      const strong = scan(WALL);
+      const strong = pick(WALL);
       if (strong) return strong;
       const ID_SEL = ${JSON.stringify(WALL_ID_SEL)};
       const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)} + ',' + ID_SEL)].find(e => e !== document.body && e !== document.documentElement
@@ -365,8 +353,8 @@ const WALL = `
         for (let t = bw.nextNode(); t; t = bw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };
         return { text: clip(box.innerText), n: null };
       }
-      return fixedBar() || scan(WEAK);
-    } catch { return null; }
+      return pick(WEAK);
+    } catch (e) { return { text: null, error: String(e && e.message || e).slice(0, 80) }; }
   };`;
 
 const SCROLL_INFO = `(() => {
@@ -445,10 +433,12 @@ function readText(main) {
   }
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
+  host.setAttribute('data-cxb-read-host', '');
+  const cv = document.createElement('style'); cv.textContent = '[data-cxb-read-host] * { content-visibility: visible !important; }'; document.head.appendChild(cv);
   host.appendChild(clone); document.body.appendChild(host);
   bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   ${TABLES}
-  const txt = clone.innerText; host.remove();
+  const txt = clone.innerText; host.remove(); cv.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
   return { text, busy, outline, wall };
 })()`;
@@ -935,9 +925,9 @@ function find(n) {
     for (const b of o ? o.querySelectorAll('button,[role=button],a') : []) {
       const m = numberOf(b);
       if (m != null) out.push({ n: m, label: labelOf(b).slice(0, 60) });
-      if (out.length === 4) break;
     }
-    return out;
+    const PRIO = /\\b(accept|agree|allow|reject|refuse|decline|respinge|refuz|sunt de acord|save|salveaz|close|dismiss|got it|ok)\\b|^[×✕✖⨯x]$/i;
+    return [...out.filter(b => PRIO.test(b.label)), ...out.filter(b => !PRIO.test(b.label))].slice(0, 8);
   };
   let lastHit = null;
   const report = () => {
@@ -1107,9 +1097,11 @@ const PAGE_TEXT = `(() => {
   clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio,[aria-hidden=true],[inert]').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
+  host.setAttribute('data-cxb-read-host', '');
+  const cv = document.createElement('style'); cv.textContent = '[data-cxb-read-host] * { content-visibility: visible !important; }'; document.head.appendChild(cv);
   host.appendChild(clone); document.body.appendChild(host);
   ${TABLES}
-  const t = clone.innerText || ''; host.remove();
+  const t = clone.innerText || ''; host.remove(); cv.remove();
   return t.replace(/[ \\t]+/g, ' ').split('\\n').map(l => l.trim()).filter(Boolean).join('\\n').slice(0, ${TEXT_MAX});
 })()`;
 

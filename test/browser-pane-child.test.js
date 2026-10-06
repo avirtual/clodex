@@ -603,18 +603,35 @@ test('page scripts: wallScan skips script text, quotes the gate sentence and nev
   assert.ok(src.includes('[id*=gate-toast i]'));
 });
 
-test('page scripts: wallScan ranks the Member-only badge last, walks the box text for visibility and finds a fixed bar before the badge', () => {
+test('page scripts: wallScan picks over the whole page nearest the root end, skips chrome and in-body CTA labels, ranks the badge last and surfaces errors', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(!scripts.WALL_RE.source.includes('members?-only story'));
   assert.ok(!scripts.WALL_RE.test('Member-only story'));
   assert.ok(scripts.WALL_WEAK_RE.test('Member-only story'));
   assert.ok(src.includes("const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };"));
-  assert.ok(src.includes("['fixed', 'sticky'].includes(getComputedStyle(e).position)"));
-  assert.ok(src.includes("[...document.querySelectorAll('div,section,aside,footer,[role=dialog],[role=alert],[role=region]')].slice(0, 400)"));
-  const strong = src.indexOf('const strong = scan(WALL);');
-  const fixed = src.indexOf('return fixedBar() || scan(WEAK);');
-  assert.ok(strong > 0 && fixed > strong);
-  assert.ok(src.indexOf('scan(WEAK)') > src.indexOf('fixedBar()', src.indexOf('const box =')));
+  assert.ok(src.includes("const chrome = t => !!(t.parentElement && t.parentElement.closest('header,nav,[role=banner],[role=navigation]'));"));
+  assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };"));
+  assert.ok(src.includes("const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };"));
+  assert.ok(src.includes('if (!re.test(t.data) || chrome(t) || (wholeLabel(t) && !floating(t))) continue;'));
+  assert.ok(src.includes('if (i > endIdx) return { text: quote(t, re), n: null };'));
+  assert.ok(src.includes('return before ? { text: quote(before, re), n: null } : null;'));
+  assert.ok(src.includes('endIdx = inRoot.length ? all.lastIndexOf(inRoot[inRoot.length - 1]) : -1;'));
+  assert.ok(src.includes("} catch (e) { return { text: null, error: String(e && e.message || e).slice(0, 80) }; }"));
+  assert.ok(!src.includes('fixedBar'));
+  assert.ok(!src.includes('tail.concat(after)'));
+  const strong = src.indexOf('const strong = pick(WALL);');
+  const box = src.indexOf('const box =', strong);
+  const weak = src.indexOf('return pick(WEAK);');
+  assert.ok(strong > 0 && box > strong && weak > box);
+});
+
+test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtrees in the off-screen clone and drop the style with the host', () => {
+  for (const src of [scripts.READ_TEXT(false), scripts.PAGE_TEXT]) {
+    assert.ok(src.includes("host.setAttribute('data-cxb-read-host', '');"));
+    assert.ok(src.includes("const cv = document.createElement('style'); cv.textContent = '[data-cxb-read-host] * { content-visibility: visible !important; }'; document.head.appendChild(cv);"));
+    assert.ok(src.indexOf('document.head.appendChild(cv);') < src.indexOf('document.body.appendChild(host);'));
+    assert.ok(src.includes('host.remove(); cv.remove();'));
+  }
 });
 
 test('page scripts: READ_TEXT gives two-digit superscript cents a decimal separator', () => {
@@ -1370,6 +1387,25 @@ test('FIND: a target our scroll parked under a sticky header is scrolled clear o
   assert.deepStrictEqual([l.hitN, l.hitConsequential, l.hitButtons], [30, null, [{ n: 31, label: 'Delete account' }, { n: 32, label: 'Cancel' }]], 'a numbered dialog lists its buttons, ⚠ ones included');
 });
 
+test('FIND: a cover lists its accept/reject/close buttons first and up to eight of them', () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const shown = { visibility: 'visible', display: 'block', opacity: '1' };
+  const coverWith = (labels) => {
+    const btns = labels.map((t, i) => boxEl('button', t, box(10 + i * 50, 700, 40, 20)));
+    const banner = Object.assign(boxEl('div', 'Cookie consent', box(0, 600, 1200, 200)), { style: { ...shown, position: 'fixed' }, querySelectorAll: () => btns });
+    const para = boxEl('p', 'Cookie consent', box(10, 610, 800, 60), banner);
+    const inView = boxEl('button', 'Pret crescator', box(10, 620, 100, 30));
+    const numbered = Object.fromEntries(btns.map((b, i) => [300 + i, b]));
+    return plain(findOn(inView, () => para, { numbered })).hitButtons;
+  };
+  const five = coverWith(['Detalii', 'Parteneri', 'Politica', 'Setări', 'ACCEPT TOATE', '×']);
+  assert.deepStrictEqual(five.map((b) => b.label), ['ACCEPT TOATE', '×', 'Detalii', 'Parteneri', 'Politica', 'Setări']);
+  assert.deepStrictEqual(five.map((b) => b.n), [304, 305, 300, 301, 302, 303]);
+  const ten = coverWith(Array.from({ length: 10 }, (_, i) => `Link ${i}`));
+  assert.deepStrictEqual(ten.map((b) => b.label), Array.from({ length: 8 }, (_, i) => `Link ${i}`));
+});
+
 test('page scripts: FIND and INSPECT share one clipOf from DEEP', () => {
   for (const src of [scripts.FIND(1), scripts.INSPECT(1)]) assert.strictEqual(src.split('const clipOf = ').length, 2);
   assert.match(scripts.FIND(1), /const clip = clipOf\(el\);\n\s*const outside = outOf\(r0, /);
@@ -1760,6 +1796,20 @@ test('page scripts: a has-delete class on a filter reset honours the row\'s unle
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'delete' });
 });
 
+test('page scripts: a label-less × that clears a field is never deletion; reserve/book controls are booking', () => {
+  assert.strictEqual(scripts.consequentialHit({ label: 'Șterge', control: true, clearer: true }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Șterge anunțul', control: true, clearer: false }), { cat: 'deletion', term: 'sterge' });
+  assert.strictEqual(scripts.consequentialHit({ label: 'Delete', control: true, clearer: true }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ value: 'Delete', control: true, clearer: false }), { cat: 'deletion', term: 'delete' });
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),"));
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Reserve your apartment stay', control: true }), { cat: 'booking', term: 'reserve' });
+  assert.strictEqual(scripts.consequentialOf({ label: "I'll reserve", control: true }), 'booking');
+  assert.strictEqual(scripts.consequentialOf({ label: 'Rezervă acum', control: true }), 'booking');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Book', control: true }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ action: '/hotel/book' }), { cat: 'booking', term: 'book' });
+  assert.strictEqual(scripts.consequentialOf({ label: 'Complete booking', capped: true }), 'booking');
+});
+
 test('page scripts: a sort button\'s third state is not deletion, a plain Remove still is', () => {
   assert.strictEqual(scripts.consequentialHit({ label: 'Age: Activate to remove sorting' }), null);
   assert.strictEqual(scripts.consequentialHit({ label: 'Age', aria: 'Age: Activate to remove sorting' }), null);
@@ -1884,8 +1934,8 @@ test('page scripts: READ_TEXT reads the text of a table inside a form and drops 
     node('p', [], 'Datorii curente '.repeat(15)),
     node('form', [node('table', [node('tr', [node('td', [], 'Întreţinere August 2026'), node('td', [], '315,90 Lei')])]), node('button', [], 'Plăteşte')]),
   ]);
-  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} },
-    createElement: () => ({ style: {}, appendChild() {}, remove() {} }) };
+  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} }, head: { appendChild() {} },
+    createElement: () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {} }) };
   const ctx = vm.createContext({ document, getComputedStyle: () => ({}), scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
   const { text } = vm.runInContext(src, ctx);
   assert.ok(text.includes('Întreţinere August 2026\n315,90 Lei'), text);

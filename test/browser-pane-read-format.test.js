@@ -701,3 +701,13 @@ test('read-format: a wall prints right after login: as a quoted line; no wall, n
   assert.strictEqual(lines[at + 1], 'wall: "Create an account to read the full story." — the text below may stop here; sign-in or subscription is the operator\'s call');
   assert.ok(!fmt().content.split('\n').some((l) => l.startsWith('wall:')));
 });
+
+test('read-format: a failed wall scan prints its reason in the wall slot; a found wall is unchanged', () => {
+  const lines = formatRead({ ...RAW, wall: { text: null, error: 'boom' } }, { service: 'utility' }).content.split('\n');
+  const at = lines.findIndex((l) => l.startsWith('login: '));
+  assert.strictEqual(lines[at + 1], 'wall: scan failed — boom');
+  assert.ok(!lines.some((l) => l.startsWith('wall: "')));
+  const found = formatRead({ ...RAW, wall: { text: 'x' } }, { service: 'utility' }).content.split('\n');
+  assert.strictEqual(found[found.findIndex((l) => l.startsWith('login: ')) + 1], 'wall: "x" — the text below may stop here; sign-in or subscription is the operator\'s call');
+  assert.ok(!found.some((l) => l.includes('scan failed')));
+});
