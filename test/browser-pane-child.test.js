@@ -1933,8 +1933,8 @@ test('page scripts: READ_TEXT reads the text of a table inside a form and drops 
     node('p', [], 'Datorii curente '.repeat(15)),
     node('form', [node('table', [node('tr', [node('td', [], 'Întreţinere August 2026'), node('td', [], '315,90 Lei')])]), node('button', [], 'Plăteşte')]),
   ]);
-  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} },
-    createElement: () => ({ style: {}, appendChild() {}, remove() {} }) };
+  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} }, head: { appendChild() {} },
+    createElement: () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {} }) };
   const ctx = vm.createContext({ document, getComputedStyle: () => ({}), scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
   const { text } = vm.runInContext(src, ctx);
   assert.ok(text.includes('Întreţinere August 2026\n315,90 Lei'), text);
