@@ -541,6 +541,7 @@ test('page scripts: LOGIN_PROBE ignores a hidden Sign out and a long product tit
   assert.strictEqual(guardian.logoutLink, false);
   assert.strictEqual(loginLabel(guardian), 'none');
   assert.strictEqual(run([link('Sign out', '/signout', true)]).loggedInHint, null);
+  assert.strictEqual(run([link('Sign out', '/signout'), link('Sign in', '/signin')]).loggedInHint, null);
   const emag = run([link('Fierbator apa Bosch TWK70B03, 1.7 l, 2400 W, Deconectare automata', '/fierbator/pd/X1'), link('Contul meu', '/user/login')]);
   assert.strictEqual(emag.loggedInHint, null);
   assert.strictEqual(emag.logoutLink, false);
