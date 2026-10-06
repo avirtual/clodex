@@ -992,6 +992,8 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.strictEqual(lineOf(ri, 'const modal = forced ? null :'), lineOf(src, 'const modal = forced ? null :'));
   assert.ok(ri.includes('covered.push(n);'));
   assert.ok(ri.includes('rows: rowsOut, chrome, covered, cats,'));
+  assert.ok(src.includes('[...document.querySelectorAll(DIALOG_SEL), ...drawersOf()].filter(vis)'));
+  assert.match(CHILD_SRC, /chrome: el\.chrome \|\| \[\],\n\s*covered: el\.covered \|\| \[\],/);
   assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
   assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
