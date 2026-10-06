@@ -555,6 +555,54 @@ test('page scripts: LOGIN_PROBE treats a password-change form on a signed-in pag
   assert.strictEqual(loginLabel(reauth), 'password field');
 });
 
+test('page scripts: wallScan skips script text, quotes the gate sentence and never takes body or html as the gate box', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes('const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","TEMPLATE"]);'));
+  assert.ok(src.includes('if (t.data.trim() && !scripted(t)) all.push(t);'));
+  assert.ok(src.includes('return { text: quote(t), n: null };'));
+  assert.ok(src.includes('const TOKEN = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;'));
+  assert.ok(src.includes('[...e.classList].some(c => TOKEN.test(c))'));
+  assert.ok(src.includes('e !== document.body && e !== document.documentElement'));
+  assert.ok(src.includes("(WALL.test(e.innerText) || String(e.innerText).trim().length <= 300)"));
+  assert.ok(src.includes('[id*=gate-toast i]'));
+});
+
+test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("String(getComputedStyle(e).textDecorationLine || '').includes('line-through')"));
+  assert.ok(src.includes("wrapped.add(c); c.prepend('(was '); c.append(')');"));
+});
+
+test('page scripts: a filter or search reset is not deletion; Delete account and Remove item still are', () => {
+  const c = scripts.consequentialOf;
+  assert.strictEqual(c({ label: 'Sterge toate filtrele' }), null);
+  assert.strictEqual(c({ label: 'Clear filters' }), null);
+  assert.strictEqual(c({ label: 'Delete account' }), 'deletion');
+  assert.strictEqual(c({ label: 'Remove item' }), 'deletion');
+});
+
+test('page scripts: LOGIN_PROBE profile hint is void while a visible Sign in link is on the page', () => {
+  const { loginLabel } = require('../plugins/browser-pane/read-format');
+  const rect = () => ({ left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 });
+  const el = (tagName, text, href, profile = false) => ({
+    tagName, innerText: text, textContent: text, parentElement: null, type: '',
+    getAttribute: (k) => (k === 'href' ? href : null), matches: (sel) => profile && sel.includes('/profile'), getBoundingClientRect: rect,
+  });
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: '' } },
+    { hostname: 'www.theguardian.com', pathname: '/uk' }, 0, 0, 1200, 800);
+  const profile = el('A', 'Profile', '/profile', true);
+  const gated = run([profile, el('A', 'Sign in', '/signin')]);
+  assert.strictEqual(gated.loggedInHint, null);
+  assert.strictEqual(loginLabel(gated), 'none');
+  assert.strictEqual(run([profile, el('A', 'Contul meu', '/user/login')]).loggedInHint, null);
+  assert.strictEqual(run([profile, el('A', 'Sign in to comment', '/discussion')]).loggedInHint, 'profile');
+  const signed = run([profile, el('A', 'News', '/news')]);
+  assert.strictEqual(signed.loggedInHint, 'profile');
+  assert.strictEqual(loginLabel(signed), 'signed in');
+});
+
 test('page scripts: READ_TEXT falls back to body when the best-scoring block holds under half the body text', () => {
   assert.ok(scripts.READ_TEXT(false).includes("(best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best"));
 });
@@ -1866,7 +1914,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   const src = scripts.READ_TEXT(false);
   const WALL = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
   assert.ok(src.includes(`const WALL = ${WALL};`));
-  assert.ok(src.includes('[class*=paywall i],[class*=meter i],[id*=paywall i],[data-testid*=paywall i],[class*=regwall i],[class*=gate i]'));
+  assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
   assert.ok(src.includes('return { text, busy, outline, wall };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');

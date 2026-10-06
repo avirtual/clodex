@@ -47,7 +47,7 @@ const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abm
 const CONSEQUENTIAL = [
   ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
   ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], []],
-  ['deletion', ['delete', 'sterge', 'remove', 'elimina'], []],
+  ['deletion', ['delete', 'sterge', 'remove', 'elimina'], [], [], {}, '\\b(filtr|filter|selection|selectie|search|cautare|sort)'],
   ['sign-out', SIGN_OUT, []],
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
@@ -73,9 +73,9 @@ function termRe(t, lead) {
 
 function cqCompile(table, idTerms, leadCats = []) {
   const out = [];
-  for (const [cat, verbs, nouns, idOnly = [], withs = {}] of table) {
+  for (const [cat, verbs, nouns, idOnly = [], withs = {}, unless = null] of table) {
     for (const t of verbs) {
-      out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)), with: withs[t] ? new RegExp(withs[t]) : null });
+      out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)), with: withs[t] ? new RegExp(withs[t]) : null, unless: unless ? new RegExp(unless) : null });
     }
     for (const t of nouns) out.push({ cat, t, id: false, noun: true, re: termRe(t) });
     for (const t of idOnly) out.push({ cat, t, id: true, idOnly: true, noun: false, lead: false, re: termRe(t) });
@@ -100,7 +100,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
   for (const r of res) {
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
-    const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h));
+    const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h)) && (!r.unless || !r.unless.test(h));
     const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
     if (!(byText || (r.id && idClass && r.re.test(idClass)))) continue;
     if (!r.lead) return { cat: r.cat, term: r.t };
@@ -293,16 +293,30 @@ function bulletItems(root, mark, hidden = (e) => getComputedStyle(e).display ===
 
 const READ_ROOT_SEL = 'main article, article, [role=main], main, #mw-content-text, #content';
 const WALL_RE = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
-const WALL_SEL = '[class*=paywall i],[class*=meter i],[id*=paywall i],[data-testid*=paywall i],[class*=regwall i],[class*=gate i]';
+const WALL_SEL = '[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]';
+const WALL_ID_SEL = '[id*=paywall i],[id*=regwall i],[id*=gate-toast i],[data-testid*=paywall i]';
+const WALL_TOKEN_RE = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;
+const WALL_SKIP = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'];
+const WALL_BLOCK = 'p,div,section,li,h1,h2,h3,h4,h5,h6,[role=alert]';
 const WALL = `
   const wallScan = (root) => {
     const WALL = ${WALL_RE};
+    const TOKEN = ${WALL_TOKEN_RE};
+    const SKIP = new Set(${JSON.stringify(WALL_SKIP)});
     const clip = t => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    const scripted = t => { for (let e = t.parentElement; e; e = e.parentElement) if (SKIP.has(e.tagName)) return true; return false; };
+    const sentence = t => clip(t.data.split(/(?<=[.!?])\\s+/).find(x => WALL.test(x)) || t.data);
+    const quote = t => {
+      if (t.data.trim().length >= 20) return sentence(t);
+      const b = t.parentElement && t.parentElement.closest(${JSON.stringify(WALL_BLOCK)});
+      const bt = b ? String(b.innerText || '').trim() : '';
+      return bt && bt.length <= 300 ? clip(bt) : sentence(t);
+    };
     try {
       if (root && document.body) {
         const all = [];
         const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        for (let t = w.nextNode(); t; t = w.nextNode()) all.push(t);
+        for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t)) all.push(t);
         const inRoot = all.filter(t => root.contains(t));
         const last = inRoot[inRoot.length - 1];
         const tail = [];
@@ -319,10 +333,13 @@ const WALL = `
         }
         for (const t of tail.concat(after)) {
           const el = t.parentElement;
-          if (el && WALL.test(t.data) && vis(el)) return { text: clip(el.innerText || t.data), n: null };
+          if (el && WALL.test(t.data) && vis(el)) return { text: quote(t), n: null };
         }
       }
-      const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)})].find(e => vis(e) && clip(e.innerText));
+      const ID_SEL = ${JSON.stringify(WALL_ID_SEL)};
+      const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)} + ',' + ID_SEL)].find(e => e !== document.body && e !== document.documentElement
+        && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && vis(e) && clip(e.innerText)
+        && (WALL.test(e.innerText) || String(e.innerText).trim().length <= 300));
       return box ? { text: clip(box.innerText), n: null } : null;
     } catch { return null; }
   };`;
@@ -375,7 +392,22 @@ function readText(main) {
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   const wall = wallScan(root);
   if (!root) return { text: '', busy, outline, wall };
+  const STRUCK = /^(S|DEL|STRIKE)$/;
+  const struck = new Set();
+  [...root.querySelectorAll('*')].forEach((e, i) => {
+    if ((e.textContent || '').trim().length > 40 || !(e.textContent || '').trim()) return;
+    if (STRUCK.test(e.tagName) || String(getComputedStyle(e).textDecorationLine || '').includes('line-through')) struck.add(i);
+  });
   const clone = root.cloneNode(true);
+  const twins = struck.size ? [...clone.querySelectorAll('*')] : [];
+  const wrapped = new Set();
+  for (const i of struck) {
+    const c = twins[i];
+    let up = c && c.parentElement;
+    while (up && !wrapped.has(up)) up = up.parentElement;
+    if (!c || up) continue;
+    wrapped.add(c); c.prepend('(was '); c.append(')');
+  }
   clone.querySelectorAll(DROP).forEach(n => n.remove());
   const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
   for (const c of chrome) {
@@ -1172,6 +1204,11 @@ const LOGIN_PROBE = `(() => {${DEEP}
     const exit = /log ?out|sign ?out|deconectare|ieșire/i;
     if (has(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
       && exit.test((el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '')))) return 'logout';
+    const SIGN_IN = /\\b(sign in|log in|login|intra in cont|autentificare|conectare|contul meu)\\b/i;
+    const fold = x => String(x || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ');
+    if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
+      && SIGN_IN.test(fold(el.innerText || el.textContent) + ' ' + fold(el.getAttribute('aria-label')))
+      && (!el.getAttribute('href') || /login|signin|sign-in|auth/i.test(el.getAttribute('href'))))) return null;
     if (has(el => el.matches(${JSON.stringify(PROFILE_SEL)}))) return 'profile';
     if (has(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
     return null;

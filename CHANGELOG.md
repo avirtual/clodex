@@ -64,6 +64,7 @@ blocks a release.
 - Browser pane: a password-change form on a signed-in page (e-bloc Setări) no longer triggers a sign-in hold (`signed in (password-change form)`); a short flat page reads its whole body instead of one row; a `--filter` count line must carry numbers (`Showing off…` is prose); a bare `Sort` button inside a column header is listed as `<Column>: Sort` (those buttons renumber once).
 - Browser pane: typing into a password field on a signed-in page (password-change form) is refused without holding the service or notifying the operator; a countdown written `19 : 49 : 05` keeps its number; `click --text` finds a suggestion whose text is split by highlight spans; `transfer`/`swap` are ⚠ only with a money or token word (`self-transfer flights`, `Airport transfer`, `swap-stations` are free).
 - Browser pane: a label with a ticking `19 : 49 : 05` countdown keeps its element number; a read whose article stops at a registration or pay wall says so (`wall: "Create an account to read the full story."`) instead of ending silently.
+- Browser pane: the `wall:` line quotes the gate sentence, ignores scripts and never fires on a page whose body class merely contains `meter`/`gate`; `login: signed in` is not claimed while a visible Sign in link is on the page; `Clear all filters` is not ⚠; a struck-through old price reads `(was 87,98 Lei)`.
 
 ## 5.112.2 — 2026-10-04
 

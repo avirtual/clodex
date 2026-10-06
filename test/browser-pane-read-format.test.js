@@ -698,6 +698,6 @@ test('read-format: --filter count line must carry numbers — "Showing off…" i
 test('read-format: a wall prints right after login: as a quoted line; no wall, no line', () => {
   const lines = formatRead({ ...RAW, wall: { text: 'Create an account to read the full story.', n: null } }, { service: 'utility' }).content.split('\n');
   const at = lines.findIndex((l) => l.startsWith('login: '));
-  assert.strictEqual(lines[at + 1], 'wall: "Create an account to read the full story." — the text above may stop here; sign-in or subscription is the operator\'s call');
+  assert.strictEqual(lines[at + 1], 'wall: "Create an account to read the full story." — the text below may stop here; sign-in or subscription is the operator\'s call');
   assert.ok(!fmt().content.split('\n').some((l) => l.startsWith('wall:')));
 });
