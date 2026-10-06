@@ -52,7 +52,7 @@ function segmentFor(status) {
   if (status.child === 'off') return null;
   if (status.child === 'unavailable') return { text: 'browser: unavailable', tip: 'The browser child crashed repeatedly; see the Clodex log.' };
   const list = Array.isArray(status.services) ? status.services : [];
-  const tip = list.length ? list.map((s) => `${s.name}: ${stateLabel(s)}${s.seat ? ` (${s.seat})` : ''}`).join('\n') : 'No browser windows open';
+  const tip = list.length ? list.map((s) => `${s.name}: ${stateLabel(s)}${s.openedBy || s.seat ? ` (${s.openedBy || s.seat})` : ''}`).join('\n') : 'No browser windows open';
   const more = list.length > 1 ? ` +${list.length - 1}` : '';
   const held = list.find((s) => s.state === 'held' && !s.operator);
   if (held) return { text: `browser: needs you (${held.name})${more}`, tip, accentClass: ATTENTION };
@@ -332,6 +332,7 @@ function activate(rhost) {
     r.appendChild(hs);
     r.appendChild(el('span', 'bp-login', loginText(s)));
     r.appendChild(el('span', 'bp-window', windowText(s)));
+    if (s.tabs && s.tabs.length) r.appendChild(el('span', 'bp-tabs', 'tabs: ' + s.tabs.map((t) => t.name.split(':')[1] + ' (' + t.state + ')').join(', ')));
     const acts = el('span', 'bp-actions');
     r.appendChild(acts);
     if (s.windowOpen) windowControls(acts, s.name, refill, { owner: hands, formHost: r });

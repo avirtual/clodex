@@ -478,6 +478,7 @@ function run(electron, ctx) {
   const gateMaxMs = Number((ctx && ctx.gateMaxMs) || 60000);
   const services = new Map();
   const opened = new Set();
+  const shut = new Map();
   let known = [];
   const chains = new Map();
   const partitions = new Set();
@@ -565,7 +566,7 @@ function run(electron, ctx) {
     svc.lock = lock.reduce(prev, ev);
     render(svc);
     if (prev.state === svc.lock.state && prev.reason === svc.lock.reason) return false;
-    send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), ...extra });
+    send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), openedBy: svc.openedBy, ...extra });
     return true;
   };
 
@@ -605,7 +606,7 @@ function run(electron, ctx) {
       const chain = item.getURLChain();
       const url = (chain && chain[0]) || '';
       let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
-      if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from) || waiters.find((x) => !x.url);
+      if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);
       if (w) drop(w);
       const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
       const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
@@ -669,6 +670,7 @@ function run(electron, ctx) {
       throw codedError('TOO_MANY_WINDOWS', `at most ${MAX_WINDOWS} service windows can be open — the operator can close one`);
     }
     opened.add(name);
+    shut.delete(name);
     const profile = profileOf(name);
     const ses = session.fromPartition('persist:' + profile);
     ses.setUserAgent(ses.getUserAgent().replace(/ (Clodex|Electron)\/\S+/g, ''));
@@ -719,7 +721,7 @@ function run(electron, ctx) {
     const svc = {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
-      policy: null, barMsg: null, lastDenied: null, blockedNav: null,
+      policy: null, barMsg: null, lastDenied: null, blockedNav: null, openedBy: null,
       origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '', numDir: path.join(data, 'numbers', profile), dirty: new Set(), saveTimer: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
@@ -822,7 +824,7 @@ function run(electron, ctx) {
   };
 
   const heldError = (svc) => codedError('HELD', TEXT.held(svc.name, svc.lock.reason));
-  const closedError = (name) => codedError('CLOSED', `the operator closed the ${name} window — open it again`);
+  const closedError = (name) => codedError('CLOSED', shut.has(name) ? `the ${name} window was closed by close ${shut.get(name)} — open it again` : `the operator closed the ${name} window — open it again`);
 
   const numOf = (svc) => numState(svc, svc.wc.getURL());
 
@@ -915,6 +917,7 @@ function run(electron, ctx) {
     if (hit) throw deniedError({ name }, url, hit, 'open');
     const created = !(have && !have.win.isDestroyed());
     const svc = openService(name);
+    if (created) svc.openedBy = frame.seat || null;
     svc.policy = policy;
     await svc.blank;
     const out = await mutating(svc, frame, `open ${url.slice(0, 80)}`, async () => {
@@ -1341,6 +1344,7 @@ function run(electron, ctx) {
     const tabs = tabOf(name) || !windowsOf(name).length ? [need(name)] : windowsOf(name);
     for (const svc of tabs) {
       if (svc.win.isDestroyed()) continue;
+      shut.set(svc.name, name);
       const closed = new Promise((resolve) => svc.win.once('closed', resolve));
       svc.win.hide();
       svc.win.close();
