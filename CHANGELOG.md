@@ -96,6 +96,7 @@ blocks a release.
 - Browser pane: controls under a modal dialog's backdrop are no longer listed in a default read (they keep their numbers; `read --all` lists them and the head line says how many are under the dialog), the README documents the read root (modal, drawer, `--main`), and a drawer without `role=dialog` (GitLab's work-item panel) is recognised by its geometry, with a classic scrollbar tolerated.
 - Muse seats on the PTY transport: `[agent:context compact]` and `[agent:context clear]` type the Muse TUI's `/compact` and `/clear` like Claude and Codex seats, instead of bouncing as unsupported.
 - Muse seats on the PTY transport: the briefing body after `[agent:context compact]` is injected when Muse's compaction lands, as it is for Claude seats, instead of expiring unseen.
+- Clodex MCP: each `mcp.log` line names what the call did beside the tool name — the browser tool logs its verb and service (`browser open x ok 9912ms`); a plugin declares which token-shaped arguments to log via `logKeys`, and anything else stays out of the log.
 
 ## 5.112.2 — 2026-10-04
 
