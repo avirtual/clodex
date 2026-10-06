@@ -60,6 +60,7 @@ blocks a release.
 - Browser pane: an element keeps its number when only its own state text or live numbers change (sort buttons that say "Activate to invert sorting", portfolio rows with ticking prices); sorted columns show `[sorted ↑]` and the current pagination page `[current]`; a filtered read keeps the "Showing n of N" line.
 - Browser pane: a sort button's third state (`remove sorting`) keeps its number and is not flagged ⚠; site notes accept `@/path?key=value` anchors (query-routed sites like e-bloc) and notes written for the current page surface before origin-wide ones.
 - Browser pane site notes: re-anchoring a note to another path is no longer refused as a duplicate (`already noted` now names the anchor); the `noted` reply says `as <seat>/agent` when the note was stamped from a subagent identity; a site-wide caution keeps one line on a page that has three notes of its own.
+- Browser pane: a label with dotted dates (`01.08.2026 - 31.08.2026`) keeps its number (dates are not live values); `--filter` keeps only a real count line; `[role=columnheader]` grids show `[sorted ↑/↓]`; site notes: no `notes: 0` line, `Continue`/`content` no longer trip the account-number filter, and a failed paged read does not mark notes as shown.
 
 ## 5.112.2 — 2026-10-04
 

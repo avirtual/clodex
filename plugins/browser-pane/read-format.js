@@ -17,7 +17,9 @@ const BLOCK_MAX = 8;
 const BULLET_RE = /^\s*[•-] /;
 const BACKREF_RE = /^(\W*?)(?:\^\s*)?(?:Jump up to:(?:\s+(?:[a-z]{1,2}|\^))*\s*|\^\s+)/;
 const WORD_BACK_MAX = 40;
-const COUNT_LINE_RE = /\b(showing|afisare|afișare|page \d+ of|\d+ of \d+ (entries|results|rezultate))/i;
+const COUNT_LINE_RE = /^(?:showing|afisare|afișare|page \d+ of|\d+ of \d+ (?:entries|results|rezultate)|\d+ ?[–-] ?\d+ of \d+)/i;
+const COUNT_LINE_MAX = 80;
+const isCountLine = (l) => { const t = unmark(l).trim(); return t.length <= COUNT_LINE_MAX && COUNT_LINE_RE.test(t); };
 
 function filterLines(lines, filter, { blocks = false } = {}) {
   if (!filter) return lines;
@@ -57,7 +59,7 @@ function filterLines(lines, filter, { blocks = false } = {}) {
     out.push(hit[i] ? l.replace(BACKREF_RE, '$1') : l);
     prev = i;
   });
-  const count = lines.findIndex((l, i) => !keep[i] && COUNT_LINE_RE.test(unmark(l)));
+  const count = lines.findIndex((l, i) => !keep[i] && isCountLine(l));
   if (out.length && count >= 0) out.push('', lines[count]);
   return out;
 }

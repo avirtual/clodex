@@ -186,3 +186,15 @@ test('readLines: a site-wide caution keeps a 4th line behind three page notes, o
   const fits = lines([page[0], page[1], mk('dddd', '*', 'caution', '2026-01-01')]);
   assert.deepStrictEqual(fits.map((l) => l.trim().slice(0, 4)), ['bbbb', 'aaaa', 'dddd']);
 });
+
+test('readLines: an origin with notes but none for this page prints no notes line, full or not', () => {
+  assert.deepStrictEqual(N.readLines('svc', { matched: [], total: 2, full: true }), []);
+  assert.deepStrictEqual(N.readLines('svc', { matched: [], total: 2, full: false }), []);
+});
+
+test('prepare: the account word is a whole word — Continue/content pass, cont/contul still refuse', () => {
+  assert.strictEqual(N.prepare('@* path: the Continue button 12345678').text, 'the Continue button 12345678');
+  assert.strictEqual(N.prepare('@* path: the content block 12345678').text, 'the content block 12345678');
+  assert.throws(() => N.prepare('@* path: cont 12345678 is the main one'), { message: N.TEXT.account });
+  assert.throws(() => N.prepare('@* path: contul 12345678 is the main one'), { message: N.TEXT.account });
+});

@@ -16,7 +16,7 @@ const PREFIX_RE = /^@(\S+)\s+([a-z]+):\s*(.*)$/s;
 const REF_RE = /\[(\d{1,7})\]/g;
 const CRED_RE = /\b(password|passwords|parol[aăe]|otp|one-time|cvv|pin)\b/i;
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.[a-z0-9-]/i;
-const ACCOUNT_WORD_RE = /account|cont|client|invoice|factur/i;
+const ACCOUNT_WORD_RE = /account|\bcont(?:ul|uri|urile)?\b|client|invoice|factur/i;
 const ACCOUNT_NEAR = 20;
 
 const TEXT = {
@@ -139,6 +139,7 @@ function moreLine(service, n) {
 function readLines(service, info) {
   if (!info || !info.total) return [];
   const k = info.matched.length;
+  if (!k) return [];
   if (!info.full) return [`notes: ${k} for this page (shown earlier; --notes to repeat)`];
   const shown = info.matched.slice(0, SHOW_MAX);
   const isWide = (n) => n.anchor === '*' && n.kind === 'caution';

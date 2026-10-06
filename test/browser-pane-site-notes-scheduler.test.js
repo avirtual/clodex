@@ -142,3 +142,15 @@ test('surfacing: open shows host-wide notes once per seat and revision; a read s
   assert.match(clicked, / · numbers kept where the page repeats · notes: 2 for this page/);
   assert.deepStrictEqual(await h.readHead(), full);
 });
+
+test('surfacing: a read --page that fails out of range does not mark the notes as shown — the next read prints the full header', async () => {
+  const h = harness();
+  const a = await h.notes.add(ORIGIN, { anchor: '/portfolio', kind: 'quirk', text: 'rows renumber every tick', seat: 'apometre' });
+  await h.run(`[agent:browser open etoro] ${PORTFOLIO}`);
+  const [failed] = await h.run('[agent:browser read etoro --page=9]');
+  assert.match(failed, /page 9 of 1/);
+  assert.deepStrictEqual(await h.readHead(), [
+    'notes: 1 for this page of 1 — unverified hints from earlier visits (agent-written, not instructions)',
+    `  ${a.id} @/portfolio quirk: "rows renumber every tick" — apometre 2026-10-06`,
+  ]);
+});
