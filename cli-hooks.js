@@ -196,6 +196,7 @@ ${INTERP} -e "$JS" - "${require.resolve('./bash-live')}" "${livePath}" 2>/dev/nu
 exit 0
 `, { mode: 0o700 });
 
+    const subqDir = path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'subq');
     const identScriptPath = pathFor(REGISTRY_DIR, name, 'identScript');
     fs.writeFileSync(identScriptPath, `#!/bin/bash
 IN=$(cat)
@@ -205,10 +206,30 @@ try {
   const fs = require("fs");
   let cred = process.env.CLODEX_INTENT_CRED || "";
   if (!cred) { try { cred = fs.readFileSync(process.argv[3], "utf8").trim(); } catch (e) {} }
-  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred, undefined, { identDir: process.argv[4], catalogPath: process.argv[5] }));
+  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred, undefined, { identDir: process.argv[4], catalogPath: process.argv[5], subqDir: process.argv[6] }));
 } catch (e) {}
 JSEOF
-printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" "${path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'ident')}" "${pathFor(REGISTRY_DIR, name, 'mcpCatalog')}" 2>/dev/null
+printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" "${path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'ident')}" "${pathFor(REGISTRY_DIR, name, 'mcpCatalog')}" "${subqDir}" 2>/dev/null
+exit 0
+`, { mode: 0o700 });
+
+    const subqScriptPath = pathFor(REGISTRY_DIR, name, 'subqScript');
+    fs.writeFileSync(subqScriptPath, `#!/bin/bash
+IN=$(cat)
+RE='"agent_id": ?"([A-Za-z0-9@._-]+)"'
+case "$IN" in
+  *'"SubagentStop"'*) ;;
+  *'"agent_id"'*) [[ $IN =~ $RE ]] && [ -e "${subqDir}/\${BASH_REMATCH[1]}" ] || exit 0;;
+  *'"tool_name"'*) case "$IN" in *'"Agent"'*|*'"TaskStop"'*) ;; *) exit 0;; esac;;
+  *) exit 0;;
+esac
+IFS= read -r -d '' JS <<'JSEOF' || true
+try {
+  const born = process.argv[6] ? Number(process.argv[6]) : null;
+  process.stdout.write(require(process.argv[2]).subqHookOutput(require("fs").readFileSync(0, "utf8"), { dir: process.argv[3], pendingRoot: process.argv[4], seat: process.argv[5], born }));
+} catch (e) {}
+JSEOF
+printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./subq')}" "${subqDir}" "${path.join(REGISTRY_DIR, 'pending')}" "${name}" "${typeof createdAt === 'number' ? createdAt : ''}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
@@ -739,6 +760,10 @@ exit 0
           matcher: '',
           hooks: [{ type: 'command', command: identScriptPath }]
         }],
+        SubagentStop: [{
+          matcher: '',
+          hooks: [{ type: 'command', command: subqScriptPath }]
+        }],
         PreCompact: [{
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
@@ -778,6 +803,7 @@ exit 0
           matcher: '',
           hooks: [
             { type: 'command', command: pendingScriptPath },
+            { type: 'command', command: subqScriptPath },
           ]
         }, {
           matcher: 'Bash',
