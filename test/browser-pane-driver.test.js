@@ -104,18 +104,26 @@ function pollRun(urls, gapMs = 200, { method = 'GET', other = false } = {}) {
   });
 }
 
-test('driver armIdle: a page GET-polling one path goes idle with the poll named; under three completions, a burst or POSTs it does not; another completion holds the quiet window', async () => {
+test('driver armIdle: a page polling up to three paths of any method goes idle with the polls named; under three completions, a burst or five rotating paths it does not; another completion holds the quiet window', async () => {
   const r = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4']);
   assert.strictEqual(r.ok, true);
-  assert.strictEqual(r.polls.path, 'https://x/api/poll');
+  assert.deepStrictEqual(r.polls.paths, ['https://x/api/poll']);
+  assert.ok(!('keys' in r.polls));
   assert.ok(Math.abs(r.polls.everyMs - 300) <= 50, String(r.polls.everyMs));
   const two = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2']);
   assert.strictEqual(two.ok, false);
   assert.strictEqual(two.reason, 'timeout');
   assert.ok(!('polls' in two));
   const posts = await pollRun(['https://x/graphql', 'https://x/graphql', 'https://x/graphql', 'https://x/graphql'], 200, { method: 'POST' });
-  assert.strictEqual(posts.ok, false);
-  assert.ok(!('polls' in posts));
+  assert.strictEqual(posts.ok, true);
+  assert.deepStrictEqual(posts.polls.paths, ['https://x/graphql']);
+  const rotate = await pollRun(Array.from({ length: 15 }, (_, i) => `https://x/p${i % 5}.txt?${i}`));
+  assert.strictEqual(rotate.ok, false);
+  assert.ok(!('polls' in rotate));
+  const pair = await pollRun(Array.from({ length: 8 }, (_, i) => `https://x/p${i % 2}.txt?${i}`));
+  assert.strictEqual(pair.ok, true);
+  assert.deepStrictEqual([...pair.polls.paths].sort(), ['https://x/p0.txt', 'https://x/p1.txt']);
+  assert.ok(Math.abs(pair.polls.everyMs - 600) <= 50, String(pair.polls.everyMs));
   const held = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4'], 200, { other: true });
   assert.strictEqual(held.ok, true);
   assert.ok(held.ms >= 500, String(held.ms));
@@ -124,8 +132,27 @@ test('driver armIdle: a page GET-polling one path goes idle with the poll named;
   assert.ok(!('polls' in burst));
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
   assert.ok(src.includes('const DONE_MAX = 64;'));
-  assert.ok(src.includes('if (!top || top[1] < 3) return null;'));
+  assert.ok(src.includes('const other = recent.filter((d) => !keys.has(d.method + \' \' + d.path)); if (other.length > tops.length) return null;'));
+  assert.ok(src.includes('.filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3);'));
   assert.ok(src.includes('const POLL_MIN_MS = 100;'));
+});
+
+test('driver armIdle: a timed-out wait names the top two requests completed in the last 2 s; with none it carries no held', async () => {
+  let t = 1000;
+  const { wc, sent, finished } = fakeWc();
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  const rows = [['POST', 'https://x/api/graphql'], ['GET', 'https://x/api/v1/x'], ['POST', 'https://x/api/graphql'], ['POST', 'https://x/api/graphql'], ['GET', 'https://x/api/v1/x?2'], ['POST', 'https://x/api/graphql']];
+  rows.forEach(([method, url], i) => { sent(`h${i}`, url, 'XHR', method); t += 50; finished(`h${i}`); t += 50; });
+  sent('open', 'https://x/api/slow');
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.held, { n: 6, top: [{ method: 'POST', path: 'https://x/api/graphql', n: 4 }, { method: 'GET', path: 'https://x/api/v1/x', n: 2 }] });
+  const bare = fakeWc();
+  const w2 = await driver.armIdle(bare.wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  bare.sent('open', 'https://x/api/slow');
+  const r2 = await w2.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r2.ok, false);
+  assert.ok(!('held' in r2));
 });
 
 test('driver armIdle: reset() forgets the finished requests a poll was detected from', async () => {

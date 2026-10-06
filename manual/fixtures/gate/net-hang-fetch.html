@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>net-hang-fetch</title></head><body>
+<main><h1>Portfolio</h1><p>After load the page starts one fetch that the server holds open for 90 s (a long-poll or a stuck analytics call); the DOM is quiet. Needs the hang server on port 8732.</p>
+<button type="button" onclick="document.getElementById('o').textContent='Opened the holding detail.'">Show detail</button><p id="o"></p></main>
+<script>addEventListener('load',()=>fetch('http://127.0.0.1:8732/hang').catch(()=>{}));</script>
+</body></html>

@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>cloaked-posts-div</title>
+<style>body{margin:0;font:15px sans-serif} main{max-width:700px;margin:0 auto} .topic-post,.post-stream--cloaked{border-bottom:1px solid #ccc;min-height:420px} .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style></head><body>
+<main><h1>Meter readings drift after the swap</h1><p>Live Discourse markup: a cloaked post is a div.post-stream--cloaked holding only its sr-only heading; the article exists only while the post is rendered.</p><div class="post-stream" id="ps"></div></main>
+<script>
+const posts=[1,2,3,4,5,6,7,8,9].map(i=>({n:i,u:'user'+i,b:'Post '+i+' body: reading '+(100+i*7)+' m³ on day '+i+'. '+'More detail about the meter, the association and the bill. '.repeat(3)}));
+const ps=document.getElementById('ps');
+for(const p of posts){const d=document.createElement('div');d.dataset.postNumber=p.n;d.innerHTML='<h2 class="sr-only">post by '+p.u+' on Oct '+p.n+'</h2>';ps.appendChild(d);}
+function render(){const top=scrollY-innerHeight, bot=scrollY+2*innerHeight;for(const p of posts){const d=ps.querySelector('[data-post-number="'+p.n+'"]');const y=d.offsetTop;const on=y+420>top&&y<bot;const a=d.querySelector('article');
+ if(on&&!a){d.className='topic-post';d.removeAttribute('id');d.style.height='';d.insertAdjacentHTML('beforeend','<article id="post_'+p.n+'"><h3>'+p.u+'</h3><div class="cooked"><p>'+p.b+'</p></div></article>');}
+ if(!on&&(a||!d.className)){d.className='post-stream--cloaked';d.id='post_'+p.n;d.style.height='420px';if(a)a.remove();}}}
+addEventListener('scroll',render);render();
+</script></body></html>
