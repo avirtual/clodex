@@ -254,6 +254,14 @@ function toCommand(intent) {
     throw new Error(`unknown subcommand '${sub}' — use ${SUBCOMMANDS.join(', ')}`);
   }
   if (sub === 'note') return noteCommand(toks, String((intent && intent.body) || '').trim());
+  if (sub !== 'click' && sub !== 'inspect') {
+    const at = qt.findIndex((x, i) => i > 0 && !x.q && /^--(for|filter|text|as|to)=./.test(x.t) && qt[i + 1] && !qt[i + 1].t.startsWith('--') && !/^\d+$/.test(qt[i + 1].t));
+    if (at > 0) {
+      const prev = qt[at].t;
+      const bad = qt[at + 1].t;
+      throw new Error(`unexpected '${bad}' for ${sub} — quote multi-word text: ${prev.split('=')[0]}="${prev.split('=').slice(1).join('=')} ${bad}"`);
+    }
+  }
   const { flags, positional } = splitArgs(sub, toks);
   if (sub === 'open') {
     const service = serviceArg(sub, positional, true);

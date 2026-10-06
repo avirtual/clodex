@@ -900,7 +900,7 @@ function run(electron, ctx) {
     }
   }
 
-  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [] });
+  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [], ...(idle.ticker ? { ticker: idle.ticker } : {}) });
   const actOpts = (svc) => ({ timeoutMs: ACT_IDLE_MS, shouldStop: () => svc.lock.takeover });
 
   async function opOpen(name, frame, args) {
@@ -1538,6 +1538,8 @@ function run(electron, ctx) {
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const frames = allFrames.filter((u) => !inlined.has(u));
+    const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;
+    frames.push(...Array(nestedN).fill('nested'));
     const login = challenged(await probe(svc), allFrames, wc.getTitle());
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
     return {
