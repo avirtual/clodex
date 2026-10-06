@@ -62,8 +62,23 @@ test('driver armIdle: the idle probe runs in the isolated world so a page that r
   assert.deepStrictEqual(wc.worlds, [4242]);
   assert.strictEqual(direct, 0);
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
-  assert.ok(src.includes('wc.executeJavaScriptInIsolatedWorld(worldId, [{ code: `new Promise(res => {'));
+  assert.ok(src.includes('worldId == null ? wc.executeJavaScript(code) : wc.executeJavaScriptInIsolatedWorld(worldId, [{ code }])'));
+  assert.ok(!src.includes('worldId = 0'));
   assert.ok(!src.includes('wc.executeJavaScript(`new Promise'));
+});
+
+test('driver armIdle: without a worldId the probe runs through wc.executeJavaScript (no isolated world is assumed)', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  const real = wc.executeJavaScript;
+  let direct = 0;
+  wc.executeJavaScript = async (code) => { direct++; return real(code); };
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  t += 1000;
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(wc.worlds, []);
+  assert.strictEqual(direct, 1);
 });
 
 test('driver act: the world id in its options reaches the idle probe', async () => {
@@ -179,6 +194,13 @@ test('driver armIdle: a timed-out wait names the top two requests completed in t
   const r2 = await w2.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r2.ok, false);
   assert.ok(!('held' in r2));
+  assert.ok(!('more' in r.held));
+  const tie = fakeWc();
+  const w4 = await driver.armIdle(tie.wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  [['POST', 'https://x/a'], ['GET', 'https://x/b'], ['GET', 'https://x/a'], ['POST', 'https://x/a'], ['GET', 'https://x/b'], ['GET', 'https://x/a']].forEach(([method, url], i) => { tie.sent(`q${i}`, url, 'XHR', method); t += 50; tie.finished(`q${i}`); t += 50; });
+  tie.sent('open', 'https://x/api/slow');
+  const r4 = await w4.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.deepStrictEqual(r4.held, { n: 6, more: 1, top: [{ method: 'GET', path: 'https://x/a', n: 2 }, { method: 'GET', path: 'https://x/b', n: 2 }] });
   const many = fakeWc();
   const w3 = await driver.armIdle(many.wc, { now: () => t, sleepFn: async () => { t += 100; } });
   for (let i = 0; i < 64; i++) { many.sent(`m${i}`, 'https://x/api/graphql', 'XHR', 'POST'); t += 10; many.finished(`m${i}`); t += 10; }

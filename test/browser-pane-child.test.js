@@ -669,7 +669,7 @@ test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its
   const cut = "if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; }";
   const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
   const read = scripts.READ_TEXT(false);
-  const readZip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden) '); twin.append(' (end hidden)'); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true)));";
+  const readZip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden)\\n'); twin.append('\\n(end hidden)'); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true)));";
   assert.ok(read.includes(readZip));
   assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
@@ -690,10 +690,10 @@ test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
 
 test('page scripts: READ_TEXT tags the top element faded by its own opacity:0 as (hidden), after the struck pass', () => {
   const src = scripts.READ_TEXT(false);
-  assert.ok(src.includes("else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden) '); twin.append(' (end hidden)'); }"));
+  assert.ok(src.includes("else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden)\\n'); twin.append('\\n(end hidden)'); }"));
   assert.ok(src.includes("twin.setAttribute('data-cxb-cut', ''); twin.textContent = '';"));
   assert.ok(scripts.PAGE_TEXT.includes("twin.setAttribute('data-cxb-cut', ''); twin.textContent = '';"));
-  assert.ok(src.indexOf("twin.prepend('(hidden) ')") > src.indexOf("c.prepend('(was ')"));
+  assert.ok(src.indexOf("twin.prepend('(hidden)\\n')") > src.indexOf("c.prepend('(was ')"));
 });
 
 test('page scripts: a filter or search reset is not deletion; Delete account and Remove item still are', () => {

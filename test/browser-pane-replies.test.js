@@ -564,6 +564,14 @@ test('replies: the --filter hint skips stop words and needs a word shared by two
   assert.doesNotMatch(hint(['View posts', 'View more posts', 'Show more posts']), /--filter/);
 });
 
+test('replies: a cut that hid a heading names it as the first --filter hint and drops the word hint', () => {
+  const hint = (cutHeading) => R.readReply('wiki', { ...formatRead({ ...BIG, outline: { headings: ['Trending', 'Trending in Romania'], landmarks: [] } }, { service: 'wiki' }), cutHeading }, '/t/r.txt', 'claude', { attach: false }).split('\n').find((l) => l.startsWith('  hint:'));
+  const cut = hint('Erforderliche Unterlagen');
+  assert.match(cut, /^ {2}hint: --filter="Erforderliche Unterlagen"( · |$)/);
+  assert.strictEqual(cut.split('--filter').length, 2);
+  assert.match(hint(null), /^ {2}hint: --filter=trending · /);
+});
+
 test('replies: a path-only screenshot is the plain path, no digest; codex keeps its tail', () => {
   const r = { width: 1280, height: 900 };
   assert.strictEqual(R.screenshotReply('ebloc', r, '/tmp/s.jpg', 'claude', false), '[agent:browser] screenshot ebloc 1280×900 → /tmp/s.jpg');
@@ -644,8 +652,10 @@ test('replies: an idle that ignored network polling names the polled path; a pol
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: ['https://x/y'], polls }), `${head}still busy after 15s (1 requests in flight: https://x/y)`);
   assert.strictEqual(reply({ ok: true, ms: 2100, polls: { paths: ['https://x/p0.txt', 'https://x/p1.txt'], everyMs: 300 } }), `${head}idle 2.1s · polls ignored: https://x/p0.txt, https://x/p1.txt every ~0.3 s`);
   const held = { n: 14, top: [{ method: 'POST', path: 'https://x/api/graphql', n: 8 }, { method: 'GET', path: 'https://x/api/v1/x', n: 6 }] };
-  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held }), `${head}still busy after 15s (network: 14 req in 2 s — POST https://x/api/graphql ×8, GET https://x/api/v1/x ×6)`);
-  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, n: 64, full: true } }), `${head}still busy after 15s (network: 64+ req in 2 s — POST https://x/api/graphql ×8, GET https://x/api/v1/x ×6)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held }), `${head}still busy after 15s (network: 14 req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, more: 3 } }), `${head}still busy after 15s (network: 14 req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6, +3 more)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { n: 2, top: [{ method: 'GET', path: 'blob:x', n: 2 }] } }), `${head}still busy after 15s (network: 2 req in 2 s — GET blob:x ×2)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, n: 64, full: true } }), `${head}still busy after 15s (network: 64+ req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], churn: ['div#app'], held }), `${head}still busy after 15s (DOM churn: div#app)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], polls, held }), `${head}still busy after 15s (network polls: https://x/api/poll every ~0.3 s)`);
 });

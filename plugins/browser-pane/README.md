@@ -189,7 +189,7 @@ ipc handlers (step 12).
 - **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
   a matching table row with its table's header row, or a matching line with its
   paragraph (or the line before and after it when the paragraph is long); a
-  matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows.
+  matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows. The default read's hint names the first heading its 1,200-char cut hid, as `--filter="<heading>"`.
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
   hidden. `read --all` shows everything, the full text included. Text inside forms is

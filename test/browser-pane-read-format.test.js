@@ -84,6 +84,14 @@ test('read-format: a text longer than 1,200 chars shows only its head on page 1'
   assert.strictEqual(body[2], '== elements ==');
 });
 
+test('read-format: the cut names the first outline heading it hid; none when nothing is cut or the heading is not in the outline', () => {
+  const lines = Array.from({ length: 20 }, (_v, i) => (i === 0 ? 'Intro' : i === 14 ? 'Erforderliche Unterlagen' : 'y'.repeat(100)));
+  const outline = { headings: ['Intro', 'Erforderliche Unterlagen'], landmarks: [] };
+  assert.strictEqual(formatRead({ ...RAW, text: lines.join('\n'), outline }, { service: 'utility' }).cutHeading, 'Erforderliche Unterlagen');
+  assert.strictEqual(formatRead({ ...RAW, text: lines.slice(0, 5).join('\n'), outline }, { service: 'utility' }).cutHeading, null);
+  assert.strictEqual(formatRead({ ...RAW, text: lines.join('\n'), outline: { headings: ['Intro', 'Elsewhere'], landmarks: [] } }, { service: 'utility' }).cutHeading, null);
+});
+
 test('read-format: 700 links of 200 chars page into 15 pages at the default cap', () => {
   const LINE = 200;
   const elements = [];
