@@ -70,7 +70,9 @@ test('read-format: login and frames lines report the raw probe', () => {
     { service: 'utility' });
   const lines = out.content.split('\n');
   assert.strictEqual(lines[4], 'login: password field');
-  assert.strictEqual(lines[5], 'frames: 2 not read (billing.example/f, …)');
+  assert.strictEqual(lines[5], 'frames: 2 not read (billing.example/f, b.example/)');
+  const four = formatRead({ ...RAW, frames: ['https://a.example/', 'https://b.example/', 'nested', 'nested'] }, { service: 'utility' });
+  assert.strictEqual(four.content.split('\n').find((l) => l.startsWith('frames:')), 'frames: 4 not read (a.example/, b.example/, nested, …)');
 });
 
 test('read-format: a text longer than 1,200 chars shows only its head on page 1', () => {

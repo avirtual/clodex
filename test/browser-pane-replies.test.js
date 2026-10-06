@@ -623,3 +623,12 @@ test('replies: an idle that ignored a repainting ticker names it', () => {
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle: { ok: true, ms: 2100, ticker: 'span#clock' } }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 2.1s · ticker ignored: span#clock');
 });
+
+test('replies: a churn timeout names the churning nodes unless requests are in flight', () => {
+  const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
+  const head = '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · ';
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle: { ok: false, ms: 15000, inflight: [], churn: ['div#app', 'span.price'] } }),
+    `${head}still busy after 15s (DOM churn: div#app, span.price)`);
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle: { ok: false, ms: 15000, inflight: ['https://x/y'], churn: ['div#app'] } }),
+    `${head}still busy after 15s (1 requests in flight: https://x/y)`);
+});

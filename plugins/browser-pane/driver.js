@@ -26,7 +26,7 @@ async function emulateFocus(wc) {
   await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
 }
 
-async function armIdle(wc, { network = true, now = Date.now } = {}) {
+async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } = {}) {
   const dbg = attachCdp(wc);
   await dbg.sendCommand('Page.enable');
   await dbg.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true });
@@ -84,7 +84,7 @@ async function armIdle(wc, { network = true, now = Date.now } = {}) {
             return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}) };
           }
         }
-        await sleep(100);
+        await sleepFn(100);
       }
     } finally {
       detach();

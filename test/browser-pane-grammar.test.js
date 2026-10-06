@@ -119,6 +119,8 @@ const ROWS = [
   ['[agent:browser scroll utility --for=a b]', { error: 'unknown flag --for for scroll — valid: --pages' }],
   ['[agent:browser read utility --text=yes foo]', { error: '--text takes no value' }],
   ['[agent:browser read utility --filter=heat meter]', { error: "unexpected 'meter' for read — quote multi-word text: --filter=\"heat meter\"" }],
+  ['[agent:browser read --filter=pdf t56]', { error: "unexpected 't56' for read — put the service first: read t56 --filter=pdf" }],
+  ['[agent:browser wait --for=Done utility]', { error: "unexpected 'utility' for wait — put the service first: wait utility --for=Done" }],
   ['[agent:browser wait --ms=99999999]', { sub: 'wait', service: null, ms: 1800000, forText: null, sleep: true }],
   ['[agent:browser wait utility --ms=2000]', { sub: 'wait', service: 'utility', ms: 2000, forText: null, sleep: true }],
   ['[agent:browser wait --idle --ms=2000]', { sub: 'wait', service: null, ms: 2000, forText: null }],
