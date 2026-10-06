@@ -6,6 +6,8 @@ const grammar = require('./grammar');
 const { createClient, OP_DEADLINE_MS } = require('./client');
 const { createScheduler, attachBudget, WAIT_MAX_MS, DOWNLOAD_OP_MS, ATTACH_MIN, ATTACH_MAX } = require('./scheduler');
 const replies = require('./replies');
+const subagentPolicy = require('./subagent');
+const mcpTool = require('./mcp-tool');
 const urlpolicy = require('./urlpolicy');
 const siteNotes = require('./site-notes');
 const { hostOf } = require('./read-format');
@@ -216,6 +218,8 @@ function activate(host) {
       return Object.hasOwn(OP_DEADLINE_MS, op) ? OP_DEADLINE_MS[op] + 5000 : null;
     },
     classifyReply: replies.classifyReply,
+    tools: [mcpTool.TOOL],
+    subagent: subagentPolicy,
   });
   host.sessions.onExit((h) => scheduler.onSessionExit(h));
   const operatorOp = (op) => (service) => {
