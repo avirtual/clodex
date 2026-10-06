@@ -5450,6 +5450,19 @@ input.env-locked {
   color: var(--text-dim);
   white-space: nowrap;
 }
+.inbox-delete {
+  margin-left: 6px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+.inbox-delete:hover {
+  color: var(--text);
+}
 .inbox-body {
   font-size: 12px;
   color: var(--text-dim);
@@ -30629,6 +30642,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
         ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ""}
         <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
       `;
+            const del = document.createElement("button");
+            del.className = "inbox-delete";
+            del.type = "button";
+            del.title = "Delete this note";
+            del.textContent = "\xD7";
+            del.addEventListener("click", async (ev) => {
+              ev.stopPropagation();
+              try {
+                await window.api.removeNotification(note.id);
+              } catch {
+                return;
+              }
+              await renderList();
+              await refreshBadge();
+            });
+            head.appendChild(del);
             el.appendChild(head);
             el.appendChild(renderBody(note));
             el.addEventListener("click", async () => {
