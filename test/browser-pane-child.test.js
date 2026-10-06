@@ -904,7 +904,8 @@ test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', (
   assert.ok(!scrollCode('down', 1).includes('data-cxb-scroller'));
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(src.includes("const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);"));
-  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;'));
+  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER(dir)) : null;'));
+  assert.ok(src.includes('const measureInner = async () => { const d = await measure(); const sc = d && await inMain(wc, scripts.SCROLLER_INFO); return d && sc ? { ...sc, items: d.items } : null; };'));
   assert.ok(src.includes('await inMain(wc, scrollCode(dir, pages, inner));'));
   assert.ok(src.includes('...(inner ? { scroller: scroller.label } : {}),'));
 });
@@ -932,7 +933,7 @@ test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element
       setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
     };
   };
-  const run = (els, old = []) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER}`)(
+  const run = (els, old = []) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER('down')}`)(
     { querySelectorAll: (s) => (s === '*' ? els : old) }, (e) => ({ overflowY: e.overflowY }), 1200, 800);
   const small = mk('code', 300, 100, 'auto', 900, 100);
   const big = mk('list', 1000, 600, 'auto', 6000, 600);
@@ -944,6 +945,34 @@ test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element
   assert.ok('data-cxb-scroller' in big.attrs);
   assert.ok(!('data-cxb-scroller' in prev.attrs));
   assert.strictEqual(run([hidden, short]), null);
+});
+
+test('page scripts: MAIN_SCROLLER skips a candidate already at the requested end, the page body and one under a tenth of the viewport', () => {
+  const mk = (id, w, h, scrollTop, scrollHeight, clientHeight) => {
+    const attrs = {};
+    return {
+      id, tagName: 'DIV', classList: [], scrollTop, scrollHeight, clientHeight, overflowY: 'auto', attrs,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h, right: w, bottom: h }),
+      setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    };
+  };
+  const run = (els, dir, docEls = {}) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER(dir)}`)(
+    { querySelectorAll: (s) => (s === '*' ? els : []), ...docEls }, (e) => ({ overflowY: e.overflowY }), 1200, 800);
+  const column = mk('col', 1200, 800, 5200, 6000, 800);
+  const vp = mk('vp', 600, 400, 0, 9000, 400);
+  assert.strictEqual(run([column, vp], 'down').label, 'div#vp');
+  assert.ok('data-cxb-scroller' in vp.attrs && !('data-cxb-scroller' in column.attrs));
+  assert.strictEqual(run([column, vp], 'up').label, 'div#col');
+  assert.strictEqual(run([column, vp], 'bottom').label, 'div#vp');
+  assert.strictEqual(run([column, vp], 'top').label, 'div#col');
+  const tiny = mk('tiny', 300, 300, 0, 900, 300);
+  assert.strictEqual(run([column, tiny], 'down'), null);
+  const body = mk('body', 1200, 800, 0, 6000, 800);
+  assert.strictEqual(run([body], 'down', { body }), null);
+  assert.strictEqual(run([body], 'down', { documentElement: body }), null);
+  assert.strictEqual(run([body], 'down', { scrollingElement: body }), null);
+  assert.ok(!('data-cxb-scroller' in body.attrs));
+  assert.strictEqual(run([body], 'down').label, 'div#body');
 });
 
 function visOf(view = {}) {

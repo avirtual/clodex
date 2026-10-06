@@ -1070,13 +1070,9 @@ function run(electron, ctx) {
       const doc = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
       const forward = dir === 'down' || dir === 'bottom';
       const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);
-      const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;
+      const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER(dir)) : null;
       const inner = !!scroller;
-      const measureInner = async () => {
-        const d = await measure();
-        const sc = d && await inMain(wc, scripts.MAIN_SCROLLER);
-        return d && sc ? { ...sc, items: d.items } : null;
-      };
+      const measureInner = async () => { const d = await measure(); const sc = d && await inMain(wc, scripts.SCROLLER_INFO); return d && sc ? { ...sc, items: d.items } : null; };
       const before = inner ? { ...scroller, items: doc.items } : doc;
       const pre = await preAct(svc, null);
       const { idle } = await driver.act(wc, async () => {

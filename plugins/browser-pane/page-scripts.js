@@ -402,21 +402,25 @@ const SCROLL_INFO = `(() => {
   return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
 })()`;
 
-const MAIN_SCROLLER = `(() => {
+const MAIN_SCROLLER = (dir) => `(() => {
   for (const e of document.querySelectorAll('[data-cxb-scroller]')) e.removeAttribute('data-cxb-scroller');
   let best = null;
   let area = 0;
   for (const e of [...document.querySelectorAll('*')].slice(0, 3000)) {
     if (e.scrollHeight <= e.clientHeight + 40 || !/^(auto|scroll)$/.test(getComputedStyle(e).overflowY)) continue;
+    if (e === document.documentElement || e === document.body || e === document.scrollingElement) continue;
+    const fwd = ${JSON.stringify(dir === 'down' || dir === 'bottom')}; if (fwd ? e.scrollTop + e.clientHeight >= e.scrollHeight - 2 : e.scrollTop <= 1) continue;
     const r = e.getBoundingClientRect();
     const a = r.width * r.height;
-    if (a > area && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) { best = e; area = a; }
+    if (a > area && a >= innerWidth * innerHeight / 10 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) { best = e; area = a; }
   }
   if (!best) return null;
   best.setAttribute('data-cxb-scroller', '');
   const label = best.tagName.toLowerCase() + (best.id ? '#' + best.id : '') + (best.classList[0] ? '.' + best.classList[0] : '');
   return { y: Math.round(best.scrollTop), height: Math.round(best.scrollHeight), vh: Math.round(best.clientHeight), label };
 })()`;
+
+const SCROLLER_INFO = `(() => { const el = document.querySelector('[data-cxb-scroller]'); if (!el) return null; return { y: Math.round(el.scrollTop), height: Math.round(el.scrollHeight), vh: Math.round(el.clientHeight) }; })()`;
 
 const BUSY = `
   const busyScan = () => {
@@ -1771,7 +1775,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
