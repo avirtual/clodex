@@ -403,6 +403,7 @@ clodexctl-tok-
 clodexctl-undeploy-t-
 clodexctl-up-t-
 clx-accounts-
+clx-mcpcat-
 clx-accounts-create-
 clx-accounts-global-
 clx-accounts-global-ud-

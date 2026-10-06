@@ -103,7 +103,7 @@ test('intent-socket.js names no plugin: no browser literal in the source', () =>
 });
 
 function mkManager() {
-  const root = mkTmpRoot('clx-mcpcat-sm-');
+  const root = mkTmpRoot('clx-mcpcat-');
   const store = new Map();
   const persistence = {
     list: () => [...store.values()],
@@ -271,7 +271,7 @@ test('ipc: setIntents, setPlugins and setPluginGrants each refresh the seat cata
 test('plugin host: activate and deactivate tell the manager to refresh every seat catalog', () => {
   const { createPluginHostEngine } = require('../plugin-host-engine');
   const { HOST_API_VERSION } = require('../plugin-api');
-  const dir = mkTmpRoot('clx-mcpcat-host-');
+  const dir = mkTmpRoot('clx-mcpcat-');
   let calls = 0;
   const engine = createPluginHostEngine({
     manager: {
