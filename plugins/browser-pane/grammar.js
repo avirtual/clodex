@@ -224,7 +224,7 @@ function historyCommand(sub, positional, body) {
   return { sub, service: serviceArg(sub, positional, false) };
 }
 
-const NOTE_USAGE = 'note needs "@<anchor> <kind>: <text>" — anchor * or a path, kind path|quirk|caution';
+const NOTE_USAGE = 'note needs "@<anchor> <kind>: <text>" — anchor * or a path (a ?key=value query is allowed), kind path|quirk|caution';
 
 function noteCommand(toks, body) {
   const args = [];

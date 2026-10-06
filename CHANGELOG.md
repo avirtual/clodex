@@ -57,6 +57,7 @@ blocks a release.
 - Browser pane: a radio or checkbox hidden behind its label (GOV.UK, Bootstrap custom controls) is listed as the choice with its state, and clicking the label replies `checked now`.
 - Browser pane: site notes — an agent leaves per-site hints with `[agent:browser note <service>] @<path|*> path|quirk|caution: <text>`; later visits by any seat see them once on open and on the first read of a page, labelled as unverified observations.
 - Browser pane: an element keeps its number when only its own state text or live numbers change (sort buttons that say "Activate to invert sorting", portfolio rows with ticking prices); sorted columns show `[sorted ↑]` and the current pagination page `[current]`; a filtered read keeps the "Showing n of N" line.
+- Browser pane: a sort button's third state (`remove sorting`) keeps its number and is not flagged ⚠; site notes accept `@/path?key=value` anchors (query-routed sites like e-bloc) and notes written for the current page surface before origin-wide ones.
 
 ## 5.112.2 — 2026-10-04
 

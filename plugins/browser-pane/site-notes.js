@@ -20,7 +20,7 @@ const ACCOUNT_WORD_RE = /account|cont|client|invoice|factur/i;
 const ACCOUNT_NEAR = 20;
 
 const TEXT = {
-  usage: 'note needs "@<anchor> <kind>: <text>" — anchor * or a path, kind path|quirk|caution',
+  usage: 'note needs "@<anchor> <kind>: <text>" — anchor * or a path (a ?key=value query is allowed), kind path|quirk|caution',
   intent: 'a note cannot carry an intent',
   credentials: 'a note should not mention credentials — describe the step, not the field',
   account: 'a note describes the site, never your account — no balances, names, invoice numbers or ids that belong to one login',
@@ -46,6 +46,10 @@ function originKey(url) {
 
 function pathOf(url) {
   try { return new URL(String(url || '')).pathname; } catch { return '/'; }
+}
+
+function searchOf(url) {
+  try { return new URL(String(url || '')).search; } catch { return ''; }
 }
 
 function fileName(origin) {
@@ -87,10 +91,19 @@ function trimSlash(p) {
   return p.length > 1 ? p.replace(/\/+$/, '') : p;
 }
 
-function anchorMatches(anchor, pathname) {
+function queryMatches(query, search) {
+  if (!query) return true;
+  const page = new URLSearchParams(String(search || ''));
+  for (const [k, v] of new URLSearchParams(query)) if (page.get(k) !== v) return false;
+  return true;
+}
+
+function anchorMatches(anchor, pathname, search = '') {
   if (anchor === '*') return true;
+  const q = anchor.indexOf('?');
+  if (q >= 0 && !queryMatches(anchor.slice(q + 1), search)) return false;
   const p = trimSlash(String(pathname || '/'));
-  const a = trimSlash(anchor);
+  const a = trimSlash(q >= 0 ? anchor.slice(0, q) : anchor);
   if (!a.includes('*')) return a === p;
   const re = new RegExp(`^${a.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`);
   return re.test(p);
@@ -98,19 +111,21 @@ function anchorMatches(anchor, pathname) {
 
 function validAnchor(anchor) {
   if (anchor === '*') return true;
-  return anchor.length <= ANCHOR_MAX && /^\/[^\s?#]*$/.test(anchor);
+  return anchor.length <= ANCHOR_MAX && /^\/[^\s?#]*(\?[\w.-]+=[\w.-]*(&[\w.-]+=[\w.-]*)*)?$/.test(anchor);
 }
 
-function sortNotes(notes) {
+function sortNotes(notes, pageFirst = false) {
   const order = notes.map((n, i) => ({ n, i }));
-  order.sort((x, y) => (x.n.kind === 'caution' ? 0 : 1) - (y.n.kind === 'caution' ? 0 : 1)
+  const tier = (n) => (pageFirst && n.anchor === '*' ? 1 : 0);
+  order.sort((x, y) => tier(x.n) - tier(y.n)
+    || (x.n.kind === 'caution' ? 0 : 1) - (y.n.kind === 'caution' ? 0 : 1)
     || (x.n.date < y.n.date ? 1 : x.n.date > y.n.date ? -1 : 0)
     || y.i - x.i);
   return order.map((o) => o.n);
 }
 
-function matching(notes, pathname) {
-  return sortNotes(notes.filter((n) => anchorMatches(n.anchor, pathname)));
+function matching(notes, pathname, search = '') {
+  return sortNotes(notes.filter((n) => anchorMatches(n.anchor, pathname, search)), true);
 }
 
 function shownLine(note) {
@@ -267,6 +282,6 @@ function createStore({ dir, files = nodeFiles, now = () => Date.now(), newId = r
 }
 
 module.exports = {
-  createStore, originKey, pathOf, fileName, formatLine, parseLine, parseFile, formatFile, anchorMatches, sortNotes, matching,
+  createStore, originKey, pathOf, searchOf, fileName, formatLine, parseLine, parseFile, formatFile, anchorMatches, sortNotes, matching,
   shownLine, readLines, openParts, prepare, elementLabel, screen, TEXT, KINDS, CAP, TEXT_MAX, SHOW_MAX, ID_RE,
 };

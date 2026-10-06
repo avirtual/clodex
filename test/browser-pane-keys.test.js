@@ -78,6 +78,8 @@ test('keys: counterMask blanks a count next to a counter word; amounts and dates
 test('keys: a control keyed without its sort/selection state suffix and a live-price row without its numbers; a lone integer stays identity', () => {
   const k = (label, kind = 'button') => K.keyOf({ kind, label, href: '' });
   assert.strictEqual(k('Age: Activate to sort'), k('Age: Activate to invert sorting'));
+  assert.strictEqual(k('Age: Activate to remove sorting'), k('Age: Activate to sort'));
+  assert.strictEqual(k('Age: Activate to remove sorting'), k('Age: Activate to invert sorting'));
   assert.notStrictEqual(k('Age: Activate to sort'), k('Name: Activate to sort'));
   assert.strictEqual(k('Price: ascending'), k('Price: descending'));
   assert.strictEqual(k('Name sorted ascending'), k('Name'));

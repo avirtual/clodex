@@ -157,7 +157,7 @@ const ROWS = [
   ['[agent:browser note etoro --forget ab1k]', { error: '--forget needs a note id from note --list, e.g. --forget ab3k' }],
   ['[agent:browser note etoro --list] x', { error: 'note --list takes no text after the bracket' }],
   ['[agent:browser note etoro --list --forget ab3k]', { error: '--list and --forget cannot be combined' }],
-  ['[agent:browser note etoro]', { error: 'note needs "@<anchor> <kind>: <text>" — anchor * or a path, kind path|quirk|caution' }],
+  ['[agent:browser note etoro]', { error: 'note needs "@<anchor> <kind>: <text>" — anchor * or a path (a ?key=value query is allowed), kind path|quirk|caution' }],
   ['[agent:browser read --notes]', { ...READ, notes: true }],
 ];
 

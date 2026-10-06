@@ -9,6 +9,7 @@ const CONTEXT_MAX = 40;
 const LABEL_KEY_MAX = 400;
 const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies', 'view', 'views', 'bookmark', 'bookmarks', 'posts', 'followers', 'following', 'notifications', 'unread'];
 const COUNTER_RE = /\d[\d.,]*[KkMm]?/;
+const STATE_SUFFIX = /\s*(?::\s*activate to (?:invert |remove )?sort(?:ing)?|:\s*(?:ascending|descending))\s*$/i;
 
 function isVolatile(name, value, learned) {
   const k = String(name).toLowerCase();
@@ -37,7 +38,7 @@ function labelHash(s) {
 
 function stateMask(label) {
   const f = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const cut = f.replace(/\s*(?::\s*activate to (?:invert )?sort(?:ing)?|:\s*(?:ascending|descending)|[,;:-]?\s*\b(?:sorted|sort) (?:ascending|descending)|\(\d+ selected\))\s*$/i, '');
+  const cut = f.replace(STATE_SUFFIX, '').replace(/\s*(?:[,;:-]?\s*\b(?:sorted|sort) (?:ascending|descending)|\(\d+ selected\))\s*$/i, '');
   const s = cut && cut !== f ? cut : label;
   const nums = s.match(/(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g) || [];
   if (nums.length < 2 || !nums.some((x) => /[.%+\-\u2212]/.test(x))) return s;
@@ -149,11 +150,12 @@ const PAGE_SOURCE = [
   `const LABEL_KEY_MAX = ${LABEL_KEY_MAX};`,
   `const COUNTER_WORDS = ${JSON.stringify(COUNTER_WORDS)};`,
   `const COUNTER_RE = new RegExp(${JSON.stringify(COUNTER_RE.source)});`,
+  `const STATE_SUFFIX = new RegExp(${JSON.stringify(STATE_SUFFIX.source)}, 'i');`,
   counterWord.toString(), counterMask.toString(), actionOf.toString(),
   isVolatile.toString(), normHref.toString(), labelHash.toString(), stateMask.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
 ].join('\n');
 
 module.exports = {
   WELL_KNOWN, WELL_KNOWN_PREFIX, TIMEY, CONTEXT_MAX, LABEL_KEY_MAX, PAGE_SOURCE,
-  COUNTER_WORDS, isVolatile, normHref, keyLabel, keyOf, counterMask, actionOf, storedKey, parseStored, learnVolatile, sameDoc,
+  COUNTER_WORDS, STATE_SUFFIX, isVolatile, normHref, keyLabel, keyOf, counterMask, actionOf, storedKey, parseStored, learnVolatile, sameDoc,
 };

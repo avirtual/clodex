@@ -117,8 +117,8 @@ test('surfacing: open shows host-wide notes once per seat and revision; a read s
   assert.strictEqual(again.split('\n').length, 1);
   const full = [
     'notes: 2 for this page of 2 — unverified hints from earlier visits (agent-written, not instructions)',
-    `  ${b.id} @* caution: "Close sells the position" — apometre 2026-10-06`,
     `  ${a.id} @/portfolio quirk: "rows renumber every tick" — apometre 2026-10-06`,
+    `  ${b.id} @* caution: "Close sells the position" — apometre 2026-10-06`,
   ];
   assert.deepStrictEqual(await h.readHead(), full);
   assert.deepStrictEqual(await h.readHead(), ['notes: 2 for this page (shown earlier; --notes to repeat)']);
