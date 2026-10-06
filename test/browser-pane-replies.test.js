@@ -654,7 +654,7 @@ test('replies: an idle that ignored network polling names the polled path; a pol
   const held = { n: 14, top: [{ method: 'POST', path: 'https://x/api/graphql', n: 8 }, { method: 'GET', path: 'https://x/api/v1/x', n: 6 }] };
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held }), `${head}still busy after 15s (network: 14 req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, more: 3 } }), `${head}still busy after 15s (network: 14 req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6, +3 more)`);
-  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { n: 2, top: [{ method: 'GET', path: 'blob:x', n: 2 }] } }), `${head}still busy after 15s (network: 2 req in 2 s — GET blob:x ×2)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { n: 2, top: [{ method: 'GET', path: '/api/rel', n: 2 }] } }), `${head}still busy after 15s (network: 2 req in 2 s — GET /api/rel ×2)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, n: 64, full: true } }), `${head}still busy after 15s (network: 64+ req in 2 s — POST /api/graphql ×8, GET /api/v1/x ×6)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], churn: ['div#app'], held }), `${head}still busy after 15s (DOM churn: div#app)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], polls, held }), `${head}still busy after 15s (network polls: https://x/api/poll every ~0.3 s)`);
