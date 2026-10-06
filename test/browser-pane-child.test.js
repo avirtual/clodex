@@ -770,7 +770,8 @@ test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or 
   assert.strictEqual(run([frame(v2, box(304, 78))], sorry).captcha, true, 'a sparse page with nothing else to fill');
   assert.strictEqual(run([frame(v2, box(304, 78)), name], sorry).captcha, false, 'a visible field to fill');
   assert.strictEqual(run([frame(v2, box(304, 78))], 'x'.repeat(700)).captcha, false, 'a 700-char body');
-  assert.ok(scripts.LOGIN_PROBE.includes('const sparse = body.trim().length < 600 && !fillable;'));
+  assert.strictEqual(run([frame('https://challenges.cloudflare.com/x', box(300, 65))], sorry).captcha, false, 'a Cloudflare frame is left to the title rule');
+  assert.ok(scripts.LOGIN_PROBE.includes("const sparse = body.trim().length < 600 && !fillable && captchaFrames.some(el => !/challenges\\.cloudflare\\.com/.test(el.src || ''));"));
   assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big) || sparse)),'));
 });
 
@@ -930,6 +931,7 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
   assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box);"));
+  assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');

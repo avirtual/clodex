@@ -453,7 +453,8 @@ function readText(main) {
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
-  if (!forced && (!root || (root.innerText || '').length < 200)) {
+  const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
+  if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
     let best = document.body, bs = -1;
     document.querySelectorAll('div,section,td').forEach(el => {
       const s = score(el); if (s > bs) { bs = s; best = el; }
@@ -1378,7 +1379,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const captchaFrames = deepAll(document, el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '') && !/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')).filter(vis);
   const big = el => { const r = el.getBoundingClientRect(); return r.width * r.height >= innerWidth * innerHeight / 4; };
   const fillable = any(el => el.tagName === 'INPUT' && !['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio'].includes(el.type) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
-  const sparse = body.trim().length < 600 && !fillable;
+  const sparse = body.trim().length < 600 && !fillable && captchaFrames.some(el => !/challenges\\.cloudflare\\.com/.test(el.src || ''));
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
     || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'
