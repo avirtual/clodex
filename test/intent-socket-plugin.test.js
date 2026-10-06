@@ -109,7 +109,7 @@ test('a refuse() that throws is a generic refusal, never an allow', () => {
 test('subagent browser close is refused as the main agent\'s; a word that is no verb keeps the generic label', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
   const r = await handle({ intent: '[agent:browser close ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note" });
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "close is for the seat's main agent — a subagent may close only a tab it opened (close <profile>:<tab>)" });
   const odd = await handle({ intent: '[agent:browser frobnicate ebloc]', agentId: 'agent-7' }, ctl);
   assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: "not available to a subagent: browser — return and let the seat's main agent do it" });
   assert.deepStrictEqual(seen, []);

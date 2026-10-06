@@ -255,6 +255,7 @@ const TEXT = {
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,
   passwordFieldSignedIn: (service, n) => `[${n}] is a password field — credentials never pass through agents; this is a password-change form on a signed-in page, so nothing to wait for. Leave it to the operator.`,
+  notYourTab: (service, openedBy) => `${service} was opened by ${openedBy || 'the main agent'} — a subagent closes only a tab it opened`,
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,

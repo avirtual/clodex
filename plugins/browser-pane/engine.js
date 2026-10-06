@@ -120,6 +120,7 @@ function activate(host) {
     live.set(service, {
       state: frame.state, reason: frame.state === 'held' ? (frame.reason || 'login') : null, seat: frame.seat || null, url: frame.url || '', title: frame.title || '',
       visible: typeof frame.visible === 'boolean' ? frame.visible : (prev ? prev.visible : undefined),
+      openedBy: frame.openedBy !== undefined || frame.state === 'closed' ? frame.openedBy || null : (prev ? prev.openedBy : null),
     });
     scheduler.onState(frame);
     if (frame.state !== 'held') { notified.delete(service); return; }
@@ -281,16 +282,17 @@ function activate(host) {
   }, req));
   host.ipc.handle('status', (workspaceId) => {
     const saved = stored();
+    const mask = (who) => {
+      const h = who && host.sessions.get(who.split('/')[0]);
+      return !who || (h && h.workspaceId === workspaceId) ? who : 'another workspace';
+    };
     const services = [...live.entries()].filter(([, v]) => v.state !== 'closed').map(([name, v]) => {
-      let seat = v.seat;
-      if (seat) {
-        const h = host.sessions.get(seat);
-        if (!h || h.workspaceId !== workspaceId) seat = 'another workspace';
-      }
+      const seat = mask(v.seat);
       const login = saved[grammar.profileOf(name)] && saved[grammar.profileOf(name)].login;
       const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown', denied: denials.get(name) || 0, host: hostOf(v.url), title: v.title || '' };
       if (v.state === 'held' && v.reason === 'takeover') entry.operator = true;
       if (typeof v.visible === 'boolean') entry.visible = v.visible;
+      if (v.openedBy) entry.openedBy = mask(v.openedBy);
       return entry;
     });
     return { ok: true, child: childState(), services, ...(notice ? { notice } : {}) };
@@ -304,6 +306,7 @@ function activate(host) {
     const services = Object.keys(saved).sort().map((name) => {
       const s = saved[name] || {};
       const v = live.get(name);
+      const tabs = [...live.entries()].filter(([n, t]) => grammar.tabOf(n) && grammar.profileOf(n) === name && t.state !== 'closed').map(([n, t]) => ({ name: n, state: t.state, openedBy: t.openedBy || null }));
       return {
         name,
         login: (s.login && s.login.state) || 'unknown',
@@ -311,7 +314,8 @@ function activate(host) {
         lastUrl: s.lastUrl || '',
         host: hostOf(s.lastUrl),
         notes: noteCount(s.lastUrl),
-        windowOpen: !!(v && v.state !== 'closed'),
+        windowOpen: !!(v && v.state !== 'closed') || tabs.length > 0,
+        tabs,
         state: v ? v.state : 'closed',
         ...(v && v.state === 'held' && v.reason === 'takeover' ? { operator: true } : {}),
       };

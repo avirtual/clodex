@@ -9,7 +9,7 @@ const subagent = require('../plugins/browser-pane/subagent');
 
 const DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 const NO_RELEASE = "release is for the seat's main agent";
-const NO_CLOSE = "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note";
+const NO_CLOSE = "close is for the seat's main agent — a subagent may close only a tab it opened (close <profile>:<tab>)";
 const NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
 const NO_FORGET = 'a subagent cannot forget a site note — ask the main agent';
 
@@ -18,6 +18,7 @@ test('the four refusal literals', () => {
   assert.strictEqual(subagent.NO_CLOSE, NO_CLOSE);
   assert.strictEqual(subagent.NO_CONFIRM, 'a subagent cannot confirm a consequential action — ask the main agent');
   assert.strictEqual(subagent.NO_FORGET, 'a subagent cannot forget a site note — ask the main agent');
+  assert.strictEqual(subagent.NO_TAB_OPEN, 'a subagent may open a tab only on a profile this seat already has open — ask the main agent to open <profile> first');
 });
 
 const REFUSE_ROWS = [
@@ -31,6 +32,9 @@ const REFUSE_ROWS = [
   ['note x --forget=ab3k', NO_FORGET],
   ['close x', NO_CLOSE],
   ['close', NO_CLOSE],
+  ['close x:riot', null],
+  ['close x:riot --confirm', null],
+  ['release x:riot', NO_RELEASE],
   ['frobnicate x', ''],
 ];
 

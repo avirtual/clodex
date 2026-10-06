@@ -7,6 +7,7 @@ const paths = require('./paths');
 const siteNotes = require('./site-notes');
 const { formatRead, chromeStrip, elementStrip, hostOf, postKey } = require('./read-format');
 const { profileOf, tabOf } = require('./grammar');
+const { NO_TAB_OPEN } = require('./subagent');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -221,7 +222,7 @@ function createScheduler({
   }
 
   async function runOpen(handle, service, cmd) {
-    const r = await client.request('open', { url: cmd.url, ...(cmd.show ? { show: true } : {}) }, { service, seat: handle.name });
+    const r = await client.request('open', { url: cmd.url, ...(cmd.show ? { show: true } : {}) }, { service, seat: handle.from || handle.name });
     recordOpen(service, handle.name, r, cmd.url);
     for (const st of seats.values()) delete st.feed[service];
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });
@@ -456,6 +457,8 @@ function createScheduler({
     return replies.errorReply((e && e.message) || String(e));
   }
 
+  const heldSibling = (service, sub) => sub === 'close' && !tabOf(service) && [...services.entries()].find(([n, t]) => profileOf(n) === service && t.state === 'held' && !heldOk(t, 'close'));
+
   function pump(service) {
     const s = svcState(service);
     if (s.inflight || !s.queue.length) return;
@@ -468,7 +471,9 @@ function createScheduler({
       pump(service);
       return;
     }
+    const sib = heldSibling(service, job.cmd.sub);
     if (s.state === 'held' && !heldOk(s, job.cmd.sub)) p = Promise.reject(new Error(replies.TEXT.held(service, s.reason)));
+    else if (sib) p = Promise.reject(new Error(replies.TEXT.held(sib[0], sib[1].reason)));
     else p = Promise.resolve().then(() => RUN[job.cmd.sub](job.handle, service, job.cmd));
     p
       .then((text) => job.handle.inject(text))
@@ -520,7 +525,7 @@ function createScheduler({
   }
 
   async function runClose(handle, service) {
-    const r = await client.request('close', {}, { service, seat: handle.name });
+    const r = await client.request('close', {}, { service, seat: handle.from || handle.name });
     dropSeat(svcState(service), handle.name);
     for (const n of r.also || []) dropSeat(svcState(n), handle.name);
     const data = storage.get() || {};
@@ -539,6 +544,15 @@ function createScheduler({
       return;
     }
     const s = svcState(service);
+    const isSub = handle.from && handle.from !== handle.name;
+    if (isSub && cmd.sub === 'open' && tabOf(service) && ![...services.entries()].some(([n, t]) => profileOf(n) === profileOf(service) && t.state !== 'closed')) {
+      handle.inject(replies.errorReply(NO_TAB_OPEN.replace('<profile>', profileOf(service))));
+      return;
+    }
+    if (isSub && cmd.sub === 'close' && s.openedBy !== handle.from) {
+      handle.inject(replies.errorReply(replies.TEXT.notYourTab(service, s.openedBy)));
+      return;
+    }
     if (!leaseFree(s, handle.name)) {
       handle.inject(replies.errorReply(replies.TEXT.lease(service, s.lease.seat, now() - s.lease.lastCmdAt)));
       return;
@@ -550,7 +564,7 @@ function createScheduler({
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
       return;
     }
-    const heldTab = cmd.sub === 'close' && !tabOf(service) && [...services.entries()].find(([n, t]) => profileOf(n) === service && t.state === 'held' && !heldOk(t, 'close'));
+    const heldTab = heldSibling(service, cmd.sub);
     if (heldTab) {
       handle.inject(replies.errorReply(replies.TEXT.held(heldTab[0], heldTab[1].reason)));
       return;
@@ -571,6 +585,7 @@ function createScheduler({
     s.state = frame.state;
     s.reason = frame.state === 'held' ? (frame.reason || 'login') : null;
     noteUrl(service, frame.url);
+    if (frame.openedBy !== undefined || frame.state === 'closed') s.openedBy = frame.openedBy || null;
     if (mirror) mirror.set(service, frame.state);
     if (frame.state === 'held' && was !== 'held' && frame.reason !== 'takeover') {
       const login = storedLogin(frame.login, now());
