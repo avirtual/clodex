@@ -47,10 +47,11 @@ function idleLabel(idle) {
   if (idle.ok) return `idle ${secs}s${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}${polls ? ` · polls ignored: ${polls}` : ''}`;
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
+  const pathOnly = (p) => { try { return new URL(p).pathname || '/'; } catch { return oneLine(redactUrl(p), 40); } };
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
     : Array.isArray(idle.churn) && idle.churn.length ? `still busy after ${Math.round(idle.ms / 1000)}s (DOM churn: ${idle.churn.join(', ')})`
     : polls ? `still busy after ${Math.round(idle.ms / 1000)}s (network polls: ${polls})`
-    : idle.held && Array.isArray(idle.held.top) && idle.held.top.length ? `still busy after ${Math.round(idle.ms / 1000)}s (${oneLine(`network: ${idle.held.n}${idle.held.full ? '+' : ''} req in 2 s — ${idle.held.top.map((t) => `${t.method} ${oneLine(redactUrl(t.path), 40)} ×${t.n}`).join(', ')}`, 100)})`
+    : idle.held && Array.isArray(idle.held.top) && idle.held.top.length ? `still busy after ${Math.round(idle.ms / 1000)}s (${oneLine(`network: ${idle.held.n}${idle.held.full ? '+' : ''} req in 2 s — ${idle.held.top.map((t) => `${t.method} ${oneLine(pathOnly(t.path), 40)} ×${t.n}`).join(', ')}${idle.held.more ? `, +${idle.held.more} more` : ''}`, 100)})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 
@@ -104,8 +105,10 @@ function topWord(texts) {
 function readHint(info, headings) {
   const parts = [];
   const word = topWord(headings);
+  const cut = typeof info.cutHeading === 'string';
+  if (cut) parts.push(`--filter=${JSON.stringify(oneLine(info.cutHeading, 40))}`);
   if (!info.main && info.stripped) parts.push('--main');
-  else if (word) parts.push(`--filter=${word}`);
+  else if (word && !cut) parts.push(`--filter=${word}`);
   if (!info.compact && info.posts >= COMPACT_HINT_POSTS) parts.push('--compact');
   if (info.pages > 1) parts.push(`--page=${info.page < info.pages ? info.page + 1 : 1} (of ${info.pages})`);
   return parts.length ? [`  hint: ${parts.join(' · ')}`] : [];
