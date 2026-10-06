@@ -864,7 +864,7 @@ test('a seat moved OUT of team alpha: alpha\'s lead is told it left', async () =
   }], 'exactly one delta, to the OLD lead, resolved against the OLD cwd');
 });
 
-test('a seat moved INTO team beta: beta\'s lead is told it arrived', async () => {
+test('a seat moved INTO team beta that holds no beta role: beta\'s lead is not told', async () => {
   const { home, betaRepo, outRepo } = mkTeamHome();
   const d = mkDeltas({ from: outRepo, to: betaRepo, teamHome: home });
   d.seatIn('blead', betaRepo);
@@ -873,14 +873,10 @@ test('a seat moved INTO team beta: beta\'s lead is told it arrived', async () =>
 
   const r = await d.move();
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
-  assert.deepStrictEqual(d.passive, [{
-    target: 'blead', sender: 'team',
-    body: '[team beta] seat alpha-dev moved in',
-    kind: 'dm',
-  }], 'the arrival body, with no role — `alpha-dev` matches no beta role');
+  assert.deepStrictEqual(d.passive, [], '`alpha-dev` matches no beta role, so its arrival is not a beta composition event');
 });
 
-test('a move between two teams tells BOTH leads, each about its own side', async () => {
+test('a move between two teams tells the old lead, and not the new lead when the seat holds no role there', async () => {
   const { home, inRepo, betaRepo } = mkTeamHome();
   const d = mkDeltas({ from: inRepo, to: betaRepo, teamHome: home });
   d.seatIn('lead', inRepo);
@@ -892,8 +888,7 @@ test('a move between two teams tells BOTH leads, each about its own side', async
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.deepStrictEqual(d.passive.map((p) => `${p.target}: ${p.body}`), [
     'lead: [team alpha] seat alpha-dev moved out (role: dev)',
-    'blead: [team beta] seat alpha-dev moved in',
-  ], 'departure first, arrival second — and neither lead hears the other team\'s half');
+  ], 'only the departure: beta cannot place alpha-dev, and beta\'s lead never hears alpha\'s half');
 });
 
 test('a NOT-LIVE record still tells the old lead — there is no session object to read the old cwd off', async () => {
