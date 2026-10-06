@@ -87,6 +87,7 @@ blocks a release.
 - Operator inbox: each note has an × that deletes it (immediate, no undo); the row's mark-read click is not triggered by the delete.
 - Teams: a seat in the team's root that holds no role (a Codex seat, an ad-hoc operator seat) no longer wakes the lead with a `spawned`/`retired` composition delta on every restart; the roster still lists it under `also live, no role`.
 - Clodex MCP: every Claude seat gets `run/<seat>/mcp-tools.json`, its MCP tool catalog built from the plugins and verbs enabled for it and rewritten when they change; the subagent brief is composed from it, so a seat with no tool-bearing plugin no longer tells its subagents about a `browser` tool it cannot use.
+- Clodex MCP: the seat's intent socket accepts tool calls by catalog name (`{tool, args}`) and maps them through the owning plugin's mapper after the seat's grant check, so a tool is refused before its plugin code runs when the seat lacks it; the `clodex-mcp` server still sends intents until the next step.
 
 ## 5.112.2 — 2026-10-04
 
