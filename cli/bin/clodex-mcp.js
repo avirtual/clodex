@@ -15,7 +15,7 @@ const LOOP_MAX = 3;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
 const TOOL_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 const LOG_KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
-const LOG_VAL_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+const LOG_VAL_RE = /^[a-z][a-z0-9_:.-]{0,31}$/;
 
 class InvalidRequest extends Error {}
 

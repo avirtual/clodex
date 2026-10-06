@@ -282,6 +282,7 @@ test('mcp.log carries metadata only', async () => {
     { ok: true, status: 'ok', reply: 'opened' },
     { ok: true, status: 'ok', reply: 'read' },
     { ok: true, status: 'ok', reply: 'read' },
+    { ok: true, status: 'ok', reply: 'read' },
   ];
   const seat = await fakeSeat((r, c, i) => answers[i]);
   try {
@@ -306,6 +307,7 @@ test('mcp.log carries metadata only', async () => {
     await s.handle(call(6, { verb: 'open', service: 'x', body: 'https://a.example/' }));
     await s.handle(call(7, { verb: 'read', service: 'SENTINEL8 with space' }));
     await s.handle(call(8, { verb: 'read', body: 'leaked' }));
+    await s.handle(call(9, { verb: 'read', service: 'x:riot' }));
     const all = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
     const rows = all.split('\n').filter(Boolean);
     assert.deepStrictEqual(rows.slice(2, 4).map((l) => l.split(' ')[4]), ['error', 'bad-reply']);
@@ -313,6 +315,7 @@ test('mcp.log carries metadata only', async () => {
     assert.match(rows[5], /^\S+ browser open x ok \d+ms$/);
     assert.match(rows[6], /^\S+ browser read - ok \d+ms$/);
     assert.match(rows[7], /^\S+ browser read - ok \d+ms$/);
+    assert.match(rows[8], /^\S+ browser read x:riot ok \d+ms$/);
     assert.ok(!all.includes('leaked') && !all.includes('example'));
     for (const k of [1, 2, 3, 4, 5, 6, 7, 8]) assert.ok(!all.includes(`SENTINEL${k}`), `SENTINEL${k}`);
   } finally { await seat.close(); }
