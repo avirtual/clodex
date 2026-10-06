@@ -90,7 +90,7 @@ function withGen(args, st, service) {
 }
 
 function needsRead(cmd) {
-  return N_ACTS.has(cmd.sub) || cmd.sub === 'inspect' || (cmd.sub === 'download' && cmd.n != null);
+  return (N_ACTS.has(cmd.sub) || cmd.sub === 'inspect' || cmd.sub === 'download') && cmd.n != null;
 }
 
 function createScheduler({

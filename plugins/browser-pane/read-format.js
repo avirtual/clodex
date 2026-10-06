@@ -96,6 +96,12 @@ function wordCut(line, room) {
   return (ws >= 0 && room - ws <= WORD_BACK_MAX ? head.slice(0, ws) : head).trimEnd();
 }
 
+function headingsPast(rest, headings) {
+  const seen = new Set(rest.map((l) => unmark(l).trim()));
+  const hit = (headings || []).find((h) => seen.has(String(h).trim()));
+  return hit == null ? [] : [hit];
+}
+
 function textHead(lines, budget = TEXT_HEAD) {
   const out = [];
   let used = 0;
@@ -108,8 +114,9 @@ function textHead(lines, budget = TEXT_HEAD) {
     if (used + need <= budget) { out.push(l); used += need; continue; }
     const room = budget - used - (used ? 1 : 0);
     const cut = room > 0 ? wordCut(l, room) : '';
+    const cutAt = out.length;
     if (cut) out.push(cut);
-    return { lines: out, cut: true };
+    return { lines: out, cut: true, cutAt };
   }
   return { lines: out, cut: false };
 }
@@ -312,10 +319,11 @@ function sections(raw, opts) {
       out.push({ marker: '== text ==', lines: text ? text.split('\n') : ['(no text)'] });
     } else {
       const head = textHead(rawLines);
+      const missed = head.cut ? headingsPast(rawLines.slice(head.cutAt), opts.headings) : [];
       const marker = head.cut
         ? `== text (first ${fmt(TEXT_HEAD)} of ${fmt(text.length)} chars; read --text for all) ==`
         : '== text ==';
-      out.push({ marker, lines: text ? head.lines : ['(no text)'], headOnly: true });
+      out.push({ marker, lines: text ? head.lines : ['(no text)'], headOnly: true, cutHeading: missed[0] || null });
     }
   }
   if (opts.mode === 'default' || opts.mode === 'links') {
@@ -611,7 +619,9 @@ function formatRead(raw, opts) {
   const stripped = (strip.top > 0 || strip.bottom > 0) && !o.filter;
   const loading = loadingRows(raw, o.service, o.all);
   const cap = o.max * 4;
-  const pages = paginate(sections(raw, o), cap);
+  const secs = sections(raw, { ...o, headings: raw.outline && Array.isArray(raw.outline.headings) ? raw.outline.headings.map(String) : [] });
+  const cutHeading = (secs.find((sec) => sec.headOnly) || {}).cutHeading || null;
+  const pages = paginate(secs, cap);
   const total = pages.length;
   if (o.page > total) throw new Error(`page ${o.page} of ${total}`);
   const body = pages[o.page - 1];
@@ -644,7 +654,7 @@ function formatRead(raw, opts) {
   const build = (tok) => [...head(tok), ...body, foot].join('\n') + '\n';
   const tokens = Math.ceil(build('0').length / 4);
   const content = build(fmt(tokens));
-  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed, new Set(body)) : null };
+  return { content, page: o.page, pages: total, elements: elementsTotal, tokens, stripped, hidden, loading: stillLoading(raw), main: o.main, compact: o.compact, posts, cutHeading, digest: digestOf(raw, compactFeed(raw, o)), feedPosts: compactFeed(raw, o) ? feedPosts(raw.feed, new Set(body)) : null };
 }
 
 module.exports = {

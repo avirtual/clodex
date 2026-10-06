@@ -401,12 +401,16 @@ test('scheduler: handback records the login as logged-in via handback', async ()
   assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
 });
 
-test('scheduler: click --text needs a read like a numbered click, passes the text and no doc for the stale-doc check', async () => {
+test('scheduler: click --text works before any read; a numbered click still needs one; it passes the text and no doc for the stale-doc check', async () => {
   const h = harness({ click: () => ({ n: 31, kind: 'clickable', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 500 }, ...PAGE }) });
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.calls.length = 0;
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click --text="Lista de plată"]']]),
+    [['hand-a', '[agent:browser] clicked utility [31] clickable "Lista de plată" · same page · idle 0.5s']]);
+  assert.deepStrictEqual(h.calls, [['hand-a', 'click', { byText: 'Lista de plată' }]]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
+  h.calls.length = 0;
   await h.run([['hand-a', '[agent:browser read]']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click --text="Lista de plată"]'], ['hand-a', '[agent:browser click --text=Lista]']]), [
     ['hand-a', '[agent:browser] clicked utility [31] clickable "Lista de plată" · same page · idle 0.5s'],
@@ -457,6 +461,10 @@ test('scheduler inspect: needs a read first, then asks the child by text without
   });
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser inspect utility 4]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
+  const early = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);
+  assert.deepStrictEqual(h.calls.filter((c) => c[1] === 'inspect'), [['hand-a', 'inspect', { byText: 'Go' }]]);
+  assert.strictEqual(early[0][1].split('\n').length, 6);
+  h.calls.length = 0;
   await h.run([['hand-a', '[agent:browser read utility]']]);
   const out = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);
   assert.deepStrictEqual(h.calls[1], ['hand-a', 'inspect', { byText: 'Go' }]);

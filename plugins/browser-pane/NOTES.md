@@ -16,6 +16,8 @@ Idle means: not loading, no in-flight XHR/fetch/document request (CDP Network;
 WebSocket, EventSource and Ping excluded), and no DOM mutation, all held for
 `quietMs`. Lifecycle events are recorded but not trusted: pushState transitions
 fire none.
+An absent `worldId` runs the probe in the main world and is for harnesses only;
+production passes `scripts.ISOLATED_WORLD`.
 
 ## driver.js — act
 
@@ -97,6 +99,8 @@ re-pointing it would let an ordinal shift aim an old number at the next row. An 
 substring matches: one exact is the target, several are the only ones listed.
 Run 13: the substring list numbered "Show more" and post text with numbers the
 next read never used.
+A `--text` act stamps the page on demand (`textTarget` → `stampPage`), so only
+numbered acts need a read first.
 
 ## child.js — run
 
