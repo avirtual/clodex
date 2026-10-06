@@ -570,6 +570,10 @@ test('replies: a cut that hid a heading names it as the first --filter hint and 
   assert.match(cut, /^ {2}hint: --filter="Erforderliche Unterlagen"( · |$)/);
   assert.strictEqual(cut.split('--filter').length, 2);
   assert.match(hint(null), /^ {2}hint: --filter=trending · /);
+  const long = 'Formulare "und" Dokumente zum Download und Antrag]';
+  const q = /--filter="([^"]*)"/.exec(hint(long))[1];
+  assert.ok(!q.includes('...') && !q.includes('\\'));
+  assert.ok(long.replace(/["\]]/g, '').startsWith(q) && q.length === 40);
 });
 
 test('replies: a path-only screenshot is the plain path, no digest; codex keeps its tail', () => {

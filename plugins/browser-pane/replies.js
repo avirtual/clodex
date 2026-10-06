@@ -47,7 +47,7 @@ function idleLabel(idle) {
   if (idle.ok) return `idle ${secs}s${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}${polls ? ` · polls ignored: ${polls}` : ''}`;
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
-  const pathOnly = (p) => { try { return new URL(p).pathname || '/'; } catch { return oneLine(redactUrl(p), 40); } };
+  const pathOnly = (p) => { try { return new URL(p).pathname || '/'; } catch { return redactUrl(p); } };
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
     : Array.isArray(idle.churn) && idle.churn.length ? `still busy after ${Math.round(idle.ms / 1000)}s (DOM churn: ${idle.churn.join(', ')})`
     : polls ? `still busy after ${Math.round(idle.ms / 1000)}s (network polls: ${polls})`
@@ -106,7 +106,7 @@ function readHint(info, headings) {
   const parts = [];
   const word = topWord(headings);
   const cut = typeof info.cutHeading === 'string';
-  if (cut) parts.push(`--filter=${JSON.stringify(oneLine(info.cutHeading, 40))}`);
+  if (cut) parts.push(`--filter=${JSON.stringify(oneLine(info.cutHeading).replace(/["\]]/g, '').slice(0, 40).trimEnd())}`);
   if (!info.main && info.stripped) parts.push('--main');
   else if (word && !cut) parts.push(`--filter=${word}`);
   if (!info.compact && info.posts >= COMPACT_HINT_POSTS) parts.push('--compact');
