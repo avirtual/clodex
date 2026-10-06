@@ -1442,12 +1442,16 @@ test('FIND: a bare backdrop with no buttons names the topmost on-screen dialog b
   const banner = Object.assign(boxEl('div', 'Banner pentru cookie-uri', box(300, 60, 600, 300), consent), { id: 'onetrust-banner-sdk', style: { ...shown, position: 'fixed', zIndex: '2147483646' }, querySelectorAll: () => btns });
   const gone = Object.assign(boxEl('div', '', box(0, 0, 1200, 800)), { id: 'cookie-old', style: { ...shown, display: 'none', zIndex: '9999999999' }, querySelectorAll: () => btns });
   const offscreen = Object.assign(boxEl('div', '', box(0, 900, 1200, 100)), { id: 'cookie-low', style: { ...shown, zIndex: '9999999999' }, querySelectorAll: () => btns });
+  const group = Object.assign(boxEl('div', '', box(300, 300, 600, 40), banner), { id: 'onetrust-button-group', style: { ...shown, zIndex: 'auto' }, querySelectorAll: () => btns.slice(3) });
+  const bar = Object.assign(boxEl('div', '', box(0, 700, 1200, 100)), { className: 'cookie-bar', style: { ...shown, position: 'fixed', zIndex: '10' }, querySelectorAll: () => btns });
   const inView = boxEl('button', 'Sortare:', box(1100, 170, 80, 40));
   const numbered = Object.fromEntries(btns.map((b, i) => [10 + i, b]));
   const document = (dialogs) => ({ elementFromPoint: () => backdrop, querySelectorAll: () => dialogs, documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) });
-  const a = plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([consent, gone, offscreen, banner]) } }));
+  const a = plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([consent, gone, offscreen, banner, group, bar]) } }));
   assert.deepStrictEqual([a.covered, a.hitN, a.hitDialog, a.hitButtons[0], a.hitButtons.length], [true, null, 'onetrust-banner-sdk', { n: 14, label: 'ACCEPT TOATE' }, 5]);
   assert.match(R.TEXT.covered(5, a), /^\[5\] "Sortare:" is covered at its click point by an unnumbered element \("div"\) whose dialog "onetrust-banner-sdk" has buttons \[14\] "ACCEPT TOATE" · \[10\] "Mai multe informații" · /);
+  const inner = Object.assign(boxEl('div', '', box(300, 300, 600, 40), consent), { id: 'ot-sdk-row', style: { ...shown, zIndex: 'auto' }, querySelectorAll: () => btns.slice(3) });
+  assert.strictEqual(plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([consent, inner]) } })).hitDialog, 'onetrust-consent-sdk', 'at equal z the outer dialog keeps its place over a part nested in it');
   const b = plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([gone, offscreen]) } }));
   assert.deepStrictEqual([b.covered, b.hitButtons, b.hitDialog], [true, undefined, undefined], 'no on-screen dialog leaves the bare cover reply');
   const c = plain(findOn(inView, () => backdrop, { numbered: {}, extra: { document: document([banner]) } }));
