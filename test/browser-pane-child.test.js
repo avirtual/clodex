@@ -2235,7 +2235,7 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
   ];
   for (const [d, want] of rows) assert.strictEqual(c(d), want, JSON.stringify(d));
   const ri = scripts.READ_INTERACTIVE(false, {});
-  assert.match(ri, /const cq = cqOf\(el\);\n {4}items\.push\(\{ el, full, cq, line: kind \+ ' ' \+ \(cq \? '⚠ ' : ''\) \+ line/);
+  assert.match(ri, /const cq = cqOf\(el\);\n {4}items\.push\(\{ el, full, cq, line: \[kind, cq \? '⚠' : '', line\]\.filter\(Boolean\)\.join\(' '\) \+ flags/);
   assert.match(ri, /if \(it\.cq\) cats\[n\] = it\.cq;/);
   assert.ok(ri.includes("e.getAttribute('data-automation-id'), e.getAttribute('data-testid'), e.getAttribute('data-test')"));
   assert.match(ri, /control: button && !doc && \(!!\(form \|\| e\.closest\('form'\)\) \|\| e\.hasAttribute\('formaction'\)\),/);

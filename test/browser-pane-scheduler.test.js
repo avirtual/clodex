@@ -715,7 +715,7 @@ test('scheduler: a later open of a profile re-stamps the host it was opened as',
   const newest = fs.readdirSync(dir).filter((f) => f.startsWith('r-')).sort().at(-1);
   const line = fs.readFileSync(path.join(dir, newest), 'utf8').split('\n')[1];
   fs.rmSync(dir, { recursive: true, force: true });
-  assert.strictEqual(line, 'url: https://ghostfol.io/ · site: ghostfol.io');
+  assert.strictEqual(line, 'url: https://ghostfol.io/');
 });
 
 test('scheduler replies through the handle each submit was given, even two of one seat', async () => {
