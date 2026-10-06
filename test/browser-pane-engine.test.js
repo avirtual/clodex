@@ -71,6 +71,17 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
   return { emit, emitAs, nextReply, injected, dir, tmp, host, engine, notes, frames, clearFrames };
 }
 
+test('engine: the browser row carries the plugin\'s MCP tool and subagent policy', (t) => {
+  boot(t);
+  const row = pluginRowFor('browser');
+  const { TOOL } = require('../plugins/browser-pane/mcp-tool');
+  const subagent = require('../plugins/browser-pane/subagent');
+  assert.deepStrictEqual(row.tools.map((x) => x.name), ['browser']);
+  assert.strictEqual(row.tools[0].toIntent, TOOL.toIntent);
+  assert.strictEqual(row.subagent.refuse, subagent.refuse);
+  assert.strictEqual(row.subagent.brief, subagent.brief);
+});
+
 test('engine: open replies with one line and records the service in storage', async (t) => {
   const { emit, injected, host } = boot(t);
   const reply = await emit('[agent:browser open utility] https://portal.example.com/home?acct=123');
