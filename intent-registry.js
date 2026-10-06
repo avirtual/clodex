@@ -515,11 +515,17 @@ function toolRowFor(name) {
 
 function toolIntentFor(name, args) {
   const row = toolRowFor(name);
-  if (!row) throw new Error(`unknown tool: ${name}`);
+  if (!row) {
+    const err = new Error(`unknown tool: ${name}`);
+    err.code = 'ENOTOOL';
+    throw err;
+  }
   const tool = row.tools.find((t) => t.name === name);
   const text = tool.toIntent(args);
   if (typeof text !== 'string' || !(text.startsWith(`[agent:${row.type}]`) || text.startsWith(`[agent:${row.type} `))) {
-    throw new Error(`tool "${name}" emitted a foreign intent`);
+    const err = new Error(`tool "${name}" emitted a foreign intent`);
+    err.code = 'EFOREIGN';
+    throw err;
   }
   return { row, text };
 }

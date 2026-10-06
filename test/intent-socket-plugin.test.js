@@ -395,3 +395,26 @@ test('a grammar hint thrown by the browser handler exits 1, the service-after-fl
     }
   }, { handler: (handle, intent) => grammar.toCommand(intent) });
 });
+
+test('over the real seat socket a {cred, tool, args} call and its intent form answer alike and dispatch the same raw intent', async () => {
+  const sendRaw = (h, o) => new Promise((resolve, reject) => {
+    let buf = '';
+    const c = require('node:net').createConnection(pathFor(h.root, 'a', 'intentSocket'));
+    c.on('connect', () => c.write(JSON.stringify(o) + '\n'));
+    c.on('data', (d) => { buf += d; });
+    c.on('error', reject);
+    c.on('close', () => { try { resolve(JSON.parse(buf.split('\n')[0])); } catch (e) { reject(e); } });
+  });
+  await withSeat(async (h, cred) => {
+    const replies = [];
+    for (const [i, o] of [{ cred, tool: 'browser', args: { verb: 'read', service: 'svc' } }, { cred, intent: '[agent:browser read svc]' }].entries()) {
+      const call = sendRaw(h, o);
+      await Promise.race([h.nextHandled(i + 1), call]);
+      if (h.handled.length > i) h.handled[i].handle.inject('[agent:browser] read svc → @/tmp/r-0009.txt');
+      replies.push(await call);
+    }
+    assert.deepStrictEqual(replies[0], replies[1]);
+    assert.deepStrictEqual(replies[0], { ok: true, status: 'ok', reply: '[agent:browser] read svc → @/tmp/r-0009.txt' });
+    assert.deepStrictEqual(h.handled.map((x) => x.raw), ['read svc', 'read svc']);
+  });
+});

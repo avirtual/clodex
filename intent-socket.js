@@ -287,19 +287,38 @@ function lateReply(intent) {
 function createIntentRequestHandler({
   seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
   crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout, log = null, identSeen = new Map(), now = Date.now,
+  tools = null,
 }) {
-  return async function handleIntentRequest(req, ctl) {
-    const text = req && typeof req.intent === 'string' ? req.intent : '';
-    if (!text.trim()) return { ok: false, error: 'empty intent' };
+  const unknownTool = (name) => ({ ok: false, status: 'refused', error: `unknown tool: ${JSON.stringify(String(name).slice(0, 64))}` });
+  const oneLineMsg = (e) => String((e && e.message) || 'invalid arguments').replace(/[\r\n]+/g, ' ').slice(0, 300);
+  const foreign = (toolName) => {
+    if (log) log.warn('intent-socket', `${seat}: tool ${toolName} emitted a foreign intent`);
+    return { ok: false, error: `tool ${toolName} emitted a foreign intent` };
+  };
+
+  async function handleToolRequest(req, ctl) {
+    if (!tools) return { ok: false, error: 'tool calls are not available' };
+    if (req.intent != null) return { ok: false, error: 'one of intent or tool' };
+    const args = req.args;
+    if (args === null || typeof args !== 'object' || Array.isArray(args)) return { ok: false, status: 'invalid', error: 'arguments must be an object' };
+    const name = req.tool;
+    const row = typeof name === 'string' ? tools.rowFor(name) : null;
+    if (!row || !tools.enabled(row.type, entryOf())) return unknownTool(name);
+    const toolName = row.tools.find((t) => t.name === name).name;
+    let text;
+    try {
+      ({ text } = tools.intentFor(name, args));
+    } catch (e) {
+      if (e && e.code === 'EFOREIGN') return foreign(toolName);
+      if (e && e.code === 'ENOTOOL') return unknownTool(name);
+      return { ok: false, status: 'invalid', error: oneLineMsg(e) };
+    }
     const intents = parse(text).filter((i) => i && i.type !== 'end' && i.type !== 'escape');
-    if (!intents.length) return { ok: false, error: 'no [agent:…] intent in the request' };
-    if (intents.length > 1) return { ok: false, error: 'one intent per call' };
-    const intent = intents[0];
-    if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
-    const subagent = callerIsSubagent({
-      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
-      onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
-    });
+    if (intents.length !== 1 || intents[0].type !== row.type) return foreign(toolName);
+    return run(intents[0], true, ctl);
+  }
+
+  async function run(intent, subagent, ctl) {
     if (subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
       if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)} — return and let the seat's main agent do it` };
@@ -330,6 +349,22 @@ function createIntentRequestHandler({
     if (!lines.length) return { ok: true, status: 'ok', reply: defaultReply(intent) };
     const status = classifyReply ? classifyReply(intent, lines[0]) : 'ok';
     return { ok: true, status: status === 'error' || status === 'refused' ? status : 'ok', reply: lines.join('\n') };
+  }
+
+  return async function handleIntentRequest(req, ctl) {
+    if (req && req.tool != null) return handleToolRequest(req, ctl);
+    const text = req && typeof req.intent === 'string' ? req.intent : '';
+    if (!text.trim()) return { ok: false, error: 'empty intent' };
+    const intents = parse(text).filter((i) => i && i.type !== 'end' && i.type !== 'escape');
+    if (!intents.length) return { ok: false, error: 'no [agent:…] intent in the request' };
+    if (intents.length > 1) return { ok: false, error: 'one intent per call' };
+    const intent = intents[0];
+    if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
+    const subagent = callerIsSubagent({
+      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
+      onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
+    });
+    return run(intent, subagent, ctl);
   };
 }
 
@@ -382,7 +417,7 @@ function createIntentSocketServer({
       const expire = () => end({ ok: false, error: 'timeout' });
       let timer = setTimer(expire, timeoutMs);
       const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
-      const request = { intent: req.intent, agentId: req.agentId, agentType: req.agentType, ident: req.ident };
+      const request = { intent: req.intent, tool: req.tool, args: req.args, agentId: req.agentId, agentType: req.agentType, ident: req.ident };
       Promise.resolve()
         .then(() => handle(request, { closed: () => done || gone, extend }))
         .then((r) => end(r && typeof r === 'object' ? r : { ok: false, error: 'no reply' }),

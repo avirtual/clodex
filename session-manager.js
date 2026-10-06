@@ -487,7 +487,7 @@ const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
-const { subagentRefusal, subagentCatalogFor, classifyReplyLine } = require('./intent-registry');
+const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
@@ -5613,6 +5613,7 @@ function createSessionManager(deps) {
         isCodex: session.agentType === 'codex',
         crypto: nodeCrypto,
         refusal: subagentRefusal,
+        tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
         log,

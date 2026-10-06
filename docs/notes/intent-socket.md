@@ -6,6 +6,8 @@ A subagent drives the browser as its seat; two subagents of one seat share the s
 
 A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this call, not from AsyncLocalStorage: the browser scheduler replies from timers and child IPC, and a queued job starts in the previous job's async context.
 
+A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. Identity fields on a tool call are ignored because the MCP server stamps nothing, so a forged stamp on a tool call must not widen policy.
+
 ## isMainThread
 
 Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while a Codex seat's `sessionId` is the rollout basename `rollout-<ts>-<uuid>`; so the main agent is an `agentId` equal to the `sessionId` or to its `-<uuid>` tail.

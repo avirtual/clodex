@@ -615,13 +615,20 @@ seats get a request/response channel whose reply is the caller's own tool result
   the CLI env only). No KEY/SECRET/TOKEN in the names, so Codex's default shell
   env excludes keep them. `PATH` gets `~/.clodex/bin` prepended, where
   `materializeSeatVerb` stamps `cli/bin/clodex.js` as an executable `clodex`.
-- **Wire:** one JSON line `{cred, intent, agentId?, ident?}` in, one JSON line
+- **Wire:** one JSON line `{cred, intent, agentId?, ident?}` or `{cred, tool, args}` in, one JSON line
   `{ok, status, reply}` or `{ok:false, status?, error}` out. `status` is `ok`, `error`
   (first reply line `[agent:<verb>] error: …`) or `refused` (a subagent refusal, or a
   line the plugin's `classifyReply` calls refused — the browser's denylist, ⚠-needs-`--confirm`,
   ambiguous and retired-number replies). Wrong cred → `unauthorized`; over 64KB
   → `request too large`; a ninth concurrent connection → `busy`; 10 s → `timeout`.
   One intent per request, parsed by `_extractIntents` (same body rules as PTY text).
+  `{cred, tool, args}` is a tool call by catalog name (`run/<seat>/mcp-tools.json`),
+  always handled as a subagent request whatever identity fields it carries: the seat's
+  live grant for the owning verb is checked, then the plugin's `toIntent` maps `args`
+  to one intent of that verb, then the same refusal/dispatch path as an intent. New
+  answers: `{ok:false, status:'invalid', error}` (the mapper rejected the arguments),
+  `unknown tool: "<name>"` (unregistered or not granted — one text),
+  `tool <name> emitted a foreign intent` (plugin bug).
 - **Reply capture:** `_handleIntent(name, intent, {replyTo, fromLabel})` runs the
   unchanged handler inside an AsyncLocalStorage scope; `_injectText` to the
   sender seat goes to `replyTo` instead of the PTY until the response is sent;
