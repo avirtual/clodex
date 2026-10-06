@@ -1059,7 +1059,7 @@ test('a tool schema that is not a plain object is refused', () => {
   } finally { registry._resetPluginRows(); }
 });
 
-test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser tool maps to the same text the server builds', () => {
+test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser tool maps through the plugin\'s own toIntent', () => {
   const { TOOL } = require('../plugins/browser-pane/mcp-tool');
   const subagent = require('../plugins/browser-pane/subagent');
   try {
@@ -1068,7 +1068,7 @@ test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser t
     assert.throws(() => registry.toolIntentFor('nope', {}), { message: 'unknown tool: nope', code: 'ENOTOOL' });
     assert.throws(() => registry.toolIntentFor('evil', {}), { message: 'tool "evil" emitted a foreign intent', code: 'EFOREIGN' });
     assert.throws(() => registry.toolIntentFor('prefix', {}), { message: 'tool "prefix" emitted a foreign intent', code: 'EFOREIGN' });
-    assert.throws(() => registry.toolIntentFor('browser', { verb: 'release' }), (e) => e.message === "release is for the seat's main agent" && e.code === undefined);
+    assert.throws(() => registry.toolIntentFor('browser', { verb: 'jump' }), (e) => e.message.startsWith('verb must be one of ') && e.code === undefined);
     for (const args of [{ verb: 'read', service: 'svc' }, { verb: 'click', service: 'svc', bracket: ['--text=Lista de plată'] }, { verb: 'type', service: 'svc', bracket: ['3', '--enter'], body: 'hello world' }]) {
       const full = { bracket: [], body: '', ...args };
       const out = registry.toolIntentFor('browser', full);

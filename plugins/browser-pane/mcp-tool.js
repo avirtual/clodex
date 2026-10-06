@@ -6,6 +6,7 @@ const SERVICE_PATTERN = '^[a-z][a-z0-9-]{0,31}$';
 const SERVICE_RE = new RegExp(SERVICE_PATTERN);
 const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
 const SUBS = subagent.SUBS;
+const VERBS = [...SUBS, 'release', 'close'];
 
 function tok(t) {
   const m = /^(--[^=\s"]+=)([\s\S]*)$/.exec(t);
@@ -22,8 +23,7 @@ function validate(args) {
   const extra = Object.keys(args).find((k) => !ARG_KEYS.includes(k));
   if (extra) throw new Error(`unknown argument: ${extra} (use ${ARG_KEYS.join(', ')})`);
   const { verb, service } = args;
-  if (verb === 'release' || verb === 'close') throw new Error(verb === 'release' ? "release is for the seat's main agent" : 'close is for the seat\'s main agent — a subagent may ' + SUBS.join(', '));
-  if (!SUBS.includes(verb)) throw new Error(`verb must be one of ${SUBS.join(', ')}`);
+  if (!VERBS.includes(verb)) throw new Error(`verb must be one of ${SUBS.join(', ')}`);
   if (service != null && (typeof service !== 'string' || !SERVICE_RE.test(service))) throw new Error(`service must match ${SERVICE_PATTERN}`);
   const bracket = args.bracket == null ? [] : args.bracket;
   if (!Array.isArray(bracket) || bracket.some((t) => typeof t !== 'string')) throw new Error('bracket must be an array of strings');

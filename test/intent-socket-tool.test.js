@@ -72,10 +72,12 @@ test('subagent policy applies through the mapper: --confirm and note --forget ar
   assert.deepStrictEqual(seen, []);
 }));
 
-test('release: the mapper refuses first (invalid) where the intent form is refused by policy (refused) — same text', () => withBrowserVerb(async () => {
+test('release and close: the tool form and the intent form are both refused by policy with the same text', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
-  assert.deepStrictEqual(await handle({ tool: 'browser', args: { verb: 'release', service: 'ebloc' } }, ctl), { ok: false, status: 'invalid', error: subagent.NO_RELEASE });
-  assert.deepStrictEqual(await handle({ intent: '[agent:browser release ebloc]' }, ctl), { ok: false, status: 'refused', error: subagent.NO_RELEASE });
+  for (const [verb, error] of [['release', subagent.NO_RELEASE], ['close', subagent.NO_CLOSE]]) {
+    assert.deepStrictEqual(await handle({ tool: 'browser', args: { verb, service: 'ebloc' } }, ctl), { ok: false, status: 'refused', error });
+    assert.deepStrictEqual(await handle({ intent: `[agent:browser ${verb} ebloc]` }, ctl), { ok: false, status: 'refused', error });
+  }
   assert.deepStrictEqual(seen, []);
 }));
 
@@ -149,6 +151,22 @@ test('a mapper emitting anything but one intent of its own verb is a foreign int
       assert.ok(lines[0].includes(`tool ${name} `), lines[0]);
       assert.ok(!lines[0].includes('hi') && !lines[0].includes(' y'), lines[0]);
     }
+  } finally { registry._resetPluginRows(); }
+});
+
+test('a mapper line that parses as ONE intent of another verb is a foreign intent', async () => {
+  try {
+    registry.registerIntent({ verb: 'zzz', parse: () => null, tools: [fakeTool('other', { toIntent: () => '[agent:zzz a]\n[agent:end]\n' })], subagent: fakePolicy }, 'zzz-plugin');
+    const seen = [];
+    const handle = createIntentRequestHandler({
+      seat: 'h1', parse: () => [{ type: 'yyy', raw: 'a' }], entryOf: () => ({ intents: ['zzz'], plugins: ['zzz-plugin'] }), sessionIdOf: () => 'main-thread', cred: HCRED, log,
+      refusal: registry.subagentRefusal, tools: TOOLS,
+      dispatch: async (intent, opts) => { seen.push(intent.raw); opts.replyTo('ok'); },
+    });
+    const before = warns.length;
+    assert.deepStrictEqual(await handle({ tool: 'other', args: {} }, ctl), { ok: false, error: 'tool other emitted a foreign intent' });
+    assert.deepStrictEqual(seen, []);
+    assert.strictEqual(warns.length - before, 1);
   } finally { registry._resetPluginRows(); }
 });
 

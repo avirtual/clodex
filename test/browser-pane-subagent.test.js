@@ -9,11 +9,13 @@ const subagent = require('../plugins/browser-pane/subagent');
 
 const DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 const NO_RELEASE = "release is for the seat's main agent";
+const NO_CLOSE = "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note";
 const NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
 const NO_FORGET = 'a subagent cannot forget a site note — ask the main agent';
 
-test('the three refusal literals', () => {
+test('the four refusal literals', () => {
   assert.strictEqual(subagent.NO_RELEASE, "release is for the seat's main agent");
+  assert.strictEqual(subagent.NO_CLOSE, NO_CLOSE);
   assert.strictEqual(subagent.NO_CONFIRM, 'a subagent cannot confirm a consequential action — ask the main agent');
   assert.strictEqual(subagent.NO_FORGET, 'a subagent cannot forget a site note — ask the main agent');
 });
@@ -27,7 +29,8 @@ const REFUSE_ROWS = [
   ['click x 26 --con"firm"', NO_CONFIRM],
   ['note x --forget ab3k', NO_FORGET],
   ['note x --forget=ab3k', NO_FORGET],
-  ['close x', 'not available to a subagent: browser close (a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note)'],
+  ['close x', NO_CLOSE],
+  ['close', NO_CLOSE],
   ['frobnicate x', ''],
 ];
 
@@ -51,6 +54,12 @@ function requires(file) {
   const src = fs.readFileSync(path.join(DIR, file), 'utf8');
   return [...src.matchAll(/require\((['"])([^'"]+)\1\)/g)].map((m) => m[2]);
 }
+
+test('one denial site: the mapper renders release and close, the refusal texts live only in subagent.js', () => {
+  const src = fs.readFileSync(path.join(DIR, 'mcp-tool.js'), 'utf8');
+  assert.ok(src.includes("'release', 'close'"));
+  assert.ok(!src.includes("is for the seat's main agent"));
+});
 
 test('both leaves require only their one sibling', () => {
   assert.deepStrictEqual(requires('subagent.js'), ['./grammar']);

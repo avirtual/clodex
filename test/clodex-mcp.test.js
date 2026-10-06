@@ -121,7 +121,7 @@ test('tools/call forwards {cred, tool, args} as received; the socket decides an 
 
 test('the socket\'s answers render as plain text results', async () => {
   const rows = [
-    [{ ok: false, status: 'invalid', error: "release is for the seat's main agent" }, "invalid: release is for the seat's main agent"],
+    [{ ok: false, status: 'refused', error: "release is for the seat's main agent" }, "release is for the seat's main agent"],
     [{ ok: false, status: 'invalid', error: 'body must be one line' }, 'invalid: body must be one line'],
     [{ ok: false, status: 'refused', error: SUBAGENT_NO_CONFIRM }, SUBAGENT_NO_CONFIRM],
     [{ ok: false, error: 'tool browser emitted a foreign intent' }, 'tool browser emitted a foreign intent'],
@@ -486,11 +486,12 @@ test('spawned: a catalog rev change reaches stdout as list_changed within the re
     env: { ...process.env, CLODEX_INTENT_SOCK: seat.sockPath, CLODEX_INTENT_CRED: CRED },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  const bound = setTimeout(() => child.kill(), 8000);
   const exited = new Promise((r) => child.on('exit', r));
   try {
     let out = '';
     const waiters = [];
-    const lines = () => out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    const lines = () => out.slice(0, out.lastIndexOf('\n') + 1).split('\n').filter(Boolean).map((l) => JSON.parse(l));
     let closed = false;
     const wake = () => { for (const w of waiters.splice(0)) w(); };
     child.stdout.on('data', (d) => { out += d; wake(); });
@@ -506,13 +507,11 @@ test('spawned: a catalog rev change reaches stdout as list_changed within the re
     assert.deepStrictEqual(JSON.parse(JSON.stringify(listed.result.tools)), [LISTED]);
     assert.deepStrictEqual(seat.got, [{ cred: CRED, tool: 'browser', args: { verb: 'read', service: 'svc' } }]);
     fs.writeFileSync(seat.catalogPath, catalog('r2', []));
-    const bound = setTimeout(() => child.kill(), 4000);
-    try {
-      await until((ls) => ls.some((m) => m.method === 'notifications/tools/list_changed'));
-    } finally { clearTimeout(bound); }
+    await until((ls) => ls.some((m) => m.method === 'notifications/tools/list_changed'));
     const note = lines().find((m) => m.method === 'notifications/tools/list_changed');
     assert.deepStrictEqual(note, { jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
   } finally {
+    clearTimeout(bound);
     child.stdin.end();
     await exited;
     await seat.close();
