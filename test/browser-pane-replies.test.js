@@ -275,6 +275,9 @@ test('replies: scroll reports position, items loaded or dropped, page growth and
   assert.strictEqual(R.scrollReply('x', { sub: 'scroll', dir: 'bottom' }, {
     before: { y: 0, height: 2868, items: 0 }, after: { y: 2000, height: 2868, items: 0 }, vh: 868, navigated: false, idle, changed: '',
   }), '[agent:browser] scrolled x bottom · bottom of page · idle 0.4s · page text unchanged');
+  assert.strictEqual(R.scrollReply('x', down, {
+    before: { y: 0, height: 6000, items: 0 }, after: { y: 560, height: 6000, items: 0 }, vh: 600, navigated: false, idle, changed: '', scroller: 'div#list',
+  }), '[agent:browser] scrolled x down · in div#list · 560–1160 of 6000 px (9–19%) · idle 0.4s · page text unchanged');
 });
 
 test('replies: back and forward say where they landed and whether another step is possible', () => {

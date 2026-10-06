@@ -414,6 +414,20 @@ test('read-format: --filter on a table row keeps the table header; on a text lin
   assert.deepStrictEqual(filterLines(nav, 'factura', { blocks: true }), ['Factura iulie', '', 'Factura august'], 'one blank between kept runs');
 });
 
+test('read-format: --filter in a long block pairs a hit with its own row\'s timestamp, not the next row\'s; an age line right after a title is kept', () => {
+  const log = ['07:21:44.100', 'INFO', 'cart opened', '07:21:46.500', 'INFO', 'checkout started', '07:21:48.900', 'WARN', 'payment slow',
+    '07:21:50.000', 'INFO', 'order placed'];
+  assert.deepStrictEqual(filterLines(log, 'checkout', { blocks: true }), ['07:21:46.500', 'INFO', 'checkout started']);
+  const grafana = ['Logs (12)', ...[50, 48, 46, 44, 42, 40].flatMap((sec) => [`2026-10-06 07:21:${sec}.500`, 'INFO', `ts=2026-10-06T07:21:${sec}.400Z ${sec === 46 ? 'POST /api/checkout' : 'GET /api/products'} status=200`])];
+  assert.deepStrictEqual(filterLines(grafana, 'checkout', { blocks: true }), ['2026-10-06 07:21:46.500', 'INFO', 'ts=2026-10-06T07:21:46.400Z POST /api/checkout status=200'],
+    'a header line and a stamp inside the message do not shift the row');
+  const hn = ['1.', 'Show HN: A tiny database', '120 points by a 2 minutes ago | hide | 40 comments', '2.', 'Ask HN: Editors?', '88 points by b 1 hour ago | hide | 12 comments',
+    '3.', 'Rust 2.0 released', '300 points by c 5 hours ago | hide | 99 comments'];
+  assert.deepStrictEqual(filterLines(hn, 'editors', { blocks: true }), ['Ask HN: Editors?', '88 points by b 1 hour ago | hide | 12 comments']);
+  const plain = ['a', 'b', 'c', 'd', 'needle here', 'e', 'f', 'g', 'h'];
+  assert.deepStrictEqual(filterLines(plain, 'needle', { blocks: true }), ['d', 'needle here', 'e']);
+});
+
 test('read-format: a filter on a bullet list returns the matching item only; Wikipedia backref prefixes are dropped from the match line', () => {
   const list = ['Releases', '• Node 20 LTS', '• Node 22 LTS', '• Node 24 Current', '', 'Footer'];
   assert.deepStrictEqual(filterLines(list, 'node 22', { blocks: true }), ['• Node 22 LTS']);

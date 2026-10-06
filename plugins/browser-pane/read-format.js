@@ -19,7 +19,27 @@ const BACKREF_RE = /^(\W*?)(?:\^\s*)?(?:Jump up to:(?:\s+(?:[a-z]{1,2}|\^))*\s*|
 const WORD_BACK_MAX = 40;
 const COUNT_LINE_RE = /^(?:(?:showing|afisare|afișare)\b(?=.*(?:\d+ .*\bof\b.* \d+|\d+ ?[–-] ?\d+ (?:din|of) \d+))|page \d+ of|\d+ of \d+ (?:entries|results|rezultate)|\d+ ?[–-] ?\d+ of \d+)/i;
 const COUNT_LINE_MAX = 80;
+const STAMP_RE = /\b\d{1,2}:\d{2}(:\d{2})?\b|\b\d{4}-\d{2}-\d{2}\b|\b\d+ (minutes?|hours?|days?) ago\b/i;
 const isCountLine = (l) => { const t = unmark(l).trim(); return t.length <= COUNT_LINE_MAX && COUNT_LINE_RE.test(t); };
+
+const stamped = (l) => STAMP_RE.test(unmark(l));
+const shapeOf = (l) => unmark(l).replace(/\d+/g, '0').replace(/\p{L}+/gu, 'a').slice(0, 6);
+
+function stampOf(lines, i, s, e) {
+  const near = (step) => {
+    for (let k = i + step; k >= s && k <= e && Math.abs(k - i) <= 3; k += step) if (stamped(lines[k])) return k;
+    return -1;
+  };
+  const b = near(-1);
+  const a = near(1);
+  if (b < 0 || a < 0) return b >= 0 ? b : a;
+  const p = a - b;
+  let t0 = s + ((b - s) % p);
+  while (t0 < b && !stamped(lines[t0])) t0 += p;
+  let i0 = s + ((i - s) % p);
+  while (i0 < i && shapeOf(lines[i0]) !== shapeOf(lines[i])) i0 += p;
+  return t0 < i0 ? b : a;
+}
 
 function filterLines(lines, filter, { blocks = false } = {}) {
   if (!filter) return lines;
@@ -47,7 +67,10 @@ function filterLines(lines, filter, { blocks = false } = {}) {
     while (s > 0 && lines[s - 1].trim()) s--;
     let e = i;
     while (e < lines.length - 1 && lines[e + 1].trim()) e++;
-    if (e - s + 1 > BLOCK_MAX) { s = Math.max(s, i - 1); e = Math.min(e, i + 1); }
+    if (e - s + 1 > BLOCK_MAX) {
+      const ts = stampOf(lines, i, s, e);
+      if (ts >= 0) { s = Math.min(ts, i); e = Math.max(ts, i); } else { s = Math.max(s, i - 1); e = Math.min(e, i + 1); }
+    }
     for (let k = s; k <= e; k++) keep[k] = true;
   });
   const out = [];
