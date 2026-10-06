@@ -377,7 +377,7 @@ function itemsLabel(a, b) {
 function scrollReply(service, cmd, r) {
   const before = r.before || {};
   const after = r.after || {};
-  const head = `scrolled ${service} ${cmd.dir}${cmd.pages > 1 ? ` ×${cmd.pages}` : ''}`;
+  const head = `scrolled ${service} ${cmd.dir}${cmd.pages > 1 ? ` ×${cmd.pages}` : ''}${r.scroller ? ` · in ${r.scroller}` : ''}`;
   const tail = r.takeover ? TEXT.takeover : '';
   if ((cmd.dir === 'down' || cmd.dir === 'up') && !r.navigated && after.y === before.y) {
     return oneLine(`${PREFIX} ${head} · already at ${cmd.dir === 'down' ? 'bottom' : 'top'} of page${tail}`, REPLY_MAX);

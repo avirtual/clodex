@@ -383,7 +383,14 @@ function signinHold(svc) {
 const SCROLL_DIRS = new Set(['down', 'up', 'top', 'bottom']);
 const SCROLL_OVERLAP_PX = 40;
 
-function scrollCode(dir, pages) {
+function scrollCode(dir, pages, inner) {
+  if (inner) {
+    const sign = dir === 'up' ? '-' : '';
+    const move = dir === 'top' ? "el.scrollTo({ top: 0, behavior: 'instant' })"
+      : dir === 'bottom' ? "el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })"
+        : `el.scrollBy({ top: ${sign}(el.clientHeight - ${SCROLL_OVERLAP_PX}) * ${pages}, behavior: 'instant' })`;
+    return `(() => { const el = document.querySelector('[data-cxb-scroller]'); if (!el) return ${scrollCode(dir, pages)}; return ${move}; })()`;
+  }
   if (dir === 'top') return "window.scrollTo({ top: 0, behavior: 'instant' })";
   if (dir === 'bottom') return "window.scrollTo({ top: (document.scrollingElement || document.documentElement).scrollHeight, behavior: 'instant' })";
   const sign = dir === 'up' ? '-' : '';
@@ -1060,18 +1067,29 @@ function run(electron, ctx) {
       const hrefBefore = wc.getURL();
       const titleBefore = wc.getTitle();
       const measure = async () => (wc.isDestroyed() ? null : inMain(wc, scripts.SCROLL_INFO));
-      const before = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
+      const doc = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
+      const forward = dir === 'down' || dir === 'bottom';
+      const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);
+      const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;
+      const inner = !!scroller;
+      const measureInner = async () => {
+        const d = await measure();
+        const sc = d && await inMain(wc, scripts.MAIN_SCROLLER);
+        return d && sc ? { ...sc, items: d.items } : null;
+      };
+      const before = inner ? { ...scroller, items: doc.items } : doc;
       const pre = await preAct(svc, null);
       const { idle } = await driver.act(wc, async () => {
-        await inMain(wc, scrollCode(dir, pages));
+        await inMain(wc, scrollCode(dir, pages, inner));
         await driver.sleep(0);
       }, actOpts(svc));
-      const after = (await measure()) || before;
+      const after = (await (inner ? measureInner() : measure())) || before;
       const out = {
         dir, pages,
         before: { y: before.y, height: before.height, items: before.items },
         after: { y: after.y, height: after.height, items: after.items },
         vh: after.vh,
+        ...(inner ? { scroller: scroller.label } : {}),
         ...navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.isDestroyed() ? hrefBefore : wc.getURL(), titleBefore, titleAfter: wc.isDestroyed() ? titleBefore : wc.getTitle(), download: false }),
         idle: idleOf(idle),
       };

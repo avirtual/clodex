@@ -612,8 +612,14 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };"));
   assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };"));
   assert.ok(src.includes("const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };"));
-  assert.ok(src.includes('return re.test(bt) && bt.length > own.trim().length ? { text: quote(bt, b, re), b } : null;'));
-  assert.ok(src.includes('return bt && re.test(bt) ? { text: quote(bt, b, re), b } : null;'));
+  assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
+  assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
+  assert.ok(src.includes('return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));'));
+  assert.ok(src.includes('return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  const authored = new Function('norm', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '));
+  assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', textContent: 'to read this story, Sign in.' }), 'to read this story, Sign in.');
+  assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', textContent: 'Create an account.The author' }), 'Create an account. The author');
+  assert.ok(src.includes('return blockText(blk) ? clip(authored(blk)) : sentence(s, re);'));
   assert.ok(src.includes("const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');"));
   assert.ok(src.includes("if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }"));
   assert.ok(src.includes('const seen = new Set();'));
@@ -720,6 +726,44 @@ test('page scripts: LOGIN_PROBE profile hint is void while a visible Sign in lin
   const signed = run([profile, el('A', 'News', '/news')]);
   assert.strictEqual(signed.loggedInHint, 'profile');
   assert.strictEqual(loginLabel(signed), 'signed in');
+});
+
+test('page scripts: LOGIN_PROBE reads a hidden profile link or composer as no hint; visible ones keep profile/composer', () => {
+  const shown = { left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 };
+  const gone = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+  const el = (sel, hidden) => ({
+    tagName: 'A', innerText: 'x', textContent: 'x', parentElement: null, type: '',
+    getAttribute: () => null, matches: (s) => s.includes(sel), getBoundingClientRect: () => (hidden ? gone : shown),
+  });
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: '' } },
+    { hostname: 'contactform7.com', pathname: '/' }, 0, 0, 1200, 800);
+  assert.strictEqual(run([el('/profile', true)]).loggedInHint, null);
+  assert.strictEqual(run([el('[contenteditable=true][role=textbox]', true)]).loggedInHint, null);
+  assert.strictEqual(run([el('/profile', false)]).loggedInHint, 'profile');
+  assert.strictEqual(run([el('[contenteditable=true][role=textbox]', false)]).loggedInHint, 'composer');
+});
+
+test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or covering a quarter of the viewport; an invisible badge never', () => {
+  const box = (w, h) => ({ left: 10, top: 10, width: w, height: h, right: 10 + w, bottom: 10 + h });
+  const frame = (src, rect, badge = false) => ({
+    tagName: 'IFRAME', src, innerText: '', textContent: '', parentElement: null, type: '',
+    getAttribute: () => null, matches: () => false, closest: (s) => (badge && s === '.grecaptcha-badge' ? {} : null), getBoundingClientRect: () => rect,
+  });
+  const pwd = { tagName: 'INPUT', type: 'password', innerText: '', textContent: '', parentElement: null, getAttribute: () => null, matches: () => false, getBoundingClientRect: () => box(200, 30) };
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { title: 'Contact', querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: 'Contact us' } },
+    { hostname: 'contactform7.com', pathname: '/' }, 0, 0, 1200, 800);
+  const v2 = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=normal';
+  assert.strictEqual(run([frame('https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible', box(256, 60))]).captcha, false);
+  assert.strictEqual(run([frame(v2, box(256, 60), true)]).captcha, false);
+  assert.strictEqual(run([frame(v2, box(304, 78))]).captcha, false);
+  assert.strictEqual(run([frame(v2, box(304, 78)), pwd]).captcha, true);
+  assert.strictEqual(run([frame('https://challenges.cloudflare.com/x', box(800, 400))]).captcha, true);
+  assert.ok(scripts.LOGIN_PROBE.includes("!/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')"));
+  assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),'));
 });
 
 test('page scripts: READ_TEXT falls back to body when the best-scoring block holds under half the body text', () => {
@@ -851,6 +895,49 @@ test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', (
   assert.strictEqual(scrollCode('up', 1), "window.scrollBy({ top: -(window.innerHeight - 40) * 1, behavior: 'instant' })");
   assert.strictEqual(scrollCode('top'), "window.scrollTo({ top: 0, behavior: 'instant' })");
   assert.match(scrollCode('bottom'), /^window\.scrollTo\(\{ top: .*scrollHeight, behavior: 'instant' \}\)$/);
+  const inner = scrollCode('down', 1, true);
+  assert.ok(inner.includes("document.querySelector('[data-cxb-scroller]')"));
+  assert.ok(inner.includes("el.scrollBy({ top: (el.clientHeight - 40) * 1, behavior: 'instant' })"));
+  assert.ok(inner.includes(scrollCode('down', 1)), 'no tagged scroller falls back to the window');
+  assert.ok(scrollCode('up', 2, true).includes('el.scrollBy({ top: -(el.clientHeight - 40) * 2'));
+  assert.ok(scrollCode('bottom', 1, true).includes("el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })"));
+  assert.ok(!scrollCode('down', 1).includes('data-cxb-scroller'));
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(src.includes("const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);"));
+  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;'));
+  assert.ok(src.includes('await inMain(wc, scrollCode(dir, pages, inner));'));
+  assert.ok(src.includes('...(inner ? { scroller: scroller.label } : {}),'));
+});
+
+test('page scripts: READ_TEXT appends the absolute local time to a relative age read from the original element', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes(`const AGE_SEL = 'time[datetime], [title*="T"][class*="age" i], [data-time]';`));
+  assert.ok(src.includes('const AGE_RE = /\\b(\\d+|an?|one)\\s+(second|minute|hour|day|week|month|year)s?\\s+ago\\b|\\bjust now\\b|\\bacum\\b/i;'));
+  assert.ok(src.includes("if (!isNaN(d)) twin.append(' (' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ')');"));
+  assert.ok(src.indexOf('const AGE_SEL') > src.indexOf("c.prepend('(was ')"));
+});
+
+test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
+  const mk = (id, w, h, overflowY, scrollHeight, clientHeight) => {
+    const attrs = {};
+    return {
+      id, tagName: 'DIV', classList: ['list', 'x'], scrollTop: 120, scrollHeight, clientHeight, overflowY, attrs,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h, right: w, bottom: h }),
+      setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    };
+  };
+  const run = (els, old = []) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER}`)(
+    { querySelectorAll: (s) => (s === '*' ? els : old) }, (e) => ({ overflowY: e.overflowY }), 1200, 800);
+  const small = mk('code', 300, 100, 'auto', 900, 100);
+  const big = mk('list', 1000, 600, 'auto', 6000, 600);
+  const hidden = mk('clip', 1200, 800, 'hidden', 6000, 800);
+  const short = mk('short', 1200, 800, 'scroll', 820, 800);
+  const prev = mk('prev', 10, 10, 'auto', 900, 10);
+  prev.attrs['data-cxb-scroller'] = '';
+  assert.deepStrictEqual(run([small, big, hidden, short], [prev]), { y: 120, height: 6000, vh: 600, label: 'div#list.list' });
+  assert.ok('data-cxb-scroller' in big.attrs);
+  assert.ok(!('data-cxb-scroller' in prev.attrs));
+  assert.strictEqual(run([hidden, short]), null);
 });
 
 function visOf(view = {}) {
@@ -1721,6 +1808,7 @@ test('page scripts: consequentialHit with no terms judges a form by its action a
   assert.deepStrictEqual(scripts.consequentialHit({ action: '/hotel/book' }, []), { cat: 'booking', term: 'book' });
   assert.deepStrictEqual(scripts.consequentialHit({ action: 'https://shop.example/payment?ref=booking' }, []), { cat: 'payment', term: 'pay' });
   assert.strictEqual(scripts.consequentialHit({ label: 'Pay', action: '' }, []), null);
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("action: submit && (e.hasAttribute('formaction') || !(form && String(form.getAttribute('method') || '').toLowerCase() === 'get')) ? "));
 });
 
 test('signinHold: operator-nav stays quiet while a sign-in hold is up, not during a takeover or when idle', () => {

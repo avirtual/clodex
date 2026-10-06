@@ -156,7 +156,7 @@ const CQ = `
       aria: e.getAttribute('aria-label'),
       idClass: [e.id, e.getAttribute('class'), e.getAttribute('data-automation-id'), e.getAttribute('data-testid'), e.getAttribute('data-test')].filter(Boolean).join(' '),
       formaction: e.getAttribute('formaction'),
-      action: submit ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
+      action: submit && (e.hasAttribute('formaction') || !(form && String(form.getAttribute('method') || '').toLowerCase() === 'get')) ? e.getAttribute('formaction') || (form ? form.getAttribute('action') : '') : '',
     };
   };
   const adLines = new Map();
@@ -324,15 +324,30 @@ const WALL = `
       if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }
       return blockTexts.get(b);
     };
+    const authored = b => {
+      const tc = norm(b.textContent);
+      let j = 0;
+      return [...norm(b.innerText).trim()].map(ch => {
+        if (/\\s/.test(ch)) return ch;
+        while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
+        return j < tc.length ? tc[j++] : ch;
+      }).join('');
+    };
     const quote = (s, el, re) => {
       if (norm(s).trim().length >= 20) return sentence(s, re);
-      const bt = blockText(el && el.closest(${JSON.stringify(WALL_BLOCK)}));
-      return bt ? clip(bt) : sentence(s, re);
+      const blk = el && el.closest(${JSON.stringify(WALL_BLOCK)});
+      return blockText(blk) ? clip(authored(blk)) : sentence(s, re);
     };
     const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };
     const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };
     const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };
     const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };
+    const gated = (b, bt, re) => {
+      const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));
+      let rest = norm(bt);
+      for (const l of labels) rest = rest.replace(l, ' ');
+      return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));
+    };
     let all = [];
     let endIdx = -1;
     const hitOf = (t, re) => {
@@ -341,11 +356,9 @@ const WALL = `
       const own = norm(t.data);
       if (re.test(own)) {
         if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
-        const bt = blockText(b);
-        return re.test(bt) && bt.length > own.trim().length ? { text: quote(bt, b, re), b } : null;
       }
       const bt = blockText(b);
-      return bt && re.test(bt) ? { text: quote(bt, b, re), b } : null;
+      return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
     };
     const pick = (re) => {
       let before = null;
@@ -387,6 +400,22 @@ const SCROLL_INFO = `(() => {
   const items = count(document, 'article') || count(root, '[role=listitem]') || count(root, 'li');
   const se = document.scrollingElement || document.documentElement;
   return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
+})()`;
+
+const MAIN_SCROLLER = `(() => {
+  for (const e of document.querySelectorAll('[data-cxb-scroller]')) e.removeAttribute('data-cxb-scroller');
+  let best = null;
+  let area = 0;
+  for (const e of [...document.querySelectorAll('*')].slice(0, 3000)) {
+    if (e.scrollHeight <= e.clientHeight + 40 || !/^(auto|scroll)$/.test(getComputedStyle(e).overflowY)) continue;
+    const r = e.getBoundingClientRect();
+    const a = r.width * r.height;
+    if (a > area && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) { best = e; area = a; }
+  }
+  if (!best) return null;
+  best.setAttribute('data-cxb-scroller', '');
+  const label = best.tagName.toLowerCase() + (best.id ? '#' + best.id : '') + (best.classList[0] ? '.' + best.classList[0] : '');
+  return { y: Math.round(best.scrollTop), height: Math.round(best.scrollHeight), vh: Math.round(best.clientHeight), label };
 })()`;
 
 const BUSY = `
@@ -445,6 +474,17 @@ function readText(main) {
     if (!c || up) continue;
     wrapped.add(c); c.prepend('(was '); c.append(')');
   }
+  const AGE_SEL = 'time[datetime], [title*="T"][class*="age" i], [data-time]';
+  const AGE_RE = /\\b(\\d+|an?|one)\\s+(second|minute|hour|day|week|month|year)s?\\s+ago\\b|\\bjust now\\b|\\bacum\\b/i;
+  const pad2 = n => String(n).padStart(2, '0');
+  const ageOrigs = [...root.querySelectorAll('*')];
+  [...clone.querySelectorAll('*')].forEach((twin, i) => {
+    const o = ageOrigs[i];
+    if (!o || !o.matches(AGE_SEL) || o.querySelector(AGE_SEL) || !AGE_RE.test(o.textContent || '')) return;
+    const v = String(o.getAttribute('datetime') || o.getAttribute('title') || o.getAttribute('data-time') || '').trim();
+    const d = isNaN(new Date(v)) ? new Date(v.split(/\\s+/)[0]) : new Date(v);
+    if (!isNaN(d)) twin.append(' (' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ')');
+  });
   const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
@@ -1299,13 +1339,16 @@ const LOGIN_PROBE = `(() => {${DEEP}
     const exit = /log ?out|sign ?out|deconectare|iesire/i;
     if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
       && [el.innerText || el.textContent, el.getAttribute('aria-label')].some(x => exit.test(fold(short(x)))))) return 'logout';
-    if (has(el => el.matches(${JSON.stringify(PROFILE_SEL)}))) return 'profile';
-    if (has(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
+    if (any(el => el.matches(${JSON.stringify(PROFILE_SEL)}))) return 'profile';
+    if (any(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
     return null;
   };
   const pwds = deepAll(document, el => el.tagName === 'INPUT' && el.type === 'password').filter(vis);
   const logoutLink = !signInShown && any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
     && signOutOf([short(el.innerText || el.textContent), short(el.getAttribute('aria-label')), hrefPath(el)], SO_RES));
+  const interstitial = /^just a moment|checking your browser|verify you are human|attention required/i.test(document.title) && body.trim().length < 600;
+  const captchaFrames = deepAll(document, el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '') && !/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')).filter(vis);
+  const big = el => { const r = el.getBoundingClientRect(); return r.width * r.height >= innerWidth * innerHeight / 4; };
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
     || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'
@@ -1314,8 +1357,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
     password: pwds.length > 0 && !passwordChange,
     passwordChange,
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
-    captcha: any(el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || ''))
-      || (/^just a moment|checking your browser|verify you are human|attention required/i.test(document.title) && body.trim().length < 600),
+    captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
     logoutLink,
@@ -1729,7 +1771,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
