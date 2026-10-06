@@ -271,7 +271,7 @@ function createScheduler({
     }
     const p = siteNotes.prepare(cmd.text, (n) => (samePage ? siteNotes.elementLabel(last.elements, n) : null));
     const note = await notes.add(origin, { ...p, seat: handle.from || handle.name });
-    return replies.reply(`noted ${note.id} for ${origin}: @${note.anchor} ${note.kind}: ${JSON.stringify(note.text)}`);
+    return replies.reply(`noted ${note.id} for ${origin}: @${note.anchor} ${note.kind}: ${JSON.stringify(note.text)}${handle.from && handle.from !== handle.name ? ` — as ${handle.from}` : ''}`);
   }
 
   function feedMemory(st, service, raw, cmd) {

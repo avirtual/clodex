@@ -107,11 +107,21 @@ test('store: add writes origin + line, duplicate refused, forget by id, a stale 
   assert.deepStrictEqual(a, { id: a.id, anchor: '/portfolio/*', kind: 'quirk', text: 'rows renumber on every tick', seat: 'apometre', date: '2026-10-06' });
   assert.match(a.id, N.ID_RE);
   assert.strictEqual(files.data.get(s.fileFor(o)), `${o}\n${a.id} @/portfolio/* quirk: rows renumber on every tick — apometre 2026-10-06\n`);
-  await assert.rejects(s.add(o, { anchor: '*', kind: 'path', text: ' rows renumber   on every tick ', seat: 'b' }), { message: N.TEXT.duplicate(a.id) });
+  await assert.rejects(s.add(o, { anchor: '/portfolio/*', kind: 'path', text: ' rows renumber   on every tick ', seat: 'b' }), { message: N.TEXT.duplicate(a.id, '/portfolio/*') });
   const gone = await s.forget(o, a.id);
   assert.strictEqual(gone.id, a.id);
   await assert.rejects(s.forget(o, a.id), { message: N.TEXT.noId(a.id, o) });
   assert.deepStrictEqual(s.load(o).notes, []);
+});
+
+test('store: same text under another anchor is a new note, not a duplicate; the duplicate error names the anchor', async () => {
+  const { s } = store();
+  const o = 'https://x.com';
+  const a = await s.add(o, { anchor: '*', kind: 'quirk', text: 'page renumbers', seat: 's' });
+  await assert.rejects(s.add(o, { anchor: '*', kind: 'quirk', text: 'page  renumbers', seat: 's' }), { message: `already noted (${a.id} @*)` });
+  const b = await s.add(o, { anchor: '/index.php?page=11', kind: 'quirk', text: 'page renumbers', seat: 's' });
+  assert.notStrictEqual(b.id, a.id);
+  assert.deepStrictEqual(s.load(o).notes.map((n) => [n.id, n.anchor]), [[a.id, '*'], [b.id, '/index.php?page=11']]);
 });
 
 test('store: the 41st add is REFUSED and the 40 survive (no eviction)', async () => {
@@ -161,4 +171,18 @@ test('readLines: a page-anchored note surfaces before three origin-wide cautions
   assert.deepStrictEqual(N.sortNotes(notes).map((n) => n.id), ['cccc', 'bbbb', 'aaaa', 'dddd']);
   const pageCaution = mk('eeee', '/portfolio/*', 'caution', '2025-01-01');
   assert.deepStrictEqual(N.matching([...notes, pageCaution], '/portfolio/btc').map((n) => n.id), ['eeee', 'dddd', 'cccc', 'bbbb', 'aaaa']);
+});
+
+test('readLines: a site-wide caution keeps a 4th line behind three page notes, outside the …more count', () => {
+  const mk = (id, anchor, kind, date) => ({ id, anchor, kind, text: id, seat: 's', date });
+  const page = [mk('aaaa', '/x', 'quirk', '2026-05-01'), mk('bbbb', '/x', 'quirk', '2026-05-02'), mk('cccc', '/x', 'quirk', '2026-05-03')];
+  const lines = (notes) => N.readLines('svc', { matched: N.matching(notes, '/x'), total: notes.length, full: true }).slice(1);
+  const one = lines([...page, mk('dddd', '*', 'caution', '2026-01-01')]);
+  assert.deepStrictEqual(one.map((l) => l.trim().slice(0, 4)), ['cccc', 'bbbb', 'aaaa', 'dddd']);
+  const two = lines([...page, mk('dddd', '*', 'caution', '2026-01-01'), mk('eeee', '*', 'caution', '2026-02-01')]);
+  assert.deepStrictEqual(two.slice(0, 4).map((l) => l.trim().slice(0, 4)), ['cccc', 'bbbb', 'aaaa', 'eeee']);
+  assert.match(two[4], /^ {2}…1 more: /);
+  assert.strictEqual(two.length, 5);
+  const fits = lines([page[0], page[1], mk('dddd', '*', 'caution', '2026-01-01')]);
+  assert.deepStrictEqual(fits.map((l) => l.trim().slice(0, 4)), ['bbbb', 'aaaa', 'dddd']);
 });

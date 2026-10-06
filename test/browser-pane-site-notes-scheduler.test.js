@@ -65,6 +65,7 @@ test('note: [n] is rewritten to the label from the seat\'s read of the same page
   assert.strictEqual(r, `[agent:browser] noted ${note.id} for ${ORIGIN}: @/portfolio quirk: "type into \\"Enter destination\\" (combobox) first"`);
   assert.strictEqual(note.text, 'type into "Enter destination" (combobox) first');
   assert.strictEqual(note.seat, 'hand-a');
+  assert.ok(!r.includes(' — as '), r);
 });
 
 test('note: a note from a subagent handle is stamped with its from label, and --list shows it', async () => {
@@ -75,6 +76,7 @@ test('note: a note from a subagent handle is stamped with its from label, and --
   for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r));
   const note = h.notes.load(ORIGIN).notes[0];
   assert.match(out[0], /noted /);
+  assert.ok(out[0].endsWith(' — as ap/agent'), out[0]);
   assert.strictEqual(note.seat, 'ap/agent');
   const [list] = await h.run('[agent:browser note etoro --list]', 'ap');
   assert.match(list, /— ap\/agent 2026-10-06$/);
