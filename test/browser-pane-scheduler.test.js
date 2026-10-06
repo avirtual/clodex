@@ -560,6 +560,19 @@ test('scheduler: elements repeated from the previous read of the site are hidden
   assert.ok(!/elements hidden/.test(links.reply) && links.file.includes('[1] link Acasa'));
 });
 
+test('scheduler: controls under a dialog\'s backdrop are hidden from a first default read and counted as under the dialog; --all lists them', async () => {
+  const { h, read } = siteHarness();
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/a']]);
+  const page = { url: 'https://portal.example.com/a', text: 'A\nSettings', elements: ['[1] link Portfolio app → /', '[2] link Accounts → /accounts', '[3] button Close'], covered: [1, 2] };
+  const first = await read(page);
+  assert.ok(first.file.includes('\n== elements ==\n[3] button Close\n'));
+  assert.ok(!first.file.includes('Portfolio app'));
+  assert.ok(first.file.includes('(2 hidden (2 under the dialog, 0 repeated) — read --all lists them; numbers: stable per site;'));
+  const all = await read(page, '[agent:browser read --all]');
+  assert.ok(all.file.includes('\n== elements ==\n[1] link Portfolio app → /\n[2] link Accounts → /accounts\n[3] button Close\n'));
+  assert.ok(!/hidden/.test(all.file));
+});
+
 test('scheduler: page 2 of a read hides the same repeated elements as page 1', async () => {
   const { h, read } = siteHarness();
   const many = (from, n, tag) => Array.from({ length: n }, (_, i) => `[${from + i}] link ${tag} ${i} ${'x'.repeat(150)} → /${tag}/${i}`);
