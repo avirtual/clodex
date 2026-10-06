@@ -324,7 +324,7 @@ test('READ_INTERACTIVE: [unread] votes per cell, so attachment chips cannot outv
   const td = (kids, y) => mk('td', {}, kids, [10, y, 300, 20]);
   const mail = (y, w) => Object.assign(mk('tr', {}, [
     td([span('Ana ' + y, y, w)], y),
-    td([span('Factura ' + y, y, w), span('a.pdf', y, '400'), span('b.pdf', y, '400'), span('c.pdf', y, '400')], y),
+    td([span('Factura ' + y, y, w), span('see attached', y, '400'), span('a.pdf', y, '400'), span('b.pdf', y, '400'), span('c.pdf', y, '400')], y),
     td([span('12:0' + y, y, w)], y),
   ], [10, y, 600, 20]), { css: { cursor: 'pointer' } });
   const wide = Object.assign(mk('tr', {}, ['Ion', 'Avizier', 'Bloc', 'Scara', 'Ora'].map((t, i) => td([span(t, 80, i ? '400' : '700')], 80)), [10, 80, 600, 20]), { css: { cursor: 'pointer' } });
