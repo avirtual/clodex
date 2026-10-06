@@ -14999,6 +14999,33 @@ test('context: an unknown sub-command bounces to the agent, not just console.war
   assert.match(injected[0], /compact\|clear\|reload/);
 });
 
+function mkMuseBounce() {
+  const b = mkBounce();
+  b.m._armInjectValve = () => {};
+  b.m._armCompactValve = () => {};
+  b.m.sessions.set('mu', { name: 'mu', type: 'muse', agentType: 'muse', io: 'pty', workspaceId: 'ws1' });
+  return b;
+}
+
+test('t1669: a muse PTY seat types /compact for [agent:context compact] and gets no bounce', async () => {
+  const { m, injected } = mkMuseBounce();
+  await m._handleIntent('mu', { type: 'context', sub: 'compact', body: 'pick up t1669' });
+  assert.deepStrictEqual(injected, ['/compact']);
+});
+
+test('t1669: a muse PTY seat types /clear for [agent:context clear]', async () => {
+  const { m, injected } = mkMuseBounce();
+  await m._handleIntent('mu', { type: 'context', sub: 'clear', body: '' });
+  assert.deepStrictEqual(injected, ['/clear']);
+});
+
+test('t1669: [agent:context compress] on a muse seat still bounces', async () => {
+  const { m, injected } = mkMuseBounce();
+  await m._handleIntent('mu', { type: 'context', sub: 'compress', body: '' });
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /unknown or unsupported sub-command "compress" for a muse session \(use compact\|clear\|reload\)/);
+});
+
 // --- T35: boot-readiness gate wiring (_injectQueueFor + the 2004 latch) -------
 // The first inject into a freshly spawned CLAUDE seat races CLI boot: text+Enter
 // written before the raw-mode input loop is up read as one paste-like chunk and

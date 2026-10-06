@@ -6564,6 +6564,7 @@ function createSessionManager(deps) {
     static CONTEXT_COMMANDS = {
       claude: { compact: '/compact', clear: '/clear' },
       codex: { compact: '/compact', clear: '/clear' },
+      muse: { compact: '/compact', clear: '/clear' },
     };
 
     _promptDeltaPending(name, out = {}) {
