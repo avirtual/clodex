@@ -646,6 +646,8 @@ what keeps parallel work from colliding in one checkout.
 
 The lead's team roster spells out the reachable actions for whatever roles exist,
 so you do not have to teach it the vocabulary.
+When a seat spawns or retires, the lead gets a one-line composition delta
+(`[team <name>] seat <seat> spawned (role: <role>)`). Only seats the manifest can place (the lead, `<team>-<role>…`) raise it; a roleless seat in the root shows in the roster as `also live, no role` and is otherwise silent.
 
 ## Checklist for a new project
 
