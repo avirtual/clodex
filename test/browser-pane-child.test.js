@@ -1473,7 +1473,7 @@ test('forgetNumbers: forget deletes the service numbers directory, and a flush o
   flushNumbers(svc);
   assert.ok(!fs.existsSync(dir), 'a late flush or merge writes nothing');
   forgetNumbers(null, dir);
-  assert.match(CHILD_SRC, /svc\.win\.destroy\(\);\n\s*forgetNumbers\(svc, path\.join\(data, 'numbers', name\)\);/);
+  assert.match(CHILD_SRC, /for \(const svc of windowsOf\(profile\)\) \{\n\s*svc\.win\.destroy\(\);\n\s*forgetNumbers\(svc, null\);\n\s*\}\n\s*forgetNumbers\(null, path\.join\(data, 'numbers', profile\)\);/);
 });
 
 test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
@@ -2074,8 +2074,8 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
 });
 
 test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
-  const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(name)'));
-  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*return \{ closed: name, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(profile)'));
+  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
   assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
 });
