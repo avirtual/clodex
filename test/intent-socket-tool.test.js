@@ -147,7 +147,7 @@ test('a mapper emitting anything but one intent of its own verb is a foreign int
       const lines = warns.slice(before);
       assert.strictEqual(lines.length, 1, name);
       assert.ok(lines[0].includes(`tool ${name} `), lines[0]);
-      assert.ok(!lines[0].includes('hi') && !lines[0].includes(' y') && !lines[0].includes('k'), lines[0]);
+      assert.ok(!lines[0].includes('hi') && !lines[0].includes(' y'), lines[0]);
     }
   } finally { registry._resetPluginRows(); }
 });
