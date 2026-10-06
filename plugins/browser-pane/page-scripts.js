@@ -325,17 +325,21 @@ const WALL = `
       return blockTexts.get(b);
     };
     const authored = b => {
-      const tc = norm(textsOf(b, []).filter(t => t.parentElement && vis(t.parentElement) && !scripted(t) && (r => r.width > 2 && r.height > 2)(t.parentElement.getBoundingClientRect())).map(t => t.data).join(' '));
       const it = norm(b.innerText).trim();
-      let j = 0;
-      let over = false;
-      const out = [...it].map(ch => {
-        if (/\\s/.test(ch)) return ch;
-        while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
-        if (j >= tc.length) { over = true; return ch; }
-        return tc[j++];
-      }).join('');
-      return over ? it : out;
+      const zip = tc => {
+        let j = 0;
+        let over = false;
+        const out = [...it].map(ch => {
+          if (/\\s/.test(ch)) return ch;
+          while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
+          if (j >= tc.length) { over = true; return ch; }
+          return tc[j++];
+        }).join('');
+        return over ? null : out;
+      };
+      const tc = norm(textsOf(b, []).filter(t => t.parentElement && vis(t.parentElement) && !scripted(t) && (r => r.width > 2 && r.height > 2)(t.parentElement.getBoundingClientRect())).map(t => t.data).join(' '));
+      const tc2 = norm(textsOf(b, []).filter(t => !scripted(t)).map(t => t.data).join(' '));
+      return zip(tc) || zip(tc2) || it;
     };
     const quote = (s, el, re) => {
       if (norm(s).trim().length >= 20) return sentence(s, re);
@@ -354,7 +358,7 @@ const WALL = `
     };
     const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };
     const GATE_LINK = /\\b(subscribe|sign (in|up)|log in|create (a free )?account|already a subscriber|abonează-te|pentru a citi)\\b/i;
-    const truncates = (b) => { const r = (document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body); const after = all.slice(all.indexOf([...textsOf(b, [])].pop()) + 1).filter(t => inside(r, t) && !floating(t) && !chrome(t)); let n = 0; for (const t of after) { n += norm(t.data).trim().length; if (n >= 80) return false; } return true; };
+    const truncates = (b) => { const r = (document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body); let i = -1; for (const x of textsOf(b, [])) { const k = all.indexOf(x); if (k > i) i = k; } const after = all.slice(i + 1).filter(t => inside(r, t) && !floating(t) && !chrome(t)); let n = 0; for (const t of after) { n += norm(t.data).trim().length; if (n >= 80) return false; } return true; };
     const moreLink = (t) => { const a = t.parentElement && t.parentElement.closest('a'); return !!a && (a.matches('.more-link,[rel=bookmark]') || /\\bmore-link\\b/.test(a.className)); };
     let all = [];
     let endIdx = -1;
@@ -506,7 +510,7 @@ function readText(main) {
   const inlined = [];
   const nested = [];
   const hidden = [];
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');

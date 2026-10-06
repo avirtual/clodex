@@ -255,7 +255,7 @@ function toCommand(intent) {
   }
   if (sub === 'note') return noteCommand(toks, String((intent && intent.body) || '').trim());
   if (sub !== 'click' && sub !== 'inspect') {
-    const at = qt.findIndex((x, i) => i > 0 && !x.q && /^--(for|filter|text|as|to)=./.test(x.t) && qt[i + 1] && !qt[i + 1].t.startsWith('--') && !/^\d+$/.test(qt[i + 1].t));
+    const at = qt.findIndex((x, i) => i > 0 && !x.q && /^--(for|filter|as|to)=./.test(x.t) && FLAGS[sub] && FLAGS[sub][x.t.slice(2, x.t.indexOf('='))] === 'value' && qt[i + 1] && !qt[i + 1].t.startsWith('--') && !/^\d+$/.test(qt[i + 1].t));
     if (at > 0) {
       const prev = qt[at].t;
       const bad = qt[at + 1].t;

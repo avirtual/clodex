@@ -622,7 +622,10 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const sentence = (s, re) => { const segs = norm(s).split(/(?<=[.!?])\\s+|\\s*\\|\\s*/).map(x => x.trim()).filter(Boolean); const hits = segs.filter(x => re.test(x)); return clip(hits.length ? hits.sort((a, b) => b.split(' ').length - a.split(' ').length)[0] : s.replace(/^\\s*\\|\\s*|\\s*\\|\\s*$/g, '')); };"));
   assert.ok(src.includes('(r => r.width > 2 && r.height > 2)(t.parentElement.getBoundingClientRect())'));
   assert.ok(src.includes('if (j >= tc.length) { over = true; return ch; }'));
-  assert.ok(src.includes('return over ? it : out;'));
+  assert.ok(src.includes('return over ? null : out;'));
+  assert.ok(src.includes("const tc2 = norm(textsOf(b, []).filter(t => !scripted(t)).map(t => t.data).join(' '));"));
+  assert.ok(src.includes('return zip(tc) || zip(tc2) || it;'));
+  assert.ok(src.includes('let i = -1; for (const x of textsOf(b, [])) { const k = all.indexOf(x); if (k > i) i = k; } const after = all.slice(i + 1)'));
   assert.ok(src.includes("const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };"));
   const authored = new Function('norm', 'textsOf', 'vis', 'scripted', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '), (b) => b.nodes, (e) => !e.hidden, () => false);
   const node = (data, w = 100, hidden = false) => ({ data, parentElement: { hidden, getBoundingClientRect: () => ({ width: w, height: w }) } });
@@ -630,6 +633,7 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', nodes: [node('Create an account.'), node('The author')] }), 'Create an account. The author');
   assert.strictEqual(authored({ innerText: 'THIS IS YOUR LAST FREE ARTICLE |', nodes: [node('This is your last free article'), node('Subscriber benefits', 1), node('|')] }), 'This is your last free article |');
   assert.strictEqual(authored({ innerText: 'LAST FREE ARTICLE EXTRA', nodes: [node('last free article')] }), 'LAST FREE ARTICLE EXTRA');
+  assert.strictEqual(authored({ innerText: 'LAST FREE ARTICLE\nSubscriber benefits |', nodes: [node('Last free article'), node('Subscriber benefits', 1), node('|')] }), 'Last free article Subscriber benefits |');
   assert.ok(src.includes('return blockText(blk) ? clip(authored(blk)) : sentence(s, re);'));
   assert.ok(src.includes("const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');"));
   assert.ok(src.includes("if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }"));
@@ -941,7 +945,7 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
   assert.ok(src.includes('if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty or hidden frame is not inlined');
-  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
+  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
   assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
@@ -966,6 +970,9 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(/const modal = forced \? null : .*innerWidth \* innerHeight \/ 4.*\n  if \(modal\) root = modal\.e;/.test(src));
   assert.ok(src.includes("(modal ? '[dialog]\\n' : '')"));
   assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
+});
+
+test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {})'));
 });
