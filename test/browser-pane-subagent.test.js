@@ -67,7 +67,8 @@ test('one denial site: the mapper renders release and close, the refusal texts l
 
 test('subagent.js requires nothing, mcp-tool.js only its sibling', () => {
   assert.deepStrictEqual(requires('subagent.js'), []);
-  assert.deepStrictEqual(requires('mcp-tool.js'), ['./subagent']);
+  assert.deepStrictEqual(requires('mcp-tool.js'), ['./subagent', './grammar']);
+  assert.deepStrictEqual(requires('grammar.js'), []);
 });
 
 test('both leaves carry zero comment lines', () => {
