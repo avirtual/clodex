@@ -62,6 +62,7 @@ clodex-bash-marks-
 clodex-bp-child-
 clodex-bp-client-
 clodex-bp-engine-
+clodex-bp-notes-
 clodex-bp-paths-
 clodex-bp-prompt-
 clodex-bp-replies-
