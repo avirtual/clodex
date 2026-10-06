@@ -29,7 +29,7 @@ function withBrowserVerb(fn) {
   return Promise.resolve().then(fn).finally(() => registry._resetPluginRows());
 }
 
-async function fakeSeat(answer, root = mkTmpRoot('mcp-')) {
+async function fakeSeat(answer, root = mkTmpRoot('verb-')) {
   const sockPath = path.join(root, 'i.sock');
   const got = [];
   const conns = new Set();
