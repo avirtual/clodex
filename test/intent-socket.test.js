@@ -246,11 +246,11 @@ async function withSeat(fn, opts) {
 
 test('reply capture: who returns the roster line to the caller and injects nothing into the seat', async () => {
   await withSeat(async (h, cred) => {
-    const r = await viaVerb(h, cred, ['[agent:who]']);
+    const r = await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));
     assert.strictEqual(r.code, 0, r.err);
     assert.match(r.out, /^\[agent:peers\] b\b/);
     assert.deepStrictEqual(h.injected, [], 'the acknowledgement went to the socket, not the PTY');
-    const n = await viaVerb(h, cred, ['[agent:name]'], { CODEX_THREAD_ID: 'thread-9' });
+    const n = await viaVerb(h, cred, ['[agent:name]'], { ...mainEnv(cred), CODEX_THREAD_ID: 'thread-9' });
     assert.strictEqual(n.out, '[agent:name] a\n');
     assert.deepStrictEqual(h.injected, []);
   });
@@ -287,8 +287,9 @@ test('a subagent is refused a lead verb with exit 3, and the main agent is not',
 
 test('the seat credential appears in no log line and no ipc broadcast', async () => {
   await withSeat(async (h, cred) => {
-    await viaVerb(h, cred, ['[agent:who]']);
+    await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));
     await viaVerb(h, cred, ['[agent:dm b] x'], { CLODEX_AGENT_ID: 'agent-7' });
+    await viaVerb(h, cred, ['[agent:dm b] x'], mainEnv(cred));
     await viaVerb(h, cred, ['[agent:shout] x'], { CLODEX_AGENT_ID: 'agent-7' });
     await viaVerb(h, cred, ['[agent:bogus thing]']);
     await viaVerb(h, cred, ['[agent:exec clodex-run-tests] {}'], { CLODEX_AGENT_ID: 'agent-7' });
@@ -483,7 +484,7 @@ test('a client that hangs up before the reply closes the sink, so the late reply
   const dispatched = new Promise((r) => { arrived = r; });
   let ctlRef = null;
   const inner = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
     replyWaitMs: () => 60000,
     setTimer: () => 0, clearTimer: () => {},
@@ -523,7 +524,7 @@ test('the socket writes the credential file 0600 beside it and removes it on sto
 test('the reply sink closes when the reply is built, so a late acknowledgement falls through to the seat', async () => {
   let late = null;
   const handle = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { opts.replyTo('now'); late = opts.replyTo; },
   });
   const r = await handle({ intent: '[agent:who]' }, { closed: () => false });
