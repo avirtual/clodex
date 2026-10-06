@@ -67,6 +67,19 @@ test('note: [n] is rewritten to the label from the seat\'s read of the same page
   assert.strictEqual(note.seat, 'hand-a');
 });
 
+test('note: a note from a subagent handle is stamped with its from label, and --list shows it', async () => {
+  const h = harness();
+  await h.run(`[agent:browser open etoro] ${PORTFOLIO}`, 'ap');
+  const out = [];
+  h.sched.submit({ name: 'ap', from: 'ap/agent', type: 'claude', inject: (t) => out.push(t) }, toCommand(parseLine('[agent:browser note etoro] @* quirk: rows renumber')));
+  for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r));
+  const note = h.notes.load(ORIGIN).notes[0];
+  assert.match(out[0], /noted /);
+  assert.strictEqual(note.seat, 'ap/agent');
+  const [list] = await h.run('[agent:browser note etoro --list]', 'ap');
+  assert.match(list, /— ap\/agent 2026-10-06$/);
+});
+
 test('note: a number from a read of another page is refused and nothing is written', async () => {
   const h = harness();
   await h.run(`[agent:browser open etoro] ${PORTFOLIO}`);

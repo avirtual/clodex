@@ -234,8 +234,10 @@ test('scheduler: a held service refuses everything but wait, services and releas
     ['hand-a', HELD], ['hand-a', HELD], ['hand-a', HELD],
     ['hand-a', '[agent:browser] services: utility — portal.example.com · sign-in page · window open · held'],
   ]);
-  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser release utility]']]), [['hand-a', '[agent:browser] released utility']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser release utility]']]), [['hand-a', '[agent:browser] released utility — the operator still has control (sign-in); [agent:browser wait utility] resumes after the hand-back']]);
+  assert.strictEqual(h.sched.leaseHolder('utility'), null);
   assert.deepStrictEqual(h.calls, []);
+  assert.deepStrictEqual(await h.run([['hand-b', '[agent:browser read utility]']]), [['hand-b', HELD]], 'the hold outlives the release');
 });
 
 test('scheduler close: refused under a takeover hold, closes under a sign-in hold, then drops the seat\'s lease', async () => {

@@ -10,6 +10,7 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Browser pane: `release` during a sign-in hold says the operator still has control (and what resumes it) instead of `released`; a site note written by a subagent is stamped `<seat>/agent`.
 
 ## Unreleased
 

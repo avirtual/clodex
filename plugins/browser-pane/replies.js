@@ -240,6 +240,7 @@ const TEXT = {
   retiredN: (service, n, now) => `[${n}] retired: its text changed since your read${now ? ` (now [${now}]?)` : ''} — read again`,
   unknownN: (service, n) => `[${n}] was not in your read of ${service} — read again`,
   ambiguousN: (service, n, label, context) => `[${n}] on ${service} no longer points at one element (was ${JSON.stringify(String(label || ''))}${context ? ` in ${JSON.stringify(String(context))}` : ''}) — read again and use the new number`,
+  releasedHeld: (service, reason) => `released ${service} — the operator still has control (${reason === 'takeover' ? 'takeover' : 'sign-in'}); [agent:browser wait ${service}] resumes after the hand-back`,
   held: (service, reason) => `the operator has control of ${service} (${reason === 'takeover' ? 'takeover' : 'sign-in'}). Emit [agent:browser wait ${service}] and end your turn.`,
   operatorBusy: (service) => `the operator has been using the ${service} window for the last 60s; try again in a minute or emit [agent:browser wait ${service}].`,
   passwordField: (service, n) => `[${n}] is a password field — credentials never pass through agents. The operator has been asked to sign in; emit [agent:browser wait ${service}] and end your turn. Do not ask anyone for the password.`,

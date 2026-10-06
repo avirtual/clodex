@@ -251,6 +251,26 @@ test('two concurrent plugin calls on one seat each get their own reply', async (
   });
 });
 
+test('the plugin handle carries from: <seat>/agent for a subagent, the seat for the main agent, nothing outside a call', async () => {
+  await withSeat(async (h, cred) => {
+    const sub = viaVerb(h, cred, ['[agent:browser read one]'], { CLODEX_AGENT_ID: 'agent-7' });
+    await h.nextHandled(1);
+    await turns(10);
+    assert.strictEqual(h.handled[0].handle.from, 'a/agent');
+    h.handled[0].handle.inject('reply one');
+    await sub;
+    const main = viaVerb(h, cred, ['[agent:browser read two]'], mainStamp(cred));
+    await h.nextHandled(2);
+    await turns(10);
+    assert.strictEqual(h.handled[1].handle.from, 'a');
+    h.handled[1].handle.inject('reply two');
+    await main;
+    h.m._dispatchPluginIntent(h.a, { type: 'browser', raw: 'read three' });
+    assert.strictEqual(h.handled[2].handle.from, undefined);
+    assert.strictEqual(h.handled[2].handle.name, 'a');
+  });
+});
+
 test('a Claude seat without the hook stamp: release and --confirm exit 3 and dispatch nothing, read goes through', async () => {
   await withSeat(async (h, cred) => {
     const rel = await viaVerb(h, cred, ['[agent:browser release one]']);

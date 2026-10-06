@@ -5617,6 +5617,7 @@ function createSessionManager(deps) {
       const handle = scope && scope.session === session
         ? Object.freeze({
           ...seatHandle,
+          from: scope.fromLabel || seatHandle.name,
           inject(text, opts) {
             if (scope.replyTo(String(text)) !== false) return;
             seatHandle.inject(text, opts);
