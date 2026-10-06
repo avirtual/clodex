@@ -1354,6 +1354,8 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const interstitial = /^just a moment|checking your browser|verify you are human|attention required/i.test(document.title) && body.trim().length < 600;
   const captchaFrames = deepAll(document, el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '') && !/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')).filter(vis);
   const big = el => { const r = el.getBoundingClientRect(); return r.width * r.height >= innerWidth * innerHeight / 4; };
+  const fillable = any(el => el.tagName === 'INPUT' && !['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio'].includes(el.type) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+  const sparse = body.trim().length < 600 && !fillable;
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
     || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'
@@ -1362,7 +1364,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
     password: pwds.length > 0 && !passwordChange,
     passwordChange,
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
-    captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),
+    captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big) || sparse)),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
     logoutLink,

@@ -752,9 +752,9 @@ test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or 
     getAttribute: () => null, matches: () => false, closest: (s) => (badge && s === '.grecaptcha-badge' ? {} : null), getBoundingClientRect: () => rect,
   });
   const pwd = { tagName: 'INPUT', type: 'password', innerText: '', textContent: '', parentElement: null, getAttribute: () => null, matches: () => false, getBoundingClientRect: () => box(200, 30) };
-  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+  const run = (els, text = 'Contact us '.repeat(60)) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
     () => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
-    { title: 'Contact', querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: 'Contact us' } },
+    { title: 'Contact', querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: text } },
     { hostname: 'contactform7.com', pathname: '/' }, 0, 0, 1200, 800);
   const v2 = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=normal';
   assert.strictEqual(run([frame('https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible', box(256, 60))]).captcha, false);
@@ -763,7 +763,13 @@ test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or 
   assert.strictEqual(run([frame(v2, box(304, 78)), pwd]).captcha, true);
   assert.strictEqual(run([frame('https://challenges.cloudflare.com/x', box(800, 400))]).captcha, true);
   assert.ok(scripts.LOGIN_PROBE.includes("!/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')"));
-  assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),'));
+  const name = { tagName: 'INPUT', type: 'text', innerText: '', textContent: '', parentElement: null, getAttribute: (k) => (k === 'name' ? 'name' : null), matches: () => false, getBoundingClientRect: () => box(200, 30) };
+  const sorry = 'Our systems have detected unusual traffic from your computer network. '.repeat(3);
+  assert.strictEqual(run([frame(v2, box(304, 78))], sorry).captcha, true, 'a sparse page with nothing else to fill');
+  assert.strictEqual(run([frame(v2, box(304, 78)), name], sorry).captcha, false, 'a visible field to fill');
+  assert.strictEqual(run([frame(v2, box(304, 78))], 'x'.repeat(700)).captcha, false, 'a 700-char body');
+  assert.ok(scripts.LOGIN_PROBE.includes('const sparse = body.trim().length < 600 && !fillable;'));
+  assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big) || sparse)),'));
 });
 
 test('page scripts: READ_TEXT falls back to body when the best-scoring block holds under half the body text', () => {
