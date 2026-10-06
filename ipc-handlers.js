@@ -1060,11 +1060,11 @@ function registerIpcHandlers(deps) {
       Array.isArray(denyBuiltins) ? denyBuiltins : []);
     return { ok: true };
   });
-  // The collapse to the all-enabled default happens here, not in the renderer:
-  // only the engine knows the live row set.
   const refreshCatalog = (name) => {
     try { if (manager && typeof manager.refreshSeatCatalog === 'function') manager.refreshSeatCatalog(name); } catch {}
   };
+  // The collapse to the all-enabled default happens here, not in the renderer:
+  // only the engine knows the live row set.
   handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setIntents(name, Array.isArray(intents) ? allowlistFromChecked(intents) : null);

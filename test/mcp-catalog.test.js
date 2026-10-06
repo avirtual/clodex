@@ -298,3 +298,26 @@ test('plugin host: activate and deactivate tell the manager to refresh every sea
     registry._resetPluginRows();
   }
 });
+
+test('refreshSeatCatalog: a persisted claude seat that is not live is not written', () => withBrowserVerb(async () => {
+  const { m, persistence, catalogs } = mkManager();
+  persistence.upsert({ name: 'gone', type: 'claude', intents: ['browser'], plugins: ['browser-pane'] });
+  assert.strictEqual(m.refreshSeatCatalog('gone'), null);
+  assert.deepStrictEqual(catalogs, []);
+}));
+
+test('engine applySessionArgs without restart refreshes the seat catalog after the grant writes', async () => {
+  const { createEngine } = require('../engine');
+  const tmp = mkTmpRoot('clx-mcpcat-');
+  const eng = createEngine({
+    userDataPath: tmp,
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
+    log: { info() {}, warn() {}, error() {} },
+  });
+  eng.stores.persistence.upsert({ name: 'c', type: 'claude', cwd: '/tmp', workspaceId: 'default', intents: ['browser'] });
+  const seen = [];
+  eng.manager.refreshSeatCatalog = (n) => { seen.push([n, eng.stores.persistence.get(n).intents]); return null; };
+  const res = await eng.applySessionArgs('c', { intents: [], restart: false }, 'default');
+  assert.deepStrictEqual(res, { ok: true, restarted: false });
+  assert.deepStrictEqual(seen, [['c', []]]);
+});

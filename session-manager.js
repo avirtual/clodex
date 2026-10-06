@@ -2436,6 +2436,7 @@ function createSessionManager(deps) {
     }
 
     refreshSeatCatalog(name) {
+      if (!this.sessions.has(name)) return null;
       const entry = getPersistence().get(name);
       if (!entry || entry.type !== 'claude') return null;
       return writeMcpCatalog(name, subagentCatalogFor(entry));
