@@ -618,8 +618,8 @@ seats get a request/response channel whose reply is the caller's own tool result
 - **Wire:** one JSON line `{cred, intent, agentId?, ident?}` or `{cred, tool, args}` in, one JSON line
   `{ok, status, reply}` or `{ok:false, status?, error}` out. `status` is `ok`, `error`
   (first reply line `[agent:<verb>] error: …`) or `refused` (a subagent refusal, or a
-  line the plugin's `classifyReply` calls refused — the browser's denylist, ⚠-needs-`--confirm`,
-  ambiguous and retired-number replies). Wrong cred → `unauthorized`; over 64KB
+  line the plugin's `classifyReply` calls refused — a plugin's refused classes (the browser pane's
+  denylist and ⚠ gate, for instance)). Wrong cred → `unauthorized`; over 64KB
   → `request too large`; a ninth concurrent connection → `busy`; 10 s → `timeout`.
   One intent per request, parsed by `_extractIntents` (same body rules as PTY text).
   `{cred, tool, args}` is a tool call by catalog name (`run/<seat>/mcp-tools.json`),
@@ -672,9 +672,9 @@ seats get a request/response channel whose reply is the caller's own tool result
   the intent's reply; the verb's own lines (refusals, unauthorized, no socket, timeout)
   go to stderr as `clodex: <reason>`. Exit 0 ok, 1 error (the reply, or stderr `clodex: …`),
   2 usage, 3 refused (stderr `clodex: …`), 4 no socket, 5 timeout. The client waits up to 500 s,
-  30 s past the registry's 470 s plugin-wait cap, so a browser `wait` or `download`
-  answers inline and the server always times out first. A browser URL follows the
-  closing bracket: `clodex '[agent:browser open wiki] https://…'`.
+  30 s past the registry's 470 s plugin-wait cap, so a plugin's longest wait answers
+  inline and the server always times out first; `clodex --help` lists the seat's MCP
+  tools from `run/<seat>/mcp-tools.json`.
 - **SubagentStart:** the same `hook-ident.sh` answers `SubagentStart` with one
   `additionalContext` line composed from the seat's `run/<name>/mcp-tools.json` briefs (one sentence per granted plugin that declares a tool); a seat with no such plugin gets no line.
 - **MCP (Claude):** `run/<name>/mcp.json` names `cli/bin/clodex-mcp.js` under the hooks' interpreter; pushed as `--mcp-config` unless the seat's extra args carry their own `--mcp-config`/`--strict-mcp-config` (then a `MCP:` system row says the tool is unavailable); with the claude_design strip fallback it rides `--strict-mcp-config --mcp-config` and is the only server. Next to it, `mcp-tools.json` is the seat's tool catalog, written from its grants at spawn and rewritten on every grant change (content `rev`; unchanged content is not rewritten). `clodex-mcp` reads `mcp-tools.json` for `tools/list`, forwards `tools/call` as `{cred, tool, args}`, and sends `notifications/tools/list_changed` within 2 s of a `rev` change once the client has initialised.
