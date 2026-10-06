@@ -522,6 +522,7 @@ function createScheduler({
   async function runClose(handle, service) {
     const r = await client.request('close', {}, { service, seat: handle.name });
     dropSeat(svcState(service), handle.name);
+    for (const n of r.also || []) dropSeat(svcState(n), handle.name);
     const data = storage.get() || {};
     const rec = (data.services && data.services[profileOf(service)]) || {};
     return replies.closedReply(service, rec, r.windows, r.also || []);
@@ -547,6 +548,11 @@ function createScheduler({
     s.lease = { seat: handle.name, lastCmdAt: now() };
     if (s.state === 'held' && !heldOk(s, cmd.sub)) {
       handle.inject(replies.errorReply(replies.TEXT.held(service, s.reason)));
+      return;
+    }
+    const heldTab = cmd.sub === 'close' && !tabOf(service) && [...services.entries()].find(([n, t]) => profileOf(n) === service && t.state === 'held' && !heldOk(t, 'close'));
+    if (heldTab) {
+      handle.inject(replies.errorReply(replies.TEXT.held(heldTab[0], heldTab[1].reason)));
       return;
     }
     if (needsRead(cmd) && !seatState(handle.name).hasRead[service]) {

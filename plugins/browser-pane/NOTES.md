@@ -201,7 +201,8 @@ CDP `Page.captureScreenshot` is the fallback.
 `[a-z0-9-]`, so Electron uses the name verbatim. A service name is `<profile>[:<tab>]`; the
 partition, numbers dir, downloads dir, storage record and denylist scope are per PROFILE (a `:` never
 reaches a path); the window, lease, hold and a seat's read state are per TAB; bare `close <profile>`
-closes every tab of the profile.
+closes every tab of the profile. Two tabs open on one origin keep separate in-memory number maps
+and the last flush wins on disk, so a number holds across tabs only through each tab's own read.
 
 ## child.js — clickWatched
 

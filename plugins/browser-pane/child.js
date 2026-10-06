@@ -592,8 +592,8 @@ function run(electron, ctx) {
     const reserved = new Set();
     const r = { waiters };
     const drop = (w) => { const i = waiters.indexOf(w); if (i >= 0) waiters.splice(i, 1); };
-    r.expect = ({ url = null, dir, nameHint = null }) => {
-      const w = { url, dir, nameHint, item: null };
+    r.expect = ({ url = null, dir, nameHint = null, wc = null }) => {
+      const w = { url, dir, nameHint, wc, item: null };
       w.started = new Promise((res) => { w.onStart = res; });
       w.done = new Promise((res, rej) => { w.resolve = res; w.reject = rej; });
       w.done.catch(() => {});
@@ -601,11 +601,11 @@ function run(electron, ctx) {
       waiters.push(w);
       return w;
     };
-    ses.on('will-download', (_e, item) => {
+    ses.on('will-download', (_e, item, from) => {
       const chain = item.getURLChain();
       const url = (chain && chain[0]) || '';
       let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
-      if (!w) w = waiters.find((x) => !x.url);
+      if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from) || waiters.find((x) => !x.url);
       if (w) drop(w);
       const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
       const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
@@ -1176,7 +1176,7 @@ function run(electron, ctx) {
 
   async function clickWatched(svc, n, el, nav, dir) {
     const wc = svc.wc;
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, wc });
     let began = false;
     let pdf = false;
     let acting = true;
@@ -1236,14 +1236,14 @@ function run(electron, ctx) {
   async function viaUrl(svc, url, dir, nameHint) {
     const hit = policyDenies(svc, url, 'agent');
     if (hit) throw deniedError(svc, url, hit, 'download');
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ url, dir, nameHint });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ url, dir, nameHint, wc: svc.wc });
     svc.wc.downloadURL(url);
     return landed(w, DOWNLOAD_START_MS);
   }
 
   async function viaClick(svc, n, el, dir, nameHint) {
     const wc = svc.wc;
-    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, nameHint });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, nameHint, wc });
     const t0 = Date.now();
     svc.popupUrl = null;
     try {
@@ -1340,6 +1340,7 @@ function run(electron, ctx) {
   async function opClose(name) {
     const tabs = tabOf(name) || !windowsOf(name).length ? [need(name)] : windowsOf(name);
     for (const svc of tabs) {
+      if (svc.win.isDestroyed()) continue;
       const closed = new Promise((resolve) => svc.win.once('closed', resolve));
       svc.win.hide();
       svc.win.close();

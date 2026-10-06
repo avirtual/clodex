@@ -903,9 +903,21 @@ test('scheduler tabs: read state is per tab — read x then click x:riot 3 is re
 test('scheduler tabs: close x sends close for x and the reply lists the also tabs', async () => {
   let meta = null;
   const h = harness({ close: (_a, m) => { meta = m; return { closed: 'x', windows: 0, also: ['x:riot'] }; } });
-  await h.run([['hand-a', '[agent:browser open x] https://x.com/a']]);
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a'], ['hand-a', '[agent:browser open x:riot] https://x.com/b']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close x]']]), [['hand-a', '[agent:browser] closed x (also x:riot) · 0 windows open']]);
   assert.strictEqual(meta.service, 'x');
+  assert.strictEqual(h.sched.leaseHolder('x:riot'), null);
+});
+
+test('scheduler tabs: close x is refused while the operator has taken over a sibling tab, and no close reaches the child', async () => {
+  const h = harness({ close: () => ({ closed: 'x', windows: 0, also: [] }) });
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a'], ['hand-a', '[agent:browser open x:riot] https://x.com/b']]);
+  h.sched.onState({ event: 'state', service: 'x:riot', state: 'held', reason: 'takeover' });
+  h.calls.length = 0;
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close x]']]), [
+    ['hand-a', `[agent:browser] error: ${R.TEXT.held('x:riot', 'takeover')}`],
+  ]);
+  assert.deepStrictEqual(h.calls, []);
 });
 
 test('scheduler tabs: services lists a profile\'s open named tabs', async () => {

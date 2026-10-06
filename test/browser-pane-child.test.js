@@ -2075,7 +2075,7 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
 
 test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
   const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(profile)'));
-  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*if \(svc\.win\.isDestroyed\(\)\) continue;\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
   assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
 });
@@ -2498,6 +2498,9 @@ test('child: partition, numbers dir, downloads dir, cookie watch and download ro
   assert.ok(!CHILD_SRC.includes("'persist:' + name"));
   for (const s of ["path.join(data, 'numbers', profile)", 'watchCookies(profile, ses)', 'routerFor(profile, ses)']) assert.ok(CHILD_SRC.includes(s), s);
   assert.strictEqual(CHILD_SRC.split('path.join(downloadsRoot, profile').length - 1, 2);
+  assert.ok(CHILD_SRC.includes("ses.on('will-download', (_e, item, from) => {"));
+  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from) || waiters.find((x) => !x.url);'));
+  assert.deepStrictEqual(['.expect({ dir, wc });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
   assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });
 
