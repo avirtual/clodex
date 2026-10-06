@@ -11,6 +11,7 @@ const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies',
 const COUNTER_RE = /\d[\d.,]*[KkMm]?/;
 const DATE_RE = /^(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})$/;
 const LIVE_RE = /(?<![\w.,/])(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})(?![\w.,/])|(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g;
+const HMS_RE = /\b\d{1,2}\s?:\s?\d{2}\s?:\s?\d{2}\b/g;
 const STATE_SUFFIX = /\s*(?::\s*activate to (?:invert |remove )?sort(?:ing)?|:\s*(?:ascending|descending))\s*$/i;
 
 function isVolatile(name, value, learned) {
@@ -41,7 +42,7 @@ function labelHash(s) {
 function stateMask(label) {
   const f = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const cut = f.replace(STATE_SUFFIX, '').replace(/\s*(?:[,;:-]?\s*\b(?:sorted|sort) (?:ascending|descending)|\(\d+ selected\))\s*$/i, '');
-  const s = cut && cut !== f ? cut : label;
+  const s = (cut && cut !== f ? cut : label).replace(HMS_RE, '#:##:##');
   const nums = (s.match(LIVE_RE) || []).filter((x) => !DATE_RE.test(x));
   if (nums.length < 2 || !nums.some((x) => /[.%+\-\u2212]/.test(x))) return s;
   return s.replace(LIVE_RE, (x) => (DATE_RE.test(x) ? x : '#'));
@@ -154,6 +155,7 @@ const PAGE_SOURCE = [
   `const COUNTER_RE = new RegExp(${JSON.stringify(COUNTER_RE.source)});`,
   `const DATE_RE = new RegExp(${JSON.stringify(DATE_RE.source)});`,
   `const LIVE_RE = new RegExp(${JSON.stringify(LIVE_RE.source)}, 'g');`,
+  `const HMS_RE = new RegExp(${JSON.stringify(HMS_RE.source)}, 'g');`,
   `const STATE_SUFFIX = new RegExp(${JSON.stringify(STATE_SUFFIX.source)}, 'i');`,
   counterWord.toString(), counterMask.toString(), actionOf.toString(),
   isVolatile.toString(), normHref.toString(), labelHash.toString(), stateMask.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
@@ -161,5 +163,5 @@ const PAGE_SOURCE = [
 
 module.exports = {
   WELL_KNOWN, WELL_KNOWN_PREFIX, TIMEY, CONTEXT_MAX, LABEL_KEY_MAX, PAGE_SOURCE,
-  COUNTER_WORDS, STATE_SUFFIX, isVolatile, normHref, keyLabel, keyOf, counterMask, actionOf, storedKey, parseStored, learnVolatile, sameDoc,
+  COUNTER_WORDS, STATE_SUFFIX, HMS_RE, isVolatile, normHref, keyLabel, keyOf, counterMask, actionOf, storedKey, parseStored, learnVolatile, sameDoc,
 };

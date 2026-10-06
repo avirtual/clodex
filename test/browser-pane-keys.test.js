@@ -100,3 +100,14 @@ test('keys: a dotted or ISO date is not a live number — e-bloc period rows kee
   const page = new Function(K.PAGE_SOURCE + '; return keyLabel;')();
   assert.strictEqual(page('Due 01.08.2026 €1,234.50 +2%'), 'Due 01.08.2026 €# #');
 });
+
+test('keys: a ticking 19 : 49 : 05 countdown in the label keeps one key; hours and minutes alone are not a countdown', () => {
+  const spaced = K.keyLabel('Promotion is live 19 : 49 : 05');
+  assert.strictEqual(spaced, K.keyLabel('Promotion is live 19 : 49 : 06'));
+  assert.strictEqual(spaced, K.keyLabel('Promotion is live 19:49:05'));
+  assert.strictEqual(K.keyLabel('Open 9:30 to 17:00'), 'Open 9:30 to 17:00');
+  const page = new Function(K.PAGE_SOURCE + '; return keyLabel;')();
+  assert.strictEqual(page('Promotion is live 19 : 49 : 05'), spaced);
+  assert.strictEqual(page('Promotion is live 19 : 49 : 06'), spaced);
+  assert.strictEqual(page('Open 9:30 to 17:00'), 'Open 9:30 to 17:00');
+});

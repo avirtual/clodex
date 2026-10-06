@@ -33,7 +33,7 @@ const NUMBERS_SAVE_MS = 1000;
 const PARENT_POLL_MS = 5000;
 const SLUG_MAX = 120;
 const GEN_OPS = new Set(['click', 'type', 'select', 'download', 'inspect']);
-const HMS = /\b\d{1,2}:\d{2}:\d{2}\b/g;
+const HMS = /\b\d{1,2}\s?:\s?\d{2}\s?:\s?\d{2}\b/g;
 const CLASS_NOISE = /focus|hover|ripple/i;
 const LOADING_INFLIGHT_MS = 300;
 const CLICKISH = ['click', 'mousedown', 'pointerdown', 'mouseup'];
@@ -1467,6 +1467,7 @@ function run(electron, ctx) {
     const text = got == null ? null : typeof got === 'string' ? got : String(got.text || '');
     const busy = got && got.busy && got.busy.count > 0 ? { count: got.busy.count, text: String(got.busy.text || '') } : null;
     const outline = got && got.outline && typeof got.outline === 'object' ? got.outline : null;
+    const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;
     const state = numOf(svc);
     const ent = svc.num;
     const first = !ent.lastRead;
@@ -1523,6 +1524,7 @@ function run(electron, ctx) {
       loading: loadingOf(svc),
       ...(busy ? { busy } : {}),
       ...(outline ? { outline } : {}),
+      ...(wall ? { wall } : {}),
       ...(feed ? { feed } : {}),
     };
   }

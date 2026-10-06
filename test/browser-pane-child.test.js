@@ -1861,3 +1861,15 @@ test('page scripts: transfer and swap are consequential only with a money or tok
   assert.strictEqual(c({ label: 'Swap ETH for USDT' }), 'trading');
   assert.strictEqual(c({ formaction: '/transfer' }), 'transfer');
 });
+
+test('page scripts: READ_TEXT scans for a registration or pay wall and returns it as wall; child lifts it onto the read', () => {
+  const src = scripts.READ_TEXT(false);
+  const WALL = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
+  assert.ok(src.includes(`const WALL = ${WALL};`));
+  assert.ok(src.includes('[class*=paywall i],[class*=meter i],[id*=paywall i],[data-testid*=paywall i],[class*=regwall i],[class*=gate i]'));
+  assert.ok(src.includes('const wall = wallScan(root);'));
+  assert.ok(src.includes('return { text, busy, outline, wall };'));
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
+  assert.ok(child.includes('...(wall ? { wall } : {}),'));
+});

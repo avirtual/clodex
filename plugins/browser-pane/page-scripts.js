@@ -64,7 +64,7 @@ const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sig
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
-const HMS_RE = '/\\b\\d{1,2}\\s?:\\s?\\d{2}\\s?:\\s?\\d{2}\\b/g';
+const HMS_RE = `/${keys.HMS_RE.source}/g`;
 
 function termRe(t, lead) {
   const body = t.split(' ').join('[\\s_-]?');
@@ -292,6 +292,40 @@ function bulletItems(root, mark, hidden = (e) => getComputedStyle(e).display ===
 }
 
 const READ_ROOT_SEL = 'main article, article, [role=main], main, #mw-content-text, #content';
+const WALL_RE = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
+const WALL_SEL = '[class*=paywall i],[class*=meter i],[id*=paywall i],[data-testid*=paywall i],[class*=regwall i],[class*=gate i]';
+const WALL = `
+  const wallScan = (root) => {
+    const WALL = ${WALL_RE};
+    const clip = t => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    try {
+      if (root && document.body) {
+        const all = [];
+        const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let t = w.nextNode(); t; t = w.nextNode()) all.push(t);
+        const inRoot = all.filter(t => root.contains(t));
+        const last = inRoot[inRoot.length - 1];
+        const tail = [];
+        let n = 0;
+        for (let i = inRoot.length - 1; i >= 0 && n < 600; i--) { tail.unshift(inRoot[i]); n += inRoot[i].data.length; }
+        const after = [];
+        let m = 0;
+        for (const t of all) {
+          if (m >= 2000) break;
+          if (last && root.contains(t)) continue;
+          if (last && !(last.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+          if (!last && !(root.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+          after.push(t); m += t.data.length;
+        }
+        for (const t of tail.concat(after)) {
+          const el = t.parentElement;
+          if (el && WALL.test(t.data) && vis(el)) return { text: clip(el.innerText || t.data), n: null };
+        }
+      }
+      const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)})].find(e => vis(e) && clip(e.innerText));
+      return box ? { text: clip(box.innerText), n: null } : null;
+    } catch { return null; }
+  };`;
 
 const SCROLL_INFO = `(() => {
   const root = document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body;
@@ -318,7 +352,7 @@ const BUSY = `
   };`;
 
 function readText(main) {
-  return `(() => {${DEEP}${BUSY}
+  return `(() => {${DEEP}${BUSY}${WALL}
   ${bulletItems.toString()}
   const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
   const score = el => {
@@ -339,7 +373,8 @@ function readText(main) {
   const busy = busyScan();
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
-  if (!root) return { text: '', busy, outline };
+  const wall = wallScan(root);
+  if (!root) return { text: '', busy, outline, wall };
   const clone = root.cloneNode(true);
   clone.querySelectorAll(DROP).forEach(n => n.remove());
   const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
@@ -354,7 +389,7 @@ function readText(main) {
   ${TABLES}
   const txt = clone.innerText; host.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
-  return { text, busy, outline };
+  return { text, busy, outline, wall };
 })()`;
 }
 
