@@ -378,6 +378,9 @@ bundle), whose packaged form is the Docker image under
   env, the unix-socket server (auth, 64KB cap, 8 connections, timeout) and the
   request handler (one intent, subagent filter, captured reply). Wired by
   session-manager `_startIntentSocket`; see docs/messaging.md §7b.
+- **subq.js** — the parent → subagent queue run by `run/<seat>/subq.sh`: drains
+  `subq/<agent_id>` as a `[parent <nonce>]` note, maps Agent names to ids, and
+  parks a note left at TaskStop/SubagentStop; see docs/messaging.md §7b.
 - **intent-glyphs.js** — the glyph vocabulary: `glyphFor`, `headOf` (glyph,
   label, target, chips for a card head), `REPLY_GLYPHS` for runtime replies,
   and the plugin-glyph check `registerIntent` applies. Main-side, no deps.
