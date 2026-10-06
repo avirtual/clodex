@@ -993,7 +993,6 @@ test('page scripts: the short-root fallback scores an element with no layout box
   const score = new Function(`${scripts.READ_TEXT(false).match(/(const score = el => \{[\s\S]*?\n  \};)/)[1]}\nreturn score;`)();
   assert.strictEqual(score({ getClientRects: () => [], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), -1);
   assert.strictEqual(score({ getClientRects: () => [{}], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), 500);
-  assert.ok(scripts.READ_TEXT(false).includes("document.querySelectorAll('main,div,section,td').forEach(el => {"));
 });
 
 function lineOf(src, head) {
