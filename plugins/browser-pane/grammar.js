@@ -1,6 +1,10 @@
 'use strict';
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
+const NAME_PATTERN = '^[a-z][a-z0-9-]{0,31}(?::[a-z0-9][a-z0-9-]{0,15})?$';
+const NAME_RE = new RegExp(NAME_PATTERN);
+const profileOf = (n) => String(n).split(':')[0];
+const tabOf = (n) => { const i = String(n).indexOf(':'); return i < 0 ? '' : String(n).slice(i + 1); };
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
 const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close', 'note'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
@@ -116,9 +120,9 @@ function serviceArg(sub, positional, required) {
     if (required) throw new Error(`${sub} needs a service — [agent:browser open <service>] <url>`);
     return null;
   }
-  if (!SERVICE_RE.test(s)) {
+  if (!NAME_RE.test(s)) {
     if (/^[0-9]+$/.test(s)) throw new Error(`unexpected '${s}' for ${sub}`);
-    throw new Error(`bad service name '${s}' — use a-z, 0-9 and -, starting with a letter, at most 32 chars`);
+    throw new Error(`bad service name '${s}' — use a-z, 0-9 and -, starting with a letter, at most 32 chars, optionally :<tab> (a-z, 0-9 and -, at most 16)`);
   }
   return s;
 }
@@ -259,7 +263,7 @@ function toCommand(intent) {
     if (at > 0) {
       const prev = qt[at].t;
       const bad = qt[at + 1].t;
-      if (SERVICE_RE.test(bad) && !qt.slice(1, at).some(x => !x.q && SERVICE_RE.test(x.t) && !x.t.startsWith('--'))) throw new Error(`unexpected '${bad}' for ${sub} — put the service first: ${sub} ${bad} ${qt.slice(1).filter((x, i) => i + 1 !== at + 1).map(x => x.q ? `"${x.t}"` : x.t).join(' ')}`);
+      if (NAME_RE.test(bad) && !qt.slice(1, at).some(x => !x.q && NAME_RE.test(x.t) && !x.t.startsWith('--'))) throw new Error(`unexpected '${bad}' for ${sub} — put the service first: ${sub} ${bad} ${qt.slice(1).filter((x, i) => i + 1 !== at + 1).map(x => x.q ? `"${x.t}"` : x.t).join(' ')}`);
       throw new Error(`unexpected '${bad}' for ${sub} — quote multi-word text: ${prev.split('=')[0]}="${prev.split('=').slice(1).join('=')} ${bad}"`);
     }
   }
@@ -331,4 +335,4 @@ function toCommand(intent) {
   return { sub, service: serviceArg(sub, positional, false) };
 }
 
-module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, SUBCOMMANDS, KEY_NAMES, SCROLL_DIRS, DEFAULT_MAX, WAIT_MS_MAX };
+module.exports = { parseLine, toCommand, tokenize, SERVICE_RE, NAME_PATTERN, NAME_RE, profileOf, tabOf, SUBCOMMANDS, KEY_NAMES, SCROLL_DIRS, DEFAULT_MAX, WAIT_MS_MAX };

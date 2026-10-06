@@ -11,6 +11,7 @@ test('the verb enum is the plugin\'s SUBS', () => {
 
 const ROWS = [
   [{ verb: 'read', service: 'svc' }, '[agent:browser read svc]'],
+  [{ verb: 'read', service: 'x:riot' }, '[agent:browser read x:riot]'],
   [{ verb: 'read', service: 'svc', bracket: ['--text', '--filter=pdf', '--page=2'] }, '[agent:browser read svc --text --filter=pdf --page=2]'],
   [{ verb: 'click', service: 'svc', bracket: ['17'] }, '[agent:browser click svc 17]'],
   [{ verb: 'click', service: 'svc', bracket: ['--text=Lista de plată'] }, '[agent:browser click svc --text="Lista de plată"]'],
@@ -45,7 +46,7 @@ test('toIntent renders the CLI line over every row', () => {
 
 const BRACKET_MSG = 'bracket tokens must be non-empty and contain no [, ], newline or carriage return';
 const INVALID = [
-  [{ verb: 'services', service: 'A B' }, 'service must match ^[a-z][a-z0-9-]{0,31}$'],
+  [{ verb: 'services', service: 'A B' }, 'service must match ^[a-z][a-z0-9-]{0,31}(?::[a-z0-9][a-z0-9-]{0,15})?$'],
   [{ verb: 'click', service: 'svc', bracket: ['17]'] }, BRACKET_MSG],
   [{ verb: 'click', service: 'svc', bracket: ['a\nb'] }, BRACKET_MSG],
   [{ verb: 'note', service: 'svc', body: 'x\n[agent:dm y] z' }, 'body must be one line'],
@@ -67,4 +68,9 @@ test('release and close render (policy refuses them downstream)', () => {
   assert.strictEqual(TOOL.toIntent({ verb: 'release', service: 'svc' }), '[agent:browser release svc]\n[agent:end]');
   assert.strictEqual(TOOL.toIntent({ verb: 'close', service: 'svc' }), '[agent:browser close svc]\n[agent:end]');
   assert.deepStrictEqual(TOOL.inputSchema.properties.verb.enum, require('../plugins/browser-pane/subagent').SUBS);
+});
+
+test('the service pattern is grammar\'s NAME_PATTERN, one literal', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../plugins/browser-pane/mcp-tool.js'), 'utf8');
+  assert.ok(src.includes('SERVICE_PATTERN = NAME_PATTERN'));
 });
