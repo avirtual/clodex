@@ -91,7 +91,7 @@ test('a plugin row without a subagent policy refuses every subagent call with th
     assert.deepStrictEqual(seen, []);
     const main = await handle({ intent: '[agent:zzz anything]', ident: MAIN }, ctl);
     assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
-    assert.deepStrictEqual(seen, ['anything']);
+    assert.deepStrictEqual(seen, ['[agent:zzz anything]']);
   } finally {
     registry._resetPluginRows();
   }
@@ -220,6 +220,8 @@ function seatHarness({ handler = null } = {}) {
     parse: grammar.parseLine,
     handler: (handle, intent) => { handled.push({ handle, raw: intent.raw }); if (arrived) arrived(); if (handler) handler(handle, intent); },
     classifyReply: replies.classifyReply,
+    tools: [TOOL],
+    subagent,
   }, 'browser-pane', { shipped: true });
   const nextHandled = (n) => new Promise((resolve) => {
     arrived = () => { if (handled.length >= n) resolve(); };

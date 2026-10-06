@@ -1094,6 +1094,28 @@ test('a verb collision NAMES the verb and the plugin holding it', () => {
     'the log names the holder too');
 });
 
+test('an ETOOLTAKEN from activate records the conflict and takes no strike', () => {
+  const dir = mkTree({ alpha: { manifest: OK_MANIFEST, files: { 'engine.js': engineFile, 'renderer.js': '', 'style.css': '' } } });
+  const { loader, logged } = mkLoader(dir);
+  const host = {
+    register() {
+      const e = new Error('tool "browser" is already registered by plugin "other"');
+      e.code = 'ETOOLTAKEN';
+      e.tool = 'browser';
+      e.heldBy = 'other';
+      throw e;
+    },
+  };
+  const results = loader.loadAll(host);
+  assert.deepStrictEqual(results[0].verbConflict, { verb: 'browser', heldBy: 'other' });
+  loader.loadAll(host);
+  const row = loader.status().plugins.find((p) => p.id === 'alpha');
+  assert.deepStrictEqual(row.verbConflict, { verb: 'browser', heldBy: 'other' });
+  assert.strictEqual(row.failCount, 0);
+  assert.strictEqual(row.quarantined, false);
+  assert.ok(logged.some((l) => l.includes('NOT loaded — MCP tool "browser" is already held by "other"')));
+});
+
 test('a plugin that CRASHES still strikes and still quarantines', () => {
   // The other half of the classification: t20 must not have turned the failure
   // machinery off. `boom` throws a plain Error with no code.
