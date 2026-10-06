@@ -276,3 +276,21 @@ test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓],
   nameBtn.setAttribute('aria-label', 'Name: Activate to invert sorting');
   assert.strictEqual(vm.runInContext(scripts.CHECK(2, read.keys[2], merged({ known: {}, next: 1 }, read)), ctx), 'ok');
 });
+
+test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by its whole phrase; a phrase across two siblings is not', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const luton = mk('li', { onclick: 'pick()' }, ['London ', mk('b', {}, ['Luton'], [60, 40, 40, 20]), ' LTN'], [10, 40, 200, 20]);
+  const gatwick = mk('li', { onclick: 'pick()' }, ['Gatwick'], [10, 60, 200, 20]);
+  const stansted = mk('li', { onclick: 'pick()' }, ['Stansted'], [10, 80, 200, 20]);
+  const list = mk('ul', { role: 'listbox' }, [luton, gatwick, stansted], [10, 40, 200, 60]);
+  const body = mk('body', {}, [list], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  const state = merged({ known: {} }, read);
+  const found = vm.runInContext(scripts.FIND_TEXT('London Luton', state), ctx);
+  assert.strictEqual(found.count, 1);
+  assert.strictEqual(found.hits[0].n, ctx.__cxOf.get(luton));
+  assert.strictEqual(vm.runInContext(scripts.FIND_TEXT('Gatwick Stansted', state), ctx).count, 0);
+});

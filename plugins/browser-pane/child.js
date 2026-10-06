@@ -387,6 +387,14 @@ function consequentialRefusal(n, el, confirm) {
   return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential));
 }
 
+function passwordRefusal(service, n, el, login) {
+  const signedIn = !!login && (login.passwordChange === true || (login.password === false && !!el.password && !el.otp));
+  if (signedIn) return codedError('PASSWORD_FIELD', TEXT.passwordFieldSignedIn(service, n));
+  const e = codedError('PASSWORD_FIELD', TEXT.passwordField(service, n));
+  e.handoff = { password: !!el.password, otp: !!el.otp };
+  return e;
+}
+
 async function enterRefusal(isolated, n, args) {
   if (args.confirm) return null;
   const key = args.key === 'Space' || scripts.ARROW_KEYS.includes(args.key) ? args.key : 'Enter';
@@ -990,11 +998,7 @@ function run(electron, ctx) {
         return done;
       }
       if (op === 'type') {
-        if (el.password || el.otp) {
-          const e = codedError('PASSWORD_FIELD', TEXT.passwordField(svc.name, n));
-          e.handoff = { password: !!el.password, otp: !!el.otp };
-          throw e;
-        }
+        if (el.password || el.otp) throw passwordRefusal(svc.name, n, el, await probe(svc));
         if (!el.editable) throw codedError('NOT_EDITABLE', TEXT.notEditable(n, el.kind));
         const text = String(args.text || '');
         const { idle } = await driver.act(wc, async () => {
@@ -1627,5 +1631,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

@@ -62,6 +62,7 @@ blocks a release.
 - Browser pane site notes: re-anchoring a note to another path is no longer refused as a duplicate (`already noted` now names the anchor); the `noted` reply says `as <seat>/agent` when the note was stamped from a subagent identity; a site-wide caution keeps one line on a page that has three notes of its own.
 - Browser pane: a label with dotted dates (`01.08.2026 - 31.08.2026`) keeps its number (dates are not live values); `--filter` keeps only a real count line; `[role=columnheader]` grids show `[sorted ↑/↓]`; site notes: no `notes: 0` line, `Continue`/`content` no longer trip the account-number filter, and a failed paged read does not mark notes as shown.
 - Browser pane: a password-change form on a signed-in page (e-bloc Setări) no longer triggers a sign-in hold (`signed in (password-change form)`); a short flat page reads its whole body instead of one row; a `--filter` count line must carry numbers (`Showing off…` is prose); a bare `Sort` button inside a column header is listed as `<Column>: Sort` (those buttons renumber once).
+- Browser pane: typing into a password field on a signed-in page (password-change form) is refused without holding the service or notifying the operator; a countdown written `19 : 49 : 05` keeps its number; `click --text` finds a suggestion whose text is split by highlight spans; `transfer`/`swap` are ⚠ only with a money or token word (`self-transfer flights`, `Airport transfer`, `swap-stations` are free).
 
 ## 5.112.2 — 2026-10-04
 
