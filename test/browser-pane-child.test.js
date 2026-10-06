@@ -1028,15 +1028,6 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes("(a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a"));
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
-  assert.ok(src.includes("[...document.querySelectorAll('div,aside,section')]"));
-  assert.ok(src.includes('/close|dismiss|^×$/i.test('));
-  const ri = scripts.READ_INTERACTIVE(false, {});
-  assert.strictEqual(lineOf(ri, 'const modalBy = (e) =>'), lineOf(src, 'const modalBy = (e) =>'));
-  assert.strictEqual(lineOf(ri, 'const modal = forced ? null :'), lineOf(src, 'const modal = forced ? null :'));
-  assert.ok(ri.includes('covered.push(n);'));
-  assert.ok(ri.includes('rows: rowsOut, chrome, covered, cats,'));
-  assert.ok(src.includes('[...document.querySelectorAll(DIALOG_SEL), ...drawersOf()].filter(vis)'));
-  assert.match(CHILD_SRC, /chrome: el\.chrome \|\| \[\],\n\s*covered: el\.covered \|\| \[\],/);
   assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
   assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
@@ -1074,16 +1065,13 @@ test('page scripts: wholeLabel drops an icon-only child from the label, keeps re
 });
 
 function modalByOf() {
-  const src = scripts.READ_TEXT(false);
-  const make = new Function('getComputedStyle', 'document', 'innerWidth', 'innerHeight', 'vis', `${lineOf(src, 'const drawerAt = (e) =>')}\n${lineOf(src, 'const drawerKeep = (e) =>')}\n${lineOf(src, 'const modalBy = (e) =>')}\nreturn modalBy;`);
+  const make = new Function('getComputedStyle', 'document', 'innerWidth', 'innerHeight', 'vis', `${lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>')}\nreturn modalBy;`);
   const body = { children: [] };
-  return { body, modalBy: make((e) => e.style, { body, documentElement: { clientWidth: 1185 } }, 1200, 800, () => true) };
+  return { body, modalBy: make((e) => e.style, { body }, 1200, 800, () => true) };
 }
 
-function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, role = false, innerText = '', nav = '', controls = [] } = {}) {
+function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, role = false, innerText = '' } = {}) {
   const e = { attrs, style, parentElement, innerText, children: [], previousElementSibling: null,
-    closest: () => (nav === 'in' ? {} : null), querySelector: () => (nav === 'has' ? {} : null),
-    querySelectorAll: () => controls.map((name) => ({ getAttribute: (k) => (k === 'aria-label' ? name : null), innerText: '' })),
     matches: (sel) => (sel === '[role=dialog]' ? role : aria), getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
   if (parentElement) {
     e.previousElementSibling = parentElement.children[parentElement.children.length - 1] || null;
@@ -1142,16 +1130,8 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(drawer({ position: 'absolute' }, docked), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 100, right: 580 }), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
-    const paneled = { left: 660, right: 1200, top: 0, bottom: 800, width: 540, height: 800 };
-    const bare = (rect, opts) => modalBy(node(body, { style: { position: 'fixed' }, rect, controls: ['Close panel'], ...opts }));
-    assert.strictEqual(bare(paneled), 'drawer', 'a role-less fixed docked panel with a close control is a drawer');
-    assert.strictEqual(bare({ ...paneled, left: 645, right: 1185 }), 'drawer', 'a classic scrollbar does not undock it');
-    assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
-    assert.strictEqual(bare(paneled, { nav: 'has' }), '', 'a panel holding a nav is not a drawer');
-    assert.strictEqual(bare(paneled, { controls: ['Save'] }), '', 'a panel with no close control is not a drawer');
-    assert.strictEqual(drawer({ position: 'fixed' }, paneled), 'drawer', 'a role=dialog drawer needs no close control');
   }
-  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };");
+  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (e.matches('[role=dialog]') && getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= innerWidth - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6) return 'drawer'; } return ''; };");
 });
 
 test('child: a --text target matched by label carries byName onto the click and inspect replies', () => {
@@ -2286,7 +2266,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   assert.strictEqual(adKeyOf(wrapper()), null);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.match(ri, /if \(it\.cq === 'ad'\) \{ const k = adKeyOf\(it\.el\); if \(k != null\) adKeys\[n\] = k; \}/);
-  assert.match(ri, /chrome, covered, cats, adKeys, posts:/);
+  assert.match(ri, /chrome, cats, adKeys, posts:/);
   assert.match(CHILD_SRC, /cats: el\.cats \|\| \{\},\n\s*adKeys: el\.adKeys \|\| \{\},/);
   assert.match(scripts.INSPECT(1), /warn: cqHit\(el\),/);
 });

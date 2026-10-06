@@ -358,21 +358,3 @@ test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by
   assert.strictEqual(found.hits[0].n, ctx.__cxOf.get(luton));
   assert.strictEqual(vm.runInContext(scripts.FIND_TEXT('Gatwick Stansted', state), ctx).count, 0);
 });
-
-test('READ_INTERACTIVE: links under an aria-modal dialog\'s backdrop are numbered and returned as covered; the dialog\'s own button is not', () => {
-  const page = mkPage();
-  const { mk } = page;
-  const a1 = mk('a', { href: '/' }, ['Portfolio app'], [10, 10, 100, 20]);
-  const a2 = mk('a', { href: '/accounts' }, ['Accounts'], [120, 10, 100, 20]);
-  const pane = mk('div', { role: 'dialog', 'aria-modal': 'true' }, [mk('button', {}, ['Close'], [300, 200, 80, 20])], [250, 150, 700, 500]);
-  const backdrop = mk('div', { class: 'backdrop' }, [], [0, 0, 1200, 800]);
-  const body = mk('body', {}, [mk('header', {}, [a1, a2], [0, 0, 1200, 40]), backdrop, pane], [0, 0, 1200, 800]);
-  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
-  const ctx = context(page);
-  ctx.document.elementFromPoint = (x, y) => (x >= 250 && x <= 950 && y >= 150 && y <= 650 ? pane : backdrop);
-  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
-  const num = (label) => Number(/^\[(\d+)\]/.exec(read.lines.find((l) => l.includes(label)))[1]);
-  assert.strictEqual(read.lines.length, 3);
-  assert.deepStrictEqual(Array.from(read.covered).map(Number), [num('Portfolio app'), num('Accounts')]);
-  assert.ok(!Array.from(read.covered).map(Number).includes(num('Close')));
-});

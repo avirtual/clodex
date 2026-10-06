@@ -284,18 +284,6 @@ articles (on X: the timeline, not the Trending / Who to follow sidebar). `--atta
 forces the `@`, `--path-only` drops it. A screenshot attaches unless `--path-only`
 is given. A Codex seat gets its "read it with your Read tool" line either way.
 
-The read root is normally the page's main column. When a modal dialog is open —
-`[role=dialog]`/`[role=alertdialog]`/`dialog[open]`/`[aria-modal=true]`, proven by
-`aria-modal`, by the page behind it being `aria-hidden`/`inert`, or by a
-full-viewport backdrop — the read returns the dialog's text alone under a first
-line `[dialog]`, and the default elements list omits the controls under its
-backdrop (`read --all` lists them; a click on one is refused as covered). A side
-drawer — a fixed panel of at least 80 % of the viewport height docked to the left
-or right edge and 20–60 % of its width, with a close control, whether or not it
-carries `role=dialog` — is a read root the same way, also under `[dialog]`, but
-covers nothing: the page's own controls stay listed. `read --main` reads the page
-behind the dialog or drawer instead.
-
 Every act reply says what it caused: `navigated → …` (read again),
 `navigated → <url> (in-page)` for a single-page-app route change (pushState),
 still followed by what changed, `changed: "…"` with the text that changed in place

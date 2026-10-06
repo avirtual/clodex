@@ -456,26 +456,6 @@ const BUSY = `
     return { count: busyEls.length, text: busyEls.length ? (busyEls[0].innerText || busyEls[0].textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) : '' };
   };`;
 
-const HIT_AT = `
-  const hitAt = (at) => {
-    let hit = document.elementFromPoint ? document.elementFromPoint(at.x, at.y) : null;
-    while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
-      const inner = hit.shadowRoot.elementFromPoint(at.x, at.y);
-      if (!inner || inner === hit) break;
-      hit = inner;
-    }
-    return hit;
-  };
-  const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };`;
-
-const MODAL_FINDER = `const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
-  const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
-  const drawerAt = (e) => { if (getComputedStyle(e).position !== 'fixed') return false; const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= w - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6; };
-  const drawerKeep = (e) => !e.closest('nav, [role=navigation]') && !e.querySelector('nav, [role=navigation]') && [...e.querySelectorAll('button, a, [role=button]')].some(b => /close|dismiss|^×$/i.test((b.getAttribute('aria-label') || b.innerText || b.getAttribute('title') || '').trim()));
-  const drawersOf = () => [...document.querySelectorAll('div,aside,section')].filter(e => !e.matches(DIALOG_SEL) && drawerAt(e) && vis(e) && drawerKeep(e)).filter((e, _i, a) => !a.some(x => x !== e && e.contains(x)));
-  const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };
-  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL), ...drawersOf()].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => (a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a)[0];`;
-
 function readText(main) {
   return `(() => {${DEEP}${BUSY}${WALL}
   ${bulletItems.toString()}
@@ -487,7 +467,10 @@ function readText(main) {
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
-  ${MODAL_FINDER}
+  const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
+  const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
+  const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (e.matches('[role=dialog]') && getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= innerWidth - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6) return 'drawer'; } return ''; };
+  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => (a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a)[0];
   if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
   if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
@@ -863,11 +846,7 @@ function readInteractive(main, state) {
   return `(() => {${DEEP}${numbering(state)}
   ${distinctClips.toString()}
   ${inputLine.toString()}
-  resetTable();${collect(main)}${HIT_AT}
-  const forced = ${main ? 'mainRootOf()' : 'null'};
-  ${MODAL_FINDER}
-  const cover = modal && modal.by !== 'drawer' ? modal.e : null;
-  const tails = distinctClips(items.map(i => (i.line != null && i.full) || ''));
+  resetTable();${collect(main)}  const tails = distinctClips(items.map(i => (i.line != null && i.full) || ''));
   items.forEach((it, i) => {
     if (!tails[i]) return;
     it.line = it.line.replace(clip(it.full, 60), () => tails[i]);
@@ -875,7 +854,7 @@ function readInteractive(main, state) {
   });
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const covered = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
@@ -888,10 +867,9 @@ function readInteractive(main, state) {
       rowsOut[n] = rowOf(it.el);
       sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
-      if (cover && !within(cover, it.el) && !within(it.el, hitAt((r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(it.el.getBoundingClientRect())))) covered.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
 })()`;
 }
 
@@ -1063,11 +1041,17 @@ function find(n) {
     }
     return best;
   };
-  let lastHit = null;${HIT_AT}
+  let lastHit = null;
   const report = () => {
     const r = el.getBoundingClientRect();
     const at = r.width && r.height ? clickPoint(el, r, document) : first;
-    const hit = hitAt(at);
+    let hit = document.elementFromPoint ? document.elementFromPoint(at.x, at.y) : null;
+    while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+      const inner = hit.shadowRoot.elementFromPoint(at.x, at.y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };
     const covered = !!hit && !within(el, hit) && !within(hit, el);
     lastHit = covered ? hit : null;
     let hitN = null;

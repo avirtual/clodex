@@ -506,23 +506,18 @@ function elementKey(line) {
   return String(line).replace(/^\[\d+\] /, '').replace(/([?&](?:t|_|ts)=)\d+/g, '$1');
 }
 
-function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null, covered = null } = {}) {
+function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null } = {}) {
   const lines = Array.isArray(elements) ? elements.map(String) : [];
-  const under = new Set(Array.isArray(covered) || covered instanceof Set ? [...covered].map(String) : []);
-  const isUnder = lines.map((l) => { const m = ELEMENT_RE.exec(l); return !!m && under.has(m[1]); });
-  const fresh = !Array.isArray(prevElements) || !prevElements.length;
-  if (fresh && !isUnder.some(Boolean)) return { lines, hidden: 0 };
+  if (!Array.isArray(prevElements) || !prevElements.length) return { lines, hidden: 0 };
   const byKey = !!(prevKeys && curKeys);
   const inChrome = new Set(Array.isArray(chrome) || chrome instanceof Set ? [...chrome].map(String) : []);
   const prev = new Map();
-  for (const l of fresh ? [] : prevElements.map(String)) {
+  for (const l of prevElements.map(String)) {
     const m = ELEMENT_RE.exec(l);
     if (!m) continue;
     if (byKey) { if (prevKeys[m[1]] != null) prev.set(prevKeys[m[1]], m[1]); } else prev.set(elementKey(l), m[1]);
   }
-  const hide = lines.map((l, i) => {
-    if (isUnder[i]) return true;
-    if (fresh) return false;
+  const hide = lines.map((l) => {
     const m = ELEMENT_RE.exec(l);
     if (!m || m[2].startsWith('input') || FORM_KINDS.has(m[2])) return false;
     if (!inChrome.has(m[1])) return false;
@@ -530,9 +525,8 @@ function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null
     return prev.get(elementKey(l)) === m[1];
   });
   let hidden = hide.filter(Boolean).length;
-  let coveredN = hide.filter((h, i) => h && isUnder[i]).length;
-  if (hidden && hidden >= lines.length) { if (isUnder[0]) coveredN -= 1; hide[0] = false; hidden -= 1; }
-  return { lines: lines.filter((_l, i) => !hide[i]), hidden, ...(coveredN ? { covered: coveredN } : {}) };
+  if (hidden && hidden >= lines.length) { hide[0] = false; hidden -= 1; }
+  return { lines: lines.filter((_l, i) => !hide[i]), hidden };
 }
 
 const NUMBERS_LISTED = 10;
@@ -633,8 +627,7 @@ function formatRead(raw, opts) {
   const body = pages[o.page - 1];
   const hidden = opts.hidden > 0 ? opts.hidden : 0;
   const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.length : 0) + hidden;
-  const under = opts.covered > 0 ? Math.min(opts.covered, hidden) : 0;
-  const range = (under ? `${fmt(hidden)} hidden (${under} under the dialog, ${hidden - under} repeated) — read --all lists them; ` : hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '')
+  const range = (hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '')
     + (raw.restored != null ? `numbers: stable per site; numbers restored${savedLabel(raw.restored)}`
       : raw.first ? `numbers: stable per site; first read of ${typeof raw.first === 'string' ? raw.first : o.service}` : `numbers: stable per site; new since your last read: ${numberList(raw.fresh)}`)
     + (Array.isArray(raw.retired) && raw.retired.length ? `; retired: ${numberList(raw.retired)}` : '')
