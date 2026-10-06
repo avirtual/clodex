@@ -126,15 +126,15 @@ test('a request past the timeout answers timeout and closes the reply sink', asy
 
 const GRANTED = { execCommands: ['clodex-run-tests'] };
 const TABLE = [
-  ['[agent:dm reviewer] which file', 'dm', true],
-  ['[agent:who]', 'who', true],
-  ['[agent:name]', 'name', true],
-  ['[agent:task list]', 'task list', true],
-  ['[agent:exec clodex-run-tests] {}', 'exec clodex-run-tests', true],
+  ['[agent:dm reviewer] which file', 'dm', false],
+  ['[agent:who]', 'who', false],
+  ['[agent:name]', 'name', false],
+  ['[agent:task list]', 'task list', false],
+  ['[agent:exec clodex-run-tests] {}', 'exec clodex-run-tests', false],
   ['[agent:exec clodex-team] {}', 'exec clodex-team', false],
   ['[agent:exec status] {}', 'exec status', false],
-  ['[agent:memory recall] pins', 'memory recall', true],
-  ['[agent:memory list]', 'memory list', true],
+  ['[agent:memory recall] pins', 'memory recall', false],
+  ['[agent:memory list]', 'memory list', false],
   ['[agent:memory remember] x', 'memory remember', false],
   ['[agent:memory forget] x', 'memory forget', false],
   ['[agent:task add] spec', 'task add', false],
@@ -173,7 +173,7 @@ for (const [line, label, allowed] of TABLE) {
       assert.strictEqual(r.ok, true);
       assert.deepStrictEqual(seen, ['h1/agent']);
     } else {
-      assert.deepStrictEqual(r, { ok: false, status: 'refused', error: `not available to a subagent: ${label}` });
+      assert.deepStrictEqual(r, { ok: false, status: 'refused', error: `not available to a subagent: ${label} — return and let the seat's main agent do it` });
       assert.deepStrictEqual(seen, [], 'a refusal dispatches nothing');
     }
     const main = await handle({ intent: line, ident: identToken(crypto, CRED, null, null, 'main-thread') }, { closed: () => false });
@@ -246,25 +246,26 @@ async function withSeat(fn, opts) {
 
 test('reply capture: who returns the roster line to the caller and injects nothing into the seat', async () => {
   await withSeat(async (h, cred) => {
-    const r = await viaVerb(h, cred, ['[agent:who]']);
+    const r = await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));
     assert.strictEqual(r.code, 0, r.err);
     assert.match(r.out, /^\[agent:peers\] b\b/);
     assert.deepStrictEqual(h.injected, [], 'the acknowledgement went to the socket, not the PTY');
-    const n = await viaVerb(h, cred, ['[agent:name]'], { CODEX_THREAD_ID: 'thread-9' });
+    const n = await viaVerb(h, cred, ['[agent:name]'], { ...mainEnv(cred), CODEX_THREAD_ID: 'thread-9' });
     assert.strictEqual(n.out, '[agent:name] a\n');
     assert.deepStrictEqual(h.injected, []);
   });
 });
 
-test('an async verb says where its answer arrives, and a subagent dm is sent as <seat>/agent', async () => {
+test('an async verb says where its answer arrives for the main agent; a subagent dm is refused', async () => {
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:dm', 'b]', 'which', 'file'], { CLODEX_AGENT_ID: 'agent-7' });
-    assert.strictEqual(r.code, 0, r.err);
-    assert.strictEqual(r.out, "sent to b; a reply arrives in the seat's main conversation\n");
-    assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a/agent', body: 'which file' }]);
+    assert.strictEqual(r.code, verb.EXIT.DENIED);
+    assert.strictEqual(r.err, "clodex: not available to a subagent: dm — return and let the seat's main agent do it\n");
+    assert.deepStrictEqual(h.delivered, []);
     const main = await viaVerb(h, cred, ['[agent:dm b] hi'], mainEnv(cred));
     assert.strictEqual(main.code, 0);
-    assert.strictEqual(h.delivered[1].tag, 'a', 'the main agent still sends as the seat');
+    assert.strictEqual(main.out, "sent to b; a reply arrives in the seat's main conversation\n");
+    assert.strictEqual(h.delivered[0].tag, 'a', 'the main agent still sends as the seat');
     assert.deepStrictEqual(h.injected, []);
   });
 });
@@ -273,9 +274,11 @@ test('a subagent is refused a lead verb with exit 3, and the main agent is not',
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:shout] approve?'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(r.code, verb.EXIT.DENIED);
-    assert.strictEqual(r.err, 'clodex: not available to a subagent: shout\n');
+    assert.strictEqual(r.err, "clodex: not available to a subagent: shout — return and let the seat's main agent do it\n");
     const g = await viaVerb(h, cred, ['[agent:exec clodex-team] {}'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(g.code, verb.EXIT.DENIED);
+    const granted = await viaVerb(h, cred, ['[agent:exec clodex-run-tests] {}'], { CLODEX_AGENT_ID: 'agent-7' });
+    assert.strictEqual(granted.code, verb.EXIT.DENIED);
     const bad = await viaVerb(h, 'e'.repeat(64), ['[agent:who]']);
     assert.strictEqual(bad.code, verb.EXIT.DENIED);
     assert.strictEqual(bad.err, 'clodex: unauthorized\n');
@@ -284,8 +287,9 @@ test('a subagent is refused a lead verb with exit 3, and the main agent is not',
 
 test('the seat credential appears in no log line and no ipc broadcast', async () => {
   await withSeat(async (h, cred) => {
-    await viaVerb(h, cred, ['[agent:who]']);
+    await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));
     await viaVerb(h, cred, ['[agent:dm b] x'], { CLODEX_AGENT_ID: 'agent-7' });
+    await viaVerb(h, cred, ['[agent:dm b] x'], mainEnv(cred));
     await viaVerb(h, cred, ['[agent:shout] x'], { CLODEX_AGENT_ID: 'agent-7' });
     await viaVerb(h, cred, ['[agent:bogus thing]']);
     await viaVerb(h, cred, ['[agent:exec clodex-run-tests] {}'], { CLODEX_AGENT_ID: 'agent-7' });
@@ -315,20 +319,14 @@ test('dropping run/<name>/ on exit unlinks the live intent socket', async () => 
   } finally { srv.stop(); }
 });
 
-test('a subagent dm reaches the recipient answerable, and its reply to <seat>/agent lands in the seat', async () => {
+test('a subagent dm is refused before delivery', async () => {
   await withSeat(async (h, cred) => {
     h.a.activityState = 'working';
     h.a.activityTs = Date.now();
     const r = await viaVerb(h, cred, ['[agent:dm b] which file holds the pin'], { CLODEX_AGENT_ID: 'agent-7' });
-    assert.strictEqual(r.code, 0, `${r.err} ${h.logs.join(' | ')}`);
+    assert.strictEqual(r.code, verb.EXIT.DENIED);
     await new Promise((res) => setImmediate(res));
-    const toB = h.injected.filter((i) => i.to === 'b').map((i) => i.text).join('\n');
-    assert.match(toB, /\[agent:from a\/agent\] which file holds the pin/);
-    assert.ok(!toB.includes('no reply path'), `the recipient is told it can answer: ${toB}`);
-    await h.m._handleIntent('b', { type: 'dm', target: 'a/agent', body: 'pins.test.js', urgent: false });
-    await new Promise((res) => setImmediate(res));
-    const toA = h.injected.filter((i) => i.to === 'a').map((i) => i.text).join('\n');
-    assert.match(toA, /\[agent:from b\] pins\.test\.js/, 'the reply lands in the seat\'s main conversation');
+    assert.ok(!h.injected.some((i) => /\[agent:from a\/agent\]/.test(i.text)), JSON.stringify(h.injected));
   }, { realDeliver: true });
 });
 
@@ -343,7 +341,7 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   assert.strictEqual(main.ok, true, 'CODEX_THREAD_ID of the main thread is the main agent');
   assert.deepStrictEqual(seen, [null], 'and its dm would go out as the seat');
   const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
-  assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: 'not available to a subagent: shout' });
+  assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
 });
 
 test('a Codex clone (no persistence entry) keeps its main thread: isCodex comes from the session, not entryOf', async () => {
@@ -381,7 +379,7 @@ test('a Codex seat with no session id yet treats every caller as a subagent', as
       dispatch: async () => {},
     });
     for (const r of [{ intent: '[agent:shout] x', agentId: uuid }, { intent: '[agent:shout] x' }]) {
-      assert.deepStrictEqual(await handle(r, { closed: () => false }), { ok: false, status: 'refused', error: 'not available to a subagent: shout' });
+      assert.deepStrictEqual(await handle(r, { closed: () => false }), { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
     }
   }
 });
@@ -400,7 +398,7 @@ test('a Claude seat: only a main stamp keyed by this seat\'s credential and sess
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
   const ctl = { closed: () => false };
-  const refused = { ok: false, status: 'refused', error: 'not available to a subagent: shout' };
+  const refused = { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" };
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x' }, ctl), refused, 'no stamp');
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', agentId: 'sess-1' }, ctl), refused, 'an agentId claim is not a stamp');
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, 'd'.repeat(64), null, null, 'sess-1') }, ctl), refused, 'wrong cred');
@@ -486,7 +484,7 @@ test('a client that hangs up before the reply closes the sink, so the late reply
   const dispatched = new Promise((r) => { arrived = r; });
   let ctlRef = null;
   const inner = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
     replyWaitMs: () => 60000,
     setTimer: () => 0, clearTimer: () => {},
@@ -526,7 +524,7 @@ test('the socket writes the credential file 0600 beside it and removes it on sto
 test('the reply sink closes when the reply is built, so a late acknowledgement falls through to the seat', async () => {
   let late = null;
   const handle = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: subagentAllows,
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { opts.replyTo('now'); late = opts.replyTo; },
   });
   const r = await handle({ intent: '[agent:who]' }, { closed: () => false });

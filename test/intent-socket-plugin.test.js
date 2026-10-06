@@ -70,12 +70,19 @@ for (const [args, allowed] of BROWSER_TABLE) {
   }));
 }
 
+test('the subagent catalog is browser only', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
+  assert.ok(src.includes('const SUBAGENT_TYPES = [...Object.keys(SUBAGENT_SUBS)];'));
+  assert.deepStrictEqual(registry.SUBAGENT_TYPES, ['browser']);
+  assert.deepStrictEqual(Object.keys(registry.SUBAGENT_SUBS), ['browser']);
+});
+
 test('subagent browser close is refused naming the verb; a word that is no verb keeps the generic label', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
   const r = await handle({ intent: '[agent:browser close ebloc]', agentId: 'agent-7' }, ctl);
   assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser close (a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note)' });
   const odd = await handle({ intent: '[agent:browser frobnicate ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
+  assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: "not available to a subagent: browser — return and let the seat's main agent do it" });
   assert.deepStrictEqual(seen, []);
   assert.deepStrictEqual(registry.BROWSER_VERBS, require('../plugins/browser-pane/grammar').SUBCOMMANDS);
 }));
@@ -83,7 +90,7 @@ test('subagent browser close is refused naming the verb; a word that is no verb 
 test('subagent browser is refused when the seat lacks the plugin, and when no plugin registered the verb', () => withBrowserVerb(async () => {
   const noPlugin = browserHandler({ intents: ['browser'], plugins: [] });
   const r = await noPlugin.handle({ intent: '[agent:browser read ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "not available to a subagent: browser — return and let the seat's main agent do it" });
   assert.deepStrictEqual(noPlugin.seen, []);
   assert.strictEqual(registry.subagentAllows({ type: 'browser', raw: 'read ebloc' }, SEAT), true);
   registry._resetPluginRows();

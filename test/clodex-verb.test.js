@@ -160,9 +160,11 @@ test('--help lists the subagent catalog', async () => {
   const r = await run(null, ['--help']);
   assert.strictEqual(r.code, 0);
   assert.match(r.out, /timeout that covers it/);
-  for (const v of ['[agent:dm', '[agent:who]', '[agent:name]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:memory list]']) {
+  for (const v of ['[agent:browser <sub> …]']) {
     assert.ok(r.out.includes(v), v);
   }
+  for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]']) assert.ok(!r.out.includes(v), v);
+  assert.match(r.out, /Everything else is refused to a subagent: return and let the seat's main agent do it\./);
   assert.match(r.out, /\[agent:browser <sub> …\].*\bscroll,/);
   assert.ok(r.out.includes('scroll,\n                                  back, forward, wait, download, screenshot,\n                                  inspect, services\n'), r.out);
 });

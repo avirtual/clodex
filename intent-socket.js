@@ -20,7 +20,7 @@ const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!
 const TIMEOUT_ARG_FLAGS = ['-s', '-k', '--signal', '--kill-after'];
 const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
 const SEPARATORS = ';&|(){}\n';
-const SUBAGENT_BRIEF = "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body — same replies and refusals as the Bash form); the Bash form `clodex '[agent:browser …]'` and the other Clodex intents are reachable from Bash too; run `clodex --help` for the subagent catalog.";
+const SUBAGENT_BRIEF = "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body). Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
 
 function mintIntentCredential(crypto) {
   return crypto.randomBytes(32).toString('hex');
@@ -294,7 +294,7 @@ function createIntentRequestHandler({
     });
     if (subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
-      if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)}` };
+      if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)} — return and let the seat's main agent do it` };
     }
     const lines = [];
     let open = true;
