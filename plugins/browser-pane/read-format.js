@@ -609,7 +609,7 @@ function formatRead(raw, opts) {
     ...loading,
     `doc: ${raw.doc == null ? '?' : raw.doc} · elements: ${fmt(elementsTotal)} (${range})${posts ? ` · posts: ${posts}` : ''} · mode: ${mode} · filter: ${filter}${raw.truncated ? ' · truncated' : ''}`,
     `login: ${loginLabel(raw.login)}`,
-    ...(raw.wall && raw.wall.text ? [`wall: "${String(raw.wall.text).replace(/\s+/g, ' ').trim().slice(0, 120)}" — the text above may stop here; sign-in or subscription is the operator's call`] : []),
+    ...(raw.wall && raw.wall.text ? [`wall: "${String(raw.wall.text).replace(/\s+/g, ' ').trim().slice(0, 120)}" — the text below may stop here; sign-in or subscription is the operator's call`] : []),
     ...siteNotes.readLines(o.service, opts.notes),
     `frames: ${framesLabel(raw.frames)}`,
   ];
