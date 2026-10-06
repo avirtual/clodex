@@ -40,8 +40,6 @@ function pickProxyRecord(candidates, sessionId) {
   return pool.reduce((a, b) => ((b.last_seen ?? 0) > (a.last_seen ?? 0) ? b : a));
 }
 
-// --strict-mcp-config is passed with no --mcp-config, i.e. the empty set: on
-// this fallback path the user's real project/user MCP servers are dropped too.
 // The surgical alternative is a strip-capable wire removing only claude_design.
 // The reasons are kept distinct because their remedies differ.
 // `probe` is null when unreachable or unrecognized (caller owns the try/catch).
