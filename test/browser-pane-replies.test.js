@@ -172,7 +172,7 @@ test('replies: a stopped stalled load says so instead of still busy', () => {
 
 test('replies: click --text with no match or several matches names the text and up to five numbered candidates', () => {
   assert.strictEqual(R.TEXT.noText('ebloc', 'Lista de plată'),
-    'no visible element with the text "Lista de plată" on ebloc — read ebloc, or try a shorter part of the text');
+    'no visible element with the text or label "Lista de plată" on ebloc — read ebloc, or try a shorter part of the text');
   const hits = [31, 32, 33, 34, 35].map((n) => ({ n, text: `Lista de plată 0${n - 30}/2026` }));
   assert.strictEqual(R.TEXT.manyText('ebloc', 'lista', 7, hits),
     '"lista" matches 7 visible elements on ebloc: [31] "Lista de plată 01/2026", [32] "Lista de plată 02/2026", [33] "Lista de plată 03/2026", [34] "Lista de plată 04/2026", [35] "Lista de plată 05/2026", …(+2 more) — click one by number');
@@ -184,6 +184,10 @@ test('replies: a click names the element the text resolved to and what the click
   const base = { kind: 'clickable', label: 'Lista de plată', navigated: false, idle: { ok: true, ms: 800 } };
   const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31 }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, byName: true }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" (matched by label) · same page · idle 0.8s');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, byName: false }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s');
   const dl = { file: '/Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf', bytes: 48213, mime: 'application/pdf', url: 'https://www.e-bloc.ro/lista?id=8' };
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: dl }),
@@ -375,6 +379,7 @@ test('replies: inspect is six lines with the prefix on the first, attrs none and
   assert.strictEqual(lines({ listeners: { types: ['x\nhtml: <evil>'] } }).length, 6);
   assert.strictEqual(lines({ fresh: true })[0], '[agent:browser] inspect ebloc [12] (numbered now): div#prow.row.pay · clickable "Factura iulie"');
   assert.strictEqual(lines({ warn: { cat: 'purchase', term: 'buy' } })[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie" · ⚠ purchase ("buy")');
+  assert.strictEqual(lines({ byName: true })[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie" (matched by label)');
   assert.strictEqual(lines({ warn: null })[0], '[agent:browser] inspect ebloc [12]: div#prow.row.pay · clickable "Factura iulie"');
   assert.strictEqual(R.TEXT.manyText('ebloc', 'PDF', 2, [{ n: 1, text: 'PDF' }, { n: 2, text: 'PDF' }], 'inspect'),
     '"PDF" matches 2 visible elements on ebloc: [1] "PDF", [2] "PDF" — inspect one by number');

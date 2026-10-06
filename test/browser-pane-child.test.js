@@ -77,6 +77,9 @@ test('page scripts: FIND_TEXT hits say whether this find assigned the number, an
   const src = scripts.FIND_TEXT('PDF');
   assert.match(src, /return \{ n, fresh: n != null && fresh\.includes\(n\), text: /);
   assert.match(src, /if \(!window\.__cxEls \|\| !window\.__cxKeys\) return \{ unstamped: true \};/);
+  assert.match(src, /const nameOf = el => String\(el\.getAttribute\('aria-label'\) \|\| el\.getAttribute\('title'\) \|\| ''\)/);
+  assert.match(src, /return \{ count: pick\.length, byName, hits: /);
+  assert.ok(src.indexOf('textOf = flatOf') < src.indexOf('textOf = nameOf'));
 });
 
 function page(state) {
@@ -249,6 +252,46 @@ test('FIND_TEXT: a loose duplicate is keyed the way verify recomputes it; a twin
   assert.strictEqual(ctx.__cxOf.get(a), 1);
   assert.strictEqual(verify(1), 'ok', '[1] still points at its own caret');
   assert.match(CHILD_SRC, /if \(found\.hits\[0\]\.n == null\) throw codedError\('AMBIGUOUS', TEXT\.twinText\(svc\.name, text\)\);/);
+});
+
+test('FIND_TEXT: a control\'s aria-label is tried only when no visible text matched, and the result says byName', () => {
+  const style = { visibility: 'visible', display: 'block', opacity: '1', position: 'fixed', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible', overflowY: 'visible' };
+  const order = [];
+  const ctl = (label, own) => {
+    const b = Object.assign(button(label, null), {
+      parentElement: null, childNodes: [{ nodeType: 3, nodeValue: own }],
+      getBoundingClientRect: () => ({ left: 10, top: 10 + 30 * order.length, right: 30, bottom: 30 + 30 * order.length, width: 20, height: 20 }),
+      compareDocumentPosition: (o) => (order.indexOf(o) > order.indexOf(b) ? 4 : 2),
+    });
+    order.push(b);
+    return b;
+  };
+  const x = ctl('×', '×');
+  x.setAttribute('aria-label', 'Close drawer');
+  const save = ctl('Save', 'Save');
+  const doc = { querySelectorAll: (sel) => (sel === '*' ? order : []), documentElement: {}, scrollingElement: {} };
+  const ctx = { Node: { DOCUMENT_POSITION_FOLLOWING: 4 }, document: doc, WeakRef, URL, URLSearchParams, location: { origin: 'https://x.test', href: 'https://x.test/' },
+    getComputedStyle: () => style, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0 };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  ctx.__stamp = order;
+  const stamped = vm.runInContext(`(() => {${scripts.numbering({ known: {}, next: 1 })}
+  resetTable();
+  const stored = storedKeysOf(__stamp);
+  __stamp.forEach((el, i) => place(el, stored[i]));
+  return { assigned, next };
+})()`, ctx);
+  const find = (t) => vm.runInContext(scripts.FIND_TEXT(t, { known: stamped.assigned, next: stamped.next }), ctx);
+  const close = find('Close drawer');
+  assert.strictEqual(close.count, 1);
+  assert.strictEqual(close.byName, true);
+  assert.strictEqual(close.hits[0].text, 'Close drawer');
+  assert.strictEqual(typeof close.hits[0].n, 'number');
+  assert.deepStrictEqual([find('Save').count, find('Save').byName], [1, false]);
+  assert.deepStrictEqual([find('close').count, find('close').byName], [1, true]);
+  save.setAttribute('aria-label', 'Save changes');
+  const s2 = find('Save');
+  assert.deepStrictEqual([s2.count, s2.byName, s2.hits[0].text], [1, false, 'Save']);
 });
 
 test('numbering: verify refuses a number whose element no longer yields its stored key', () => {
@@ -1089,6 +1132,13 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
   }
   assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (e.matches('[role=dialog]') && getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= innerWidth - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6) return 'drawer'; } return ''; };");
+});
+
+test('child: a --text target matched by label carries byName onto the click and inspect replies', () => {
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('byName: !!found.byName'));
+  assert.ok(child.includes('if (byName) out.byName = true;'));
+  assert.ok(child.includes('...(byName ? { byName: true } : {})'));
 });
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {

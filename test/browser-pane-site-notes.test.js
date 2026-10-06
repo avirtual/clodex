@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
 const N = require('../plugins/browser-pane/site-notes');
 
 function memFiles(seed = {}) {
@@ -46,6 +47,8 @@ test('origin scope: a loopback origin is split by its first path segment, any ot
   assert.strictEqual(N.originKey('http://localhost:3000/app/x'), 'http://localhost:3000/app');
   assert.strictEqual(N.originKey('http://localhost:3000/'), 'http://localhost:3000/');
   assert.strictEqual(N.originKey('http://[::1]:3000/app/x?q=1'), 'http://[::1]:3000/app');
+  assert.strictEqual(N.originKey('http://[::1]:3000/'), 'http://[::1]:3000/');
+  assert.ok(!fs.readFileSync(require.resolve('../plugins/browser-pane/site-notes'), 'utf8').includes("'::1',"));
   assert.strictEqual(N.originKey('https://example.com/a'), N.originKey('https://example.com/b'));
 });
 

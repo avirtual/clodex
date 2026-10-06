@@ -145,7 +145,9 @@ ipc handlers (step 12).
 - **Two "Clodex" Dock icons**: the browser is the same app bundle; the second
   icon appears only while a browser window is on screen.
 - **Script-only rows**: rows that open through a script are numbered as
-  `clickable`; when nothing is numbered, `click --text=` targets visible text.
+  `clickable`; when nothing is numbered, `click --text=` targets visible text
+  or, when no visible text matches, its `aria-label`/`title` (the reply says
+  `(matched by label)`).
   `--text="…"` quotes the text; unquoted, the rest of the bracket is the text.
 - **Stable numbers**: an element keeps its number across pages of one site;
   `screenshot --numbers` draws each visible number on the image, and lists a

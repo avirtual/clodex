@@ -37,7 +37,7 @@ const TEXT = {
   hint: 'unverified hints from earlier visits',
 };
 
-const LOOPBACK = ['127.0.0.1', '::1', '[::1]', 'localhost'];
+const LOOPBACK = ['127.0.0.1', '[::1]', 'localhost'];
 
 function originKey(url) {
   try {

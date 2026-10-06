@@ -1244,11 +1244,18 @@ function findText(text, state) {
   };
   const flatOf = el => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
   let textOf = own;
+  let byName = false;
   let hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && own(el).toLowerCase().includes(want)).filter(vis);
   if (!hits.length) {
     const spans = el => { const t = flatOf(el); return t.length <= 400 && t.toLowerCase().includes(want); };
     textOf = flatOf;
     hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && !!own(el) && spans(el) && ![...el.children].some(spans)).filter(vis);
+  }
+  if (!hits.length) {
+    const nameOf = el => String(el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim();
+    hits = deepAll(document, el => el.matches(sel) && nameOf(el).toLowerCase().includes(want)).filter(vis);
+    textOf = nameOf;
+    byName = hits.length > 0;
   }
   const found = [];
   const loose = [];
@@ -1265,7 +1272,7 @@ function findText(text, state) {
   const exact = found.filter(x => x.exact);
   const pick = exact.length ? exact : [...found, ...loose];
   const clipT = t => (t.length > 60 ? t.slice(0, 59) + '…' : t);
-  return { count: pick.length, hits: pick.slice(0, 5).map(h => {
+  return { count: pick.length, byName, hits: pick.slice(0, 5).map(h => {
     if (h.loose) return { n: null, loose: true, text: clipT(h.text) };
     const s = keyed.get(h.el);
     const ref = known[s] != null && window.__cxEls[known[s]];

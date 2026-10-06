@@ -56,7 +56,8 @@ function wrapList(items, first, rest) {
 
 function toolLines(t) {
   const desc = String(t.description || '').split('\n')[0].slice(0, HELP_DESC_MAX);
-  const lines = [`  ${t.name}  ${desc}`.replace(/\s+$/, '')];
+  const name = String(t.name || '').split('\n')[0].slice(0, 64);
+  const lines = [`  ${name}  ${desc}`.replace(/\s+$/, '')];
   const props = t.inputSchema && t.inputSchema.properties;
   const en = props && props.verb && props.verb.enum;
   if (Array.isArray(en) && en.length && en.every((v) => typeof v === 'string')) lines.push(...wrapList(en, '    verbs: ', '    '));

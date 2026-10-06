@@ -276,7 +276,7 @@ const TEXT = {
   driving: (seat, service, waiting) => `agent ${seat} ${waiting ? 'is waiting on' : 'is driving'} ${service} — wait or ask it to release`,
   takeover: ' · the operator took over during this command',
   popup: ' · link opened a new window; followed it in this view',
-  noText: (service, text) => `no visible element with the text ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
+  noText: (service, text) => `no visible element with the text or label ${JSON.stringify(String(text))} on ${service} — read ${service}, or try a shorter part of the text`,
   twinText: (service, text) => `${JSON.stringify(String(text))} on ${service} is an unnumbered twin of a numbered element with the same row text — read ${service}; the re-read numbers both`,
   manyText: (service, text, count, hits, verb = 'click') => `${JSON.stringify(String(text))} matches ${count} visible elements on ${service}: ${
     hits.slice(0, 5).map(textHit).join(', ')}${count > 5 ? `, …(+${count - 5} more)` : ''} — ${hits.every((h) => h.loose) ? `read ${service} and use a number` : `${verb} one by number`}`,
@@ -346,7 +346,7 @@ function actReply(sub, service, cmd, r) {
   let head;
   if (sub === 'click') {
     const n = r.n != null ? r.n : cmd.n;
-    head = `clicked ${service} [${n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}${r.textChanged ? ` (text under [${n}] changed since your read)` : ''}`;
+    head = `clicked ${service} [${n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}${r.byName ? ' (matched by label)' : ''}${r.textChanged ? ` (text under [${n}] changed since your read)` : ''}`;
   }
   else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
   else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;
@@ -472,7 +472,7 @@ function inspectReply(service, r) {
   const attrs = (r.attrs || []).map(([k, v]) => `${oneLine(k)}=${attrValue(v)}`).join(' ');
   const rect = r.rect || {};
   const lines = [
-    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}${typeof r.value === 'string' ? ` · value ${JSON.stringify(clip60(r.value))}` : ''}`,
+    `${PREFIX} inspect ${service} [${r.n}]${r.fresh ? ' (numbered now)' : ''}: ${oneLine(shortEl(r, 5))} · ${oneLine(r.kind || '')} ${r.label || r.kind !== 'clickable' ? JSON.stringify(String(r.label || '')) : '(icon)'}${r.byName ? ' (matched by label)' : ''}${r.warn ? ` · ⚠ ${oneLine(r.warn.cat)} (${JSON.stringify(oneLine(r.warn.term))})` : ''}${typeof r.value === 'string' ? ` · value ${JSON.stringify(clip60(r.value))}` : ''}`,
     `  attrs: ${attrs || 'none'}`,
     `  listeners: ${oneLine(listenersLabel(r.listeners))}`,
     `  cursor: ${oneLine(r.cursor || '?')} · at ${rect.x},${rect.y} size ${rect.w}×${rect.h} · ${r.visible ? (r.clipped ? 'clipped (scroll its list)' : 'visible') : 'hidden'}`,

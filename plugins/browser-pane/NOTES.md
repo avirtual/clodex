@@ -99,6 +99,8 @@ as `[–] … (not clickable)` and never placed. A candidate whose key's number 
 still stamped on another connected element is returned unnumbered (`twinText`):
 re-pointing it would let an ordinal shift aim an old number at the next row. An exact own-text match outranks
 substring matches: one exact is the target, several are the only ones listed.
+A control's `aria-label`/`title` is tried only when no visible text matched at all, and the reply then
+says `(matched by label)`; a visible-text hit never widens to names.
 Run 13: the substring list numbered "Show more" and post text with numbers the
 next read never used.
 A `--text` act stamps the page on demand (`textTarget` → `stampPage`), so only
