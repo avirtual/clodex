@@ -11,6 +11,9 @@ const SERVICE_PATTERN = '^[a-z][a-z0-9-]{0,31}$';
 const SERVICE_RE = new RegExp(SERVICE_PATTERN);
 const DEFAULT_PROTOCOL = '2025-06-18';
 const PPID_POLL_MS = 5000;
+const LOOP_WINDOW_MS = 60 * 1000;
+const LOOP_RING = 12;
+const LOOP_MAX = 3;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
 const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a --flag value (it is dropped)';
 const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
@@ -20,6 +23,7 @@ const BROWSER_TOOL = {
   description: [
     "Drive this seat's browser pane. Same verbs, replies and refusals as `clodex '[agent:browser …]'`.",
     'A call waits up to 500 s; a browser `wait` may take up to 30 min server-side, so a result starting `completion unknown — do not retry` means the action may still have run: read the page before repeating a click, type or download.',
+    'A refusal or error comes back as text, not as a tool error; the same call will fail the same way — do not retry it, return and let the seat\'s main agent decide.',
     '`bracket` holds the tokens that go INSIDE the intent bracket after the service (element number, direction, --flag, --flag=value; for click/inspect --text=<text> as ONE item); `body` is the one-line text AFTER the bracket (the URL for open/download, the text for type, the option for select, the key name for key, the note text for note).',
     'A " inside a --flag value is dropped. No release, no close, no --confirm, no note --forget: those are the main agent\'s.',
   ].join(' '),
@@ -71,8 +75,8 @@ function validate(params) {
 }
 
 function toolResult(r) {
-  const text = (t) => ({ content: [{ type: 'text', text: t }], isError: true });
-  if (r.res && r.res.ok) return { content: [{ type: 'text', text: String(r.res.reply ?? '') }], isError: r.res.status !== 'ok' };
+  const text = (t) => ({ content: [{ type: 'text', text: t }] });
+  if (r.res && r.res.ok) return text(String(r.res.reply ?? ''));
   if (r.res) return text(r.res.error || 'failed');
   if (r.transport === 'timeout') return text(`${COMPLETION_UNKNOWN}: the seat did not answer within 500 s; the action may still have run — read the page before repeating it`);
   if (r.transport === 'no-socket') return text(`no seat channel: ${r.message}`);
@@ -92,6 +96,9 @@ function createServer({
 } = {}) {
   let logFailed = false;
   let stopped = false;
+  const fails = new Map();
+  const keyOf = (a) => JSON.stringify([a.verb, a.service, a.bracket, a.body]);
+  const failed = (key, text) => { const t = now(); const f = fails.get(key); const n = f && t - f.at < LOOP_WINDOW_MS ? f.n + 1 : 1; fails.set(key, { n, at: t, text }); if (fails.size > LOOP_RING) fails.delete(fails.keys().next().value); return n; };
 
   const send = (msg) => { if (!stopped) output.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n'); };
 
@@ -118,7 +125,14 @@ function createServer({
       if (!(e instanceof InvalidParams)) throw e;
       if (e.message === 'body must be one line') errOut.write(LIMITS + '\n');
       log(a.verb, a.service, 'invalid', now() - start);
-      return { result: { content: [{ type: 'text', text: e.message }], isError: true } };
+      return { result: { content: [{ type: 'text', text: `invalid: ${e.message}` }] } };
+    }
+    const key = keyOf(args);
+    const f = fails.get(key);
+    if (f && f.n >= LOOP_MAX - 1 && now() - f.at < LOOP_WINDOW_MS) {
+      fails.set(key, { ...f, n: f.n + 1, at: now() });
+      log(args.verb, args.service, 'looped', now() - start);
+      return { result: { content: [{ type: 'text', text: `the same call failed ${LOOP_MAX} times — stop retrying: ${f.text}` }] } };
     }
     if (!env.CLODEX_INTENT_SOCK || !env.CLODEX_INTENT_CRED) {
       return { error: { code: -32603, message: 'no seat channel (CLODEX_INTENT_SOCK / CLODEX_INTENT_CRED unset)' } };
@@ -129,7 +143,9 @@ function createServer({
       timeoutMs,
       ...(connect ? { connect } : {}),
     });
-    log(args.verb, args.service, statusOf(r), now() - start);
+    const st = statusOf(r);
+    log(args.verb, args.service, st, now() - start);
+    if (st === 'ok') fails.delete(key); else failed(key, toolResult(r).content[0].text);
     return { result: toolResult(r) };
   }
 

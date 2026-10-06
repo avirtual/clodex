@@ -10,4 +10,6 @@ The server sends `{cred, intent}` with no caller identity, so the socket's `call
 
 ## callTool
 
-An argument error is answered as an `isError` tool result because Claude Code elides a JSON-RPC error from the model's transcript (`[Tool error elided: …]`, apometre run 56); `-32602` is kept only for an unknown tool name or non-object arguments.
+Every tools/call answer is a plain text result — never `isError` — because Claude Code elides a prior failed tool call from the model's transcript once another call follows (`[Tool error elided: resolved in a later turn]`, apometre run 57), and an elided refusal is retried forever; `-32602` is kept only for an unknown tool name or non-object arguments.
+
+The loop ring is per server process: a seat's main agent and its subagents share it, so a refusal the main agent provoked twice stops a subagent's identical third call too. Keyed by verb+service+bracket+body; 60 s window; a success clears the key.

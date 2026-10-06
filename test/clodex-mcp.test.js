@@ -150,7 +150,7 @@ test('a malformed tools/call answers -32602, logs nothing and never touches the 
   } finally { await seat.close(); }
 });
 
-test('an argument error is an isError tool result with the exact message and never touches the socket', async () => {
+test('an argument error is a readable `invalid:` text result with the exact message and never touches the socket', async () => {
   const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: 'x' }));
   try {
     const s = server(seat);
@@ -170,8 +170,8 @@ test('an argument error is an isError tool result with the exact message and nev
       const r = await s.handle(m);
       assert.strictEqual(r.id, m.id);
       assert.strictEqual(r.error, undefined, JSON.stringify(m.params));
-      assert.strictEqual(r.result.isError, true);
-      assert.deepStrictEqual(r.result.content, [{ type: 'text', text }]);
+      assert.strictEqual('isError' in r.result, false);
+      assert.deepStrictEqual(r.result.content, [{ type: 'text', text: `invalid: ${text}` }]);
     }
     assert.match(s.errOut.buf, /multi-line body/);
     assert.strictEqual(seat.got.length, 0);
@@ -204,11 +204,11 @@ test('forwarded calls map the socket reply; --confirm reaches the socket and com
   try {
     const s = server(seat);
     const r1 = await s.handle(call(1, { verb: 'click', service: 'svc', bracket: ['17', '--confirm'] }));
-    assert.deepStrictEqual(r1.result, { content: [{ type: 'text', text: SUBAGENT_NO_CONFIRM }], isError: true });
+    assert.deepStrictEqual(r1.result, { content: [{ type: 'text', text: SUBAGENT_NO_CONFIRM }] });
     const r2 = await s.handle(call(2, { verb: 'read', service: 'svc' }));
-    assert.deepStrictEqual(r2.result, { content: [{ type: 'text', text: '[agent:browser] read svc · …' }], isError: false });
+    assert.deepStrictEqual(r2.result, { content: [{ type: 'text', text: '[agent:browser] read svc · …' }] });
     const r3 = await s.handle(call(3, { verb: 'read', service: 'svc' }));
-    assert.deepStrictEqual(r3.result, { content: [{ type: 'text', text: '[agent:browser] error: x' }], isError: true });
+    assert.deepStrictEqual(r3.result, { content: [{ type: 'text', text: '[agent:browser] error: x' }] });
     assert.strictEqual(seat.got.length, 3);
     for (const p of seat.got) {
       assert.deepStrictEqual(Object.keys(p).sort(), ['cred', 'intent']);
@@ -245,6 +245,7 @@ test('JSON-RPC: initialize, tools/list, ping, unknown method, parse error, notif
   assert.ok(tool.description.includes('completion unknown — do not retry'));
   assert.ok(tool.description.includes('500 s'));
   assert.ok(tool.description.includes('A " inside a --flag value is dropped.'));
+  assert.ok(tool.description.includes('do not retry it, return and let the seat\'s main agent decide'));
   assert.deepStrictEqual(await s.handle({ jsonrpc: '2.0', id: 3, method: 'ping' }), { id: 3, result: {} });
   assert.strictEqual((await s.handle({ jsonrpc: '2.0', id: 4, method: 'resources/list' })).error.code, -32601);
   assert.strictEqual(await s.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
@@ -267,7 +268,7 @@ test('a timed-out or dropped call answers completion unknown and is never retrie
   try {
     const s = server(hang, { timeoutMs: 50 });
     const r = await s.handle(call(1, { verb: 'click', service: 'svc', bracket: ['3'] }));
-    assert.strictEqual(r.result.isError, true);
+    assert.strictEqual('isError' in r.result, false);
     assert.ok(r.result.content[0].text.startsWith('completion unknown — do not retry:'), r.result.content[0].text);
     assert.strictEqual(hang.got.length, 1);
   } finally { await hang.close(); }
@@ -275,7 +276,7 @@ test('a timed-out or dropped call answers completion unknown and is never retrie
   try {
     const s = server(drop);
     const r = await s.handle(call(1, { verb: 'click', service: 'svc', bracket: ['3'] }));
-    assert.strictEqual(r.result.isError, true);
+    assert.strictEqual('isError' in r.result, false);
     assert.ok(r.result.content[0].text.startsWith('completion unknown — do not retry:'), r.result.content[0].text);
     assert.strictEqual(drop.got.length, 1);
   } finally { await drop.close(); }
@@ -326,10 +327,60 @@ test('mcp.log carries metadata only', async () => {
     assert.strictEqual(r3.result.content[0].text, 'nope SENTINEL7');
     const r4 = await s.handle(call(4, { verb: 'read', service: 'svc' }));
     assert.strictEqual(r4.result.content[0].text, 'completion unknown — do not retry: unreadable reply from the seat socket');
+    assert.ok(!('isError' in r4.result));
     const all = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
     assert.ok(!all.includes('SENTINEL7'));
     assert.deepStrictEqual(all.split('\n').filter(Boolean).slice(2).map((l) => l.split(' ')[3]), ['error', 'bad-reply']);
   } finally { await seat.close(); }
+});
+
+test('no tools/call answer is a tool error: the server never names isError', () => {
+  assert.ok(!fs.readFileSync(SERVER, 'utf8').includes('isError'));
+});
+
+test('the same failing call is stopped at the third try within a minute; a success clears it', async () => {
+  const own = fs.readFileSync(SERVER, 'utf8');
+  assert.ok(own.includes('const LOOP_MAX = 3;'));
+  assert.ok(own.includes('const LOOP_WINDOW_MS = 60 * 1000;'));
+  assert.ok(own.includes("if (st === 'ok') fails.delete(key); else failed(key, toolResult(r).content[0].text);"));
+  let t = 1000;
+  const seat = await fakeSeat(() => ({ ok: false, status: 'refused', error: SUBAGENT_NO_CONFIRM }));
+  try {
+    const s = server(seat, { now: () => t });
+    const a = { verb: 'click', service: 'svc', bracket: ['17', '--confirm'] };
+    const r1 = await s.handle(call(1, a));
+    assert.strictEqual(r1.result.content[0].text, SUBAGENT_NO_CONFIRM);
+    await s.handle(call(2, a));
+    assert.strictEqual(seat.got.length, 2);
+    const r3 = await s.handle(call(3, a));
+    assert.strictEqual(seat.got.length, 2);
+    assert.deepStrictEqual(r3.result, { content: [{ type: 'text', text: `the same call failed 3 times — stop retrying: ${SUBAGENT_NO_CONFIRM}` }] });
+    const r4 = await s.handle(call(4, a));
+    assert.strictEqual(seat.got.length, 2);
+    assert.strictEqual(r4.result.content[0].text, r3.result.content[0].text);
+    await s.handle(call(5, { verb: 'click', service: 'svc', bracket: ['18', '--confirm'] }));
+    assert.strictEqual(seat.got.length, 3);
+    t += 61000;
+    await s.handle(call(6, a));
+    assert.strictEqual(seat.got.length, 4);
+    const lines = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean);
+    assert.match(lines[2], /^\S+ click svc looped \d+ms$/);
+    assert.match(lines[3], /^\S+ click svc looped \d+ms$/);
+  } finally { await seat.close(); }
+  const answers = [{ ok: false, status: 'refused', error: 'no' }, { ok: true, status: 'ok', reply: 'yes' }];
+  const ok = await fakeSeat((r, c, i) => answers[i === 1 ? 1 : 0]);
+  try {
+    const s = server(ok, { now: () => t });
+    const a = { verb: 'read', service: 'svc' };
+    await s.handle(call(1, a));
+    assert.strictEqual((await s.handle(call(2, a))).result.content[0].text, 'yes');
+    await s.handle(call(3, a));
+    await s.handle(call(4, a));
+    assert.strictEqual(ok.got.length, 4);
+    const r5 = await s.handle(call(5, a));
+    assert.strictEqual(ok.got.length, 4);
+    assert.strictEqual(r5.result.content[0].text, 'the same call failed 3 times — stop retrying: no');
+  } finally { await ok.close(); }
 });
 
 test('the server exits when its parent changes, polled every 5 s', () => {
