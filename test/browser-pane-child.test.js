@@ -687,6 +687,12 @@ test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
   assert.ok(src.includes("wrapped.add(c); c.prepend('(was '); c.append(')');"));
 });
 
+test('page scripts: READ_TEXT tags the top element faded by its own opacity:0 as (hidden), after the struck pass', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); }"));
+  assert.ok(src.indexOf("twin.prepend('(hidden) ')") > src.indexOf("c.prepend('(was ')"));
+});
+
 test('page scripts: a filter or search reset is not deletion; Delete account and Remove item still are', () => {
   const c = scripts.consequentialOf;
   assert.strictEqual(c({ label: 'Sterge toate filtrele' }), null);
@@ -2004,8 +2010,17 @@ test('page scripts: VALUE_CHOICE and TARGET_STATE on a label read its radio or c
   const run = (code) => new Function('window', 'document', `return ${code}`)(win, {});
   assert.deepStrictEqual(run(scripts.VALUE_CHOICE(3)), { kind: 'choice', label: 'No', value: 'no' });
   assert.strictEqual(run(scripts.VALUE_CHOICE(4)), null);
-  assert.deepStrictEqual(run(scripts.TARGET_STATE(3)), { el: { checked: true }, tile: null });
-  assert.deepStrictEqual(run(scripts.TARGET_STATE(4)), { el: {}, tile: null });
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(3)), { el: { checked: true }, tile: null, panel: null });
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(4)), { el: {}, tile: null, panel: null });
+});
+
+test('page scripts: TARGET_STATE carries the state of the panel its target aria-controls', () => {
+  const attrs = (o) => (k) => (k in o ? o[k] : null);
+  const panel = { getAttribute: attrs({ class: 'panel open', 'aria-expanded': 'true' }) };
+  const btn = { tagName: 'BUTTON', isConnected: true, getAttribute: attrs({ 'aria-controls': 'd' }), parentElement: null };
+  const win = { __cxEls: { 5: { deref: () => btn } } };
+  const doc = { getElementById: (id) => (id === 'd' ? panel : null) };
+  assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.TARGET_STATE(5)}`)(win, doc), { el: {}, tile: null, panel: { class: 'panel open', 'aria-expanded': 'true' } });
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {

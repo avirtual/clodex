@@ -515,7 +515,7 @@ function readText(main) {
   const inlined = [];
   const nested = [];
   const hidden = [];
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); } if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -1541,7 +1541,8 @@ function targetState(n) {
   const up = el.parentElement || (el.parentNode && el.parentNode.host) || null;
   const own = of(el);
   if (el.tagName === 'LABEL' && el.control && el.control.tagName === 'INPUT' && /^(radio|checkbox)$/.test(el.control.type)) own.checked = el.control.checked;
-  return { el: own, tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})) };
+  const ctl = el.getAttribute('aria-controls'); const panel = ctl ? document.getElementById(ctl) : null;
+  return { el: own, tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})), panel: of(panel) };
 })()`;
 }
 
