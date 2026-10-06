@@ -213,9 +213,13 @@ const SCANNED_MODULES = [
   // because the convention says every new extraction joins; the real guard for
   // this one is its leaf property — it has NO requires at all.
   'cli/src/sse-frame.js',
+  // The seat's MCP server for subagents (t1648). Same honest caveat as dial.js
+  // and sse-frame.js: a cli/ leaf never carved out of main.js, so the forward
+  // scan only catches it accidentally; the real guard is the require-shape pin
+  // in test/clodex-mcp.test.js (only builtins and the sideways ./clodex.js).
   'cli/bin/clodex-mcp.js',
   // The shared tunnel supervisor (t49/L2), collapsing peer-tunnel.js's `Tunnel`
-  // and web-tunnel.js's `WebTunnel`. Unlike the two cli/ leaves above, this one
+  // and web-tunnel.js's `WebTunnel`. Unlike the three cli/ leaves above, this one
   // is a root main-process module and the forward scan says something real about
   // it: it is required BY peer-wiring.js (which was itself carved out of
   // main.js), so a main.js name reaching it through that path is exactly the

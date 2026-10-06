@@ -265,7 +265,8 @@ test('concurrent calls each answer under their own id', async () => {
 });
 
 test('mcp.log carries metadata only', async () => {
-  const seat = await fakeSeat(() => ({ ok: true, status: 'error', reply: 'page SENTINEL3', error: 'oops SENTINEL4' }));
+  const answers = [{ ok: true, status: 'error', reply: 'page SENTINEL3', error: 'oops SENTINEL4' }, { ok: false, error: 'nope SENTINEL7' }, null];
+  const seat = await fakeSeat((r, c, i) => answers[i]);
   try {
     const s = server(seat, { env: { CLODEX_INTENT_CRED: 'SENTINEL5' } });
     const r = await s.handle(call(1, { verb: 'read', service: 'svc', bracket: ['--filter=SENTINEL1'], body: 'SENTINEL2' }));
@@ -279,6 +280,13 @@ test('mcp.log carries metadata only', async () => {
     await s.handle(call(2, { verb: 'services', service: 'SENTINEL6 x' }));
     const inv = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean)[1];
     assert.match(inv, /^\S+ services - invalid \d+ms$/);
+    const r3 = await s.handle(call(3, { verb: 'read', service: 'svc' }));
+    assert.strictEqual(r3.result.content[0].text, 'nope SENTINEL7');
+    const r4 = await s.handle(call(4, { verb: 'read', service: 'svc' }));
+    assert.strictEqual(r4.result.content[0].text, 'completion unknown — do not retry: unreadable reply from the seat socket');
+    const all = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
+    assert.ok(!all.includes('SENTINEL7'));
+    assert.deepStrictEqual(all.split('\n').filter(Boolean).slice(2).map((l) => l.split(' ')[3]), ['error', 'bad-reply']);
   } finally { await seat.close(); }
 });
 

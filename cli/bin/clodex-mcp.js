@@ -80,7 +80,7 @@ function toolResult(r) {
 function statusOf(r) {
   if (r.res && r.res.ok) return ['ok', 'error', 'refused'].includes(r.res.status) ? r.res.status : 'error';
   if (r.res) return r.res.status === 'refused' ? 'refused' : 'error';
-  return r.transport;
+  return r.transport || 'bad-reply';
 }
 
 function createServer({
@@ -174,6 +174,7 @@ function createServer({
     rl.on('line', onLine);
     rl.on('close', stop);
   }
+  if (output && output.on) output.on('error', stop);
 
   return { handle, stop };
 }
