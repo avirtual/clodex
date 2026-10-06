@@ -1734,7 +1734,7 @@ test('page scripts: consequentialHit names the category and the source term; con
 
 test('page scripts: a has-delete class on a filter reset honours the row\'s unless; a delete label still hits', () => {
   assert.strictEqual(scripts.consequentialHit({ label: 'Sterge toate filtrele', idClass: 'has-delete' }), null);
-  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'sterge' });
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'delete' });
 });
 
 test('page scripts: a sort button\'s third state is not deletion, a plain Remove still is', () => {
