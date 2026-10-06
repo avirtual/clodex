@@ -22347,7 +22347,7 @@ test('stream seat: extra args spelling --mcp-config=<path> get no clodex mcp.jso
   assert.ok(args.includes('--mcp-config=/x/own.json'));
   assert.ok(!args.some((a) => a.includes(require('node:path').join('run', 'st1', 'mcp.json'))));
   assert.ok(!args.includes('--mcp-config'));
-  assert.ok(notices.includes("MCP: the clodex browser tool is not available to this session — the seat's extra args carry their own --mcp-config."));
+  assert.ok(notices.includes("MCP: the clodex MCP tools are not available to this session — the seat's extra args carry their own --mcp-config."));
 });
 
 test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {

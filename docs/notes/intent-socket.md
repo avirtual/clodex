@@ -2,7 +2,7 @@
 
 ## createIntentRequestHandler
 
-A subagent drives the browser as its seat; two subagents of one seat share the seat's lease and queue, its held windows, downloads dir and read-file dir. That is why `release` is refused to a subagent.
+A subagent drives the browser as its seat; two subagents of one seat share the seat's lease and queue, its held windows, downloads dir and read-file dir. That is why `release` is refused to a subagent (the browser pane is the example; the rule is the plugin's `refuse`).
 
 A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this call, not from AsyncLocalStorage: the browser scheduler replies from timers and child IPC, and a queued job starts in the previous job's async context.
 
@@ -14,7 +14,7 @@ Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while
 
 ## seatOfAgentTag
 
-A subagent's dm is delivered as `[agent:from <seat>/agent]`; `_isDmReachable` and the dm arm map that tag back to the seat, so a reply lands in the seat's main conversation (ticket B hands it to the still-running subagent).
+A subagent's dm is refused at the socket (`not available to a subagent: dm`): no plugin policy allows it, and a subagent has no inbox to receive a reply. A `<seat>/agent` name that still reaches `_isDmReachable` or the dm arm as a sender or target maps back to the seat, so a reply lands in the seat's main conversation.
 
 ## callerIsSubagent
 

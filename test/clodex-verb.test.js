@@ -17,9 +17,10 @@ function sink() {
   return s;
 }
 
-async function fakeSeat(answer) {
+async function fakeSeat(answer, { catalog } = {}) {
   const root = mkTmpRoot('verb-');
   const sockPath = path.join(root, 'i.sock');
+  if (catalog !== undefined) fs.writeFileSync(path.join(root, 'mcp-tools.json'), typeof catalog === 'string' ? catalog : JSON.stringify(catalog));
   const got = [];
   const srv = net.createServer((c) => {
     let buf = '';
@@ -156,17 +157,60 @@ test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', as
   assert.strictEqual((await run({ sockPath: gone }, ['[agent:who]'])).code, 4);
 });
 
-test('--help lists the subagent catalog', async () => {
-  const r = await run(null, ['--help']);
-  assert.strictEqual(r.code, 0);
-  assert.match(r.out, /timeout that covers it/);
-  for (const v of ['[agent:browser <sub> …]']) {
-    assert.ok(r.out.includes(v), v);
+const CATCH_ALL = "Everything else is refused to a subagent: return and let the seat's main agent do it.";
+
+test('--help with a catalog lists each tool, its verbs and the catch-all line', async () => {
+  const catalog = { v: 1, rev: 'r', tools: [{ name: 'browser', description: "Drive this seat's browser pane. More…", inputSchema: { type: 'object', properties: { verb: { type: 'string', enum: ['open', 'read', 'note'] } } } }], briefs: [] };
+  const seat = await fakeSeat(() => ({ ok: true }), { catalog });
+  try {
+    const r = await run(seat, ['--help']);
+    assert.strictEqual(r.code, 0);
+    assert.match(r.out, /timeout that covers it/);
+    for (const v of ["  browser  Drive this seat's browser pane. More…\n", '    verbs: open, read, note\n', CATCH_ALL]) assert.ok(r.out.includes(v), v);
+    for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:name]', '[agent:memory list]']) assert.ok(!r.out.includes(v), v);
+    assert.strictEqual(seat.got.length, 0);
+  } finally { await seat.close(); }
+});
+
+test('--help without a catalog says so', async () => {
+  const none = 'No MCP tools on this seat: the plugins that declare one are not enabled for it.\n';
+  const check = (r, stream, code) => {
+    assert.strictEqual(r.code, code);
+    assert.ok(r[stream].includes(none + CATCH_ALL + '\n'), r[stream]);
+    assert.ok(!r[stream].includes('Available to a subagent'), r[stream]);
+  };
+  check(await run(null, ['--help']), 'out', 0);
+  for (const catalog of ['{"v":1,', { v: 1, tools: [] }]) {
+    const seat = await fakeSeat(() => ({ ok: true }), { catalog });
+    try {
+      check(await run(seat, ['--help']), 'out', 0);
+      check(await run(seat, []), 'err', 2);
+    } finally { await seat.close(); }
   }
-  for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]']) assert.ok(!r.out.includes(v), v);
-  assert.match(r.out, /Everything else is refused to a subagent: return and let the seat's main agent do it\./);
-  assert.match(r.out, /\[agent:browser <sub> …\].*\bscroll,/);
-  assert.ok(r.out.includes('scroll,\n                                  back, forward, wait, download, screenshot,\n                                  inspect, services\n'), r.out);
+  check(await run(null, []), 'err', 2);
+});
+
+test('--help with the real browser tool lists its verbs, note included', async () => {
+  const { TOOL } = require('../plugins/browser-pane/mcp-tool');
+  const { SUBS } = require('../plugins/browser-pane/subagent');
+  const tool = JSON.parse(JSON.stringify({ name: TOOL.name, description: TOOL.description, inputSchema: TOOL.inputSchema }));
+  const seat = await fakeSeat(() => ({ ok: true }), { catalog: { v: 1, rev: 'r', tools: [tool], briefs: [] } });
+  try {
+    const r = await run(seat, ['--help']);
+    const lines = r.out.split('\n');
+    const at = lines.findIndex((l) => l.startsWith('    verbs: '));
+    assert.ok(at > 0, r.out);
+    const end = lines.findIndex((l, i) => i > at && !/^ {4}\S/.test(l));
+    const block = lines.slice(at, end);
+    assert.ok(block.every((l) => l.length <= 90), block.join('\n'));
+    assert.ok(('    verbs: ' + SUBS.join(', ')).startsWith(block[0]), block[0]);
+    assert.strictEqual(block.map((l) => l.trim()).join(' '), 'verbs: ' + SUBS.join(', '));
+    assert.ok(block[block.length - 1].endsWith(' note'), block.join('\n'));
+  } finally { await seat.close(); }
+});
+
+test('the verb carries no browser knowledge: its help comes from the catalog', () => {
+  assert.ok(!/browser|release|confirm|wiki/.test(fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8')));
 });
 
 test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
@@ -192,10 +236,8 @@ test('reply shapes: a refusal is stderr `clodex: <reason>` exit 3; an error repl
   }
 });
 
-test('--help documents the streams, the exit codes and the URL-after-the-bracket browser form', async () => {
+test('--help documents the streams and the exit codes', async () => {
   const r = await run(null, ['--help']);
-  assert.ok(r.out.includes("clodex '[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland'"), r.out);
-  assert.match(r.out, /the URL follows the closing bracket/);
   assert.match(r.out, /stdout: the intent's reply\. stderr: this verb's own lines, each `clodex: <reason>`/);
   assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex: …`\), 2 usage,\n\s+3 refused \(stderr `clodex: …`\), 4 no socket, 5 timeout/);
 });

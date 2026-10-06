@@ -8,7 +8,7 @@ const path = require('path');
 const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
 const CLIENT_TIMEOUT_MS = 500 * 1000;
 
-const HELP = [
+const HELP_HEAD = [
   'usage: clodex \'<[agent:…] intent line>\' [more words…]',
   '       clodex -            read the intent (and a multi-line body) from stdin',
   'Remaining args are joined with spaces into ONE line; use - for a multi-line body.',
@@ -18,23 +18,61 @@ const HELP = [
   'Asynchronous answers (a dm reply, an exec run result) arrive in the seat\'s',
   'main conversation, not here.',
   '',
-  'Available to a subagent:',
-  '  [agent:browser <sub> …]         open, read, click, type, select, key, scroll,',
-  '                                  back, forward, wait, download, screenshot,',
-  '                                  inspect, services',
-  '                                  — as the seat, when the seat has the browser',
-  '                                  plugin; not release or close, and never --confirm',
-  '    e.g. clodex \'[agent:browser open wiki] https://en.wikipedia.org/wiki/Iceland\'',
-  '    the URL follows the closing bracket, never inside it',
-  'Everything else is refused to a subagent: return and let the seat\'s main agent do it.',
+];
+
+const HELP_TAIL = [
   '',
-  'A browser wait or download answers here when it ends (up to ~8 min): give the',
+  'A long-running tool call (a wait, a download) answers here when it ends (up to ~8 min): give the',
   'calling tool a timeout that covers it (Claude Code\'s Bash tool defaults to 120 s).',
   '',
   'stdout: the intent\'s reply. stderr: this verb\'s own lines, each `clodex: <reason>`.',
   'exit codes: 0 ok, 1 error (the reply, or stderr `clodex: …`), 2 usage,',
   '            3 refused (stderr `clodex: …`), 4 no socket, 5 timeout',
-].join('\n');
+];
+
+const HELP_DESC_MAX = 100;
+const HELP_WRAP_COLS = 90;
+
+function readCatalogTools(env, fsImpl) {
+  if (!env || !env.CLODEX_INTENT_SOCK) return [];
+  try {
+    const c = JSON.parse(fsImpl.readFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp-tools.json'), 'utf8'));
+    return c && c.v === 1 && Array.isArray(c.tools) ? c.tools.filter((t) => t && typeof t.name === 'string') : [];
+  } catch { return []; }
+}
+
+function wrapList(items, first, rest) {
+  const lines = [];
+  let cur = first;
+  let fresh = true;
+  items.forEach((it, i) => {
+    const piece = it + (i < items.length - 1 ? ',' : '');
+    if (!fresh && (cur + ' ' + piece).length > HELP_WRAP_COLS) { lines.push(cur); cur = rest + piece; } else { cur += (fresh ? '' : ' ') + piece; }
+    fresh = false;
+  });
+  lines.push(cur);
+  return lines;
+}
+
+function toolLines(t) {
+  const desc = String(t.description || '').split('\n')[0].slice(0, HELP_DESC_MAX);
+  const lines = [`  ${t.name}  ${desc}`.replace(/\s+$/, '')];
+  const props = t.inputSchema && t.inputSchema.properties;
+  const en = props && props.verb && props.verb.enum;
+  if (Array.isArray(en) && en.length && en.every((v) => typeof v === 'string')) lines.push(...wrapList(en, '    verbs: ', '    '));
+  return lines;
+}
+
+function helpText(env, fsImpl) {
+  const tools = readCatalogTools(env, fsImpl);
+  const mid = tools.length
+    ? ['Available to a subagent (this seat\'s MCP tools, also callable as intents):', ...tools.flatMap(toolLines),
+      '  Call a tool by its MCP name, or as the intent `[agent:<name> …]` through this verb.']
+    : ['No MCP tools on this seat: the plugins that declare one are not enabled for it.'];
+  return [...HELP_HEAD, ...mid, 'Everything else is refused to a subagent: return and let the seat\'s main agent do it.', ...HELP_TAIL].join('\n');
+}
+
+const HELP = helpText({}, nodeFs);
 
 function hasEnd(text) {
   return text.split('\n').some((l) => /^\s*\[agent:end\]\s*$/.test(l));
@@ -107,11 +145,11 @@ function readStdin(stdin) {
 
 async function main(argv, { env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
-    (argv.length ? out : err).write(HELP + '\n');
+    (argv.length ? out : err).write(helpText(env, fs) + '\n');
     return argv.length ? EXIT.OK : EXIT.USAGE;
   }
   const text = buildIntentText(argv, argv.length === 1 && argv[0] === '-' ? await readStdin(stdin) : '');
-  if (!text) { err.write('clodex: empty intent\n' + HELP + '\n'); return EXIT.USAGE; }
+  if (!text) { err.write('clodex: empty intent\n' + helpText(env, fs) + '\n'); return EXIT.USAGE; }
   const sockPath = env.CLODEX_INTENT_SOCK;
   const cred = env.CLODEX_INTENT_CRED;
   if (!sockPath || !cred) {
@@ -138,4 +176,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { EXIT, CLIENT_TIMEOUT_MS, HELP, buildIntentText, agentIdFrom, resolveIdent, exitFor, request, main };
+module.exports = { EXIT, CLIENT_TIMEOUT_MS, HELP, helpText, buildIntentText, agentIdFrom, resolveIdent, exitFor, request, main };

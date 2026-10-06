@@ -39,15 +39,12 @@ const ROWS = [
 test('toIntent renders the CLI line over every row', () => {
   for (const [args, line] of ROWS) {
     const full = { bracket: [], body: '', ...args };
-    assert.strictEqual(TOOL.toIntent(full), `${line}
-[agent:end]`, JSON.stringify(args));
+    assert.strictEqual(TOOL.toIntent(full), `${line}\n[agent:end]`, JSON.stringify(args));
   }
 });
 
 const BRACKET_MSG = 'bracket tokens must be non-empty and contain no [, ], newline or carriage return';
 const INVALID = [
-  [{ verb: 'release' }, "release is for the seat's main agent"],
-  [{ verb: 'close', service: 'svc' }, "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note"],
   [{ verb: 'services', service: 'A B' }, 'service must match ^[a-z][a-z0-9-]{0,31}$'],
   [{ verb: 'click', service: 'svc', bracket: ['17]'] }, BRACKET_MSG],
   [{ verb: 'click', service: 'svc', bracket: ['a\nb'] }, BRACKET_MSG],
@@ -66,7 +63,8 @@ test('invalid arguments throw the server\'s exact messages', () => {
   }
 });
 
-test('release and close are the main agent\'s', () => {
-  assert.throws(() => TOOL.toIntent({ verb: 'release' }), { message: "release is for the seat's main agent" });
-  assert.throws(() => TOOL.toIntent({ verb: 'close' }), { message: "close is for the seat's main agent — a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note" });
+test('release and close render (policy refuses them downstream)', () => {
+  assert.strictEqual(TOOL.toIntent({ verb: 'release', service: 'svc' }), '[agent:browser release svc]\n[agent:end]');
+  assert.strictEqual(TOOL.toIntent({ verb: 'close', service: 'svc' }), '[agent:browser close svc]\n[agent:end]');
+  assert.deepStrictEqual(TOOL.inputSchema.properties.verb.enum, require('../plugins/browser-pane/subagent').SUBS);
 });

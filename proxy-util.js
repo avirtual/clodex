@@ -59,7 +59,7 @@ const STRICT_MCP_EXPLANATION = {
 };
 
 function mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath }) {
-  const unavailable = 'MCP: the clodex browser tool is not available to this session — ';
+  const unavailable = 'MCP: the clodex MCP tools are not available to this session — ';
   if (userMcp) {
     return { push: [], notice: `${unavailable}the seat's extra args carry their own --mcp-config.`, writeConfig: false };
   }
@@ -69,7 +69,7 @@ function mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath }) {
   if (disableDesign && reason) {
     return {
       push: ['--strict-mcp-config', '--mcp-config', mcpPath],
-      notice: `MCP: all MCP servers disabled for this session (--strict-mcp-config) — ${STRICT_MCP_EXPLANATION[reason]}. The clodex browser tool stays available.`,
+      notice: `MCP: all MCP servers disabled for this session (--strict-mcp-config) — ${STRICT_MCP_EXPLANATION[reason]}. The clodex MCP tools stay available.`,
       writeConfig: true,
     };
   }

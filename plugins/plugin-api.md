@@ -1797,6 +1797,38 @@ message than your exception's.
 session hooks. An `async handler` will run, but nothing awaits it: its rejection
 escapes every guard above, so its failure becomes silence rather than a bounce.
 
+### Declaring an MCP tool for subagents
+
+Two optional fields on `host.intents.register` let a seat's subagents call your
+verb as an MCP tool:
+
+- **`tools: [{ name, description, inputSchema, toIntent(args) }]`**. `name`
+  matches `/^[a-z][a-z0-9_-]{0,63}$/` and lives in ONE GLOBAL namespace like
+  verbs: a name another plugin holds throws `ETOOLTAKEN` with `err.tool` and
+  `err.heldBy`, mirroring `EVERBTAKEN`. `inputSchema` is a plain
+  `{ type: 'object', … }` JSON object. `toIntent(args)` returns ONE intent line
+  of YOUR verb (`[agent:<verb> …]` then `[agent:end]`), or throws an Error whose
+  message the caller sees as `invalid: <message>`. Anything else is a foreign
+  intent and the host refuses it.
+- **`subagent: { refuse(intent), brief }`**. `refuse` returns `null` to allow, a
+  non-empty string as the refusal text, or `''` for "not mine" (default-deny).
+  `brief` is one sentence a subagent reads at `SubagentStart`. `tools` without
+  `subagent` is a registration error.
+
+What the host does with them: it writes `run/<seat>/mcp-tools.json`
+`{ v: 1, rev, tools, briefs }` from the seat's effective grants (plugin granted
+AND verb enabled) and rewrites it on every grant change. The `clodex-mcp` server
+lists that file and forwards `{ tool, args }` to the seat socket, which checks
+the live grant BEFORE calling your `toIntent`, then runs your `refuse`, then
+dispatches as the seat (never as the subagent).
+
+A caller may see four refusal texts: `invalid: <your message>`,
+`unknown tool: "<name>"` (unregistered OR not granted — one text, so there is no
+existence oracle), `tool <name> emitted a foreign intent`, and your `refuse`
+string. The server stops the 3rd byte-identical failing call within 60 s per
+server process (one per seat; main and subagents share it); your `invalid`
+rejections are not counted.
+
 ### Choosing a verb is a compatibility decision
 
 Every other name you pick is yours. Your plugin id namespaces your settings, your
