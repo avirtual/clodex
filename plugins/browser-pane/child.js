@@ -998,7 +998,8 @@ function run(electron, ctx) {
         return out;
       }
       let fresh = false;
-      if (byText != null) ({ n, fresh } = await textTarget(svc, byText));
+      let byName = false;
+      if (byText != null) ({ n, fresh, byName } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
       const coveredErr = coveredRefusal(n, el);
       if (coveredErr) throw coveredErr;
@@ -1011,6 +1012,7 @@ function run(electron, ctx) {
       if (op === 'click') {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
+        if (byName) out.byName = true;
         if (rowChanged(svc.num && svc.num.lastRead, n, el.row)) out.textChanged = true;
         const done = await withChange(svc, pre, out, lateMsFor(op));
         if ((done.changed === '' || done.watched) && !wc.isDestroyed()) {
@@ -1168,7 +1170,7 @@ function run(electron, ctx) {
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
     if (found.hits[0].loose) throw codedError('NO_ELEMENT', TEXT.looseText(svc.name, text, found.hits[0]));
     if (found.hits[0].n == null) throw codedError('AMBIGUOUS', TEXT.twinText(svc.name, text));
-    return { n: found.hits[0].n, fresh: !!found.hits[0].fresh };
+    return { n: found.hits[0].n, fresh: !!found.hits[0].fresh, byName: !!found.byName };
   }
 
   async function clickWatched(svc, n, el, nav, dir) {
@@ -1389,14 +1391,14 @@ function run(electron, ctx) {
     svc.reading += 1;
     blockerSync();
     try {
-      const { n, fresh } = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : { n: Number(args.n), fresh: false };
+      const { n, fresh, byName } = args.byText != null ? await textTarget(svc, String(args.byText), 'inspect') : { n: Number(args.n), fresh: false, byName: false };
       await checkNumber(svc, n);
       const r = await inIsolated(svc.wc, scripts.INSPECT(n));
       if (!r) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
       const listeners = await driver.withTimeout(listenersOf(svc, n).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
       if (listeners && listeners.ancestorAt) listeners.ancestor = r.ancestors[listeners.ancestorAt - 1] || '?';
       const { marked, ...shown } = r;
-      return { n, ...shown, kind: inspectKind(r, listeners), listeners, ...(fresh ? { fresh: true } : {}) };
+      return { n, ...shown, kind: inspectKind(r, listeners), listeners, ...(fresh ? { fresh: true } : {}), ...(byName ? { byName: true } : {}) };
     } finally {
       svc.reading -= 1;
       blockerSync();
