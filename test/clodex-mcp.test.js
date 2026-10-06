@@ -347,3 +347,12 @@ test('cli/package.json ships clodex-mcp as a bin', () => {
   assert.strictEqual(pkg.bin['clodex-mcp'], 'bin/clodex-mcp.js');
   assert.ok(fs.statSync(SERVER).mode & 0o111);
 });
+
+test('a stdout error (EPIPE after the parent died) stops the server quietly', () => {
+  const { EventEmitter } = require('node:events');
+  const output = Object.assign(new EventEmitter(), { write: () => true });
+  let exited = null;
+  mcp.createServer({ env: {}, input: null, output, errOut: sink(), setInterval: () => null, onExit: (c) => { exited = c; } });
+  output.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+  assert.strictEqual(exited, 0);
+});
