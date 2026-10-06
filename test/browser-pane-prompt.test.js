@@ -29,7 +29,7 @@ const DESIGN_PROMPT_LINES = [
 ].join('\n');
 
 const FILL = [
-  ['<n>|--text="<s>"', '3'],
+  ['<n>|--text="<s>"', '3'], ['--list | --forget <id>', '--list'],
   ['[service]', 'utility'], ['<service>', 'utility'], ['[<n>]', '3'], ['<n>', '3'],
   ['[--text|--links]', '--links'], ['[--main]', '--main'], ['[--all]', '--all'], ['[--filter=<s>]', '--filter=pdf'],
   ['[--page=N]', '--page=2'], ['[--attach|--path-only]', '--path-only'], ['[--enter]', '--enter'], ['[--to=<dir in your cwd>]', '--to=bills'],
@@ -105,6 +105,6 @@ test('prompt: every form the prompt lines name parses into a command, covering e
     subs.add(cmd.sub);
   }
   assert.deepStrictEqual([...subs].sort(),
-    ['back', 'click', 'close', 'download', 'forward', 'inspect', 'key', 'open', 'read', 'release', 'screenshot', 'scroll', 'select', 'services', 'type', 'wait']);
-  assert.strictEqual(lines.length, 18);
+    ['back', 'click', 'close', 'download', 'forward', 'inspect', 'key', 'note', 'open', 'read', 'release', 'screenshot', 'scroll', 'select', 'services', 'type', 'wait']);
+  assert.strictEqual(lines.length, 19);
 });
