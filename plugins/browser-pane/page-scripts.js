@@ -1022,7 +1022,7 @@ function findText(text, state) {
   if (!hits.length) {
     const spans = el => { const t = flatOf(el); return t.length <= 400 && t.toLowerCase().includes(want); };
     textOf = flatOf;
-    hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && spans(el) && ![...el.children].some(spans)).filter(vis);
+    hits = deepAll(document, el => !TEXT_SKIP.has(el.tagName) && !!own(el) && spans(el) && ![...el.children].some(spans)).filter(vis);
   }
   const found = [];
   const loose = [];

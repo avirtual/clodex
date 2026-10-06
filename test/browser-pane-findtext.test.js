@@ -280,9 +280,9 @@ test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓],
 test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by its whole phrase; a phrase across two siblings is not', () => {
   const page = mkPage();
   const { mk } = page;
-  const luton = mk('li', { role: 'option' }, ['London ', mk('b', {}, ['Luton'], [60, 40, 40, 20]), ' LTN'], [10, 40, 200, 20]);
-  const gatwick = mk('li', { role: 'option' }, ['Gatwick'], [10, 60, 200, 20]);
-  const stansted = mk('li', { role: 'option' }, ['Stansted'], [10, 80, 200, 20]);
+  const luton = mk('li', { onclick: 'pick()' }, ['London ', mk('b', {}, ['Luton'], [60, 40, 40, 20]), ' LTN'], [10, 40, 200, 20]);
+  const gatwick = mk('li', { onclick: 'pick()' }, ['Gatwick'], [10, 60, 200, 20]);
+  const stansted = mk('li', { onclick: 'pick()' }, ['Stansted'], [10, 80, 200, 20]);
   const list = mk('ul', { role: 'listbox' }, [luton, gatwick, stansted], [10, 40, 200, 60]);
   const body = mk('body', {}, [list], [0, 0, 1200, 800]);
   Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
