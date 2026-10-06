@@ -22312,6 +22312,20 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
   assert.deepStrictEqual({ pid: res.pid, io: res.io }, { pid: 7001, io: 'stream' });
 });
 
+test('stream seat: extra args spelling --mcp-config=<path> get no clodex mcp.json and a tool-unavailable notice', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const notices = [];
+  h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') notices.push(msg.body); };
+  await h.m.create('st1', 'claude', require('node:os').tmpdir(), ['--mcp-config=/x/own.json'], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  const { args } = h.spawns[0];
+  assert.ok(args.includes('--mcp-config=/x/own.json'));
+  assert.ok(!args.some((a) => a.includes(require('node:path').join('run', 'st1', 'mcp.json'))));
+  assert.ok(!args.includes('--mcp-config'));
+  assert.ok(notices.includes("MCP: the clodex browser tool is not available to this session — the seat's extra args carry their own --mcp-config."));
+});
+
 test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {
   const h = mkStreamSeatManager({ persisted: { st2: { io: 'stream', sessionId: 'sid-old', streamPid: { pid: 6001, startTime: 1780000000000 } } } });
   t.after(() => h.stopAll());

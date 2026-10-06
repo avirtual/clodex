@@ -98,15 +98,15 @@ test('writeMcpConfig: one clodex server under the hooks interpreter, mode 0600, 
 
 test('session-manager samples the user MCP flags before the plan and its push', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
-  const mcp = src.indexOf("const userMcp = args.includes('--mcp-config');");
-  const strict = src.indexOf("const userStrict = args.includes('--strict-mcp-config');");
+  const mcp = src.indexOf('const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));');
+  const strict = src.indexOf('const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));');
   const plan = src.indexOf('const plan = mcpArgvPlan(');
   const push = src.indexOf('args.push(...plan.push);');
   assert.ok(mcp > 0 && strict > 0);
   assert.ok(plan > mcp && plan > strict);
   assert.ok(push > plan);
-  assert.strictEqual(src.split("args.includes('--mcp-config')").length, 2);
-  assert.strictEqual(src.split("args.includes('--strict-mcp-config')").length, 2);
+  assert.strictEqual(src.split('/^--mcp-config(=|$)/').length, 2);
+  assert.strictEqual(src.split('/^--strict-mcp-config(=|$)/').length, 2);
   const block = src.slice(mcp, src.indexOf('const userPluginDir', mcp));
   assert.ok(block.includes('if (plan.writeConfig) writeMcpConfig(name);'));
   assert.ok(block.includes("mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig')"));
