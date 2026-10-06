@@ -387,7 +387,7 @@ when the clear is body-less), so the fresh process boots on a regenerated
 prompt and `bakePrompt(reuse=false)` re-baselines the cache. The typed `/clear`
 edge (`refreshPrompt(name,'clear')` + the post-clear continuation) never fires
 on that arm. Shadow row `prompt-regen-at-clear` {agent, bytes}. Nothing
-pending, or a codex seat: the plain `/clear` path, unchanged.
+pending, or a codex or muse seat: the plain `/clear` path, unchanged.
 A Clodex-driven compact whose summary lands on such a seat (`_compactRegen`,
 from `_fireCompactContinuation`) takes the same `_coldRespawn` with
 `resume: true`: `create()` runs with `--resume <the compact's own sessionId>`

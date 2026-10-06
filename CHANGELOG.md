@@ -94,6 +94,7 @@ blocks a release.
 - Browser pane: the read cut hint is always a findable prefix of the heading, the polls line is sorted, a side drawer (`[role=dialog]`, fixed and docked to an edge) becomes the read root like a modal, item counts follow the main list's rows, loopback mocks keep separate site notes, and the subagent policy sheds a dead branch.
 - Browser pane: `click --text` and `inspect --text` fall back to a control's `aria-label`/`title` when no visible text matches (an icon button named "Close drawer" showing only `×`), and the reply then says `(matched by label)`; a visible-text match is never widened by names. `clodex --help` bounds a catalog tool's name like its description.
 - Browser pane: controls under a modal dialog's backdrop are no longer listed in a default read (they keep their numbers; `read --all` lists them and the head line says how many are under the dialog), the README documents the read root (modal, drawer, `--main`), and a drawer without `role=dialog` (GitLab's work-item panel) is recognised by its geometry, with a classic scrollbar tolerated.
+- Muse seats on the PTY transport: `[agent:context compact]` and `[agent:context clear]` type the Muse TUI's `/compact` and `/clear` like Claude and Codex seats, instead of bouncing as unsupported.
 
 ## 5.112.2 — 2026-10-04
 
