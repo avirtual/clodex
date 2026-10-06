@@ -1060,7 +1060,6 @@ test('a tool schema that is not a plain object is refused', () => {
 });
 
 test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser tool maps to the same text the server builds', () => {
-  const mcp = require('../cli/bin/clodex-mcp.js');
   const { TOOL } = require('../plugins/browser-pane/mcp-tool');
   const subagent = require('../plugins/browser-pane/subagent');
   try {
@@ -1074,7 +1073,7 @@ test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser t
       const full = { bracket: [], body: '', ...args };
       const out = registry.toolIntentFor('browser', full);
       assert.strictEqual(out.row.type, 'browser');
-      assert.strictEqual(out.text, mcp.toIntent(full));
+      assert.strictEqual(out.text, TOOL.toIntent(full));
     }
   } finally { registry._resetPluginRows(); }
 });
