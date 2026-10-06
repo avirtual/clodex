@@ -244,7 +244,7 @@ test('concurrent calls each answer under their own id', async () => {
   const answer = ([req, conn]) => conn.end(JSON.stringify({ ok: true, status: 'ok', reply: `re ${req.intent.split('\n')[0]}` }) + '\n');
   const seat = await fakeSeat((r, c) => {
     held.push([r, c]);
-    if (held.length === 2) answer(held[1]);
+    if (held.length === 2) answer(held.find(([q]) => q.intent.includes('two')));
     return 'hang';
   });
   try {
@@ -254,7 +254,7 @@ test('concurrent calls each answer under their own id', async () => {
     const p2 = s.handle(call('b', { verb: 'read', service: 'two' })).then((r) => { order.push(r.id); return r; });
     const r2 = await p2;
     assert.deepStrictEqual(order, ['b']);
-    answer(held[0]);
+    answer(held.find(([q]) => q.intent.includes('one')));
     const r1 = await p1;
     assert.strictEqual(r1.id, 'a');
     assert.strictEqual(r1.result.content[0].text, 're [agent:browser read one]');
