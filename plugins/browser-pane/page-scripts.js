@@ -413,7 +413,9 @@ const WALL = `
 const SCROLL_INFO = `(() => {
   const root = document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body;
   const count = (el, sel) => (el ? el.querySelectorAll(sel).length : 0);
-  const items = count(document, 'article') || count(root, '[role=listitem]') || count(root, 'li');
+  const rowsOf = (c) => [...c.children].filter(k => k.matches('li,tr')).length;
+  const best = Math.max(0, ...[...root.querySelectorAll('ul,ol,tbody,table,[role=list]')].map(rowsOf));
+  const items = count(document, 'article') || count(root, '[role=listitem]') || best;
   const se = document.scrollingElement || document.documentElement;
   return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
 })()`;
@@ -467,8 +469,8 @@ function readText(main) {
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
   const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
   const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
-  const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; return ''; };
-  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => b.a - a.a)[0];
+  const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (e.matches('[role=dialog]') && getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= innerWidth - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6) return 'drawer'; } return ''; };
+  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => (a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a)[0];
   if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
   if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {

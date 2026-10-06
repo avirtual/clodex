@@ -325,7 +325,8 @@ site) or a path pattern matched against the pathname (`/portfolio/*`); the kind 
 `quirk` or `caution`. For example `@/portfolio/* quirk: rows renumber on every price tick — click --text="<asset name>"`
 or `@/facturi path: Facturi → check the date column → Descarcă on the newest row`.
 A `[n]` in the text becomes the element's label from the seat's read of the current page.
-Notes belong to the exact origin the window is on (`www.` included, no sign-in host) and are
+Notes belong to the exact origin the window is on (`www.` included, no sign-in host; a loopback
+origin is split by its first path segment, so local mocks on one port do not share notes) and are
 shared by every service on it, so a note describes the site, never your account — no balances,
 names, invoice numbers or ids that belong to one login. At most 200 chars and 40 notes per origin;
 a full origin refuses until one is forgotten by id (`--list` shows ids). `open` shows the count and

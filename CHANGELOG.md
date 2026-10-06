@@ -10,6 +10,7 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Browser pane: the read cut hint is always a findable prefix of the heading, the polls line is sorted, a side drawer (`[role=dialog]`, fixed and docked to an edge) becomes the read root like a modal, item counts follow the main list's rows, loopback mocks keep separate site notes, and the subagent policy sheds a dead branch.
 
 ## Unreleased
 

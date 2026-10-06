@@ -37,10 +37,13 @@ const TEXT = {
   hint: 'unverified hints from earlier visits',
 };
 
+const LOOPBACK = ['127.0.0.1', '::1', '[::1]', 'localhost'];
+
 function originKey(url) {
   try {
     const u = new URL(String(url || ''));
-    return u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : '';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return LOOPBACK.includes(u.hostname) ? u.origin + '/' + (u.pathname.split('/')[1] || '') : u.origin;
   } catch { return ''; }
 }
 
