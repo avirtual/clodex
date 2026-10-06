@@ -5328,25 +5328,26 @@ function createSessionManager(deps) {
               (disposition) => this._armDmConfirm(intent.target, senderName, disposition));
             if (r.parked || r.held) {
               const parkId = r.parked || null;
+              const why = r.parked ? r.reason : r.held;
               if (session) {
                 let notice;
                 if (parkId) {
                   notice = r.noUrgent
-                    ? `[agent:dm] parked for ${intent.target} (${r.reason}) as ${parkId} — it'll be delivered after the human answers the dialog.`
-                    : `[agent:dm] parked for ${intent.target} (${r.reason}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
+                    ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered after the human answers the dialog.`
+                    : `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
                 } else {
                   const retry = r.noUrgent
-                    ? `Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
-                    : `If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`; otherwise it'll be cheapest right after ${intent.target}'s next turn.`;
-                  notice = `[agent:dm] NOT delivered to ${intent.target}: ${r.reason}. ${retry}`;
+                    ? `Nothing was kept. Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
+                    : `Nothing was kept (${intent.target} cannot park messages). Resend as \`[agent:dm ${intent.target} urgent] <message>\` to deliver it now.`;
+                  notice = `[agent:dm] NOT delivered to ${intent.target}: ${why}. ${retry}`;
                 }
                 this._injectText(session, notice, { parkable: true });
               }
               this._broadcast('ipc-message', {
                 type: 'dm', from: senderName, to: intent.target,
                 body: parkId
-                  ? `PARKED (${r.reason}, ${parkId}): ${intent.body}`
-                  : `HELD (${r.reason}): ${intent.body}`,
+                  ? `PARKED (${why}, ${parkId}): ${intent.body}`
+                  : `HELD (${why}): ${intent.body}`,
               });
               break;
             }
