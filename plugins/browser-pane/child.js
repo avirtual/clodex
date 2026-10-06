@@ -1017,6 +1017,7 @@ function run(electron, ctx) {
             done.choice = value.label;
             if (value.select) done.choiceKind = 'select';
           }
+          if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }
         }
         return done;
       }
@@ -1070,13 +1071,9 @@ function run(electron, ctx) {
       const doc = (await measure()) || { y: 0, height: 0, vh: 0, items: 0 };
       const forward = dir === 'down' || dir === 'bottom';
       const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);
-      const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;
+      const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER(dir)) : null;
       const inner = !!scroller;
-      const measureInner = async () => {
-        const d = await measure();
-        const sc = d && await inMain(wc, scripts.MAIN_SCROLLER);
-        return d && sc ? { ...sc, items: d.items } : null;
-      };
+      const measureInner = async () => { const d = await measure(); const sc = d && await inMain(wc, scripts.SCROLLER_INFO); return d && sc ? { ...sc, items: d.items } : null; };
       const before = inner ? { ...scroller, items: doc.items } : doc;
       const pre = await preAct(svc, null);
       const { idle } = await driver.act(wc, async () => {
@@ -1540,8 +1537,8 @@ function run(electron, ctx) {
       ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
-    const frames = framesOf(wc);
-    const login = challenged(await probe(svc), frames, wc.getTitle());
+    const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const frames = allFrames.filter((u) => !inlined.has(u));
+    const login = challenged(await probe(svc), allFrames, wc.getTitle());
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
     return {
       ...base,

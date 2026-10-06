@@ -46,7 +46,7 @@ const MAIN_ROOT = `
 const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abmelden', 'deconnexion', 'cerrar sesion', 'uitloggen', 'esci', 'sair'];
 const CONSEQUENTIAL = [
   ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
-  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], []],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], [], [], {}, '\\border (status|history|number|tracking|details|istoric)\\b'],
   ['booking', ['reserve', "i'll reserve", 'book now', 'complete booking', 'confirm booking', 'rezerva', 'rezerva acum', 'finalizeaza rezervarea'], []],
   ['deletion', ['delete', 'sterge', 'remove', 'elimina'], [], [], {}, '\\b(filtr|filter|selection|selectie|search|cautare|sort)'],
   ['sign-out', SIGN_OUT, []],
@@ -57,7 +57,7 @@ const CONSEQUENTIAL = [
   ['trading', ['trade', 'sell', 'close position', 'close all', 'close trade', 'invest', 'copy trader', 'stake', 'unstake', 'swap', 'vinde', 'tranzactioneaza'], [],
     ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
     { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
-  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
+  ['publish', ['post', 'reply', 'forward', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
     'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
 ];
 const LEAD_CATS = ['publish'];
@@ -348,6 +348,7 @@ const WALL = `
       for (const l of labels) rest = rest.replace(l, ' ');
       return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));
     };
+    const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };
     let all = [];
     let endIdx = -1;
     const hitOf = (t, re) => {
@@ -358,7 +359,9 @@ const WALL = `
         if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
       }
       const bt = blockText(b);
-      return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
+      if (!bt) return null;
+      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };
+      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
     };
     const pick = (re) => {
       let before = null;
@@ -402,21 +405,25 @@ const SCROLL_INFO = `(() => {
   return { y: Math.round(window.scrollY), height: Math.round(se.scrollHeight), vh: Math.round(window.innerHeight), items };
 })()`;
 
-const MAIN_SCROLLER = `(() => {
+const MAIN_SCROLLER = (dir) => `(() => {
   for (const e of document.querySelectorAll('[data-cxb-scroller]')) e.removeAttribute('data-cxb-scroller');
   let best = null;
   let area = 0;
   for (const e of [...document.querySelectorAll('*')].slice(0, 3000)) {
     if (e.scrollHeight <= e.clientHeight + 40 || !/^(auto|scroll)$/.test(getComputedStyle(e).overflowY)) continue;
+    if (e === document.documentElement || e === document.body || e === document.scrollingElement) continue;
+    const fwd = ${JSON.stringify(dir === 'down' || dir === 'bottom')}; if (fwd ? e.scrollTop + e.clientHeight >= e.scrollHeight - 2 : e.scrollTop <= 1) continue;
     const r = e.getBoundingClientRect();
     const a = r.width * r.height;
-    if (a > area && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) { best = e; area = a; }
+    if (a > area && a >= innerWidth * innerHeight / 10 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth) { best = e; area = a; }
   }
   if (!best) return null;
   best.setAttribute('data-cxb-scroller', '');
   const label = best.tagName.toLowerCase() + (best.id ? '#' + best.id : '') + (best.classList[0] ? '.' + best.classList[0] : '');
   return { y: Math.round(best.scrollTop), height: Math.round(best.scrollHeight), vh: Math.round(best.clientHeight), label };
 })()`;
+
+const SCROLLER_INFO = `(() => { const el = document.querySelector('[data-cxb-scroller]'); if (!el) return null; return { y: Math.round(el.scrollTop), height: Math.round(el.scrollHeight), vh: Math.round(el.clientHeight) }; })()`;
 
 const BUSY = `
   const busyScan = () => {
@@ -446,7 +453,8 @@ function readText(main) {
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
-  if (!forced && (!root || (root.innerText || '').length < 200)) {
+  const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
+  if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
     let best = document.body, bs = -1;
     document.querySelectorAll('div,section,td').forEach(el => {
       const s = score(el); if (s > bs) { bs = s; best = el; }
@@ -457,7 +465,7 @@ function readText(main) {
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   const wall = wallScan(root);
-  if (!root) return { text: '', busy, outline, wall };
+  if (!root) return { text: '', busy, outline, wall, inlined: [] };
   const STRUCK = /^(S|DEL|STRIKE)$/;
   const struck = new Set();
   [...root.querySelectorAll('*')].forEach((e, i) => {
@@ -482,10 +490,11 @@ function readText(main) {
     const o = ageOrigs[i];
     if (!o || !o.matches(AGE_SEL) || o.querySelector(AGE_SEL) || !AGE_RE.test(o.textContent || '')) return;
     const v = String(o.getAttribute('datetime') || o.getAttribute('title') || o.getAttribute('data-time') || '').trim();
-    const d = isNaN(new Date(v)) ? new Date(v.split(/\\s+/)[0]) : new Date(v);
+    const tok = v.split(/\\s+/); const d = /^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000) : isNaN(new Date(v)) ? new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0]) : new Date(v);
     if (!isNaN(d)) twin.append(' (' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ')');
   });
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
+  const inlined = [];
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -505,7 +514,7 @@ function readText(main) {
   ${TABLES}
   const txt = clone.innerText; host.remove(); cv.remove();
   const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
-  return { text, busy, outline, wall };
+  return { text, busy, outline, wall, inlined };
 })()`;
 }
 
@@ -1287,6 +1296,26 @@ const VALUE_ACTIVE = `(() => {${ICON}
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
 
+function UNDER_POINT(n) {
+  return `(() => {${DEEP}
+  ${REF(n)}
+  ${clickPoint.toString()}
+  ${KIND_LABEL}
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const at = clickPoint(el, r, document);
+  let hit = document.elementFromPoint ? document.elementFromPoint(at.x, at.y) : null;
+  while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+    const inner = hit.shadowRoot.elementFromPoint(at.x, at.y);
+    if (!inner || inner === hit) break;
+    hit = inner;
+  }
+  if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+  const hl = labelOf(hit);
+  return (hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.classList[0] ? '.' + hit.classList[0] : '')).replace(/[^\\w#.:-]/g, '') + (hl ? ' ' + JSON.stringify(hl.slice(0, 40)) : '');
+})()`;
+}
+
 const VALUE_CHOICE = (n) => `(() => {${ICON}
   ${REF(n)}
   ${CHOICE_OF}
@@ -1349,6 +1378,8 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const interstitial = /^just a moment|checking your browser|verify you are human|attention required/i.test(document.title) && body.trim().length < 600;
   const captchaFrames = deepAll(document, el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '') && !/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')).filter(vis);
   const big = el => { const r = el.getBoundingClientRect(); return r.width * r.height >= innerWidth * innerHeight / 4; };
+  const fillable = any(el => el.tagName === 'INPUT' && !['hidden', 'submit', 'button', 'reset', 'image', 'checkbox', 'radio'].includes(el.type) || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+  const sparse = body.trim().length < 600 && !fillable && captchaFrames.some(el => !/challenges\\.cloudflare\\.com/.test(el.src || ''));
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
     || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'
@@ -1357,7 +1388,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
     password: pwds.length > 0 && !passwordChange,
     passwordChange,
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
-    captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),
+    captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big) || sparse)),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
     logoutLink,
@@ -1771,7 +1802,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };

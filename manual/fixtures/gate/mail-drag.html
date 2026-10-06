@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>mail-drag</title><style>body{display:flex;font:14px sans-serif} #list{width:380px} .row{padding:10px;border-bottom:1px solid #ddd;cursor:pointer} #pane{flex:1;padding:20px}</style></head><body>
+<div id="list">
+<div class="row" draggable="true" data-id="1">Alice Johnson · Mon 08:18<br>Re: Q4 Project Timeline</div>
+<div class="row" data-id="2">Demo User · Mon 07:18<br>Updated Requirements Document</div>
+</div><div id="pane">Click any email on the left to get started.</div>
+<script>
+// row 1 is draggable (like Bulwark), row 2 is not; both open on click
+document.querySelectorAll('.row').forEach(function(r){r.addEventListener('click',function(){document.getElementById('pane').textContent='OPENED message '+r.dataset.id+': '+r.textContent;});});
+</script></body></html>

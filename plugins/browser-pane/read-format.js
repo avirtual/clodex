@@ -61,6 +61,7 @@ function filterLines(lines, filter, { blocks = false } = {}) {
       let h = i;
       while (h > 0 && row(lines[h - 1])) h--;
       keep[h] = true;
+      if (!stamped(l)) { if (i + 1 < lines.length && stamped(lines[i + 1])) keep[i + 1] = true; else if (i > 0 && stamped(lines[i - 1])) keep[i - 1] = true; }
       return;
     }
     let s = i;

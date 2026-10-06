@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>virt-list-nested</title>
+<style>body{margin:0;font:14px sans-serif;height:100vh;overflow:hidden;display:flex} nav{width:200px;border-right:1px solid #ccc} .grow{flex:1;overflow-y:auto;padding:0 16px} #vp{height:300px;overflow-y:auto;position:relative;border:1px solid #888} #sp{position:relative} .row{position:absolute;left:0;right:0;height:30px;line-height:30px;padding:0 8px} pre{height:900px;background:#f6f6f6}</style></head><body>
+<nav><a href="/">Getting started</a></nav>
+<div class="grow"><h1>Lists: Fixed row heights</h1><p>The simplest type of list to render is one with fixed row heights.</p>
+<div id="vp"><div id="sp"></div></div>
+<p>To render this type of list, you need to specify how many rows it contains.</p><pre>import { List } from "react-window";</pre></div>
+<script>
+// react-window style: 1000 rows, only the visible ones (+2) are in the DOM; the page column .grow also scrolls and is larger
+var N=1000,H=30,vp=document.getElementById('vp'),sp=document.getElementById('sp');sp.style.height=(N*H)+'px';
+function draw(){var a=Math.max(0,Math.floor(vp.scrollTop/H)-2),b=Math.min(N,Math.ceil((vp.scrollTop+vp.clientHeight)/H)+2),h='';
+for(var i=a;i<b;i++)h+='<div class="row" style="top:'+(i*H)+'px">Name '+(i+1)+' — '+(i+1)+' of 1000</div>';sp.innerHTML=h;}
+vp.addEventListener('scroll',draw);draw();
+</script></body></html>

@@ -615,7 +615,8 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
   assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
   assert.ok(src.includes('return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));'));
-  assert.ok(src.includes('return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes('      if (!bt) return null;\n      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };\n      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes("const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };"));
   const authored = new Function('norm', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '));
   assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', textContent: 'to read this story, Sign in.' }), 'to read this story, Sign in.');
   assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', textContent: 'Create an account.The author' }), 'Create an account. The author');
@@ -653,8 +654,9 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
 test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
   const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
   const read = scripts.READ_TEXT(false);
-  assert.ok(read.includes(zip));
-  assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(zip) && read.indexOf(zip) < read.indexOf('clone.querySelectorAll(DROP)'));
+  const readZip = zip.slice(0, -' });'.length);
+  assert.ok(read.includes(readZip));
+  assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
   assert.ok(scripts.PAGE_TEXT.indexOf(zip) < scripts.PAGE_TEXT.indexOf("clone.querySelectorAll('script,style"));
 });
@@ -703,7 +705,7 @@ test('child: a challenges.cloudflare.com frame makes the probe a captcha hold; a
   assert.deepStrictEqual(framesOf({ mainFrame: null }), []);
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(src.includes('const login = challenged(await probe(svc), framesOf(svc.wc), svc.wc.getTitle());'));
-  assert.ok(src.includes('const login = challenged(await probe(svc), frames, wc.getTitle());'));
+  assert.ok(src.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
 });
 
 test('page scripts: LOGIN_PROBE profile hint is void while a visible Sign in link is on the page', () => {
@@ -752,9 +754,9 @@ test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or 
     getAttribute: () => null, matches: () => false, closest: (s) => (badge && s === '.grecaptcha-badge' ? {} : null), getBoundingClientRect: () => rect,
   });
   const pwd = { tagName: 'INPUT', type: 'password', innerText: '', textContent: '', parentElement: null, getAttribute: () => null, matches: () => false, getBoundingClientRect: () => box(200, 30) };
-  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+  const run = (els, text = 'Contact us '.repeat(60)) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
     () => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
-    { title: 'Contact', querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: 'Contact us' } },
+    { title: 'Contact', querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: text } },
     { hostname: 'contactform7.com', pathname: '/' }, 0, 0, 1200, 800);
   const v2 = 'https://www.google.com/recaptcha/api2/anchor?k=x&size=normal';
   assert.strictEqual(run([frame('https://www.google.com/recaptcha/api2/anchor?k=x&size=invisible', box(256, 60))]).captcha, false);
@@ -763,7 +765,14 @@ test('page scripts: LOGIN_PROBE holds a captcha only beside a password field or 
   assert.strictEqual(run([frame(v2, box(304, 78)), pwd]).captcha, true);
   assert.strictEqual(run([frame('https://challenges.cloudflare.com/x', box(800, 400))]).captcha, true);
   assert.ok(scripts.LOGIN_PROBE.includes("!/size=invisible/.test(el.src || '') && !el.closest('.grecaptcha-badge')"));
-  assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big))),'));
+  const name = { tagName: 'INPUT', type: 'text', innerText: '', textContent: '', parentElement: null, getAttribute: (k) => (k === 'name' ? 'name' : null), matches: () => false, getBoundingClientRect: () => box(200, 30) };
+  const sorry = 'Our systems have detected unusual traffic from your computer network. '.repeat(3);
+  assert.strictEqual(run([frame(v2, box(304, 78))], sorry).captcha, true, 'a sparse page with nothing else to fill');
+  assert.strictEqual(run([frame(v2, box(304, 78)), name], sorry).captcha, false, 'a visible field to fill');
+  assert.strictEqual(run([frame(v2, box(304, 78))], 'x'.repeat(700)).captcha, false, 'a 700-char body');
+  assert.strictEqual(run([frame('https://challenges.cloudflare.com/x', box(300, 65))], sorry).captcha, false, 'a Cloudflare frame is left to the title rule');
+  assert.ok(scripts.LOGIN_PROBE.includes("const sparse = body.trim().length < 600 && !fillable && captchaFrames.some(el => !/challenges\\.cloudflare\\.com/.test(el.src || ''));"));
+  assert.ok(scripts.LOGIN_PROBE.includes('captcha: interstitial || (captchaFrames.length > 0 && (pwds.length > 0 || captchaFrames.some(big) || sparse)),'));
 });
 
 test('page scripts: READ_TEXT falls back to body when the best-scoring block holds under half the body text', () => {
@@ -904,7 +913,8 @@ test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', (
   assert.ok(!scrollCode('down', 1).includes('data-cxb-scroller'));
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(src.includes("const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);"));
-  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;'));
+  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER(dir)) : null;'));
+  assert.ok(src.includes('const measureInner = async () => { const d = await measure(); const sc = d && await inMain(wc, scripts.SCROLLER_INFO); return d && sc ? { ...sc, items: d.items } : null; };'));
   assert.ok(src.includes('await inMain(wc, scrollCode(dir, pages, inner));'));
   assert.ok(src.includes('...(inner ? { scroller: scroller.label } : {}),'));
 });
@@ -917,6 +927,25 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
   assert.ok(src.indexOf('const AGE_SEL') > src.indexOf("c.prepend('(was ')"));
 });
 
+test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a [frame] line; read lists only the frames it did not inline', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
+  assert.ok(src.includes('if (fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty frame is not inlined');
+  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box);"));
+  assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
+  assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('const frames = allFrames.filter((u) => !inlined.has(u));'));
+  assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
+});
+
+test('page scripts: READ_TEXT reads an epoch token in an age title first and a zone-less ISO time as UTC', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("/^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000)"));
+  assert.ok(src.includes("new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0])"));
+});
+
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
   const mk = (id, w, h, overflowY, scrollHeight, clientHeight) => {
     const attrs = {};
@@ -926,7 +955,7 @@ test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element
       setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
     };
   };
-  const run = (els, old = []) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER}`)(
+  const run = (els, old = []) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER('down')}`)(
     { querySelectorAll: (s) => (s === '*' ? els : old) }, (e) => ({ overflowY: e.overflowY }), 1200, 800);
   const small = mk('code', 300, 100, 'auto', 900, 100);
   const big = mk('list', 1000, 600, 'auto', 6000, 600);
@@ -938,6 +967,34 @@ test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element
   assert.ok('data-cxb-scroller' in big.attrs);
   assert.ok(!('data-cxb-scroller' in prev.attrs));
   assert.strictEqual(run([hidden, short]), null);
+});
+
+test('page scripts: MAIN_SCROLLER skips a candidate already at the requested end, the page body and one under a tenth of the viewport', () => {
+  const mk = (id, w, h, scrollTop, scrollHeight, clientHeight) => {
+    const attrs = {};
+    return {
+      id, tagName: 'DIV', classList: [], scrollTop, scrollHeight, clientHeight, overflowY: 'auto', attrs,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: w, height: h, right: w, bottom: h }),
+      setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; },
+    };
+  };
+  const run = (els, dir, docEls = {}) => new Function('document', 'getComputedStyle', 'innerWidth', 'innerHeight', `return ${scripts.MAIN_SCROLLER(dir)}`)(
+    { querySelectorAll: (s) => (s === '*' ? els : []), ...docEls }, (e) => ({ overflowY: e.overflowY }), 1200, 800);
+  const column = mk('col', 1200, 800, 5200, 6000, 800);
+  const vp = mk('vp', 600, 400, 0, 9000, 400);
+  assert.strictEqual(run([column, vp], 'down').label, 'div#vp');
+  assert.ok('data-cxb-scroller' in vp.attrs && !('data-cxb-scroller' in column.attrs));
+  assert.strictEqual(run([column, vp], 'up').label, 'div#col');
+  assert.strictEqual(run([column, vp], 'bottom').label, 'div#vp');
+  assert.strictEqual(run([column, vp], 'top').label, 'div#col');
+  const tiny = mk('tiny', 300, 300, 0, 900, 300);
+  assert.strictEqual(run([column, tiny], 'down'), null);
+  const body = mk('body', 1200, 800, 0, 6000, 800);
+  assert.strictEqual(run([body], 'down', { body }), null);
+  assert.strictEqual(run([body], 'down', { documentElement: body }), null);
+  assert.strictEqual(run([body], 'down', { scrollingElement: body }), null);
+  assert.ok(!('data-cxb-scroller' in body.attrs));
+  assert.strictEqual(run([body], 'down').label, 'div#body');
 });
 
 function visOf(view = {}) {
@@ -1401,6 +1458,35 @@ function boxEl(tag, text, rect, parent = null) {
   };
   return e;
 }
+
+test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const under = (el, hitAt) => {
+    const ctx = {
+      document: { elementFromPoint: hitAt, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
+      getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
+      location: { href: 'http://x/', origin: 'http://x' }, __cxEls: { 5: new WeakRef(el) }, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+    };
+    ctx.window = ctx;
+    vm.createContext(ctx);
+    return vm.runInContext(scripts.UNDER_POINT(5), ctx);
+  };
+  const row = boxEl('div', 'Invoice March', box(10, 100, 400, 30));
+  row.classList = [];
+  const veil = Object.assign(boxEl('div', 'Loading', box(0, 0, 1200, 800)), { id: 'veil', classList: ['overlay', 'x'] });
+  assert.strictEqual(under(row, () => veil), 'div#veil.overlay "Loading"');
+  const odd = Object.assign(boxEl('div', '', box(0, 0, 1200, 800)), { id: 'a b"<x>', classList: [] });
+  assert.strictEqual(under(row, () => odd), 'div#abx');
+  assert.strictEqual(under(row, () => row), null);
+  const child = Object.assign(boxEl('span', 'Invoice', box(10, 100, 50, 30), row), { classList: [] });
+  assert.strictEqual(under(row, () => child), null);
+  const shell = Object.assign(boxEl('div', 'Invoice March', box(0, 0, 1200, 800)), { classList: [] });
+  row.parentElement = shell;
+  assert.strictEqual(under(row, () => shell), null);
+  assert.strictEqual(under(boxEl('div', 'x', box(0, 0, 0, 0)), () => veil), null);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(src.includes("if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }"));
+});
 
 test('FIND: scrolls only an element outside the viewport, to nearest, and reports what sits under the click point', async () => {
   const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
@@ -1965,6 +2051,15 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
 });
 
+test('page scripts: Forward is a publish verb; an Order Status/history link is not a purchase, Place order still is', () => {
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Forward' }), { cat: 'publish', term: 'forward' });
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order Status' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order history' }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Go', action: '/orders/new' }), { cat: 'purchase', term: 'order' });
+  assert.strictEqual(scripts.consequentialHit({ label: 'Place order' }).cat, 'purchase');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order now' }).cat, 'purchase');
+});
+
 test('page scripts: a has-delete class on a filter reset honours the row\'s unless; a delete label still hits', () => {
   assert.strictEqual(scripts.consequentialHit({ label: 'Sterge toate filtrele', idClass: 'has-delete' }), null);
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'delete' });
@@ -2205,7 +2300,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
-  assert.ok(src.includes('return { text, busy, outline, wall };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
   assert.ok(child.includes('...(wall ? { wall } : {}),'));

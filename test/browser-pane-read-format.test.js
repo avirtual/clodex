@@ -428,6 +428,18 @@ test('read-format: --filter in a long block pairs a hit with its own row\'s time
   assert.deepStrictEqual(filterLines(plain, 'needle', { blocks: true }), ['d', 'needle here', 'e']);
 });
 
+test('read-format: --filter on a `|` row keeps the adjacent timestamp line, the one after first; a row hit without a stamped neighbour is unchanged', () => {
+  const hn = ['1. | Show HN: Thyme | 12 comments', '4 points by x 16 minutes ago | hide', '2. | Ask HN: Editors? | 3 comments', '9 points by y 1 hour ago | hide'];
+  assert.deepStrictEqual(filterLines(hn, 'thyme', { blocks: true }), ['1. | Show HN: Thyme | 12 comments', '4 points by x 16 minutes ago | hide']);
+  assert.deepStrictEqual(filterLines(hn, 'editors', { blocks: true }), ['1. | Show HN: Thyme | 12 comments', '2. | Ask HN: Editors? | 3 comments', '9 points by y 1 hour ago | hide']);
+  const before = ['Head | x', '09:12 | posted', 'Thyme | y', 'Other | z'];
+  assert.deepStrictEqual(filterLines(before, 'thyme', { blocks: true }), ['Head | x', '09:12 | posted', 'Thyme | y']);
+  const table = ['Country | Population', 'Poland | 36,620,970', 'Romania | 19,036,031', 'Hungary | 9,539,502'];
+  assert.deepStrictEqual(filterLines(table, 'romania', { blocks: true }), ['Country | Population', 'Romania | 19,036,031']);
+  const bills = ['Factura | Data | Suma', 'Factura iulie | 2026-07-01 | 120 lei', 'Factura august | 2026-08-01 | 130 lei', 'Factura sept | 2026-09-01 | 125 lei'];
+  assert.deepStrictEqual(filterLines(bills, 'august', { blocks: true }), ['Factura | Data | Suma', 'Factura august | 2026-08-01 | 130 lei'], 'a dated row needs no neighbour');
+});
+
 test('read-format: a filter on a bullet list returns the matching item only; Wikipedia backref prefixes are dropped from the match line', () => {
   const list = ['Releases', '• Node 20 LTS', '• Node 22 LTS', '• Node 24 Current', '', 'Footer'];
   assert.deepStrictEqual(filterLines(list, 'node 22', { blocks: true }), ['• Node 22 LTS']);
