@@ -9,6 +9,8 @@ const CONTEXT_MAX = 40;
 const LABEL_KEY_MAX = 400;
 const COUNTER_WORDS = ['like', 'likes', 'repost', 'reposts', 'reply', 'replies', 'view', 'views', 'bookmark', 'bookmarks', 'posts', 'followers', 'following', 'notifications', 'unread'];
 const COUNTER_RE = /\d[\d.,]*[KkMm]?/;
+const DATE_RE = /^(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})$/;
+const LIVE_RE = /(?<![\w.,/])(?:\d{1,2}[./]\d{1,2}[./]\d{2,4}|\d{4}-\d{2}-\d{2})(?![\w.,/])|(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g;
 const STATE_SUFFIX = /\s*(?::\s*activate to (?:invert |remove )?sort(?:ing)?|:\s*(?:ascending|descending))\s*$/i;
 
 function isVolatile(name, value, learned) {
@@ -40,9 +42,9 @@ function stateMask(label) {
   const f = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const cut = f.replace(STATE_SUFFIX, '').replace(/\s*(?:[,;:-]?\s*\b(?:sorted|sort) (?:ascending|descending)|\(\d+ selected\))\s*$/i, '');
   const s = cut && cut !== f ? cut : label;
-  const nums = s.match(/(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g) || [];
+  const nums = (s.match(LIVE_RE) || []).filter((x) => !DATE_RE.test(x));
   if (nums.length < 2 || !nums.some((x) => /[.%+\-\u2212]/.test(x))) return s;
-  return s.replace(/(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g, '#');
+  return s.replace(LIVE_RE, (x) => (DATE_RE.test(x) ? x : '#'));
 }
 
 function keyLabel(label) {
@@ -150,6 +152,8 @@ const PAGE_SOURCE = [
   `const LABEL_KEY_MAX = ${LABEL_KEY_MAX};`,
   `const COUNTER_WORDS = ${JSON.stringify(COUNTER_WORDS)};`,
   `const COUNTER_RE = new RegExp(${JSON.stringify(COUNTER_RE.source)});`,
+  `const DATE_RE = new RegExp(${JSON.stringify(DATE_RE.source)});`,
+  `const LIVE_RE = new RegExp(${JSON.stringify(LIVE_RE.source)}, 'g');`,
   `const STATE_SUFFIX = new RegExp(${JSON.stringify(STATE_SUFFIX.source)}, 'i');`,
   counterWord.toString(), counterMask.toString(), actionOf.toString(),
   isVolatile.toString(), normHref.toString(), labelHash.toString(), stateMask.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),

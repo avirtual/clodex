@@ -679,3 +679,11 @@ test('read-format: the notes header: none for 0 notes, then 2 and 5 sits between
     'notes: 5 for this page (shown earlier; --notes to repeat)',
   ]);
 });
+
+test('read-format: --filter keeps only a real count line — prose mentioning "showing" or "page 1 of" is not pushed', () => {
+  const dt = ['Name | City', 'Ion | Iasi', '', 'We are showing you the best page 1 of our guide to the finest cafés in the whole county', 'Showing 1 to 10 of 57 entries'];
+  assert.deepStrictEqual(filterLines(dt, 'iasi', { blocks: true }), ['Name | City', 'Ion | Iasi', '', 'Showing 1 to 10 of 57 entries']);
+  const prose = ['Name | City', 'Ion | Iasi', '', 'We are showing you the best page 1 of our guide to the finest cafés in the whole county'];
+  assert.deepStrictEqual(filterLines(prose, 'iasi', { blocks: true }), ['Name | City', 'Ion | Iasi']);
+  assert.deepStrictEqual(filterLines(['Ion | Iasi', '', '1–10 of 57'], 'iasi', { blocks: true }), ['Ion | Iasi', '', '1–10 of 57']);
+});

@@ -90,3 +90,13 @@ test('keys: a control keyed without its sort/selection state suffix and a live-p
   assert.notStrictEqual(k('Page 3', 'link'), k('Page 4', 'link'));
   assert.notStrictEqual(k('COVID-19 2020'), k('COVID-19 2021'));
 });
+
+test('keys: a dotted or ISO date is not a live number — e-bloc period rows keep distinct keys; money and percent beside a date still mask', () => {
+  assert.strictEqual(K.keyLabel('Perioada 01.08.2026 - 31.08.2026'), 'Perioada 01.08.2026 - 31.08.2026');
+  assert.notStrictEqual(K.keyLabel('Perioada 01.08.2026 - 31.08.2026'), K.keyLabel('Perioada 01.09.2026 - 30.09.2026'));
+  assert.strictEqual(K.keyLabel('BTC 61,234.50 +1.2%'), 'BTC # #');
+  assert.strictEqual(K.keyLabel('Due 01.08.2026 €1,234.50 +2%'), 'Due 01.08.2026 €# #');
+  assert.strictEqual(K.keyLabel('Due 2026-08-01 €1,234.50 +2%'), 'Due 2026-08-01 €# #');
+  const page = new Function(K.PAGE_SOURCE + '; return keyLabel;')();
+  assert.strictEqual(page('Due 01.08.2026 €1,234.50 +2%'), 'Due 01.08.2026 €# #');
+});

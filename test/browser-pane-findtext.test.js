@@ -226,6 +226,18 @@ test('READ_INTERACTIVE: a label whose radio is visually hidden is listed as that
   assert.strictEqual(ctx.__cxOf.get(noLab), 1, 'the number maps to the label');
 });
 
+test('READ_INTERACTIVE: an ARIA grid [role=columnheader] with aria-sort prints [sorted ↑] on its button', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const btn = mk('button', { 'aria-label': 'Age' }, ['Age'], [10, 10, 80, 20]);
+  const head = mk('div', { role: 'columnheader', 'aria-sort': 'ascending' }, [btn], [10, 10, 100, 20]);
+  const body = mk('body', {}, [head], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), ['[1] button Age [sorted ↑]']);
+});
+
 test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓], the current pagination link [current]; a header whose sort label flips keeps its number', () => {
   const page = mkPage();
   const { mk } = page;

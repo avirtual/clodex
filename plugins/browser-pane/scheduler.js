@@ -242,8 +242,7 @@ function createScheduler({
     const page = pageKey(raw.url);
     const shown = st.notesShown[service];
     const full = !!cmd.notes || !shown || shown.page !== page || shown.rev !== n.rev;
-    st.notesShown[service] = { page, rev: n.rev };
-    return { matched: siteNotes.matching(n.notes, siteNotes.pathOf(raw.url), siteNotes.searchOf(raw.url)), total: n.notes.length, full };
+    return { matched: siteNotes.matching(n.notes, siteNotes.pathOf(raw.url), siteNotes.searchOf(raw.url)), total: n.notes.length, full, mark: { page, rev: n.rev } };
   }
 
   async function runNote(handle, service, cmd) {
@@ -343,6 +342,7 @@ function createScheduler({
     const memo = feedMemory(st, service, raw, cmd);
     const notesInfo = hasText ? readNotes(st, service, raw, cmd) : null;
     const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost, feedSeen: memo && memo.view, notes: notesInfo });
+    if (notesInfo) st.notesShown[service] = notesInfo.mark;
     rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
