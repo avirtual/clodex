@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>dialog-overlay-tall</title>
+<style>body{margin:0;font:14px sans-serif} main{padding:20px} .cdk-overlay-container{position:fixed;inset:0;z-index:1000} .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.3)} .pane{position:absolute;left:15%;top:60px;width:70%;height:70vh;overflow:auto;background:#fff;padding:16px} table{border-collapse:collapse} td,th{padding:4px 8px;border-bottom:1px solid #ddd}</style></head><body>
+<header><a href="/">Portfolio app</a> <a href="/accounts">Accounts</a></header>
+<main><h1>Accounts</h1><p>Accounts group your holdings by platform. Cash balances are shown in the base currency; values update when market data refreshes, usually every few minutes during trading hours.</p>
+<table><tr><th>Name</th><th>Platform</th><th>Activities</th><th>Value</th></tr>
+<tr><td>Coinbase Account</td><td>Coinbase</td><td>0</td><td>278.00</td></tr>
+<tr><td>Trading Account</td><td>Interactive Brokers</td><td>12</td><td>112,762.10</td></tr></table></main>
+<div class="cdk-overlay-container"><div class="backdrop"></div>
+<div class="pane" role="dialog" aria-modal="true" aria-labelledby="dt"><h2 id="dt">Trading Account</h2><button type="button" aria-label="Close">×</button>
+<p><b>112,618.95</b> USD</p>
+<div role="tablist"><button role="tab" aria-selected="false">Overview</button><button role="tab" aria-selected="true">Activities</button></div>
+<table><tr><th>Name</th><th>Type</th><th>Date</th><th>Quantity</th><th>Unit Price</th></tr>
+<tr><td>Vanguard Total World Stock Index Fund ETF Shares</td><td>Buy</td><td>04/09/2025</td><td>115.00</td><td>103.54</td></tr>
+<tr><td>Alphabet Inc.</td><td>Dividend</td><td>03/17/2025</td><td>40.00</td><td>0.20</td></tr>
+<tr><td>iShares Bitcoin Trust ETF</td><td>Buy</td><td>03/12/2024</td><td>167.00</td><td>39.73</td></tr></table>
+</div></div>
+</body></html>

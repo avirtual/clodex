@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>opacity-parent</title>
+<style>body{margin:0;font:14px sans-serif} .bar{padding:10px;background:#223;color:#fff} .bar span{cursor:pointer;margin-right:20px} .venue{position:relative;height:500px;background:#334}
+.dlg{position:absolute;inset:0;pointer-events:none;transition:opacity .1s} .dlg:not(.open){opacity:0} .dlg.open{opacity:1;pointer-events:auto}
+.dlg>.box{position:absolute;right:20px;top:10px;width:220px;background:#fff;padding:12px} .box div{cursor:pointer;padding:4px}</style></head><body>
+<div class="bar"><span id="ba" onclick="document.getElementById('d').classList.toggle('open')">Best Available</span><span>My tickets 0</span></div>
+<div class="venue"><p style="color:#fff;padding:10px">Click on the floor plan to select your seats</p>
+<div class="dlg" id="d"><div class="box"><label>Number of seats <input type="number" value="2"></label>
+<div onclick="1">Platinum</div><div onclick="1">Diamond</div><div onclick="1">Gold</div><div class="button" onclick="1">Select best seats</div></div></div></div>
+</body></html>
