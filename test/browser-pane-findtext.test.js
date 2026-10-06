@@ -277,6 +277,24 @@ test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓],
   assert.strictEqual(vm.runInContext(scripts.CHECK(2, read.keys[2], merged({ known: {}, next: 1 }, read)), ctx), 'ok');
 });
 
+test('READ_INTERACTIVE: a bold mail row is listed with [unread] and the marker is in its signature; a normal-weight row is not', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const cell = (t, y) => mk('td', {}, [mk('span', {}, [t], [10, y, 200, 20])], [10, y, 300, 20]);
+  const fresh = Object.assign(mk('tr', { class: 'zA zE' }, [cell('Ana', 40), cell('Factura iunie', 40)], [10, 40, 600, 20]), { css: { cursor: 'pointer', fontWeight: '700' } });
+  const old = Object.assign(mk('tr', { class: 'zA yO' }, [cell('Ion', 60), cell('Avizier', 60)], [10, 60, 600, 20]), { css: { cursor: 'pointer', fontWeight: '400' } });
+  const body = mk('body', {}, [mk('table', {}, [mk('tbody', {}, [fresh, old], [10, 40, 600, 40])], [10, 40, 600, 40])], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const base = ctx.getComputedStyle();
+  const weightOf = (e) => { for (let p = e; p; p = p.parentElement) if (p.css && p.css.fontWeight) return p.css.fontWeight; return '400'; };
+  ctx.getComputedStyle = (e) => ({ ...base, ...(e && e.css), fontWeight: e && e.nodeType === 1 ? weightOf(e) : '400', cursor: (e && e.css && e.css.cursor) || 'auto' });
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), ['[1] clickable "Ana Factura iunie" [unread]', '[2] clickable "Ion Avizier"']);
+  assert.ok(read.sigs[1].includes('[unread]'));
+  assert.ok(!read.sigs[2].includes('[unread]'));
+});
+
 test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by its whole phrase; a phrase across two siblings is not', () => {
   const page = mkPage();
   const { mk } = page;
