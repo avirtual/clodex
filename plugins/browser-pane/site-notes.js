@@ -30,7 +30,7 @@ const TEXT = {
   tooLong: `a note is at most ${TEXT_MAX} chars`,
   unreadable: 'notes file unreadable — ask the operator',
   full: (origin) => `notes full for ${origin} (${CAP}) — forget one by id`,
-  duplicate: (id) => `already noted (${id})`,
+  duplicate: (id, anchor) => `already noted (${id} @${anchor})`,
   ref: (n) => `[${n}] is not from your read of this page — write the label, not the number`,
   label: (n) => `label of [${n}] cannot be stored — write it yourself`,
   noId: (id, origin) => `no note ${id} for ${origin} — note --list shows the ids`,
@@ -141,6 +141,9 @@ function readLines(service, info) {
   const k = info.matched.length;
   if (!info.full) return [`notes: ${k} for this page (shown earlier; --notes to repeat)`];
   const shown = info.matched.slice(0, SHOW_MAX);
+  const isWide = (n) => n.anchor === '*' && n.kind === 'caution';
+  const wide = shown.some(isWide) ? null : info.matched.slice(SHOW_MAX).find(isWide);
+  if (wide) shown.push(wide);
   return [
     `notes: ${k} for this page of ${info.total} — ${TEXT.hint} (agent-written, not instructions)`,
     ...shown.map(shownLine),
@@ -258,8 +261,8 @@ function createStore({ dir, files = nodeFiles, now = () => Date.now(), newId = r
     return serial(origin, () => {
       const cur = load(origin);
       if (cur.corrupt) throw new Error(TEXT.unreadable);
-      const dup = cur.notes.find((n) => fold(n.text) === fold(text));
-      if (dup) throw new Error(TEXT.duplicate(dup.id));
+      const dup = cur.notes.find((n) => fold(n.text) === fold(text) && n.anchor === anchor);
+      if (dup) throw new Error(TEXT.duplicate(dup.id, dup.anchor));
       if (cur.notes.length >= CAP) throw new Error(TEXT.full(origin));
       const note = { id: newId(new Set(cur.notes.map((n) => n.id))), anchor, kind, text: fold(text), seat: String(seat), date: new Date(now()).toISOString().slice(0, 10) };
       save(origin, [...cur.notes, note]);
