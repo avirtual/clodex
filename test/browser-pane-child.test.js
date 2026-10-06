@@ -2234,7 +2234,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
   assert.strictEqual(adKeyOf(wrapper()), null);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.match(ri, /if \(it\.cq === 'ad'\) \{ const k = adKeyOf\(it\.el\); if \(k != null\) adKeys\[n\] = k; \}/);
-  assert.match(ri, /chrome, cats, adKeys, posts:/);
+  assert.match(ri, /chrome, covered, cats, adKeys, posts:/);
   assert.match(CHILD_SRC, /cats: el\.cats \|\| \{\},\n\s*adKeys: el\.adKeys \|\| \{\},/);
   assert.match(scripts.INSPECT(1), /warn: cqHit\(el\),/);
 });
