@@ -7,7 +7,8 @@
   "type": "commonjs",
   "bin": {
     "clodexctl": "bin/clodexctl.js",
-    "clodex": "bin/clodex.js"
+    "clodex": "bin/clodex.js",
+    "clodex-mcp": "bin/clodex-mcp.js"
   },
   "engines": {
     "node": ">=20"
