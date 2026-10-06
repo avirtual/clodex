@@ -2541,7 +2541,7 @@ test('windows: a service window opens hidden and surfaces without focus only on 
 test('windows: a show or hide sends a visibility frame and every state frame carries visible', () => {
   const svcFn = CHILD_SRC.slice(CHILD_SRC.indexOf('function openService('), CHILD_SRC.indexOf('const inIsolated ='));
   assert.ok(svcFn.includes("const visibility = () => { if (!win.isDestroyed()) send({ event: 'visibility', service: name, visible: win.isVisible() }); };\n    win.on('show', visibility);\n    win.on('hide', visibility);"));
-  assert.ok(CHILD_SRC.includes("send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), ...extra });"));
+  assert.ok(CHILD_SRC.includes("send({ event: 'state', service: svc.name, state: svc.lock.state, reason: svc.lock.reason, visible: !svc.win.isDestroyed() && svc.win.isVisible(), ...pageInfo(svc), openedBy: svc.openedBy, ...extra });"));
 });
 
 test('passwordRefusal: a password-change form on a signed-in page refuses without a handoff; a sign-in page still hands off', () => {

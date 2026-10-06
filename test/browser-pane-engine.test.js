@@ -327,7 +327,7 @@ test('engine: status redacts a seat from another workspace', async (t) => {
   assert.deepStrictEqual(theirs, {
     ok: true,
     child: 'running',
-    services: [{ name: 'utility', state: 'driving', reason: null, seat: 'another workspace', login: 'unknown', denied: 0, host: 'portal.example.com', title: '' }],
+    services: [{ name: 'utility', state: 'driving', reason: null, seat: 'another workspace', login: 'unknown', denied: 0, host: 'portal.example.com', title: '', openedBy: 'another workspace' }],
   });
 });
 
