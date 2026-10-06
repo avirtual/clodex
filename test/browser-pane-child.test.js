@@ -525,6 +525,40 @@ test('page scripts: LOGIN_PROBE reads a localized sign-out link (Ieşire → ind
   assert.strictEqual(loginLabel(run([link('Avizier', 'index.php?page=1')])), 'none');
 });
 
+test('page scripts: LOGIN_PROBE treats a password-change form on a signed-in page as signed in, not a sign-in hold', () => {
+  const { loginLabel } = require('../plugins/browser-pane/read-format');
+  const rect = () => ({ left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 });
+  const link = (text, href) => ({
+    tagName: 'A', innerText: text, textContent: text, parentElement: null, type: '',
+    getAttribute: (k) => (k === 'href' ? href : null), matches: () => false, getBoundingClientRect: rect,
+  });
+  const pw = (attrs = {}) => ({
+    tagName: 'INPUT', type: 'password', innerText: '', textContent: '', parentElement: null, id: attrs.id || '',
+    getAttribute: (k) => (k in attrs ? attrs[k] : null), matches: () => false, getBoundingClientRect: rect,
+  });
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: '' } },
+    { hostname: 'www.e-bloc.ro', pathname: '/index.php' }, 0, 0, 1200, 800);
+  const login = run([pw({ name: 'pass' })]);
+  assert.strictEqual(login.password, true);
+  assert.strictEqual(loginLabel(login), 'password field');
+  const change = run([link('Ieşire', 'index.php?page=5'), pw({ name: 'parola' }), pw({ name: 'parola2' })]);
+  assert.strictEqual(change.password, false);
+  assert.strictEqual(change.passwordChange, true);
+  assert.strictEqual(change.logoutLink, true);
+  assert.strictEqual(loginLabel(change), 'signed in (password-change form)');
+  assert.strictEqual(run([link('Ieşire', 'index.php?page=5'), pw({ autocomplete: 'new-password' })]).password, false);
+  assert.strictEqual(run([link('Ieşire', 'index.php?page=5'), pw({ name: 'parola_noua' })]).password, false);
+  const reauth = run([link('Ieşire', 'index.php?page=5'), pw({ name: 'pass' })]);
+  assert.strictEqual(reauth.password, true);
+  assert.strictEqual(loginLabel(reauth), 'password field');
+});
+
+test('page scripts: READ_TEXT falls back to body when the best-scoring block holds under half the body text', () => {
+  assert.ok(scripts.READ_TEXT(false).includes("(best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best"));
+});
+
 test('numberVerdict: an unresolved number is ambiguous when its base key is on the page under another key, else gone', () => {
   const base = K.keyOf({ kind: 'button', label: 'Delete', href: '' });
   const stored = K.storedKey(base, 1, 'Factura A');

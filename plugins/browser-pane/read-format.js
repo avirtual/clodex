@@ -17,7 +17,7 @@ const BLOCK_MAX = 8;
 const BULLET_RE = /^\s*[•-] /;
 const BACKREF_RE = /^(\W*?)(?:\^\s*)?(?:Jump up to:(?:\s+(?:[a-z]{1,2}|\^))*\s*|\^\s+)/;
 const WORD_BACK_MAX = 40;
-const COUNT_LINE_RE = /^(?:showing|afisare|afișare|page \d+ of|\d+ of \d+ (?:entries|results|rezultate)|\d+ ?[–-] ?\d+ of \d+)/i;
+const COUNT_LINE_RE = /^(?:(?:showing|afisare|afișare)\b(?=.*(?:\d+ .*\bof\b.* \d+|\d+ ?[–-] ?\d+ (?:din|of) \d+))|page \d+ of|\d+ of \d+ (?:entries|results|rezultate)|\d+ ?[–-] ?\d+ of \d+)/i;
 const COUNT_LINE_MAX = 80;
 const isCountLine = (l) => { const t = unmark(l).trim(); return t.length <= COUNT_LINE_MAX && COUNT_LINE_RE.test(t); };
 
@@ -333,7 +333,7 @@ function loginLabel(login) {
   if (login.otp) return 'one-time-code field';
   if (login.captcha) return 'captcha';
   if (login.idp) return `${login.idp} sign-in`;
-  if (login.logoutLink || login.loggedInHint) return 'signed in';
+  if (login.logoutLink || login.loggedInHint) return login.passwordChange ? 'signed in (password-change form)' : 'signed in';
   return 'none';
 }
 

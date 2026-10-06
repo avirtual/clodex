@@ -328,7 +328,7 @@ function readText(main) {
     document.querySelectorAll('div,section,td').forEach(el => {
       const s = score(el); if (s > bs) { bs = s; best = el; }
     });
-    root = best;
+    root = (best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best;
   }
   const busy = busyScan();
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
@@ -731,7 +731,18 @@ const ICON = `
       inLink: !!e.closest('a[href] *'),
     };
   };
-  const labelOf = el => labelFrom(descOf(el));`;
+  const SORT_STATE = new RegExp(${JSON.stringify(keys.STATE_SUFFIX.source)}, 'i');
+  const headed = (el, l) => {
+    const th = el.closest && el.closest('th,[role=columnheader]');
+    if (!th || th === el) return l;
+    const bare = String(l || '').replace(SORT_STATE, '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/\\s+/g, ' ').trim();
+    if (!/^(?:sort(?: ascending| descending| by)?|sortare)$/.test(bare)) return l;
+    const own = String(el.innerText || '').trim();
+    const all = String(th.innerText || '');
+    const head = (own ? all.replace(own, '') : all).replace(/\\s+/g, ' ').trim().slice(0, 40).trim();
+    return head ? head + ': ' + l : l;
+  };
+  const labelOf = el => headed(el, labelFrom(descOf(el)));`;
 
 
 const KIND_LABEL = `${ICON}
@@ -1117,14 +1128,21 @@ const LOGIN_PROBE = `(() => {${DEEP}
     if (has(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
     return null;
   };
+  const pwds = deepAll(document, el => el.tagName === 'INPUT' && el.type === 'password').filter(vis);
+  const logoutLink = any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
+    && signOutOf([el.innerText || el.textContent, el.getAttribute('aria-label'), hrefPath(el)], SO_RES));
+  const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
+  const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
+    || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'
+      || NEW_PW.test([el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].filter(Boolean).join(' '))));
   return {
-    password: any(el => el.tagName === 'INPUT' && el.type === 'password'),
+    password: pwds.length > 0 && !passwordChange,
+    passwordChange,
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
     captcha: any(el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '')),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
-    logoutLink: any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
-      && signOutOf([el.innerText || el.textContent, el.getAttribute('aria-label'), hrefPath(el)], SO_RES)),
+    logoutLink,
     loggedInHint: loggedInHint(),
   };
 })()`;
