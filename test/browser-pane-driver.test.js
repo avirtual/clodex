@@ -66,6 +66,14 @@ test('driver armIdle: the idle probe runs in the isolated world so a page that r
   assert.ok(!src.includes('wc.executeJavaScript(`new Promise'));
 });
 
+test('driver act: the world id in its options reaches the idle probe', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  const { idle } = await driver.act(wc, async () => {}, { worldId: 4242, timeoutMs: 5000, now: () => (t += 600), sleepFn: async () => {} });
+  assert.strictEqual(idle.ok, true);
+  assert.deepStrictEqual(wc.worlds, [4242]);
+});
+
 test('driver armIdle: a page whose only mutations are a repainting ticker goes idle and names it; a plain readyState keeps the old shape', async () => {
   let t = 1000;
   const { wc } = fakeWc();
