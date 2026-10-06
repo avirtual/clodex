@@ -672,7 +672,8 @@ seats get a request/response channel whose reply is the caller's own tool result
   answers inline and the server always times out first. A browser URL follows the
   closing bracket: `clodex '[agent:browser open wiki] https://…'`.
 - **SubagentStart:** the same `hook-ident.sh` answers `SubagentStart` with one
-  `additionalContext` line telling the subagent the `clodex` verb exists.
+  `additionalContext` line telling the subagent the `browser` MCP tool and the `clodex` verb exist.
+- **MCP (Claude):** `run/<name>/mcp.json` names `cli/bin/clodex-mcp.js` under the hooks' interpreter; pushed as `--mcp-config` unless the seat's extra args carry their own `--mcp-config`/`--strict-mcp-config` (then a `MCP:` system row says the tool is unavailable); with the claude_design strip fallback it rides `--strict-mcp-config --mcp-config` and is the only server.
 - **Client hang-up:** a caller that disconnects before the reply (its tool timeout)
   closes the reply sink, so a late plugin reply falls back to the seat's PTY.
 - **Deferred:** the SubagentStop late-reply handoff.
