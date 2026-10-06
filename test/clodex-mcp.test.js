@@ -12,6 +12,8 @@ const { scanIntentLines } = require('../intent-segments');
 const registry = require('../intent-registry');
 const grammar = require('../plugins/browser-pane/grammar');
 const mcp = require('../cli/bin/clodex-mcp.js');
+const subagent = require('../plugins/browser-pane/subagent');
+const { TOOL } = require('../plugins/browser-pane/mcp-tool');
 
 const SERVER = path.join(__dirname, '..', 'cli', 'bin', 'clodex-mcp.js');
 const SEAT = { intents: ['browser'], plugins: ['browser-pane'] };
@@ -25,7 +27,7 @@ function parse(text) {
 }
 
 function withBrowserVerb(fn) {
-  registry.registerIntent({ verb: 'browser', parse: grammar.parseLine, handler: () => {} }, 'browser-pane', { shipped: true });
+  registry.registerIntent({ verb: 'browser', parse: grammar.parseLine, handler: () => {}, tools: [TOOL], subagent }, 'browser-pane', { shipped: true });
   return Promise.resolve().then(fn).finally(() => registry._resetPluginRows());
 }
 
@@ -70,8 +72,8 @@ function server(seat, opts = {}) {
 
 const call = (id, args, name = 'browser') => ({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } });
 
-test('the verb list is the registry\'s subagent browser list', () => {
-  assert.deepStrictEqual(mcp.SUBAGENT_BROWSER_VERBS, registry.SUBAGENT_SUBS.browser);
+test('the verb list is the browser plugin\'s subagent list', () => {
+  assert.deepStrictEqual(mcp.SUBAGENT_BROWSER_VERBS, subagent.SUBS);
 });
 
 const ROWS = [
@@ -180,9 +182,9 @@ test('an argument error is a readable `invalid:` text result with the exact mess
   } finally { await seat.close(); }
 });
 
-test('the release refusal is the registry\'s SUBAGENT_NO_RELEASE literal', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
-  assert.ok(src.includes(`const SUBAGENT_NO_RELEASE = ${JSON.stringify(SUBAGENT_NO_RELEASE)};`));
+test('the release refusal is the browser plugin\'s NO_RELEASE literal', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'subagent.js'), 'utf8');
+  assert.ok(src.includes(`const NO_RELEASE = ${JSON.stringify(SUBAGENT_NO_RELEASE)};`));
   const own = fs.readFileSync(SERVER, 'utf8');
   assert.ok(own.includes(JSON.stringify(SUBAGENT_NO_RELEASE)));
 });
@@ -240,7 +242,7 @@ test('JSON-RPC: initialize, tools/list, ping, unknown method, parse error, notif
   assert.strictEqual(r2.result.tools.length, 1);
   const [tool] = r2.result.tools;
   assert.strictEqual(tool.name, 'browser');
-  assert.deepStrictEqual(tool.inputSchema.properties.verb.enum, registry.SUBAGENT_SUBS.browser);
+  assert.deepStrictEqual(tool.inputSchema.properties.verb.enum, subagent.SUBS);
   assert.strictEqual(tool.inputSchema.additionalProperties, false);
   assert.ok(tool.description.includes('completion unknown — do not retry'));
   assert.ok(tool.description.includes('500 s'));

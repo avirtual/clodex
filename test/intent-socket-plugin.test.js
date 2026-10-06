@@ -12,6 +12,8 @@ const { scanIntentLines } = require('../intent-segments');
 const registry = require('../intent-registry');
 const grammar = require('../plugins/browser-pane/grammar');
 const replies = require('../plugins/browser-pane/replies');
+const subagent = require('../plugins/browser-pane/subagent');
+const { TOOL } = require('../plugins/browser-pane/mcp-tool');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, identToken } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -20,7 +22,7 @@ function parse(text) {
 }
 
 function withBrowserVerb(fn) {
-  registry.registerIntent({ verb: 'browser', parse: grammar.parseLine, handler: () => {} }, 'browser-pane', { shipped: true });
+  registry.registerIntent({ verb: 'browser', parse: grammar.parseLine, handler: () => {}, tools: [TOOL], subagent }, 'browser-pane', { shipped: true });
   return Promise.resolve().then(fn).finally(() => registry._resetPluginRows());
 }
 
@@ -70,11 +72,38 @@ for (const [args, allowed] of BROWSER_TABLE) {
   }));
 }
 
-test('the subagent catalog is browser only', () => {
+test('the subagent catalog is the granted rows with tools', () => withBrowserVerb(() => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
-  assert.ok(src.includes('const SUBAGENT_TYPES = [...Object.keys(SUBAGENT_SUBS)];'));
-  assert.deepStrictEqual(registry.SUBAGENT_TYPES, ['browser']);
-  assert.deepStrictEqual(Object.keys(registry.SUBAGENT_SUBS), ['browser']);
+  assert.ok(!src.includes('SUBAGENT_SUBS'));
+  assert.ok(!src.includes("'browser'"));
+  assert.deepStrictEqual(registry.subagentCatalogFor(SEAT), { tools: [{ name: 'browser', description: TOOL.description, inputSchema: TOOL.inputSchema }], briefs: [subagent.brief] });
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['browser'], plugins: [] }), { tools: [], briefs: [] });
+  registry._resetPluginRows();
+  assert.deepStrictEqual(registry.subagentCatalogFor(SEAT), { tools: [], briefs: [] });
+}));
+
+test('a plugin row without a subagent policy refuses every subagent call with the generic text', async () => {
+  registry.registerIntent({ verb: 'zzz', parse: (s) => ({ raw: s }), handler() {} }, 'zzz-plugin');
+  try {
+    const { handle, seen } = browserHandler({ intents: ['zzz'], plugins: ['zzz-plugin'] });
+    const r = await handle({ intent: '[agent:zzz anything]', agentId: 'agent-7' }, ctl);
+    assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "not available to a subagent: zzz — return and let the seat's main agent do it" });
+    assert.deepStrictEqual(seen, []);
+    const main = await handle({ intent: '[agent:zzz anything]', ident: MAIN }, ctl);
+    assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
+    assert.deepStrictEqual(seen, ['anything']);
+  } finally {
+    registry._resetPluginRows();
+  }
+});
+
+test('a refuse() that throws is a generic refusal, never an allow', () => {
+  registry.registerIntent({ verb: 'zzz', parse: (s) => ({ raw: s }), handler() {}, subagent: { refuse() { throw new Error('boom'); }, brief: 'z' } }, 'zzz-plugin');
+  try {
+    assert.strictEqual(registry.subagentRefusal({ type: 'zzz', raw: 'anything' }, { intents: ['zzz'], plugins: ['zzz-plugin'] }), '');
+  } finally {
+    registry._resetPluginRows();
+  }
 });
 
 test('subagent browser close is refused naming the verb; a word that is no verb keeps the generic label', () => withBrowserVerb(async () => {
@@ -84,7 +113,6 @@ test('subagent browser close is refused naming the verb; a word that is no verb 
   const odd = await handle({ intent: '[agent:browser frobnicate ebloc]', agentId: 'agent-7' }, ctl);
   assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: "not available to a subagent: browser — return and let the seat's main agent do it" });
   assert.deepStrictEqual(seen, []);
-  assert.deepStrictEqual(registry.BROWSER_VERBS, require('../plugins/browser-pane/grammar').SUBCOMMANDS);
 }));
 
 test('subagent browser is refused when the seat lacks the plugin, and when no plugin registered the verb', () => withBrowserVerb(async () => {
@@ -120,7 +148,7 @@ test('a subagent cannot --confirm a consequential action; the main agent can', (
 
 test('a subagent may add and list site notes but not --forget one; the main agent can', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
-  assert.deepStrictEqual(registry.SUBAGENT_SUBS.browser.includes('note'), true);
+  assert.deepStrictEqual(subagent.SUBS.includes('note'), true);
   const add = await handle({ intent: '[agent:browser note ebloc] @/facturi path: Facturi first', agentId: 'agent-7' }, ctl);
   assert.deepStrictEqual(add, { ok: true, status: 'ok', reply: 'ok' });
   for (const intent of ['[agent:browser note ebloc --forget ab3k]', '[agent:browser note ebloc --forget=ab3k]']) {
