@@ -234,6 +234,7 @@ const TEXT = {
     const buttons = (el.hitButtons || []).map((b) => `[${b.n}] ${JSON.stringify(String(b.label || ''))}`).join(' · ');
     if (el.hitN != null && buttons) return `${head} [${el.hitN}] ${label} whose buttons are ${buttons} — read again, or click one of them`;
     if (el.hitN != null) return `${head} [${el.hitN}] ${label} — read again, or click the element that covers it`;
+    if (buttons && el.hitDialog) return `${head} an unnumbered element (${label}) whose dialog ${JSON.stringify(String(el.hitDialog))} has buttons ${buttons} — read again, or click one of them`;
     if (buttons) return `${head} an unnumbered element (${label}) whose buttons are ${buttons} — read again, or click one of them`;
     return `${head} an unnumbered element (${label}) — read again, or click the element that covers it`;
   },

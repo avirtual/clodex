@@ -591,11 +591,11 @@ test('page scripts: LOGIN_PROBE treats a password-change form on a signed-in pag
 test('page scripts: wallScan skips script text, quotes the gate sentence and never takes body or html as the gate box', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes('const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","TEMPLATE"]);'));
-  assert.ok(src.includes('if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);'));
+  assert.ok(src.includes('all = textsOf(document.body, []).filter(t => t.data.trim() && t.parentElement && vis(t.parentElement));'));
   assert.ok(src.includes('(vis(e) || boxVis(e))'));
-  assert.ok(src.includes('if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };'));
+  assert.ok(src.includes('for (const t of textsOf(box, [])) if (WALL.test(norm(t.data)) && t.parentElement && vis(t.parentElement)) return { text: quote(t.data, t.parentElement, WALL), n: null };'));
   assert.ok(src.includes('return { text: clip(box.innerText), n: null };'));
-  assert.ok(src.includes('return { text: quote(t, re), n: null };'));
+  assert.ok(src.includes('if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };'));
   assert.ok(src.includes('const TOKEN = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;'));
   assert.ok(src.includes('[...e.classList].some(c => TOKEN.test(c))'));
   assert.ok(src.includes('e !== document.body && e !== document.documentElement'));
@@ -609,13 +609,23 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(!scripts.WALL_RE.test('Member-only story'));
   assert.ok(scripts.WALL_WEAK_RE.test('Member-only story'));
   assert.ok(src.includes("const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };"));
-  assert.ok(src.includes("const chrome = t => !!(t.parentElement && t.parentElement.closest('header,nav,[role=banner],[role=navigation]'));"));
+  assert.ok(src.includes("const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };"));
   assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };"));
   assert.ok(src.includes("const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };"));
-  assert.ok(src.includes('if (!re.test(t.data) || chrome(t) || (wholeLabel(t) && !floating(t))) continue;'));
-  assert.ok(src.includes('if (i > endIdx) return { text: quote(t, re), n: null };'));
-  assert.ok(src.includes('return before ? { text: quote(before, re), n: null } : null;'));
+  assert.ok(src.includes('return re.test(bt) && bt.length > own.trim().length ? { text: quote(bt, b, re), b } : null;'));
+  assert.ok(src.includes('return bt && re.test(bt) ? { text: quote(bt, b, re), b } : null;'));
+  assert.ok(src.includes("const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');"));
+  assert.ok(src.includes("if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }"));
+  assert.ok(src.includes('const seen = new Set();'));
+  assert.ok(src.includes('if (b && seen.has(b)) continue;'));
+  assert.ok(src.includes('if (hit.b) seen.add(hit.b);'));
+  assert.ok(src.includes('if (i > endIdx) return { text: hit.text, n: null };'));
+  assert.ok(src.includes('return before ? { text: before.text, n: null } : null;'));
+  assert.ok(src.includes('const textsOf = (n, out) => { for (const c of n.childNodes) { if (c.nodeType === 3) out.push(c); else if (c.nodeType === 1 && !SKIP.has(c.tagName)) { textsOf(c, out); if (c.shadowRoot) textsOf(c.shadowRoot, out); } } return out; };'));
+  assert.ok(src.includes('const inside = (r, t) => { for (let n = t; n; n = n.parentNode || n.host) if (n === r) return true; return false; };'));
+  assert.ok(src.includes('const inRoot = all.filter(t => inside(root, t));'));
   assert.ok(src.includes('endIdx = inRoot.length ? all.lastIndexOf(inRoot[inRoot.length - 1]) : -1;'));
+  assert.ok(!src.includes('createTreeWalker(document.body'));
   assert.ok(src.includes("} catch (e) { return { text: null, error: String(e && e.message || e).slice(0, 80) }; }"));
   assert.ok(!src.includes('fixedBar'));
   assert.ok(!src.includes('tail.concat(after)'));
@@ -632,6 +642,15 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
     assert.ok(src.indexOf('document.head.appendChild(cv);') < src.indexOf('document.body.appendChild(host);'));
     assert.ok(src.includes('host.remove(); cv.remove();'));
   }
+});
+
+test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
+  const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
+  const read = scripts.READ_TEXT(false);
+  assert.ok(read.includes(zip));
+  assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(zip) && read.indexOf(zip) < read.indexOf('clone.querySelectorAll(DROP)'));
+  assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
+  assert.ok(scripts.PAGE_TEXT.indexOf(zip) < scripts.PAGE_TEXT.indexOf("clone.querySelectorAll('script,style"));
 });
 
 test('page scripts: READ_TEXT gives two-digit superscript cents a decimal separator', () => {
@@ -652,6 +671,33 @@ test('page scripts: a filter or search reset is not deletion; Delete account and
   assert.strictEqual(c({ label: 'Clear filters' }), null);
   assert.strictEqual(c({ label: 'Delete account' }), 'deletion');
   assert.strictEqual(c({ label: 'Remove item' }), 'deletion');
+});
+
+test('page scripts: LOGIN_PROBE reads a short Cloudflare "Just a moment" page as a captcha, a long page with that title or a plain page as none', () => {
+  const run = (title, text) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'block', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { title, querySelectorAll: () => [], documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: text } },
+    { hostname: 'ghiseul.ro', pathname: '/' }, 0, 0, 1200, 800);
+  assert.ok(scripts.LOGIN_PROBE.includes('/^just a moment|checking your browser|verify you are human|attention required/i.test(document.title)'));
+  assert.strictEqual(run('Just a moment...', 'Performing security verification').captcha, true);
+  assert.strictEqual(run('Attention Required! | Cloudflare', 'Sorry, you have been blocked').captcha, true);
+  assert.strictEqual(run('Just a moment...', 'x'.repeat(700)).captcha, false);
+  assert.strictEqual(run('Ghiseul.ro', 'Performing security verification').captcha, false);
+});
+
+test('child: a challenges.cloudflare.com frame makes the probe a captcha hold; an ordinary frame does not', () => {
+  const { framesOf, challenged, signinOf } = require('../plugins/browser-pane/child');
+  const wcOf = (...urls) => { const mainFrame = { url: 'https://ghiseul.ro/' }; return { mainFrame: Object.assign(mainFrame, { framesInSubtree: [mainFrame, ...urls.map((url) => ({ url }))] }) }; };
+  const cf = wcOf('about:blank', 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/f/av0');
+  assert.deepStrictEqual(framesOf(cf), ['https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/f/av0']);
+  assert.strictEqual(signinOf(challenged({ captcha: false }, framesOf(cf), 'Just a moment...')), 'captcha');
+  assert.strictEqual(signinOf(challenged({ captcha: false }, framesOf(cf), 'Contact form')), null, 'an invisible Turnstile on an ordinary page is no hold');
+  assert.strictEqual(signinOf(challenged({ captcha: false }, framesOf(wcOf('https://www.google.com/recaptcha/api2/bframe?k=x')), 'Just a moment...')), null, 'a reCAPTCHA v3 frame is left to the visible-iframe probe');
+  assert.strictEqual(signinOf(challenged({ captcha: false }, framesOf(wcOf('https://www.youtube.com/embed/x')), 'Just a moment...')), null);
+  assert.deepStrictEqual(framesOf({ mainFrame: null }), []);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(src.includes('const login = challenged(await probe(svc), framesOf(svc.wc), svc.wc.getTitle());'));
+  assert.ok(src.includes('const login = challenged(await probe(svc), frames, wc.getTitle());'));
 });
 
 test('page scripts: LOGIN_PROBE profile hint is void while a visible Sign in link is on the page', () => {
@@ -1387,6 +1433,37 @@ test('FIND: a target our scroll parked under a sticky header is scrolled clear o
   assert.deepStrictEqual([l.hitN, l.hitConsequential, l.hitButtons], [30, null, [{ n: 31, label: 'Delete account' }, { n: 32, label: 'Cancel' }]], 'a numbered dialog lists its buttons, ⚠ ones included');
 });
 
+test('FIND: a bare backdrop with no buttons names the topmost on-screen dialog beside it and that dialog\'s buttons', () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const shown = { visibility: 'visible', display: 'block', opacity: '1' };
+  const labels = ['Mai multe informații', 'aici', 'Listă parteneri (furnizori)', 'VREAU SA MODIFIC SETARILE INDIVIDUAL', 'ACCEPT TOATE'];
+  const btns = labels.map((t, i) => boxEl('button', t, box(300 + i * 100, 300, 90, 40)));
+  const consent = Object.assign(boxEl('div', '', box(0, 0, 1200, 800)), { id: 'onetrust-consent-sdk', style: { ...shown, position: 'fixed', zIndex: 'auto' }, querySelectorAll: () => btns });
+  const backdrop = Object.assign(boxEl('div', '', box(0, 0, 1200, 800), consent), { style: { ...shown, position: 'fixed', zIndex: '2147483645' } });
+  const banner = Object.assign(boxEl('div', 'Banner pentru cookie-uri', box(300, 60, 600, 300), consent), { id: 'onetrust-banner-sdk', style: { ...shown, position: 'fixed', zIndex: '2147483646' }, querySelectorAll: () => btns });
+  const gone = Object.assign(boxEl('div', '', box(0, 0, 1200, 800)), { id: 'cookie-old', style: { ...shown, position: 'fixed', display: 'none', zIndex: '9999999999' }, querySelectorAll: () => btns });
+  const offscreen = Object.assign(boxEl('div', '', box(0, 900, 1200, 100)), { id: 'cookie-low', style: { ...shown, position: 'fixed', zIndex: '9999999999' }, querySelectorAll: () => btns });
+  const group = Object.assign(boxEl('div', '', box(300, 300, 600, 40), banner), { id: 'onetrust-button-group', style: { ...shown, zIndex: 'auto' }, querySelectorAll: () => btns.slice(3) });
+  const bar = Object.assign(boxEl('div', '', box(0, 700, 1200, 100)), { className: 'cookie-bar', style: { ...shown, position: 'fixed', zIndex: '10' }, querySelectorAll: () => btns });
+  const links = Object.assign(boxEl('div', '', box(0, 760, 1200, 40)), { id: 'cookie-links', style: { ...shown, position: 'static', zIndex: '99999999999' }, querySelectorAll: () => btns });
+  const inView = boxEl('button', 'Sortare:', box(1100, 170, 80, 40));
+  const numbered = Object.fromEntries(btns.map((b, i) => [10 + i, b]));
+  const document = (dialogs) => ({ elementFromPoint: () => backdrop, querySelectorAll: () => dialogs, documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) });
+  const a = plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([consent, gone, offscreen, banner, group, bar, links]) } }));
+  assert.deepStrictEqual([a.covered, a.hitN, a.hitDialog, a.hitButtons[0], a.hitButtons.length], [true, null, 'onetrust-banner-sdk', { n: 14, label: 'ACCEPT TOATE' }, 5]);
+  assert.match(R.TEXT.covered(5, a), /^\[5\] "Sortare:" is covered at its click point by an unnumbered element \("div"\) whose dialog "onetrust-banner-sdk" has buttons \[14\] "ACCEPT TOATE" · \[10\] "Mai multe informații" · /);
+  const inner = Object.assign(boxEl('div', '', box(300, 300, 600, 40), consent), { id: 'ot-sdk-row', style: { ...shown, position: 'sticky', zIndex: 'auto' }, querySelectorAll: () => btns.slice(3) });
+  assert.strictEqual(plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([consent, inner]) } })).hitDialog, 'onetrust-consent-sdk', 'at equal z the outer dialog keeps its place over a part nested in it');
+  const classed = Object.assign(boxEl('div', '', box(0, 600, 1200, 200)), { getAttribute: (k) => (k === 'class' ? ' consent-banner shown' : null), style: { ...shown, position: 'fixed', zIndex: '5' }, querySelectorAll: () => btns });
+  assert.strictEqual(plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([classed]) } })).hitDialog, 'consent-banner', 'a dialog with no id is named by its first class');
+  assert.strictEqual(plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([links]) } })).hitDialog, undefined, 'an in-flow cookie footer is not a dialog');
+  const b = plain(findOn(inView, () => backdrop, { numbered, extra: { document: document([gone, offscreen]) } }));
+  assert.deepStrictEqual([b.covered, b.hitButtons, b.hitDialog], [true, undefined, undefined], 'no on-screen dialog leaves the bare cover reply');
+  const c = plain(findOn(inView, () => backdrop, { numbered: {}, extra: { document: document([banner]) } }));
+  assert.deepStrictEqual([c.hitButtons, c.hitDialog], [undefined, undefined], 'a dialog with no numbered button is not named');
+});
+
 test('FIND: a cover lists its accept/reject/close buttons first and up to eight of them', () => {
   const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
   const plain = (o) => JSON.parse(JSON.stringify(o));
@@ -1636,6 +1713,13 @@ test('page scripts: VALUE_CHOICE and TARGET_STATE on a label read its radio or c
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
   assert.deepStrictEqual(scripts.consequentialHit({ action: '/account/checkout' }, []), { cat: 'payment', term: 'checkout' });
   assert.strictEqual(scripts.consequentialHit({ action: '/cauta' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ action: 'https://www.booking.com/searchresults.html' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ action: '/notebook/save' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ action: '/reorder-list' }, []), null);
+  assert.strictEqual(scripts.consequentialHit({ action: '/display/settings' }, []), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ action: '/booking/confirm' }, []), { cat: 'booking', term: 'book' });
+  assert.deepStrictEqual(scripts.consequentialHit({ action: '/hotel/book' }, []), { cat: 'booking', term: 'book' });
+  assert.deepStrictEqual(scripts.consequentialHit({ action: 'https://shop.example/payment?ref=booking' }, []), { cat: 'payment', term: 'pay' });
   assert.strictEqual(scripts.consequentialHit({ label: 'Pay', action: '' }, []), null);
 });
 
@@ -1679,6 +1763,8 @@ test('page scripts: consequentialOf tags one label per category, diacritic- and 
     [{ label: 'Arm' }, 'alarm'], [{ label: 'Disarm' }, 'alarm'],
     [{ label: 'Dezabonare' }, 'unsubscribe'], [{ label: 'Cancel subscription' }, 'unsubscribe'],
     [{ label: 'Send money' }, 'transfer'], [{ formaction: '/transfer' }, 'transfer'],
+    [{ label: 'Depune cererea', capped: true }, null], [{ label: 'DEPUNE ACUM', capped: true }, null],
+    [{ label: 'Depune bani', control: true }, 'transfer'], [{ label: 'Depune 100 lei', control: true }, 'transfer'],
     [{ label: 'Trimite', action: '/plata/pay' }, 'payment'], [{ label: 'Go', action: '/orders/new' }, 'purchase'],
     [{ label: 'Carduri' }, null], [{ label: 'Avizier' }, null], [{ label: 'Armată' }, null], [{ label: 'Wireless' }, null],
     [{ label: 'Lista de plată pentru Bloc M4 Tabelul cu sumele de plată pe luna august', capped: true }, null],
