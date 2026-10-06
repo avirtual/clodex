@@ -829,23 +829,19 @@ test('team re-derivation: a seat moved OUT of a team\'s repo leaves that team', 
 // arrival notifier _maybeInjectComposition returns early on `rosterSentAt`, which
 // every seat that has run carries — so without an explicit pair of calls here
 // both leads are silently wrong.
-//
-// The seat is named `alpha-dev` so its role differs on the two sides: `dev` under
-// alpha (prefix match), none under beta. A body asserted as a literal would pass
-// against a role resolved from the wrong team otherwise.
-function mkDeltas({ from, to, teamHome, live = true, createThrows = null }) {
+function mkDeltas({ from, to, teamHome, live = true, createThrows = null, name = 'alpha-dev' }) {
   const { m, store, created } = mkMove({
-    entries: [{ ...BASE, name: 'alpha-dev', cwd: from }], teamHome, createThrows,
+    entries: [{ ...BASE, name, cwd: from }], teamHome, createThrows,
   });
   // `cwd` explicitly: the shipped session object always carries one and
   // _notifyComposition resolves the OLD team off it, so a fixture omitting it
   // makes every departure pin below assert an absence for the wrong reason.
-  if (live) seedLive(m, 'alpha-dev', { cwd: from });
+  if (live) seedLive(m, name, { cwd: from });
   const passive = [];
   m._deliverPassive = (target, sender, body, kind) => passive.push({ target, sender, body, kind });
   m._rebakeDigest = () => {};
   const seatIn = (name, cwd) => m.sessions.set(name, { name, agentType: 'claude', cwd });
-  return { m, store, created, passive, seatIn, move: () => m.move('alpha-dev', to) };
+  return { m, store, created, passive, seatIn, move: () => m.move(name, to) };
 }
 
 test('a seat moved OUT of team alpha: alpha\'s lead is told it left', async () => {
@@ -864,9 +860,9 @@ test('a seat moved OUT of team alpha: alpha\'s lead is told it left', async () =
   }], 'exactly one delta, to the OLD lead, resolved against the OLD cwd');
 });
 
-test('a seat moved INTO team beta: beta\'s lead is told it arrived', async () => {
+test('a seat moved INTO team beta that holds a beta role: beta\'s lead is told it arrived', async () => {
   const { home, betaRepo, outRepo } = mkTeamHome();
-  const d = mkDeltas({ from: outRepo, to: betaRepo, teamHome: home });
+  const d = mkDeltas({ from: outRepo, to: betaRepo, teamHome: home, name: 'beta-dev' });
   d.seatIn('blead', betaRepo);
   assert.strictEqual(d.m.teamNameFor(outRepo), null, 'ENTER: it starts teamless');
   assert.strictEqual(d.m.teamNameFor(betaRepo), 'beta', 'ENTER: and lands on beta');
@@ -875,12 +871,24 @@ test('a seat moved INTO team beta: beta\'s lead is told it arrived', async () =>
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.deepStrictEqual(d.passive, [{
     target: 'blead', sender: 'team',
-    body: '[team beta] seat alpha-dev moved in',
+    body: '[team beta] seat beta-dev moved in (role: dev)',
     kind: 'dm',
-  }], 'the arrival body, with no role — `alpha-dev` matches no beta role');
+  }]);
 });
 
-test('a move between two teams tells BOTH leads, each about its own side', async () => {
+test('a seat moved INTO team beta that holds no beta role: beta\'s lead is not told', async () => {
+  const { home, betaRepo, outRepo } = mkTeamHome();
+  const d = mkDeltas({ from: outRepo, to: betaRepo, teamHome: home });
+  d.seatIn('blead', betaRepo);
+  assert.strictEqual(d.m.teamNameFor(outRepo), null, 'ENTER: it starts teamless');
+  assert.strictEqual(d.m.teamNameFor(betaRepo), 'beta', 'ENTER: and lands on beta');
+
+  const r = await d.move();
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(d.passive, [], '`alpha-dev` matches no beta role, so its arrival is not a beta composition event');
+});
+
+test('a move between two teams tells the old lead, and not the new lead when the seat holds no role there', async () => {
   const { home, inRepo, betaRepo } = mkTeamHome();
   const d = mkDeltas({ from: inRepo, to: betaRepo, teamHome: home });
   d.seatIn('lead', inRepo);
@@ -892,8 +900,7 @@ test('a move between two teams tells BOTH leads, each about its own side', async
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.deepStrictEqual(d.passive.map((p) => `${p.target}: ${p.body}`), [
     'lead: [team alpha] seat alpha-dev moved out (role: dev)',
-    'blead: [team beta] seat alpha-dev moved in',
-  ], 'departure first, arrival second — and neither lead hears the other team\'s half');
+  ], 'only the departure: beta cannot place alpha-dev, and beta\'s lead never hears alpha\'s half');
 });
 
 test('a NOT-LIVE record still tells the old lead — there is no session object to read the old cwd off', async () => {

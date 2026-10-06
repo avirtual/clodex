@@ -3788,6 +3788,30 @@ test('_notifyComposition: passive delta skips other projects and bash seats, and
   assert.match(passive[0].b, /\[team team\] seat team-dev retired \(role: dev\)/);
 });
 
+test('_notifyComposition: a roleless seat in the team root is not a composition event', () => {
+  const shop = { name: 'shop', root: '/shop', lead: 'boss',
+    roles: { lead: { instantiate: 'session', brief: 'the lead' }, hand: { instantiate: 'session', brief: 'a hand' } } };
+  const { m } = mkPark({
+    resolveTeam: (cwd) => (cwd && cwd.startsWith('/shop') ? shop : null),
+    findProjectRoot: (cwd) => (cwd && cwd.startsWith('/shop') ? '/shop' : null),
+  });
+  m.sessions.set('boss', { name: 'boss', agentType: 'claude', cwd: '/shop' });
+  m.sessions.set('shop-hand-3', { name: 'shop-hand-3', agentType: 'claude', cwd: '/shop' });
+  m.sessions.set('Codex', { name: 'Codex', agentType: 'codex', cwd: '/shop' });
+  m.sessions.set('shop-hand-7', { name: 'shop-hand-7', agentType: 'claude', cwd: '/shop' });
+  const passive = [];
+  const rebaked = [];
+  m._deliverPassive = (...a) => passive.push(a);
+  m._rebakeDigest = (n) => rebaked.push(n);
+  m._notifyComposition(m.sessions.get('Codex'), 'spawned');
+  m._notifyComposition(m.sessions.get('Codex'), 'retired');
+  assert.deepStrictEqual(passive, [], 'no delta reaches boss for a roleless seat');
+  assert.deepStrictEqual(rebaked, [], 'no digest re-bake for a roleless seat');
+  m._notifyComposition(m.sessions.get('shop-hand-7'), 'spawned');
+  assert.deepStrictEqual(passive, [['boss', 'team', '[team shop] seat shop-hand-7 spawned (role: hand)', 'dm']]);
+  assert.deepStrictEqual(rebaked.sort(), ['boss', 'shop-hand-3']);
+});
+
 // Boot-race coalesce (task 20 + task-22 rework): _notifyComposition shares the
 // codex active-fallback that task 11 fixed for the initial roster. A target codex
 // seat still inside its boot-settle window (_bootSettling) would get the delta

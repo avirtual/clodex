@@ -4131,6 +4131,7 @@ function createSessionManager(deps) {
       try { team = resolveTeam(session.cwd); } catch { return; }
       if (!team) return;
       const role = matchSeatRole(team, session.name);
+      if (!role) return;
       const body = formatCompositionDelta(team.name, verb, { seat: session.name, role });
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;

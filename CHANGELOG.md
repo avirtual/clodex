@@ -85,6 +85,7 @@ blocks a release.
 - Browser pane: a page that replaces `Promise` (Angular/zone.js, e.g. Ghostfolio) no longer pins the wait at `still busy after 15s` with a quiet network — the idle probe runs in the pane's isolated world; a timed-out held line says `64+ req` when the completion ring is full.
 - Clodex MCP: the browser plugin now declares its own MCP tool and subagent policy (`tools` and `subagent` on `host.intents.register`); the intent registry keeps only the generic rules — default-deny for subagents, tool-name uniqueness, a tool maps only to its own plugin's intent. No behaviour change for a granted seat.
 - Operator inbox: each note has an × that deletes it (immediate, no undo); the row's mark-read click is not triggered by the delete.
+- Teams: a seat in the team's root that holds no role (a Codex seat, an ad-hoc operator seat) no longer wakes the lead with a `spawned`/`retired` composition delta on every restart; the roster still lists it under `also live, no role`.
 
 ## 5.112.2 — 2026-10-04
 
