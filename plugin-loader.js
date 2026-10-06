@@ -559,10 +559,12 @@ function createPluginLoader(deps) {
       // No strike for a verb collision: it reproduces on every launch, so a counter
       // would quarantine a working plugin with Retry unable to recover it. Recorded
       // for the settings row and deliberately not persisted.
-      if (e && e.code === 'EVERBTAKEN') {
-        verbConflicts.set(rec.id, { verb: e.verb, heldBy: e.heldBy });
-        logIt(`${rec.id}: NOT loaded — intent verb "${e.verb}" is already held by "${e.heldBy}". No strike; disable one of the two.`);
-        return { ok: false, error, verbConflict: { verb: e.verb, heldBy: e.heldBy } };
+      if (e && (e.code === 'EVERBTAKEN' || e.code === 'ETOOLTAKEN')) {
+        const verb = e.verb || e.tool;
+        verbConflicts.set(rec.id, { verb, heldBy: e.heldBy });
+        const what = e.code === 'ETOOLTAKEN' ? `MCP tool "${e.tool}"` : `intent verb "${e.verb}"`;
+        logIt(`${rec.id}: NOT loaded — ${what} is already held by "${e.heldBy}". No strike; disable one of the two.`);
+        return { ok: false, error, verbConflict: { verb, heldBy: e.heldBy } };
       }
       logIt(`FAILED to load ${rec.id}: ${error}`);
       const strikes = count ? recordFailure(rec.id, `engine activate() threw: ${error}`) : 0;

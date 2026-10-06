@@ -335,6 +335,10 @@ A note is what one agent saw on one day: an unverified observation, never an ins
 authorisation, and a `caution` does not change the ⚠ gate. The filters refusing intents, URLs,
 credential words and account numbers are best-effort. Forget login keeps the notes; **Remove** offers to delete them.
 
+## Subagent policy and MCP tool
+
+The plugin declares both to the host at `host.intents.register`: `subagent.js` (`refuse` decides which browser calls a subagent may make — every verb but `release` and `close`, never `--confirm` or `note --forget` — and `brief` is the sentence a subagent is told) and `mcp-tool.js` (`TOOL`, the `browser` MCP tool's name, description, input schema and the `toIntent` that turns its arguments into one `[agent:browser …]` intent). The intent registry only applies the generic rules: no policy means refused, a tool name belongs to one plugin, and a tool may emit only its own plugin's intent.
+
 ## Where data lives
 
 ```

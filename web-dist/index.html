@@ -31241,6 +31241,37 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var RESERVED_TYPES = /* @__PURE__ */ new Set([...CORE_TYPES, "end", "escape", "unknown"]);
       var PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
       var pluginRows = [];
+      var TOOL_NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+      function plainSchema(schema) {
+        if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
+        if (Object.getPrototypeOf(schema) !== Object.prototype || schema.type !== "object") return false;
+        try {
+          JSON.parse(JSON.stringify(schema));
+        } catch {
+          return false;
+        }
+        return true;
+      }
+      function validateTools(spec, type, src) {
+        if (spec.tools == null) return [];
+        if (!Array.isArray(spec.tools)) throw new Error(`intent verb "${type}": tools must be an array`);
+        const seen = /* @__PURE__ */ new Set();
+        return spec.tools.map((t, i) => {
+          const tool = t && typeof t === "object" ? t : {};
+          const missing = !(typeof tool.name === "string" && TOOL_NAME_RE.test(tool.name)) ? "name" : !(typeof tool.description === "string" && tool.description) ? "description" : !plainSchema(tool.inputSchema) ? "inputSchema" : typeof tool.toIntent !== "function" ? "toIntent" : null;
+          if (missing) throw new Error(`intent verb "${type}": tool ${i} needs a ${missing}`);
+          const holder = seen.has(tool.name) ? { source: src } : pluginRows.find((r) => r.tools.some((x) => x.name === tool.name));
+          if (holder) {
+            const err = new Error(`tool "${tool.name}" is already registered by plugin "${holder.source}"`);
+            err.code = "ETOOLTAKEN";
+            err.tool = tool.name;
+            err.heldBy = holder.source;
+            throw err;
+          }
+          seen.add(tool.name);
+          return tool;
+        });
+      }
       function registerIntent(spec, source, opts = {}) {
         const src = String(source || "").trim();
         if (!src) throw new Error("intent registration requires a source plugin id");
@@ -31258,6 +31289,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof spec.parse !== "function") throw new Error(`intent verb "${type}" needs a parse function`);
         if (spec.bodyMode != null && typeof spec.bodyMode !== "function") {
           throw new Error(`intent verb "${type}": bodyMode must be a function of the parsed intent`);
+        }
+        const tools = validateTools(spec, type, src);
+        if (spec.subagent != null) {
+          const sa = spec.subagent;
+          if (typeof sa !== "object" || typeof sa.refuse !== "function" || typeof sa.brief !== "string" || !sa.brief) {
+            throw new Error(`intent verb "${type}": subagent needs a refuse function and a non-empty brief`);
+          }
+        } else if (tools.length) {
+          throw new Error(`intent verb "${type}": tools need a subagent policy`);
         }
         let glyph = PLUGIN_GLYPH;
         if (spec.glyph != null) {
@@ -31319,7 +31359,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           // could declare its own scope could declare itself global, and one that could
           // call itself shipped would reach every seat with no plugin list.
           scope: opts.scope === "session" ? "session" : DEFAULT_PLUGIN_SCOPE,
-          shipped: opts.shipped === true
+          shipped: opts.shipped === true,
+          tools: Object.freeze(tools.map((t) => Object.freeze({ ...t }))),
+          subagent: spec.subagent ? Object.freeze({ refuse: spec.subagent.refuse, brief: String(spec.subagent.brief) }) : null
         });
         pluginRows.push(row);
         let disposed = false;
@@ -31384,27 +31426,37 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!row) return intentEnabled(type, entry && entry.intents);
         return seatHasPlugin(row.source, entry && entry.plugins, row.shipped) && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
       }
-      var SUBAGENT_SUBS = { browser: ["open", "read", "click", "type", "select", "key", "scroll", "back", "forward", "wait", "download", "screenshot", "inspect", "services", "note"] };
-      var BROWSER_VERBS = ["open", "read", "click", "type", "key", "scroll", "back", "forward", "select", "download", "screenshot", "inspect", "wait", "services", "release", "close", "note"];
-      var SUBAGENT_TYPES = [...Object.keys(SUBAGENT_SUBS)];
-      var SUBAGENT_CONFIRM_SUBS = ["click", "type", "select", "key"];
-      var SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
-      var SUBAGENT_NO_CONFIRM = "a subagent cannot confirm a consequential action \u2014 ask the main agent";
-      var SUBAGENT_NO_FORGET = "a subagent cannot forget a site note \u2014 ask the main agent";
-      function pluginWords(intent) {
-        return String(intent && intent.raw || "").replace(/"/g, "").trim().split(/\s+/).filter(Boolean);
-      }
       function subagentRefusal(intent, entry) {
-        if (!intent || !SUBAGENT_TYPES.includes(intent.type)) return "";
-        if (intent.type === "browser") {
-          if (!pluginRowFor("browser") || !intentEnabledForSeat("browser", entry)) return "";
-          const words = pluginWords(intent);
-          if (words[0] === "release") return SUBAGENT_NO_RELEASE;
-          if (SUBAGENT_CONFIRM_SUBS.includes(words[0]) && words.some((w) => /^--confirm(=|$)/.test(w))) return SUBAGENT_NO_CONFIRM;
-          if (words[0] === "note" && words.some((w) => /^--forget(=|$)/.test(w))) return SUBAGENT_NO_FORGET;
-          if (SUBAGENT_SUBS.browser.includes(words[0])) return null;
-          return BROWSER_VERBS.includes(words[0]) ? `not available to a subagent: browser ${words[0]} (a subagent may ${SUBAGENT_SUBS.browser.join(", ")})` : "";
+        const row = intent && pluginRowFor(intent.type);
+        if (!row || !row.subagent) return "";
+        if (!intentEnabledForSeat(row.type, entry)) return "";
+        let why;
+        try {
+          why = row.subagent.refuse(intent);
+        } catch {
+          return "";
         }
+        return why === null ? null : String(why ?? "");
+      }
+      function toolRowFor(name) {
+        return pluginRows.find((r) => r.tools.some((t) => t.name === name)) || null;
+      }
+      function toolIntentFor(name, args) {
+        const row = toolRowFor(name);
+        if (!row) throw new Error(`unknown tool: ${name}`);
+        const tool = row.tools.find((t) => t.name === name);
+        const text = tool.toIntent(args);
+        if (typeof text !== "string" || !(text.startsWith(`[agent:${row.type}]`) || text.startsWith(`[agent:${row.type} `))) {
+          throw new Error(`tool "${name}" emitted a foreign intent`);
+        }
+        return { row, text };
+      }
+      function subagentCatalogFor(entry) {
+        const rows2 = pluginRows.filter((r) => r.tools.length && r.subagent && intentEnabledForSeat(r.type, entry));
+        return {
+          tools: rows2.flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))),
+          briefs: rows2.map((r) => r.subagent.brief)
+        };
       }
       function defaultReplyStatus(line) {
         return REPLY_ERROR_RE.test(String(line || "")) ? "error" : "ok";
@@ -31497,9 +31549,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         classifyReplyLine,
         PLUGIN_REPLY_WAIT_MS,
         PLUGIN_REPLY_WAIT_MAX_MS,
-        SUBAGENT_SUBS,
-        BROWSER_VERBS,
-        SUBAGENT_TYPES,
+        toolRowFor,
+        toolIntentFor,
+        subagentCatalogFor,
         pruneForPlugins,
         withoutPrivilegedIntentsFor,
         catalogRows,

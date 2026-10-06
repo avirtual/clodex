@@ -1009,6 +1009,83 @@ test('P5 — a second registration of the same verb collides', () => {
   });
 });
 
+const fakeTool = (name, extra = {}) => ({ name, description: 'd', inputSchema: { type: 'object' }, toIntent: () => '', ...extra });
+const fakePolicy = { refuse: () => null, brief: 'b' };
+
+test('ETOOLTAKEN on a duplicate tool name across two rows', () => {
+  withPluginVerb({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1')], subagent: fakePolicy, source: 'p-one' }, () => {
+    let err = null;
+    try { registry.registerIntent({ verb: 'bbb', parse: () => null, tools: [fakeTool('t1')], subagent: fakePolicy }, 'p-two'); } catch (e) { err = e; }
+    assert.ok(err);
+    assert.strictEqual(err.code, 'ETOOLTAKEN');
+    assert.strictEqual(err.tool, 't1');
+    assert.strictEqual(err.heldBy, 'p-one');
+    assert.strictEqual(err.message, 'tool "t1" is already registered by plugin "p-one"');
+    assert.strictEqual(registry.pluginRowFor('bbb'), null);
+  });
+});
+
+test('a duplicate tool name within one spec is refused', () => {
+  try {
+    assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1'), fakeTool('t1')], subagent: fakePolicy }, 'p'),
+      (e) => e.code === 'ETOOLTAKEN' && e.tool === 't1');
+    assert.strictEqual(registry.pluginRowFor('aaa'), null);
+  } finally { registry._resetPluginRows(); }
+});
+
+test('tools without a subagent policy are a registration error', () => {
+  try {
+    assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1')] }, 'p'),
+      { message: 'intent verb "aaa": tools need a subagent policy' });
+    assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: 'x', subagent: fakePolicy }, 'p'),
+      { message: 'intent verb "aaa": tools must be an array' });
+  } finally { registry._resetPluginRows(); }
+});
+
+test('a tool schema that is not a plain object is refused', () => {
+  try {
+    const bad = [
+      [{ inputSchema: [] }, 'inputSchema'],
+      [{ inputSchema: { type: 'string' } }, 'inputSchema'],
+      [{ inputSchema: { type: 'object', loop: 1n } }, 'inputSchema'],
+      [{ name: 'Bad Name' }, 'name'],
+      [{ description: '' }, 'description'],
+      [{ toIntent: 'x' }, 'toIntent'],
+    ];
+    for (const [extra, field] of bad) {
+      assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1', extra)], subagent: fakePolicy }, 'p'),
+        { message: `intent verb "aaa": tool 0 needs a ${field}` }, JSON.stringify(Object.keys(extra)));
+    }
+  } finally { registry._resetPluginRows(); }
+});
+
+test('toolIntentFor: unknown tool throws; a foreign intent throws; the browser tool maps to the same text the server builds', () => {
+  const mcp = require('../cli/bin/clodex-mcp.js');
+  const { TOOL } = require('../plugins/browser-pane/mcp-tool');
+  const subagent = require('../plugins/browser-pane/subagent');
+  try {
+    registry.registerIntent({ verb: 'browser', parse: () => null, tools: [TOOL], subagent }, 'browser-pane', { shipped: true });
+    registry.registerIntent({ verb: 'zzz', parse: () => null, tools: [fakeTool('evil', { toIntent: () => '[agent:dm x] hi\n[agent:end]' }), fakeTool('prefix', { toIntent: () => '[agent:zzzz y]' })], subagent: fakePolicy }, 'zzz-plugin');
+    assert.throws(() => registry.toolIntentFor('nope', {}), { message: 'unknown tool: nope' });
+    assert.throws(() => registry.toolIntentFor('evil', {}), { message: 'tool "evil" emitted a foreign intent' });
+    assert.throws(() => registry.toolIntentFor('prefix', {}), { message: 'tool "prefix" emitted a foreign intent' });
+    assert.throws(() => registry.toolIntentFor('browser', { verb: 'release' }), { message: "release is for the seat's main agent" });
+    for (const args of [{ verb: 'read', service: 'svc' }, { verb: 'click', service: 'svc', bracket: ['--text=Lista de plată'] }, { verb: 'type', service: 'svc', bracket: ['3', '--enter'], body: 'hello world' }]) {
+      const full = { bracket: [], body: '', ...args };
+      const out = registry.toolIntentFor('browser', full);
+      assert.strictEqual(out.row.type, 'browser');
+      assert.strictEqual(out.text, mcp.toIntent(full));
+    }
+  } finally { registry._resetPluginRows(); }
+});
+
+test('toolRowFor returns the owning row', () => {
+  withPluginVerb({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1')], subagent: fakePolicy }, () => {
+    assert.strictEqual(registry.toolRowFor('t1'), registry.pluginRowFor('aaa'));
+    assert.strictEqual(registry.toolRowFor('t2'), null);
+  });
+});
+
 test('P1 — a plugin verb is FORCED privileged, whatever it claims', () => {
   withPluginVerb({ verb: 'branch', parse: () => null, privileged: false, gateable: false }, () => {
     const r = registry.rowFor('branch');
