@@ -993,6 +993,7 @@ test('page scripts: the short-root fallback scores an element with no layout box
   const score = new Function(`${scripts.READ_TEXT(false).match(/(const score = el => \{[\s\S]*?\n  \};)/)[1]}\nreturn score;`)();
   assert.strictEqual(score({ getClientRects: () => [], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), -1);
   assert.strictEqual(score({ getClientRects: () => [{}], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), 500);
+  assert.ok(scripts.READ_TEXT(false).includes("document.querySelectorAll('main,div,section,td').forEach(el => {"));
 });
 
 function lineOf(src, head) {
@@ -1078,6 +1079,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}) });'));
+  assert.strictEqual((child.match(/driver\.armIdle\(svc\.wc, \{ worldId: scripts\.ISOLATED_WORLD \}\)/g) || []).length, 2);
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {

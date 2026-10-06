@@ -920,7 +920,7 @@ function run(electron, ctx) {
       svc.wc.on('did-navigate', onNav);
       try {
         ensureCdp(svc);
-        if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
+        if (!svc.watch) svc.watch = await driver.armIdle(svc.wc, { worldId: scripts.ISOLATED_WORLD }).catch(() => null);
         let navErr = null;
         svc.blockedNav = null;
         const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
@@ -951,7 +951,7 @@ function run(electron, ctx) {
     if (svc.lock.state !== 'held' || svc.lock.reason !== 'takeover') takeover(svc);
     if (svc.lock.state !== 'held') throw codedError('OPERATOR_BUSY', TEXT.operatorBusy(name));
     ensureCdp(svc);
-    if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
+    if (!svc.watch) svc.watch = await driver.armIdle(svc.wc, { worldId: scripts.ISOLATED_WORLD }).catch(() => null);
     let navErr = null;
     await driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
     if (svc.wc.isDestroyed()) throw closedError(name);

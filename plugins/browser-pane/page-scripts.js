@@ -473,7 +473,7 @@ function readText(main) {
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
   if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
     let best = document.body, bs = -1;
-    document.querySelectorAll('div,section,td').forEach(el => {
+    document.querySelectorAll('main,div,section,td').forEach(el => {
       const s = score(el); if (s > bs) { bs = s; best = el; }
     });
     root = best && (best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best;

@@ -645,6 +645,7 @@ test('replies: an idle that ignored network polling names the polled path; a pol
   assert.strictEqual(reply({ ok: true, ms: 2100, polls: { paths: ['https://x/p0.txt', 'https://x/p1.txt'], everyMs: 300 } }), `${head}idle 2.1s · polls ignored: https://x/p0.txt, https://x/p1.txt every ~0.3 s`);
   const held = { n: 14, top: [{ method: 'POST', path: 'https://x/api/graphql', n: 8 }, { method: 'GET', path: 'https://x/api/v1/x', n: 6 }] };
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held }), `${head}still busy after 15s (network: 14 req in 2 s — POST https://x/api/graphql ×8, GET https://x/api/v1/x ×6)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], held: { ...held, n: 64, full: true } }), `${head}still busy after 15s (network: 64+ req in 2 s — POST https://x/api/graphql ×8, GET https://x/api/v1/x ×6)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], churn: ['div#app'], held }), `${head}still busy after 15s (DOM churn: div#app)`);
   assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], polls, held }), `${head}still busy after 15s (network polls: https://x/api/poll every ~0.3 s)`);
 });
