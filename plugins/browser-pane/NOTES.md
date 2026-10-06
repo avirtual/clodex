@@ -65,7 +65,9 @@ child restamps once; an element that no longer yields its stored key, or a
 vanished number whose base key is still on the page, is refused `AMBIGUOUS`.
 A clickable wrapping exactly one input/button/select/link is not listed. Open
 shadow roots are walked. Identical link repeats (nav duplicated in mobile menus)
-are listed once.
+are listed once. Controls under a modal's backdrop (`covered` from
+READ_INTERACTIVE) are hidden from the default read but keep their number; `--all`
+prints them, and a click on one is refused by the COVERED check, not by the listing.
 
 Beyond the standard controls, `a` without href, `[onclick]`, `[tabindex]` not
 -1 and pointer-cursor elements are numbered as `clickable`. The pointer test

@@ -93,6 +93,7 @@ blocks a release.
 - Browser pane: the held line lists sorted paths with `+N more`, `click --text` and `inspect --text` work before a read, no trailing space after `(hidden)`, the read cut hint names the first heading it hid (`--filter="…"`), and the idle probe has no silent main-world default; two tester fixtures (hidden-ai-reveal, hidden-ai-inspect) join the gate.
 - Browser pane: the read cut hint is always a findable prefix of the heading, the polls line is sorted, a side drawer (`[role=dialog]`, fixed and docked to an edge) becomes the read root like a modal, item counts follow the main list's rows, loopback mocks keep separate site notes, and the subagent policy sheds a dead branch.
 - Browser pane: `click --text` and `inspect --text` fall back to a control's `aria-label`/`title` when no visible text matches (an icon button named "Close drawer" showing only `×`), and the reply then says `(matched by label)`; a visible-text match is never widened by names. `clodex --help` bounds a catalog tool's name like its description.
+- Browser pane: controls under a modal dialog's backdrop are no longer listed in a default read (they keep their numbers; `read --all` lists them and the head line says how many are under the dialog), the README documents the read root (modal, drawer, `--main`), and a drawer without `role=dialog` (GitLab's work-item panel) is recognised by its geometry, with a classic scrollbar tolerated.
 
 ## 5.112.2 — 2026-10-04
 

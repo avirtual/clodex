@@ -280,6 +280,10 @@ test('read-format: elementStrip hides lines whose number and key the previous re
   assert.deepStrictEqual(elementStrip(prev, prev.slice(0, 2), null, null, { chrome: ['1', '2'] }), { lines: ['[1] link Acasa → /?t=111'], hidden: 1 });
   assert.deepStrictEqual(elementStrip(null, cur), { lines: cur, hidden: 0 });
   assert.deepStrictEqual(elementStrip([], cur), { lines: cur, hidden: 0 });
+  assert.deepStrictEqual(elementStrip(null, cur, null, null, { covered: ['1'] }), { lines: cur.slice(1), hidden: 1, covered: 1 });
+  assert.deepStrictEqual(elementStrip(null, cur, null, null, { covered: ['3'] }).lines.includes('[3] input:text Cauta'), false);
+  assert.deepStrictEqual(elementStrip(prev, cur, null, null, { chrome: ['1'], covered: ['2'] }), { lines: cur.slice(2), hidden: 2, covered: 1 });
+  assert.deepStrictEqual(elementStrip(null, cur.slice(0, 2), null, null, { covered: ['1', '2'] }), { lines: ['[1] link Acasa → /?t=222'], hidden: 1, covered: 1 });
 });
 
 const K = require('../plugins/browser-pane/keys');

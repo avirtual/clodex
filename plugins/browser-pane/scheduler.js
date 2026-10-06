@@ -322,6 +322,7 @@ function createScheduler({
     let page = raw;
     let strip = null;
     let hidden = 0;
+    let covered = 0;
     const stripping = hasText && !cmd.all && cmd.mode !== 'links';
     if (stripping && base && (base.where !== where || linesApart(base.text, raw.text) > IN_PLACE_LINES)) {
       const [title, body] = splitTitle(raw.text, raw.title);
@@ -332,16 +333,16 @@ function createScheduler({
     const samePage = !!last && last.page === pageKey(raw && raw.url);
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
       : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
-    if (elBase) {
-      const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome });
-      if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
+    if (elBase || (stripping && cmd.mode === 'default')) {
+      const e = elementStrip(elBase ? elBase.elements : null, raw.elements, elBase ? elBase.keys : null, raw.keys, { chrome: raw.chrome, covered: raw.covered });
+      if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; covered = e.covered || 0; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };
     const rec = ((storage.get() || {}).services || {})[service] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
     const memo = feedMemory(st, service, raw, cmd);
     const notesInfo = hasText ? readNotes(st, service, raw, cmd) : null;
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost, feedSeen: memo && memo.view, notes: notesInfo });
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, covered, openedHost, feedSeen: memo && memo.view, notes: notesInfo });
     if (notesInfo) st.notesShown[service] = notesInfo.mark;
     rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
