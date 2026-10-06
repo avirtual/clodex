@@ -1051,6 +1051,9 @@ test('a tool schema that is not a plain object is refused', () => {
       [{ name: 'Bad Name' }, 'name'],
       [{ description: '' }, 'description'],
       [{ toIntent: 'x' }, 'toIntent'],
+      [{ logKeys: ['Verb'] }, 'logKeys'],
+      [{ logKeys: 'verb' }, 'logKeys'],
+      [{ logKeys: ['a', 'b', 'c', 'd', 'e'] }, 'logKeys'],
     ];
     for (const [extra, field] of bad) {
       assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('t1', extra)], subagent: fakePolicy }, 'p'),

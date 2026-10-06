@@ -76,6 +76,7 @@ test('tools/list is the catalog file\'s tools, name/description/inputSchema only
     assert.deepStrictEqual(tools[1], { name: 'other', description: 'd', inputSchema: { type: 'object' } });
     assert.ok(!JSON.stringify(tools).includes('secret brief'));
     assert.ok(!JSON.stringify(tools).includes('briefs'));
+    assert.ok(tools.every((t) => !('logKeys' in t)));
   } finally { await seat.close(); }
 });
 
@@ -278,6 +279,10 @@ test('mcp.log carries metadata only', async () => {
     { ok: false, error: 'nope SENTINEL7' },
     null,
     { ok: false, status: 'refused', error: 'unknown tool: "../x"' },
+    { ok: true, status: 'ok', reply: 'opened' },
+    { ok: true, status: 'ok', reply: 'read' },
+    { ok: true, status: 'ok', reply: 'read' },
+    { ok: true, status: 'ok', reply: 'read' },
   ];
   const seat = await fakeSeat((r, c, i) => answers[i]);
   try {
@@ -288,22 +293,31 @@ test('mcp.log carries metadata only', async () => {
     const log = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
     const lines = log.split('\n').filter(Boolean);
     assert.strictEqual(lines.length, 1);
-    assert.match(lines[0], /^\d{4}-\d{2}-\d{2}T\S+ browser (ok|error) \d+ms$/);
+    assert.match(lines[0], /^\d{4}-\d{2}-\d{2}T\S+ browser read svc (ok|error) \d+ms$/);
     const r2 = await s.handle(call(2, { verb: 'services', service: 'SENTINEL6 x' }));
     assert.strictEqual(r2.result.content[0].text, 'invalid: service must match SENTINEL6');
     const inv = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean)[1];
-    assert.match(inv, /^\S+ browser invalid \d+ms$/);
+    assert.match(inv, /^\S+ browser services - invalid \d+ms$/);
     const r3 = await s.handle(call(3, { verb: 'read', service: 'svc' }));
     assert.strictEqual(r3.result.content[0].text, 'nope SENTINEL7');
     const r4 = await s.handle(call(4, { verb: 'read', service: 'svc' }));
     assert.strictEqual(r4.result.content[0].text, 'completion unknown — do not retry: unreadable reply from the seat socket');
     assert.ok(!('isError' in r4.result));
     await s.handle(call(5, {}, '../x'));
+    await s.handle(call(6, { verb: 'open', service: 'x', body: 'https://a.example/' }));
+    await s.handle(call(7, { verb: 'read', service: 'SENTINEL8 with space' }));
+    await s.handle(call(8, { verb: 'read', body: 'leaked' }));
+    await s.handle(call(9, { verb: 'read', service: 'x:riot' }));
     const all = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
     const rows = all.split('\n').filter(Boolean);
-    assert.deepStrictEqual(rows.slice(2, 4).map((l) => l.split(' ')[2]), ['error', 'bad-reply']);
+    assert.deepStrictEqual(rows.slice(2, 4).map((l) => l.split(' ')[4]), ['error', 'bad-reply']);
     assert.match(rows[4], /^\S+ - refused \d+ms$/);
-    for (const k of [1, 2, 3, 4, 5, 6, 7]) assert.ok(!all.includes(`SENTINEL${k}`), `SENTINEL${k}`);
+    assert.match(rows[5], /^\S+ browser open x ok \d+ms$/);
+    assert.match(rows[6], /^\S+ browser read - ok \d+ms$/);
+    assert.match(rows[7], /^\S+ browser read - ok \d+ms$/);
+    assert.match(rows[8], /^\S+ browser read x:riot ok \d+ms$/);
+    assert.ok(!all.includes('leaked') && !all.includes('example'));
+    for (const k of [1, 2, 3, 4, 5, 6, 7, 8]) assert.ok(!all.includes(`SENTINEL${k}`), `SENTINEL${k}`);
   } finally { await seat.close(); }
 });
 
@@ -344,8 +358,8 @@ test('the same failing call is stopped at the third try within a minute; a succe
     await s.handle(call(6, a));
     assert.strictEqual(seat.got.length, 4);
     const lines = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean);
-    assert.match(lines[2], /^\S+ browser looped \d+ms$/);
-    assert.match(lines[3], /^\S+ browser looped \d+ms$/);
+    assert.match(lines[2], /^\S+ browser click svc looped \d+ms$/);
+    assert.match(lines[3], /^\S+ browser click svc looped \d+ms$/);
   } finally { await seat.close(); }
   const answers = [{ ok: false, status: 'refused', error: 'no' }, { ok: true, status: 'ok', reply: 'yes' }];
   const ok = await fakeSeat((r, c, i) => answers[i === 1 ? 1 : 0]);

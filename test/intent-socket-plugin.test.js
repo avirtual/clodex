@@ -76,7 +76,7 @@ test('the subagent catalog is the granted rows with tools', () => withBrowserVer
   const src = fs.readFileSync(path.join(__dirname, '..', 'intent-registry.js'), 'utf8');
   assert.ok(!src.includes('SUBAGENT_SUBS'));
   assert.ok(!src.includes("'browser'"));
-  assert.deepStrictEqual(registry.subagentCatalogFor(SEAT), { tools: [{ name: 'browser', description: TOOL.description, inputSchema: TOOL.inputSchema }], briefs: [subagent.brief] });
+  assert.deepStrictEqual(registry.subagentCatalogFor(SEAT), { tools: [{ name: 'browser', description: TOOL.description, inputSchema: TOOL.inputSchema, logKeys: ['verb', 'service'] }], briefs: [subagent.brief] });
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['browser'], plugins: [] }), { tools: [], briefs: [] });
   registry._resetPluginRows();
   assert.deepStrictEqual(registry.subagentCatalogFor(SEAT), { tools: [], briefs: [] });

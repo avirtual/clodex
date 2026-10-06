@@ -14,6 +14,8 @@ const LOOP_RING = 12;
 const LOOP_MAX = 3;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
 const TOOL_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+const LOG_KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
+const LOG_VAL_RE = /^[a-z][a-z0-9_:.-]{0,31}$/;
 
 class InvalidRequest extends Error {}
 
@@ -22,7 +24,7 @@ function readCatalog(env, fsImpl = fs) {
   try {
     const c = JSON.parse(fsImpl.readFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp-tools.json'), 'utf8'));
     if (!c || c.v !== 1 || !Array.isArray(c.tools)) return { rev: null, tools: [] };
-    return { rev: typeof c.rev === 'string' ? c.rev : null, tools: c.tools.filter((t) => t && typeof t.name === 'string').map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+    return { rev: typeof c.rev === 'string' ? c.rev : null, tools: c.tools.filter((t) => t && typeof t.name === 'string').map(({ name, description, inputSchema, logKeys }) => ({ name, description, inputSchema, logKeys: Array.isArray(logKeys) ? logKeys.filter((k) => typeof k === 'string' && LOG_KEY_RE.test(k)).slice(0, 4) : [] })) };
   } catch { return { rev: null, tools: [] }; }
 }
 
@@ -62,11 +64,14 @@ function createServer({
 
   const send = (msg) => { if (!stopped) output.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n'); };
 
-  const log = (name, status, ms) => {
+  const log = (name, status, ms, args) => {
     if (!env.CLODEX_INTENT_SOCK) return;
     const n = typeof name === 'string' && TOOL_RE.test(name) ? name : '-';
+    const tool = n === '-' ? null : readCatalog(env, fsImpl).tools.find((t) => t.name === n);
+    const own = (k) => args && typeof args === 'object' && Object.hasOwn(args, k) ? args[k] : null;
+    const cols = tool ? tool.logKeys.map((k) => typeof own(k) === 'string' && LOG_VAL_RE.test(own(k)) ? own(k) : '-') : [];
     try {
-      fsImpl.appendFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp.log'), `${new Date(now()).toISOString()} ${n} ${status} ${ms}ms\n`);
+      fsImpl.appendFileSync(path.join(path.dirname(env.CLODEX_INTENT_SOCK), 'mcp.log'), `${new Date(now()).toISOString()} ${[n, ...cols, status].join(' ')} ${ms}ms\n`);
     } catch (e) {
       if (!logFailed) errOut.write(`clodex-mcp: cannot write mcp.log (${e.message})\n`);
       logFailed = true;
@@ -94,7 +99,7 @@ function createServer({
     const f = fails.get(key);
     if (f && f.n >= LOOP_MAX - 1 && now() - f.at < LOOP_WINDOW_MS) {
       fails.set(key, { ...f, n: f.n + 1, at: now() });
-      log(name, 'looped', now() - start);
+      log(name, 'looped', now() - start, args);
       return { result: { content: [{ type: 'text', text: `the same call failed ${LOOP_MAX} times — stop retrying: ${f.text}` }] } };
     }
     if (!env.CLODEX_INTENT_SOCK || !env.CLODEX_INTENT_CRED) {
@@ -107,7 +112,7 @@ function createServer({
       ...(connect ? { connect } : {}),
     });
     const st = statusOf(r);
-    log(name, st, now() - start);
+    log(name, st, now() - start, args);
     if (st === 'ok') fails.delete(key); else if (st !== 'invalid') failed(key, toolResult(r).content[0].text);
     return { result: toolResult(r) };
   }
@@ -124,7 +129,7 @@ function createServer({
       return { id, result: { protocolVersion: PROTOCOLS.includes(asked) ? asked : PROTOCOLS[0], capabilities: { tools: { listChanged: true } }, serverInfo: { name: 'clodex', version: env.CLODEX_VERSION || '0' } } };
     }
     if (method === 'ping') return { id, result: {} };
-    if (method === 'tools/list') return { id, result: { tools: readCatalog(env, fsImpl).tools } };
+    if (method === 'tools/list') return { id, result: { tools: readCatalog(env, fsImpl).tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) } };
     if (method === 'tools/call') return { id, ...(await callTool(params)) };
     return { id, error: { code: -32601, message: `method not found: ${method}` } };
   }
