@@ -102,7 +102,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
     if (lead && r.lead) continue;
     const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h)) && (!r.unless || !r.unless.test(h));
     const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
-    if (!(byText || (r.id && idClass && r.re.test(idClass)))) continue;
+    if (!(byText || (r.id && idClass && r.re.test(idClass) && !(r.unless && hay.some(h => r.unless.test(h)))))) continue;
     if (!r.lead) return { cat: r.cat, term: r.t };
     lead = { cat: r.cat, term: r.t };
   }
@@ -316,7 +316,7 @@ const WALL = `
       if (root && document.body) {
         const all = [];
         const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t)) all.push(t);
+        for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);
         const inRoot = all.filter(t => root.contains(t));
         const last = inRoot[inRoot.length - 1];
         const tail = [];
@@ -338,9 +338,12 @@ const WALL = `
       }
       const ID_SEL = ${JSON.stringify(WALL_ID_SEL)};
       const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)} + ',' + ID_SEL)].find(e => e !== document.body && e !== document.documentElement
-        && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && vis(e) && clip(e.innerText)
+        && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && (vis(e) || [...e.querySelectorAll('*')].slice(0, 50).some(vis)) && clip(e.innerText)
         && (WALL.test(e.innerText) || String(e.innerText).trim().length <= 300));
-      return box ? { text: clip(box.innerText), n: null } : null;
+      if (!box) return null;
+      const bw = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+      for (let t = bw.nextNode(); t; t = bw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t), n: null };
+      return { text: clip(box.innerText), n: null };
     } catch { return null; }
   };`;
 
@@ -408,6 +411,10 @@ function readText(main) {
     if (!c || up) continue;
     wrapped.add(c); c.prepend('(was '); c.append(')');
   }
+  clone.querySelectorAll('sup').forEach(c => {
+    const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
+    if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
+  });
   clone.querySelectorAll(DROP).forEach(n => n.remove());
   const chrome = root.closest(${JSON.stringify(CHROME_SEL)}) ? [clone] : [...clone.querySelectorAll(${JSON.stringify(CHROME_SEL)})];
   for (const c of chrome) {
@@ -641,6 +648,18 @@ function collect(main) {
     for (let p = el.parentNode || el.host; p; p = p.parentNode || p.host) if (rows.has(p)) return true;
     return false;
   };
+  const UNREAD = /\\b(unread|necitit)/i;
+  const MARK = /\\b(mark(ed)?|marcheaz[aă]|marca(t|ti|ți)?) (as|ca)\\b/i;
+  const says = x => UNREAD.test(x) && !MARK.test(x);
+  const ownText = e => [...e.childNodes].some(c => c.nodeType === 3 && c.nodeValue.trim());
+  const unreadOf = el => {
+    if (!(el.tagName === 'TR' || el.getAttribute('role') === 'row' || (el.tagName === 'LI' && el.parentElement && el.parentElement.closest('[role=list],[role=listbox],ul')))) return false;
+    if (says(el.getAttribute('aria-label') || '')) return true;
+    const kids = [...el.querySelectorAll('*')].slice(0, 60);
+    if (kids.some(e => says(e.getAttribute('aria-label') || '') || (!e.children.length && says(e.textContent || '') && !vis(e)))) return true;
+    const texted = [el, ...kids].filter(ownText).slice(0, 30);
+    return texted.length > 0 && texted.filter(e => parseInt(getComputedStyle(e).fontWeight, 10) >= 600).length * 2 >= texted.length;
+  };
   const items = []; const seen = new Set(); let listed = 0; let truncated = false;
   for (const el of cands) {
     if (!vis(el)) continue;
@@ -653,6 +672,7 @@ function collect(main) {
     let line = '';
     let sig = null;
     let full = null;
+    let unread = false;
     if (plain) {
       if (underRow(el)) continue;
       const inner = el.querySelectorAll(sel);
@@ -662,6 +682,7 @@ function collect(main) {
       if (tag === 'a' && !label) continue;
       if (tag === 'tr' || el.getAttribute('role') === 'row' || !el.querySelector(sel)) rows.add(el);
       line = label ? JSON.stringify(label) : '(icon)';
+      unread = unreadOf(el);
     } else if (tag === 'a') {
       let h = el.getAttribute('href') || '';
       try { const u = new URL(el.href); h = u.origin === location.origin ? u.pathname + u.search + u.hash : u.href; } catch {}
@@ -699,7 +720,7 @@ function collect(main) {
     const th = el.closest('th,[role=columnheader]');
     const sorted = (el.getAttribute('aria-sort') || (th && th.getAttribute('aria-sort')) || '').toLowerCase();
     const flags = (disabled ? ' [disabled]' : '') + (sorted === 'ascending' ? ' [sorted ↑]' : sorted === 'descending' ? ' [sorted ↓]' : '')
-      + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '');
+      + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '') + (unread ? ' [unread]' : '');
     const cq = cqOf(el);
     items.push({ el, full, cq, line: kind + ' ' + (cq ? '⚠ ' : '') + line + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
   }
@@ -1199,23 +1220,24 @@ const LOGIN_PROBE = `(() => {${DEEP}
     : /(^|\\.)okta\\.com$/.test(host) ? 'okta' : null;
   const body = (document.body && document.body.innerText) || '';
   const has = (test) => deepAll(document, test).length > 0;
+  const short = x => { const s = String(x || '').replace(/\\s+/g, ' ').trim(); return s.length <= 30 ? s : ''; };
   const loggedInHint = () => {
     if (has(el => el.tagName === 'INPUT' && el.type === 'password')) return null;
-    const exit = /log ?out|sign ?out|deconectare|ieșire/i;
-    if (has(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
-      && exit.test((el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '')))) return 'logout';
     const SIGN_IN = /\\b(sign in|log in|login|intra in cont|autentificare|conectare|contul meu)\\b/i;
     const fold = x => String(x || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ');
     if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
       && SIGN_IN.test(fold(el.innerText || el.textContent) + ' ' + fold(el.getAttribute('aria-label')))
       && (!el.getAttribute('href') || /login|signin|sign-in|auth/i.test(el.getAttribute('href'))))) return null;
+    const exit = /log ?out|sign ?out|deconectare|iesire/i;
+    if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
+      && [el.innerText || el.textContent, el.getAttribute('aria-label')].some(x => exit.test(fold(short(x)))))) return 'logout';
     if (has(el => el.matches(${JSON.stringify(PROFILE_SEL)}))) return 'profile';
     if (has(el => el.matches('[contenteditable=true][role=textbox]'))) return 'composer';
     return null;
   };
   const pwds = deepAll(document, el => el.tagName === 'INPUT' && el.type === 'password').filter(vis);
   const logoutLink = any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
-    && signOutOf([el.innerText || el.textContent, el.getAttribute('aria-label'), hrefPath(el)], SO_RES));
+    && signOutOf([short(el.innerText || el.textContent), short(el.getAttribute('aria-label')), hrefPath(el)], SO_RES));
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
     || pwds.some(el => el.getAttribute('autocomplete') === 'new-password'

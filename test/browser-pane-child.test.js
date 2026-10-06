@@ -525,6 +525,35 @@ test('page scripts: LOGIN_PROBE reads a localized sign-out link (Ieşire → ind
   assert.strictEqual(loginLabel(run([link('Avizier', 'index.php?page=1')])), 'none');
 });
 
+test('page scripts: LOGIN_PROBE ignores a hidden Sign out and a long product title with deconectare; a short visible exit still signs in', () => {
+  const { loginLabel } = require('../plugins/browser-pane/read-format');
+  const link = (text, href, hidden = false) => ({
+    tagName: 'A', innerText: text, textContent: text, parentElement: null, type: '',
+    getAttribute: (k) => (k === 'href' ? href : null), matches: () => false,
+    getBoundingClientRect: () => (hidden ? { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 } : { left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 }),
+  });
+  const run = (els) => new Function('getComputedStyle', 'document', 'location', 'scrollX', 'scrollY', 'innerWidth', 'innerHeight', `return ${scripts.LOGIN_PROBE}`)(
+    () => ({ visibility: 'visible', display: 'inline', opacity: '1', clip: 'auto', clipPath: 'none', overflow: 'visible', overflowX: 'visible' }),
+    { querySelectorAll: () => els, documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: { innerText: '' } },
+    { hostname: 'www.example.com', pathname: '/' }, 0, 0, 1200, 800);
+  const guardian = run([link('Sign out', '/signout', true), link('Sign in', '/signin')]);
+  assert.strictEqual(guardian.loggedInHint, null);
+  assert.strictEqual(guardian.logoutLink, false);
+  assert.strictEqual(loginLabel(guardian), 'none');
+  assert.strictEqual(run([link('Sign out', '/signout', true)]).loggedInHint, null);
+  assert.strictEqual(run([link('Sign out', '/signout'), link('Sign in', '/signin')]).loggedInHint, null);
+  const emag = run([link('Fierbator apa Bosch TWK70B03, 1.7 l, 2400 W, Deconectare automata', '/fierbator/pd/X1'), link('Contul meu', '/user/login')]);
+  assert.strictEqual(emag.loggedInHint, null);
+  assert.strictEqual(emag.logoutLink, false);
+  assert.strictEqual(loginLabel(emag), 'none');
+  const kettle = run([link('Fierbator apa Bosch TWK70B03, 1.7 l, 2400 W, Deconectare automata', '/fierbator/pd/X1')]);
+  assert.strictEqual(kettle.loggedInHint, null);
+  assert.strictEqual(kettle.logoutLink, false);
+  const ebloc = run([link('Ieşire', 'index.php?page=5')]);
+  assert.strictEqual(ebloc.loggedInHint, 'logout');
+  assert.strictEqual(loginLabel(ebloc), 'signed in');
+});
+
 test('page scripts: LOGIN_PROBE treats a password-change form on a signed-in page as signed in, not a sign-in hold', () => {
   const { loginLabel } = require('../plugins/browser-pane/read-format');
   const rect = () => ({ left: 10, top: 10, width: 60, height: 18, right: 70, bottom: 28 });
@@ -558,13 +587,22 @@ test('page scripts: LOGIN_PROBE treats a password-change form on a signed-in pag
 test('page scripts: wallScan skips script text, quotes the gate sentence and never takes body or html as the gate box', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes('const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","TEMPLATE"]);'));
-  assert.ok(src.includes('if (t.data.trim() && !scripted(t)) all.push(t);'));
+  assert.ok(src.includes('if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);'));
+  assert.ok(src.includes("(vis(e) || [...e.querySelectorAll('*')].slice(0, 50).some(vis))"));
+  assert.ok(src.includes('if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t), n: null };'));
+  assert.ok(src.includes('return { text: clip(box.innerText), n: null };'));
   assert.ok(src.includes('return { text: quote(t), n: null };'));
   assert.ok(src.includes('const TOKEN = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;'));
   assert.ok(src.includes('[...e.classList].some(c => TOKEN.test(c))'));
   assert.ok(src.includes('e !== document.body && e !== document.documentElement'));
   assert.ok(src.includes("(WALL.test(e.innerText) || String(e.innerText).trim().length <= 300)"));
   assert.ok(src.includes('[id*=gate-toast i]'));
+});
+
+test('page scripts: READ_TEXT gives two-digit superscript cents a decimal separator', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("clone.querySelectorAll('sup').forEach(c => {"));
+  assert.ok(src.includes("if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');"));
 });
 
 test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
@@ -1694,6 +1732,11 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Log out' }), { cat: 'sign-out', term: 'log out' });
   assert.strictEqual(scripts.consequentialOf({ label: 'Log out' }), 'sign-out');
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
+});
+
+test('page scripts: a has-delete class on a filter reset honours the row\'s unless; a delete label still hits', () => {
+  assert.strictEqual(scripts.consequentialHit({ label: 'Sterge toate filtrele', idClass: 'has-delete' }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'delete' });
 });
 
 test('page scripts: a sort button\'s third state is not deletion, a plain Remove still is', () => {
