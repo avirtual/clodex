@@ -325,19 +325,20 @@ test('READ_INTERACTIVE: [unread] votes per cell, so attachment chips cannot outv
   const mail = (y, w) => Object.assign(mk('tr', {}, [
     td([span('Ana ' + y, y, w)], y),
     td([span('Factura ' + y, y, w), span('see attached', y, '400'), span('a.pdf', y, '400'), span('b.pdf', y, '400'), span('c.pdf', y, '400')], y),
-    td([span('12:0' + y, y, w)], y),
+    td([span('12:' + y, y, w)], y),
   ], [10, y, 600, 20]), { css: { cursor: 'pointer' } });
   const wide = Object.assign(mk('tr', {}, ['Ion', 'Avizier', 'Bloc', 'Scara', 'Ora'].map((t, i) => td([span(t, 80, i ? '400' : '700')], 80)), [10, 80, 600, 20]), { css: { cursor: 'pointer' } });
-  const body = mk('body', {}, [mk('table', {}, [mk('tbody', {}, [mail(1, '700'), mail(2, '400'), wide], [10, 0, 600, 100])], [10, 0, 600, 100])], [0, 0, 1200, 800]);
+  const body = mk('body', {}, [mk('table', {}, [mk('tbody', {}, [mail(40, '700'), mail(60, '400'), wide], [10, 0, 600, 100])], [10, 0, 600, 100])], [0, 0, 1200, 800]);
   Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
   const ctx = context(page);
   const base = ctx.getComputedStyle();
   ctx.getComputedStyle = (e) => ({ ...base, ...(e && e.css), fontWeight: (e && e.css && e.css.fontWeight) || '400', cursor: (e && e.css && e.css.cursor) || 'auto' });
   const lines = Array.from(vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx).lines);
   assert.strictEqual(lines.length, 3, lines.join('\n'));
-  assert.ok(lines[0].endsWith('[unread]'), lines[0]);
-  assert.ok(!lines[1].includes('[unread]'), lines[1]);
-  assert.ok(!lines[2].includes('[unread]'), lines[2]);
+  const line = (w) => lines.find((l) => l.includes(w)) || '';
+  assert.ok(line('Ana 40').endsWith('[unread]'), lines.join('\n'));
+  assert.ok(line('Ana 60') && !line('Ana 60').includes('[unread]'), lines.join('\n'));
+  assert.ok(line('Ion') && !line('Ion').includes('[unread]'), lines.join('\n'));
 });
 
 test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by its whole phrase; a phrase across two siblings is not', () => {

@@ -1976,8 +1976,9 @@ test('page scripts: transfer and swap are consequential only with a money or tok
 
 test('page scripts: READ_TEXT scans for a registration or pay wall and returns it as wall; child lifts it onto the read', () => {
   const src = scripts.READ_TEXT(false);
-  const WALL = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
+  const WALL = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
   assert.ok(src.includes(`const WALL = ${WALL};`));
+  assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
   assert.ok(src.includes('return { text, busy, outline, wall };'));
