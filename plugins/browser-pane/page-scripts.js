@@ -249,12 +249,14 @@ const DEEP = `
     if (!placedScroller.has(sc)) placedScroller.set(sc, placed(sc, pr, getComputedStyle(sc)));
     return placedScroller.get(sc);
   };
+  const fadedMemo = new Map(); const faded = (el) => { let k = 0; const seen = []; for (let e = upOf(el); e && e !== document.body && k < 12; e = upOf(e), k++) { if (fadedMemo.has(e)) { const v = fadedMemo.get(e); for (const x of seen) fadedMemo.set(x, v); return v; } seen.push(e); if (getComputedStyle(e).opacity === '0') { for (const x of seen) fadedMemo.set(x, true); return true; } } for (const x of seen) fadedMemo.set(x, false); return false; };
   const vis = (el) => {
     const r = el.getBoundingClientRect();
     if (!r.width || !r.height) return false;
     const s = getComputedStyle(el);
     if (s.visibility === 'hidden' || s.display === 'none') return false;
     if (s.opacity === '0') return false;
+    if (faded(el)) return false;
     if (!placed(el, r, s)) return false;
     if (s.clip === 'rect(0px, 0px, 0px, 0px)' || s.clip === 'rect(1px, 1px, 1px, 1px)') return false;
     if (s.clipPath === 'inset(50%)' || s.clipPath === 'inset(100%)') return false;
@@ -348,7 +350,7 @@ const WALL = `
     };
     const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };
     const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };
-    const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };
+    const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); if (!a) return false; const icon = s => s.trim().length <= 2 && !/[\\p{L}\\p{N}]/u.test(s); return norm([...a.childNodes].map(n => n.nodeType === 3 ? n.data : (n.innerText || '')).filter(s => !icon(s)).join(' ')).trim() === norm(t.data).trim(); };
     const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };
     const gated = (b, bt, re) => {
       const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));
@@ -367,7 +369,7 @@ const WALL = `
       const b = blockOf(t);
       const own = norm(t.data);
       if (re.test(own)) {
-        if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
+        if (!wholeLabel(t) && !moreLink(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
       }
       const bt = blockText(b);
       if (!bt) return null;
@@ -464,8 +466,10 @@ function readText(main) {
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
-  const DIALOG_SEL = '[role=dialog][aria-modal=true], dialog[open], [aria-modal=true]';
-  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, a: (r => r.width * r.height)(e.getBoundingClientRect()) })).filter(x => x.a >= innerWidth * innerHeight / 4).sort((a, b) => b.a - a.a)[0];
+  const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
+  const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
+  const modalBy = (e) => { if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } return ''; };
+  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => b.a - a.a)[0];
   if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
   if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
@@ -475,6 +479,7 @@ function readText(main) {
     });
     root = best && (best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best;
   }
+  const dialogRead = !!modal && root === modal.e;
   const busy = busyScan();
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
@@ -529,7 +534,7 @@ function readText(main) {
   bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   ${TABLES}
   const txt = clone.innerText; host.remove(); cv.remove();
-  const text = (document.title + '\\n\\n' + (modal ? '[dialog]\\n' : '') + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
+  const text = (document.title + '\\n\\n' + (dialogRead ? '[dialog]\\n' : '') + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
   return { text, busy, outline, wall, inlined, nested, hidden };
 })()`;
 }

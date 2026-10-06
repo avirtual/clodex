@@ -47,6 +47,7 @@ function idleLabel(idle) {
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
+    : Array.isArray(idle.churn) && idle.churn.length ? `still busy after ${Math.round(idle.ms / 1000)}s (DOM churn: ${idle.churn.join(', ')})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 

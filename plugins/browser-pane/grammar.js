@@ -259,6 +259,7 @@ function toCommand(intent) {
     if (at > 0) {
       const prev = qt[at].t;
       const bad = qt[at + 1].t;
+      if (SERVICE_RE.test(bad) && !qt.slice(1, at).some(x => !x.q && SERVICE_RE.test(x.t) && !x.t.startsWith('--'))) throw new Error(`unexpected '${bad}' for ${sub} — put the service first: ${sub} ${bad} ${qt.slice(1).filter((x, i) => i + 1 !== at + 1).map(x => x.q ? `"${x.t}"` : x.t).join(' ')}`);
       throw new Error(`unexpected '${bad}' for ${sub} — quote multi-word text: ${prev.split('=')[0]}="${prev.split('=').slice(1).join('=')} ${bad}"`);
     }
   }

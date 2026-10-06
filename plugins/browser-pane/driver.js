@@ -63,21 +63,24 @@ async function armIdle(wc, { network = true, now = Date.now } = {}) {
   };
   const wait = async ({ quietMs = 500, graceMs = 0, timeoutMs = 15000, shouldStop = null } = {}) => {
     const t0 = now();
+    let lastChurn = [];
     if (graceMs) await sleep(graceMs);
     try {
       for (;;) {
         if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: now() - t0, fired, inflight: [] };
         if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: now() - t0, fired };
         if (now() - t0 > timeoutMs) {
-          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url) };
+          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url), ...(lastChurn.length ? { churn: lastChurn } : {}) };
         }
         if (!wc.isLoading() && active().length === 0) {
           const q = await withTimeout(wc.executeJavaScript(`new Promise(res => {
-            let last = performance.now(); const hits = new Map(); const mo = new MutationObserver(ms => { last = performance.now(); for (const m of ms) { const k = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (k) hits.set(k, (hits.get(k) || 0) + 1); } });
+            let last = performance.now(); const hits = new Map(); const label = k => k.tagName.toLowerCase() + (k.id ? '#' + k.id : '') + (k.classList && k.classList[0] ? '.' + k.classList[0] : ''); const mo = new MutationObserver(ms => { last = performance.now(); for (const m of ms) { const k = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (k) hits.set(k, (hits.get(k) || 0) + 1); } });
             mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-            const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 3 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.keys()][0]; res({ state: document.readyState, ticker: k.tagName.toLowerCase() + (k.id ? '#' + k.id : '') + (k.classList && k.classList[0] ? '.' + k.classList[0] : '') }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })`).catch(() => null), quietMs + 3000);
+            const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 8 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.entries()].sort((a, b) => b[1] - a[1])[0][0]; res({ state: document.readyState, ticker: label(k) }); return; } if (performance.now() - t0 >= ${quietMs} * 4 + 2000) { mo.disconnect(); res({ state: document.readyState, churn: [...hits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => label(k)) }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })`).catch(() => null), quietMs * 4 + 3000);
           const state = q && typeof q === 'object' ? q.state : q; const ticker = q && typeof q === 'object' && q.ticker ? String(q.ticker).replace(/[^\w#.:-]/g, '').slice(0, 60) : '';
-          if (state === 'complete' && !wc.isLoading() && active().length === 0 && now() - lastNet >= quietMs) {
+          const churn = q && typeof q === 'object' && Array.isArray(q.churn) ? q.churn.map(x => String(x).replace(/[^\w#.:-]/g, '').slice(0, 40)).filter(Boolean).slice(0, 3) : [];
+          if (churn.length) lastChurn = churn;
+          if (state === 'complete' && !churn.length && !wc.isLoading() && active().length === 0 && now() - lastNet >= quietMs) {
             return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}) };
           }
         }
