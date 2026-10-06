@@ -64,7 +64,7 @@ const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sig
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
 const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
-const HMS_RE = '/\\b\\d{1,2}\\s?:\\s?\\d{2}\\s?:\\s?\\d{2}\\b/g';
+const HMS_RE = `/${keys.HMS_RE.source}/g`;
 
 function termRe(t, lead) {
   const body = t.split(' ').join('[\\s_-]?');
