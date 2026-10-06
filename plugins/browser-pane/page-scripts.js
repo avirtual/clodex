@@ -649,12 +649,14 @@ function collect(main) {
     return false;
   };
   const UNREAD = /\\b(unread|necitit)/i;
+  const MARK = /\\b(mark(ed)?|marcheaz[aă]|marca(t|ti|ți)?) (as|ca)\\b/i;
+  const says = x => UNREAD.test(x) && !MARK.test(x);
   const ownText = e => [...e.childNodes].some(c => c.nodeType === 3 && c.nodeValue.trim());
   const unreadOf = el => {
     if (!(el.tagName === 'TR' || el.getAttribute('role') === 'row' || (el.tagName === 'LI' && el.parentElement && el.parentElement.closest('[role=list],[role=listbox],ul')))) return false;
-    if (UNREAD.test(el.getAttribute('aria-label') || '')) return true;
+    if (says(el.getAttribute('aria-label') || '')) return true;
     const kids = [...el.querySelectorAll('*')].slice(0, 60);
-    if (kids.some(e => UNREAD.test(e.getAttribute('aria-label') || '') || (!e.children.length && UNREAD.test(e.textContent || '') && !vis(e)))) return true;
+    if (kids.some(e => says(e.getAttribute('aria-label') || '') || (!e.children.length && says(e.textContent || '') && !vis(e)))) return true;
     const texted = [el, ...kids].filter(ownText).slice(0, 30);
     return texted.length > 0 && texted.filter(e => parseInt(getComputedStyle(e).fontWeight, 10) >= 600).length * 2 >= texted.length;
   };

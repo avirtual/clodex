@@ -295,6 +295,28 @@ test('READ_INTERACTIVE: a bold mail row is listed with [unread] and the marker i
   assert.ok(!read.sigs[2].includes('[unread]'));
 });
 
+test('READ_INTERACTIVE: a read row\'s Mark as unread action is not [unread]; an Unread label or hidden unread text is', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const row = (y, extra) => Object.assign(mk('tr', {}, [mk('td', {}, [mk('span', {}, ['Ion ' + y], [10, y, 200, 20])], [10, y, 300, 20]), extra], [10, y, 600, 20]), { css: { cursor: 'pointer', fontWeight: '400' } });
+  const action = row(40, mk('td', {}, [mk('ul', { role: 'toolbar' }, [mk('li', { 'aria-label': 'Mark as unread' }, [], [400, 40, 20, 20])], [400, 40, 20, 20])], [400, 40, 100, 20]));
+  const ro = row(60, mk('td', {}, [mk('li', { 'aria-label': 'Marchează ca necitit' }, [], [400, 60, 20, 20])], [400, 60, 100, 20]));
+  const labelled = row(80, mk('td', {}, [mk('span', { 'aria-label': 'Unread' }, [], [400, 80, 20, 20])], [400, 80, 100, 20]));
+  const hidden = row(100, mk('td', {}, [mk('span', {}, ['unread'], [0, 0, 0, 0])], [400, 100, 100, 20]));
+  const body = mk('body', {}, [mk('table', {}, [mk('tbody', {}, [action, ro, labelled, hidden], [10, 40, 600, 80])], [10, 40, 600, 80])], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const base = ctx.getComputedStyle();
+  ctx.getComputedStyle = (e) => ({ ...base, ...(e && e.css), fontWeight: '400', cursor: (e && e.css && e.css.cursor) || 'auto' });
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  const lines = Array.from(read.lines);
+  assert.strictEqual(lines.length, 4, lines.join('\n'));
+  assert.ok(!lines[0].includes('[unread]'), lines[0]);
+  assert.ok(!lines[1].includes('[unread]'), lines[1]);
+  assert.ok(lines[2].endsWith('[unread]'), lines[2]);
+  assert.ok(lines[3].endsWith('[unread]'), lines[3]);
+});
+
 test('FIND_TEXT: a suggestion whose text is split by highlight spans is found by its whole phrase; a phrase across two siblings is not', () => {
   const page = mkPage();
   const { mk } = page;
