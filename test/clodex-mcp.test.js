@@ -241,18 +241,21 @@ test('a timed-out or dropped call answers completion unknown and is never retrie
 
 test('concurrent calls each answer under their own id', async () => {
   const held = [];
+  const answer = ([req, conn]) => conn.end(JSON.stringify({ ok: true, status: 'ok', reply: `re ${req.intent.split('\n')[0]}` }) + '\n');
   const seat = await fakeSeat((r, c) => {
     held.push([r, c]);
-    if (held.length < 2) return 'hang';
-    for (const [req, conn] of held.slice().reverse()) conn.end(JSON.stringify({ ok: true, status: 'ok', reply: `re ${req.intent.split('\n')[0]}` }) + '\n');
-    return undefined;
+    if (held.length === 2) answer(held[1]);
+    return 'hang';
   });
   try {
     const s = server(seat);
     const order = [];
     const p1 = s.handle(call('a', { verb: 'read', service: 'one' })).then((r) => { order.push(r.id); return r; });
     const p2 = s.handle(call('b', { verb: 'read', service: 'two' })).then((r) => { order.push(r.id); return r; });
-    const [r1, r2] = await Promise.all([p1, p2]);
+    const r2 = await p2;
+    assert.deepStrictEqual(order, ['b']);
+    answer(held[0]);
+    const r1 = await p1;
     assert.strictEqual(r1.id, 'a');
     assert.strictEqual(r1.result.content[0].text, 're [agent:browser read one]');
     assert.strictEqual(r2.id, 'b');
