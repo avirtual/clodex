@@ -61,7 +61,7 @@ test('with no plugin registered, core knows no browser verb, tool or brief', asy
 });
 
 test('the MCP server lists an empty catalog as no tools', async () => {
-  const root = mkTmpRoot('detached-');
+  const root = mkTmpRoot('verb-');
   fs.writeFileSync(path.join(root, 'mcp-tools.json'), JSON.stringify({ v: 1, rev: 'e', tools: [], briefs: [] }));
   const output = { write: () => {} };
   const s = mcp.createServer({ input: null, output, errOut: output, setInterval: () => null, clearInterval: () => {}, env: { CLODEX_INTENT_SOCK: path.join(root, 'i.sock'), CLODEX_INTENT_CRED: 'k1' } });
