@@ -177,7 +177,7 @@ test('driver armIdle: a page polling up to three paths of any method goes idle w
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
   assert.ok(src.includes('const DONE_MAX = 64;'));
   assert.ok(src.includes('const other = recent.filter((d) => !keys.has(d.method + \' \' + d.path)); if (other.length > tops.length) return null;'));
-  assert.ok(src.includes('.filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3);'));
+  assert.ok(src.includes('.filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 3);'));
   assert.ok(src.includes('const POLL_MIN_MS = 100;'));
 });
 
