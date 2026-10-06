@@ -67,4 +67,5 @@ test('release and close render (policy refuses them downstream)', () => {
   assert.strictEqual(TOOL.toIntent({ verb: 'release', service: 'svc' }), '[agent:browser release svc]\n[agent:end]');
   assert.strictEqual(TOOL.toIntent({ verb: 'close', service: 'svc' }), '[agent:browser close svc]\n[agent:end]');
   assert.deepStrictEqual(TOOL.inputSchema.properties.verb.enum, require('../plugins/browser-pane/subagent').SUBS);
+  assert.deepStrictEqual(TOOL.logKeys, ['verb', 'service']);
 });

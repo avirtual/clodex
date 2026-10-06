@@ -1809,7 +1809,10 @@ verb as an MCP tool:
   `{ type: 'object', … }` JSON object. `toIntent(args)` returns ONE intent line
   of YOUR verb (`[agent:<verb> …]` then `[agent:end]`), or throws an Error whose
   message the caller sees as `invalid: <message>`. Anything else is a foreign
-  intent and the host refuses it.
+  intent and the host refuses it. Optional `logKeys` (up to 4 argument names
+  matching `/^[a-z][a-z0-9_]{0,31}$/`) names the arguments whose token-shaped
+  string values `run/<seat>/mcp.log` records beside the tool name; any other
+  value is logged as `-`.
 - **`subagent: { refuse(intent), brief }`**. `refuse` returns `null` to allow, a
   non-empty string as the refusal text, or `''` for "not mine" (default-deny).
   `brief` is one sentence a subagent reads at `SubagentStart`. `tools` without

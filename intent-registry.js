@@ -303,6 +303,7 @@ const PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const pluginRows = [];
 
 const TOOL_NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+const LOG_KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
 
 function plainSchema(schema) {
   if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return false;
@@ -320,6 +321,7 @@ function validateTools(spec, type, src) {
     const missing = !(typeof tool.name === 'string' && TOOL_NAME_RE.test(tool.name)) ? 'name'
       : !(typeof tool.description === 'string' && tool.description) ? 'description'
         : !plainSchema(tool.inputSchema) ? 'inputSchema'
+          : !(tool.logKeys == null || (Array.isArray(tool.logKeys) && tool.logKeys.length <= 4 && tool.logKeys.every((k) => typeof k === 'string' && LOG_KEY_RE.test(k)))) ? 'logKeys'
           : typeof tool.toIntent !== 'function' ? 'toIntent' : null;
     if (missing) throw new Error(`intent verb "${type}": tool ${i} needs a ${missing}`);
     const holder = seen.has(tool.name) ? { source: src } : pluginRows.find((r) => r.tools.some((x) => x.name === tool.name));
@@ -533,7 +535,7 @@ function toolIntentFor(name, args) {
 function subagentCatalogFor(entry) {
   const rows = pluginRows.filter((r) => r.tools.length && r.subagent && intentEnabledForSeat(r.type, entry));
   return {
-    tools: rows.flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }))),
+    tools: rows.flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, logKeys: t.logKeys || [] }))),
     briefs: rows.map((r) => r.subagent.brief),
   };
 }

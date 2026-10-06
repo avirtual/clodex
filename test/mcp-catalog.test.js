@@ -69,6 +69,7 @@ test('writeMcpCatalog: the written inputSchema round-trips the plugin TOOL schem
   h.writeMcpCatalog('seat1', cat);
   const back = h.readMcpCatalog('seat1');
   assert.deepStrictEqual(back.tools[0].inputSchema, TOOL.inputSchema);
+  assert.deepStrictEqual(back.tools[0].logKeys, ['verb', 'service']);
   assert.deepStrictEqual(back.briefs, [subagent.brief]);
   assert.notStrictEqual(back.tools[0].inputSchema, TOOL.inputSchema);
 }));
@@ -201,7 +202,7 @@ function spawn(m, name, { extraArgs = [], intents = null, plugins = null } = {})
     [], [], [], [], [], null, [], [], intents, null, true, true, plugins);
 }
 
-const BROWSER_CATALOG = () => ({ tools: [{ name: TOOL.name, description: TOOL.description, inputSchema: TOOL.inputSchema }], briefs: [subagent.brief] });
+const BROWSER_CATALOG = () => ({ tools: [{ name: TOOL.name, description: TOOL.description, inputSchema: TOOL.inputSchema, logKeys: TOOL.logKeys }], briefs: [subagent.brief] });
 
 test('spawn: a seat granted browser writes the browser catalog from the create() arguments', () => withBrowserVerb(async () => {
   const { m, catalogs, stop } = mkManager();

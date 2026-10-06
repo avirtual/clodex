@@ -55,6 +55,7 @@ const TOOL = {
     required: ['verb'],
     additionalProperties: false,
   },
+  logKeys: ['verb', 'service'],
   toIntent(args) {
     return render(validate(args == null ? {} : args));
   },
