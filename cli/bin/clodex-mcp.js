@@ -161,7 +161,6 @@ function createServer({
 
   const parent = process.ppid;
   const poll = setInterval(() => { if (process.ppid !== parent) stop(); }, PPID_POLL_MS);
-  if (poll && poll.unref) poll.unref();
 
   function stop() {
     if (stopped) return;
