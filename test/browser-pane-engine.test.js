@@ -540,3 +540,17 @@ test('engine: browser refusals classify as refused, a plain error as error, a no
   assert.strictEqual(classifyReplyLine('browser', replies.reply('released utility')), 'ok');
   assert.strictEqual(classifyReplyLine('browser', replies.reply('closed utility · 2 windows open')), 'ok');
 });
+
+test('engine tabs: a tab window is a live entry by full name with its profile\'s login; remove and denylist scope cover every tab of the profile', async (t) => {
+  const { emit, engine, host, frames, clearFrames } = boot(t);
+  await emit('[agent:browser open x:riot] https://portal.example.com/drive');
+  host.storage.set({ v: 1, services: { x: { createdAt: 1, login: { state: 'logged-in', at: 5 } } } });
+  const st = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
+  assert.deepStrictEqual(st.services.map((s) => [s.name, s.login]), [['x:riot', 'logged-in']]);
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'services.remove', [{ name: 'x' }], 'desktop'), { ok: false, error: 'window open — close it first' });
+  await emit('[agent:browser open x] https://portal.example.com/drive');
+  await emit('[agent:browser open y] https://portal.example.com/drive');
+  clearFrames();
+  await engine.dispatch('browser-pane', 'denylist.set', [{ scope: 'x', patterns: ['bad.example.com'] }], 'desktop');
+  assert.strictEqual(frames().filter((l) => l === 'policy').length, 2);
+});

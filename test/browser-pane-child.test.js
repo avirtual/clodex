@@ -1473,7 +1473,7 @@ test('forgetNumbers: forget deletes the service numbers directory, and a flush o
   flushNumbers(svc);
   assert.ok(!fs.existsSync(dir), 'a late flush or merge writes nothing');
   forgetNumbers(null, dir);
-  assert.match(CHILD_SRC, /svc\.win\.destroy\(\);\n\s*forgetNumbers\(svc, path\.join\(data, 'numbers', name\)\);/);
+  assert.match(CHILD_SRC, /for \(const svc of windowsOf\(profile\)\) \{\n\s*svc\.win\.destroy\(\);\n\s*forgetNumbers\(svc, null\);\n\s*\}\n\s*forgetNumbers\(null, path\.join\(data, 'numbers', profile\)\);/);
 });
 
 test('numbers persist: a corrupt or other-schema file is ignored and overwritten on the next save', () => {
@@ -2074,8 +2074,8 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
 });
 
 test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
-  const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(name)'));
-  assert.match(body, /const svc = need\(name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*return \{ closed: name, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(profile)'));
+  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*if \(svc\.win\.isDestroyed\(\)\) continue;\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
   assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
 });
@@ -2487,8 +2487,21 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
   assert.strictEqual(notOpenError('nosuch', opened, dir, ['gh', 'hn']).message, 'nosuch is not a service here — services: ebloc, gh, hn, x — [agent:browser open nosuch] <url> opens a new one');
   assert.strictEqual(notOpenError('gh', opened, dir, ['gh']).message, 'gh is not open — [agent:browser open gh] <url>');
   assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\), known\);/);
-  assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => SERVICE_RE\.test\(n\)\);/);
+  assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => NAME_RE\.test\(n\)\);/);
   assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
+  assert.strictEqual(notOpenError('ebloc:riot', new Set(), dir).message, 'ebloc:riot is not open — [agent:browser open ebloc:riot] <url>');
+  assert.match(notOpenError('y:riot', new Set(), dir).message, /^y:riot is not a service here/);
+});
+
+test('child: partition, numbers dir, downloads dir, cookie watch and download router are per profile; NAME_RE is grammar\'s', () => {
+  assert.strictEqual(CHILD_SRC.split("session.fromPartition('persist:' + profile)").length - 1, 2);
+  assert.ok(!CHILD_SRC.includes("'persist:' + name"));
+  for (const s of ["path.join(data, 'numbers', profile)", 'watchCookies(profile, ses)', 'routerFor(profile, ses)']) assert.ok(CHILD_SRC.includes(s), s);
+  assert.strictEqual(CHILD_SRC.split('path.join(downloadsRoot, profile').length - 1, 2);
+  assert.ok(CHILD_SRC.includes("ses.on('will-download', (_e, item, from) => {"));
+  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from) || waiters.find((x) => !x.url);'));
+  assert.deepStrictEqual(['.expect({ dir, wc });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
+  assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });
 
 test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {

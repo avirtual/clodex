@@ -2,7 +2,9 @@
 
 const subagent = require('./subagent');
 
-const SERVICE_PATTERN = '^[a-z][a-z0-9-]{0,31}$';
+const { NAME_PATTERN } = require('./grammar');
+
+const SERVICE_PATTERN = NAME_PATTERN;
 const SERVICE_RE = new RegExp(SERVICE_PATTERN);
 const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
 const SUBS = subagent.SUBS;

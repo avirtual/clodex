@@ -59,7 +59,7 @@ function removePartition(dataDir, name) {
 
 async function handOver({ scheduler, live, request, session }, req) {
   const { service, seat, instruction } = req || {};
-  if (!grammar.SERVICE_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
+  if (!grammar.NAME_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
   const name = String(service);
   const h = session(String(seat || ''));
   if (!h || !h.isAlive() || (h.type !== 'claude' && h.type !== 'codex')) throw new Error(`no live claude or codex seat named ${seat}`);
@@ -142,7 +142,7 @@ function activate(host) {
     },
     log: host.log,
     onEvent: (frame) => {
-      if (!frame.service || !grammar.SERVICE_RE.test(String(frame.service))) return;
+      if (!frame.service || !grammar.NAME_RE.test(String(frame.service))) return;
       if (frame.event === 'state') onState(frame);
       else if (frame.event === 'window-closed') { notified.delete(frame.service); live.delete(frame.service); scheduler.onClosed(frame.service); }
       else if (frame.event === 'visibility') { const v = live.get(frame.service); if (v) v.visible = !!frame.visible; }
@@ -175,7 +175,8 @@ function activate(host) {
   };
   const policyFor = (service) => {
     const d = denylist();
-    return { global: d.global, service: Array.isArray(d.services[service]) ? d.services[service] : [] };
+    const p = grammar.profileOf(service);
+    return { global: d.global, service: Array.isArray(d.services[p]) ? d.services[p] : [] };
   };
   const onOperatorNav = (frame) => {
     scheduler.noteUrl(frame.service, String(frame.url || ''));
@@ -223,7 +224,7 @@ function activate(host) {
   });
   host.sessions.onExit((h) => scheduler.onSessionExit(h));
   const operatorOp = (op) => (service) => {
-    if (!grammar.SERVICE_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
+    if (!grammar.NAME_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
     return client.request(op, {}, { service });
   };
   const stored = () => {
@@ -249,7 +250,7 @@ function activate(host) {
   host.ipc.handle('show', async (service) => {
     const name = service == null ? pickShown() : service;
     if (!name) return { ok: false, error: 'no browser window is open' };
-    if (!grammar.SERVICE_RE.test(String(name))) throw new Error(`bad service name: ${name}`);
+    if (!grammar.NAME_RE.test(String(name))) throw new Error(`bad service name: ${name}`);
     const notOpen = { ok: false, error: `${name} has no window open — Open it again` };
     const v = live.get(String(name));
     if (!v || v.state === 'closed') return notOpen;
@@ -286,7 +287,7 @@ function activate(host) {
         const h = host.sessions.get(seat);
         if (!h || h.workspaceId !== workspaceId) seat = 'another workspace';
       }
-      const login = saved[name] && saved[name].login;
+      const login = saved[grammar.profileOf(name)] && saved[grammar.profileOf(name)].login;
       const entry = { name, state: v.state, reason: v.reason, seat, login: (login && login.state) || 'unknown', denied: denials.get(name) || 0, host: hostOf(v.url), title: v.title || '' };
       if (v.state === 'held' && v.reason === 'takeover') entry.operator = true;
       if (typeof v.visible === 'boolean') entry.visible = v.visible;
@@ -333,8 +334,7 @@ function activate(host) {
   host.ipc.handle('services.remove', async (req) => {
     const name = req && req.name;
     if (!grammar.SERVICE_RE.test(String(name || ''))) throw new Error(`bad service name: ${name}`);
-    const v = live.get(name);
-    if (v && v.state !== 'closed') return { ok: false, error: 'window open — close it first' };
+    if ([...live.entries()].some(([n, v]) => grammar.profileOf(n) === name && v.state !== 'closed')) return { ok: false, error: 'window open — close it first' };
     const st = client.state();
     if (st === 'running' || st === 'starting') await client.request('forget', {}, { service: name, timeoutMs: FORGET_OP_MS });
     else removePartition(host.paths.dataDir, name);
@@ -364,7 +364,7 @@ function activate(host) {
     data.denylist = d;
     host.storage.set(data);
     if (client.state() === 'running') {
-      const names = scope === 'global' ? [...live.keys()] : [scope].filter((n) => live.has(n));
+      const names = [...live.keys()].filter((n) => scope === 'global' || grammar.profileOf(n) === scope);
       await Promise.all(names.filter((n) => live.get(n).state !== 'closed')
         .map((n) => client.request('policy', { policy: policyFor(n) }, { service: n }).catch(() => null)));
     }

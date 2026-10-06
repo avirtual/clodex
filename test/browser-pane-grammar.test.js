@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { parseLine, toCommand } = require('../plugins/browser-pane/grammar');
+const { parseLine, toCommand, profileOf, tabOf } = require('../plugins/browser-pane/grammar');
 
 const run = (line) => {
   const intent = parseLine(line);
@@ -38,7 +38,11 @@ const ROWS = [
   ['[agent:browser read 5]', { error: "unexpected '5' for read" }],
   ['[agent:browser release 12]', { error: "unexpected '12' for release" }],
   ['[agent:browser read Utility]',
-    { error: "bad service name 'Utility' — use a-z, 0-9 and -, starting with a letter, at most 32 chars" }],
+    { error: "bad service name 'Utility' — use a-z, 0-9 and -, starting with a letter, at most 32 chars, optionally :<tab> (a-z, 0-9 and -, at most 16)" }],
+  ['[agent:browser open x:riot] https://x.example/a', { sub: 'open', service: 'x:riot', url: 'https://x.example/a' }],
+  ['[agent:browser read x:riot]', { ...READ, service: 'x:riot' }],
+  ...['x:', 'x:Riot', 'x:a-very-long-tab-1', 'x:riot:2', 'x::riot'].map((n) => [`[agent:browser open ${n}] https://x.example/`,
+    { error: `bad service name '${n}' — use a-z, 0-9 and -, starting with a letter, at most 32 chars, optionally :<tab> (a-z, 0-9 and -, at most 16)` }]),
   ['[agent:browser read utility --bogus]',
     { error: 'unknown flag --bogus for read — valid: --text --links --compact --main --all --notes --filter --page --max --attach --path-only' }],
   ['[agent:browser open utility --links] https://x.example/',
@@ -195,4 +199,8 @@ test('grammar: type and key take --confirm', () => {
   assert.strictEqual(run('[agent:browser key x Enter]').error, 'the key goes after the bracket: [agent:browser key [service]] Enter');
   assert.strictEqual(run('[agent:browser key Space]').error, 'the key goes after the bracket: [agent:browser key [service]] Space');
   assert.match(run('[agent:browser key utility --bogus] Enter').error, /unknown flag --bogus for key — valid: .*--confirm/);
+});
+
+test('grammar: profileOf and tabOf split <profile>[:<tab>]', () => {
+  assert.deepStrictEqual([profileOf('x:riot'), tabOf('x:riot'), profileOf('x'), tabOf('x')], ['x', 'riot', 'x', '']);
 });

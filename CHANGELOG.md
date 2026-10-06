@@ -97,6 +97,7 @@ blocks a release.
 - Muse seats on the PTY transport: `[agent:context compact]` and `[agent:context clear]` type the Muse TUI's `/compact` and `/clear` like Claude and Codex seats, instead of bouncing as unsupported.
 - Muse seats on the PTY transport: the briefing body after `[agent:context compact]` is injected when Muse's compaction lands, as it is for Claude seats, instead of expiring unseen.
 - Clodex MCP: each `mcp.log` line names what the call did beside the tool name — the browser tool logs its verb and service (`browser open x ok 9912ms`); a plugin declares which token-shaped arguments to log via `logKeys`, and anything else stays out of the log.
+- Browser pane: a service can have several windows on one login — `open x:riot <url>` opens a second window on x's cookie store (profile `x`, tab `riot`); every verb takes `x:riot`, the read state and the lease are per tab, element numbers and site notes stay per profile, `services` lists a profile's open tabs, and `close x` closes every x window while `close x:riot` closes that one.
 
 ## 5.112.2 — 2026-10-04
 
