@@ -1800,7 +1800,8 @@ test('page scripts: a label-less × that clears a field is never deletion; reser
   assert.strictEqual(scripts.consequentialHit({ label: 'Șterge', control: true, clearer: true }), null);
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Șterge anunțul', control: true, clearer: false }), { cat: 'deletion', term: 'sterge' });
   assert.strictEqual(scripts.consequentialHit({ label: 'Delete', control: true, clearer: true }), null);
-  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("clearer: button && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),"));
+  assert.deepStrictEqual(scripts.consequentialHit({ value: 'Delete', control: true, clearer: false }), { cat: 'deletion', term: 'delete' });
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),"));
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Reserve your apartment stay', control: true }), { cat: 'booking', term: 'reserve' });
   assert.strictEqual(scripts.consequentialOf({ label: "I'll reserve", control: true }), 'booking');
   assert.strictEqual(scripts.consequentialOf({ label: 'Rezervă acum', control: true }), 'booking');

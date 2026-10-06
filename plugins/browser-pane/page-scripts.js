@@ -147,7 +147,7 @@ const CQ = `
     return {
       textual,
       button,
-      clearer: button && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),
+      clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
       capped: tg === 'a' || e.getAttribute('role') === 'link' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
