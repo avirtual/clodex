@@ -668,7 +668,7 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
 test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
   const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
   const read = scripts.READ_TEXT(false);
-  const readZip = zip.slice(0, -' });'.length);
+  const readZip = zip.slice(0, -' });'.length).replace('const orig = origs[i]; ', "const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); } ");
   assert.ok(read.includes(readZip));
   assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
@@ -685,6 +685,12 @@ test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("String(getComputedStyle(e).textDecorationLine || '').includes('line-through')"));
   assert.ok(src.includes("wrapped.add(c); c.prepend('(was '); c.append(')');"));
+});
+
+test('page scripts: READ_TEXT tags the top element faded by its own opacity:0 as (hidden), after the struck pass', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); }"));
+  assert.ok(src.indexOf("twin.prepend('(hidden) ')") > src.indexOf("c.prepend('(was ')"));
 });
 
 test('page scripts: a filter or search reset is not deletion; Delete account and Remove item still are', () => {
@@ -946,7 +952,7 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
   assert.ok(src.includes('if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty or hidden frame is not inlined');
   assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
-  assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
+  assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
@@ -972,6 +978,7 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
   assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
+  assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
   assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
   assert.ok(src.indexOf('const dialogRead') > src.indexOf('root = best &&'));
@@ -1004,8 +1011,8 @@ function modalByOf() {
   return { body, modalBy: make((e) => e.style, { body }, 1200, 800, () => true) };
 }
 
-function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false } = {}) {
-  const e = { attrs, style, parentElement, children: [], previousElementSibling: null,
+function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, innerText = '' } = {}) {
+  const e = { attrs, style, parentElement, innerText, children: [], previousElementSibling: null,
     matches: () => aria, getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
   if (parentElement) {
     e.previousElementSibling = parentElement.children[parentElement.children.length - 1] || null;
@@ -1017,11 +1024,23 @@ function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, heig
 test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden page siblings or a full-viewport backdrop', () => {
   {
     const { body, modalBy } = modalByOf();
-    node(body, { attrs: { 'aria-hidden': 'true' } });
-    node(body, { attrs: { 'aria-hidden': 'true' } });
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: 'Accounts Holdings Activities Portfolio Overview Settings' });
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: 'Footer links: About, Blog, Pricing, Privacy policy' });
     const container = node(body);
     const pane = node(node(container));
     assert.strictEqual(modalBy(pane), 'hidden');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: '' });
+    assert.strictEqual(modalBy(node(body)), '');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body);
+    const wrap = node(body);
+    node(wrap, { style: { position: 'fixed' }, rect: { width: 1200, height: 800 } });
+    assert.strictEqual(modalBy(node(wrap, { aria: true })), 'backdrop');
   }
   {
     const { body, modalBy } = modalByOf();
@@ -1042,11 +1061,12 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     node(body);
     assert.strictEqual(modalBy(node(node(body), { aria: true })), 'aria');
   }
+  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; return ''; };");
 });
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}) });'));
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}) });'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
@@ -1475,6 +1495,8 @@ test('settleChange: a target aria flip after the click is reported and ends the 
   assert.deepStrictEqual(w.sleeps, [500, 500]);
   assert.strictEqual(targetDiff(off, focused), null);
   assert.deepStrictEqual(targetDiff(off, { el: { 'aria-label': 'AC Off', class: 'btn sel' }, tile: off.tile }), { text: 'class +sel', strong: false });
+  assert.deepStrictEqual(targetDiff({ el: {}, tile: null, panel: { class: 'panel' } }, { el: {}, tile: null, panel: { class: 'panel open' } }), { text: 'panel class +open', strong: false });
+  assert.deepStrictEqual(targetDiff({ el: {}, tile: null, panel: { 'aria-expanded': 'false' } }, { el: {}, tile: null, panel: { 'aria-expanded': 'true' } }), { text: 'panel aria-expanded "false" → "true"', strong: true });
 });
 
 const CHILD_SRC = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
@@ -1990,8 +2012,20 @@ test('page scripts: VALUE_CHOICE and TARGET_STATE on a label read its radio or c
   const run = (code) => new Function('window', 'document', `return ${code}`)(win, {});
   assert.deepStrictEqual(run(scripts.VALUE_CHOICE(3)), { kind: 'choice', label: 'No', value: 'no' });
   assert.strictEqual(run(scripts.VALUE_CHOICE(4)), null);
-  assert.deepStrictEqual(run(scripts.TARGET_STATE(3)), { el: { checked: true }, tile: null });
-  assert.deepStrictEqual(run(scripts.TARGET_STATE(4)), { el: {}, tile: null });
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(3)), { el: { checked: true }, tile: null, panel: null });
+  assert.deepStrictEqual(run(scripts.TARGET_STATE(4)), { el: {}, tile: null, panel: null });
+});
+
+test('page scripts: TARGET_STATE carries the state of the panel its target aria-controls', () => {
+  const attrs = (o) => (k) => (k in o ? o[k] : null);
+  const panel = { getAttribute: attrs({ class: 'panel open', 'aria-expanded': 'true' }) };
+  const btn = { tagName: 'BUTTON', isConnected: true, getAttribute: attrs({ 'aria-controls': ' d e' }), parentElement: null };
+  const win = { __cxEls: { 5: { deref: () => btn } } };
+  const doc = { getElementById: (id) => (id === 'd' ? panel : null) };
+  assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.TARGET_STATE(5)}`)(win, doc), { el: {}, tile: null, panel: { class: 'panel open', 'aria-expanded': 'true' } });
+  const shadowBtn = { ...btn, getRootNode: () => doc };
+  const win2 = { __cxEls: { 5: { deref: () => shadowBtn } } };
+  assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.TARGET_STATE(5)}`)(win2, {}).panel, { class: 'panel open', 'aria-expanded': 'true' });
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {
@@ -2160,6 +2194,16 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Log out' }), { cat: 'sign-out', term: 'log out' });
   assert.strictEqual(scripts.consequentialOf({ label: 'Log out' }), 'sign-out');
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
+});
+
+test('page scripts: post edit history and a like count are not publish; a Like button and a like-classed button still are', () => {
+  assert.strictEqual(scripts.consequentialHit({ label: 'post edit history', idClass: 'post-edit-history' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: '19 likes', idClass: 'like-count' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Like', idClass: 'like' }).cat, 'publish');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Post' }).cat, 'publish');
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Please sign up or log in to like this post', idClass: 'like' }), { cat: 'publish', term: 'like' });
+  assert.strictEqual(scripts.labelFrom({ tag: 'button', label: '\u200b', title: 'Please sign up or log in to like this post' }), 'Please sign up or log in to like this post');
+  assert.ok(String(scripts.labelFrom).includes("const flat = (s) => String(s == null ? '' : s).replace(/[\\u200b\\u200c\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();"));
 });
 
 test('page scripts: Forward is a publish verb; an Order Status/history link is not a purchase, Place order still is', () => {
@@ -2344,11 +2388,13 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
 });
 
 test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {
-  assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*let feed = posts \? \{ count: posts \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
+  assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*const cloaked = el && Number\(el\.cloaked\) > 0 \? Number\(el\.cloaked\) : 0;\n\s*let feed = posts \? \{ count: posts, cloaked \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
   assert.match(CHILD_SRC, /\.\.\.\(feed \? \{ feed \} : \{\}\),/);
   assert.match(scripts.READ_INTERACTIVE(false, {}), /posts: \[\.\.\.\(document\)\.querySelectorAll\('article'\)\]\.filter\(a => !\(a\.parentElement && a\.parentElement\.closest\('article'\)\)\)\.length,/);
   assert.match(scripts.READ_INTERACTIVE(true, {}), /posts: \[\.\.\.\(mainRootOf\(\) \|\| document\)\.querySelectorAll/);
-  assert.match(CHILD_SRC, /: \{ count: posts, failed: true \};/);
+  assert.match(CHILD_SRC, /: \{ count: posts, cloaked, failed: true \};/);
+  assert.match(CHILD_SRC, /\{ count: f\.posts\.length, cloaked, posts: f\.posts,/);
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("cloaked: [...(document).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url:"));
 });
 
 test('windows: a service window opens hidden and surfaces without focus only on open --show; operator show still raises and focuses', () => {

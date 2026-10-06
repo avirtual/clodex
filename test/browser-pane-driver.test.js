@@ -12,8 +12,9 @@ function fakeWc() {
   dbg.sendCommand = async () => ({});
   const wc = new EventEmitter();
   Object.assign(wc, { debugger: dbg, isDestroyed: () => false, isLoading: () => false, executeJavaScript: async () => 'complete' });
-  const sent = (id, url, type = 'XHR') => dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: id, type, request: { url } });
-  return { wc, sent };
+  const sent = (id, url, type = 'XHR', method = 'GET') => dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: id, type, request: { url, method } });
+  const finished = (id) => dbg.emit('message', {}, 'Network.loadingFinished', { requestId: id });
+  return { wc, sent, finished };
 }
 
 test('driver armIdle: blob: and data: requests never count as in flight', async () => {
@@ -90,4 +91,51 @@ test('driver armIdle: a complete page reporting churn is not idle', async () => 
   const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r.ok, false);
   assert.deepStrictEqual(r.churn, ['div#app']);
+});
+
+function pollRun(urls, gapMs = 200, { method = 'GET', other = false } = {}) {
+  let t = 1000;
+  const { wc, sent, finished } = fakeWc();
+  return driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } }).then((w) => {
+    urls.forEach((url, i) => { sent(`p${i}`, url, 'XHR', method); t += 100; finished(`p${i}`); t += gapMs; });
+    if (other) { sent('o', 'https://x/api/data'); finished('o'); }
+    sent('open', urls[0].replace(/\?.*$/, '?open'), 'XHR', method);
+    return w.wait({ quietMs: 500, timeoutMs: 1000 });
+  });
+}
+
+test('driver armIdle: a page GET-polling one path goes idle with the poll named; under three completions, a burst or POSTs it does not; another completion holds the quiet window', async () => {
+  const r = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.polls.path, 'https://x/api/poll');
+  assert.ok(Math.abs(r.polls.everyMs - 300) <= 50, String(r.polls.everyMs));
+  const two = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2']);
+  assert.strictEqual(two.ok, false);
+  assert.strictEqual(two.reason, 'timeout');
+  assert.ok(!('polls' in two));
+  const posts = await pollRun(['https://x/graphql', 'https://x/graphql', 'https://x/graphql', 'https://x/graphql'], 200, { method: 'POST' });
+  assert.strictEqual(posts.ok, false);
+  assert.ok(!('polls' in posts));
+  const held = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4'], 200, { other: true });
+  assert.strictEqual(held.ok, true);
+  assert.ok(held.ms >= 500, String(held.ms));
+  const burst = await pollRun(['https://x/w/load.php?a', 'https://x/w/load.php?b', 'https://x/w/load.php?c', 'https://x/w/load.php?d'], -95);
+  assert.strictEqual(burst.ok, false);
+  assert.ok(!('polls' in burst));
+  const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
+  assert.ok(src.includes('const DONE_MAX = 64;'));
+  assert.ok(src.includes('if (!top || top[1] < 3) return null;'));
+  assert.ok(src.includes('const POLL_MIN_MS = 100;'));
+});
+
+test('driver armIdle: reset() forgets the finished requests a poll was detected from', async () => {
+  let t = 1000;
+  const { wc, sent, finished } = fakeWc();
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  for (let i = 0; i < 4; i++) { sent(`p${i}`, `https://x/api/poll?${i}`); t += 100; finished(`p${i}`); t += 200; }
+  w.reset();
+  sent('open', 'https://x/api/poll?open');
+  const r = await w.wait({ quietMs: 500, timeoutMs: 1000 });
+  assert.strictEqual(r.ok, false);
+  assert.ok(!('polls' in r));
 });

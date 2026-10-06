@@ -1,0 +1,6 @@
+<!doctype html><html><head><meta charset="utf-8"><title>busy-wide</title></head><body>
+<main><h1>Markets</h1><p>Twelve price cells repaint every 200 ms, like a chart-heavy dashboard; no network.</p>
+<div id="cells"></div><button type="button" onclick="document.getElementById('o').textContent='Opened the market detail.'">Show detail</button><p id="o"></p></main>
+<script>const c=document.getElementById('cells');for(let i=0;i<12;i++){const s=document.createElement('span');s.className='px';s.id='p'+i;c.appendChild(s);c.append(' ');}
+setInterval(()=>{for(let i=0;i<12;i++)document.getElementById('p'+i).textContent=(100+Math.random()).toFixed(2);},200);</script>
+</body></html>

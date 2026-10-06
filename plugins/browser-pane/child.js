@@ -309,7 +309,7 @@ function targetDiff(before, after) {
   if (!before || !after) return null;
   const parts = [];
   let strong = false;
-  for (const [where, b, a] of [['', before.el, after.el], ['tile ', before.tile, after.tile]]) {
+  for (const [where, b, a] of [['', before.el, after.el], ['tile ', before.tile, after.tile], ['panel ', before.panel, after.panel]]) {
     if (!b || !a) continue;
     for (const k of [...new Set([...Object.keys(b), ...Object.keys(a)])]) {
       if (b[k] === a[k]) continue;
@@ -900,7 +900,7 @@ function run(electron, ctx) {
     }
   }
 
-  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [], ...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}) });
+  const idleOf = (idle) => ({ ok: !!idle.ok, ms: idle.ms, inflight: idle.inflight || [], ...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}) });
   const actOpts = (svc) => ({ timeoutMs: ACT_IDLE_MS, shouldStop: () => svc.lock.takeover });
 
   async function opOpen(name, frame, args) {
@@ -1517,10 +1517,11 @@ function run(electron, ctx) {
     }
     mergeNumbers(svc, el);
     const posts = el && Number(el.posts) > 0 ? Number(el.posts) : 0;
-    let feed = posts ? { count: posts } : null;
+    const cloaked = el && Number(el.cloaked) > 0 ? Number(el.cloaked) : 0;
+    let feed = posts ? { count: posts, cloaked } : null;
     if (args.compact && el) {
       const f = await inIsolated(wc, scripts.FEED(main, el.cats || {}));
-      feed = f && Array.isArray(f.posts) ? { count: f.posts.length, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} } : { count: posts, failed: true };
+      feed = f && Array.isArray(f.posts) ? { count: f.posts.length, cloaked, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} } : { count: posts, cloaked, failed: true };
     }
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),

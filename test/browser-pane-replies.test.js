@@ -632,3 +632,14 @@ test('replies: a churn timeout names the churning nodes unless requests are in f
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle: { ok: false, ms: 15000, inflight: ['https://x/y'], churn: ['div#app'] } }),
     `${head}still busy after 15s (1 requests in flight: https://x/y)`);
 });
+
+test('replies: an idle that ignored network polling names the polled path; a polling timeout says so unless churn or requests win', () => {
+  const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
+  const head = '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · ';
+  const polls = { path: 'https://x/api/poll', everyMs: 300 };
+  const reply = (idle) => R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle });
+  assert.strictEqual(reply({ ok: true, ms: 2100, polls }), `${head}idle 2.1s · polls ignored: https://x/api/poll every ~0.3 s`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], polls }), `${head}still busy after 15s (network polls: https://x/api/poll every ~0.3 s)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: [], churn: ['div#app'], polls }), `${head}still busy after 15s (DOM churn: div#app)`);
+  assert.strictEqual(reply({ ok: false, ms: 15000, inflight: ['https://x/y'], polls }), `${head}still busy after 15s (1 requests in flight: https://x/y)`);
+});

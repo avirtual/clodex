@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>cloaked-posts</title>
+<style>body{margin:0;font:15px sans-serif} main{max-width:700px;margin:0 auto} article{border-bottom:1px solid #ccc;min-height:420px} article.cloaked{height:420px} .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}</style></head><body>
+<main><h1>Meter readings drift after the swap</h1><div class="post-stream" id="ps"></div></main>
+<script>
+const posts=[1,2,3,4,5,6,7,8,9].map(i=>({n:i,u:'user'+i,b:'Post '+i+' body: reading '+(100+i*7)+' m³ on day '+i+'. '+'More detail about the meter, the association and the bill. '.repeat(3)}));
+const ps=document.getElementById('ps');
+for(const p of posts){const a=document.createElement('article');a.id='post_'+p.n;a.innerHTML='<span class="sr">post by '+p.u+' on Oct '+p.n+'</span>';ps.appendChild(a);}
+function render(){const top=scrollY-innerHeight, bot=scrollY+2*innerHeight;for(const p of posts){const a=document.getElementById('post_'+p.n);const y=a.offsetTop;const on=y+420>top&&y<bot;const has=a.querySelector('.body');
+ if(on&&!has){a.classList.remove('cloaked');a.insertAdjacentHTML('beforeend','<h3>'+p.u+'</h3><div class="body"><p>'+p.b+'</p></div>');}
+ if(!on&&has){a.classList.add('cloaked');a.querySelector('h3').remove();has.remove();}}}
+addEventListener('scroll',render);render();
+</script></body></html>

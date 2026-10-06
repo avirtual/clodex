@@ -625,6 +625,12 @@ test('read without --compact keeps the text and full elements sections and repor
   assert.match(out.content.split('\n')[3], / · posts: 2 · mode: default · /);
 });
 
+test('read header says how many posts are cloaked placeholders', () => {
+  const head = (feed) => formatRead({ ...FEED_RAW, feed }, { service: 'x' }).content.split('\n')[3];
+  assert.match(head({ count: 9, cloaked: 8 }), / · posts: 9 \(8 not rendered — scroll to load\) · mode: default · /);
+  assert.match(head({ count: 9 }), / · posts: 9 · mode: default · /);
+});
+
 test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
   const raw = {
     ...RAW, url: 'https://x.com/home',
