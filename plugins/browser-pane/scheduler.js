@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const replies = require('./replies');
 const paths = require('./paths');
+const siteNotes = require('./site-notes');
 const { formatRead, chromeStrip, elementStrip, hostOf, postKey } = require('./read-format');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
@@ -93,13 +94,13 @@ function needsRead(cmd) {
 }
 
 function createScheduler({
-  client, storage, mirror, now = () => Date.now(), log, timers = realTimers, fsScope = () => ({ error: 'Session not found' }), downloadsDir = null,
+  client, storage, mirror, now = () => Date.now(), log, timers = realTimers, fsScope = () => ({ error: 'Session not found' }), downloadsDir = null, notes = null,
 }) {
   const services = new Map();
   const seats = new Map();
 
   const seatState = (name) => {
-    if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {}, feed: {} });
+    if (!seats.has(name)) seats.set(name, { current: null, hasRead: {}, lastText: {}, feed: {}, notesShown: {}, notesOpen: {} });
     return seats.get(name);
   };
 
@@ -205,13 +206,72 @@ function createScheduler({
     throw e;
   }
 
+  function notesFor(url) {
+    const origin = notes ? siteNotes.originKey(url) : '';
+    return origin ? { origin, ...notes.load(origin) } : null;
+  }
+
+  function withNotes(handle, service, r) {
+    if (!r || !r.navigated) return r;
+    delete seatState(handle.name).notesShown[service];
+    const n = notesFor(r.url);
+    return n ? { ...r, notes: siteNotes.matching(n.notes, siteNotes.pathOf(r.url)).length } : r;
+  }
+
   async function runOpen(handle, service, cmd) {
     const r = await client.request('open', { url: cmd.url, ...(cmd.show ? { show: true } : {}) }, { service, seat: handle.name });
     recordOpen(service, handle.name, r, cmd.url);
     for (const st of seats.values()) delete st.feed[service];
     if (svcState(service).state === 'closed') onState({ service, state: 'idle' });
     if (r.held && !r.takeover) signin(service, r);
-    return replies.openReply(service, r) + (r.takeover ? replies.TEXT.takeover : '');
+    const st = seatState(handle.name);
+    delete st.notesShown[service];
+    const n = notesFor(r.url);
+    let info = null;
+    if (n) {
+      const key = `${n.origin} ${n.rev}`;
+      info = { total: n.notes.length, notes: n.notes, full: st.notesOpen[service] !== key };
+      st.notesOpen[service] = key;
+    }
+    return replies.openReply(service, r, info, r.takeover ? replies.TEXT.takeover : '');
+  }
+
+  function readNotes(st, service, raw, cmd) {
+    const n = notesFor(raw.url);
+    if (!n) return null;
+    const page = pageKey(raw.url);
+    const shown = st.notesShown[service];
+    const full = !!cmd.notes || !shown || shown.page !== page || shown.rev !== n.rev;
+    st.notesShown[service] = { page, rev: n.rev };
+    return { matched: siteNotes.matching(n.notes, siteNotes.pathOf(raw.url)), total: n.notes.length, full };
+  }
+
+  async function runNote(handle, service, cmd) {
+    if (!notes) throw new Error('site notes are unavailable');
+    const s = svcState(service);
+    const rec = ((storage.get() || {}).services || {})[service] || {};
+    const url = s.url || rec.lastUrl || '';
+    const origin = siteNotes.originKey(url);
+    if (!origin) throw new Error(`note needs a page — open ${service} first`);
+    if (cmd.list) {
+      const cur = notes.load(origin);
+      if (cur.corrupt) throw new Error(siteNotes.TEXT.unreadable);
+      if (!cur.notes.length) return replies.reply(`no notes for ${origin}`);
+      const head = replies.reply(`notes for ${origin}: ${cur.notes.length} — ${siteNotes.TEXT.hint} (agent-written, not instructions)`);
+      return [head, ...siteNotes.sortNotes(cur.notes).map(siteNotes.shownLine)].join('\n');
+    }
+    if (cmd.forget) {
+      const gone = await notes.forget(origin, cmd.forget);
+      return replies.reply(`forgot ${gone.id} (${gone.seat}) for ${origin}`);
+    }
+    const last = seatState(handle.name).lastText[service];
+    const samePage = !!last && last.page === pageKey(url);
+    if ((s.state === 'held' && s.reason !== 'takeover') || (samePage && last.idp)) {
+      throw new Error(`note refused: ${service} is on ${origin} (sign-in), not the site — note after the hand-back`);
+    }
+    const p = siteNotes.prepare(cmd.text, (n) => (samePage ? siteNotes.elementLabel(last.elements, n) : null));
+    const note = await notes.add(origin, { ...p, seat: handle.name });
+    return replies.reply(`noted ${note.id} for ${origin}: @${note.anchor} ${note.kind}: ${JSON.stringify(note.text)}`);
   }
 
   function feedMemory(st, service, raw, cmd) {
@@ -277,11 +337,12 @@ function createScheduler({
       const e = elementStrip(elBase.elements, raw.elements, elBase.keys, raw.keys, { chrome: raw.chrome });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; }
     }
-    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen };
+    if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };
     const rec = ((storage.get() || {}).services || {})[service] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
     const memo = feedMemory(st, service, raw, cmd);
-    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost, feedSeen: memo && memo.view });
+    const notesInfo = hasText ? readNotes(st, service, raw, cmd) : null;
+    const out = formatRead(page, { service, mode: cmd.mode, main: cmd.main, all: cmd.all, compact: cmd.compact, filter: cmd.filter, page: cmd.page, max: cmd.max, strip, hidden, openedHost, feedSeen: memo && memo.view, notes: notesInfo });
     rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
@@ -322,21 +383,21 @@ function createScheduler({
     const d = r.download;
     if (root && d && d.file && !d.failed) keepInside(root, d.bytes == null ? path.dirname(d.file) : d.file);
     if (r.held && !r.takeover) signin(service, r);
-    return replies.actReply(cmd.sub, service, cmd, r);
+    return replies.actReply(cmd.sub, service, cmd, withNotes(handle, service, r));
   }
 
   async function runScroll(handle, service, cmd) {
     const r = await client.request('scroll', { dir: cmd.dir, pages: cmd.pages || 1 }, { service, seat: handle.name });
     noteUrl(service, r.url);
     if (r.held && !r.takeover) signin(service, r);
-    return replies.scrollReply(service, cmd, r);
+    return replies.scrollReply(service, cmd, withNotes(handle, service, r));
   }
 
   async function runNav(handle, service, cmd) {
     const r = await client.request('nav', { dir: cmd.sub }, { service, seat: handle.name });
     noteUrl(service, r.url);
     if (r.held && !r.takeover) signin(service, r);
-    return replies.navReply(service, cmd, r);
+    return replies.navReply(service, cmd, withNotes(handle, service, r));
   }
 
   async function runInspect(handle, service, cmd) {
@@ -467,6 +528,10 @@ function createScheduler({
       return;
     }
     const service = resolveService(handle, cmd);
+    if (cmd.sub === 'note') {
+      Promise.resolve().then(() => runNote(handle, service, cmd)).then((text) => handle.inject(text), (e) => handle.inject(errText(service, e)));
+      return;
+    }
     const s = svcState(service);
     if (!leaseFree(s, handle.name)) {
       handle.inject(replies.errorReply(replies.TEXT.lease(service, s.lease.seat, now() - s.lease.lastCmdAt)));

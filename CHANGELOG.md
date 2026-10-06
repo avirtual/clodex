@@ -55,6 +55,7 @@ blocks a release.
 - Browser pane: a readable slug in a URL (`?id=coverpage-as-homepage`) is no longer redacted as a secret; a page-sized container whose class contains "loading" no longer makes every read say `still loading`; an in-page navigation reply shows the new page title; a hash-route query (`#/reset?token=…`) is redacted like a real query, and a text-less, unanimated "loading" placeholder no longer counts as busy.
 - Browser pane: the ⚠ gate now covers broker and wallet controls (trade, sell, close position, copy a trader, deposit, add funds, withdraw) and like buttons whose only label is a count — a bare `close`/`copy` stays free; `open` with the URL inside the bracket says where the URL goes.
 - Browser pane: a radio or checkbox hidden behind its label (GOV.UK, Bootstrap custom controls) is listed as the choice with its state, and clicking the label replies `checked now`.
+- Browser pane: site notes — an agent leaves per-site hints with `[agent:browser note <service>] @<path|*> path|quirk|caution: <text>`; later visits by any seat see them once on open and on the first read of a page, labelled as unverified observations.
 
 ## 5.112.2 — 2026-10-04
 

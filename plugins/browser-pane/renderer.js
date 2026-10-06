@@ -99,7 +99,7 @@ function pickerHeading(list) {
 }
 
 function forgetText(name) {
-  return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page and its downloads are kept.`;
+  return `Forget the login for ${name}?\n\nIts cookies and site data are deleted, so the next visit starts signed out. The service, its last page, its downloads and its site notes are kept.`;
 }
 
 function el(tag, cls, text) {

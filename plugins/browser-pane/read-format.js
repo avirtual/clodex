@@ -1,6 +1,7 @@
 'use strict';
 
 const keys = require('./keys');
+const siteNotes = require('./site-notes');
 
 const TEXT_HEAD = 1200;
 const CHANGE_MAX = 600;
@@ -603,6 +604,7 @@ function formatRead(raw, opts) {
     ...loading,
     `doc: ${raw.doc == null ? '?' : raw.doc} · elements: ${fmt(elementsTotal)} (${range})${posts ? ` · posts: ${posts}` : ''} · mode: ${mode} · filter: ${filter}${raw.truncated ? ' · truncated' : ''}`,
     `login: ${loginLabel(raw.login)}`,
+    ...siteNotes.readLines(o.service, opts.notes),
     `frames: ${framesLabel(raw.frames)}`,
   ];
   const foot = o.page < total

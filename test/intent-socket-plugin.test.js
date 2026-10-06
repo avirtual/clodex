@@ -52,6 +52,7 @@ const BROWSER_TABLE = [
   ['screenshot ebloc', true],
   ['inspect ebloc 2', true],
   ['services', true],
+  ['note ebloc --list', true],
   ['release ebloc', false],
 ];
 
@@ -72,7 +73,7 @@ for (const [args, allowed] of BROWSER_TABLE) {
 test('subagent browser close is refused naming the verb; a word that is no verb keeps the generic label', () => withBrowserVerb(async () => {
   const { handle, seen } = browserHandler();
   const r = await handle({ intent: '[agent:browser close ebloc]', agentId: 'agent-7' }, ctl);
-  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser close (a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services)' });
+  assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'not available to a subagent: browser close (a subagent may open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note)' });
   const odd = await handle({ intent: '[agent:browser frobnicate ebloc]', agentId: 'agent-7' }, ctl);
   assert.deepStrictEqual(odd, { ok: false, status: 'refused', error: 'not available to a subagent: browser' });
   assert.deepStrictEqual(seen, []);
@@ -108,6 +109,21 @@ test('a subagent cannot --confirm a consequential action; the main agent can', (
   const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN }, ctl);
   assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(seen, ['click ebloc 26 --confirm']);
+}));
+
+test('a subagent may add and list site notes but not --forget one; the main agent can', () => withBrowserVerb(async () => {
+  const { handle, seen } = browserHandler();
+  assert.deepStrictEqual(registry.SUBAGENT_SUBS.browser.includes('note'), true);
+  const add = await handle({ intent: '[agent:browser note ebloc] @/facturi path: Facturi first', agentId: 'agent-7' }, ctl);
+  assert.deepStrictEqual(add, { ok: true, status: 'ok', reply: 'ok' });
+  for (const intent of ['[agent:browser note ebloc --forget ab3k]', '[agent:browser note ebloc --forget=ab3k]']) {
+    const r = await handle({ intent, agentId: 'agent-7' }, ctl);
+    assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'a subagent cannot forget a site note — ask the main agent' }, intent);
+  }
+  assert.deepStrictEqual(seen, ['note ebloc']);
+  const main = await handle({ intent: '[agent:browser note ebloc --forget ab3k]', ident: MAIN }, ctl);
+  assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
+  assert.deepStrictEqual(seen, ['note ebloc', 'note ebloc --forget ab3k']);
 }));
 
 test('a plugin that never replies: the deadline answers "accepted", and a late line falls through', async () => {

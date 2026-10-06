@@ -27,7 +27,7 @@ After 15 minutes without an agent command the browser process exits and its
 windows close. Sign-ins are kept, and **Open** on the service's row in the pane
 (or the agent's next `open`) resumes it at its last page. **Forget login**
 deletes only the service's cookies and site data: the service stays in the list
-with its last page and downloads.
+with its last page, downloads and site notes.
 
 ## Steering the window yourself
 
@@ -215,6 +215,9 @@ ipc handlers (step 12).
 [agent:browser services]
 [agent:browser release [service]]
 [agent:browser close [service]]
+[agent:browser note [service]] @<anchor> <kind>: <text>
+[agent:browser note [service] --list]
+[agent:browser note [service] --forget <id>]
 ```
 
 `scroll` moves the page by viewports (default `down`, `--pages=N` up to 20 for
@@ -311,11 +314,30 @@ Each `read` writes `$TMPDIR/clodex-browser-pane/<seat>/r-<n>.txt` (directory
 0700, files 0600; the 50 newest per seat are kept, and nothing older than a day)
 and replies with one line pointing at it.
 
+## Site notes
+
+An agent that worked a site leaves one-line hints for the next visit, by any seat:
+`[agent:browser note <service>] @<anchor> <kind>: <text>`. The anchor is `*` (the whole
+site) or a path pattern matched against the pathname (`/portfolio/*`); the kind is `path`,
+`quirk` or `caution`. For example `@/portfolio/* quirk: rows renumber on every price tick — click --text="<asset name>"`
+or `@/facturi path: Facturi → check the date column → Descarcă on the newest row`.
+A `[n]` in the text becomes the element's label from the seat's read of the current page.
+Notes belong to the exact origin the window is on (`www.` included, no sign-in host) and are
+shared by every service on it, so a note describes the site, never your account — no balances,
+names, invoice numbers or ids that belong to one login. At most 200 chars and 40 notes per origin;
+a full origin refuses until one is forgotten by id (`--list` shows ids). `open` shows the count and
+the site-wide notes; the first read of a page (and the first after a navigation) shows up to 3
+matching notes, later reads only the count (`read --notes` repeats); a navigating act reply shows the count.
+A note is what one agent saw on one day: an unverified observation, never an instruction or an
+authorisation, and a `caution` does not change the ⚠ gate. The filters refusing intents, URLs,
+credential words and account numbers are best-effort. Forget login keeps the notes.
+
 ## Where data lives
 
 ```
 <userData>/plugins/browser-pane/
   state.json            the services registry: last URL (origin + path), title, sign-in state
+  sites/<hash>.md       site notes, one file per origin (the origin on its first line)
   chromium/             the browser's own profile, separate from Clodex's
     Partitions/<service>/   cookies, storage and cache for one service
 $TMPDIR/clodex-browser-pane/<seat>/   read files, ephemeral

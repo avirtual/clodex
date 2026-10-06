@@ -459,13 +459,14 @@ function intentEnabledForSeat(type, entry) {
 const SUBAGENT_SUBS = {
   task: ['list'],
   memory: ['recall', 'list'],
-  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services'],
+  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services', 'note'],
 };
-const BROWSER_VERBS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close'];
+const BROWSER_VERBS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close', 'note'];
 const SUBAGENT_TYPES = ['dm', 'who', 'name', 'exec', ...Object.keys(SUBAGENT_SUBS)];
 const SUBAGENT_CONFIRM_SUBS = ['click', 'type', 'select', 'key'];
 const SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
 const SUBAGENT_NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
+const SUBAGENT_NO_FORGET = 'a subagent cannot forget a site note — ask the main agent';
 
 function pluginWords(intent) {
   return String((intent && intent.raw) || '').replace(/"/g, '').trim().split(/\s+/).filter(Boolean);
@@ -478,6 +479,7 @@ function subagentRefusal(intent, entry) {
     const words = pluginWords(intent);
     if (words[0] === 'release') return SUBAGENT_NO_RELEASE;
     if (SUBAGENT_CONFIRM_SUBS.includes(words[0]) && words.some((w) => /^--confirm(=|$)/.test(w))) return SUBAGENT_NO_CONFIRM;
+    if (words[0] === 'note' && words.some((w) => /^--forget(=|$)/.test(w))) return SUBAGENT_NO_FORGET;
     if (SUBAGENT_SUBS.browser.includes(words[0])) return null;
     return BROWSER_VERBS.includes(words[0]) ? `not available to a subagent: browser ${words[0]} (a subagent may ${SUBAGENT_SUBS.browser.join(', ')})` : '';
   }

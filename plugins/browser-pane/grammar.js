@@ -2,7 +2,7 @@
 
 const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const LINE_RE = /^\[agent:browser\s+([^\]]*)\](.*)$/s;
-const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close'];
+const SUBCOMMANDS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close', 'note'];
 const KEY_NAMES = ['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End', 'Space'];
 const SCROLL_DIRS = ['down', 'up', 'top', 'bottom'];
 const SCROLL_PAGES_MAX = 20;
@@ -15,7 +15,7 @@ const DEFAULT_MAX = 2500;
 
 const FLAGS = {
   open: { show: 'bool' },
-  read: { text: 'bool', links: 'bool', compact: 'bool', main: 'bool', all: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
+  read: { text: 'bool', links: 'bool', compact: 'bool', main: 'bool', all: 'bool', notes: 'bool', filter: 'value', page: 'value', max: 'value', attach: 'bool', 'path-only': 'bool' },
   click: { text: 'value', to: 'value', confirm: 'bool' },
   type: { enter: 'bool', confirm: 'bool' },
   key: { confirm: 'bool' },
@@ -30,6 +30,7 @@ const FLAGS = {
   services: {},
   release: {},
   close: {},
+  note: { list: 'bool', forget: 'value' },
 };
 
 function parseLine(line) {
@@ -223,6 +224,28 @@ function historyCommand(sub, positional, body) {
   return { sub, service: serviceArg(sub, positional, false) };
 }
 
+const NOTE_USAGE = 'note needs "@<anchor> <kind>: <text>" — anchor * or a path, kind path|quirk|caution';
+
+function noteCommand(toks, body) {
+  const args = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i] === '--forget' && i + 1 < toks.length && !toks[i + 1].startsWith('--')) { args.push(`--forget=${toks[i + 1]}`); i++; continue; }
+    args.push(toks[i]);
+  }
+  const { flags, positional } = splitArgs('note', args);
+  const service = serviceArg('note', positional, false);
+  if (flags.list && flags.forget != null) throw new Error('--list and --forget cannot be combined');
+  if (flags.list || flags.forget != null) {
+    if (body) throw new Error(`note --${flags.list ? 'list' : 'forget'} takes no text after the bracket`);
+    if (flags.list) return { sub: 'note', service, list: true };
+    const id = flags.forget.toLowerCase();
+    if (!/^[a-z2-7]{4}$/.test(id)) throw new Error(`--forget needs a note id from note --list, e.g. --forget ab3k`);
+    return { sub: 'note', service, forget: id };
+  }
+  if (!body) throw new Error(NOTE_USAGE);
+  return { sub: 'note', service, text: body };
+}
+
 function toCommand(intent) {
   const qt = tokenizeQ(String((intent && intent.raw) || ''));
   const sub = qt.length ? qt[0].t : undefined;
@@ -230,6 +253,7 @@ function toCommand(intent) {
   if (!SUBCOMMANDS.includes(sub)) {
     throw new Error(`unknown subcommand '${sub}' — use ${SUBCOMMANDS.join(', ')}`);
   }
+  if (sub === 'note') return noteCommand(toks, String((intent && intent.body) || '').trim());
   const { flags, positional } = splitArgs(sub, toks);
   if (sub === 'open') {
     const service = serviceArg(sub, positional, true);
@@ -252,6 +276,7 @@ function toCommand(intent) {
       filter: flags.filter == null ? null : flags.filter,
       page: flags.page == null ? 1 : intArg('page', flags.page, 1),
       max,
+      ...(flags.notes ? { notes: true } : {}),
       ...attachArg(flags),
     };
   }

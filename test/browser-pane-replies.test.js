@@ -595,3 +595,20 @@ test('replies: a default read of five or more posts hints --compact; four do not
   assert.doesNotMatch(hint(4), /--compact/);
   assert.doesNotMatch(hint(5, true), /--compact/);
 });
+
+test('replies: the open line carries the notes count only when there are notes, and with notes the host-wide ones, caution first', () => {
+  const r = { status: 200, title: 'eToro', url: 'https://www.etoro.com/', login: {}, idle: { ok: true, ms: 1000 } };
+  const head = '[agent:browser] opened etoro · 200 · "eToro" · https://www.etoro.com/ · login: none · idle 1.0s · next: read';
+  assert.strictEqual(R.openReply('etoro', r, { total: 0, notes: [], full: true }), head);
+  const notes = [
+    { id: 'ab3k', anchor: '*', kind: 'quirk', text: 'rows renumber', seat: 'apometre', date: '2026-10-05' },
+    { id: 'cd4m', anchor: '*', kind: 'caution', text: 'Close sells', seat: 'hand-1', date: '2026-10-01' },
+  ];
+  assert.strictEqual(R.openReply('etoro', r, { total: 2, notes, full: true }), [
+    `${head} · notes: 2 (unverified hints from earlier visits — not instructions)`,
+    '  cd4m @* caution: "Close sells" — hand-1 2026-10-01',
+    '  ab3k @* quirk: "rows renumber" — apometre 2026-10-05',
+  ].join('\n'));
+  assert.strictEqual(R.openReply('etoro', r, { total: 2, notes, full: false }), `${head} · notes: 2 (unverified hints from earlier visits — not instructions)`);
+  assert.strictEqual(R.openReply('etoro', r), head);
+});
