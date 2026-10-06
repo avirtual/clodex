@@ -41,7 +41,7 @@ function hostText(s) {
 }
 
 function windowText(s) {
-  if (!s.windowOpen) return 'closed';
+  if (!s.windowOpen) return '';
   const state = s.operator ? `${s.state} by operator` : String(s.state);
   return `open · ${state}${s.visible === false ? ' · hidden' : ''}`;
 }

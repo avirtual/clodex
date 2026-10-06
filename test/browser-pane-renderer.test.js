@@ -159,6 +159,8 @@ test('hostText: the last URL\'s hostname without www., empty when absent or unpa
   assert.strictEqual(bp.hostText({ lastUrl: 'https://www.e-bloc.ro/index.php?page=1' }), 'e-bloc.ro');
   assert.strictEqual(bp.hostText({ lastUrl: '' }), '');
   assert.strictEqual(bp.hostText({ lastUrl: 'not a url' }), '');
+  assert.strictEqual(bp.windowText({ windowOpen: false }), '');
+  assert.strictEqual(bp.windowText({ windowOpen: true, state: 'running' }), 'open · running');
 });
 
 test('a service row shows its host, and the name and host carry the full last URL as a tooltip', async () => {
@@ -591,11 +593,11 @@ test('Settings: services are a grid table with a header; each row is one line of
     assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-host', 'g.example'], ['bp-login', 'signed in · Oct 5 23:27'],
       ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-host', 'u.example'], ['bp-login', 'login unknown'],
-      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
+      ['bp-window', ''], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
-    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(0, 1fr) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
+    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(12ch, auto) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
     assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));
-    assert.ok(css.includes('.bp-services > .bp-row > .bp-login {\n  min-width: 11ch;\n}'));
+    assert.ok(!css.includes('.bp-login {\n  min-width'));
     assert.ok(css.includes('.bp-services > .bp-th,\n.bp-services > .bp-row > * {\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}'));
     assert.ok(css.includes('.bp-services > .bp-row > .bp-hand {\n  grid-column: 1 / -1;'));
     assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-section').map((n) => n.textContent), ['Windows', 'Reads', 'Denylist']);
