@@ -215,7 +215,7 @@ function createScheduler({
     if (!r || !r.navigated) return r;
     delete seatState(handle.name).notesShown[service];
     const n = notesFor(r.url);
-    return n ? { ...r, notes: siteNotes.matching(n.notes, siteNotes.pathOf(r.url)).length } : r;
+    return n ? { ...r, notes: siteNotes.matching(n.notes, siteNotes.pathOf(r.url), siteNotes.searchOf(r.url)).length } : r;
   }
 
   async function runOpen(handle, service, cmd) {
@@ -243,7 +243,7 @@ function createScheduler({
     const shown = st.notesShown[service];
     const full = !!cmd.notes || !shown || shown.page !== page || shown.rev !== n.rev;
     st.notesShown[service] = { page, rev: n.rev };
-    return { matched: siteNotes.matching(n.notes, siteNotes.pathOf(raw.url)), total: n.notes.length, full };
+    return { matched: siteNotes.matching(n.notes, siteNotes.pathOf(raw.url), siteNotes.searchOf(raw.url)), total: n.notes.length, full };
   }
 
   async function runNote(handle, service, cmd) {

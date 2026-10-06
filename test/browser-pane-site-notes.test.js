@@ -56,6 +56,18 @@ test('anchor match: * is host-wide, a trailing * covers deeper paths, a plain an
   assert.strictEqual(N.anchorMatches('/facturi', '/facturi/2026'), false);
 });
 
+test('anchorMatches: a query anchor needs every listed key equal, extra page params ignored', () => {
+  assert.strictEqual(N.anchorMatches('/index.php?page=11', '/index.php', '?page=11&x=1'), true);
+  assert.strictEqual(N.anchorMatches('/index.php?page=11', '/index.php', '?page=12'), false);
+  assert.strictEqual(N.anchorMatches('/index.php?page=11', '/index.php', ''), false);
+  assert.strictEqual(N.anchorMatches('/index.php?page=11', '/other.php', '?page=11'), false);
+  assert.deepStrictEqual(N.matching([{ id: 'aaaa', anchor: '/index.php?page=11', kind: 'path', date: '2026-01-01' }], N.pathOf('https://e.ro/index.php?page=11&x=1'), N.searchOf('https://e.ro/index.php?page=11&x=1')).map((n) => n.id), ['aaaa']);
+  assert.deepStrictEqual(N.prepare('@/index.php?page=11 path: Avizier is the second tab'), { anchor: '/index.php?page=11', kind: 'path', text: 'Avizier is the second tab' });
+  assert.throws(() => N.prepare('@/a?b path: x'), { message: N.TEXT.usage });
+  const note = { id: 'abcd', anchor: '/index.php?page=11', kind: 'quirk', text: 'slow', seat: 's', date: '2026-10-06' };
+  assert.deepStrictEqual(N.parseLine(N.formatLine(note)), note);
+});
+
 test('prepare: the prefix grammar, the 200-char limit and the best-effort filters', () => {
   assert.deepStrictEqual(N.prepare('@/facturi path: Facturi → Descarcă on the newest row'), { anchor: '/facturi', kind: 'path', text: 'Facturi → Descarcă on the newest row' });
   for (const bad of ['no prefix', '@* rule: Trade moves money', '@facturi path: x', '@* path:', '@https://x.com/a path: x']) {
@@ -137,4 +149,13 @@ test('sortNotes: caution first, then newest first', () => {
   const mk = (id, kind, date) => ({ id, anchor: '*', kind, text: id, seat: 's', date });
   const sorted = N.sortNotes([mk('aaaa', 'quirk', '2026-01-01'), mk('bbbb', 'path', '2026-05-01'), mk('cccc', 'caution', '2025-01-01'), mk('dddd', 'quirk', '2026-05-01')]);
   assert.deepStrictEqual(sorted.map((n) => n.id), ['cccc', 'dddd', 'bbbb', 'aaaa']);
+});
+
+test('readLines: a page-anchored note surfaces before three origin-wide cautions', () => {
+  const mk = (id, anchor, kind, date) => ({ id, anchor, kind, text: id, seat: 's', date });
+  const notes = [mk('aaaa', '*', 'caution', '2026-05-01'), mk('bbbb', '*', 'caution', '2026-05-02'), mk('cccc', '*', 'caution', '2026-05-03'), mk('dddd', '/portfolio/*', 'quirk', '2026-01-01')];
+  const matched = N.matching(notes, '/portfolio/btc');
+  const lines = N.readLines('svc', { matched, total: notes.length, full: true });
+  assert.ok(lines.slice(1, 4).some((l) => l.includes('dddd')), lines.join('\n'));
+  assert.deepStrictEqual(N.sortNotes(notes).map((n) => n.id), ['cccc', 'bbbb', 'aaaa', 'dddd']);
 });

@@ -1614,6 +1614,12 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
 });
 
+test('page scripts: a sort button\'s third state is not deletion, a plain Remove still is', () => {
+  assert.strictEqual(scripts.consequentialHit({ label: 'Age: Activate to remove sorting' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Age', aria: 'Age: Activate to remove sorting' }), null);
+  assert.strictEqual(scripts.consequentialOf({ label: 'Remove' }), 'deletion');
+});
+
 test('page scripts: clickPoint lands a tall role=link card on its time link, a short one or a plain element at its centre', () => {
   const rect = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
   const node = (tag, attrs, r, kids = []) => {

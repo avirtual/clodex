@@ -61,6 +61,7 @@ const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
+const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
 const HMS_RE = '/\\b\\d{1,2}:\\d{2}:\\d{2}\\b/g';
 
 function termRe(t, lead) {
@@ -87,7 +88,8 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
   const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
-  const hay = [text(d.label), text(d.value), text(d.aria)].filter(Boolean);
+  const bare = (x) => text(x).replace(CQ_STATE_SUFFIX, '');
+  const hay = [bare(d.label), text(d.value), bare(d.aria)].filter(Boolean);
   const hayAll = [...hay, fold(d.formaction)].filter(Boolean);
   const idClass = fold(d.idClass);
   let lead = null;
@@ -114,6 +116,7 @@ const CQ = `
   const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  const CQ_STATE_SUFFIX = new RegExp(${JSON.stringify(keys.STATE_SUFFIX.source)}, 'i');
   const LEAD_CATS = ${JSON.stringify(LEAD_CATS)};
   ${termRe.toString()}
   ${cqCompile.toString()}
