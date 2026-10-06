@@ -447,6 +447,10 @@ test('list_changed is announced on a rev change, only after initialize', async (
     fs.writeFileSync(seat.catalogPath, catalog('r3'));
     s.pollCatalog();
     assert.strictEqual(s.output.buf, NOTE + NOTE + NOTE);
+    const fresh = server(seat);
+    await fresh.handle({ jsonrpc: '2.0', id: 1, method: 'initialize' });
+    fresh.pollCatalog();
+    assert.strictEqual(fresh.output.buf, '');
   } finally { await seat.close(); }
 });
 
@@ -482,12 +486,16 @@ test('spawned: a catalog rev change reaches stdout as list_changed within the re
     env: { ...process.env, CLODEX_INTENT_SOCK: seat.sockPath, CLODEX_INTENT_CRED: CRED },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+  const exited = new Promise((r) => child.on('exit', r));
   try {
     let out = '';
     const waiters = [];
     const lines = () => out.split('\n').filter(Boolean).map((l) => JSON.parse(l));
-    child.stdout.on('data', (d) => { out += d; for (const w of waiters.splice(0)) w(); });
-    const until = async (pred) => { while (!pred(lines())) await new Promise((r) => waiters.push(r)); };
+    let closed = false;
+    const wake = () => { for (const w of waiters.splice(0)) w(); };
+    child.stdout.on('data', (d) => { out += d; wake(); });
+    child.stdout.on('close', () => { closed = true; wake(); });
+    const until = async (pred) => { while (!pred(lines()) && !closed) await new Promise((r) => waiters.push(r)); assert.ok(pred(lines()), out); };
     child.stdin.write('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}\n');
     child.stdin.write('{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n');
     child.stdin.write(JSON.stringify(call(3, { verb: 'read', service: 'svc' })) + '\n');
@@ -497,14 +505,14 @@ test('spawned: a catalog rev change reaches stdout as list_changed within the re
     assert.deepStrictEqual(init.result.capabilities, { tools: { listChanged: true } });
     assert.deepStrictEqual(JSON.parse(JSON.stringify(listed.result.tools)), [LISTED]);
     assert.deepStrictEqual(seat.got, [{ cred: CRED, tool: 'browser', args: { verb: 'read', service: 'svc' } }]);
-    const at = Date.now();
     fs.writeFileSync(seat.catalogPath, catalog('r2', []));
-    await until((ls) => ls.some((m) => m.method === 'notifications/tools/list_changed'));
-    assert.ok(Date.now() - at <= 4000, `${Date.now() - at}ms`);
+    const bound = setTimeout(() => child.kill(), 4000);
+    try {
+      await until((ls) => ls.some((m) => m.method === 'notifications/tools/list_changed'));
+    } finally { clearTimeout(bound); }
     const note = lines().find((m) => m.method === 'notifications/tools/list_changed');
     assert.deepStrictEqual(note, { jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
   } finally {
-    const exited = new Promise((r) => child.on('exit', r));
     child.stdin.end();
     await exited;
     await seat.close();
