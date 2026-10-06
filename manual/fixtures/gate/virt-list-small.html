@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>virt-list-small</title>
+<style>body{margin:0;font:14px sans-serif;height:100vh;overflow:hidden} .pad{height:calc(100vh - 200px);background:#f4f4f4} header{padding:8px;border-bottom:1px solid #ccc} #vp{height:130px;width:640px;overflow-y:auto;position:relative} #sp{position:relative} .row{position:absolute;left:0;right:0;height:28px;line-height:28px;padding:0 8px;border-bottom:1px solid #eee;white-space:nowrap}</style></head><body>
+<header><h1 style="margin:0;font-size:18px">Logs (1,000)</h1><button type="button">Sorted by newest logs first</button></header>
+<div class="pad">Log volume chart</div><div id="vp" role="log" aria-label="Log lines"><div id="sp"></div></div>
+<script>
+// 1000 rows, newest first; only rows in view (+4) are in the DOM, like react-window
+var N=1000,H=28,t0=Date.UTC(2026,9,6,7,21,10),vp=document.getElementById('vp'),sp=document.getElementById('sp');
+sp.style.height=(N*H)+'px';
+function ts(i){return new Date(t0-i*1700).toISOString().replace('T',' ').replace('Z','');}
+function msg(i){return (i%37===5||i%53===11)?'POST /api/checkout status=200 order='+(9000-i):'GET /api/products/'+(i%90)+' status=200';}
+function draw(){var a=Math.max(0,Math.floor(vp.scrollTop/H)-2),b=Math.min(N,Math.ceil((vp.scrollTop+vp.clientHeight)/H)+2),h='';
+for(var i=a;i<b;i++)h+='<div class="row" style="top:'+(i*H)+'px"><time>'+ts(i)+'</time> INFO '+msg(i)+'</div>';sp.innerHTML=h;}
+vp.addEventListener('scroll',draw);draw();
+</script></body></html>

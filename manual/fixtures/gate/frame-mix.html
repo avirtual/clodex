@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>frame-mix</title></head><body>
+<h1>Message: PR #1284 review</h1>
+<p>From: alice@example.com · To: me</p>
+<h2>A. srcdoc body with a link and a button</h2>
+<iframe id="fa" sandbox="allow-same-origin" srcdoc="<p>Alice requested your review on PR 1284.</p><p><a href='https://example.com/pr/1284'>View pull request</a> · <a href='https://example.com/unsub'>Unsubscribe</a></p><button type='button'>Approve</button>"></iframe>
+<h2>B. same-origin src frame</h2>
+<iframe id="fb" src="frame-child.html?v=55"></iframe>
+<h2>C. cross-origin frame</h2>
+<iframe id="fc" src="https://example.com/"></iframe>
+<h2>D. blank frame</h2>
+<iframe id="fd" srcdoc="<p>   </p>"></iframe>
+<h2>E. nested srcdoc (frame in a frame)</h2>
+<iframe id="fe" srcdoc="<p>Outer frame text: shipment 7731 dispatched.</p><iframe srcdoc='<p>Inner frame text: tracking code ZX-55.</p>'></iframe>"></iframe>
+<h2>F. hidden srcdoc frame</h2>
+<iframe id="ff" style="display:none" srcdoc="<p>Hidden frame text: should not be read.</p>"></iframe>
+<p>End of message.</p>
+</body></html>

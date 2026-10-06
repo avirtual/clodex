@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>busy-ticker</title></head><body>
+<header><a href="/">Portfolio app</a> <span id="clock" aria-live="off">market time 00:00:00.0</span></header>
+<main><h1>Holdings</h1>
+<button type="button" id="b" onclick="document.getElementById('out').textContent='Opened the holding detail.'">Show detail</button>
+<p id="out">Detail closed.</p></main>
+<script>
+// a header clock repainted every 250 ms: no requests in flight, but the DOM never stays quiet for 500 ms
+var c=document.getElementById('clock');setInterval(function(){c.textContent='market time '+new Date().toISOString().slice(11,21);},250);
+</script></body></html>

@@ -73,12 +73,12 @@ async function armIdle(wc, { network = true, now = Date.now } = {}) {
         }
         if (!wc.isLoading() && active().length === 0) {
           const q = await withTimeout(wc.executeJavaScript(`new Promise(res => {
-            let last = performance.now(); const mo = new MutationObserver(() => last = performance.now());
+            let last = performance.now(); const hits = new Map(); const mo = new MutationObserver(ms => { last = performance.now(); for (const m of ms) { const k = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (k) hits.set(k, (hits.get(k) || 0) + 1); } });
             mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-            const tick = () => { if (performance.now() - last >= ${quietMs}) { mo.disconnect(); res(document.readyState); } else setTimeout(tick, 100); };
-            setTimeout(tick, 100); })`).catch(() => null), quietMs + 3000);
-          if (q === 'complete' && !wc.isLoading() && active().length === 0 && now() - lastNet >= quietMs) {
-            return { ok: true, ms: now() - t0, fired };
+            const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 3 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.keys()][0]; res({ state: document.readyState, ticker: k.tagName.toLowerCase() + (k.id ? '#' + k.id : '') + (k.classList && k.classList[0] ? '.' + k.classList[0] : '') }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })`).catch(() => null), quietMs + 3000);
+          const state = q && typeof q === 'object' ? q.state : q; const ticker = q && typeof q === 'object' && q.ticker ? String(q.ticker).replace(/[^\w#.:-]/g, '').slice(0, 60) : '';
+          if (state === 'complete' && !wc.isLoading() && active().length === 0 && now() - lastNet >= quietMs) {
+            return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}) };
           }
         }
         await sleep(100);

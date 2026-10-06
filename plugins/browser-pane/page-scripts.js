@@ -46,7 +46,7 @@ const MAIN_ROOT = `
 const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abmelden', 'deconnexion', 'cerrar sesion', 'uitloggen', 'esci', 'sair'];
 const CONSEQUENTIAL = [
   ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
-  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], [], [], {}, '\\border (status|history|number|tracking|details|istoric)\\b'],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], [], [], {}, '\\border (status|history|number|tracking|details|istoric)\\b|\\b(sort|display|view) order\\b|\\border (by|of)\\b'],
   ['booking', ['reserve', "i'll reserve", 'book now', 'complete booking', 'confirm booking', 'rezerva', 'rezerva acum', 'finalizeaza rezervarea'], []],
   ['deletion', ['delete', 'sterge', 'remove', 'elimina'], [], [], {}, '\\b(filtr|filter|selection|selectie|search|cautare|sort)'],
   ['sign-out', SIGN_OUT, []],
@@ -316,7 +316,7 @@ const WALL = `
     const scripted = t => { for (let e = t.parentElement; e; e = e.parentElement) if (SKIP.has(e.tagName)) return true; return false; };
     const textsOf = (n, out) => { for (const c of n.childNodes) { if (c.nodeType === 3) out.push(c); else if (c.nodeType === 1 && !SKIP.has(c.tagName)) { textsOf(c, out); if (c.shadowRoot) textsOf(c.shadowRoot, out); } } return out; };
     const inside = (r, t) => { for (let n = t; n; n = n.parentNode || n.host) if (n === r) return true; return false; };
-    const sentence = (s, re) => clip(norm(s).split(/(?<=[.!?])\\s+/).find(x => re.test(x)) || s);
+    const sentence = (s, re) => { const segs = norm(s).split(/(?<=[.!?])\\s+|\\s*\\|\\s*/).map(x => x.trim()).filter(Boolean); const hits = segs.filter(x => re.test(x)); return clip(hits.length ? hits.sort((a, b) => b.split(' ').length - a.split(' ').length)[0] : s.replace(/^\\s*\\|\\s*|\\s*\\|\\s*$/g, '')); };
     const blockOf = t => (t.parentElement && t.parentElement.closest(${JSON.stringify(WALL_BLOCK)})) || null;
     const blockTexts = new Map();
     const blockText = b => {
@@ -325,13 +325,21 @@ const WALL = `
       return blockTexts.get(b);
     };
     const authored = b => {
-      const tc = norm(b.textContent);
-      let j = 0;
-      return [...norm(b.innerText).trim()].map(ch => {
-        if (/\\s/.test(ch)) return ch;
-        while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
-        return j < tc.length ? tc[j++] : ch;
-      }).join('');
+      const it = norm(b.innerText).trim();
+      const zip = tc => {
+        let j = 0;
+        let over = false;
+        const out = [...it].map(ch => {
+          if (/\\s/.test(ch)) return ch;
+          while (j < tc.length && tc[j].toLowerCase() !== ch.toLowerCase()) j++;
+          if (j >= tc.length) { over = true; return ch; }
+          return tc[j++];
+        }).join('');
+        return over ? null : out;
+      };
+      const tc = norm(textsOf(b, []).filter(t => t.parentElement && vis(t.parentElement) && !scripted(t) && (r => r.width > 2 && r.height > 2)(t.parentElement.getBoundingClientRect())).map(t => t.data).join(' '));
+      const tc2 = norm(textsOf(b, []).filter(t => !scripted(t)).map(t => t.data).join(' '));
+      return zip(tc) || zip(tc2) || it;
     };
     const quote = (s, el, re) => {
       if (norm(s).trim().length >= 20) return sentence(s, re);
@@ -349,6 +357,9 @@ const WALL = `
       return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));
     };
     const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };
+    const GATE_LINK = /\\b(subscribe|sign (in|up)|log in|create (a free )?account|already a subscriber|abonează-te|pentru a citi)\\b/i;
+    const truncates = (b) => { const r = (document.querySelector(${JSON.stringify(READ_ROOT_SEL)}) || document.body); let i = -1; for (const x of textsOf(b, [])) { const k = all.indexOf(x); if (k > i) i = k; } const after = all.slice(i + 1).filter(t => inside(r, t) && !floating(t) && !chrome(t)); let n = 0; for (const t of after) { n += norm(t.data).trim().length; if (n >= 80) return false; } return true; };
+    const moreLink = (t) => { const a = t.parentElement && t.parentElement.closest('a'); return !!a && (a.matches('.more-link,[rel=bookmark]') || /\\bmore-link\\b/.test(a.className)); };
     let all = [];
     let endIdx = -1;
     const hitOf = (t, re) => {
@@ -360,7 +371,7 @@ const WALL = `
       }
       const bt = blockText(b);
       if (!bt) return null;
-      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };
+      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b) && GATE_LINK.test(own) && !moreLink(t) && truncates(b)) return { text: quote(t.data, t.parentElement, re), b };
       return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
     };
     const pick = (re) => {
@@ -453,6 +464,9 @@ function readText(main) {
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
   let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
+  const DIALOG_SEL = '[role=dialog][aria-modal=true], dialog[open], [aria-modal=true]';
+  const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL)].filter(vis).map(e => ({ e, a: (r => r.width * r.height)(e.getBoundingClientRect()) })).filter(x => x.a >= innerWidth * innerHeight / 4).sort((a, b) => b.a - a.a)[0];
+  if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
   if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {
     let best = document.body, bs = -1;
@@ -465,7 +479,7 @@ function readText(main) {
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   const wall = wallScan(root);
-  if (!root) return { text: '', busy, outline, wall, inlined: [] };
+  if (!root) return { text: '', busy, outline, wall, inlined: [], nested: [], hidden: [] };
   const STRUCK = /^(S|DEL|STRIKE)$/;
   const struck = new Set();
   [...root.querySelectorAll('*')].forEach((e, i) => {
@@ -490,11 +504,13 @@ function readText(main) {
     const o = ageOrigs[i];
     if (!o || !o.matches(AGE_SEL) || o.querySelector(AGE_SEL) || !AGE_RE.test(o.textContent || '')) return;
     const v = String(o.getAttribute('datetime') || o.getAttribute('title') || o.getAttribute('data-time') || '').trim();
-    const tok = v.split(/\\s+/); const d = /^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000) : isNaN(new Date(v)) ? new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0]) : new Date(v);
+    const tok = v.split(/\\s+/); const bare = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?$/.test(tok[0]); const d = /^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000) : bare ? new Date(tok[0] + 'Z') : new Date(v);
     if (!isNaN(d)) twin.append(' (' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ')');
   });
   const inlined = [];
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
+  const nested = [];
+  const hidden = [];
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -513,8 +529,8 @@ function readText(main) {
   bulletItems(clone, ${JSON.stringify(CHROME_MARK)});
   ${TABLES}
   const txt = clone.innerText; host.remove(); cv.remove();
-  const text = (document.title + '\\n\\n' + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
-  return { text, busy, outline, wall, inlined };
+  const text = (document.title + '\\n\\n' + (modal ? '[dialog]\\n' : '') + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
+  return { text, busy, outline, wall, inlined, nested, hidden };
 })()`;
 }
 

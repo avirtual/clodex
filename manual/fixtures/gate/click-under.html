@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>click-under</title>
+<style>body{font:14px sans-serif} .row{position:relative;width:420px;height:60px;border:1px solid #ccc;margin:8px;padding:6px;cursor:pointer} .tools{display:none;position:absolute;inset:0;background:rgba(255,255,255,.01)} #tools{display:none;position:absolute;background:rgba(255,255,255,.01)} #tools.on{display:block}</style></head><body>
+<h1>Search results (2)</h1>
+<div class="row" id="r1" data-id="m1"><b>Alice Johnson</b> — Re: Q4 Project Timeline</div>
+<div class="row" id="r2" data-id="m2"><b>Bob Chen</b> — Sprint planning</div>
+<div id="tools" aria-label="Row actions"></div>
+<p id="out">Reading pane: empty</p>
+<script>
+// row 1: on hover a transparent actions layer (a body-level sibling, not a child) covers the whole row and swallows the click (search-mode webmail shape)
+document.querySelectorAll('.row').forEach(function(r){
+  r.addEventListener('mouseenter',function(){ if(r.id!=='r1') return; var b=r.getBoundingClientRect(),t=document.getElementById('tools'); t.style.left=(b.left+scrollX)+'px'; t.style.top=(b.top+scrollY)+'px'; t.style.width=b.width+'px'; t.style.height=b.height+'px'; t.className='on'; });
+  r.addEventListener('click',function(e){ document.getElementById('out').textContent='Reading pane: '+r.querySelector('b').textContent; });
+});
+</script></body></html>
