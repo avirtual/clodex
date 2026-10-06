@@ -63,6 +63,31 @@ test('driver armIdle: a page whose only mutations are a repainting ticker goes i
   assert.strictEqual(r2.ok, true);
   assert.ok(!('ticker' in r2));
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
-  assert.ok(src.includes('hits.size <= 3 && [...hits.values()].every(n => n >= 3)'));
+  assert.ok(src.includes('hits.size <= 8 && [...hits.values()].every(n => n >= 3)'));
   assert.ok(src.includes('${quietMs} * 4'));
+  assert.ok(src.includes("const k = [...hits.entries()].sort((a, b) => b[1] - a[1])[0][0];"));
+});
+
+test('driver armIdle: a page that never stops churning times out naming its top churn nodes, sanitized', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  wc.executeJavaScript = async () => { t += 1000; return { state: 'interactive', churn: ['div#app', 'span.price', 'x y z!'] }; };
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => {} });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.reason, 'timeout');
+  assert.deepStrictEqual(r.churn, ['div#app', 'span.price', 'xyz']);
+  const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
+  assert.ok(src.includes('quietMs * 4 + 3000'));
+  assert.ok(src.includes('if (performance.now() - t0 >= ${quietMs} * 4 + 2000) { mo.disconnect(); res({ state: document.readyState, churn: [...hits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => label(k)) }); return; }'));
+});
+
+test('driver armIdle: a complete page reporting churn is not idle', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  wc.executeJavaScript = async () => { t += 1000; return { state: 'complete', churn: ['div#app'] }; };
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => {} });
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.churn, ['div#app']);
 });

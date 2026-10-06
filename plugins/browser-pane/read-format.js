@@ -415,7 +415,7 @@ function savedLabel(iso) {
 function framesLabel(frames) {
   const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
   if (!list.length) return 'none';
-  return `${list.length} not read (${frameLabel(list[0])}${list.length > 1 ? ', …' : ''})`;
+  return `${list.length} not read (${list.slice(0, 3).map(frameLabel).join(', ')}${list.length > 3 ? ', …' : ''})`;
 }
 
 function changedRegion(before, after, max = CHANGE_MAX, norm = (l) => l) {

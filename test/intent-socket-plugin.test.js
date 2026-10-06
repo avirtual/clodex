@@ -146,7 +146,7 @@ test('a plugin that never replies: the deadline answers "accepted", and a late l
   assert.strictEqual(late('later'), false, 'the late line goes to the seat');
 });
 
-function seatHarness() {
+function seatHarness({ handler = null } = {}) {
   const root = mkTmpRoot('isock-sm-');
   const injected = [];
   const handled = [];
@@ -183,7 +183,7 @@ function seatHarness() {
   registry.registerIntent({
     verb: 'browser',
     parse: grammar.parseLine,
-    handler: (handle, intent) => { handled.push({ handle, raw: intent.raw }); if (arrived) arrived(); },
+    handler: (handle, intent) => { handled.push({ handle, raw: intent.raw }); if (arrived) arrived(); if (handler) handler(handle, intent); },
     classifyReply: replies.classifyReply,
   }, 'browser-pane', { shipped: true });
   const nextHandled = (n) => new Promise((resolve) => {
@@ -197,8 +197,8 @@ async function turns(n) {
   for (let i = 0; i < n; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-async function withSeat(fn) {
-  const h = seatHarness();
+async function withSeat(fn, opts) {
+  const h = seatHarness(opts);
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
   const cred = mintIntentCredential(crypto);
   await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
@@ -335,4 +335,26 @@ test('end to end: a caller that hangs up before the plugin replies: the reply la
     assert.strictEqual(h.a.intentSocket.activeCount(), 0);
     assert.strictEqual(h.injected.length, 1, 'the expired wait adds nothing to the PTY');
   });
+});
+
+test('a plugin handler that throws answers the socket caller with an error status, and the CLI exits 1', async () => {
+  await withSeat(async (h, cred) => {
+    const sock = require('node:net').createConnection(pathFor(h.root, 'a', 'intentSocket'));
+    await new Promise((resolve) => sock.on('connect', resolve));
+    let buf = '';
+    const res = new Promise((resolve) => sock.on('data', (d) => { buf += d; if (buf.includes('\n')) resolve(JSON.parse(buf)); }));
+    sock.write(JSON.stringify({ cred, intent: '[agent:browser read one]', ident: mainStamp(cred).CLODEX_HOOK_IDENT }) + '\n');
+    assert.deepStrictEqual(await res, { ok: true, status: 'error', reply: '[agent:browser] error: boom' });
+    sock.destroy();
+  }, { handler: () => { throw new Error('boom'); } });
+});
+
+test('a grammar hint thrown by the browser handler exits 1, the service-after-flag hint included', async () => {
+  await withSeat(async (h, cred) => {
+    for (const raw of ['[agent:browser read --filter=pdf t56]', '[agent:browser wait t56 --for=Interactive Brokers]']) {
+      const r = await viaVerb(h, cred, [raw], mainStamp(cred));
+      assert.strictEqual(r.code, verb.EXIT.ERROR, raw);
+      assert.match(r.out, /^\[agent:browser\] error: unexpected /, raw);
+    }
+  }, { handler: (handle, intent) => grammar.toCommand(intent) });
 });

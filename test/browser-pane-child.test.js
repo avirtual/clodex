@@ -595,7 +595,7 @@ test('page scripts: wallScan skips script text, quotes the gate sentence and nev
   assert.ok(src.includes('(vis(e) || boxVis(e))'));
   assert.ok(src.includes('for (const t of textsOf(box, [])) if (WALL.test(norm(t.data)) && t.parentElement && vis(t.parentElement)) return { text: quote(t.data, t.parentElement, WALL), n: null };'));
   assert.ok(src.includes('return { text: clip(box.innerText), n: null };'));
-  assert.ok(src.includes('if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };'));
+  assert.ok(src.includes('if (!wholeLabel(t) && !moreLink(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };'));
   assert.ok(src.includes('const TOKEN = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;'));
   assert.ok(src.includes('[...e.classList].some(c => TOKEN.test(c))'));
   assert.ok(src.includes('e !== document.body && e !== document.documentElement'));
@@ -610,7 +610,7 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(scripts.WALL_WEAK_RE.test('Member-only story'));
   assert.ok(src.includes("const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };"));
   assert.ok(src.includes("const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };"));
-  assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };"));
+  assert.ok(src.includes("const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); if (!a) return false; const icon = s => s.trim().length <= 2 && !/[\\p{L}\\p{N}]/u.test(s); return norm([...a.childNodes].map(n => n.nodeType === 3 ? n.data : (n.innerText || '')).filter(s => !icon(s)).join(' ')).trim() === norm(t.data).trim(); };"));
   assert.ok(src.includes("const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };"));
   assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
   assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
@@ -966,15 +966,87 @@ test('page scripts: READ_TEXT reads an epoch token in an age title first and a z
 
 test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of the viewport as the root, under a [dialog] line', () => {
   const src = scripts.READ_TEXT(false);
-  assert.ok(src.includes("const DIALOG_SEL = '[role=dialog][aria-modal=true], dialog[open], [aria-modal=true]';"));
-  assert.ok(/const modal = forced \? null : .*innerWidth \* innerHeight \/ 4.*\n  if \(modal\) root = modal\.e;/.test(src));
-  assert.ok(src.includes("(modal ? '[dialog]\\n' : '')"));
+  assert.ok(src.includes("const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';"));
+  assert.ok(/const modal = forced \? null : .*a: paintedArea\(e\).*\n  if \(modal\) root = modal\.e;/.test(src));
+  assert.ok(src.includes('x.by !== \'aria\' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4'));
+  assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
+  assert.ok(src.includes('const modalBy = (e) =>'));
+  assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
+  assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
   assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
+  assert.ok(src.indexOf('const dialogRead') > src.indexOf('root = best &&'));
+});
+
+function lineOf(src, head) {
+  const i = src.indexOf(head);
+  return src.slice(i, src.indexOf('\n', i));
+}
+
+test('page scripts: wholeLabel drops an icon-only child from the label, keeps real extra words', () => {
+  const src = scripts.READ_TEXT(false);
+  const wholeLabel = new Function(`${lineOf(src, 'const norm = s =>')}\n${lineOf(src, 'const wholeLabel = t =>')}\nreturn wholeLabel;`)();
+  const label = (...kids) => {
+    const a = { closest: () => a, childNodes: [] };
+    const t = { nodeType: 3, data: kids[0], parentElement: a };
+    a.childNodes = [t, ...kids.slice(1).map((innerText) => ({ nodeType: 1, innerText }))];
+    return t;
+  };
+  assert.strictEqual(wholeLabel(label('Continue reading ', '→')), true);
+  assert.strictEqual(wholeLabel(label('Continue reading ', '»')), true);
+  assert.strictEqual(wholeLabel(label('Continue reading ', 'the full story')), false);
+  assert.strictEqual(wholeLabel(label('Subscribe')), true);
+  assert.strictEqual(wholeLabel(label('Page ', '2')), false);
+});
+
+function modalByOf() {
+  const make = new Function('getComputedStyle', 'document', 'innerWidth', 'innerHeight', 'vis', `${lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>')}\nreturn modalBy;`);
+  const body = { children: [] };
+  return { body, modalBy: make((e) => e.style, { body }, 1200, 800, () => true) };
+}
+
+function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false } = {}) {
+  const e = { attrs, style, parentElement, children: [], previousElementSibling: null,
+    matches: () => aria, getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
+  if (parentElement) {
+    e.previousElementSibling = parentElement.children[parentElement.children.length - 1] || null;
+    parentElement.children.push(e);
+  }
+  return e;
+}
+
+test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden page siblings or a full-viewport backdrop', () => {
+  {
+    const { body, modalBy } = modalByOf();
+    node(body, { attrs: { 'aria-hidden': 'true' } });
+    node(body, { attrs: { 'aria-hidden': 'true' } });
+    const container = node(body);
+    const pane = node(node(container));
+    assert.strictEqual(modalBy(pane), 'hidden');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body);
+    const wrap = node(body);
+    node(wrap, { style: { position: 'fixed' }, rect: { width: 1200, height: 800 } });
+    assert.strictEqual(modalBy(node(wrap)), 'backdrop');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body);
+    const wrap = node(body);
+    node(wrap, { style: { position: 'static' }, rect: { width: 1200, height: 800 } });
+    assert.strictEqual(modalBy(node(wrap)), '');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body);
+    assert.strictEqual(modalBy(node(node(body), { aria: true })), 'aria');
+  }
 });
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {})'));
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}) });'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
@@ -1059,6 +1131,14 @@ test('page scripts: vis drops elements parked off the document, transparent, cli
   assert.strictEqual(vis(box(10, 10, 1, 1)), true);
   assert.strictEqual(vis(box(10, 10, 80, 20, { display: 'none' })), false);
   assert.strictEqual(visOf({ scrollY: 2000 })(box(10, -100, 80, 20)), true);
+  assert.strictEqual(vis(box(10, 10, 80, 20, {}, box(0, 0, 500, 500, { opacity: '0' }))), false);
+  assert.strictEqual(vis(box(10, 10, 80, 20, {}, box(0, 0, 500, 500, { opacity: '0.5' }))), true);
+  let chain = box(0, 0, 1200, 800, { opacity: '0' });
+  for (let i = 0; i < 12; i++) chain = box(0, 0, 1200, 800, {}, chain);
+  assert.strictEqual(vis(box(10, 10, 80, 20, {}, chain)), true);
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes('const faded = (el) => { let k = 0; const seen = []; for (let e = upOf(el); e && e !== document.body && k < 12; e = upOf(e), k++)'));
+  assert.ok(src.includes("    if (s.opacity === '0') return false;\n    if (faded(el)) return false;"));
 });
 
 test('page scripts: vis measures an element inside a scrolling ancestor against that scroller, not the document', () => {
