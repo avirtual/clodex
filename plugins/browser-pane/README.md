@@ -138,6 +138,8 @@ ipc handlers (step 12).
 - **iframes are not read.** The read file's header names the frames it skipped;
   the agent may open a frame's URL in the same service.
 - **Closed shadow roots are not read** (open ones are).
+- **Tabs share the site's cross-tab state**: a logout in one tab of a profile logs out all
+  of them, as in a real browser.
 - **Infinite scroll**: `scroll` loads more and counts it; a `read` is still
   needed to number what loaded.
 - **Keychain prompt**: on macOS a one-time prompt for "Clodex Safe Storage" can
@@ -223,6 +225,13 @@ ipc handlers (step 12).
 [agent:browser note [service] --list]
 [agent:browser note [service] --forget <id>]
 ```
+
+**Tabs on one login.** A service name is `<profile>` or `<profile>:<tab>`: `open x:riot <url>`
+opens a second window on profile `x`. Tabs of one profile share the login and cookies, the
+numbers store, site notes, the denylist and the downloads folder; each tab has its own window,
+lease, sign-in hold and your read state (`read x:riot` before acting on its numbers). `close x`
+closes every tab of `x`, `close x:riot` only that tab, and `services` lists the open tabs under
+their profile. Tabs are never saved: Settings shows profiles only.
 
 `scroll` moves the page by viewports (default `down`, `--pages=N` up to 20 for
 `up`/`down`) and replies with the position (`1868–2736 of 9500 px (20–29%)`, or
@@ -352,7 +361,7 @@ credential words and account numbers are best-effort. Forget login keeps the not
 
 ## Subagent policy and MCP tool
 
-The policy is `subagent.js`, declared to the host at `host.intents.register`. `refuse` is the ONE denial site for a subagent's browser call, whether it arrives as an intent or through the tool: `release`, `close`, `--confirm` on click/type/select/key, and `note --forget` are refused; every other verb in `SUBS` is allowed. `brief` is the sentence a subagent is told at start.
+The policy is `subagent.js`, declared to the host at `host.intents.register`. `refuse` is the ONE denial site for a subagent's browser call, whether it arrives as an intent or through the tool: a subagent may open a tab (`open x:riot <url>`) only on a profile the seat already has a window open for — the main agent or the operator signed in there — and may close only a tab it opened (`close x:riot`, stamped with its `<seat>/agent` identity at open). `release`, bare `close`, `--confirm` on click/type/select/key, and `note --forget` stay with the main agent; every other verb in `SUBS` is allowed. The text rules live in `refuse`; the "profile has a window" precondition and the opener check need the pane's live state, so the scheduler (`submit`) enforces them — the same split as `readFirst`. `brief` is the sentence a subagent is told at start.
 
 The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}` render to the same line `clodex '[agent:browser …]'` would send. Its validation messages are the `invalid:` texts a caller sees; `release` and `close` render and are then refused by `refuse`. The intent registry only applies the generic rules: no policy means refused, a tool name belongs to one plugin, and a tool may emit only its own plugin's intent.
 

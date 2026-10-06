@@ -185,7 +185,7 @@ and cleared on `did-navigate`, a main-frame `did-fail-load` /
 ## child.js — routerFor
 
 One `will-download` handler per partition. Waiters match by URL against
-`getURLChain()` (redirects included), else the oldest URL-less waiter (a click).
+`getURLChain()` (redirects included), else the oldest URL-less waiter from the same tab's webContents.
 A download with no waiter is the operator's: it lands in the service's default
 folder with no dialog. `setSavePath` must be called synchronously in the handler
 or Electron shows a save dialog.
@@ -201,7 +201,8 @@ CDP `Page.captureScreenshot` is the fallback.
 `[a-z0-9-]`, so Electron uses the name verbatim. A service name is `<profile>[:<tab>]`; the
 partition, numbers dir, downloads dir, storage record and denylist scope are per PROFILE (a `:` never
 reaches a path); the window, lease, hold and a seat's read state are per TAB; bare `close <profile>`
-closes every tab of the profile. Two tabs open on one origin keep separate in-memory number maps
+closes every tab of the profile. A subagent's tab is stamped with its `<seat>/agent` identity at
+open; only that identity or the main agent closes it. Two tabs open on one origin keep separate in-memory number maps
 and the last flush wins on disk, so a number holds across tabs only through each tab's own read.
 
 ## child.js — clickWatched
