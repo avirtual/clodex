@@ -624,7 +624,8 @@ seats get a request/response channel whose reply is the caller's own tool result
   One intent per request, parsed by `_extractIntents` (same body rules as PTY text).
 - **Reply capture:** `_handleIntent(name, intent, {replyTo, fromLabel})` runs the
   unchanged handler inside an AsyncLocalStorage scope; `_injectText` to the
-  sender seat goes to `replyTo` instead of the PTY until the response is sent.
+  sender seat goes to `replyTo` instead of the PTY until the response is sent;
+  the plugin handle carries `from` = that label.
   Anything later (a dm's answer, an exec run's result) takes its normal path to
   the seat's main conversation, and a call with no captured acknowledgement
   answers `sent to <target>; a reply arrives in the seat's main conversation`.

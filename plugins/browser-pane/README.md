@@ -303,9 +303,10 @@ show host and path only.
 
 `<n>` comes from the seat's latest `read` of that page. One seat holds a service
 at a time; it frees after 5 min without commands, on `release`, or when the
-seat's session ends. `release` frees the seat's lease and leaves the window;
-`close` closes the window and keeps the sign-in (the next `open` resumes it); a
-subagent gets neither.
+seat's session ends. `release` frees the seat's lease and leaves the window.
+During a sign-in hold it frees the lease only — the hold ends when the operator
+hands back. `close` closes the window and keeps the sign-in (the next `open`
+resumes it); a subagent gets neither.
 
 Omitting `[service]` means the last service that seat opened or read. Only
 `http:` and `https:` URLs open, and a URL carrying `user:pass@` is refused.

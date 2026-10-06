@@ -270,7 +270,7 @@ function createScheduler({
       throw new Error(`note refused: ${service} is on ${origin} (sign-in), not the site — note after the hand-back`);
     }
     const p = siteNotes.prepare(cmd.text, (n) => (samePage ? siteNotes.elementLabel(last.elements, n) : null));
-    const note = await notes.add(origin, { ...p, seat: handle.name });
+    const note = await notes.add(origin, { ...p, seat: handle.from || handle.name });
     return replies.reply(`noted ${note.id} for ${origin}: @${note.anchor} ${note.kind}: ${JSON.stringify(note.text)}`);
   }
 
@@ -510,8 +510,9 @@ function createScheduler({
   }
 
   function release(handle, service) {
-    dropSeat(svcState(service), handle.name);
-    handle.inject(replies.reply(`released ${service}`));
+    const s = svcState(service);
+    dropSeat(s, handle.name);
+    handle.inject(replies.reply(s.state === 'held' ? replies.TEXT.releasedHeld(service, s.reason) : `released ${service}`));
   }
 
   async function runClose(handle, service) {
