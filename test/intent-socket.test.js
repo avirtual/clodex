@@ -328,7 +328,6 @@ test('a subagent dm is refused before delivery', async () => {
     assert.ok(!h.injected.some((i) => /\[agent:from a\/agent\]/.test(i.text)), JSON.stringify(h.injected));
   }, { realDeliver: true });
 });
-});
 
 test('a Codex main thread whose id is the rollout uuid tail keeps the full catalog', async () => {
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
