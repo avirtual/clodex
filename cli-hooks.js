@@ -1,5 +1,6 @@
 
 const fs = require('fs');
+const crypto = require('node:crypto');
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { pathFor, runDirFor, seatPathFor } = require('./clodex-paths');
@@ -204,10 +205,10 @@ try {
   const fs = require("fs");
   let cred = process.env.CLODEX_INTENT_CRED || "";
   if (!cred) { try { cred = fs.readFileSync(process.argv[3], "utf8").trim(); } catch (e) {} }
-  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred, undefined, { identDir: process.argv[4] }));
+  process.stdout.write(require(process.argv[2]).hookIdentOutput(fs.readFileSync(0, "utf8"), cred, undefined, { identDir: process.argv[4], catalogPath: process.argv[5] }));
 } catch (e) {}
 JSEOF
-printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" "${path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'ident')}" 2>/dev/null
+printf '%s' "$IN" | ${INTERP} -e "$JS" - "${require.resolve('./intent-socket')}" "${pathFor(REGISTRY_DIR, name, 'intentCred')}" "${path.join(path.dirname(pathFor(REGISTRY_DIR, name, 'intentSocket')), 'ident')}" "${pathFor(REGISTRY_DIR, name, 'mcpCatalog')}" 2>/dev/null
 exit 0
 `, { mode: 0o700 });
 
@@ -961,8 +962,36 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     return mcpPath;
   }
 
+  function catalogRev(tools, briefs) {
+    return crypto.createHash('sha1').update(JSON.stringify({ tools, briefs })).digest('hex').slice(0, 16);
+  }
+
+  function writeMcpCatalog(name, catalog) {
+    ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
+    ensureDir(runDirFor(REGISTRY_DIR, name));
+    const p = pathFor(REGISTRY_DIR, name, 'mcpCatalog');
+    const tools = JSON.parse(JSON.stringify((catalog && catalog.tools) || []));
+    const briefs = ((catalog && catalog.briefs) || []).map(String);
+    const rev = catalogRev(tools, briefs);
+    let prev = null;
+    try { prev = JSON.parse(fs.readFileSync(p, 'utf8')).rev; } catch {}
+    if (prev === rev) return { path: p, rev, changed: false };
+    atomicWriteFileSync(p, JSON.stringify({ v: 1, rev, tools, briefs }));
+    fs.chmodSync(p, 0o600);
+    return { path: p, rev, changed: true };
+  }
+
+  function readMcpCatalog(name) {
+    try {
+      const c = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'mcpCatalog'), 'utf8'));
+      return { tools: Array.isArray(c.tools) ? c.tools : [], briefs: Array.isArray(c.briefs) ? c.briefs : [] };
+    } catch {
+      return { tools: [], briefs: [] };
+    }
+  }
+
   return {
-    writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig,
+    writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig, writeMcpCatalog, readMcpCatalog,
     cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
   };
 }

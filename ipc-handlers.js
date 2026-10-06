@@ -1060,11 +1060,15 @@ function registerIpcHandlers(deps) {
       Array.isArray(denyBuiltins) ? denyBuiltins : []);
     return { ok: true };
   });
+  const refreshCatalog = (name) => {
+    try { if (manager && typeof manager.refreshSeatCatalog === 'function') manager.refreshSeatCatalog(name); } catch {}
+  };
   // The collapse to the all-enabled default happens here, not in the renderer:
   // only the engine knows the live row set.
   handle('session:setIntents', (_e, name, intents) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
     persistence.setIntents(name, Array.isArray(intents) ? allowlistFromChecked(intents) : null);
+    refreshCatalog(name);
     return { ok: true };
   });
   handle('session:agentCatalog', (_e, name) => {
@@ -1345,6 +1349,7 @@ function registerIpcHandlers(deps) {
     if (Array.isArray(entry.pluginGrants) && pruned.pluginGrants.length !== entry.pluginGrants.length) {
       persistence.setPluginGrants(name, pruned.pluginGrants);
     }
+    refreshCatalog(name);
     return { ok: true };
   });
 
@@ -1363,6 +1368,7 @@ function registerIpcHandlers(deps) {
     if (Array.isArray(entry.intents) && kept.length !== entry.intents.length) {
       persistence.setIntents(name, kept);
     }
+    refreshCatalog(name);
     return { ok: true };
   });
 

@@ -487,7 +487,7 @@ const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
-const { subagentRefusal, classifyReplyLine } = require('./intent-registry');
+const { subagentRefusal, subagentCatalogFor, classifyReplyLine } = require('./intent-registry');
 
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
@@ -695,6 +695,8 @@ function createSessionManager(deps) {
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
   const writeMcpConfig = deps.writeMcpConfig
     || ((n) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n));
+  const writeMcpCatalog = deps.writeMcpCatalog
+    || ((n, c) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpCatalog(n, c));
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
   const streamFor = deps.streamFor || adapterStreamFor;
   const loadStreamCodec = deps.loadStreamCodec || ((id) => require(`./${id}`));
@@ -1634,6 +1636,10 @@ function createSessionManager(deps) {
           }
           const plan = mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
           if (plan.writeConfig) writeMcpConfig(name);
+          writeMcpCatalog(name, subagentCatalogFor({
+            intents: Array.isArray(intents) ? intents.map(String) : undefined,
+            plugins: Array.isArray(plugins) ? plugins.map(String) : undefined,
+          }));
           args.push(...plan.push);
           if (plan.notice) {
             this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: plan.notice });
@@ -2427,6 +2433,21 @@ function createSessionManager(deps) {
       }
       try { getPluginHooks && getPluginHooks() && getPluginHooks().fireCreate(name); } catch {}
       return { name, type, pid: procPid, backend, noWire: wireOff, ...(streamIo ? { io: 'stream' } : {}), ...(teamName ? { team: teamName } : {}), ...(missingPrompt ? { missingPrompt } : {}), ...(warnings.length ? { warnings } : {}) };
+    }
+
+    refreshSeatCatalog(name) {
+      if (!this.sessions.has(name)) return null;
+      const entry = getPersistence().get(name);
+      if (!entry || entry.type !== 'claude') return null;
+      return writeMcpCatalog(name, subagentCatalogFor(entry));
+    }
+
+    refreshAllSeatCatalogs() {
+      for (const s of this.sessions.values()) {
+        if (s.type === 'claude') {
+          try { this.refreshSeatCatalog(s.name); } catch {}
+        }
+      }
     }
 
     lastOperatorInputAt() {

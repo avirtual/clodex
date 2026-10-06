@@ -44,7 +44,7 @@ test('SUBS is the grammar minus release and close', () => {
 });
 
 test('the socket brief is the plugin brief plus the refusal sentence', () => {
-  assert.strictEqual(require('../intent-socket').SUBAGENT_BRIEF, subagent.brief + ' ' + "Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.");
+  assert.strictEqual(require('../intent-socket').composeSubagentBrief([subagent.brief]), "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body). Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.");
 });
 
 function requires(file) {

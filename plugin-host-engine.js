@@ -38,7 +38,11 @@ function createPluginHostEngine(deps) {
     notifyOS,
     broadcast,
     electronChild,
+    onRowsChanged = () => { if (manager && typeof manager.refreshAllSeatCatalogs === 'function') manager.refreshAllSeatCatalogs(); },
   } = deps;
+  const notifyRowsChanged = () => {
+    try { if (typeof onRowsChanged === 'function') onRowsChanged(); } catch {}
+  };
   const notifyStateChanged = () => {
     try { if (typeof onPluginStateChanged === 'function') onPluginStateChanged(); } catch {}
   };
@@ -665,6 +669,7 @@ function createPluginHostEngine(deps) {
       deactivate(pluginId);
       throw e;
     }
+    notifyRowsChanged();
     return host;
   }
 
@@ -684,6 +689,7 @@ function createPluginHostEngine(deps) {
     unregisterSource(pluginId);
     teardowns.delete(pluginId);
     registered.delete(pluginId);
+    notifyRowsChanged();
     return true;
   }
 

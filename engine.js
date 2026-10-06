@@ -1596,6 +1596,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setEnv(name, nextEnv);
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
   if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
+  try { manager.refreshSeatCatalog(name); } catch {}
   if (!restart) return { ok: true, restarted: false };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
   const prunedGrants = (prunedArgs.pluginGrants && prunedArgs.pluginGrants.length)

@@ -1563,11 +1563,31 @@ test('ident hook: a forged CLODEX_HOOK_IDENT in the command is replaced by the h
 
 test('ident hook: SubagentStart is registered and briefs the subagent in one additionalContext line', () => {
   const REGISTRY_DIR = identSeat();
+  mk(REGISTRY_DIR).writeMcpCatalog('agent1', { tools: [], briefs: [require('../plugins/browser-pane/subagent').brief] });
   const settings = JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'settings'), 'utf-8'));
   assert.deepStrictEqual(settings.hooks.SubagentStart, [{ matcher: '', hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }] }]);
   const out = JSON.parse(runIdent(REGISTRY_DIR, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'gp', session_id: 'sess-1' }));
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SubagentStart');
   assert.strictEqual(out.hookSpecificOutput.additionalContext, "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body). Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.");
+});
+
+test('ident hook: SubagentStart with an empty catalog emits nothing', () => {
+  const REGISTRY_DIR = identSeat();
+  mk(REGISTRY_DIR).writeMcpCatalog('agent1', { tools: [], briefs: [] });
+  assert.strictEqual(runIdent(REGISTRY_DIR, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'gp', session_id: 'sess-1' }), '');
+});
+
+test('ident hook: SubagentStart with no catalog file emits nothing', () => {
+  const REGISTRY_DIR = identSeat();
+  assert.ok(!fs.existsSync(pathFor(REGISTRY_DIR, 'agent1', 'mcpCatalog')));
+  assert.strictEqual(runIdent(REGISTRY_DIR, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'gp', session_id: 'sess-1' }), '');
+});
+
+test('ident hook: the interpreter line hands the seat catalog path to the hook', () => {
+  const REGISTRY_DIR = identSeat();
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
+  assert.ok(src.includes(`"${pathFor(REGISTRY_DIR, 'agent1', 'mcpCatalog')}" 2>/dev/null`), src);
+  assert.ok(src.includes('catalogPath: process.argv[5]'), src);
 });
 
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {

@@ -51,3 +51,7 @@ measured 0 false positives on 440 non-hand sessions.
 
 Two rules, two gates: the whole-tree `git add`/`commit -a` rule fires on ticket seats only (empty `CLODEX_TICKET` skips it); the pattern-kill rule fires on EVERY Claude seat.
 The kill rule is not ticket-gated because the incident it answers (2026-09-23, `pkill -f "cat" -U $(id -u) -x` SIGTERMing every /Applications binary, Clodex included) came from a non-ticket seat — a pattern kill hurts the whole login no matter which seat runs it.
+
+## writeMcpCatalog
+
+Identical content (same `rev`) is not rewritten, because T3b's server treats any rewrite of `mcp-tools.json` as a tool-list change and would announce one.

@@ -34,6 +34,8 @@ Measured on Claude Code 2.1.289: a PreToolUse `updatedInput` with no `permission
 
 A stamp file is consumed by its first read, so one stamped segment the shell runs more than once (a loop body, a function) is main only on its first run; later runs go unstamped as a subagent.
 
+The SubagentStart brief comes from the seat's catalog file (`catalogPath`), not a constant, so a plugin's sentence reaches the subagent without a core edit.
+
 ## createIntentSocketServer
 
 The socket is chmod 0600 right after `listen`; the credential, not the mode, is the gate during that window.

@@ -86,6 +86,7 @@ blocks a release.
 - Clodex MCP: the browser plugin now declares its own MCP tool and subagent policy (`tools` and `subagent` on `host.intents.register`); the intent registry keeps only the generic rules — default-deny for subagents, tool-name uniqueness, a tool maps only to its own plugin's intent. No behaviour change for a granted seat.
 - Operator inbox: each note has an × that deletes it (immediate, no undo); the row's mark-read click is not triggered by the delete.
 - Teams: a seat in the team's root that holds no role (a Codex seat, an ad-hoc operator seat) no longer wakes the lead with a `spawned`/`retired` composition delta on every restart; the roster still lists it under `also live, no role`.
+- Clodex MCP: every Claude seat gets `run/<seat>/mcp-tools.json`, its MCP tool catalog built from the plugins and verbs enabled for it and rewritten when they change; the subagent brief is composed from it, so a seat with no tool-bearing plugin no longer tells its subagents about a `browser` tool it cannot use.
 
 ## 5.112.2 — 2026-10-04
 

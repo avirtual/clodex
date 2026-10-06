@@ -422,6 +422,7 @@ clx-commonmeta-
 clx-console-
 clx-createdat-
 clx-createdat-mgr-
+clx-mcpcat-
 clx-stream-restart-
 clx-ctl-
 clx-ctx-timeout-
