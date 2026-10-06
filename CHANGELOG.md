@@ -66,6 +66,7 @@ blocks a release.
 - Browser pane: a label with a ticking `19 : 49 : 05` countdown keeps its element number; a read whose article stops at a registration or pay wall says so (`wall: "Create an account to read the full story."`) instead of ending silently.
 - Browser pane: the `wall:` line quotes the gate sentence, ignores scripts and never fires on a page whose body class merely contains `meter`/`gate`; `login: signed in` is not claimed while a visible Sign in link is on the page; `Clear all filters` is not ⚠; a struck-through old price reads `(was 87,98 Lei)`.
 - Browser pane: the `wall:` line ignores hidden text and quotes the gate sentence from a metered wrapper or a 0×0 toast wrapper; a hidden Sign out or a product title containing `deconectare` no longer makes `login: signed in`; `Sterge toate filtrele` with a `has-delete` class is not ⚠; superscript cents read `89,99`; unread mail rows carry `[unread]`.
+- Browser pane: the `wall:` line prefers the gate sentence over a "Member-only story" badge, accepts a gate box that opens with hidden children, and finds a fixed sign-in bar wherever it sits in the page; a product link whose URL contains a sign-out word no longer reads as signed in, and a visible Sign in link always wins; a mail row with attachment chips is still `[unread]`; a button whose label runs over 100 characters (a badge tooltip) is never ⚠.
 
 ## 5.112.2 — 2026-10-04
 

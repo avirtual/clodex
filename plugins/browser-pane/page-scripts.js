@@ -63,6 +63,7 @@ const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm'];
 const FORM_ACTIONS = [['payment', 'pay'], ['payment', 'checkout'], ['purchase', 'order'], ['deletion', 'delete']];
 const CQ_LABEL_MAX = 40;
+const CQ_CONTROL_MAX = 100;
 const CQ_STATE_SUFFIX = keys.STATE_SUFFIX;
 const HMS_RE = `/${keys.HMS_RE.source}/g`;
 
@@ -91,7 +92,7 @@ function consequentialOf(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS))
 function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)) {
   if (!d || d.textual) return null;
   const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-  const text = (x) => { const f = fold(x); return d.capped && f.length > CQ_LABEL_MAX ? '' : f; };
+  const text = (x) => { const f = fold(x); return f.length > (d.capped ? CQ_LABEL_MAX : CQ_CONTROL_MAX) ? '' : f; };
   const bare = (x) => text(x).replace(CQ_STATE_SUFFIX, '');
   const hay = [bare(d.label), text(d.value), bare(d.aria)].filter(Boolean);
   const fa = fold(d.formaction);
@@ -122,6 +123,7 @@ const CQ = `
   const ID_TERMS = ${JSON.stringify(ID_TERMS)};
   const FORM_ACTIONS = ${JSON.stringify(FORM_ACTIONS)};
   const CQ_LABEL_MAX = ${CQ_LABEL_MAX};
+  const CQ_CONTROL_MAX = ${CQ_CONTROL_MAX};
   const CQ_STATE_SUFFIX = new RegExp(${JSON.stringify(keys.STATE_SUFFIX.source)}, 'i');
   const LEAD_CATS = ${JSON.stringify(LEAD_CATS)};
   ${termRe.toString()}
@@ -292,7 +294,8 @@ function bulletItems(root, mark, hidden = (e) => getComputedStyle(e).display ===
 }
 
 const READ_ROOT_SEL = 'main article, article, [role=main], main, #mw-content-text, #content';
-const WALL_RE = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|members?-only story|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
+const WALL_RE = /\b(create (a free )?account to (read|continue)|sign (in|up) to (read|continue)|subscribe to (read|continue)|continue reading|read the full (story|article)|this article is for subscribers|already a subscriber|start a free trial|pentru a citi (mai departe|articolul)|abonează-te)\b/i;
+const WALL_WEAK_RE = /\bmembers?-only story\b/i;
 const WALL_SEL = '[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]';
 const WALL_ID_SEL = '[id*=paywall i],[id*=regwall i],[id*=gate-toast i],[data-testid*=paywall i]';
 const WALL_TOKEN_RE = /^(paywall|regwall|piano-.*|tp-modal|meter(ed)?-?(gate|wall|modal|content)?|gate-toast|article-gate)$/i;
@@ -301,16 +304,37 @@ const WALL_BLOCK = 'p,div,section,li,h1,h2,h3,h4,h5,h6,[role=alert]';
 const WALL = `
   const wallScan = (root) => {
     const WALL = ${WALL_RE};
+    const WEAK = ${WALL_WEAK_RE};
     const TOKEN = ${WALL_TOKEN_RE};
     const SKIP = new Set(${JSON.stringify(WALL_SKIP)});
     const clip = t => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
     const scripted = t => { for (let e = t.parentElement; e; e = e.parentElement) if (SKIP.has(e.tagName)) return true; return false; };
-    const sentence = t => clip(t.data.split(/(?<=[.!?])\\s+/).find(x => WALL.test(x)) || t.data);
-    const quote = t => {
-      if (t.data.trim().length >= 20) return sentence(t);
+    const sentence = (t, re) => clip(t.data.split(/(?<=[.!?])\\s+/).find(x => re.test(x)) || t.data);
+    const quote = (t, re) => {
+      if (t.data.trim().length >= 20) return sentence(t, re);
       const b = t.parentElement && t.parentElement.closest(${JSON.stringify(WALL_BLOCK)});
       const bt = b ? String(b.innerText || '').trim() : '';
-      return bt && bt.length <= 300 ? clip(bt) : sentence(t);
+      return bt && bt.length <= 300 ? clip(bt) : sentence(t, re);
+    };
+    const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };
+    const fixedBar = () => {
+      for (const e of [...document.querySelectorAll('div,section,aside,footer,[role=dialog],[role=alert],[role=region]')].slice(0, 400)) {
+        if (!['fixed', 'sticky'].includes(getComputedStyle(e).position) || !vis(e)) continue;
+        const len = String(e.innerText).trim().length;
+        if (len < 1 || len > 600) continue;
+        const fw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+        for (let t = fw.nextNode(); t; t = fw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };
+      }
+      return null;
+    };
+    let tail = [];
+    let after = [];
+    const scan = (re) => {
+      for (const t of tail.concat(after)) {
+        const el = t.parentElement;
+        if (el && re.test(t.data) && vis(el)) return { text: quote(t, re), n: null };
+      }
+      return null;
     };
     try {
       if (root && document.body) {
@@ -319,10 +343,8 @@ const WALL = `
         for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);
         const inRoot = all.filter(t => root.contains(t));
         const last = inRoot[inRoot.length - 1];
-        const tail = [];
         let n = 0;
         for (let i = inRoot.length - 1; i >= 0 && n < 600; i--) { tail.unshift(inRoot[i]); n += inRoot[i].data.length; }
-        const after = [];
         let m = 0;
         for (const t of all) {
           if (m >= 2000) break;
@@ -331,19 +353,19 @@ const WALL = `
           if (!last && !(root.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
           after.push(t); m += t.data.length;
         }
-        for (const t of tail.concat(after)) {
-          const el = t.parentElement;
-          if (el && WALL.test(t.data) && vis(el)) return { text: quote(t), n: null };
-        }
       }
+      const strong = scan(WALL);
+      if (strong) return strong;
       const ID_SEL = ${JSON.stringify(WALL_ID_SEL)};
       const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)} + ',' + ID_SEL)].find(e => e !== document.body && e !== document.documentElement
-        && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && (vis(e) || [...e.querySelectorAll('*')].slice(0, 50).some(vis)) && clip(e.innerText)
+        && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && (vis(e) || boxVis(e)) && clip(e.innerText)
         && (WALL.test(e.innerText) || String(e.innerText).trim().length <= 300));
-      if (!box) return null;
-      const bw = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-      for (let t = bw.nextNode(); t; t = bw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t), n: null };
-      return { text: clip(box.innerText), n: null };
+      if (box) {
+        const bw = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+        for (let t = bw.nextNode(); t; t = bw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };
+        return { text: clip(box.innerText), n: null };
+      }
+      return fixedBar() || scan(WEAK);
     } catch { return null; }
   };`;
 
@@ -657,8 +679,15 @@ function collect(main) {
     if (says(el.getAttribute('aria-label') || '')) return true;
     const kids = [...el.querySelectorAll('*')].slice(0, 60);
     if (kids.some(e => says(e.getAttribute('aria-label') || '') || (!e.children.length && says(e.textContent || '') && !vis(e)))) return true;
-    const texted = [el, ...kids].filter(ownText).slice(0, 30);
-    return texted.length > 0 && texted.filter(e => parseInt(getComputedStyle(e).fontWeight, 10) >= 600).length * 2 >= texted.length;
+    const CELL = 'td,th,[role=gridcell],[role=cell]';
+    const all = [...el.querySelectorAll(CELL)];
+    const outer = all.filter(c => { const up = c.parentElement && c.parentElement.closest(CELL); return !up || !all.includes(up); });
+    const cells = outer.length ? outer : el.children.length ? [...el.children] : [el];
+    const heavy = e => parseInt(getComputedStyle(e).fontWeight, 10) >= 600;
+    const owned = c => [c, ...[...c.querySelectorAll('*')].slice(0, 20)].filter(ownText);
+    const texted = cells.filter(c => owned(c).length > 0);
+    const bold = texted.filter(c => owned(c).some(heavy));
+    return texted.length > 0 && bold.length * 2 >= texted.length;
   };
   const items = []; const seen = new Set(); let listed = 0; let truncated = false;
   for (const el of cands) {
@@ -1211,7 +1240,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
   ${termRe.toString()}
   ${signOutOf.toString()}
   const SO_RES = SIGN_OUT.map((t) => termRe(t));
-  const hrefPath = el => String(el.getAttribute('href') || '').split(/[?#]/)[0].replace(/[/._-]+/g, ' ');
+  const hrefPath = el => { const p = String(el.getAttribute('href') || '').split(/[?#]/)[0]; return p.length <= 40 ? p.replace(/[/._-]+/g, ' ') : ''; };
   const any = (test) => deepAll(document, test).some(vis);
   const host = location.hostname;
   const idp = /(^|\\.)accounts\\.google\\.com$/.test(host) ? 'google'
@@ -1221,13 +1250,14 @@ const LOGIN_PROBE = `(() => {${DEEP}
   const body = (document.body && document.body.innerText) || '';
   const has = (test) => deepAll(document, test).length > 0;
   const short = x => { const s = String(x || '').replace(/\\s+/g, ' ').trim(); return s.length <= 30 ? s : ''; };
+  const SIGN_IN = /\\b(sign in|log in|login|intra in cont|autentificare|conectare|contul meu)\\b/i;
+  const fold = x => String(x || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ');
+  const signInShown = any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
+    && SIGN_IN.test(fold(el.innerText || el.textContent) + ' ' + fold(el.getAttribute('aria-label')))
+    && (!el.getAttribute('href') || /login|signin|sign-in|auth/i.test(el.getAttribute('href'))));
   const loggedInHint = () => {
     if (has(el => el.tagName === 'INPUT' && el.type === 'password')) return null;
-    const SIGN_IN = /\\b(sign in|log in|login|intra in cont|autentificare|conectare|contul meu)\\b/i;
-    const fold = x => String(x || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ');
-    if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'button')
-      && SIGN_IN.test(fold(el.innerText || el.textContent) + ' ' + fold(el.getAttribute('aria-label')))
-      && (!el.getAttribute('href') || /login|signin|sign-in|auth/i.test(el.getAttribute('href'))))) return null;
+    if (signInShown) return null;
     const exit = /log ?out|sign ?out|deconectare|iesire/i;
     if (any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem' || el.getAttribute('role') === 'button')
       && [el.innerText || el.textContent, el.getAttribute('aria-label')].some(x => exit.test(fold(short(x)))))) return 'logout';
@@ -1236,7 +1266,7 @@ const LOGIN_PROBE = `(() => {${DEEP}
     return null;
   };
   const pwds = deepAll(document, el => el.tagName === 'INPUT' && el.type === 'password').filter(vis);
-  const logoutLink = any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
+  const logoutLink = !signInShown && any(el => (el.tagName === 'A' || el.tagName === 'BUTTON' || el.getAttribute('role') === 'menuitem')
     && signOutOf([short(el.innerText || el.textContent), short(el.getAttribute('aria-label')), hrefPath(el)], SO_RES));
   const NEW_PW = /new|confirm|nou|noua|confirma|repeta|neu|nouveau/i;
   const passwordChange = logoutLink && pwds.length > 0 && (pwds.length >= 2
@@ -1660,7 +1690,7 @@ function feed(main, cats) {
 const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
-  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
+  ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
   READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
