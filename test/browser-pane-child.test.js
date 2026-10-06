@@ -2373,11 +2373,13 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
 });
 
 test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {
-  assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*let feed = posts \? \{ count: posts \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
+  assert.match(CHILD_SRC, /mergeNumbers\(svc, el\);\n\s*const posts = el && Number\(el\.posts\) > 0 \? Number\(el\.posts\) : 0;\n\s*const cloaked = el && Number\(el\.cloaked\) > 0 \? Number\(el\.cloaked\) : 0;\n\s*let feed = posts \? \{ count: posts, cloaked \} : null;\n\s*if \(args\.compact && el\) \{\n\s*const f = await inIsolated\(wc, scripts\.FEED\(main, el\.cats \|\| \{\}\)\);/);
   assert.match(CHILD_SRC, /\.\.\.\(feed \? \{ feed \} : \{\}\),/);
   assert.match(scripts.READ_INTERACTIVE(false, {}), /posts: \[\.\.\.\(document\)\.querySelectorAll\('article'\)\]\.filter\(a => !\(a\.parentElement && a\.parentElement\.closest\('article'\)\)\)\.length,/);
   assert.match(scripts.READ_INTERACTIVE(true, {}), /posts: \[\.\.\.\(mainRootOf\(\) \|\| document\)\.querySelectorAll/);
-  assert.match(CHILD_SRC, /: \{ count: posts, failed: true \};/);
+  assert.match(CHILD_SRC, /: \{ count: posts, cloaked, failed: true \};/);
+  assert.match(CHILD_SRC, /\{ count: f\.posts\.length, cloaked, posts: f\.posts,/);
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("cloaked: [...(document).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url:"));
 });
 
 test('windows: a service window opens hidden and surfaces without focus only on open --show; operator show still raises and focuses', () => {

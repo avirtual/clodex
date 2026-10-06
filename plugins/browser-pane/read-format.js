@@ -631,7 +631,7 @@ function formatRead(raw, opts) {
     `title: ${raw.title || ''}`,
     ...(stripped ? [`stripped: ${strip.top} lines at top, ${strip.bottom} at bottom (repeated from your last read of ${o.service})`] : []),
     ...loading,
-    `doc: ${raw.doc == null ? '?' : raw.doc} · elements: ${fmt(elementsTotal)} (${range})${posts ? ` · posts: ${posts}` : ''} · mode: ${mode} · filter: ${filter}${raw.truncated ? ' · truncated' : ''}`,
+    `doc: ${raw.doc == null ? '?' : raw.doc} · elements: ${fmt(elementsTotal)} (${range})${posts ? ` · posts: ${posts}${raw.feed.cloaked ? ` (${raw.feed.cloaked} not rendered — scroll to load)` : ''}` : ''} · mode: ${mode} · filter: ${filter}${raw.truncated ? ' · truncated' : ''}`,
     `login: ${loginLabel(raw.login)}`,
     ...(raw.wall && raw.wall.text ? [`wall: "${String(raw.wall.text).replace(/\s+/g, ' ').trim().slice(0, 120)}" — the text below may stop here; sign-in or subscription is the operator's call`]
       : raw.wall && raw.wall.error ? [`wall: scan failed — ${String(raw.wall.error).replace(/\s+/g, ' ').trim()}`] : []),

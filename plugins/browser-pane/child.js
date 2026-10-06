@@ -1517,10 +1517,11 @@ function run(electron, ctx) {
     }
     mergeNumbers(svc, el);
     const posts = el && Number(el.posts) > 0 ? Number(el.posts) : 0;
-    let feed = posts ? { count: posts } : null;
+    const cloaked = el && Number(el.cloaked) > 0 ? Number(el.cloaked) : 0;
+    let feed = posts ? { count: posts, cloaked } : null;
     if (args.compact && el) {
       const f = await inIsolated(wc, scripts.FEED(main, el.cats || {}));
-      feed = f && Array.isArray(f.posts) ? { count: f.posts.length, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} } : { count: posts, failed: true };
+      feed = f && Array.isArray(f.posts) ? { count: f.posts.length, cloaked, posts: f.posts, numbers: f.numbers || [], folded: f.folded || {} } : { count: posts, cloaked, failed: true };
     }
     const numbers = el ? {
       fresh: (el.fresh || []).slice().sort((a, b) => a - b),
