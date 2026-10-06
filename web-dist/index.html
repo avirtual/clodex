@@ -12912,7 +12912,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         }
       }
       function windowText(s) {
-        if (!s.windowOpen) return "closed";
+        if (!s.windowOpen) return "";
         const state = s.operator ? `${s.state} by operator` : String(s.state);
         return `open \xB7 ${state}${s.visible === false ? " \xB7 hidden" : ""}`;
       }

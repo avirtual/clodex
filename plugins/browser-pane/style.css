@@ -5,7 +5,7 @@
 
 .bp-services {
   display: grid;
-  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(12ch, auto) auto auto auto auto;
   column-gap: 12px;
   row-gap: 4px;
   align-items: center;
@@ -44,10 +44,6 @@
 .bp-login,
 .bp-window {
   opacity: 0.8;
-}
-
-.bp-services > .bp-row > .bp-login {
-  min-width: 11ch;
 }
 
 .bp-actions {
