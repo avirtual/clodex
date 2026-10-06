@@ -1567,7 +1567,7 @@ test('ident hook: SubagentStart is registered and briefs the subagent in one add
   assert.deepStrictEqual(settings.hooks.SubagentStart, [{ matcher: '', hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }] }]);
   const out = JSON.parse(runIdent(REGISTRY_DIR, { hook_event_name: 'SubagentStart', agent_id: 'a1', agent_type: 'gp', session_id: 'sess-1' }));
   assert.strictEqual(out.hookSpecificOutput.hookEventName, 'SubagentStart');
-  assert.match(out.hookSpecificOutput.additionalContext, /^This seat's browser pane and Clodex intents are reachable from Bash as `clodex '\[agent:browser …\]'`; run `clodex --help` for the subagent catalog\.$/);
+  assert.match(out.hookSpecificOutput.additionalContext, /^This seat's browser pane is the `browser` MCP tool \(verb, service, bracket, body — same replies and refusals as the Bash form\); the Bash form `clodex '\[agent:browser …\]'` and the other Clodex intents are reachable from Bash too; run `clodex --help` for the subagent catalog\.$/);
 });
 
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {

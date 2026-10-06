@@ -943,8 +943,26 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     }
   }
 
+  function writeMcpConfig(name) {
+    ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
+    ensureDir(runDirFor(REGISTRY_DIR, name));
+    const mcpPath = pathFor(REGISTRY_DIR, name, 'mcpConfig');
+    const config = {
+      mcpServers: {
+        clodex: {
+          command: nodeInterp,
+          args: [require.resolve('./cli/bin/clodex-mcp.js')],
+          env: { ELECTRON_RUN_AS_NODE: '1' },
+        },
+      },
+    };
+    fs.writeFileSync(mcpPath, JSON.stringify(config, null, 2), { mode: 0o600 });
+    fs.chmodSync(mcpPath, 0o600);
+    return mcpPath;
+  }
+
   return {
-    writeClaudeDigestFile, setupClaudeHook, setupCodexHook,
+    writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig,
     cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
   };
 }

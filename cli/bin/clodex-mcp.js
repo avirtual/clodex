@@ -12,7 +12,7 @@ const SERVICE_RE = new RegExp(SERVICE_PATTERN);
 const DEFAULT_PROTOCOL = '2025-06-18';
 const PPID_POLL_MS = 5000;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
-const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a quoted --flag value (it is dropped)';
+const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a --flag value (it is dropped)';
 const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
 
 const BROWSER_TOOL = {
