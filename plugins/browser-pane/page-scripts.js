@@ -1541,7 +1541,7 @@ function targetState(n) {
   const up = el.parentElement || (el.parentNode && el.parentNode.host) || null;
   const own = of(el);
   if (el.tagName === 'LABEL' && el.control && el.control.tagName === 'INPUT' && /^(radio|checkbox)$/.test(el.control.type)) own.checked = el.control.checked;
-  const ctl = (el.getAttribute('aria-controls') || '').trim().split(/\s+/)[0]; const scope = el.getRootNode && el.getRootNode().getElementById ? el.getRootNode() : document; const panel = ctl ? scope.getElementById(ctl) : null;
+  const ctl = (el.getAttribute('aria-controls') || '').trim().split(/\\s+/)[0]; const scope = el.getRootNode && el.getRootNode().getElementById ? el.getRootNode() : document; const panel = ctl ? scope.getElementById(ctl) : null;
   return { el: own, tile: of(up && up.closest(${JSON.stringify(TILE_SEL)})), panel: of(panel) };
 })()`;
 }
