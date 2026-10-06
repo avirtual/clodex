@@ -92,6 +92,7 @@ blocks a release.
 - Clodex MCP: `clodex --help` lists the seat's MCP tools from its catalog (so a tool's verbs can no longer go stale in the help), the plugin-tool contract is documented for plugin authors, core is pinned to carry no browser-plugin knowledge, and a subagent's `release`/`close` through the tool is refused by the same policy as the intent form.
 - Browser pane: the held line lists sorted paths with `+N more`, `click --text` and `inspect --text` work before a read, no trailing space after `(hidden)`, the read cut hint names the first heading it hid (`--filter="…"`), and the idle probe has no silent main-world default; two tester fixtures (hidden-ai-reveal, hidden-ai-inspect) join the gate.
 - Browser pane: the read cut hint is always a findable prefix of the heading, the polls line is sorted, a side drawer (`[role=dialog]`, fixed and docked to an edge) becomes the read root like a modal, item counts follow the main list's rows, loopback mocks keep separate site notes, and the subagent policy sheds a dead branch.
+- Browser pane: controls under a modal dialog's backdrop are no longer listed in a default read (they keep their numbers; `read --all` lists them and the head line says how many are under the dialog), the README documents the read root (modal, drawer, `--main`), and a drawer without `role=dialog` (GitLab's work-item panel) is recognised by its geometry, with a classic scrollbar tolerated.
 
 ## 5.112.2 — 2026-10-04
 
