@@ -20,7 +20,12 @@ const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!
 const TIMEOUT_ARG_FLAGS = ['-s', '-k', '--signal', '--kill-after'];
 const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
 const SEPARATORS = ';&|(){}\n';
-const SUBAGENT_BRIEF = "This seat's browser pane is the `browser` MCP tool (verb, service, bracket, body). Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
+const SUBAGENT_BRIEF_TAIL = "Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
+
+function composeSubagentBrief(briefs) {
+  const b = (Array.isArray(briefs) ? briefs : []).map((s) => String(s || '').trim()).filter(Boolean);
+  return b.length ? `${b.join(' ')} ${SUBAGENT_BRIEF_TAIL}` : '';
+}
 
 function mintIntentCredential(crypto) {
   return crypto.randomBytes(32).toString('hex');
@@ -237,12 +242,15 @@ function sweepIdentDir(fs, dir, now) {
   }
 }
 
-function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, fs = require('node:fs'), now = Date.now() } = {}) {
+function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath, fs = require('node:fs'), now = Date.now() } = {}) {
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
   if (!d || typeof d !== 'object') return '';
   if (d.hook_event_name === 'SubagentStart') {
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: SUBAGENT_BRIEF } });
+    let briefs = [];
+    try { briefs = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).briefs || []; } catch {}
+    const ctx = composeSubagentBrief(briefs);
+    return ctx ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: ctx } }) : '';
   }
   const input = d.tool_input;
   const cmd = input && input.command;
@@ -430,7 +438,7 @@ module.exports = {
   IDENT_SEEN_MAX,
   IDENT_SEEN_MS,
   mintIdentNonce,
-  SUBAGENT_BRIEF,
+  composeSubagentBrief,
   identToken,
   identIsMain,
   callerIsSubagent,
