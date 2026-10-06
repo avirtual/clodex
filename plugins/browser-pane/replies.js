@@ -426,7 +426,7 @@ function changeTail(sub, r, key) {
     return ` · value now ${JSON.stringify(clip60(r.value))}`;
   }
   if (sub === 'scroll') return ' · page text unchanged';
-  return r.watched ? ` · no change on the target within ${Math.round((r.watched || 0) / 1000)}s` : ' · no visible change';
+  return r.watched ? ` · no change on the target within ${Math.round((r.watched || 0) / 1000)}s${r.under ? ` · under the point: ${r.under}` : ''}` : ' · no visible change';
 }
 
 function bytesLabel(n) {

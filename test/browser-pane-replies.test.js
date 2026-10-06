@@ -450,6 +450,8 @@ test('replies: a target attribute flip is reported, and a watched target with no
     '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · changed: "AC On" · target: tile aria-pressed "false" → "true"');
   assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: '', watched: 3000 }),
     '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · no change on the target within 3s');
+  assert.strictEqual(R.actReply('click', 'st', { sub: 'click', n: 11 }, { ...base, changed: '', watched: 3000, under: 'div#veil "Loading"' }),
+    '[agent:browser] clicked st [11] button "AC" · same page · idle 0.8s · no change on the target within 3s · under the point: div#veil "Loading"');
   const radio = { kind: 'radio', label: 'Ridicare', navigated: false, idle };
   assert.strictEqual(R.actReply('click', 't36', { sub: 'click', n: 7 }, { ...radio, changed: '', watched: 3000, choice: 'Ridicare' }),
     '[agent:browser] clicked t36 [7] radio "Ridicare" · same page · idle 0.8s · checked now "Ridicare"');

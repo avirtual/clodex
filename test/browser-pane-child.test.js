@@ -1455,6 +1455,35 @@ function boxEl(tag, text, rect, parent = null) {
   return e;
 }
 
+test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {
+  const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
+  const under = (el, hitAt) => {
+    const ctx = {
+      document: { elementFromPoint: hitAt, querySelectorAll: () => [], documentElement: {}, createTreeWalker: () => ({ nextNode: () => null }) },
+      getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' }, innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0,
+      location: { href: 'http://x/', origin: 'http://x' }, __cxEls: { 5: new WeakRef(el) }, WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+    };
+    ctx.window = ctx;
+    vm.createContext(ctx);
+    return vm.runInContext(scripts.UNDER_POINT(5), ctx);
+  };
+  const row = boxEl('div', 'Invoice March', box(10, 100, 400, 30));
+  row.classList = [];
+  const veil = Object.assign(boxEl('div', 'Loading', box(0, 0, 1200, 800)), { id: 'veil', classList: ['overlay', 'x'] });
+  assert.strictEqual(under(row, () => veil), 'div#veil.overlay "Loading"');
+  const odd = Object.assign(boxEl('div', '', box(0, 0, 1200, 800)), { id: 'a b"<x>', classList: [] });
+  assert.strictEqual(under(row, () => odd), 'div#abx');
+  assert.strictEqual(under(row, () => row), null);
+  const child = Object.assign(boxEl('span', 'Invoice', box(10, 100, 50, 30), row), { classList: [] });
+  assert.strictEqual(under(row, () => child), null);
+  const shell = Object.assign(boxEl('div', 'Invoice March', box(0, 0, 1200, 800)), { classList: [] });
+  row.parentElement = shell;
+  assert.strictEqual(under(row, () => shell), null);
+  assert.strictEqual(under(boxEl('div', 'x', box(0, 0, 0, 0)), () => veil), null);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(src.includes("if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }"));
+});
+
 test('FIND: scrolls only an element outside the viewport, to nearest, and reports what sits under the click point', async () => {
   const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
   const plain = (o) => JSON.parse(JSON.stringify(o));

@@ -1017,6 +1017,7 @@ function run(electron, ctx) {
             done.choice = value.label;
             if (value.select) done.choiceKind = 'select';
           }
+          if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }
         }
         return done;
       }

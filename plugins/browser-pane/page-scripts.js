@@ -1295,6 +1295,26 @@ const VALUE_ACTIVE = `(() => {${ICON}
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
 
+function UNDER_POINT(n) {
+  return `(() => {${DEEP}
+  ${REF(n)}
+  ${clickPoint.toString()}
+  ${KIND_LABEL}
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const at = clickPoint(el, r, document);
+  let hit = document.elementFromPoint ? document.elementFromPoint(at.x, at.y) : null;
+  while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+    const inner = hit.shadowRoot.elementFromPoint(at.x, at.y);
+    if (!inner || inner === hit) break;
+    hit = inner;
+  }
+  if (!hit || hit === el || el.contains(hit) || hit.contains(el)) return null;
+  const hl = labelOf(hit);
+  return (hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (hit.classList[0] ? '.' + hit.classList[0] : '')).replace(/[^\\w#.:-]/g, '') + (hl ? ' ' + JSON.stringify(hl.slice(0, 40)) : '');
+})()`;
+}
+
 const VALUE_CHOICE = (n) => `(() => {${ICON}
   ${REF(n)}
   ${CHOICE_OF}
@@ -1782,6 +1802,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, CHOICE_OF,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
