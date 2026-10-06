@@ -456,13 +456,9 @@ function intentEnabledForSeat(type, entry) {
     && Array.isArray(entry && entry.intents) && entry.intents.includes(type);
 }
 
-const SUBAGENT_SUBS = {
-  task: ['list'],
-  memory: ['recall', 'list'],
-  browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services', 'note'],
-};
+const SUBAGENT_SUBS = { browser: ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back', 'forward', 'wait', 'download', 'screenshot', 'inspect', 'services', 'note'] };
 const BROWSER_VERBS = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close', 'note'];
-const SUBAGENT_TYPES = ['dm', 'who', 'name', 'exec', ...Object.keys(SUBAGENT_SUBS)];
+const SUBAGENT_TYPES = [...Object.keys(SUBAGENT_SUBS)];
 const SUBAGENT_CONFIRM_SUBS = ['click', 'type', 'select', 'key'];
 const SUBAGENT_NO_RELEASE = "release is for the seat's main agent";
 const SUBAGENT_NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
@@ -483,10 +479,6 @@ function subagentRefusal(intent, entry) {
     if (SUBAGENT_SUBS.browser.includes(words[0])) return null;
     return BROWSER_VERBS.includes(words[0]) ? `not available to a subagent: browser ${words[0]} (a subagent may ${SUBAGENT_SUBS.browser.join(', ')})` : '';
   }
-  if (SUBAGENT_SUBS[intent.type]) return SUBAGENT_SUBS[intent.type].includes(intent.sub) ? null : '';
-  if (intent.type !== 'exec') return null;
-  const grants = entry && Array.isArray(entry.execCommands) ? entry.execCommands : [];
-  return grants.includes(intent.cmd) ? null : '';
 }
 
 function defaultReplyStatus(line) {

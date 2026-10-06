@@ -656,10 +656,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
   or its uuid tail (uuid-shaped ids only) is the main thread; a seat with no `sessionId` yet
   treats every caller as a subagent.
-- **Subagent filter:** a subagent call passes `subagentAllows` (intent-registry.js):
-  `dm` (delivered as `<seat>/agent`; a dm back to `<seat>/agent` lands in the seat), `who`, `name`, `task list`, `exec <cmd>` for
-  the seat's granted commands, `memory recall|list`. Everything else answers
-  `not available to a subagent: <verb>`.
+- **Subagent filter:** a subagent call passes `subagentAllows` (intent-registry.js): only `browser` (open, read, click, type, select, key, scroll, back, forward, wait, download, screenshot, inspect, services, note — never release, close, `--confirm` or `note --forget`). Everything else answers `not available to a subagent: <verb> — return and let the seat's main agent do it`: a subagent has no inbox, so a dm from it could never receive a reply (Claude Code's SendMessage carries subagent↔parent traffic), and an exec result would arrive as input it never sees.
 - **Verb:** `clodex '<intent>' [more words…]` (args joined with spaces into one line) or `clodex -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
   agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident` (an `@<nonce>` value resolved
