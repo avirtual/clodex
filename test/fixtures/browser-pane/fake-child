@@ -85,7 +85,7 @@ function answer(f) {
   }
   if (f.op === 'open') {
     doc += 1;
-    if (/drive/.test(f.args.url)) send({ event: 'state', service: f.service, state: 'driving', reason: null, seat: f.seat, url: f.args.url, title: '' });
+    if (/drive/.test(f.args.url)) send({ event: 'state', service: f.service, state: 'driving', reason: null, seat: f.seat, openedBy: f.seat, url: f.args.url, title: '' });
     return send({ id: f.id, ok: true, result: { status: 200, url: f.args.url, title: 'Fixture ' + f.service, doc,
       idle: { ok: true, ms: 1200 }, login: { password: /login/.test(f.args.url), logoutLink: /home/.test(f.args.url) } } });
   }

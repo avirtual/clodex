@@ -929,3 +929,44 @@ test('scheduler tabs: services lists a profile\'s open named tabs', async () => 
     ['hand-a', '[agent:browser] services: x — x.com · unknown · window open · idle · tabs: riot (idle)'],
   ]);
 });
+
+const asSub = (h, from = 'seat/agent') => ({ name: 'seat', from, type: 'claude', inject: (text) => h.out.push([from, text]) });
+const runAs = async (h, handle, line) => { h.sched.submit(handle, toCommand(parseLine(line))); await h.settle(); return h.out.splice(0); };
+const { NO_TAB_OPEN } = require('../plugins/browser-pane/subagent');
+
+test('scheduler subagent tabs: open x:riot is refused until the seat has some x window, then goes out stamped seat/agent', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser open x:riot] https://x.com/b'), [['seat/agent', R.errorReply(NO_TAB_OPEN.replace('<profile>', 'x'))]]);
+  assert.deepStrictEqual(h.calls, []);
+  await h.run([['seat', '[agent:browser open x] https://x.com/a']]);
+  await runAs(h, asSub(h), '[agent:browser open x:riot] https://x.com/b');
+  assert.deepStrictEqual(h.calls.map((c) => [c[0], c[1]]), [['seat', 'open'], ['seat/agent', 'open']]);
+});
+
+test('scheduler subagent tabs: a subagent closes only the tab its own identity opened; the main agent closes any', async () => {
+  const h = harness({ close: (_a, m) => ({ closed: m.service, windows: 1, also: [] }) });
+  await h.run([['seat', '[agent:browser open x] https://x.com/a']]);
+  h.sched.onState({ event: 'state', service: 'x:riot', state: 'idle', openedBy: 'seat/agent' });
+  h.sched.onState({ event: 'state', service: 'x:two', state: 'idle', openedBy: 'seat' });
+  h.calls.length = 0;
+  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:two]'), [['seat/agent', R.errorReply('x:two was opened by seat — a subagent closes only a tab it opened')]]);
+  assert.deepStrictEqual(await runAs(h, asSub(h), '[agent:browser close x:three]'), [['seat/agent', R.errorReply('x:three was opened by the main agent — a subagent closes only a tab it opened')]]);
+  assert.deepStrictEqual(h.calls, []);
+  await runAs(h, asSub(h), '[agent:browser close x:riot]');
+  await h.run([['seat', '[agent:browser close x:two]']]);
+  assert.deepStrictEqual(h.calls.map((c) => [c[0], c[1]]), [['seat/agent', 'close'], ['seat', 'close']]);
+});
+
+test('scheduler tabs: a close x queued behind an inflight op is refused at pump once a sibling tab is taken over', async () => {
+  let go;
+  const h = harness({ read: () => new Promise((r) => { go = r; }), close: () => ({ closed: 'x', windows: 0, also: [] }) });
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a'], ['hand-a', '[agent:browser open x:riot] https://x.com/b']]);
+  h.sched.submit(h.seat('hand-a'), toCommand(parseLine('[agent:browser read x]')));
+  h.sched.submit(h.seat('hand-a'), toCommand(parseLine('[agent:browser close x]')));
+  await h.settle();
+  h.sched.onState({ event: 'state', service: 'x:riot', state: 'held', reason: 'takeover' });
+  go({ ...PAGE, contentType: 'text/html', text: 'x', elements: [], truncated: false, frames: [], login: {} });
+  await h.settle();
+  assert.ok(h.out.some(([, t]) => t === `[agent:browser] error: ${R.TEXT.held('x:riot', 'takeover')}`), JSON.stringify(h.out));
+  assert.ok(!h.calls.some((c) => c[1] === 'close'));
+});

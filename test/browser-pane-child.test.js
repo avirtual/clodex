@@ -2075,9 +2075,17 @@ test('page scripts: SUBMIT_TARGET for an arrow key chooses the next or previous 
 
 test('child: op close hides the window before closing it, waits for closed, sweeps unowned same-title orphans, keeping the partition', () => {
   const body = CHILD_SRC.slice(CHILD_SRC.indexOf('async function opClose(name)'), CHILD_SRC.indexOf('async function opForget(profile)'));
-  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*if \(svc\.win\.isDestroyed\(\)\) continue;\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
+  assert.match(body, /const tabs = tabOf\(name\) \|\| !windowsOf\(name\)\.length \? \[need\(name\)\] : windowsOf\(name\);\n\s*for \(const svc of tabs\) \{\n\s*if \(svc\.win\.isDestroyed\(\)\) continue;\n\s*shut\.set\(svc\.name, name\);\n\s*const closed = new Promise\(\(resolve\) => svc\.win\.once\('closed', resolve\)\);\n\s*svc\.win\.hide\(\);\n\s*svc\.win\.close\(\);\n\s*await closed;\n\s*const owned = new Set\(\[\.\.\.services\.values\(\)\]\.map\(\(s\) => s\.win\)\);\n\s*for \(const w of BrowserWindow\.getAllWindows\(\)\) \{\n\s*if \(!w\.isDestroyed\(\) && !owned\.has\(w\) && w\.getTitle\(\) === `\$\{svc\.name\} — Clodex Browser`\) w\.destroy\(\);\n\s*\}\n\s*\}\n\s*const also = tabs\.map\(\(s\) => s\.name\)\.filter\(\(n\) => n !== name\);\n\s*return \{ closed: name, also, windows: services\.size, electron: BrowserWindow\.getAllWindows\(\)\.length \};/);
   assert.ok(!/svc\.win\.destroy|clearStorageData|clearCache|forgetNumbers/.test(body), 'close destroys only unowned orphans and never clears the sign-in');
   assert.match(CHILD_SRC, /else if \(op === 'close'\) result = await serial\(name, \(\) => opClose\(name\)\);/);
+});
+
+test('child: a tab is stamped with its first opener; a close of chain x does not blame the operator for x:riot', () => {
+  assert.ok(CHILD_SRC.includes('policy: null, barMsg: null, lastDenied: null, blockedNav: null, openedBy: null,'));
+  assert.ok(CHILD_SRC.includes('const svc = openService(name);\n    if (created) svc.openedBy = frame.seat || null;'));
+  assert.ok(CHILD_SRC.includes('...pageInfo(svc), openedBy: svc.openedBy, ...extra });'));
+  assert.ok(CHILD_SRC.includes("const closedError = (name) => codedError('CLOSED', shut.has(name) ? `the ${name} window was closed by close ${shut.get(name)} — open it again` : `the operator closed the ${name} window — open it again`);"));
+  assert.ok(CHILD_SRC.includes('opened.add(name);\n    shut.delete(name);'));
 });
 
 test('child: exits when reparented away from its host or sent SIGTERM', () => {
@@ -2499,7 +2507,8 @@ test('child: partition, numbers dir, downloads dir, cookie watch and download ro
   for (const s of ["path.join(data, 'numbers', profile)", 'watchCookies(profile, ses)', 'routerFor(profile, ses)']) assert.ok(CHILD_SRC.includes(s), s);
   assert.strictEqual(CHILD_SRC.split('path.join(downloadsRoot, profile').length - 1, 2);
   assert.ok(CHILD_SRC.includes("ses.on('will-download', (_e, item, from) => {"));
-  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from) || waiters.find((x) => !x.url);'));
+  assert.ok(CHILD_SRC.includes('if (!w) w = waiters.find((x) => !x.url && x.wc && x.wc === from);\n'));
+  assert.ok(!CHILD_SRC.includes('waiters.find((x) => !x.url);'), 'no cross-tab URL-less fallback');
   assert.deepStrictEqual(['.expect({ dir, wc });', '.expect({ url, dir, nameHint, wc: svc.wc });', '.expect({ dir, nameHint, wc });'].map((x) => CHILD_SRC.split(x).length - 1), [1, 1, 1]);
   assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });

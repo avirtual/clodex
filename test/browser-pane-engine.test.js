@@ -291,6 +291,17 @@ test('engine services.remove: drops the service, its partition and downloads; si
   assert.strictEqual(JSON.stringify(host.storage.get()), before);
 });
 
+test('engine services.list: a tab is listed under its profile, never as its own row; status names the opener', async (t) => {
+  const { engine, emit } = boot(t);
+  await emit('[agent:browser open x:riot] https://x.com/drive');
+  const list = await engine.dispatch('browser-pane', 'services.list', [], 'desktop');
+  assert.deepStrictEqual(list.services.map((s) => [s.name, s.windowOpen, s.tabs]), [['x', true, [{ name: 'x:riot', state: 'driving', openedBy: 'clodex-hand' }]]]);
+  const st = await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop');
+  assert.deepStrictEqual(st.services.map((s) => [s.name, s.openedBy]), [['x:riot', 'clodex-hand']]);
+  const far = await engine.dispatch('browser-pane', 'status', ['w2'], 'desktop');
+  assert.deepStrictEqual(far.services.map((s) => [s.name, s.seat, s.openedBy]), [['x:riot', 'another workspace', 'another workspace']]);
+});
+
 test('engine: show on a service with no window resolves the service\'s own refusal', async (t) => {
   const { engine } = boot(t);
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });

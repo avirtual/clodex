@@ -108,6 +108,13 @@ test('segment text for each state: literal rows', async () => {
   }
 });
 
+test('segment tooltip names a tab\'s opener before the last seat', async () => {
+  const f = makeRhost({ status: status('running', [{ ...svc('x:riot', 'idle', 'clodex-hand'), openedBy: 'clodex-hand/agent' }, svc('x', 'idle', 'clodex-hand')]) });
+  bp.activate(f.rhost);
+  await tick();
+  assert.strictEqual(f.segment().render({}).tip, 'x:riot: idle (clodex-hand/agent)\nx: idle (clodex-hand)');
+});
+
 test('the segment pulls status for this window and clicking it shows a window', async () => {
   const f = makeRhost({ status: status('running', [svc('utility', 'idle')]) });
   bp.activate(f.rhost);
@@ -575,6 +582,7 @@ test('Settings: services are a grid table with a header; each row is one line of
       { name: 'guardian', login: 'logged-in', loginAt, lastUrl: 'https://g.example/', windowOpen: true, state: 'idle', visible: false },
       { name: 'utility', login: 'unknown', loginAt: 0, lastUrl: 'https://u.example/', windowOpen: false, state: 'closed' },
       { name: 'gas', login: 'none', loginAt: 0, lastUrl: '', windowOpen: true, state: 'idle' },
+      { name: 'x', login: 'logged-in', loginAt: 0, lastUrl: '', windowOpen: true, state: 'idle', tabs: [{ name: 'x:riot', state: 'idle', openedBy: 'Plugins/agent' }, { name: 'x:two', state: 'driving', openedBy: 'Plugins' }] },
     ] };
     const f = withSeats(makeRhost({ status: status('off'), 'services.list': list }), [
       { name: 'Plugins', type: 'claude' }, { name: 'term', type: 'bash' }, { name: 'cx', type: 'codex' }, { name: 'web', type: 'browser' },
@@ -594,6 +602,8 @@ test('Settings: services are a grid table with a header; each row is one line of
       ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-host', 'u.example'], ['bp-login', 'login unknown'],
       ['bp-window', ''], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
+    assert.deepStrictEqual(cells(rows[3]).slice(3, 5), [['bp-window', 'open · idle · tabs: riot (idle), two (driving)'], ['bp-actions', 'CloseShowHand over']]);
+    assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-tabs').map((n) => n.textContent), ['tabs: riot (idle), two (driving)']);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
     assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(12ch, auto) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
     assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));

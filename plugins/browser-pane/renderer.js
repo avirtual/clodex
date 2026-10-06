@@ -331,8 +331,12 @@ function activate(rhost) {
     if (s.lastUrl) hs.title = s.lastUrl;
     r.appendChild(hs);
     r.appendChild(el('span', 'bp-login', loginText(s)));
-    r.appendChild(el('span', 'bp-window', windowText(s)));
-    if (s.tabs && s.tabs.length) r.appendChild(el('span', 'bp-tabs', 'tabs: ' + s.tabs.map((t) => t.name.split(':')[1] + ' (' + t.state + ')').join(', ')));
+    const tabbed = !!(s.tabs && s.tabs.length);
+    const win = r.appendChild(el('span', 'bp-window', tabbed ? null : windowText(s)));
+    if (tabbed) {
+      win.appendChild(el('span', null, windowText(s) + ' · '));
+      win.appendChild(el('span', 'bp-tabs', 'tabs: ' + s.tabs.map((t) => t.name.split(':')[1] + ' (' + t.state + ')').join(', ')));
+    }
     const acts = el('span', 'bp-actions');
     r.appendChild(acts);
     if (s.windowOpen) windowControls(acts, s.name, refill, { owner: hands, formHost: r });
