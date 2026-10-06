@@ -73,6 +73,17 @@ test('a wrong credential is refused as unauthorized and never reaches the handle
   } finally { srv.stop(); }
 });
 
+test('a {cred, tool, args} request reaches the handler as tool and args; a wrong cred is unauthorized first', async () => {
+  const got = [];
+  const { srv, sockPath } = await server({ handle: async (r) => { got.push(r); return { ok: true, reply: 'x' }; } });
+  try {
+    assert.deepStrictEqual(await send(sockPath, req({ cred: 'd'.repeat(64), tool: 'browser', args: { verb: 'read' } })), { ok: false, error: 'unauthorized' });
+    assert.deepStrictEqual(got, []);
+    assert.deepStrictEqual(await send(sockPath, req({ cred: CRED, tool: 'browser', args: { verb: 'read' } })), { ok: true, reply: 'x' });
+    assert.deepStrictEqual(got, [{ intent: undefined, tool: 'browser', args: { verb: 'read' }, agentId: undefined, agentType: undefined, ident: undefined }]);
+  } finally { srv.stop(); }
+});
+
 test('a request over the 64KB intent cap is refused before parsing', async () => {
   let called = 0;
   const { srv, sockPath } = await server({ handle: async () => { called++; return { ok: true, reply: '' }; } });
