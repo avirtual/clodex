@@ -58,7 +58,7 @@ const CONSEQUENTIAL = [
     ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
     { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
   ['publish', ['post', 'reply', 'forward', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
-    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
+    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like'], {}, '\\b(post|edit) history\\b|\\b\\d+ likes?\\b|\\bliked by\\b|\\bwho liked\\b'],
 ];
 const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm', 'reserve'];
@@ -80,7 +80,7 @@ function cqCompile(table, idTerms, leadCats = []) {
       out.push({ cat, t, id: idTerms.includes(t), noun: false, lead: leadCats.includes(cat), re: termRe(t, leadCats.includes(cat)), with: withs[t] ? new RegExp(withs[t]) : null, unless: unless ? new RegExp(unless) : null });
     }
     for (const t of nouns) out.push({ cat, t, id: false, noun: true, re: termRe(t) });
-    for (const t of idOnly) out.push({ cat, t, id: true, idOnly: true, noun: false, lead: false, re: termRe(t) });
+    for (const t of idOnly) out.push({ cat, t, id: true, idOnly: true, noun: false, lead: false, re: termRe(t), unless: unless ? new RegExp(unless) : null });
   }
   return out;
 }
@@ -877,7 +877,7 @@ const PLACEHOLDER_ALT_RE = 'profile picture|avatar|user image|photo of';
 const GENERIC_CLASSES = ['container', 'wrapper', 'wrap', 'inner', 'outer', 'row', 'col', 'flex', 'grid', 'item', 'box', 'btn', 'button', 'icon', 'clickable', 'active', 'selected', 'link', 'nav', 'text', 'bg', 'is', 'has', 'js', 'ui'];
 
 function labelFrom(d) {
-  const flat = (s) => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  const flat = (s) => String(s == null ? '' : s).replace(/[\u200b\u200c\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
   const alt = (s) => { const a = flat(s); return a && !PLACEHOLDER_ALTS.includes(a.toLowerCase()) && !new RegExp(PLACEHOLDER_ALT_RE, 'i').test(a) ? a : ''; };
   const tid = (s) => flat(s).replace(/[-_](container|wrapper|wrap|button|btn)$/i, '');
   const cls = (s) => flat(s).split(' ').find((c) => c.length <= 30 && /^[a-z]{2,}(?:[-_][a-z]{2,})*$/i.test(c) && !GENERIC_CLASSES.includes(c.toLowerCase().split(/[-_]/)[0])) || '';

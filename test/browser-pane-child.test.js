@@ -2191,6 +2191,16 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
 });
 
+test('page scripts: post edit history and a like count are not publish; a Like button and a like-classed button still are', () => {
+  assert.strictEqual(scripts.consequentialHit({ label: 'post edit history', idClass: 'post-edit-history' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: '19 likes', idClass: 'like-count' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Like', idClass: 'like' }).cat, 'publish');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Post' }).cat, 'publish');
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Please sign up or log in to like this post', idClass: 'like' }), { cat: 'publish', term: 'like' });
+  assert.strictEqual(scripts.labelFrom({ tag: 'button', label: '\u200b', title: 'Please sign up or log in to like this post' }), 'Please sign up or log in to like this post');
+  assert.ok(String(scripts.labelFrom).includes("const flat = (s) => String(s == null ? '' : s).replace(/[\\u200b\\u200c\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();"));
+});
+
 test('page scripts: Forward is a publish verb; an Order Status/history link is not a purchase, Place order still is', () => {
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Forward' }), { cat: 'publish', term: 'forward' });
   assert.strictEqual(scripts.consequentialHit({ label: 'Order Status' }), null);
