@@ -348,6 +348,7 @@ const WALL = `
       for (const l of labels) rest = rest.replace(l, ' ');
       return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));
     };
+    const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };
     let all = [];
     let endIdx = -1;
     const hitOf = (t, re) => {
@@ -358,7 +359,9 @@ const WALL = `
         if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
       }
       const bt = blockText(b);
-      return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
+      if (!bt) return null;
+      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };
+      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;
     };
     const pick = (re) => {
       let before = null;

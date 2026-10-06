@@ -615,7 +615,8 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
   assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
   assert.ok(src.includes('return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));'));
-  assert.ok(src.includes('return bt && gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes('      if (!bt) return null;\n      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };\n      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes("const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };"));
   const authored = new Function('norm', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '));
   assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', textContent: 'to read this story, Sign in.' }), 'to read this story, Sign in.');
   assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', textContent: 'Create an account.The author' }), 'Create an account. The author');
