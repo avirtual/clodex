@@ -620,8 +620,12 @@ function collect(main) {
     if (!inScope(el)) { items.push({ el, line: null }); continue; }
     if (listed >= ${ELEMENTS_MAX}) { truncated = true; items.push({ el, line: null }); continue; }
     listed += 1;
+    const th = el.closest('th');
+    const sorted = (el.getAttribute('aria-sort') || (th && th.getAttribute('aria-sort')) || '').toLowerCase();
+    const flags = (disabled ? ' [disabled]' : '') + (sorted === 'ascending' ? ' [sorted ↑]' : sorted === 'descending' ? ' [sorted ↓]' : '')
+      + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '');
     const cq = cqOf(el);
-    items.push({ el, full, cq, line: kind + ' ' + (cq ? '⚠ ' : '') + line + (disabled ? ' [disabled]' : ''), sig: sig == null ? null : kind + ' ' + sig + (disabled ? ' [disabled]' : '') });
+    items.push({ el, full, cq, line: kind + ' ' + (cq ? '⚠ ' : '') + line + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
   }
 `;
 }

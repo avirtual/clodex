@@ -56,6 +56,7 @@ blocks a release.
 - Browser pane: the ⚠ gate now covers broker and wallet controls (trade, sell, close position, copy a trader, deposit, add funds, withdraw) and like buttons whose only label is a count — a bare `close`/`copy` stays free; `open` with the URL inside the bracket says where the URL goes.
 - Browser pane: a radio or checkbox hidden behind its label (GOV.UK, Bootstrap custom controls) is listed as the choice with its state, and clicking the label replies `checked now`.
 - Browser pane: site notes — an agent leaves per-site hints with `[agent:browser note <service>] @<path|*> path|quirk|caution: <text>`; later visits by any seat see them once on open and on the first read of a page, labelled as unverified observations.
+- Browser pane: an element keeps its number when only its own state text or live numbers change (sort buttons that say "Activate to invert sorting", portfolio rows with ticking prices); sorted columns show `[sorted ↑]` and the current pagination page `[current]`; a filtered read keeps the "Showing n of N" line.
 
 ## 5.112.2 — 2026-10-04
 

@@ -534,6 +534,12 @@ test('numberVerdict: an unresolved number is ambiguous when its base key is on t
   assert.strictEqual(numberVerdict('ok', stored, null), 'ok');
 });
 
+test('numberVerdict: a header whose sort label flipped after the click is the same element, not ambiguous or retired', () => {
+  const stored = K.keyOf({ kind: 'button', label: 'Age: Activate to sort', href: '' });
+  const keys = { 55: K.keyOf({ kind: 'button', label: 'Name: Activate to sort', href: '' }), 56: K.keyOf({ kind: 'button', label: 'Age: Activate to invert sorting', href: '' }) };
+  assert.strictEqual(numberVerdict(keys[56] === stored ? 'ok' : null, stored, keys), 'ok');
+});
+
 test('retiredOf: numbers whose key changed on this page; on the same document also numbers that vanished', () => {
   const base = K.keyOf({ kind: 'button', label: 'Delete', href: '' });
   const prev = { 1: K.storedKey(base, 1, 'A'), 2: 'link\u0000Acasa\u0000/', 3: 'link\u0000Gone\u0000/g' };
