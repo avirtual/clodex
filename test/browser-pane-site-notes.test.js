@@ -40,6 +40,15 @@ test('origin scope: www is its own origin, a non-default port is kept, the file 
   assert.notStrictEqual(N.fileName('https://www.x.com'), N.fileName('https://x.com'));
 });
 
+test('origin scope: a loopback origin is split by its first path segment, any other origin is not', () => {
+  assert.strictEqual(N.originKey('http://127.0.0.1:8731/zone-promise.html'), 'http://127.0.0.1:8731/zone-promise.html');
+  assert.notStrictEqual(N.originKey('http://127.0.0.1:8731/net-poll-pair.html'), N.originKey('http://127.0.0.1:8731/zone-promise.html'));
+  assert.strictEqual(N.originKey('http://localhost:3000/app/x'), 'http://localhost:3000/app');
+  assert.strictEqual(N.originKey('http://localhost:3000/'), 'http://localhost:3000/');
+  assert.strictEqual(N.originKey('http://[::1]:3000/app/x?q=1'), 'http://[::1]:3000/app');
+  assert.strictEqual(N.originKey('https://example.com/a'), N.originKey('https://example.com/b'));
+});
+
 test('a note line parses and formats with its id, and a text holding " — " survives', () => {
   const line = 'ab3k @/portfolio/* quirk: rows renumber — click by name — hand-1 2026-10-06';
   const n = N.parseLine(line);

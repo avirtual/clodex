@@ -894,21 +894,25 @@ test('page scripts: VALUE_ACTIVE reads the focused text field after a key, never
   assert.match(CHILD_SRC, /const out = await withChange\(svc, pre, \{ \.\.\.nav\(\), idle: idleOf\(idle\) \}, lateMsFor\(op\)\);\n\s*if \(out\.changed === '' && !wc\.isDestroyed\(\)\) \{\n\s*const value = await inIsolated\(wc, scripts\.VALUE_ACTIVE\);/);
 });
 
-test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then li under the read root, with y/height/vh', () => {
-  const run = ({ article = 0, listitem = 0, li = 0, root = true }) => {
-    const rootEl = { querySelectorAll: (sel) => ({ length: sel === '[role=listitem]' ? listitem : sel === 'li' ? li : 0 }) };
+test('page scripts: SCROLL_INFO counts article first, then [role=listitem], then the rows of the largest list under the read root (a nav bigger than the main list wins), with y/height/vh', () => {
+  const LISTS = 'ul,ol,tbody,table,[role=list]';
+  const listOf = (n) => ({ children: [...Array.from({ length: n }, () => ({ matches: (s) => s === 'li,tr' })), { matches: () => false }] });
+  const run = ({ article = 0, listitem = 0, lists = [], root = true }) => {
+    const rootEl = { querySelectorAll: (sel) => (sel === LISTS ? lists.map(listOf) : { length: sel === '[role=listitem]' ? listitem : 0 }) };
     const document = {
       querySelector: (sel) => (root && sel.startsWith('main article') ? rootEl : null),
       querySelectorAll: (sel) => ({ length: sel === 'article' ? article : 0 }),
-      body: { querySelectorAll: () => ({ length: 0 }) },
+      body: { querySelectorAll: (sel) => (sel === LISTS ? [] : { length: 0 }) },
       scrollingElement: { scrollHeight: 9500.4 },
     };
     return new Function('document', 'window', `return ${scripts.SCROLL_INFO}`)(document, { scrollY: 1867.6, innerHeight: 868 });
   };
-  assert.deepStrictEqual(run({ article: 12, listitem: 30, li: 40 }), { y: 1868, height: 9500, vh: 868, items: 12 });
-  assert.strictEqual(run({ listitem: 30, li: 40 }).items, 30);
-  assert.strictEqual(run({ li: 40 }).items, 40);
-  assert.strictEqual(run({ li: 40, root: false }).items, 0);
+  assert.deepStrictEqual(run({ article: 12, listitem: 30, lists: [40] }), { y: 1868, height: 9500, vh: 868, items: 12 });
+  assert.strictEqual(run({ listitem: 30, lists: [40] }).items, 30);
+  assert.strictEqual(run({ lists: [42, 5] }).items, 42);
+  assert.strictEqual(run({ lists: [3, 5] }).items, 5);
+  assert.strictEqual(run({ lists: [3] }).items, 3);
+  assert.strictEqual(run({ lists: [40], root: false }).items, 0);
   assert.ok(scripts.READ_TEXT(false).includes(JSON.stringify(scripts.READ_ROOT_SEL)));
 });
 
@@ -978,6 +982,7 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes("const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';"));
   assert.ok(/const modal = forced \? null : .*a: paintedArea\(e\).*\n  if \(modal\) root = modal\.e;/.test(src));
   assert.ok(src.includes('x.by !== \'aria\' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4'));
+  assert.ok(src.includes("(a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a"));
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
   assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
@@ -1022,9 +1027,9 @@ function modalByOf() {
   return { body, modalBy: make((e) => e.style, { body }, 1200, 800, () => true) };
 }
 
-function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, innerText = '' } = {}) {
+function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, role = false, innerText = '' } = {}) {
   const e = { attrs, style, parentElement, innerText, children: [], previousElementSibling: null,
-    matches: () => aria, getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
+    matches: (sel) => (sel === '[role=dialog]' ? role : aria), getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
   if (parentElement) {
     e.previousElementSibling = parentElement.children[parentElement.children.length - 1] || null;
     parentElement.children.push(e);
@@ -1072,7 +1077,18 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     node(body);
     assert.strictEqual(modalBy(node(node(body), { aria: true })), 'aria');
   }
-  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; return ''; };");
+  {
+    const { body, modalBy } = modalByOf();
+    node(body, { innerText: 'Work items: Item 1, Item 2, Item 3, Item 4, Item 5, Item 6' });
+    const drawer = (style, rect) => modalBy(node(body, { role: true, style, rect }));
+    const docked = { left: 720, right: 1200, top: 0, bottom: 800, width: 480, height: 800 };
+    assert.strictEqual(drawer({ position: 'fixed' }, docked), 'drawer');
+    assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 300, width: 900 }), '');
+    assert.strictEqual(drawer({ position: 'absolute' }, docked), '');
+    assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 100, right: 580 }), '');
+    assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
+  }
+  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (e.matches('[role=dialog]') && getComputedStyle(e).position === 'fixed') { const r = e.getBoundingClientRect(); if (r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= innerWidth - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6) return 'drawer'; } return ''; };");
 });
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {

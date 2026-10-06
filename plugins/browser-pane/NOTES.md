@@ -18,6 +18,8 @@ WebSocket, EventSource and Ping excluded), and no DOM mutation, all held for
 fire none.
 An absent `worldId` runs the probe in the main world and is for harnesses only;
 production passes `scripts.ISOLATED_WORLD`.
+Poll keys with equal counts are listed by key, and a tie picks the lexically
+first key's cadence for `everyMs`.
 
 ## driver.js — act
 

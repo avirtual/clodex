@@ -163,7 +163,10 @@ test('driver armIdle: a page polling up to three paths of any method goes idle w
   assert.ok(!('polls' in rotate));
   const pair = await pollRun(Array.from({ length: 8 }, (_, i) => `https://x/p${i % 2}.txt?${i}`));
   assert.strictEqual(pair.ok, true);
-  assert.deepStrictEqual([...pair.polls.paths].sort(), ['https://x/p0.txt', 'https://x/p1.txt']);
+  assert.deepStrictEqual(pair.polls.paths, ['https://x/p0.txt', 'https://x/p1.txt']);
+  const reversed = await pollRun(Array.from({ length: 8 }, (_, i) => `https://x/p${1 - (i % 2)}.txt?${i}`));
+  assert.strictEqual(reversed.ok, true);
+  assert.deepStrictEqual(reversed.polls.paths, ['https://x/p0.txt', 'https://x/p1.txt']);
   assert.ok(Math.abs(pair.polls.everyMs - 600) <= 50, String(pair.polls.everyMs));
   const held = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4'], 200, { other: true });
   assert.strictEqual(held.ok, true);
@@ -174,7 +177,7 @@ test('driver armIdle: a page polling up to three paths of any method goes idle w
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
   assert.ok(src.includes('const DONE_MAX = 64;'));
   assert.ok(src.includes('const other = recent.filter((d) => !keys.has(d.method + \' \' + d.path)); if (other.length > tops.length) return null;'));
-  assert.ok(src.includes('.filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3);'));
+  assert.ok(src.includes('.filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 3);'));
   assert.ok(src.includes('const POLL_MIN_MS = 100;'));
 });
 

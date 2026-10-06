@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><title>drawer-aside</title>
+<style>body{margin:0;font:14px sans-serif} main{padding:20px} li{margin:6px 0}</style></head><body>
+<main><h1>Work items</h1>
+<button id="open" onclick="document.getElementById('drawer').style.display='block'">Open item 3</button>
+<ul>
+<li><a href="/items/1">Item 1 Upgrade the build runners to the new base image</a></li>
+<li><a href="/items/2">Item 2 Remove the deprecated metrics exporter from staging</a></li>
+<li><a href="/items/3">Item 3 Bump Go toolchain to the latest patch release</a></li>
+<li><a href="/items/4">Item 4 Rotate the deploy keys for the release pipeline</a></li>
+<li><a href="/items/5">Item 5 Document the rollback procedure for the API gateway</a></li>
+<li><a href="/items/6">Item 6 Fix the flaky integration test in the billing service</a></li>
+</ul>
+</main>
+<aside id="drawer" role="dialog" aria-label="Item 3" class="drawer" style="display:none;position:fixed;top:0;right:0;width:40vw;height:100vh;overflow:auto;background:#fff;border-left:1px solid #ccc;padding:16px">
+<h2>Item 3: Bump Go toolchain</h2>
+<p>The CI images still pin an older Go toolchain. Bump it to the latest patch release, rebuild the runner images and check that every service still compiles and passes its tests.</p>
+<button aria-label="Close drawer" onclick="document.getElementById('drawer').style.display='none'">×</button>
+</aside>
+</body></html>

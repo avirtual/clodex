@@ -37,6 +37,7 @@ const REFUSE_ROWS = [
 test('refuse maps each call to its verdict', () => {
   for (const [raw, want] of REFUSE_ROWS) assert.strictEqual(subagent.refuse({ type: 'browser', raw }), want, raw);
   for (const sub of subagent.SUBS) assert.strictEqual(subagent.refuse({ type: 'browser', raw: `${sub} x` }), null, sub);
+  for (const sub of require('../plugins/browser-pane/grammar').SUBCOMMANDS) assert.ok(!String(subagent.refuse({ type: 'browser', raw: sub + ' x' }) || '').startsWith('not available to a subagent: browser'), sub);
 });
 
 test('SUBS is the grammar minus release and close', () => {
@@ -59,10 +60,13 @@ test('one denial site: the mapper renders release and close, the refusal texts l
   const src = fs.readFileSync(path.join(DIR, 'mcp-tool.js'), 'utf8');
   assert.ok(src.includes("'release', 'close'"));
   assert.ok(!src.includes("is for the seat's main agent"));
+  const sub = fs.readFileSync(path.join(DIR, 'subagent.js'), 'utf8');
+  assert.ok(!sub.includes('not available to a subagent'));
+  assert.ok(!sub.includes("require('./grammar')"));
 });
 
-test('both leaves require only their one sibling', () => {
-  assert.deepStrictEqual(requires('subagent.js'), ['./grammar']);
+test('subagent.js requires nothing, mcp-tool.js only its sibling', () => {
+  assert.deepStrictEqual(requires('subagent.js'), []);
   assert.deepStrictEqual(requires('mcp-tool.js'), ['./subagent']);
 });
 
