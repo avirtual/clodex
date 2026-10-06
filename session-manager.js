@@ -671,7 +671,6 @@ function createSessionManager(deps) {
     scheduleTrayRefresh,
     setupClaudeHook,
     setupCodexHook,
-    writeMcpConfig,
     shadowIntentKey,
     shouldHoldDm,
     spillToFile,
@@ -694,6 +693,8 @@ function createSessionManager(deps) {
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
+  const writeMcpConfig = deps.writeMcpConfig
+    || ((n) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n));
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
   const streamFor = deps.streamFor || adapterStreamFor;
   const loadStreamCodec = deps.loadStreamCodec || ((id) => require(`./${id}`));
