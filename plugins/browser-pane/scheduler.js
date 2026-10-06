@@ -182,7 +182,7 @@ function createScheduler({
     noteUrl(service, r.url);
     updateStorage(service, (prev) => ({
       ...prev,
-      openedHost: prev.openedHost || hostOf(prev.lastUrl) || hostOf(asked || r.url),
+      openedHost: hostOf(asked) || prev.openedHost || hostOf(prev.lastUrl) || hostOf(r.url),
       createdAt: prev.createdAt || t,
       lastUsedAt: t,
       lastSeat: seat,
@@ -506,7 +506,7 @@ function createScheduler({
 
   function servicesLine() {
     const data = storage.get() || {};
-    const tabsOf = (p) => [...services.keys()].filter((n) => tabOf(n) && profileOf(n) === p && mirror && mirror.get(n) && mirror.get(n) !== 'closed').map((n) => ({ tab: tabOf(n), state: mirror.get(n) }));
+    const tabsOf = (p) => [...services.keys()].filter((n) => tabOf(n) && profileOf(n) === p && mirror && mirror.get(n) && mirror.get(n) !== 'closed').map((n) => ({ tab: tabOf(n), state: mirror.get(n), openedBy: svcState(n).openedBy || null }));
     return replies.servicesReply((data && data.services) || {}, mirror, (name) => (services.get(name) || {}).url || '', tabsOf);
   }
 
@@ -547,6 +547,10 @@ function createScheduler({
     const isSub = handle.from && handle.from !== handle.name;
     if (isSub && cmd.sub === 'open' && tabOf(service) && ![...services.entries()].some(([n, t]) => profileOf(n) === profileOf(service) && t.state !== 'closed')) {
       handle.inject(replies.errorReply(NO_TAB_OPEN.replace('<profile>', profileOf(service))));
+      return;
+    }
+    if (isSub && cmd.sub === 'close' && s.state === 'closed') {
+      handle.inject(replies.errorReply(replies.TEXT.notOpen(service)));
       return;
     }
     if (isSub && cmd.sub === 'close' && s.openedBy !== handle.from) {

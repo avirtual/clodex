@@ -470,7 +470,7 @@ const HIT_AT = `
 
 const MODAL_FINDER = `const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
   const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
-  const drawerAt = (e) => { if (getComputedStyle(e).position !== 'fixed') return false; const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 1 || r.right >= w - 1) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.6; };
+  const drawerAt = (e) => { if (getComputedStyle(e).position !== 'fixed') return false; const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 16 || r.right >= w - 16) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.75; };
   const drawerKeep = (e) => !e.closest('nav, [role=navigation]') && !e.querySelector('nav, [role=navigation]') && [...e.querySelectorAll('button, a, [role=button]')].some(b => /close|dismiss|^×$/i.test((b.getAttribute('aria-label') || b.innerText || b.getAttribute('title') || '').trim()));
   const drawersOf = () => [...document.querySelectorAll('div,aside,section')].filter(e => !e.matches(DIALOG_SEL) && drawerAt(e) && vis(e) && drawerKeep(e)).filter((e, _i, a) => !a.some(x => x !== e && e.contains(x)));
   const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };
@@ -854,7 +854,7 @@ function collect(main) {
     const flags = (disabled ? ' [disabled]' : '') + (sorted === 'ascending' ? ' [sorted ↑]' : sorted === 'descending' ? ' [sorted ↓]' : '')
       + (/^(page|true)$/i.test(el.getAttribute('aria-current') || '') ? ' [current]' : '') + (unread ? ' [unread]' : '');
     const cq = cqOf(el);
-    items.push({ el, full, cq, line: kind + ' ' + (cq ? '⚠ ' : '') + line + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
+    items.push({ el, full, cq, line: [kind, cq ? '⚠' : '', line].filter(Boolean).join(' ') + flags, sig: sig == null ? null : kind + ' ' + sig + flags });
   }
 `;
 }
@@ -913,7 +913,7 @@ function labelFrom(d) {
   const form = ['button', 'input', 'select', 'textarea'].includes(d.tag);
   const photo = d.tag === 'a' && d.href ? /\/photo\/(\d+)\/?$/.exec(path(d.href)) : null;
   const handle = d.tag === 'a' && d.href && segs(d.href).length === 1 && /^[A-Za-z0-9_]{1,30}$/.test(segs(d.href)[0]) ? '@' + segs(d.href)[0] : '';
-  const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title),
+  const named = pick([flat(d.label), flat(d.aria), flat(d.text), flat(d.placeholder), ['input', 'select', 'button'].includes(d.tag) ? flat(d.value) : '', flat(d.title), flat(d.svgAria), flat(d.svgTitle), flat(d.tooltip),
     () => (handle ? '' : (d.alts || []).map(alt).find(Boolean)), () => (form ? flat(d.name) || flat(d.id) : flat(d.inner))]);
   const pic = d.inLink && d.h <= 24 ? 'badge' : !d.inLink || d.h >= 32 ? 'avatar' : '';
   if (named) return photo && /^\d+$/.test(named) ? 'photo ' + photo[1] : avatar(named) && /\.(jpe?g|png|webp|gif)$/i.test(named) ? pic || named : named;
@@ -926,7 +926,7 @@ function labelFrom(d) {
   if (marked) return marked;
   if (src && d.video && /\.(jpe?g|png|webp|gif)$/i.test(src)) return 'video';
   if (avatar(src) && pic) return pic;
-  return pick([human(src.replace(/\.\w{2,5}$/, '')), human(d.for), cls(d.classes)]);
+  return pick([human(src.replace(/\.\w{2,5}$/, '')), human(d.for), () => (form ? '' : cls(d.classes))]);
 }
 
 const ICON = `
@@ -954,6 +954,8 @@ const ICON = `
       testid: e.getAttribute('data-testid') || (inner ? inner.getAttribute('data-testid') : ''),
       svgTestid: svg ? svg.getAttribute('data-testid') : '',
       svgTitle: st ? st.textContent : '',
+      svgAria: svg ? svg.getAttribute('aria-label') : '',
+      tooltip: e.getAttribute('data-tooltip') || e.getAttribute('data-original-title') || '',
       classes: e.getAttribute('class'),
       src: [e.getAttribute('src') || '', ...[...e.querySelectorAll('img[src]')].map(i => i.getAttribute('src'))].find(u => u && !/^data:/i.test(u)) || '',
       inner: btn ? (btn.tagName === 'INPUT' ? btn.value : btn.innerText) || btn.getAttribute('aria-label') || btn.getAttribute('title') || btn.getAttribute('name') || '' : '',
