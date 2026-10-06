@@ -298,31 +298,33 @@ const WALL = `
   const wallScan = (root) => {
     const WALL = ${WALL_RE};
     const clip = t => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
-    if (root && document.body) {
-      const all = [];
-      const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-      for (let t = w.nextNode(); t; t = w.nextNode()) all.push(t);
-      const inRoot = all.filter(t => root.contains(t));
-      const last = inRoot[inRoot.length - 1];
-      const tail = [];
-      let n = 0;
-      for (let i = inRoot.length - 1; i >= 0 && n < 600; i--) { tail.unshift(inRoot[i]); n += inRoot[i].data.length; }
-      const after = [];
-      let m = 0;
-      for (const t of all) {
-        if (m >= 2000) break;
-        if (last && root.contains(t)) continue;
-        if (last && !(last.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-        if (!last && !(root.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
-        after.push(t); m += t.data.length;
+    try {
+      if (root && document.body) {
+        const all = [];
+        const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let t = w.nextNode(); t; t = w.nextNode()) all.push(t);
+        const inRoot = all.filter(t => root.contains(t));
+        const last = inRoot[inRoot.length - 1];
+        const tail = [];
+        let n = 0;
+        for (let i = inRoot.length - 1; i >= 0 && n < 600; i--) { tail.unshift(inRoot[i]); n += inRoot[i].data.length; }
+        const after = [];
+        let m = 0;
+        for (const t of all) {
+          if (m >= 2000) break;
+          if (last && root.contains(t)) continue;
+          if (last && !(last.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+          if (!last && !(root.compareDocumentPosition(t) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+          after.push(t); m += t.data.length;
+        }
+        for (const t of tail.concat(after)) {
+          const el = t.parentElement;
+          if (el && WALL.test(t.data) && vis(el)) return { text: clip(el.innerText || t.data), n: null };
+        }
       }
-      for (const t of tail.concat(after)) {
-        const el = t.parentElement;
-        if (el && WALL.test(t.data) && vis(el)) return { text: clip(el.innerText || t.data), n: null };
-      }
-    }
-    const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)})].find(e => vis(e) && clip(e.innerText));
-    return box ? { text: clip(box.innerText), n: null } : null;
+      const box = [...document.querySelectorAll(${JSON.stringify(WALL_SEL)})].find(e => vis(e) && clip(e.innerText));
+      return box ? { text: clip(box.innerText), n: null } : null;
+    } catch { return null; }
   };`;
 
 const SCROLL_INFO = `(() => {
