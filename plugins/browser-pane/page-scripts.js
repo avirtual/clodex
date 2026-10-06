@@ -328,7 +328,7 @@ function readText(main) {
     document.querySelectorAll('div,section,td').forEach(el => {
       const s = score(el); if (s > bs) { bs = s; best = el; }
     });
-    root = (best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best;
+    root = best && (best.innerText || '').length < 0.5 * ((document.body && document.body.innerText) || '').length ? document.body : best;
   }
   const busy = busyScan();
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
