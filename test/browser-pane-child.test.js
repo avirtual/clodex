@@ -1060,7 +1060,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}) });'));
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}) });'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {

@@ -43,11 +43,13 @@ function withPath(head, tail) {
 function idleLabel(idle) {
   if (!idle) return '';
   const secs = (Number(idle.ms) / 1000).toFixed(1);
-  if (idle.ok) return `idle ${secs}s${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}`;
+  const polls = idle.polls && idle.polls.path ? `${oneLine(redactUrl(idle.polls.path), 80)} every ~${(Number(idle.polls.everyMs) / 1000).toFixed(1)} s` : '';
+  if (idle.ok) return `idle ${secs}s${idle.ticker ? ` · ticker ignored: ${idle.ticker}` : ''}${polls ? ` · polls ignored: ${polls}` : ''}`;
   if (idle.stopped) return `stopped a stalled load after ${Math.round(idle.ms / 1000)}s`;
   const n = Array.isArray(idle.inflight) ? idle.inflight.length : 0;
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
     : Array.isArray(idle.churn) && idle.churn.length ? `still busy after ${Math.round(idle.ms / 1000)}s (DOM churn: ${idle.churn.join(', ')})`
+    : polls ? `still busy after ${Math.round(idle.ms / 1000)}s (network polls: ${polls})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 

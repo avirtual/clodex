@@ -13,7 +13,8 @@ function fakeWc() {
   const wc = new EventEmitter();
   Object.assign(wc, { debugger: dbg, isDestroyed: () => false, isLoading: () => false, executeJavaScript: async () => 'complete' });
   const sent = (id, url, type = 'XHR') => dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: id, type, request: { url } });
-  return { wc, sent };
+  const finished = (id) => dbg.emit('message', {}, 'Network.loadingFinished', { requestId: id });
+  return { wc, sent, finished };
 }
 
 test('driver armIdle: blob: and data: requests never count as in flight', async () => {
@@ -90,4 +91,31 @@ test('driver armIdle: a complete page reporting churn is not idle', async () => 
   const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r.ok, false);
   assert.deepStrictEqual(r.churn, ['div#app']);
+});
+
+function pollRun(urls) {
+  let t = 1000;
+  const { wc, sent, finished } = fakeWc();
+  return driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } }).then((w) => {
+    urls.forEach((url, i) => { sent(`p${i}`, url); t += 100; finished(`p${i}`); t += 200; });
+    sent('open', urls[0].replace(/\?.*$/, '?open'));
+    return w.wait({ quietMs: 500, timeoutMs: 1000 });
+  });
+}
+
+test('driver armIdle: a page polling one path goes idle with the poll named; under three completions or two paths it does not', async () => {
+  const r = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4']);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.polls.path, 'https://x/api/poll');
+  assert.ok(Math.abs(r.polls.everyMs - 300) <= 50, String(r.polls.everyMs));
+  const two = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2']);
+  assert.strictEqual(two.ok, false);
+  assert.strictEqual(two.reason, 'timeout');
+  assert.ok(!('polls' in two));
+  const alt = await pollRun(['https://x/api/a?1', 'https://x/api/b?1', 'https://x/api/a?2', 'https://x/api/b?2']);
+  assert.strictEqual(alt.ok, false);
+  assert.ok(!('polls' in alt));
+  const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
+  assert.ok(src.includes('const DONE_MAX = 64;'));
+  assert.ok(src.includes('if (!top || top[1] < 3) return null;'));
 });
