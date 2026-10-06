@@ -95,6 +95,7 @@ blocks a release.
 - Browser pane: `click --text` and `inspect --text` fall back to a control's `aria-label`/`title` when no visible text matches (an icon button named "Close drawer" showing only `×`), and the reply then says `(matched by label)`; a visible-text match is never widened by names. `clodex --help` bounds a catalog tool's name like its description.
 - Browser pane: controls under a modal dialog's backdrop are no longer listed in a default read (they keep their numbers; `read --all` lists them and the head line says how many are under the dialog), the README documents the read root (modal, drawer, `--main`), and a drawer without `role=dialog` (GitLab's work-item panel) is recognised by its geometry, with a classic scrollbar tolerated.
 - Muse seats on the PTY transport: `[agent:context compact]` and `[agent:context clear]` type the Muse TUI's `/compact` and `/clear` like Claude and Codex seats, instead of bouncing as unsupported.
+- Muse seats on the PTY transport: the briefing body after `[agent:context compact]` is injected when Muse's compaction lands, as it is for Claude seats, instead of expiring unseen.
 
 ## 5.112.2 — 2026-10-04
 

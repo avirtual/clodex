@@ -363,7 +363,8 @@ Codex gets the shared SessionStart script plus a per-cwd `.codex/hooks.json`
   intents. It buffers assistant text by requestId and flushes on a new
   requestId / non-assistant entry / `TURN_COMPLETE_TIMEOUT` (1s) silence.
   `/clear` = new transcript + new sessionId; `/compact` = same transcript,
-  same id, plus an `isCompactSummary` entry (→ compact-continuation firing).
+  same id, plus an `isCompactSummary` entry (→ compact-continuation firing;
+  for Muse, a `context.compact.manual.outcome` record with `terminal_outcome: compacted`).
   Codex has written its replies in two shapes across builds and `transcript.js`
   reads both: the older `event_msg` `agent_message`/`user_message`, and the
   current `response_item` `{type:'message', role:'assistant'|'user'}` whose

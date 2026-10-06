@@ -46,6 +46,25 @@ const MUSE_COMMAND = {
   payload_type: 'command.invoked', payload_schema_version: 1,
   payload: { kind: 'command_invoked', record: { schema_version: 1, session_id: '01a0d9b9-7ffc-7113-a4d9-4768bbf19388', command: '/model' } },
 };
+const MUSE_COMPACT_OUTCOME = {
+  schema_version: 1, id: '2adc1d8d-4cdc-59d5-8382-978bcac4526d', stream: { kind: 'session', id: '01a11293-d35d-7b61-a7ee-d4fddefd666c' },
+  sequence: 1869, recorded_at: 1791322640014433, record_type: 'event', durability: 'durable', causation_id: '01a11326-1817-7c63-84e3-bd02eff3d44a',
+  payload_type: 'context.compact.manual.outcome', payload_schema_version: 1,
+  payload: {
+    kind: 'manual_compaction_outcome', command_id: '01a11326-1817-7c63-84e3-bd02eff3d44a',
+    run_stream: { kind: 'run', id: 'aff7e18b-32ce-4b63-bff7-6e7d8de0ed76' }, candidate_id: 'candidate-65', terminal_outcome: 'compacted', reason: null,
+  },
+};
+const MUSE_COMPACT_NOOP = { ...MUSE_COMPACT_OUTCOME, payload: { ...MUSE_COMPACT_OUTCOME.payload, terminal_outcome: 'noop' } };
+const MUSE_COMPACT_TARGET = {
+  schema_version: 1, id: '5622e2f2-05a5-53fd-90d9-0a22e566ae76', stream: { kind: 'session', id: '01a11293-d35d-7b61-a7ee-d4fddefd666c' },
+  sequence: 1862, recorded_at: 1791322626341703, record_type: 'event', durability: 'durable', causation_id: '01a11326-1817-7c63-84e3-bd02eff3d44a',
+  payload_type: 'context.compact.manual.target', payload_schema_version: 1,
+  payload: {
+    kind: 'manual_compaction_target', command_id: '01a11326-1817-7c63-84e3-bd02eff3d44a',
+    run_stream: { kind: 'run', id: 'aff7e18b-32ce-4b63-bff7-6e7d8de0ed76' }, candidate_start_anchor: 63,
+  },
+};
 const MUSE_INERT_RUN_EVENTS = [
   'model_completed', 'goal_usage_attribution', 'context_block_diagnostic', 'context_block_updated',
   'reasoning_committed', 'reasoning_summary_delta', 'assistant_tool_calls_committed',
@@ -95,6 +114,9 @@ test('muse classify table', () => {
     ['user_intent.accepted', MUSE_PROMPT, { ...NONE, prompt: 'say hello\nthen stop' }],
     ['session.end', MUSE_SESSION_END, { ...NONE, sessionEnd: true }],
     ['command.invoked', MUSE_COMMAND, { ...NONE, command: '/model', inert: true }],
+    ['compact outcome compacted', MUSE_COMPACT_OUTCOME, { ...NONE, compactSummary: true }],
+    ['compact outcome noop', MUSE_COMPACT_NOOP, { ...NONE, inert: true }],
+    ['compact target', MUSE_COMPACT_TARGET, { ...NONE, inert: true }],
     ['command.invoked without record.command', { payload_type: 'command.invoked', payload: { kind: 'command_invoked', record: { schema_version: 1 } } }, { ...NONE, inert: true }],
     ['runtime.session.task', MUSE_TASK, { ...NONE, inert: true }],
     ['tool_batch.effect.started', MUSE_TOOL_BATCH, { ...NONE, inert: true }],
@@ -258,4 +280,18 @@ test('m2: the muse reader names the session id from <sid>/session.jsonl, and the
   w._poll();
   w.stop();
   assert.deepStrictEqual(ids, [sid]);
+});
+
+test('a muse compacted outcome fires onCompactSummary once through the watcher; a noop outcome and the target do not', () => {
+  const dir = mkTmpRoot('clodex-watcher-');
+  const file = path.join(dir, 'transcript.jsonl');
+  fs.writeFileSync(file, [MUSE_COMPACT_TARGET, MUSE_COMPACT_NOOP, MUSE_COMPACT_OUTCOME].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: dir });
+  let fired = 0;
+  const w = new JsonlWatcher('seat', () => {}, () => {}, () => {}, () => { fired++; }, () => {}, { reader: readerFor('muse') });
+  w._fd = fs.openSync(file, 'r');
+  w._position = 0;
+  w._readLines();
+  w.stop();
+  assert.strictEqual(fired, 1);
 });
