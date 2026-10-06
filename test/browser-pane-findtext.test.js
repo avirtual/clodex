@@ -225,3 +225,29 @@ test('READ_INTERACTIVE: a label whose radio is visually hidden is listed as that
   assert.deepStrictEqual(Array.from(read.lines), ['[1] input:radio No = "no" [x]', '[2] input:checkbox Terms [ ]', '[3] clickable "Plain"']);
   assert.strictEqual(ctx.__cxOf.get(noLab), 1, 'the number maps to the label');
 });
+
+test('READ_INTERACTIVE: a sorted column header prints [sorted ↑]/[sorted ↓], the current pagination link [current]; a header whose sort label flips keeps its number', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const ageBtn = mk('button', { 'aria-label': 'Age: Activate to invert sorting' }, ['Age'], [10, 10, 80, 20]);
+  const age = mk('th', { 'aria-sort': 'ascending' }, [ageBtn], [10, 10, 100, 20]);
+  const nameBtn = mk('button', { 'aria-label': 'Name: Activate to sort' }, ['Name'], [110, 10, 80, 20]);
+  const name = mk('th', {}, [nameBtn], [110, 10, 100, 20]);
+  const cityBtn = mk('button', { 'aria-label': 'City: Activate to sort' }, ['City'], [210, 10, 80, 20]);
+  const city = mk('th', { 'aria-sort': 'descending' }, [cityBtn], [210, 10, 100, 20]);
+  const p2 = mk('a', { href: '/list?page=2', 'aria-current': 'page' }, ['2'], [10, 60, 20, 20]);
+  const p3 = mk('a', { href: '/list?page=3' }, ['3'], [40, 60, 20, 20]);
+  const body = mk('body', {}, [age, name, city, p2, p3], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  assert.deepStrictEqual(Array.from(read.lines), [
+    '[1] button Age: Activate to invert sorting [sorted ↑]',
+    '[2] button Name: Activate to sort',
+    '[3] button City: Activate to sort [sorted ↓]',
+    '[4] link 2 → /list?page=2 [current]',
+    '[5] link 3 → /list?page=3',
+  ]);
+  nameBtn.setAttribute('aria-label', 'Name: Activate to invert sorting');
+  assert.strictEqual(vm.runInContext(scripts.CHECK(2, read.keys[2], merged({ known: {}, next: 1 }, read)), ctx), 'ok');
+});

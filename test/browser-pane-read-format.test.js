@@ -447,6 +447,12 @@ test('read-format: the text head is cut on a word boundary and marked chrome lin
   assert.doesNotMatch(out, /Augu\n/);
 });
 
+test('read-format: --filter keeps the "Showing n of N entries" line as the last body line', () => {
+  const dt = ['Name | Age | City', 'Ana | 31 | Cluj', 'Ion | 44 | Iasi', 'Dan | 29 | Arad', '', 'Showing 1 to 3 of 57 entries', 'Previous 1 2 Next'];
+  assert.deepStrictEqual(filterLines(dt, 'iasi', { blocks: true }), ['Name | Age | City', 'Ion | 44 | Iasi', '', 'Showing 1 to 3 of 57 entries']);
+  assert.deepStrictEqual(filterLines(dt, 'brasov', { blocks: true }), []);
+});
+
 const { feedLines } = require('../plugins/browser-pane/read-format');
 
 const POST = {

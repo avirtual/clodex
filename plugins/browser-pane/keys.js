@@ -35,8 +35,17 @@ function labelHash(s) {
   return h.toString(36);
 }
 
+function stateMask(label) {
+  const f = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const cut = f.replace(/\s*(?::\s*activate to (?:invert )?sort(?:ing)?|:\s*(?:ascending|descending)|[,;:-]?\s*\b(?:sorted|sort) (?:ascending|descending)|\(\d+ selected\))\s*$/i, '');
+  const s = cut && cut !== f ? cut : label;
+  const nums = s.match(/(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g) || [];
+  if (nums.length < 2 || !nums.some((x) => /[.%+\-\u2212]/.test(x))) return s;
+  return s.replace(/(?<![\w.,])[+\-\u2212]?\d+(?:[.,]\d+)*%?/g, '#');
+}
+
 function keyLabel(label) {
-  const s = String(label || '').replace(/\s+/g, ' ').trim();
+  const s = stateMask(String(label || '').replace(/\s+/g, ' ').trim());
   return s.length > LABEL_KEY_MAX ? s.slice(0, LABEL_KEY_MAX) + '~' + labelHash(s.slice(LABEL_KEY_MAX)) : s;
 }
 
@@ -141,7 +150,7 @@ const PAGE_SOURCE = [
   `const COUNTER_WORDS = ${JSON.stringify(COUNTER_WORDS)};`,
   `const COUNTER_RE = new RegExp(${JSON.stringify(COUNTER_RE.source)});`,
   counterWord.toString(), counterMask.toString(), actionOf.toString(),
-  isVolatile.toString(), normHref.toString(), labelHash.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
+  isVolatile.toString(), normHref.toString(), labelHash.toString(), stateMask.toString(), keyLabel.toString(), keyOf.toString(), storedKey.toString(), parseStored.toString(),
 ].join('\n');
 
 module.exports = {

@@ -74,3 +74,17 @@ test('keys: counterMask blanks a count next to a counter word; amounts and dates
   assert.strictEqual(K.actionOf(K.counterMask('1.2K views. View post analytics')), '');
   assert.strictEqual(K.actionOf('19,486'), '');
 });
+
+test('keys: a control keyed without its sort/selection state suffix and a live-price row without its numbers; a lone integer stays identity', () => {
+  const k = (label, kind = 'button') => K.keyOf({ kind, label, href: '' });
+  assert.strictEqual(k('Age: Activate to sort'), k('Age: Activate to invert sorting'));
+  assert.notStrictEqual(k('Age: Activate to sort'), k('Name: Activate to sort'));
+  assert.strictEqual(k('Price: ascending'), k('Price: descending'));
+  assert.strictEqual(k('Name sorted ascending'), k('Name'));
+  assert.strictEqual(k('Filters (3 selected)'), k('Filters (4 selected)'));
+  assert.notStrictEqual(k('Sort ascending'), k('Sort descending'));
+  assert.strictEqual(k('BTC Bitcoin 85921.80 -265.3 (-0.31%) Trade', 'clickable'), k('BTC Bitcoin 86010.25 +88.1 (0.10%) Trade', 'clickable'));
+  assert.notStrictEqual(k('BTC Bitcoin 85921.80 -265.3 (-0.31%)', 'clickable'), k('ETH Ethereum 3021.80 -5.3 (-0.18%)', 'clickable'));
+  assert.notStrictEqual(k('Page 3', 'link'), k('Page 4', 'link'));
+  assert.notStrictEqual(k('COVID-19 2020'), k('COVID-19 2021'));
+});
