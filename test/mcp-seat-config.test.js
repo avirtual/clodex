@@ -9,11 +9,11 @@ const { mcpArgvPlan } = require('../proxy-util');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const P = '/run/seat/mcp.json';
-const N_USER_MCP = "MCP: the clodex browser tool is not available to this session — the seat's extra args carry their own --mcp-config.";
-const N_USER_STRICT = "MCP: the clodex browser tool is not available to this session — the seat's extra args carry --strict-mcp-config with no config, which is the empty set.";
-const N_UNROUTED = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — this session is not routed through wirescope, so Clodex could not remove only the claude_design MCP server; to keep your other MCP servers, route the session through wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex browser tool stays available.';
-const N_NO_STRIP = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex browser tool stays available.';
-const N_PROBE = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — wirescope did not answer when the session started; restart the session to retry, or turn off Settings ▸ Disable claude_design MCP. The clodex browser tool stays available.';
+const N_USER_MCP = "MCP: the clodex MCP tools are not available to this session — the seat's extra args carry their own --mcp-config.";
+const N_USER_STRICT = "MCP: the clodex MCP tools are not available to this session — the seat's extra args carry --strict-mcp-config with no config, which is the empty set.";
+const N_UNROUTED = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — this session is not routed through wirescope, so Clodex could not remove only the claude_design MCP server; to keep your other MCP servers, route the session through wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
+const N_NO_STRIP = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
+const N_PROBE = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — wirescope did not answer when the session started; restart the session to retry, or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
 
 const OURS = { push: ['--mcp-config', P], notice: null, writeConfig: true };
 const USER_MCP = { push: [], notice: N_USER_MCP, writeConfig: false };

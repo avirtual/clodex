@@ -25453,7 +25453,7 @@ ${i3.join("\n")}
         "probe-failed": "wirescope did not answer when the session started; restart the session to retry, or turn off Settings \u25B8 Disable claude_design MCP"
       };
       function mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath }) {
-        const unavailable = "MCP: the clodex browser tool is not available to this session \u2014 ";
+        const unavailable = "MCP: the clodex MCP tools are not available to this session \u2014 ";
         if (userMcp) {
           return { push: [], notice: `${unavailable}the seat's extra args carry their own --mcp-config.`, writeConfig: false };
         }
@@ -25463,7 +25463,7 @@ ${i3.join("\n")}
         if (disableDesign && reason) {
           return {
             push: ["--strict-mcp-config", "--mcp-config", mcpPath],
-            notice: `MCP: all MCP servers disabled for this session (--strict-mcp-config) \u2014 ${STRICT_MCP_EXPLANATION[reason]}. The clodex browser tool stays available.`,
+            notice: `MCP: all MCP servers disabled for this session (--strict-mcp-config) \u2014 ${STRICT_MCP_EXPLANATION[reason]}. The clodex MCP tools stay available.`,
             writeConfig: true
           };
         }
