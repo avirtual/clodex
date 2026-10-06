@@ -917,6 +917,12 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
   assert.ok(src.indexOf('const AGE_SEL') > src.indexOf("c.prepend('(was ')"));
 });
 
+test('page scripts: READ_TEXT reads an epoch token in an age title first and a zone-less ISO time as UTC', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("/^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000)"));
+  assert.ok(src.includes("new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0])"));
+});
+
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
   const mk = (id, w, h, overflowY, scrollHeight, clientHeight) => {
     const attrs = {};

@@ -482,7 +482,7 @@ function readText(main) {
     const o = ageOrigs[i];
     if (!o || !o.matches(AGE_SEL) || o.querySelector(AGE_SEL) || !AGE_RE.test(o.textContent || '')) return;
     const v = String(o.getAttribute('datetime') || o.getAttribute('title') || o.getAttribute('data-time') || '').trim();
-    const d = isNaN(new Date(v)) ? new Date(v.split(/\\s+/)[0]) : new Date(v);
+    const tok = v.split(/\\s+/); const d = /^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000) : isNaN(new Date(v)) ? new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0]) : new Date(v);
     if (!isNaN(d)) twin.append(' (' + d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ')');
   });
   const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
