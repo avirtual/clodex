@@ -163,7 +163,10 @@ test('driver armIdle: a page polling up to three paths of any method goes idle w
   assert.ok(!('polls' in rotate));
   const pair = await pollRun(Array.from({ length: 8 }, (_, i) => `https://x/p${i % 2}.txt?${i}`));
   assert.strictEqual(pair.ok, true);
-  assert.deepStrictEqual([...pair.polls.paths].sort(), ['https://x/p0.txt', 'https://x/p1.txt']);
+  assert.deepStrictEqual(pair.polls.paths, ['https://x/p0.txt', 'https://x/p1.txt']);
+  const reversed = await pollRun(Array.from({ length: 8 }, (_, i) => `https://x/p${1 - (i % 2)}.txt?${i}`));
+  assert.strictEqual(reversed.ok, true);
+  assert.deepStrictEqual(reversed.polls.paths, ['https://x/p0.txt', 'https://x/p1.txt']);
   assert.ok(Math.abs(pair.polls.everyMs - 600) <= 50, String(pair.polls.everyMs));
   const held = await pollRun(['https://x/api/poll?1', 'https://x/api/poll?2', 'https://x/api/poll?3', 'https://x/api/poll?4'], 200, { other: true });
   assert.strictEqual(held.ok, true);

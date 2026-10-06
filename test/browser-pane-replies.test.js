@@ -573,7 +573,21 @@ test('replies: a cut that hid a heading names it as the first --filter hint and 
   const long = 'Formulare "und" Dokumente zum Download und Antrag]';
   const q = /--filter="([^"]*)"/.exec(hint(long))[1];
   assert.ok(!q.includes('...') && !q.includes('\\'));
-  assert.ok(long.replace(/["\]]/g, '').startsWith(q) && q.length === 40);
+  assert.ok(long.startsWith(q));
+  assert.strictEqual(q, 'Formulare');
+  const plain = 'Erforderliche Unterlagen fuer den Antrag auf Zulassung zum Studium';
+  const pq = /--filter="([^"]*)"/.exec(hint(plain))[1];
+  assert.ok(pq.length === 40 && plain.startsWith(pq), pq);
+  const quoted = hint('Foo "bar" baz');
+  assert.match(quoted, /^ {2}hint: --filter="Foo"( · |$)/);
+  assert.strictEqual(quoted.split('--filter').length, 2);
+  assert.match(hint('a\\b'), /^ {2}hint: --filter="a"( · |$)/);
+  assert.ok(!hint('"quoted"').includes('--filter="'));
+  assert.strictEqual(hint('"quoted"'), hint(null));
+  for (const heading of ['Foo "bar" baz', 'a\\b', long, plain]) {
+    const hq = /--filter="([^"]*)"/.exec(hint(heading))[1];
+    assert.ok(heading.toLowerCase().includes(hq.toLowerCase()), heading);
+  }
 });
 
 test('replies: a path-only screenshot is the plain path, no digest; codex keeps its tail', () => {

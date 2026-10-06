@@ -105,8 +105,9 @@ function topWord(texts) {
 function readHint(info, headings) {
   const parts = [];
   const word = topWord(headings);
-  const cut = typeof info.cutHeading === 'string';
-  if (cut) parts.push(`--filter=${JSON.stringify(oneLine(info.cutHeading).replace(/["\]]/g, '').slice(0, 40).trimEnd())}`);
+  const cutText = typeof info.cutHeading === 'string' ? oneLine(info.cutHeading).split(/["\]\\]/)[0].slice(0, 40).trimEnd() : '';
+  const cut = cutText.length > 0;
+  if (cut) parts.push(`--filter=${JSON.stringify(cutText)}`);
   if (!info.main && info.stripped) parts.push('--main');
   else if (word && !cut) parts.push(`--filter=${word}`);
   if (!info.compact && info.posts >= COMPACT_HINT_POSTS) parts.push('--compact');
