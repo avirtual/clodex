@@ -2011,6 +2011,15 @@ test('page scripts: consequentialHit names the category and the source term; con
   assert.strictEqual(scripts.consequentialHit({ label: 'Carduri' }), null);
 });
 
+test('page scripts: Forward is a publish verb; an Order Status/history link is not a purchase, Place order still is', () => {
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Forward' }), { cat: 'publish', term: 'forward' });
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order Status' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order history' }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Go', action: '/orders/new' }), { cat: 'purchase', term: 'order' });
+  assert.strictEqual(scripts.consequentialHit({ label: 'Place order' }).cat, 'purchase');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order now' }).cat, 'purchase');
+});
+
 test('page scripts: a has-delete class on a filter reset honours the row\'s unless; a delete label still hits', () => {
   assert.strictEqual(scripts.consequentialHit({ label: 'Sterge toate filtrele', idClass: 'has-delete' }), null);
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Sterge contul', idClass: 'has-delete' }), { cat: 'deletion', term: 'delete' });

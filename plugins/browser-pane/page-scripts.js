@@ -46,7 +46,7 @@ const MAIN_ROOT = `
 const SIGN_OUT = ['sign out', 'log out', 'logout', 'iesire', 'deconectare', 'abmelden', 'deconnexion', 'cerrar sesion', 'uitloggen', 'esci', 'sair'];
 const CONSEQUENTIAL = [
   ['payment', ['pay', 'pay now', 'checkout', 'confirm payment', 'plateste', 'platiti', 'achita'], ['payment', 'payments', 'plata', 'plati', 'platire', 'card']],
-  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], []],
+  ['purchase', ['purchase', 'buy', 'cumpara', 'order', 'comanda'], [], [], {}, '\\border (status|history|number|tracking|details|istoric)\\b'],
   ['booking', ['reserve', "i'll reserve", 'book now', 'complete booking', 'confirm booking', 'rezerva', 'rezerva acum', 'finalizeaza rezervarea'], []],
   ['deletion', ['delete', 'sterge', 'remove', 'elimina'], [], [], {}, '\\b(filtr|filter|selection|selectie|search|cautare|sort)'],
   ['sign-out', SIGN_OUT, []],
@@ -57,7 +57,7 @@ const CONSEQUENTIAL = [
   ['trading', ['trade', 'sell', 'close position', 'close all', 'close trade', 'invest', 'copy trader', 'stake', 'unstake', 'swap', 'vinde', 'tranzactioneaza'], [],
     ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
     { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
-  ['publish', ['post', 'reply', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
+  ['publish', ['post', 'reply', 'forward', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
     'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like']],
 ];
 const LEAD_CATS = ['publish'];
