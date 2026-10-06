@@ -15000,11 +15000,23 @@ test('context: an unknown sub-command bounces to the agent, not just console.war
 });
 
 function mkMuseBounce() {
-  const b = mkBounce();
-  b.m._armInjectValve = () => {};
-  b.m._armCompactValve = () => {};
-  b.m.sessions.set('mu', { name: 'mu', type: 'muse', agentType: 'muse', io: 'pty', workspaceId: 'ws1' });
-  return b;
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: () => null }),
+    registry: { listPeers: () => [], getPeer: () => null },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+    parseIntent: parseIntentReal,
+    looksLikeIntent: looksLikeIntentReal,
+    isInjectInFlight: require('../inject-queue').isInjectInFlight,
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m._armInjectValve = () => {};
+  m._armCompactValve = () => {};
+  m.sessions.set('mu', { name: 'mu', type: 'muse', agentType: 'muse', io: 'pty', workspaceId: 'ws1' });
+  return { m, injected };
 }
 
 test('t1669: a muse PTY seat types /compact for [agent:context compact] and gets no bounce', async () => {
