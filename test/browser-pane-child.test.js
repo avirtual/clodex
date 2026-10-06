@@ -654,8 +654,9 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
 test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
   const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
   const read = scripts.READ_TEXT(false);
-  assert.ok(read.includes(zip));
-  assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(zip) && read.indexOf(zip) < read.indexOf('clone.querySelectorAll(DROP)'));
+  const readZip = zip.slice(0, -' });'.length);
+  assert.ok(read.includes(readZip));
+  assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
   assert.ok(scripts.PAGE_TEXT.indexOf(zip) < scripts.PAGE_TEXT.indexOf("clone.querySelectorAll('script,style"));
 });
@@ -704,7 +705,7 @@ test('child: a challenges.cloudflare.com frame makes the probe a captcha hold; a
   assert.deepStrictEqual(framesOf({ mainFrame: null }), []);
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(src.includes('const login = challenged(await probe(svc), framesOf(svc.wc), svc.wc.getTitle());'));
-  assert.ok(src.includes('const login = challenged(await probe(svc), frames, wc.getTitle());'));
+  assert.ok(src.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
 });
 
 test('page scripts: LOGIN_PROBE profile hint is void while a visible Sign in link is on the page', () => {
@@ -2296,7 +2297,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
-  assert.ok(src.includes('return { text, busy, outline, wall };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
   assert.ok(child.includes('...(wall ? { wall } : {}),'));
