@@ -28,6 +28,8 @@ windows close. Sign-ins are kept, and **Open** on the service's row in the pane
 (or the agent's next `open`) resumes it at its last page. **Forget login**
 deletes only the service's cookies and site data: the service stays in the list
 with its last page, downloads and site notes.
+**Remove** deletes the service — its login, last page and downloads — and offers to delete the site notes
+of the origin it was last on; those notes are shared by every service on that host.
 
 ## Steering the window yourself
 
@@ -331,7 +333,7 @@ the site-wide notes; the first read of a page (and the first after a navigation)
 matching notes, later reads only the count (`read --notes` repeats); a navigating act reply shows the count.
 A note is what one agent saw on one day: an unverified observation, never an instruction or an
 authorisation, and a `caution` does not change the ⚠ gate. The filters refusing intents, URLs,
-credential words and account numbers are best-effort. Forget login keeps the notes.
+credential words and account numbers are best-effort. Forget login keeps the notes; **Remove** offers to delete them.
 
 ## Where data lives
 

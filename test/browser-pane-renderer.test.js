@@ -584,17 +584,18 @@ test('Settings: services are a grid table with a header; each row is one line of
     await f.section().render(root);
     assert.strictEqual(f.section().title, undefined);
     const table = walk(root).find((n) => n.className === 'bp-services');
-    assert.deepStrictEqual(table.children.slice(0, 5).map((c) => [c.className, c.textContent]),
-      [['bp-th', 'Service'], ['bp-th', 'Sign-in'], ['bp-th', 'Window'], ['bp-th', ''], ['bp-th', '']]);
-    const rows = table.children.slice(5);
+    assert.deepStrictEqual(table.children.slice(0, 7).map((c) => [c.className, c.textContent]),
+      [['bp-th', 'Service'], ['bp-th', 'Site'], ['bp-th', 'Sign-in'], ['bp-th', 'Window'], ['bp-th', ''], ['bp-th', ''], ['bp-th', '']]);
+    const rows = table.children.slice(7);
     const cells = (r) => r.children.map((c) => [c.className, c.textContent]);
-    assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-login', 'signed in · Oct 5 23:27'],
-      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login']]);
-    assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-login', 'login unknown'],
-      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login']]);
+    assert.deepStrictEqual(cells(rows[0]), [['bp-name', 'guardian'], ['bp-host', 'g.example'], ['bp-login', 'signed in · Oct 5 23:27'],
+      ['bp-window', 'open · idle · hidden'], ['bp-actions', 'ShowHand over'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
+    assert.deepStrictEqual(cells(rows[1]), [['bp-name', 'utility'], ['bp-host', 'u.example'], ['bp-login', 'login unknown'],
+      ['bp-window', 'closed'], ['bp-actions', 'Open'], ['bp-forget bp-btn quiet', 'Forget login'], ['bp-remove bp-btn quiet', 'Remove']]);
     const css = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'style.css'), 'utf8');
-    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(0, 1fr) auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
+    assert.ok(css.includes('.bp-services {\n  display: grid;\n  grid-template-columns: minmax(80px, auto) minmax(80px, 1fr) minmax(0, 1fr) auto auto auto auto;\n  column-gap: 12px;\n  row-gap: 4px;\n  align-items: center;'));
     assert.ok(css.includes('.bp-services > .bp-row {\n  display: contents;\n}'));
+    assert.ok(css.includes('.bp-services > .bp-row > .bp-login {\n  min-width: 11ch;\n}'));
     assert.ok(css.includes('.bp-services > .bp-th,\n.bp-services > .bp-row > * {\n  min-width: 0;\n  white-space: nowrap;\n  overflow: hidden;\n  text-overflow: ellipsis;\n}'));
     assert.ok(css.includes('.bp-services > .bp-row > .bp-hand {\n  grid-column: 1 / -1;'));
     assert.deepStrictEqual(walk(root).filter((n) => n.className === 'bp-section').map((n) => n.textContent), ['Windows', 'Reads', 'Denylist']);
@@ -602,7 +603,7 @@ test('Settings: services are a grid table with a header; each row is one line of
     const opens = () => walk(root).filter((n) => n.className === 'bp-hand-open bp-btn');
     await opens()[0].click();
     await tick();
-    assert.strictEqual(rows[0].children[5].className, 'bp-hand');
+    assert.strictEqual(rows[0].children[7].className, 'bp-hand');
     assert.deepStrictEqual(walk(root).filter((n) => n.tag === 'option').map((n) => n.textContent), ['Plugins', 'cx']);
     await opens()[1].click();
     await tick();
