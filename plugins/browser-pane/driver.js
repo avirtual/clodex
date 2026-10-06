@@ -72,15 +72,17 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
     const t0 = now();
     let lastChurn = [];
     let lastPolls = null;
-    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000 && (d.method === 'GET' || d.method === 'HEAD')); const by = new Map(); for (const d of recent) by.set(d.path, (by.get(d.path) || 0) + 1); const top = [...by.entries()].sort((a, b) => b[1] - a[1])[0]; if (!top || top[1] < 3) return null; const ts = recent.filter((d) => d.path === top[0]).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); return everyMs >= POLL_MIN_MS ? { path: top[0], everyMs } : null; };
-    const onlyPolls = (p) => active().length === 0 || (!!p && active().every((v) => pathOf(v.url) === p.path));
+    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000); const by = new Map(); for (const d of recent) { const k = d.method + ' ' + d.path; by.set(k, (by.get(k) || 0) + 1); } const tops = [...by.entries()].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3); if (!tops.length) return null; const keys = new Set(tops.map(([k]) => k)); const ts = recent.filter((d) => keys.has(d.method + ' ' + d.path)).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); if (everyMs < POLL_MIN_MS) return null; const other = recent.filter((d) => !keys.has(d.method + ' ' + d.path)); if (other.length > tops.length) return null; return { paths: tops.map(([k]) => k.slice(k.indexOf(' ') + 1)), keys: [...keys], everyMs }; };
+    const pub = (p) => p ? { paths: p.paths, everyMs: p.everyMs } : null;
+    const held = () => { const cut = now() - 2000; const recent = done.filter((d) => d.at > cut); if (!recent.length) return null; const by = new Map(); for (const d of recent) { const k = d.method + ' ' + d.path; by.set(k, (by.get(k) || 0) + 1); } return { n: recent.length, top: [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => ({ method: k.slice(0, k.indexOf(' ')), path: k.slice(k.indexOf(' ') + 1), n })) }; };
+    const onlyPolls = (p) => active().length === 0 || (!!p && active().every((v) => p.keys.includes(v.method + ' ' + pathOf(v.url))));
     if (graceMs) await sleep(graceMs);
     try {
       for (;;) {
         if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: now() - t0, fired, inflight: [] };
         if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: now() - t0, fired };
         if (now() - t0 > timeoutMs) {
-          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url), ...(lastChurn.length ? { churn: lastChurn } : {}), ...(lastPolls ? { polls: lastPolls } : {}) };
+          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url), ...(lastChurn.length ? { churn: lastChurn } : {}), ...(lastPolls ? { polls: pub(lastPolls) } : {}), ...(held() ? { held: held() } : {}) };
         }
         const polls = polling();
         if (polls) lastPolls = polls;
@@ -92,8 +94,8 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
           const state = q && typeof q === 'object' ? q.state : q; const ticker = q && typeof q === 'object' && q.ticker ? String(q.ticker).replace(/[^\w#.:-]/g, '').slice(0, 60) : '';
           const churn = q && typeof q === 'object' && Array.isArray(q.churn) ? q.churn.map(x => String(x).replace(/[^\w#.:-]/g, '').slice(0, 40)).filter(Boolean).slice(0, 3) : [];
           if (churn.length) lastChurn = churn;
-          if (state === 'complete' && !churn.length && !wc.isLoading() && onlyPolls(polls) && (polls ? !done.some((d) => d.path !== polls.path && d.at > now() - quietMs) : now() - lastNet >= quietMs)) {
-            return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}), ...(polls ? { polls } : {}) };
+          if (state === 'complete' && !churn.length && !wc.isLoading() && onlyPolls(polls) && (polls ? !done.some((d) => !polls.keys.includes(d.method + ' ' + d.path) && d.at > now() - quietMs) : now() - lastNet >= quietMs)) {
+            return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}), ...(pub(polls) ? { polls: pub(polls) } : {}) };
           }
         }
         await sleepFn(100);

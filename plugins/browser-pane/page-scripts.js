@@ -58,7 +58,7 @@ const CONSEQUENTIAL = [
     ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
     { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
   ['publish', ['post', 'reply', 'forward', 'repost', 'retweet', 'quote', 'like', 'unlike', 'follow', 'unfollow', 'follow back', 'send', 'send via direct message', 'send message', 'comment', 'publish', 'tweet',
-    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like'], {}, '\\b(post|edit) history\\b|^\\d+ likes?$|\\bliked by\\b|\\bwho liked\\b'],
+    'submit review', 'posteaza', 'trimite', 'trimite mesaj', 'urmareste', 'apreciaza'], [], ['like', 'likes', 'social-likes', 'icon-like'], {}, '\\b(post|edit) history\\b|^\\d+ (likes?|reactions?)$|\\bliked by\\b|\\bwho liked\\b'],
 ];
 const LEAD_CATS = ['publish'];
 const ID_TERMS = ['pay', 'checkout', 'purchase', 'buy', 'delete', 'remove', 'sign out', 'log out', 'unsubscribe', 'arm', 'disarm', 'reserve'];
@@ -458,8 +458,7 @@ function readText(main) {
   return `(() => {${DEEP}${BUSY}${WALL}
   ${bulletItems.toString()}
   const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
-  const score = el => {
-    const t = (el.innerText || '').length;
+  const score = el => { if (!el.getClientRects().length) return -1; const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
     return t - 2 * l;
   };
@@ -515,7 +514,7 @@ function readText(main) {
   const inlined = [];
   const nested = [];
   const hidden = [];
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); } if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden) '); twin.append(' (end hidden)'); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -868,7 +867,7 @@ function readInteractive(main, state) {
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
 })()`;
 }
 
@@ -1209,7 +1208,7 @@ const PAGE_TEXT = `(() => {
   if (!document.body) return '';
   const clone = document.body.cloneNode(true);
   const root = document.body;
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
   clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio,[aria-hidden=true],[inert]').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';

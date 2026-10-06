@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>net-hang-img</title></head><body>
+<main><h1>Portfolio</h1><p>The page has an image that the server holds open for 90 s, so the document never finishes loading; the DOM is quiet. Needs the hang server on port 8732.</p>
+<button type="button" onclick="document.getElementById('o').textContent='Opened the holding detail.'">Show detail</button><p id="o"></p></main>
+<img src="http://127.0.0.1:8732/hang.gif" alt="">
+</body></html>

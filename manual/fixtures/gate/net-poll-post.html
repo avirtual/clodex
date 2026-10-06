@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>net-poll-post</title></head><body>
+<main><h1>Portfolio</h1><p>The page POSTs a small status request every 300 ms and changes nothing in the DOM, like an app that polls its API.</p>
+<button type="button" onclick="document.getElementById('o').textContent='Opened the holding detail.'">Show detail</button><p id="o"></p></main>
+<script>setInterval(()=>fetch("poll.txt",{method:"POST"}).catch(()=>{}),300);</script>
+</body></html>

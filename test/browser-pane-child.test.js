@@ -666,9 +666,10 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
 });
 
 test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
-  const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
+  const cut = "if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; }";
+  const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
   const read = scripts.READ_TEXT(false);
-  const readZip = zip.slice(0, -' });'.length).replace('const orig = origs[i]; ', "const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); } ");
+  const readZip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden) '); twin.append(' (end hidden)'); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true)));";
   assert.ok(read.includes(readZip));
   assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
@@ -689,7 +690,9 @@ test('page scripts: READ_TEXT renders struck-through text as (was …)', () => {
 
 test('page scripts: READ_TEXT tags the top element faded by its own opacity:0 as (hidden), after the struck pass', () => {
   const src = scripts.READ_TEXT(false);
-  assert.ok(src.includes("const orig = origs[i]; if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim()) { twin.prepend('(hidden) '); }"));
+  assert.ok(src.includes("else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend('(hidden) '); twin.append(' (end hidden)'); }"));
+  assert.ok(src.includes("twin.setAttribute('data-cxb-cut', ''); twin.textContent = '';"));
+  assert.ok(scripts.PAGE_TEXT.includes("twin.setAttribute('data-cxb-cut', ''); twin.textContent = '';"));
   assert.ok(src.indexOf("twin.prepend('(hidden) ')") > src.indexOf("c.prepend('(was ')"));
 });
 
@@ -982,6 +985,14 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
   assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
   assert.ok(src.indexOf('const dialogRead') > src.indexOf('root = best &&'));
+  assert.ok(src.includes("const score = el => { if (!el.getClientRects().length) return -1;"));
+  assert.ok(src.indexOf("const score = el => { if (!el.getClientRects().length) return -1;") < src.indexOf('const forced ='));
+});
+
+test('page scripts: the short-root fallback scores an element with no layout box -1, a rendered one by its text', () => {
+  const score = new Function(`${scripts.READ_TEXT(false).match(/(const score = el => \{[\s\S]*?\n  \};)/)[1]}\nreturn score;`)();
+  assert.strictEqual(score({ getClientRects: () => [], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), -1);
+  assert.strictEqual(score({ getClientRects: () => [{}], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), 500);
 });
 
 function lineOf(src, head) {
@@ -1066,7 +1077,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
-  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}) });'));
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}) });'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
@@ -2199,6 +2210,8 @@ test('page scripts: consequentialHit names the category and the source term; con
 test('page scripts: post edit history and a like count are not publish; a Like button and a like-classed button still are', () => {
   assert.strictEqual(scripts.consequentialHit({ label: 'post edit history', idClass: 'post-edit-history' }), null);
   assert.strictEqual(scripts.consequentialHit({ label: '19 likes', idClass: 'like-count' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: '3 reactions', idClass: 'discourse-reactions-counter only-like' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: '1 reaction', idClass: 'discourse-reactions-counter' }), null);
   assert.strictEqual(scripts.consequentialHit({ label: 'Like', idClass: 'like' }).cat, 'publish');
   assert.strictEqual(scripts.consequentialHit({ label: 'Post' }).cat, 'publish');
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Please sign up or log in to like this post', idClass: 'like' }), { cat: 'publish', term: 'like' });
@@ -2394,7 +2407,7 @@ test('readPage: a compact read runs FEED with the read\'s ⚠ categories after n
   assert.match(scripts.READ_INTERACTIVE(true, {}), /posts: \[\.\.\.\(mainRootOf\(\) \|\| document\)\.querySelectorAll/);
   assert.match(CHILD_SRC, /: \{ count: posts, cloaked, failed: true \};/);
   assert.match(CHILD_SRC, /\{ count: f\.posts\.length, cloaked, posts: f\.posts,/);
-  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("cloaked: [...(document).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url:"));
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes("cloaked: [...(document).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url:"));
 });
 
 test('windows: a service window opens hidden and surfaces without focus only on open --show; operator show still raises and focuses', () => {

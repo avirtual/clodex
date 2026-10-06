@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>net-poll-rotate</title></head><body>
+<main><h1>Portfolio</h1><p>The page fetches one of five API paths in turn every 300 ms (each path every 1.5 s) and changes nothing in the DOM, like a dashboard refreshing its widgets.</p>
+<button type="button" onclick="document.getElementById('o').textContent='Opened the holding detail.'">Show detail</button><p id="o"></p></main>
+<script>let i=0;setInterval(()=>{i=(i+1)%5;fetch('p'+i+'.txt?'+Date.now()).catch(()=>{});},300);</script>
+</body></html>
