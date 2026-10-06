@@ -1536,8 +1536,8 @@ function run(electron, ctx) {
       ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
-    const frames = framesOf(wc);
-    const login = challenged(await probe(svc), frames, wc.getTitle());
+    const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const frames = allFrames.filter((u) => !inlined.has(u));
+    const login = challenged(await probe(svc), allFrames, wc.getTitle());
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
     return {
       ...base,

@@ -918,6 +918,17 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
   assert.ok(src.indexOf('const AGE_SEL') > src.indexOf("c.prepend('(was ')"));
 });
 
+test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a [frame] line; read lists only the frames it did not inline', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
+  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box);"));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
+  assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('const frames = allFrames.filter((u) => !inlined.has(u));'));
+  assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
+});
+
 test('page scripts: READ_TEXT reads an epoch token in an age title first and a zone-less ISO time as UTC', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("/^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000)"));
