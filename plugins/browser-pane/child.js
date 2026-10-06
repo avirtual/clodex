@@ -11,6 +11,7 @@ const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
 const { changedRegion, CHANGE_MAX, hostOf } = require('./read-format');
+const { NAME_RE, profileOf, tabOf } = require('./grammar');
 const act = (wc, fn, opts = {}) => driver.act(wc, fn, { worldId: scripts.ISOLATED_WORLD, ...opts });
 const waitIdle = (wc, opts = {}) => driver.waitIdle(wc, { worldId: scripts.ISOLATED_WORLD, ...opts });
 
@@ -20,7 +21,6 @@ const PIN_DEBOUNCE_MS = 2000;
 const QUIT_CAP_MS = 2000;
 const OPEN_IDLE_MS = 15000;
 const LOAD_TIMEOUT_MS = 25000;
-const SERVICE_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const ACT_IDLE_MS = 15000;
 const DOWNLOAD_START_MS = 30000;
 const DOWNLOAD_DONE_MS = 300000;
@@ -196,7 +196,7 @@ function loadNumbers(dir, origin, now = Date.now()) {
 function notOpenError(name, opened, numbersDir, known = []) {
   let saved = [];
   try { saved = fs.readdirSync(numbersDir).filter((f) => !f.startsWith('.')); } catch {}
-  if (opened.has(name) || saved.includes(name) || known.includes(name)) return codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
+  if (opened.has(name) || saved.includes(profileOf(name)) || known.includes(profileOf(name))) return codedError('NOT_OPEN', `${name} is not open — [agent:browser open ${name}] <url>`);
   return codedError('NOT_OPEN', TEXT.notService(name, [...new Set([...opened, ...saved, ...known])].sort()));
 }
 
@@ -586,8 +586,8 @@ function run(electron, ctx) {
     });
   };
 
-  function routerFor(name, ses) {
-    if (routers.has(name)) return routers.get(name);
+  function routerFor(profile, ses) {
+    if (routers.has(profile)) return routers.get(profile);
     const waiters = [];
     const reserved = new Set();
     const r = { waiters };
@@ -607,7 +607,7 @@ function run(electron, ctx) {
       let w = waiters.find((x) => x.url && chain.some((u) => sameUrl(u, x.url)));
       if (!w) w = waiters.find((x) => !x.url);
       if (w) drop(w);
-      const owner = services.get(name);
+      const owner = services.get(profile) || [...services.values()].find((s) => profileOf(s.name) === profile);
       const hit = owner ? (chain || []).reduce((h, u) => h || policyDenies(owner, u, w ? 'agent' : 'page'), null) : null;
       if (hit) {
         item.cancel();
@@ -615,7 +615,7 @@ function run(electron, ctx) {
         return;
       }
       const mime = item.getMimeType();
-      const dir = w ? w.dir : path.join(downloadsRoot, name);
+      const dir = w ? w.dir : path.join(downloadsRoot, profile);
       const t0 = Date.now();
       let file;
       try {
@@ -649,8 +649,8 @@ function run(electron, ctx) {
           w.resolve(keepOrFold(out, w, (p) => reserved.has(p)));
           return;
         }
-        send({ event: 'operator-download', service: name, file, bytes, mime });
-        const svc = services.get(name);
+        const svc = services.get(owner ? owner.name : profile);
+        send({ event: 'operator-download', service: svc ? svc.name : profile, file, bytes, mime });
         if (svc) {
           svc.flash = { text: `Downloaded ${path.basename(file)} → ${dir}`, until: Date.now() + FLASH_MS };
           render(svc);
@@ -658,7 +658,7 @@ function run(electron, ctx) {
         }
       });
     });
-    routers.set(name, r);
+    routers.set(profile, r);
     return r;
   }
 
@@ -669,12 +669,13 @@ function run(electron, ctx) {
       throw codedError('TOO_MANY_WINDOWS', `at most ${MAX_WINDOWS} service windows can be open — the operator can close one`);
     }
     opened.add(name);
-    const ses = session.fromPartition('persist:' + name);
+    const profile = profileOf(name);
+    const ses = session.fromPartition('persist:' + profile);
     ses.setUserAgent(ses.getUserAgent().replace(/ (Clodex|Electron)\/\S+/g, ''));
     ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
     ses.setPermissionCheckHandler(() => false);
-    watchCookies(name, ses);
-    routerFor(name, ses);
+    watchCookies(profile, ses);
+    routerFor(profile, ses);
     const slot = services.size;
     const win = new BrowserWindow({
       width: 1280, height: 940, x: 80 + slot * 28, y: 60 + slot * 28, show: false,
@@ -719,7 +720,7 @@ function run(electron, ctx) {
       name, win, view, wc, ses, doc: 0, busy: 0, reading: 0, lock: lock.reduce(lock.initial(), { type: 'open' }),
       lastInput: 0, popup: false, popupUrl: null, downloading: false, pendingNav: false, flash: null, watch: null, navAt: Date.now(),
       policy: null, barMsg: null, lastDenied: null, blockedNav: null,
-      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '', numDir: path.join(data, 'numbers', name), dirty: new Set(), saveTimer: null,
+      origins: new Map(), num: null, agentNav: false, opNav: false, lastHref: '', numDir: path.join(data, 'numbers', profile), dirty: new Set(), saveTimer: null,
       blank: wc.loadURL('about:blank').catch(() => {}),
     };
     svc.scheduleSave = () => {
@@ -969,7 +970,7 @@ function run(electron, ctx) {
     const op = frame.op;
     const byText = op === 'click' && args.byText != null ? String(args.byText) : null;
     let n = Number(args.n);
-    const dir = args.dir == null ? path.join(downloadsRoot, svc.name) : String(args.dir);
+    const dir = args.dir == null ? path.join(downloadsRoot, profileOf(svc.name)) : String(args.dir);
     if (!path.isAbsolute(dir)) throw codedError('INTERNAL', 'click needs an absolute dir');
     const what = op === 'key' ? `press ${args.key}` : byText != null ? `click --text=${JSON.stringify(byText)}` : `${op} [${n}]`;
     return mutating(svc, frame, what, async () => {
@@ -1175,7 +1176,7 @@ function run(electron, ctx) {
 
   async function clickWatched(svc, n, el, nav, dir) {
     const wc = svc.wc;
-    const w = routerFor(svc.name, svc.ses).expect({ dir });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir });
     let began = false;
     let pdf = false;
     let acting = true;
@@ -1195,7 +1196,7 @@ function run(electron, ctx) {
       if (began) out.download = await settleDownload(w, deadline);
       else if (svc.popupUrl && await inMain(wc, scripts.CONTENT_TYPE) === 'application/pdf') {
         w.cancel();
-        const pw = routerFor(svc.name, svc.ses).expect({ url: wc.getURL(), dir });
+        const pw = routerFor(profileOf(svc.name), svc.ses).expect({ url: wc.getURL(), dir });
         wc.downloadURL(wc.getURL());
         out.download = await settleDownload(pw, deadline);
         if (out.download) out.download.url = svc.popupUrl;
@@ -1235,14 +1236,14 @@ function run(electron, ctx) {
   async function viaUrl(svc, url, dir, nameHint) {
     const hit = policyDenies(svc, url, 'agent');
     if (hit) throw deniedError(svc, url, hit, 'download');
-    const w = routerFor(svc.name, svc.ses).expect({ url, dir, nameHint });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ url, dir, nameHint });
     svc.wc.downloadURL(url);
     return landed(w, DOWNLOAD_START_MS);
   }
 
   async function viaClick(svc, n, el, dir, nameHint) {
     const wc = svc.wc;
-    const w = routerFor(svc.name, svc.ses).expect({ dir, nameHint });
+    const w = routerFor(profileOf(svc.name), svc.ses).expect({ dir, nameHint });
     const t0 = Date.now();
     svc.popupUrl = null;
     try {
@@ -1331,28 +1332,38 @@ function run(electron, ctx) {
     return { jpeg: img.toJPEG(SHOT_QUALITY).toString('base64'), width, height, fallback: empty };
   }
 
+  const windowsOf = (profile) => {
+    const all = [...services.values()].filter((s) => profileOf(s.name) === profile && !s.win.isDestroyed());
+    return [...all.filter((s) => s.name === profile), ...all.filter((s) => s.name !== profile)];
+  };
+
   async function opClose(name) {
-    const svc = need(name);
-    const closed = new Promise((resolve) => svc.win.once('closed', resolve));
-    svc.win.hide();
-    svc.win.close();
-    await closed;
-    const owned = new Set([...services.values()].map((s) => s.win));
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (!w.isDestroyed() && !owned.has(w) && w.getTitle() === `${name} — Clodex Browser`) w.destroy();
+    const tabs = tabOf(name) || !windowsOf(name).length ? [need(name)] : windowsOf(name);
+    for (const svc of tabs) {
+      const closed = new Promise((resolve) => svc.win.once('closed', resolve));
+      svc.win.hide();
+      svc.win.close();
+      await closed;
+      const owned = new Set([...services.values()].map((s) => s.win));
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed() && !owned.has(w) && w.getTitle() === `${svc.name} — Clodex Browser`) w.destroy();
+      }
     }
-    return { closed: name, windows: services.size, electron: BrowserWindow.getAllWindows().length };
+    const also = tabs.map((s) => s.name).filter((n) => n !== name);
+    return { closed: name, also, windows: services.size, electron: BrowserWindow.getAllWindows().length };
   }
 
-  async function opForget(name) {
-    const svc = services.get(name);
-    if (svc && !svc.win.isDestroyed()) svc.win.destroy();
-    forgetNumbers(svc, path.join(data, 'numbers', name));
-    const ses = session.fromPartition('persist:' + name);
+  async function opForget(profile) {
+    for (const svc of windowsOf(profile)) {
+      svc.win.destroy();
+      forgetNumbers(svc, null);
+    }
+    forgetNumbers(null, path.join(data, 'numbers', profile));
+    const ses = session.fromPartition('persist:' + profile);
     await ses.clearStorageData();
     await ses.clearCache();
     await ses.clearAuthCache().catch(() => {});
-    return { forgotten: name };
+    return { forgotten: profile };
   }
 
   async function listenersOf(svc, n) {
@@ -1596,7 +1607,7 @@ function run(electron, ctx) {
   async function handle(frame) {
     const { id, op } = frame;
     const args = (frame.args && typeof frame.args === 'object') ? frame.args : {};
-    if (Array.isArray(args.known)) known = args.known.map(String).filter((n) => SERVICE_RE.test(n));
+    if (Array.isArray(args.known)) known = args.known.map(String).filter((n) => NAME_RE.test(n));
     try {
       if (op === 'shutdown') {
         send({ id, ok: true, result: {} });
@@ -1608,7 +1619,7 @@ function run(electron, ctx) {
       if (op === 'ping') result = { uptimeMs: Date.now() - t0, pid: process.pid };
       else if (SERVICE_OPS.has(op)) {
         const name = String(frame.service || '');
-        if (!SERVICE_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
+        if (!NAME_RE.test(name)) throw codedError('INTERNAL', `bad service name: ${name}`);
         const stale = genRefusal(name, op, args, gen);
         if (stale) throw stale;
         if (op === 'policy') {

@@ -2487,8 +2487,18 @@ test('notOpenError: a name never opened here and without saved numbers is not a 
   assert.strictEqual(notOpenError('nosuch', opened, dir, ['gh', 'hn']).message, 'nosuch is not a service here — services: ebloc, gh, hn, x — [agent:browser open nosuch] <url> opens a new one');
   assert.strictEqual(notOpenError('gh', opened, dir, ['gh']).message, 'gh is not open — [agent:browser open gh] <url>');
   assert.match(CHILD_SRC, /throw notOpenError\(name, opened, path\.join\(data, 'numbers'\), known\);/);
-  assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => SERVICE_RE\.test\(n\)\);/);
+  assert.match(CHILD_SRC, /if \(Array\.isArray\(args\.known\)\) known = args\.known\.map\(String\)\.filter\(\(n\) => NAME_RE\.test\(n\)\);/);
   assert.match(CHILD_SRC, /\n {4}opened\.add\(name\);\n/);
+  assert.strictEqual(notOpenError('ebloc:riot', new Set(), dir).message, 'ebloc:riot is not open — [agent:browser open ebloc:riot] <url>');
+  assert.match(notOpenError('y:riot', new Set(), dir).message, /^y:riot is not a service here/);
+});
+
+test('child: partition, numbers dir, downloads dir, cookie watch and download router are per profile; NAME_RE is grammar\'s', () => {
+  assert.strictEqual(CHILD_SRC.split("session.fromPartition('persist:' + profile)").length - 1, 2);
+  assert.ok(!CHILD_SRC.includes("'persist:' + name"));
+  for (const s of ["path.join(data, 'numbers', profile)", 'watchCookies(profile, ses)', 'routerFor(profile, ses)']) assert.ok(CHILD_SRC.includes(s), s);
+  assert.strictEqual(CHILD_SRC.split('path.join(downloadsRoot, profile').length - 1, 2);
+  assert.ok(CHILD_SRC.includes("const { NAME_RE, profileOf, tabOf } = require('./grammar');"));
 });
 
 test('readPage: a compact read runs FEED with the read\'s ⚠ categories after numbering and reports the feed; any read reports the article count', () => {
