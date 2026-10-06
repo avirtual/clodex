@@ -4,6 +4,7 @@ const SCRIPT_TIMEOUT_MS = 8000;
 const SKIP_TYPES = ['WebSocket', 'EventSource', 'Ping'];
 const LIFECYCLE_MAX = 64;
 const DONE_MAX = 64;
+const POLL_MIN_MS = 100;
 const STREAM_MS = 8000;
 const SKIP_SCHEMES = /^(blob|data):/i;
 
@@ -71,7 +72,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
     const t0 = now();
     let lastChurn = [];
     let lastPolls = null;
-    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000); const by = new Map(); for (const d of recent) by.set(d.path, (by.get(d.path) || 0) + 1); const top = [...by.entries()].sort((a, b) => b[1] - a[1])[0]; if (!top || top[1] < 3) return null; const ts = recent.filter((d) => d.path === top[0]).map((d) => d.at).sort((a, b) => a - b); return { path: top[0], everyMs: Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)) }; };
+    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000); const by = new Map(); for (const d of recent) by.set(d.path, (by.get(d.path) || 0) + 1); const top = [...by.entries()].sort((a, b) => b[1] - a[1])[0]; if (!top || top[1] < 3) return null; const ts = recent.filter((d) => d.path === top[0]).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); return everyMs >= POLL_MIN_MS ? { path: top[0], everyMs } : null; };
     const onlyPolls = (p) => active().length === 0 || (!!p && active().every((v) => pathOf(v.url) === p.path));
     if (graceMs) await sleep(graceMs);
     try {

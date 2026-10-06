@@ -93,11 +93,11 @@ test('driver armIdle: a complete page reporting churn is not idle', async () => 
   assert.deepStrictEqual(r.churn, ['div#app']);
 });
 
-function pollRun(urls) {
+function pollRun(urls, gapMs = 200) {
   let t = 1000;
   const { wc, sent, finished } = fakeWc();
   return driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } }).then((w) => {
-    urls.forEach((url, i) => { sent(`p${i}`, url); t += 100; finished(`p${i}`); t += 200; });
+    urls.forEach((url, i) => { sent(`p${i}`, url); t += 100; finished(`p${i}`); t += gapMs; });
     sent('open', urls[0].replace(/\?.*$/, '?open'));
     return w.wait({ quietMs: 500, timeoutMs: 1000 });
   });
@@ -115,7 +115,11 @@ test('driver armIdle: a page polling one path goes idle with the poll named; und
   const alt = await pollRun(['https://x/api/a?1', 'https://x/api/b?1', 'https://x/api/a?2', 'https://x/api/b?2']);
   assert.strictEqual(alt.ok, false);
   assert.ok(!('polls' in alt));
+  const burst = await pollRun(['https://x/w/load.php?a', 'https://x/w/load.php?b', 'https://x/w/load.php?c', 'https://x/w/load.php?d'], -95);
+  assert.strictEqual(burst.ok, false);
+  assert.ok(!('polls' in burst));
   const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
   assert.ok(src.includes('const DONE_MAX = 64;'));
   assert.ok(src.includes('if (!top || top[1] < 3) return null;'));
+  assert.ok(src.includes('const POLL_MIN_MS = 100;'));
 });
