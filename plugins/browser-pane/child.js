@@ -1530,6 +1530,7 @@ function run(electron, ctx) {
       retired: retiredOf(prev && prev.keys, el.keys, !!prev && keys.sameDoc(prev.url, el.url, [...ent.volatile])),
       changed: changedOf(prev && prev.sigs, el.sigs),
       chrome: el.chrome || [],
+      covered: el.covered || [],
       cats: el.cats || {},
       adKeys: el.adKeys || {},
       keys: el.keys || {},

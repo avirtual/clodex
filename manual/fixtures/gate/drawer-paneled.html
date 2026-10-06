@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><title>drawer-paneled</title>
+<style>body{margin:0;font:14px sans-serif} main{padding:20px} li{margin:6px 0}
+.paneled-view{display:none;position:fixed;top:0;right:0;width:45vw;height:100vh;overflow:auto;background:#fff;border-left:1px solid #ccc;padding:16px;box-sizing:border-box}
+.paneled-view.open{display:block}</style></head><body>
+<main><h1>Work items</h1>
+<p>2,578 items</p>
+<p>Live GitLab markup: the item drawer is a fixed, right-docked div.paneled-view with no role=dialog and no aria-modal. The list behind it is not aria-hidden.</p>
+<ul>
+<li><a href="#" onclick="document.querySelector('.paneled-view').classList.add('open');return false">Item 40011 Bump Go toolchain to the latest patch release</a></li>
+<li><a href="/items/40010">Item 40010 Make the docker-machine create timeout configurable</a></li>
+<li><a href="/items/39956">Item 39956 Support Windows 11 26H2 in docker-windows executor</a></li>
+<li><a href="/items/39950">Item 39950 Rotate the deploy keys for the release pipeline</a></li>
+<li><a href="/items/39940">Item 39940 Document the rollback procedure for the API gateway</a></li>
+<li><a href="/items/39930">Item 39930 Fix the flaky integration test in the billing service</a></li>
+</ul>
+</main>
+<div class="paneled-view js-paneled-view">
+<div class="panel-header"><div class="panel-header-inner"><div class="panel-header-inner-actions"><div class="panel-header-controls">
+<button data-testid="panel-close-button" aria-label="Close panel" type="button" onclick="document.querySelector('.paneled-view').classList.remove('open')">×</button>
+</div></div></div></div>
+<h2>Bump Go toolchain to the latest patch release</h2>
+<p>Open · Issue created 9 hours ago by a contributor</p>
+<h3>Why</h3>
+<p>The runner images are built with an older Go toolchain. Container scanners report several High severity stdlib CVEs that the latest patch release fixes.</p>
+<h3>Steps</h3>
+<p>Bump GO_VERSION in the CI config, rebuild the images and backport to the stable branch.</p>
+</div>
+</body></html>
