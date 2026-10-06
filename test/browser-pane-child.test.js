@@ -902,6 +902,11 @@ test('child: scroll moves by innerHeight minus 40 per page, or to top/bottom', (
   assert.ok(scrollCode('up', 2, true).includes('el.scrollBy({ top: -(el.clientHeight - 40) * 2'));
   assert.ok(scrollCode('bottom', 1, true).includes("el.scrollTo({ top: el.scrollHeight, behavior: 'instant' })"));
   assert.ok(!scrollCode('down', 1).includes('data-cxb-scroller'));
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(src.includes("const docStuck = doc.height <= doc.vh + 2 || (forward ? doc.y + doc.vh >= doc.height - 2 : doc.y <= 0);"));
+  assert.ok(src.includes('const scroller = docStuck && !wc.isDestroyed() ? await inMain(wc, scripts.MAIN_SCROLLER) : null;'));
+  assert.ok(src.includes('await inMain(wc, scrollCode(dir, pages, inner));'));
+  assert.ok(src.includes('...(inner ? { scroller: scroller.label } : {}),'));
 });
 
 test('page scripts: READ_TEXT appends the absolute local time to a relative age read from the original element', () => {
