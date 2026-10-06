@@ -436,6 +436,8 @@ test('read-format: --filter on a `|` row keeps the adjacent timestamp line, the 
   assert.deepStrictEqual(filterLines(before, 'thyme', { blocks: true }), ['Head | x', '09:12 | posted', 'Thyme | y']);
   const table = ['Country | Population', 'Poland | 36,620,970', 'Romania | 19,036,031', 'Hungary | 9,539,502'];
   assert.deepStrictEqual(filterLines(table, 'romania', { blocks: true }), ['Country | Population', 'Romania | 19,036,031']);
+  const bills = ['Factura | Data | Suma', 'Factura iulie | 2026-07-01 | 120 lei', 'Factura august | 2026-08-01 | 130 lei', 'Factura sept | 2026-09-01 | 125 lei'];
+  assert.deepStrictEqual(filterLines(bills, 'august', { blocks: true }), ['Factura | Data | Suma', 'Factura august | 2026-08-01 | 130 lei'], 'a dated row needs no neighbour');
 });
 
 test('read-format: a filter on a bullet list returns the matching item only; Wikipedia backref prefixes are dropped from the match line', () => {

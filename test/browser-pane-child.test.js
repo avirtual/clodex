@@ -930,6 +930,7 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
 test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a [frame] line; read lists only the frames it did not inline', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
+  assert.ok(src.includes('if (fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty frame is not inlined');
   assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box);"));
   assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
