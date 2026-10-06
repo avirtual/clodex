@@ -972,6 +972,7 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
   assert.ok(src.includes('const dialogRead = !!modal && root === modal.e;'));
+  assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes("(dialogRead ? '[dialog]\\n' : '')"));
   assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
   assert.ok(src.indexOf('const dialogRead') > src.indexOf('root = best &&'));
@@ -1004,8 +1005,8 @@ function modalByOf() {
   return { body, modalBy: make((e) => e.style, { body }, 1200, 800, () => true) };
 }
 
-function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false } = {}) {
-  const e = { attrs, style, parentElement, children: [], previousElementSibling: null,
+function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, height: 100 }, aria = false, innerText = '' } = {}) {
+  const e = { attrs, style, parentElement, innerText, children: [], previousElementSibling: null,
     matches: () => aria, getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, getBoundingClientRect: () => rect };
   if (parentElement) {
     e.previousElementSibling = parentElement.children[parentElement.children.length - 1] || null;
@@ -1017,11 +1018,23 @@ function node(parentElement, { attrs = {}, style = {}, rect = { width: 100, heig
 test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden page siblings or a full-viewport backdrop', () => {
   {
     const { body, modalBy } = modalByOf();
-    node(body, { attrs: { 'aria-hidden': 'true' } });
-    node(body, { attrs: { 'aria-hidden': 'true' } });
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: 'Accounts Holdings Activities Portfolio Overview Settings' });
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: 'Footer links: About, Blog, Pricing, Privacy policy' });
     const container = node(body);
     const pane = node(node(container));
     assert.strictEqual(modalBy(pane), 'hidden');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body, { attrs: { 'aria-hidden': 'true' }, innerText: '' });
+    assert.strictEqual(modalBy(node(body)), '');
+  }
+  {
+    const { body, modalBy } = modalByOf();
+    node(body);
+    const wrap = node(body);
+    node(wrap, { style: { position: 'fixed' }, rect: { width: 1200, height: 800 } });
+    assert.strictEqual(modalBy(node(wrap, { aria: true })), 'backdrop');
   }
   {
     const { body, modalBy } = modalByOf();
@@ -1042,6 +1055,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     node(body);
     assert.strictEqual(modalBy(node(node(body), { aria: true })), 'aria');
   }
+  assert.strictEqual(lineOf(scripts.READ_TEXT(false), 'const modalBy = (e) =>'), "const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; return ''; };");
 });
 
 test('child: idleOf carries the ticker the idle wait ignored', () => {
