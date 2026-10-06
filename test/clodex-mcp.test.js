@@ -91,6 +91,8 @@ const ROWS = [
   [{ verb: 'screenshot', service: 'svc', bracket: ['--numbers'] }, '[agent:browser screenshot svc --numbers]'],
   [{ verb: 'wait', service: 'svc', bracket: ['--for=Showing 1'] }, '[agent:browser wait svc --for="Showing 1"]'],
   [{ verb: 'download', service: 'svc', bracket: ['5', '--to=bills', '--as=a.pdf'] }, '[agent:browser download svc 5 --to=bills --as=a.pdf]'],
+  [{ verb: 'read', service: 'svc', bracket: ['--filter=Showing 1'] }, '[agent:browser read svc --filter="Showing 1"]'],
+  [{ verb: 'download', service: 'svc', bracket: ['5', '--to=my bills', '--as=a b.pdf'] }, '[agent:browser download svc 5 --to="my bills" --as="a b.pdf"]'],
   [{ verb: 'download', service: 'svc', body: 'https://x/y.pdf' }, '[agent:browser download svc] https://x/y.pdf'],
   [{ verb: 'open', service: 'svc', bracket: ['--show'], body: 'https://example.com/' }, '[agent:browser open svc --show] https://example.com/'],
   [{ verb: 'note', service: 'svc', body: '@* caution: popup on page 2' }, '[agent:browser note svc] @* caution: popup on page 2'],
@@ -202,7 +204,7 @@ test('JSON-RPC: initialize, tools/list, ping, unknown method, parse error, notif
   assert.strictEqual(tool.inputSchema.additionalProperties, false);
   assert.ok(tool.description.includes('completion unknown — do not retry'));
   assert.ok(tool.description.includes('500 s'));
-  assert.ok(tool.description.includes('A " inside --text is dropped.'));
+  assert.ok(tool.description.includes('A " inside a --flag value is dropped.'));
   assert.deepStrictEqual(await s.handle({ jsonrpc: '2.0', id: 3, method: 'ping' }), { id: 3, result: {} });
   assert.strictEqual((await s.handle({ jsonrpc: '2.0', id: 4, method: 'resources/list' })).error.code, -32601);
   assert.strictEqual(await s.handle({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
@@ -348,11 +350,15 @@ test('cli/package.json ships clodex-mcp as a bin', () => {
   assert.ok(fs.statSync(SERVER).mode & 0o111);
 });
 
-test('a stdout error (EPIPE after the parent died) stops the server quietly', () => {
-  const { EventEmitter } = require('node:events');
-  const output = Object.assign(new EventEmitter(), { write: () => true });
+test('a stdout error (EPIPE after the parent died) stops the server quietly', async () => {
+  const { Writable } = require('node:stream');
+  const output = new Writable({ write: (chunk, enc, cb) => cb(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })) });
+  const input = new PassThrough();
   let exited = null;
-  mcp.createServer({ env: {}, input: null, output, errOut: sink(), setInterval: () => null, onExit: (c) => { exited = c; } });
-  output.emit('error', Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+  mcp.createServer({ env: {}, input, output, errOut: sink(), setInterval: () => null, onExit: (c) => { exited = c; } });
+  input.write('{"jsonrpc":"2.0","id":1,"method":"ping"}\n');
+  input.write('{"jsonrpc":"2.0","id":2,"method":"ping"}\n');
+  for (let i = 0; i < 200 && exited === null; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(exited, 0);
+  input.end();
 });

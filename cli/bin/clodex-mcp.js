@@ -12,7 +12,7 @@ const SERVICE_RE = new RegExp(SERVICE_PATTERN);
 const DEFAULT_PROTOCOL = '2025-06-18';
 const PPID_POLL_MS = 5000;
 const COMPLETION_UNKNOWN = 'completion unknown — do not retry';
-const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a quoted --text/--for value (it is dropped)';
+const LIMITS = 'clodex-mcp: the browser tool cannot express a multi-line body (note and type take ONE line) or a " inside a quoted --flag value (it is dropped)';
 const ARG_KEYS = ['verb', 'service', 'bracket', 'body'];
 
 const BROWSER_TOOL = {
@@ -21,7 +21,7 @@ const BROWSER_TOOL = {
     "Drive this seat's browser pane. Same verbs, replies and refusals as `clodex '[agent:browser …]'`.",
     'A call waits up to 500 s; a browser `wait` may take up to 30 min server-side, so a result starting `completion unknown — do not retry` means the action may still have run: read the page before repeating a click, type or download.',
     '`bracket` holds the tokens that go INSIDE the intent bracket after the service (element number, direction, --flag, --flag=value; for click/inspect --text=<text> as ONE item); `body` is the one-line text AFTER the bracket (the URL for open/download, the text for type, the option for select, the key name for key, the note text for note).',
-    'A " inside --text is dropped. No release, no close, no --confirm, no note --forget: those are the main agent\'s.',
+    'A " inside a --flag value is dropped. No release, no close, no --confirm, no note --forget: those are the main agent\'s.',
   ].join(' '),
   inputSchema: {
     type: 'object',
@@ -37,7 +37,7 @@ const BROWSER_TOOL = {
 };
 
 function tok(t) {
-  const m = /^(--text=|--for=)([\s\S]*)$/.exec(t);
+  const m = /^(--[^=\s"]+=)([\s\S]*)$/.exec(t);
   if (!m || !/[\s"]/.test(m[2])) return t;
   return `${m[1]}"${m[2].replace(/"/g, '')}"`;
 }
