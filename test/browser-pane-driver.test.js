@@ -11,7 +11,8 @@ function fakeWc() {
   dbg.attach = () => {};
   dbg.sendCommand = async () => ({});
   const wc = new EventEmitter();
-  Object.assign(wc, { debugger: dbg, isDestroyed: () => false, isLoading: () => false, executeJavaScript: async () => 'complete' });
+  wc.worlds = [];
+  Object.assign(wc, { debugger: dbg, isDestroyed: () => false, isLoading: () => false, executeJavaScript: async () => 'complete', executeJavaScriptInIsolatedWorld: async (w, [{ code }]) => { wc.worlds.push(w); return wc.executeJavaScript(code); } });
   const sent = (id, url, type = 'XHR', method = 'GET') => dbg.emit('message', {}, 'Network.requestWillBeSent', { requestId: id, type, request: { url, method } });
   const finished = (id) => dbg.emit('message', {}, 'Network.loadingFinished', { requestId: id });
   return { wc, sent, finished };
@@ -46,6 +47,31 @@ test('driver armIdle: a request open past STREAM_MS is background, out of size()
   assert.strictEqual(w.size(), 0);
   const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r.ok, true);
+});
+
+test('driver armIdle: the idle probe runs in the isolated world so a page that replaces Promise cannot swallow it', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  let direct = 0;
+  wc.executeJavaScriptInIsolatedWorld = async (w) => { wc.worlds.push(w); return { state: 'complete' }; };
+  wc.executeJavaScript = async () => { direct++; return { __zone_symbol__state: null, __zone_symbol__value: [] }; };
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; }, worldId: 4242 });
+  t += 1000;
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(wc.worlds, [4242]);
+  assert.strictEqual(direct, 0);
+  const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
+  assert.ok(src.includes('wc.executeJavaScriptInIsolatedWorld(worldId, [{ code: `new Promise(res => {'));
+  assert.ok(!src.includes('wc.executeJavaScript(`new Promise'));
+});
+
+test('driver act: the world id in its options reaches the idle probe', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  const { idle } = await driver.act(wc, async () => {}, { worldId: 4242, timeoutMs: 5000, now: () => (t += 600), sleepFn: async () => {} });
+  assert.strictEqual(idle.ok, true);
+  assert.deepStrictEqual(wc.worlds, [4242]);
 });
 
 test('driver armIdle: a page whose only mutations are a repainting ticker goes idle and names it; a plain readyState keeps the old shape', async () => {
@@ -153,6 +179,13 @@ test('driver armIdle: a timed-out wait names the top two requests completed in t
   const r2 = await w2.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r2.ok, false);
   assert.ok(!('held' in r2));
+  const many = fakeWc();
+  const w3 = await driver.armIdle(many.wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  for (let i = 0; i < 64; i++) { many.sent(`m${i}`, 'https://x/api/graphql', 'XHR', 'POST'); t += 10; many.finished(`m${i}`); t += 10; }
+  many.sent('open', 'https://x/api/slow');
+  const r3 = await w3.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r3.held.full, true);
+  assert.strictEqual(r3.held.n, 64);
 });
 
 test('driver armIdle: reset() forgets the finished requests a poll was detected from', async () => {

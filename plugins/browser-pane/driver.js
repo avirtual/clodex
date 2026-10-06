@@ -30,7 +30,7 @@ async function emulateFocus(wc) {
   await dbg.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
 }
 
-async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } = {}) {
+async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep, worldId = 0 } = {}) {
   const dbg = attachCdp(wc);
   await dbg.sendCommand('Page.enable');
   await dbg.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true });
@@ -74,7 +74,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
     let lastPolls = null;
     const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000); const by = new Map(); for (const d of recent) { const k = d.method + ' ' + d.path; by.set(k, (by.get(k) || 0) + 1); } const tops = [...by.entries()].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 3); if (!tops.length) return null; const keys = new Set(tops.map(([k]) => k)); const ts = recent.filter((d) => d.method + ' ' + d.path === tops[0][0]).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); if (everyMs < POLL_MIN_MS) return null; const other = recent.filter((d) => !keys.has(d.method + ' ' + d.path)); if (other.length > tops.length) return null; return { paths: tops.map(([k]) => k.slice(k.indexOf(' ') + 1)), keys: [...keys], everyMs }; };
     const pub = (p) => p ? { paths: p.paths, everyMs: p.everyMs } : null;
-    const held = () => { const cut = now() - 2000; const recent = done.filter((d) => d.at > cut); if (!recent.length) return null; const by = new Map(); for (const d of recent) { const k = d.method + ' ' + d.path; by.set(k, (by.get(k) || 0) + 1); } return { n: recent.length, top: [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => ({ method: k.slice(0, k.indexOf(' ')), path: k.slice(k.indexOf(' ') + 1), n })) }; };
+    const held = () => { const cut = now() - 2000; const recent = done.filter((d) => d.at > cut); if (!recent.length) return null; const by = new Map(); for (const d of recent) { const k = d.method + ' ' + d.path; by.set(k, (by.get(k) || 0) + 1); } return { n: recent.length, ...(recent.length === DONE_MAX ? { full: true } : {}), top: [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([k, n]) => ({ method: k.slice(0, k.indexOf(' ')), path: k.slice(k.indexOf(' ') + 1), n })) }; };
     const onlyPolls = (p) => active().length === 0 || (!!p && active().every((v) => p.keys.includes(v.method + ' ' + pathOf(v.url))));
     if (graceMs) await sleep(graceMs);
     try {
@@ -82,15 +82,16 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
         if (wc.isDestroyed()) return { ok: false, reason: 'destroyed', ms: now() - t0, fired, inflight: [] };
         if (shouldStop && shouldStop()) return { ok: true, stopped: true, ms: now() - t0, fired };
         if (now() - t0 > timeoutMs) {
-          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url), ...(lastChurn.length ? { churn: lastChurn } : {}), ...(lastPolls ? { polls: pub(lastPolls) } : {}), ...(held() ? { held: held() } : {}) };
+          const h = held();
+          return { ok: false, reason: 'timeout', ms: now() - t0, fired, inflight: active().slice(0, 5).map((v) => v.url), ...(lastChurn.length ? { churn: lastChurn } : {}), ...(lastPolls ? { polls: pub(lastPolls) } : {}), ...(h ? { held: h } : {}) };
         }
         const polls = polling();
         if (polls) lastPolls = polls;
         if (!wc.isLoading() && onlyPolls(polls)) {
-          const q = await withTimeout(wc.executeJavaScript(`new Promise(res => {
+          const q = await withTimeout(wc.executeJavaScriptInIsolatedWorld(worldId, [{ code: `new Promise(res => {
             let last = performance.now(); const hits = new Map(); const label = k => k.tagName.toLowerCase() + (k.id ? '#' + k.id : '') + (k.classList && k.classList[0] ? '.' + k.classList[0] : ''); const mo = new MutationObserver(ms => { last = performance.now(); for (const m of ms) { const k = m.target.nodeType === 1 ? m.target : m.target.parentElement; if (k) hits.set(k, (hits.get(k) || 0) + 1); } });
             mo.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-            const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 8 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.entries()].sort((a, b) => b[1] - a[1])[0][0]; res({ state: document.readyState, ticker: label(k) }); return; } if (performance.now() - t0 >= ${quietMs} * 4 + 2000) { mo.disconnect(); res({ state: document.readyState, churn: [...hits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => label(k)) }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })`).catch(() => null), quietMs * 4 + 3000);
+            const t0 = performance.now(); const tick = () => { const q = performance.now() - last; if (q >= ${quietMs}) { mo.disconnect(); res({ state: document.readyState }); return; } if (performance.now() - t0 >= ${quietMs} * 4 && hits.size > 0 && hits.size <= 8 && [...hits.values()].every(n => n >= 3)) { mo.disconnect(); const k = [...hits.entries()].sort((a, b) => b[1] - a[1])[0][0]; res({ state: document.readyState, ticker: label(k) }); return; } if (performance.now() - t0 >= ${quietMs} * 4 + 2000) { mo.disconnect(); res({ state: document.readyState, churn: [...hits.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => label(k)) }); return; } setTimeout(tick, 100); }; setTimeout(tick, 100); })` }]).catch(() => null), quietMs * 4 + 3000);
           const state = q && typeof q === 'object' ? q.state : q; const ticker = q && typeof q === 'object' && q.ticker ? String(q.ticker).replace(/[^\w#.:-]/g, '').slice(0, 60) : '';
           const churn = q && typeof q === 'object' && Array.isArray(q.churn) ? q.churn.map(x => String(x).replace(/[^\w#.:-]/g, '').slice(0, 40)).filter(Boolean).slice(0, 3) : [];
           if (churn.length) lastChurn = churn;

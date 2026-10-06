@@ -11,6 +11,8 @@ const paths = require('./paths');
 const urlpolicy = require('./urlpolicy');
 const keys = require('./keys');
 const { changedRegion, CHANGE_MAX, hostOf } = require('./read-format');
+const act = (wc, fn, opts = {}) => driver.act(wc, fn, { worldId: scripts.ISOLATED_WORLD, ...opts });
+const waitIdle = (wc, opts = {}) => driver.waitIdle(wc, { worldId: scripts.ISOLATED_WORLD, ...opts });
 
 const BAR_HEIGHT = 40;
 const MAX_WINDOWS = 8;
@@ -920,11 +922,11 @@ function run(electron, ctx) {
       svc.wc.on('did-navigate', onNav);
       try {
         ensureCdp(svc);
-        if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
+        if (!svc.watch) svc.watch = await driver.armIdle(svc.wc, { worldId: scripts.ISOLATED_WORLD }).catch(() => null);
         let navErr = null;
         svc.blockedNav = null;
         const load = () => driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
-        const { idle } = await driver.act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
+        const { idle } = await act(svc.wc, load, { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
         if (svc.wc.isDestroyed()) throw closedError(name);
         const blocked = svc.blockedNav;
         if (navErr && blocked) throw deniedError(svc, blocked.url, blocked.hit, 'open');
@@ -951,7 +953,7 @@ function run(electron, ctx) {
     if (svc.lock.state !== 'held' || svc.lock.reason !== 'takeover') takeover(svc);
     if (svc.lock.state !== 'held') throw codedError('OPERATOR_BUSY', TEXT.operatorBusy(name));
     ensureCdp(svc);
-    if (!svc.watch) svc.watch = await driver.armIdle(svc.wc).catch(() => null);
+    if (!svc.watch) svc.watch = await driver.armIdle(svc.wc, { worldId: scripts.ISOLATED_WORLD }).catch(() => null);
     let navErr = null;
     await driver.withTimeout(svc.wc.loadURL(url).catch((e) => { navErr = e; }), LOAD_TIMEOUT_MS);
     if (svc.wc.isDestroyed()) throw closedError(name);
@@ -983,7 +985,7 @@ function run(electron, ctx) {
         const refusedKey = args.key === 'Enter' || args.key === 'Space' || scripts.ARROW_KEYS.includes(args.key) ? await enterRefusal((code) => inIsolated(wc, code), null, args) : null;
         if (refusedKey) throw refusedKey;
         const pre = await preAct(svc, null);
-        const { idle } = await driver.act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
+        const { idle } = await act(wc, () => driver.pressKey(wc, args.key), actOpts(svc));
         const out = await withChange(svc, pre, { ...nav(), idle: idleOf(idle) }, lateMsFor(op));
         if (out.changed === '' && !wc.isDestroyed()) {
           const value = await inIsolated(wc, scripts.VALUE_ACTIVE);
@@ -1025,7 +1027,7 @@ function run(electron, ctx) {
         if (el.password || el.otp) throw passwordRefusal(svc.name, n, el, await probe(svc));
         if (!el.editable) throw codedError('NOT_EDITABLE', TEXT.notEditable(n, el.kind));
         const text = String(args.text || '');
-        const { idle } = await driver.act(wc, async () => {
+        const { idle } = await act(wc, async () => {
           driver.click(wc, el);
           await inIsolated(wc, scripts.CLEAR(n));
           await driver.typeText(wc, text);
@@ -1039,7 +1041,7 @@ function run(electron, ctx) {
         return out;
       }
       let picked = null;
-      const { idle } = await driver.act(wc, async () => {
+      const { idle } = await act(wc, async () => {
         picked = await inIsolated(wc, scripts.SELECT(n, String(args.option || '')));
       }, actOpts(svc));
       if (!picked) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
@@ -1076,7 +1078,7 @@ function run(electron, ctx) {
       const measureInner = async () => { const d = await measure(); const sc = d && await inMain(wc, scripts.SCROLLER_INFO); return d && sc ? { ...sc, items: d.items } : null; };
       const before = inner ? { ...scroller, items: doc.items } : doc;
       const pre = await preAct(svc, null);
-      const { idle } = await driver.act(wc, async () => {
+      const { idle } = await act(wc, async () => {
         await inMain(wc, scrollCode(dir, pages, inner));
         await driver.sleep(0);
       }, actOpts(svc));
@@ -1112,7 +1114,7 @@ function run(electron, ctx) {
       const target = entry.url;
       const hit = policyDenies(svc, target, 'agent');
       if (hit) throw deniedError(svc, target, hit, dir);
-      const { idle } = await driver.act(wc, () => h.goToIndex(entry.index), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
+      const { idle } = await act(wc, () => h.goToIndex(entry.index), { timeoutMs: OPEN_IDLE_MS, shouldStop: () => svc.lock.takeover });
       if (wc.isDestroyed()) throw closedError(name);
       const moved = navOf({ docBefore, docAfter: svc.doc, hrefBefore, hrefAfter: wc.getURL(), titleBefore, titleAfter: wc.getTitle(), download: false });
       return withChange(svc, pre, {
@@ -1183,7 +1185,7 @@ function run(electron, ctx) {
       }
     })();
     try {
-      const { idle } = await driver.act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
+      const { idle } = await act(wc, () => driver.click(wc, el), { ...actOpts(svc), shouldStop: () => svc.lock.takeover || began || pdf })
         .finally(() => { acting = false; });
       await watchPdf;
       const out = { n, kind: el.kind, label: el.label, idle: idleOf(idle) };
@@ -1197,7 +1199,7 @@ function run(electron, ctx) {
         if (out.download) out.download.url = svc.popupUrl;
         pw.cancel();
         if (wc.navigationHistory && wc.navigationHistory.canGoBack()) {
-          await driver.act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
+          await act(wc, () => wc.navigationHistory.goBack(), { timeoutMs: CLICK_DOWNLOAD_MS });
         }
       }
       if (!out.download) delete out.download;
@@ -1242,7 +1244,7 @@ function run(electron, ctx) {
     const t0 = Date.now();
     svc.popupUrl = null;
     try {
-      await driver.act(wc, () => driver.click(wc, el), actOpts(svc));
+      await act(wc, () => driver.click(wc, el), actOpts(svc));
       for (;;) {
         const got = await Promise.race([w.started.then(() => true), w.done.then(() => true), driver.sleep(250).then(() => false)]);
         if (got) return await w.done;
@@ -1432,7 +1434,7 @@ function run(electron, ctx) {
         await driver.sleep(250);
       }
     }
-    const r = await driver.waitIdle(svc.wc, { timeoutMs: ms });
+    const r = await waitIdle(svc.wc, { timeoutMs: ms });
     return idleOf(r);
   }
 
@@ -1458,7 +1460,7 @@ function run(electron, ctx) {
       const docAt = svc.doc;
       const go = kind === 'go' ? () => driver.withTimeout(wc.loadURL(url).catch(() => {}), LOAD_TIMEOUT_MS)
         : kind === 'back' ? () => wc.navigationHistory.goToIndex(back.index) : () => wc.reload();
-      const { idle } = await driver.act(wc, go, { timeoutMs: OPEN_IDLE_MS });
+      const { idle } = await act(wc, go, { timeoutMs: OPEN_IDLE_MS });
       if (wc.isDestroyed()) return;
       if (!idle.ok && wc.isLoading() && !svc.pendingNav && (kind === 'go' || svc.doc !== docAt)) wc.stop();
     });

@@ -1078,6 +1078,11 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
 test('child: idleOf carries the ticker the idle wait ignored', () => {
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {}), ...(Array.isArray(idle.churn) && idle.churn.length ? { churn: idle.churn } : {}), ...(idle.polls ? { polls: idle.polls } : {}), ...(idle.held ? { held: idle.held } : {}) });'));
+  assert.strictEqual((child.match(/driver\.armIdle\(svc\.wc, \{ worldId: scripts\.ISOLATED_WORLD \}\)/g) || []).length, 2);
+  assert.strictEqual(child.split('driver.act(').length, 2);
+  assert.strictEqual(child.split('driver.waitIdle(').length, 2);
+  assert.ok(child.includes('const act = (wc, fn, opts = {}) => driver.act(wc, fn, { worldId: scripts.ISOLATED_WORLD, ...opts });'));
+  assert.ok(child.includes('const waitIdle = (wc, opts = {}) => driver.waitIdle(wc, { worldId: scripts.ISOLATED_WORLD, ...opts });'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
@@ -1827,7 +1832,7 @@ test('enterRefusal: Enter that would submit a consequential target is refused wi
   assert.strictEqual(await enterRefusal(isolated({ ...card, consequential: null }), 26, { enter: true }), null);
   const typeGate = /const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;\n\s*const refusedEnter = op === 'type' && args\.enter \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), n, args\) : null;\n\s*if \(refusedEnter\) throw refusedEnter;\n\s*dispatch\(svc, \{ type: 'describe'/;
   assert.match(CHILD_SRC, typeGate, 'type refuses before it types anything, and only with --enter');
-  const keyGate = /const refusedKey = args\.key === 'Enter' \|\| args\.key === 'Space' \|\| scripts\.ARROW_KEYS\.includes\(args\.key\) \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await driver\.act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
+  const keyGate = /const refusedKey = args\.key === 'Enter' \|\| args\.key === 'Space' \|\| scripts\.ARROW_KEYS\.includes\(args\.key\) \? await enterRefusal\(\(code\) => inIsolated\(wc, code\), null, args\) : null;\n\s*if \(refusedKey\) throw refusedKey;\n\s*const pre = await preAct\(svc, null\);\n\s*const \{ idle \} = await act\(wc, \(\) => driver\.pressKey\(wc, args\.key\)/;
   assert.match(CHILD_SRC, keyGate, 'key probes only for Enter, Space and the arrows, before pressing');
   const btn = { from: 2, n: 2, press: true, label: 'Card bancar', consequential: 'payment' };
   const sp = await enterRefusal(isolated(btn), null, { key: 'Space' });

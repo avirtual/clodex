@@ -50,7 +50,7 @@ function idleLabel(idle) {
   return n ? `still busy after ${Math.round(idle.ms / 1000)}s (${n} requests in flight: ${idle.inflight.slice(0, 3).map(redactUrl).join(', ')})`
     : Array.isArray(idle.churn) && idle.churn.length ? `still busy after ${Math.round(idle.ms / 1000)}s (DOM churn: ${idle.churn.join(', ')})`
     : polls ? `still busy after ${Math.round(idle.ms / 1000)}s (network polls: ${polls})`
-    : idle.held && Array.isArray(idle.held.top) && idle.held.top.length ? `still busy after ${Math.round(idle.ms / 1000)}s (${oneLine(`network: ${idle.held.n} req in 2 s — ${idle.held.top.map((t) => `${t.method} ${oneLine(redactUrl(t.path), 40)} ×${t.n}`).join(', ')}`, 100)})`
+    : idle.held && Array.isArray(idle.held.top) && idle.held.top.length ? `still busy after ${Math.round(idle.ms / 1000)}s (${oneLine(`network: ${idle.held.n}${idle.held.full ? '+' : ''} req in 2 s — ${idle.held.top.map((t) => `${t.method} ${oneLine(redactUrl(t.path), 40)} ×${t.n}`).join(', ')}`, 100)})`
     : `still busy after ${Math.round(idle.ms / 1000)}s`;
 }
 

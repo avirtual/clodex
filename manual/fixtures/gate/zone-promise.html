@@ -1,0 +1,5 @@
+<!doctype html><html><head><meta charset="utf-8"><title>zone-promise</title>
+<script>class ZoneAwarePromise { constructor(fn) { this.__zone_symbol__state = null; this.__zone_symbol__value = []; fn(v => { this.__zone_symbol__state = true; this.__zone_symbol__value = v; }, () => {}); } then() { return this; } }
+window.__zone_symbol__Promise = Promise; window.Promise = ZoneAwarePromise;</script></head><body>
+<main><h1>Zone promise</h1><p>This page replaces the global Promise with a thenable class the way zone.js does on an Angular site. It loads nothing over the network and runs no timers after load, so the only thing that can keep a wait busy is a readiness probe that hands its result to the page's Promise and never gets a native one back to await.</p></main>
+</body></html>
