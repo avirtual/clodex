@@ -1495,6 +1495,8 @@ test('settleChange: a target aria flip after the click is reported and ends the 
   assert.deepStrictEqual(w.sleeps, [500, 500]);
   assert.strictEqual(targetDiff(off, focused), null);
   assert.deepStrictEqual(targetDiff(off, { el: { 'aria-label': 'AC Off', class: 'btn sel' }, tile: off.tile }), { text: 'class +sel', strong: false });
+  assert.deepStrictEqual(targetDiff({ el: {}, tile: null, panel: { class: 'panel' } }, { el: {}, tile: null, panel: { class: 'panel open' } }), { text: 'panel class +open', strong: false });
+  assert.deepStrictEqual(targetDiff({ el: {}, tile: null, panel: { 'aria-expanded': 'false' } }, { el: {}, tile: null, panel: { 'aria-expanded': 'true' } }), { text: 'panel aria-expanded "false" → "true"', strong: true });
 });
 
 const CHILD_SRC = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
@@ -2017,10 +2019,13 @@ test('page scripts: VALUE_CHOICE and TARGET_STATE on a label read its radio or c
 test('page scripts: TARGET_STATE carries the state of the panel its target aria-controls', () => {
   const attrs = (o) => (k) => (k in o ? o[k] : null);
   const panel = { getAttribute: attrs({ class: 'panel open', 'aria-expanded': 'true' }) };
-  const btn = { tagName: 'BUTTON', isConnected: true, getAttribute: attrs({ 'aria-controls': 'd' }), parentElement: null };
+  const btn = { tagName: 'BUTTON', isConnected: true, getAttribute: attrs({ 'aria-controls': ' d e' }), parentElement: null };
   const win = { __cxEls: { 5: { deref: () => btn } } };
   const doc = { getElementById: (id) => (id === 'd' ? panel : null) };
   assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.TARGET_STATE(5)}`)(win, doc), { el: {}, tile: null, panel: { class: 'panel open', 'aria-expanded': 'true' } });
+  const shadowBtn = { ...btn, getRootNode: () => doc };
+  const win2 = { __cxEls: { 5: { deref: () => shadowBtn } } };
+  assert.deepStrictEqual(new Function('window', 'document', `return ${scripts.TARGET_STATE(5)}`)(win2, {}).panel, { class: 'panel open', 'aria-expanded': 'true' });
 });
 
 test('page scripts: consequentialHit with no terms judges a form by its action alone', () => {

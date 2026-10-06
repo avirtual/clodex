@@ -309,7 +309,7 @@ function targetDiff(before, after) {
   if (!before || !after) return null;
   const parts = [];
   let strong = false;
-  for (const [where, b, a] of [['', before.el, after.el], ['tile ', before.tile, after.tile]]) {
+  for (const [where, b, a] of [['', before.el, after.el], ['tile ', before.tile, after.tile], ['panel ', before.panel, after.panel]]) {
     if (!b || !a) continue;
     for (const k of [...new Set([...Object.keys(b), ...Object.keys(a)])]) {
       if (b[k] === a[k]) continue;

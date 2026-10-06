@@ -45,12 +45,12 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
       if (fired.lifecycle.length > LIFECYCLE_MAX) fired.lifecycle.shift();
     }
     else if (method === 'Network.requestWillBeSent' && !SKIP_TYPES.includes(params.type) && !SKIP_SCHEMES.test(String((params.request || {}).url || ''))) {
-      inflight.set(params.requestId, { url: params.request.url, at: now() });
+      inflight.set(params.requestId, { url: params.request.url, method: params.request.method, at: now() });
       fired.requests++;
       lastNet = now();
     } else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed') {
       const v = inflight.get(params.requestId);
-      if (v) { done.push({ path: pathOf(v.url), at: now(), ms: now() - v.at }); if (done.length > DONE_MAX) done.shift(); }
+      if (v) { done.push({ path: pathOf(v.url), method: v.method, at: now(), ms: now() - v.at }); if (done.length > DONE_MAX) done.shift(); }
       if (inflight.delete(params.requestId)) lastNet = now();
     }
   };
@@ -72,7 +72,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
     const t0 = now();
     let lastChurn = [];
     let lastPolls = null;
-    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000); const by = new Map(); for (const d of recent) by.set(d.path, (by.get(d.path) || 0) + 1); const top = [...by.entries()].sort((a, b) => b[1] - a[1])[0]; if (!top || top[1] < 3) return null; const ts = recent.filter((d) => d.path === top[0]).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); return everyMs >= POLL_MIN_MS ? { path: top[0], everyMs } : null; };
+    const polling = () => { const cut = now() - quietMs * 4; const recent = done.filter((d) => d.at > cut && d.ms < 2000 && (d.method === 'GET' || d.method === 'HEAD')); const by = new Map(); for (const d of recent) by.set(d.path, (by.get(d.path) || 0) + 1); const top = [...by.entries()].sort((a, b) => b[1] - a[1])[0]; if (!top || top[1] < 3) return null; const ts = recent.filter((d) => d.path === top[0]).map((d) => d.at).sort((a, b) => a - b); const everyMs = Math.round((ts[ts.length - 1] - ts[0]) / (ts.length - 1)); return everyMs >= POLL_MIN_MS ? { path: top[0], everyMs } : null; };
     const onlyPolls = (p) => active().length === 0 || (!!p && active().every((v) => pathOf(v.url) === p.path));
     if (graceMs) await sleep(graceMs);
     try {
@@ -92,7 +92,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
           const state = q && typeof q === 'object' ? q.state : q; const ticker = q && typeof q === 'object' && q.ticker ? String(q.ticker).replace(/[^\w#.:-]/g, '').slice(0, 60) : '';
           const churn = q && typeof q === 'object' && Array.isArray(q.churn) ? q.churn.map(x => String(x).replace(/[^\w#.:-]/g, '').slice(0, 40)).filter(Boolean).slice(0, 3) : [];
           if (churn.length) lastChurn = churn;
-          if (state === 'complete' && !churn.length && !wc.isLoading() && onlyPolls(polls) && (polls || now() - lastNet >= quietMs)) {
+          if (state === 'complete' && !churn.length && !wc.isLoading() && onlyPolls(polls) && (polls ? !done.some((d) => d.path !== polls.path && d.at > now() - quietMs) : now() - lastNet >= quietMs)) {
             return { ok: true, ms: now() - t0, fired, ...(ticker ? { ticker } : {}), ...(polls ? { polls } : {}) };
           }
         }
@@ -107,7 +107,7 @@ async function armIdle(wc, { network = true, now = Date.now, sleepFn = sleep } =
     return active().filter((v) => v.at <= cut).length;
   };
   const background = () => inflight.size - active().length;
-  return { wait, fired, detach, size, background, reset: () => inflight.clear(), lastNet: () => lastNet };
+  return { wait, fired, detach, size, background, reset: () => { inflight.clear(); done.length = 0; }, lastNet: () => lastNet };
 }
 
 async function waitIdle(wc, opts = {}) {
