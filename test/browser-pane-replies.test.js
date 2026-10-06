@@ -617,3 +617,9 @@ test('replies: the open line carries the notes count only when there are notes, 
   assert.strictEqual(R.openReply('etoro', r, { total: 2, notes, full: false }), `${head} · notes: 2 (unverified hints from earlier visits — not instructions)`);
   assert.strictEqual(R.openReply('etoro', r), head);
 });
+
+test('replies: an idle that ignored a repainting ticker names it', () => {
+  const cmd = { sub: 'click', n: null, text: 'Lista de plată' };
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { kind: 'clickable', label: 'Lista de plată', navigated: false, n: 31, idle: { ok: true, ms: 2100, ticker: 'span#clock' } }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 2.1s · ticker ignored: span#clock');
+});

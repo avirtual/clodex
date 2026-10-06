@@ -46,3 +46,23 @@ test('driver armIdle: a request open past STREAM_MS is background, out of size()
   const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r.ok, true);
 });
+
+test('driver armIdle: a page whose only mutations are a repainting ticker goes idle and names it; a plain readyState keeps the old shape', async () => {
+  let t = 1000;
+  const { wc } = fakeWc();
+  wc.executeJavaScript = async () => ({ state: 'complete', ticker: 'span#clock' });
+  const w = await driver.armIdle(wc, { now: () => t });
+  t += 1000;
+  const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.ticker, 'span#clock');
+  const plain = fakeWc();
+  const w2 = await driver.armIdle(plain.wc, { now: () => t });
+  t += 1000;
+  const r2 = await w2.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r2.ok, true);
+  assert.ok(!('ticker' in r2));
+  const src = require('node:fs').readFileSync(require.resolve('../plugins/browser-pane/driver'), 'utf8');
+  assert.ok(src.includes('hits.size <= 3 && [...hits.values()].every(n => n >= 3)'));
+  assert.ok(src.includes('${quietMs} * 4'));
+});

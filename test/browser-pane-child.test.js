@@ -615,11 +615,21 @@ test('page scripts: wallScan picks over the whole page nearest the root end, ski
   assert.ok(src.includes("const labels = [...b.querySelectorAll('a,button,[role=button]')].map(a => norm(a.innerText).trim()).filter(l => l && re.test(l));"));
   assert.ok(src.includes("for (const l of labels) rest = rest.replace(l, ' ');"));
   assert.ok(src.includes('return re.test(rest) || (/\\b(sign in|log in|subscribe)\\b/i.test(rest) && labels.some(l => /\\b(start a free trial|create (a free )?account)\\b/i.test(l)));'));
-  assert.ok(src.includes('      if (!bt) return null;\n      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b)) return { text: quote(t.data, t.parentElement, re), b };\n      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes('      if (!bt) return null;\n      if (re.test(own) && bt === own.trim() && wholeLabel(t) && teaser(b) && GATE_LINK.test(own) && !moreLink(t) && truncates(b)) return { text: quote(t.data, t.parentElement, re), b };\n      return gated(b, bt, re) ? { text: quote(authored(b), b, re), b } : null;'));
+  assert.ok(src.includes('const GATE_LINK = /\\b(subscribe|sign (in|up)|log in|create (a free )?account|already a subscriber|abonează-te|pentru a citi)\\b/i;'));
+  assert.ok(src.includes('const truncates = (b) =>'));
+  assert.ok(src.includes("a.matches('.more-link,[rel=bookmark]')"));
+  assert.ok(src.includes("const sentence = (s, re) => { const segs = norm(s).split(/(?<=[.!?])\\s+|\\s*\\|\\s*/).map(x => x.trim()).filter(Boolean); const hits = segs.filter(x => re.test(x)); return clip(hits.length ? hits.sort((a, b) => b.split(' ').length - a.split(' ').length)[0] : s.replace(/^\\s*\\|\\s*|\\s*\\|\\s*$/g, '')); };"));
+  assert.ok(src.includes('(r => r.width > 2 && r.height > 2)(t.parentElement.getBoundingClientRect())'));
+  assert.ok(src.includes('if (j >= tc.length) { over = true; return ch; }'));
+  assert.ok(src.includes('return over ? it : out;'));
   assert.ok(src.includes("const teaser = b => { for (let e = b, k = 0; e && k < 4; e = e.parentElement, k++) { const p = e.previousElementSibling; if (p) return norm(p.innerText || '').trim().length >= 80; } return false; };"));
-  const authored = new Function('norm', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '));
-  assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', textContent: 'to read this story, Sign in.' }), 'to read this story, Sign in.');
-  assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', textContent: 'Create an account.The author' }), 'Create an account. The author');
+  const authored = new Function('norm', 'textsOf', 'vis', 'scripted', `return ${/const authored = (b => \{[\s\S]*?\n    \});/.exec(src)[1]}`)((x) => String(x || '').replace(/\s+/g, ' '), (b) => b.nodes, (e) => !e.hidden, () => false);
+  const node = (data, w = 100, hidden = false) => ({ data, parentElement: { hidden, getBoundingClientRect: () => ({ width: w, height: w }) } });
+  assert.strictEqual(authored({ innerText: 'TO READ THIS STORY,\nSIGN IN.', nodes: [node('to read this story, Sign in.')] }), 'to read this story, Sign in.');
+  assert.strictEqual(authored({ innerText: 'CREATE AN ACCOUNT.\nTHE AUTHOR', nodes: [node('Create an account.'), node('The author')] }), 'Create an account. The author');
+  assert.strictEqual(authored({ innerText: 'THIS IS YOUR LAST FREE ARTICLE |', nodes: [node('This is your last free article'), node('Subscriber benefits', 1), node('|')] }), 'This is your last free article |');
+  assert.strictEqual(authored({ innerText: 'LAST FREE ARTICLE EXTRA', nodes: [node('last free article')] }), 'LAST FREE ARTICLE EXTRA');
   assert.ok(src.includes('return blockText(blk) ? clip(authored(blk)) : sentence(s, re);'));
   assert.ok(src.includes("const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');"));
   assert.ok(src.includes("if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }"));
@@ -930,20 +940,33 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
 test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a [frame] line; read lists only the frames it did not inline', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
-  assert.ok(src.includes('if (fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty frame is not inlined');
-  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); twin.replaceWith(box);"));
+  assert.ok(src.includes('if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty or hidden frame is not inlined');
+  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
   assert.ok(src.includes("if (!forced && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('const frames = allFrames.filter((u) => !inlined.has(u));'));
+  assert.ok(child.includes("const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;"));
+  assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'))"));
   assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
 });
 
 test('page scripts: READ_TEXT reads an epoch token in an age title first and a zone-less ISO time as UTC', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("/^\\d{9,10}$/.test(tok[1] || '') ? new Date(Number(tok[1]) * 1000)"));
-  assert.ok(src.includes("new Date(/\\d{2}:\\d{2}(:\\d{2})?$/.test(tok[0]) ? tok[0] + 'Z' : tok[0])"));
+  assert.ok(src.includes("const bare = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?$/.test(tok[0]);"));
+  assert.ok(src.includes("bare ? new Date(tok[0] + 'Z') : new Date(v)"));
+});
+
+test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of the viewport as the root, under a [dialog] line', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("const DIALOG_SEL = '[role=dialog][aria-modal=true], dialog[open], [aria-modal=true]';"));
+  assert.ok(/const modal = forced \? null : .*innerWidth \* innerHeight \/ 4.*\n  if \(modal\) root = modal\.e;/.test(src));
+  assert.ok(src.includes("(modal ? '[dialog]\\n' : '')"));
+  assert.ok(src.indexOf('const DIALOG_SEL') < src.indexOf('const framed ='));
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('...(idle.ticker ? { ticker: idle.ticker } : {})'));
 });
 
 test('page scripts: MAIN_SCROLLER tags the largest visible overflow-auto element that can move and returns its metrics, null when none', () => {
@@ -2058,6 +2081,11 @@ test('page scripts: Forward is a publish verb; an Order Status/history link is n
   assert.deepStrictEqual(scripts.consequentialHit({ label: 'Go', action: '/orders/new' }), { cat: 'purchase', term: 'order' });
   assert.strictEqual(scripts.consequentialHit({ label: 'Place order' }).cat, 'purchase');
   assert.strictEqual(scripts.consequentialHit({ label: 'Order now' }).cat, 'purchase');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Sort order' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order by date' }), null);
+  assert.strictEqual(scripts.consequentialHit({ label: 'Order of columns' }), null);
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Place order' }), { cat: 'purchase', term: 'order' });
+  assert.deepStrictEqual(scripts.consequentialHit({ label: 'Order now' }), { cat: 'purchase', term: 'order' });
 });
 
 test('page scripts: a has-delete class on a filter reset honours the row\'s unless; a delete label still hits', () => {
@@ -2300,7 +2328,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
   assert.ok(child.includes('...(wall ? { wall } : {}),'));

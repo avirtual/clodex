@@ -115,6 +115,8 @@ const ROWS = [
   ['[agent:browser select utility 3]', { error: 'select needs the option after the bracket — [agent:browser select [service] <n>] <option>' }],
   ['[agent:browser wait]', { sub: 'wait', service: null, ms: null, forText: null }],
   ['[agent:browser wait utility --ms=5000 --for="Showing 1"]', { sub: 'wait', service: 'utility', ms: 5000, forText: 'Showing 1' }],
+  ['[agent:browser wait utility --for=Interactive Brokers]', { error: "unexpected 'Brokers' for wait — quote multi-word text: --for=\"Interactive Brokers\"" }],
+  ['[agent:browser read utility --filter=heat meter]', { error: "unexpected 'meter' for read — quote multi-word text: --filter=\"heat meter\"" }],
   ['[agent:browser wait --ms=99999999]', { sub: 'wait', service: null, ms: 1800000, forText: null, sleep: true }],
   ['[agent:browser wait utility --ms=2000]', { sub: 'wait', service: 'utility', ms: 2000, forText: null, sleep: true }],
   ['[agent:browser wait --idle --ms=2000]', { sub: 'wait', service: null, ms: 2000, forText: null }],
