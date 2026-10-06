@@ -170,6 +170,11 @@ function museClassify(obj) {
       return c;
     }
   }
+  if (payloadType === 'context.compact.manual.outcome') {
+    if (payload.terminal_outcome === 'compacted') c.compactSummary = true;
+    else c.inert = true;
+    return c;
+  }
   if (payloadType === 'session.end') {
     c.sessionEnd = true;
     return c;
