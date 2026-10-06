@@ -55,7 +55,7 @@ test('driver armIdle: the idle probe runs in the isolated world so a page that r
   let direct = 0;
   wc.executeJavaScriptInIsolatedWorld = async (w) => { wc.worlds.push(w); return { state: 'complete' }; };
   wc.executeJavaScript = async () => { direct++; return { __zone_symbol__state: null, __zone_symbol__value: [] }; };
-  const w = await driver.armIdle(wc, { now: () => t, worldId: 4242 });
+  const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; }, worldId: 4242 });
   t += 1000;
   const r = await w.wait({ quietMs: 500, timeoutMs: 100 });
   assert.strictEqual(r.ok, true);
