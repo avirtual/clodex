@@ -53,7 +53,7 @@ const CONSEQUENTIAL = [
   ['alarm', ['arm', 'disarm'], []],
   ['unsubscribe', ['unsubscribe', 'dezabonare', 'cancel subscription'], []],
   ['transfer', ['transfer', 'send money', 'wire', 'deposit', 'add funds', 'withdraw', 'withdrawal', 'fund', 'top up', 'depune', 'retrage', 'create wallet'], [], [],
-    { transfer: '(^|[^a-z0-9])(money|funds|bani|balance|amount|lei|eur|usd)(?![a-z0-9])|[€$]' }],
+    { transfer: '(^|[^a-z0-9])(money|funds|bani|balance|amount|lei|eur|usd)(?![a-z0-9])|[€$]', depune: '(^|[^a-z0-9])(bani|lei|eur|ron|euro|numerar|suma|sold|fonduri|money|funds)(?![a-z0-9])|[€$]' }],
   ['trading', ['trade', 'sell', 'close position', 'close all', 'close trade', 'invest', 'copy trader', 'stake', 'unstake', 'swap', 'vinde', 'tranzactioneaza'], [],
     ['copy-user', 'copytrader', 'copy-trader', 'btn-copy-user', 'close-position', 'close-all-positions'],
     { swap: '(^|[^a-z0-9])(tokens?|coins?|crypto|currency|currencies|assets?|eth|btc|usdt)(?![a-z0-9])' }],
@@ -109,8 +109,9 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
     if (!r.lead) return { cat: r.cat, term: r.t };
     lead = { cat: r.cat, term: r.t };
   }
-  const action = fold(d.action);
-  if (action) for (const [cat, w] of FORM_ACTIONS) if (action.includes(w)) return { cat, term: w };
+  const actionPath = (a) => { try { return new URL(a, 'http://x/').pathname; } catch { return String(a || '').split(/[?#]/)[0]; } };
+  const action = d.action ? fold(actionPath(d.action)) : '';
+  if (action) for (const [cat, w] of FORM_ACTIONS) if (new RegExp('(^|[^a-z0-9])' + w + '(s|ing|ment)?(?![a-z0-9])').test(action)) return { cat, term: w };
   return lead;
 }
 
@@ -311,35 +312,59 @@ const WALL = `
     const TOKEN = ${WALL_TOKEN_RE};
     const SKIP = new Set(${JSON.stringify(WALL_SKIP)});
     const clip = t => String(t || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    const norm = s => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ');
     const scripted = t => { for (let e = t.parentElement; e; e = e.parentElement) if (SKIP.has(e.tagName)) return true; return false; };
-    const sentence = (t, re) => clip(t.data.split(/(?<=[.!?])\\s+/).find(x => re.test(x)) || t.data);
-    const quote = (t, re) => {
-      if (t.data.trim().length >= 20) return sentence(t, re);
-      const b = t.parentElement && t.parentElement.closest(${JSON.stringify(WALL_BLOCK)});
-      const bt = b ? String(b.innerText || '').trim() : '';
-      return bt && bt.length <= 300 ? clip(bt) : sentence(t, re);
+    const textsOf = (n, out) => { for (const c of n.childNodes) { if (c.nodeType === 3) out.push(c); else if (c.nodeType === 1 && !SKIP.has(c.tagName)) { textsOf(c, out); if (c.shadowRoot) textsOf(c.shadowRoot, out); } } return out; };
+    const inside = (r, t) => { for (let n = t; n; n = n.parentNode || n.host) if (n === r) return true; return false; };
+    const sentence = (s, re) => clip(norm(s).split(/(?<=[.!?])\\s+/).find(x => re.test(x)) || s);
+    const blockOf = t => (t.parentElement && t.parentElement.closest(${JSON.stringify(WALL_BLOCK)})) || null;
+    const blockTexts = new Map();
+    const blockText = b => {
+      if (!b) return '';
+      if (!blockTexts.has(b)) { const bt = norm(b.innerText).trim(); blockTexts.set(b, bt.length <= 300 ? bt : ''); }
+      return blockTexts.get(b);
+    };
+    const quote = (s, el, re) => {
+      if (norm(s).trim().length >= 20) return sentence(s, re);
+      const bt = blockText(el && el.closest(${JSON.stringify(WALL_BLOCK)}));
+      return bt ? clip(bt) : sentence(s, re);
     };
     const boxVis = e => { const bw = document.createTreeWalker(e, NodeFilter.SHOW_TEXT); let k = 0; for (let t = bw.nextNode(); t && k < 400; t = bw.nextNode(), k++) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) return true; return false; };
-    const chrome = t => !!(t.parentElement && t.parentElement.closest('header,nav,[role=banner],[role=navigation]'));
+    const chrome = t => { const p = t.parentElement; const h = p && p.closest('header,nav,[role=banner],[role=navigation]'); return !!h && !h.closest('article,main,[role=main]'); };
     const wholeLabel = t => { const a = t.parentElement && t.parentElement.closest('a,button,[role=button]'); return !!a && String(a.innerText || '').trim() === t.data.trim(); };
     const floating = t => { let k = 0; for (let e = t.parentElement; e && k < 6; e = e.parentElement, k++) if (['fixed', 'sticky'].includes(getComputedStyle(e).position)) return true; return false; };
     let all = [];
     let endIdx = -1;
+    const hitOf = (t, re) => {
+      if (chrome(t)) return null;
+      const b = blockOf(t);
+      const own = norm(t.data);
+      if (re.test(own)) {
+        if (!wholeLabel(t) || floating(t)) return { text: quote(t.data, t.parentElement, re), b };
+        const bt = blockText(b);
+        return re.test(bt) && bt.length > own.trim().length ? { text: quote(bt, b, re), b } : null;
+      }
+      const bt = blockText(b);
+      return bt && re.test(bt) ? { text: quote(bt, b, re), b } : null;
+    };
     const pick = (re) => {
       let before = null;
+      const seen = new Set();
       for (let i = 0; i < all.length; i++) {
-        const t = all[i];
-        if (!re.test(t.data) || chrome(t) || (wholeLabel(t) && !floating(t))) continue;
-        if (i > endIdx) return { text: quote(t, re), n: null };
-        before = t;
+        const b = blockOf(all[i]);
+        if (b && seen.has(b)) continue;
+        const hit = hitOf(all[i], re);
+        if (!hit) continue;
+        if (hit.b) seen.add(hit.b);
+        if (i > endIdx) return { text: hit.text, n: null };
+        before = hit;
       }
-      return before ? { text: quote(before, re), n: null } : null;
+      return before ? { text: before.text, n: null } : null;
     };
     try {
       if (root && document.body) {
-        const w = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-        for (let t = w.nextNode(); t; t = w.nextNode()) if (t.data.trim() && !scripted(t) && vis(t.parentElement)) all.push(t);
-        const inRoot = all.filter(t => root.contains(t));
+        all = textsOf(document.body, []).filter(t => t.data.trim() && t.parentElement && vis(t.parentElement));
+        const inRoot = all.filter(t => inside(root, t));
         endIdx = inRoot.length ? all.lastIndexOf(inRoot[inRoot.length - 1]) : -1;
       }
       const strong = pick(WALL);
@@ -349,8 +374,7 @@ const WALL = `
         && (e.matches(ID_SEL) || [...e.classList].some(c => TOKEN.test(c))) && (vis(e) || boxVis(e)) && clip(e.innerText)
         && (WALL.test(e.innerText) || String(e.innerText).trim().length <= 300));
       if (box) {
-        const bw = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-        for (let t = bw.nextNode(); t; t = bw.nextNode()) if (WALL.test(t.data) && !scripted(t) && vis(t.parentElement)) return { text: quote(t, WALL), n: null };
+        for (const t of textsOf(box, [])) if (WALL.test(norm(t.data)) && t.parentElement && vis(t.parentElement)) return { text: quote(t.data, t.parentElement, WALL), n: null };
         return { text: clip(box.innerText), n: null };
       }
       return pick(WEAK);
@@ -421,6 +445,7 @@ function readText(main) {
     if (!c || up) continue;
     wrapped.add(c); c.prepend('(was '); c.append(')');
   }
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -929,6 +954,21 @@ function find(n) {
     const PRIO = /\\b(accept|agree|allow|reject|refuse|decline|respinge|refuz|sunt de acord|save|salveaz|close|dismiss|got it|ok)\\b|^[×✕✖⨯x]$/i;
     return [...out.filter(b => PRIO.test(b.label)), ...out.filter(b => !PRIO.test(b.label))].slice(0, 8);
   };
+  const DIALOG_SEL = '[role=dialog],[aria-modal=true],dialog,[id*=banner i],[class*=banner i],[id*=consent i],[class*=consent i],[id*=cookie i],[class*=cookie i]';
+  const dialogOf = () => {
+    let best = null, bz = -Infinity;
+    for (const d of document.querySelectorAll(DIALOG_SEL)) {
+      const r = d.getBoundingClientRect();
+      if (!r.width || !r.height || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) continue;
+      const s = getComputedStyle(d);
+      if (s.visibility === 'hidden' || s.display === 'none' || !buttonsOf(d).length) continue;
+      const z = Number(s.zIndex) || 0;
+      let nested = false;
+      for (let e = d; e && best && !nested; e = upOf(e)) nested = e === best;
+      if (z > bz || (z === bz && !nested)) { best = d; bz = z; }
+    }
+    return best;
+  };
   let lastHit = null;
   const report = () => {
     const r = el.getBoundingClientRect();
@@ -981,7 +1021,10 @@ function find(n) {
     for (let e = o.covered && o.hitN != null && !o.hitConsequential ? hit : null; e && !host; e = upOf(e)) if (numberOf(e) != null) host = e;
     const hitButtons = !o.covered ? [] : o.hitN == null ? buttonsOf(overlayOf(hit))
       : host && !host.matches(${JSON.stringify(STD_SEL)}) ? buttonsOf(host) : [];
-    return hitButtons.length ? { ...o, hitButtons } : o;
+    if (hitButtons.length) return { ...o, hitButtons };
+    const dialog = o.covered && o.hitN == null ? dialogOf() : null;
+    if (!dialog) return o;
+    return { ...o, hitButtons: buttonsOf(dialog), hitDialog: dialog.id || String(dialog.getAttribute('class') || '').trim().split(/\s+/)[0] || dialog.tagName.toLowerCase() };
   };
   const onScreen = o => o.x >= 0 && o.y >= 0 && o.x < innerWidth && o.y < innerHeight;
   if (!outside) return named(report(), lastHit);
@@ -1094,6 +1137,8 @@ function inspect(n) {
 const PAGE_TEXT = `(() => {
   if (!document.body) return '';
   const clone = document.body.cloneNode(true);
+  const root = document.body;
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
   clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio,[aria-hidden=true],[inert]').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
@@ -1268,7 +1313,8 @@ const LOGIN_PROBE = `(() => {${DEEP}
     password: pwds.length > 0 && !passwordChange,
     passwordChange,
     otp: any(el => el.tagName === 'INPUT' && el.getAttribute('autocomplete') === 'one-time-code'),
-    captcha: any(el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || '')),
+    captcha: any(el => el.tagName === 'IFRAME' && /recaptcha|hcaptcha|challenges\\.cloudflare\\.com/.test(el.src || ''))
+      || (/^just a moment|checking your browser|verify you are human|attention required/i.test(document.title) && body.trim().length < 600),
     idp,
     googleRejected: idp === 'google' && (location.pathname.startsWith('/v3/signin/rejected') || body.includes('This browser or app may not be secure')),
     logoutLink,

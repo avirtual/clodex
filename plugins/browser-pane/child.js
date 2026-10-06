@@ -53,6 +53,21 @@ function codedError(code, message) {
   return e;
 }
 
+const CHALLENGE_RE = /challenges\.cloudflare\.com|recaptcha|hcaptcha/;
+
+function framesOf(wc) {
+  try {
+    return wc.mainFrame.framesInSubtree.filter((f) => f !== wc.mainFrame).map((f) => f.url).filter((u) => u && u !== 'about:blank');
+  } catch {
+    return [];
+  }
+}
+
+function challenged(login, frames) {
+  if (login && !login.captcha && frames.some((u) => CHALLENGE_RE.test(u))) login.captcha = true;
+  return login;
+}
+
 function signinOf(login) {
   if (!login) return null;
   if (login.idp === 'google' || login.googleRejected) return 'idp';
@@ -863,7 +878,7 @@ function run(electron, ctx) {
         svc.wc.stop();
         out.idle.stopped = true;
       }
-      const login = await probe(svc);
+      const login = challenged(await probe(svc), framesOf(svc.wc));
       const takeover = svc.lock.takeover;
       dispatch(svc, { type: 'done', signin: signinOf(login) }, { seat, login });
       const result = { ...out, ...pageInfo(svc), doc: svc.doc, login, takeover };
@@ -1506,11 +1521,8 @@ function run(electron, ctx) {
       ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
-    const login = await probe(svc);
-    const frames = wc.mainFrame.framesInSubtree
-      .filter((f) => f !== wc.mainFrame)
-      .map((f) => f.url)
-      .filter((u) => u && u !== 'about:blank');
+    const frames = framesOf(wc);
+    const login = challenged(await probe(svc), frames);
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
     return {
       ...base,
@@ -1633,5 +1645,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  signinOf, framesOf, challenged, numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };
