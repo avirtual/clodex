@@ -878,3 +878,42 @@ test('scheduler: a closed window drops the feed memory, so reopening the same UR
   await h.run([['hand-a', '[agent:browser open utility] https://x.example.com/home']]);
   assert.strictEqual((await read(eight))[0], '== feed (8 posts) ==');
 });
+
+test('scheduler tabs: open x:riot records profile x; two tabs share one storage record and keep two leases', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open x:riot] https://x.com/a']]);
+  assert.deepStrictEqual(Object.keys(h.storage.get().services), ['x']);
+  assert.strictEqual(h.storage.get().services.x.lastUrl, 'https://x.com/a');
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/b'], ['hand-b', '[agent:browser open x:two] https://x.com/c']]);
+  assert.deepStrictEqual(Object.keys(h.storage.get().services), ['x']);
+  assert.strictEqual(h.storage.get().services.x.lastSeat, 'hand-b');
+  assert.deepStrictEqual([h.sched.leaseHolder('x'), h.sched.leaseHolder('x:riot'), h.sched.leaseHolder('x:two')], ['hand-a', 'hand-a', 'hand-b']);
+  await h.run([['hand-a', '[agent:browser release x:riot]']]);
+  assert.deepStrictEqual([h.sched.leaseHolder('x'), h.sched.leaseHolder('x:riot')], ['hand-a', null]);
+});
+
+test('scheduler tabs: read state is per tab — read x then click x:riot 3 is refused read x:riot first', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a'], ['hand-a', '[agent:browser open x:riot] https://x.com/b'], ['hand-a', '[agent:browser read x]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click x:riot 3]']]), [
+    ['hand-a', '[agent:browser] error: read x:riot first — numbers come from your read'],
+  ]);
+});
+
+test('scheduler tabs: close x sends close for x and the reply lists the also tabs', async () => {
+  let meta = null;
+  const h = harness({ close: (_a, m) => { meta = m; return { closed: 'x', windows: 0, also: ['x:riot'] }; } });
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser close x]']]), [['hand-a', '[agent:browser] closed x (also x:riot) · 0 windows open']]);
+  assert.strictEqual(meta.service, 'x');
+});
+
+test('scheduler tabs: services lists a profile\'s open named tabs', async () => {
+  const h = harness();
+  await h.run([['hand-a', '[agent:browser open x] https://x.com/a'], ['hand-a', '[agent:browser open x:riot] https://x.com/b']]);
+  h.sched.onState({ event: 'state', service: 'x', state: 'idle' });
+  h.sched.onState({ event: 'state', service: 'x:riot', state: 'idle' });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser services]']]), [
+    ['hand-a', '[agent:browser] services: x — x.com · unknown · window open · idle · tabs: riot (idle)'],
+  ]);
+});

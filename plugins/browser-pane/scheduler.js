@@ -6,6 +6,7 @@ const replies = require('./replies');
 const paths = require('./paths');
 const siteNotes = require('./site-notes');
 const { formatRead, chromeStrip, elementStrip, hostOf, postKey } = require('./read-format');
+const { profileOf, tabOf } = require('./grammar');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
@@ -162,8 +163,9 @@ function createScheduler({
       const all = storage.get();
       const data = all && typeof all === 'object' && all.v === 1 ? all : { v: 1, services: {} };
       if (!data.services || typeof data.services !== 'object') data.services = {};
-      const prev = data.services[service] || { createdAt: now() };
-      data.services[service] = fn(prev);
+      const key = profileOf(service);
+      const prev = data.services[key] || { createdAt: now() };
+      data.services[key] = fn(prev);
       storage.set(data);
     } catch (e) {
       if (log) log.error(`storage update failed: ${e.message}`);
@@ -248,7 +250,7 @@ function createScheduler({
   async function runNote(handle, service, cmd) {
     if (!notes) throw new Error('site notes are unavailable');
     const s = svcState(service);
-    const rec = ((storage.get() || {}).services || {})[service] || {};
+    const rec = ((storage.get() || {}).services || {})[profileOf(service)] || {};
     const url = s.url || rec.lastUrl || '';
     const origin = siteNotes.originKey(url);
     if (!origin) throw new Error(`note needs a page — open ${service} first`);
@@ -338,7 +340,7 @@ function createScheduler({
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; covered = e.covered || 0; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };
-    const rec = ((storage.get() || {}).services || {})[service] || {};
+    const rec = ((storage.get() || {}).services || {})[profileOf(service)] || {};
     const openedHost = rec.openedHost || hostOf(rec.lastUrl);
     const memo = feedMemory(st, service, raw, cmd);
     const notesInfo = hasText ? readNotes(st, service, raw, cmd) : null;
@@ -499,7 +501,8 @@ function createScheduler({
 
   function servicesLine() {
     const data = storage.get() || {};
-    return replies.servicesReply((data && data.services) || {}, mirror, (name) => (services.get(name) || {}).url || '');
+    const tabsOf = (p) => [...services.keys()].filter((n) => tabOf(n) && profileOf(n) === p && mirror && mirror.get(n) && mirror.get(n) !== 'closed').map((n) => ({ tab: tabOf(n), state: mirror.get(n) }));
+    return replies.servicesReply((data && data.services) || {}, mirror, (name) => (services.get(name) || {}).url || '', tabsOf);
   }
 
   function dropSeat(s, seat) {
@@ -520,8 +523,8 @@ function createScheduler({
     const r = await client.request('close', {}, { service, seat: handle.name });
     dropSeat(svcState(service), handle.name);
     const data = storage.get() || {};
-    const rec = (data.services && data.services[service]) || {};
-    return replies.closedReply(service, rec, r.windows);
+    const rec = (data.services && data.services[profileOf(service)]) || {};
+    return replies.closedReply(service, rec, r.windows, r.also || []);
   }
 
   function submit(handle, cmd) {

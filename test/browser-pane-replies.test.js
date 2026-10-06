@@ -79,6 +79,8 @@ test('replies: services line from storage plus mirror', () => {
   };
   assert.strictEqual(R.servicesReply(services, new Map([['utility', 'idle']])),
     '[agent:browser] services: utility — signed in (10-04 15:40) · window open · idle │ irs — unknown · closed');
+  assert.strictEqual(R.servicesReply(services, new Map([['utility', 'idle']]), () => '', (p) => (p === 'utility' ? [{ tab: 'riot', state: 'idle' }, { tab: 'm', state: 'driving' }] : [])),
+    '[agent:browser] services: utility — signed in (10-04 15:40) · window open · idle · tabs: riot (idle), m (driving) │ irs — unknown · closed');
   assert.strictEqual(R.servicesReply({}, new Map()), '[agent:browser] no services yet — [agent:browser open <service>] <url>');
   const pending = { t31: { lastUsedAt: 1, lastUrl: 'https://127.0.0.1/login', login: { state: 'login-page', at } } };
   assert.strictEqual(R.servicesReply(pending, new Map([['t31', 'closed']])), '[agent:browser] services: t31 — 127.0.0.1 · sign-in was pending · closed');
@@ -341,6 +343,8 @@ test('replies: close names the window count, and the sign-in that stays when the
   assert.strictEqual(R.closedReply('t31', { login: { state: 'logged-in', at: 1 }, lastUrl: 'https://127.0.0.1/app' }, 2),
     '[agent:browser] closed t31 · signed in stays (open t31 https://127.0.0.1/app resumes it) · 2 windows open');
   assert.strictEqual(R.closedReply('t31', {}, 0), '[agent:browser] closed t31 · 0 windows open');
+  assert.strictEqual(R.closedReply('t31', { login: { state: 'logged-in', at: 1 }, lastUrl: 'https://127.0.0.1/app' }, 0, ['t31:riot', 't31:m']),
+    '[agent:browser] closed t31 (also t31:riot, t31:m) · signed in stays (open t31 https://127.0.0.1/app resumes it) · 0 windows open');
   assert.strictEqual(R.closedReply('t31', { login: { state: 'login-page', at: 1 } }, 1), '[agent:browser] closed t31 · 1 window open');
 });
 

@@ -192,7 +192,7 @@ function loginState(login) {
   return 'unknown';
 }
 
-function servicesReply(services, mirror, urlOf = () => '') {
+function servicesReply(services, mirror, urlOf = () => '', tabsOf = () => []) {
   const names = Object.keys(services || {}).sort((a, b) => (services[b].lastUsedAt || 0) - (services[a].lastUsedAt || 0));
   if (!names.length) return reply('no services yet — [agent:browser open <service>] <url>');
   const items = names.map((n) => {
@@ -204,16 +204,17 @@ function servicesReply(services, mirror, urlOf = () => '') {
     const opened = rec.openedHost || hostOf(rec.lastUrl);
     const site = host ? `${host}${opened && opened !== host ? ` (was ${opened})` : ''} · ` : '';
     const sign = !open && rec.login && rec.login.state === 'login-page' ? 'sign-in was pending' : loginState(rec.login);
-    return `${n} — ${site}${sign} · ${win}`;
+    const tabs = tabsOf(n);
+    return `${n} — ${site}${sign} · ${win}${tabs.length ? ` · tabs: ${tabs.map((t) => `${t.tab} (${t.state})`).join(', ')}` : ''}`;
   });
   return reply(`services: ${items.join(' │ ')}`);
 }
 
-function closedReply(service, rec, windows) {
+function closedReply(service, rec, windows, also = []) {
   const login = rec && rec.login && rec.login.state === 'logged-in'
     ? ` · signed in stays (open ${service} ${rec.lastUrl || '<url>'} resumes it)` : '';
   const count = Number(windows) || 0;
-  return reply(`closed ${service}${login} · ${count} window${count === 1 ? '' : 's'} open`);
+  return reply(`closed ${service}${also.length ? ` (also ${also.join(', ')})` : ''}${login} · ${count} window${count === 1 ? '' : 's'} open`);
 }
 
 function ago(ms) {
