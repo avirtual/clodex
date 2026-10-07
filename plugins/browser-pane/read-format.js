@@ -293,7 +293,7 @@ function sections(raw, opts) {
   const out = [];
   const feed = compactFeed(raw, opts);
   if (feed) {
-    const rest = outsideFeed(elements, feed);
+    const rest = outsideFeed(elements, feed).filter((l) => !DIALOG_RE.test(l));
     const fk = feedKept(feed, opts.filter);
     if (opts.feedSeen) {
       const sec = seenSection(feed, opts.feedSeen, fk, { ...opts, url: raw.url });
@@ -506,6 +506,7 @@ function chromeStrip(prev, text, { minLines = CHROME_MIN_LINES, maxLines = CHROM
 
 const FORM_KINDS = new Set(['select', 'textarea', 'combobox', 'checkbox']);
 const ELEMENT_RE = /^\[(\d+)\] (\S+)/;
+const DIALOG_RE = /^dialog: \d+ controls? — the page's \d+ follow$/;
 
 function elementKey(line) {
   return String(line).replace(/^\[\d+\] /, '').replace(/([?&](?:t|_|ts)=)\d+/g, '$1');
@@ -644,7 +645,7 @@ function formatRead(raw, opts) {
   if (o.page > total) throw new Error(`page ${o.page} of ${total}`);
   const body = pages[o.page - 1];
   const hidden = opts.hidden > 0 ? opts.hidden : 0;
-  const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.length : 0) + hidden;
+  const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.filter((l) => !DIALOG_RE.test(String(l))).length : 0) + hidden;
   const under = opts.covered > 0 ? Math.min(opts.covered, hidden) : 0;
   const range = (under ? `${fmt(hidden)} hidden (${under} under the dialog, ${hidden - under} repeated) — read --all lists them; ` : hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '')
     + (raw.restored != null ? `numbers: stable per site; numbers restored${savedLabel(raw.restored)}`

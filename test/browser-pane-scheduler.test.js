@@ -568,6 +568,8 @@ test('scheduler: controls under a dialog\'s backdrop are hidden from a first def
   assert.ok(first.file.includes('\n== elements ==\ndialog: 1 control — the page\'s 1 follow\n[3] button Close\n[4] link Help → /help\n'));
   assert.ok(!first.file.includes('Portfolio app'));
   assert.ok(first.file.includes('(2 hidden (2 under the dialog, 0 repeated) — read --all lists them; numbers: stable per site;'));
+  assert.match(first.file, /\ndoc: 1 · elements: 4 \(2 hidden \(2 under the dialog, 0 repeated\)/);
+  assert.match(first.reply, / · 4 elements · .* · 2 elements hidden \(2 under the dialog\) → @FILE$/);
   assert.match(first.reply, / · 2 elements hidden \(2 under the dialog\) → @FILE$/);
   const all = await read(page, '[agent:browser read --all]');
   assert.ok(all.file.includes('\n== elements ==\n[1] link Portfolio app → /\n[2] link Accounts → /accounts\n[3] button Close\n[4] link Help → /help\n'));
