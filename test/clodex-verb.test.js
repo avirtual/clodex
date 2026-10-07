@@ -237,7 +237,7 @@ test('the verb is materialized as executables clodex-send and clodex in <root>/b
 test('the materialized alias shim prints the deprecation line and the clodex-send shim does not', () => {
   const { spawnSync } = require('node:child_process');
   const r = materializeSeatVerb({ root: mkTmpRoot('verb-bin-'), srcDir: ROOT });
-  const run = (p) => spawnSync(process.execPath, [p, '--help'], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  const run = (p) => spawnSync(process.execPath, [p, '--help'], { encoding: 'utf8', env: process.env });
   const alias = run(r.aliasPath);
   const send = run(r.path);
   assert.strictEqual(alias.status, 0, alias.stderr);
