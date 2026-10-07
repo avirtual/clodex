@@ -96,6 +96,11 @@ test('read-format: login and frames lines report the raw probe', () => {
   assert.strictEqual(four.content.split('\n').find((l) => l.startsWith('frames:')), 'frames: 4 not read (a.example/, b.example/, nested, …)');
 });
 
+test('read-format: an unreadable nested frame keeps its own label on the frames line', () => {
+  const out = formatRead({ ...RAW, frames: ['nested', 'nested (unreadable)'] }, { service: 'utility' });
+  assert.strictEqual(out.content.split('\n').find((l) => l.startsWith('frames:')), 'frames: 2 not read (nested, nested (unreadable))');
+});
+
 test('read-format: a text longer than 1,200 chars shows only its head on page 1', () => {
   const text = 'x'.repeat(2667);
   const out = formatRead({ ...RAW, text }, { service: 'utility' });
