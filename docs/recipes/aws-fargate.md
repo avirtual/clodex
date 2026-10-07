@@ -128,7 +128,8 @@ aws secretsmanager put-secret-value --secret-id clodex/node/oauth-token \
     "image": "ghcr.io/avirtual/clodex:VERSION",
     "portMappings": [{ "containerPort": 7900, "protocol": "tcp" }],
     "environment": [
-      { "name": "CLODEX_DATA_DIR", "value": "/data" }
+      { "name": "CLODEX_DATA_DIR", "value": "/data" },
+      { "name": "CLODEX_WEB_HOST", "value": "127.0.0.1" }
     ],
     "secrets": [
       { "name": "CLODEX_REMOTE_TOKEN",     "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:clodex/node/wire-token" },
@@ -144,6 +145,8 @@ aws secretsmanager put-secret-value --secret-id clodex/node/oauth-token \
 ```
 
 Notes:
+- `CLODEX_WEB_HOST=127.0.0.1` keeps the web GUI on loopback inside the task;
+  it is reached only through `clodexctl web`.
 - The image already sets `CLODEX_REMOTE_ENABLE=1` / `CLODEX_REMOTE_HOST=0.0.0.0`
   — the wire is token-gated by `CLODEX_REMOTE_TOKEN`, so a non-loopback bind
   inside the task's own netns is safe *provided you do NOT open 7900 in the

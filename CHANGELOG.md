@@ -19,6 +19,7 @@ blocks a release.
 
 ### Messaging
 - A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
+- Seats on the streaming transport get the same teammate-message defang as pty seats.
 
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
