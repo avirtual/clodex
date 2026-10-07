@@ -12292,7 +12292,7 @@ const {
   clampReplyBody: clampReplyBodyReal,
 } = require('../exec-schema');
 
-function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
+function mkExec({ grants = [], entry = null, cmd = 'bridge-reply', childProcess = cpReal } = {}) {
   const REGISTRY_DIR = mkTmpRoot('clodex-exec-');
   const execDir = pathReal.join(REGISTRY_DIR, 'library', 'exec');
   fsReal.mkdirSync(execDir, { recursive: true });
@@ -12300,7 +12300,7 @@ function mkExec({ grants = [], entry = null, cmd = 'bridge-reply' } = {}) {
   const persistence = { list: () => [], get: (n) => (n === 't2' ? { execCommands: grants } : null) };
   const m = mk({
     REGISTRY_DIR, fs: fsReal, path: pathReal, os: osReal,
-    childProcess: cpReal, isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal,
+    childProcess, isFilenameToken: isFilenameTokenReal, parseAndValidate: parseAndValidateReal,
     clampReplyBody: clampReplyBodyReal,
     getPersistence: () => persistence,
     log: { info: () => {}, warn: () => {}, error: () => {} },
@@ -12516,6 +12516,35 @@ test('_handleExecIntent: a count computed over TRUNCATED stderr says "or more"',
   // No retained footer on a truncated body: the last line held is the tail of a
   // fragment, and presenting it as the command's footer would invent one.
   assert.strictEqual(note, lines.at(-1));
+});
+
+test('_handleExecIntent: ONE over-cap stderr chunk still flags TRUNCATED', async () => {
+  const { PassThrough } = require('node:stream');
+  const { EventEmitter } = require('node:events');
+  const stderrCap = 6000 + 1024;
+  const rows = Array.from({ length: Math.ceil((stderrCap + 100) / 30) }, (_, i) => `row-${String(i).padStart(4, '0')}-${'x'.repeat(20)}`);
+  const chunk = `${rows.join('\n')}\n`.slice(0, stderrCap + 100);
+  const childProcess = {
+    spawn: () => {
+      const child = new EventEmitter();
+      child.stdin = { write() {}, end() {} };
+      child.stderr = new PassThrough();
+      child.kill = () => {};
+      setImmediate(() => {
+        child.stderr.end(chunk);
+        child.stderr.once('end', () => child.emit('exit', 0, null));
+        child.stderr.resume();
+      });
+      return child;
+    },
+  };
+  const entry = { argv: ['/bin/true'], replyStderr: true, replyMaxBytes: 6000, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry, childProcess });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const lines = replies.at(-1).replace('[agent:exec] bridge-reply: ', '').split('\n');
+  assert.match(lines.at(-1), /or more lines dropped — output also outran the collector/);
+  assert.ok(lines.length - 1 < chunk.split('\n').length, `kept ${lines.length - 1} rows`);
 });
 
 test('_handleExecIntent: a clamp that fits keeps the listing FOOTER, not just the head', async () => {

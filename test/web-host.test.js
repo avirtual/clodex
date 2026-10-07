@@ -38,24 +38,17 @@ function fakeEngine(sessions = {}, stores = {}) {
 async function startHost({ registerHandlers, token, sessions, stores, userDataPath } = {}) {
   const { engine, registered, unregistered } = fakeEngine(sessions, stores);
   const host = createWebHost({
-    engine, log: silentLog, port: 0, token: token || null,
+    engine, log: silentLog, host: '127.0.0.1', port: 0, token: token || null,
     userDataPath: userDataPath || os.tmpdir(), registerHandlers: registerHandlers || (() => {}),
   });
   if (!host._server.listening) await new Promise((res) => host._server.once('listening', res));
+  assert.strictEqual(host._server.address().address, '127.0.0.1');
   return { host, port: host._server.address().port, registered, unregistered };
 }
 
 // Minimal WS client: a message queue + a `next()` that awaits the next frame.
 //
-// 127.0.0.1, never `localhost`, and the rest of the suite already agrees. The
-// host binds the wildcard (`listen(port)` with no address), which on this
-// platform is `::` — and a wildcard bind does NOT conflict with a process
-// holding the SAME port on `[::1]` specifically, so `listen(0)` will hand out a
-// port another program is already listening on. `localhost` resolves to `::1`
-// first, where the more specific bind wins, so the connection lands in the
-// other program: a real one on this box is TextMate's rmate listener on 52698,
-// which answers `220 ... RMATE` and fails the HTTP parse. Ephemeral ports are
-// 49152-65535 here, so any such listener is inside the range this can draw.
+// Connect and bind both on 127.0.0.1, never `localhost`.
 function connect(port, { token } = {}) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${encodeURIComponent(token)}` : ''}`);
   const queue = [];
