@@ -586,6 +586,10 @@ test('prefix-shadow audit: no PRICES row strictly extends a fast-mode overlay ke
     'at standard rates with no warning');
 });
 
+test('prefix-shadow audit: no PRICES row strictly extends a long-prompt overlay key', () => {
+  assert.deepEqual(orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_LONG_PROMPT)), []);
+});
+
 // PRICES_DATED is empty, so running the detector over it live asserts nothing.
 // withDated puts a real schedule on 'claude-opus-4' — which four opus-4-N rows
 // already extend — so the orphan is not synthetic: were that schedule real, every
@@ -660,4 +664,20 @@ test('billing: a haiku-5-5 request over 100k prompt tokens bills every category 
   });
   assert.equal(fast.est_usd, 0.01475);
   assert.doesNotMatch(fast.price_basis, /FAST MODE/);
+});
+
+test('billing: a flat cache_creation total counts toward the haiku-5-5 long-prompt threshold', () => {
+  const b = billing('messages', {
+    modelResolved: 'claude-haiku-5-5',
+    usageStart: { input_tokens: 20000, cache_creation_input_tokens: 90000 },
+    usageFinal: { output_tokens: 100 },
+  });
+  assert.equal(b.est_usd, 0.0665);
+  assert.match(b.price_basis, /LONG PROMPT tier/);
+  assert.match(b.price_basis, /flat total priced at 5m rate/);
+});
+
+test('priceFor: a dated claude-haiku-5 id takes the long-prompt tier on the same threshold', () => {
+  assert.equal(priceFor('claude-haiku-5-20261001', { promptTokens: 100001 }).in, 0.50);
+  assert.equal(priceFor('claude-haiku-5-20261001', { promptTokens: 100000 }).in, 0.10);
 });

@@ -141,9 +141,9 @@ function priceFor(model, { table = null, now = null, speed = null, promptTokens 
     }
   }
   if (best === null) return null;
-  // Both overlays are for the DEFAULT table only: an explicit table is the
+  // All overlays are for the DEFAULT table only: an explicit table is the
   // caller's own axis (openai), and overlaying anthropic rows onto it would be
-  // nonsense. Belt-and-braces today — both overlay tables hold only claude-*
+  // nonsense. Belt-and-braces today — all overlay tables hold only claude-*
   // keys, so no openai id can match one — but it is what keeps that true if
   // either table grows a colliding prefix. Mirrors the vendor's `table is None`.
   let row = best[1];

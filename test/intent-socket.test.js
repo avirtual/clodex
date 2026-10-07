@@ -631,6 +631,13 @@ test('stamp: clodex behind a reserved word or a prefix command is stamped; clode
   }
 });
 
+test('two sequential clodex-send segments each get their own minted token', () => {
+  let n = 0;
+  const out = stampClodexCommand('clodex-send a; clodex-send b', () => `tok${++n}`);
+  assert.strictEqual(n, 2);
+  assert.strictEqual(out, 'CLODEX_HOOK_IDENT=tok1 clodex-send a; CLODEX_HOOK_IDENT=tok2 clodex-send b');
+});
+
 test('t1703 a term reply waits 130 s and the socket is extended to 140 s', async () => {
   const timers = [];
   let extended = null;
