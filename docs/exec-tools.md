@@ -210,6 +210,11 @@ the in-turn answer and the eventual output follows as a DM. A disconnect after t
 result was accepted into the reply loses it: completion and output are unknown,
 so look at the terminal and do not re-run it automatically.
 
+The same command is the `term_exec` MCP tool (`{command}`), listed in the seat's
+`tools/list` only while `term` is granted; its result is the same `[terminal]`
+text. It is main agent only, proven per call by the PreToolUse stamp: a
+subagent's or an unstamped call answers `unknown tool: "term_exec"`.
+
 ## Known v1 limitations / growth path
 
 - **Invoker identity is self-supplied.** The agent passes its own `agent` name;

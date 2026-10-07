@@ -19,6 +19,9 @@ blocks a release.
 - The read digest's ⚠ line lists only elements the pane itself flagged; a page label containing ⚠ no longer puts a row there.
 - A `display:contents` `<main>` or `<article>` becomes the read root only when something inside it is painted; one hidden with its ancestor falls back to the body scoring as before.
 
+### MCP
+- `term_exec` tool runs one command in the seat's terminal tab and returns its exit code and output; main agent only (per-call hook stamp), seats with the term grant only.
+
 ## 5.114.0 — 2026-10-07
 
 ### Web host
