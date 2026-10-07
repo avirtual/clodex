@@ -217,9 +217,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 
 ## 3. Local DM delivery
 
-A `<seat>/<x>` target folds to the seat (`seatOfAgentTag`): the reserved `agent`, or any subagent name until replies route into its note queue.
-
-The pipeline for a message addressed to a local agent, in order:
+A `<seat>/<x>` target folds to the seat (`seatOfAgentTag`): the reserved `agent`, or any subagent name until replies route into its note queue. The pipeline for a message addressed to a local agent, in order:
 
 **Gate** — `_gatedDeliver(target, senderTag, body, urgent)` (shared by local
 dm, the wire `/api/dm` entry, and claimed federated mail) consults
