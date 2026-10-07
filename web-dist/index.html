@@ -31695,7 +31695,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const cleaned = cleanLine(rawLine).trim();
         return cleaned.startsWith("[agent:") ? cleaned : null;
       }
-      var KEY_FIELDS = ["sub", "target", "name", "id", "cmd", "spec", "who", "to", "filter", "template", "cwd", "worktree", "park", "start", "dup", "reviewer", "ms", "label"];
+      var KEY_FIELDS = ["sub", "target", "name", "id", "cmd", "spec", "who", "to", "filter", "template", "cwd", "worktree", "park", "start", "dup", "reviewer", "ms", "label", "raw"];
       function shadowIntentKey(agent, intent) {
         const parts = [];
         for (const f of KEY_FIELDS) {

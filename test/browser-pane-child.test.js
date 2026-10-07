@@ -1007,10 +1007,10 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("const inlineFrame = (orig, twin, depth, win) => { let fd = null; try { fd = orig.contentDocument; } catch {}"));
   assert.ok(src.includes("if (!(fd && fd.body && fd.body.innerText.trim())) return false;"), 'an empty or hidden frame is not inlined');
-  assert.ok(src.includes("const inner = depth < 2 ? unread : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) nested.push(inner);"));
+  assert.ok(src.includes("const inner = depth < 2 ? unread : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) (depth < 2 ? unreadable : nested).push(inner);"));
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') inlineFrame(orig, twin, 1, window); });"));
   assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, unreadable, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));'));
@@ -1022,7 +1022,7 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   assert.strictEqual(nestedN({ nested: [1e12] }), 20);
   assert.strictEqual(nestedN({ nested: [1.5, 'x', -3, 2] }), 2);
   assert.strictEqual(nestedN({ nested: [2, 3] }), 5);
-  assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'))"));
+  assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'), ...Array(unreadN).fill('nested (unreadable)'));"));
   assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
 });
 
@@ -2725,18 +2725,20 @@ const leafDoc = (node, text) => ({ body: node('body', [node('p', [], text)]), de
 
 test('page scripts: READ_TEXT inlines a frame inside an inlined frame under its own [frame] box', () => {
   const r = nestDom();
-  const { text, nested } = r.out();
+  const { text, nested, unreadable } = r.out();
   assert.strictEqual(text.split('[frame]').length, 3, text);
   assert.ok(text.indexOf('OUTER-FRAME') >= 0 && text.indexOf('OUTER-FRAME') < text.indexOf('INNER-FRAME'), text);
   assert.deepStrictEqual([...nested], []);
+  assert.deepStrictEqual([...unreadable], []);
 });
 
 test('page scripts: READ_TEXT counts a third-level srcdoc frame as nested and drops its twin instead of inlining it', () => {
   const r = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-FRAME'), srcdoc: 'x' })]);
-  const { text, nested } = r.out();
+  const { text, nested, unreadable } = r.out();
   assert.ok(!text.includes('DEEP-FRAME'), text);
   assert.strictEqual(text.split('[frame]').length, 3, text);
   assert.deepStrictEqual([...nested], [1]);
+  assert.deepStrictEqual([...unreadable], []);
   assert.deepStrictEqual(r.removed.filter((t) => t === 'IFRAME'), ['IFRAME']);
 });
 
@@ -2750,12 +2752,31 @@ const depth2Dom = (kids, gs = () => ({ display: 'block' })) => {
 test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as nested and a hidden one only as hidden', () => {
   const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
     n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
-  assert.deepStrictEqual([...got.nested], [2]);
+  assert.deepStrictEqual([...got.nested], []);
+  assert.deepStrictEqual([...got.unreadable], [2]);
   assert.ok(got.text.includes('OUTER-FRAME'), got.text);
   const gone = depth2Dom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'GONE-FRAME'), srcdoc: 'x', gone: true })], (e) => ({ display: e.gone ? 'none' : 'block' }));
   assert.deepStrictEqual([...gone.nested], []);
+  assert.deepStrictEqual([...gone.unreadable], []);
   assert.ok([...gone.hidden].includes('about:srcdoc'));
   assert.ok(!gone.text.includes('GONE-FRAME'), gone.text);
+});
+
+test('page scripts: READ_TEXT keeps an unreadable second-level frame apart from a third-level srcdoc one, and child.js labels it nested (unreadable)', () => {
+  const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
+    n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
+  assert.deepStrictEqual([...got.unreadable], [2]);
+  assert.deepStrictEqual([...got.nested], []);
+  const deep = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-FRAME'), srcdoc: 'x' })]).out();
+  assert.deepStrictEqual([...deep.nested], [1]);
+  assert.deepStrictEqual([...deep.unreadable], []);
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  const unreadExpr = "got && Array.isArray(got.unreadable) ? Math.min(20, got.unreadable.reduce((a, b) => a + (Number.isInteger(b) && b > 0 ? b : 0), 0)) : 0";
+  assert.ok(child.includes(`const unreadN = ${unreadExpr};`));
+  const unreadN = new Function('got', 'return ' + unreadExpr);
+  assert.strictEqual(unreadN({ unreadable: [2] }), 2);
+  assert.strictEqual(unreadN({ nested: [2] }), 0);
+  assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'), ...Array(unreadN).fill('nested (unreadable)'));"));
 });
 
 test('page scripts: READ_TEXT inlines a second-level src= frame by URL and never counts a third-level src= frame as nested', () => {
@@ -2765,7 +2786,9 @@ test('page scripts: READ_TEXT inlines a second-level src= frame by URL and never
   assert.ok(got.text.includes('INNER-FRAME'), got.text);
   const r3 = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-A'), srcdoc: 'x' }),
     n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-B'), src: 'https://b.example/y' })]);
-  assert.deepStrictEqual([...r3.out().nested], [1]);
+  const got3 = r3.out();
+  assert.deepStrictEqual([...got3.nested], [1]);
+  assert.deepStrictEqual([...got3.unreadable], []);
 });
 
 test('page scripts: READ_TEXT cuts hidden text in a second-level frame by that frame\'s own window', () => {
@@ -2919,7 +2942,7 @@ test('page scripts: READ_TEXT scans for a registration or pay wall and returns i
   assert.ok(src.includes('const WEAK = /\\bmembers?-only story\\b/i;'));
   assert.ok(src.includes('[class*=paywall i],[class*=meter i],[class*=regwall i],[class*=gate i],[class*=piano- i],[class*=tp-modal i]'));
   assert.ok(src.includes('const wall = wallScan(root);'));
-  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
+  assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, unreadable, hidden };'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes("const wall = got && got.wall && typeof got.wall === 'object' ? got.wall : null;"));
   assert.ok(child.includes('...(wall ? { wall } : {}),'));

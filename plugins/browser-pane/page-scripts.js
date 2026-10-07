@@ -510,7 +510,7 @@ function readText(main) {
   const labels = (sel, k, of) => [...document.querySelectorAll(sel)].filter(vis).map(e => (of(e) || '').replace(/\\s+/g, ' ').trim().slice(0, 200)).filter(Boolean).slice(0, k);
   const outline = { headings: labels('h1,h2,h3', 6, e => e.innerText || e.textContent), landmarks: labels('main,nav,[role=main],[role=navigation]', 3, e => e.getAttribute('aria-label')) };
   const wall = wallScan(root);
-  if (!root) return { text: '', busy, outline, wall, inlined: [], nested: [], hidden: [] };
+  if (!root) return { text: '', busy, outline, wall, inlined: [], nested: [], unreadable: [], hidden: [] };
   const STRUCK = /^(S|DEL|STRIKE)$/;
   const struck = new Set();
   [...root.querySelectorAll('*')].forEach((e, i) => {
@@ -540,9 +540,10 @@ function readText(main) {
   });
   const inlined = [];
   const nested = [];
+  const unreadable = [];
   const hidden = [];
   const frameVis = (el, win) => { const r = el.getBoundingClientRect(); const s = win.getComputedStyle(el); return !!(r.width && r.height) && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'; };
-  const inlineFrame = (orig, twin, depth, win) => { let fd = null; try { fd = orig.contentDocument; } catch {} const url = orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''; if (!(depth === 1 ? vis(orig) : frameVis(orig, win))) { hidden.push(url); return false; } if (!(fd && fd.body && fd.body.innerText.trim())) return false; const fos = [...fd.body.querySelectorAll('*')]; const fb = fd.body.cloneNode(true); const fts = [...fb.querySelectorAll('*')]; cutHidden(fd.body, fb, fd.defaultView); let unread = 0; if (depth < 2) fts.forEach((t, i) => { const o = fos[i]; if (o && o.tagName === 'IFRAME' && t.parentElement && !t.parentElement.closest('[data-cxb-cut]')) { const h = hidden.length; const ok = inlineFrame(o, t, depth + 1, fd.defaultView); if (!ok && hidden.length === h && o.srcdoc) unread++; } }); const inner = depth < 2 ? unread : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) nested.push(inner); const box = document.createElement('div'); box.append('[frame]\\n', fb); twin.replaceWith(box); inlined.push(url); return true; };
+  const inlineFrame = (orig, twin, depth, win) => { let fd = null; try { fd = orig.contentDocument; } catch {} const url = orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''; if (!(depth === 1 ? vis(orig) : frameVis(orig, win))) { hidden.push(url); return false; } if (!(fd && fd.body && fd.body.innerText.trim())) return false; const fos = [...fd.body.querySelectorAll('*')]; const fb = fd.body.cloneNode(true); const fts = [...fb.querySelectorAll('*')]; cutHidden(fd.body, fb, fd.defaultView); let unread = 0; if (depth < 2) fts.forEach((t, i) => { const o = fos[i]; if (o && o.tagName === 'IFRAME' && t.parentElement && !t.parentElement.closest('[data-cxb-cut]')) { const h = hidden.length; const ok = inlineFrame(o, t, depth + 1, fd.defaultView); if (!ok && hidden.length === h && o.srcdoc) unread++; } }); const inner = depth < 2 ? unread : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) (depth < 2 ? unreadable : nested).push(inner); const box = document.createElement('div'); box.append('[frame]\\n', fb); twin.replaceWith(box); inlined.push(url); return true; };
   const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend(Object.assign(document.createElement('div'), { textContent: '(hidden)' })); twin.append(Object.assign(document.createElement('div'), { textContent: '(end hidden)' })); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) { const frag = document.createDocumentFragment(); frag.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); cutHidden(orig.shadowRoot, frag, window); twin.append(frag); } if (orig && orig.tagName === 'IFRAME') inlineFrame(orig, twin, 1, window); });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
@@ -563,7 +564,7 @@ function readText(main) {
   ${TABLES}
   const txt = clone.innerText; host.remove(); cv.remove();
   const text = (document.title + '\\n\\n' + (dialogRead ? '[dialog]\\n' : '') + txt).replace(/[ \\t]+/g, ' ').replace(/\\n\\s*\\n+/g, '\\n\\n').trim().slice(0, ${TEXT_MAX});
-  return { text, busy, outline, wall, inlined, nested, hidden };
+  return { text, busy, outline, wall, inlined, nested, unreadable, hidden };
 })()`;
 }
 

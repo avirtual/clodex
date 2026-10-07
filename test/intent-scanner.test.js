@@ -638,6 +638,24 @@ test('shadowIntentKey: two scratch intents in one reply key by their label — d
   assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|cancel/probe|');
 });
 
+test('shadowIntentKey: two browser intents in one reply key by their raw text — distinct commands differ, an exact repeat collapses', () => {
+  const { registerIntent, unregisterSource } = require('../intent-registry');
+  const grammar = require('../plugins/browser-pane/grammar');
+  registerIntent({ verb: 'browser', parse: grammar.parseLine }, 'browser-pane-test');
+  try {
+    const a = parseIntent('[agent:browser click np 3]');
+    const b = parseIntent('[agent:browser click np 5]');
+    assert.strictEqual(a.raw, 'click np 3');
+    assert.strictEqual(b.raw, 'click np 5');
+    assert.notStrictEqual(shadowIntentKey('me', a), shadowIntentKey('me', b));
+    assert.strictEqual(shadowIntentKey('me', a), 'me|browser|click np 3|');
+    assert.strictEqual(shadowIntentKey('me', { type: 'browser', raw: 'click np 3', body: '' }), 'me|browser|click np 3|');
+    assert.strictEqual(shadowIntentKey('me', a), shadowIntentKey('me', parseIntent('[agent:browser click np 3]')));
+  } finally {
+    unregisterSource('browser-pane-test');
+  }
+});
+
 // The key is a pure function of the parse output, so it must never read
 // anything a plugin's `parse` invented: an intent carrying a field outside the
 // allowlist (a timestamp is the dangerous shape) must key exactly as one

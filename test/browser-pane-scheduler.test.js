@@ -245,6 +245,22 @@ test('scheduler: on a closed service an act queued behind an act is dropped unde
   ]);
 });
 
+test('scheduler: a command dropped behind a failed act answers its own caller when that caller holds a reply channel; a bare seat gets only the drop suffix', async () => {
+  const notOpen = 'utility is not open — [agent:browser open utility] <url>';
+  const h = harness({ click: () => { throw coded('NOT_OPEN', notOpen); } });
+  const got = { first: [], second: [] };
+  const first = { name: 'hand-a', type: 'claude', inject: (t) => got.first.push(t) };
+  const second = { name: 'hand-a', from: 'hand-a', type: 'claude', inject: (t) => got.second.push(t) };
+  h.sched.submit(first, toCommand(parseLine('[agent:browser click utility 4]')));
+  h.sched.submit(second, toCommand(parseLine('[agent:browser click utility 5]')));
+  await h.settle();
+  assert.deepStrictEqual(got.first, [`[agent:browser] error: ${notOpen} — dropped 1 queued command after it: click 5`]);
+  assert.deepStrictEqual(got.second, [`[agent:browser] error: click 5 dropped — queued behind click 4 which failed: ${notOpen}`]);
+  assert.deepStrictEqual(h.out, []);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]'], ['hand-a', '[agent:browser click utility 5]']]),
+    [['hand-a', `[agent:browser] error: ${notOpen} — dropped 1 queued command after it: click 5`]]);
+});
+
 test('scheduler: a held service refuses everything but wait, services and release', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);

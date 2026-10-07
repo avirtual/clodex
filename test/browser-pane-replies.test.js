@@ -351,8 +351,9 @@ test('replies: an ad click without --confirm is refused as a paid click that lea
   const multi = R.TEXT.consequential(12, '', 'trading', undefined, 'button menuitem');
   assert.strictEqual(multi, nameless);
   assert.strictEqual(R.classifyReply('[agent:browser] error: ' + multi), 'refused');
-  const info = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: [] }, first: true }, { service: 'wiki', main: true });
-  const digest = R.readReply('wiki', { ...info, stripped: true, digest: { ...info.digest, warn: [{ n: 12, label: '', kind: 'button menuitem' }] } }, '/t/r-1.txt', 'claude', { attach: false, budget: null });
+  const info = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button menuitem ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: [] }, first: true }, { service: 'wiki', main: true });
+  assert.strictEqual(info.digest.warn[0].kind, 'button menuitem', 'ENTER: the multi-word kind reached the parsed digest');
+  const digest = R.readReply('wiki', { ...info, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null });
   assert.ok(digest.split('\n').includes('  ⚠: [12] button'), digest);
   assert.strictEqual(R.TEXT.consequential(12, '', 'trading', undefined, ' button menuitem'), nameless);
   const padded = R.readReply('wiki', { ...info, stripped: true, digest: { ...info.digest, warn: [{ n: 12, label: '', kind: ' button menuitem' }] } }, '/t/r-1.txt', 'claude', { attach: false, budget: null });
