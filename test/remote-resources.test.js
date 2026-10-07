@@ -1609,6 +1609,20 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
   ]);
 });
 
+test('remote-wiring send refuses a dm client tag that names a live seat in another case', () => {
+  const { deps } = makeDeps();
+  const delivered = [];
+  const logged = [];
+  deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
+  deps.manager.sessions.set('Codex', { name: 'Codex', type: 'codex', agentType: 'codex', workspaceId: 'ws-alpha' });
+  deps.manager._deliverMessage = (...a) => { delivered.push(a); };
+  deps.log.info = (...a) => { logged.push(a); };
+  const opts = captureOptions(deps);
+  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'codex'), { ok: true });
+  assert.deepStrictEqual(delivered, [['carol', 'user', 'plain', 'dm']]);
+  assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [['remote', 'dm client tag refused: codex']]);
+});
+
 test('POST /api/sessions/:name/dm: a delivery that throws on the box answers 500, and only an unknown seat is 404', async () => {
   const { deps } = makeDeps();
   deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
