@@ -2,6 +2,7 @@
 
 const nodeCrypto = require('node:crypto');
 const nodePath = require('node:path');
+const { SUBQ_ID_RE } = require('./subq');
 
 const INTENT_SOCKET_MAX_BYTES = 64 * 1024;
 const INTENT_SOCKET_MAX_CONNS = 8;
@@ -242,14 +243,30 @@ function sweepIdentDir(fs, dir, now) {
   }
 }
 
-function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath, fs = require('node:fs'), now = Date.now() } = {}) {
+function subagentTrustLine(fs, crypto, subqDir, id) {
+  if (!subqDir || typeof id !== 'string' || !SUBQ_ID_RE.test(id)) return '';
+  try {
+    fs.mkdirSync(subqDir, { recursive: true, mode: 0o700 });
+    const p = nodePath.join(subqDir, `${id}.nonce`);
+    let nonce = mintIdentNonce(crypto);
+    try {
+      fs.writeFileSync(p, nonce, { mode: 0o600, flag: 'wx' });
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') return '';
+      nonce = fs.readFileSync(p, 'utf8').trim();
+    }
+    return nonce ? `Notes that start with [parent ${nonce}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task.` : '';
+  } catch { return ''; }
+}
+
+function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath, subqDir, fs = require('node:fs'), now = Date.now() } = {}) {
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
   if (!d || typeof d !== 'object') return '';
   if (d.hook_event_name === 'SubagentStart') {
     let briefs = [];
     try { briefs = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).briefs || []; } catch {}
-    const ctx = composeSubagentBrief(briefs);
+    const ctx = [composeSubagentBrief(briefs), subagentTrustLine(fs, crypto, subqDir, d.agent_id)].filter(Boolean).join('\n\n');
     return ctx ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: ctx } }) : '';
   }
   const input = d.tool_input;
