@@ -264,7 +264,7 @@ const TEXT = {
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
-  consequential: (n, label, category) => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} re-issue with --confirm if the operator asked for it`,
+  consequential: (n, label, category, redo = 're-issue with --confirm') => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} ${redo} if the operator asked for it`,
   submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : key.startsWith('Arrow') ? 'choose' : 'submit'} — read again, or add --confirm if the operator asked for it`,
   consequentialSubmit: (from, sub, key = 'Enter') => {
     const label = JSON.stringify(String(sub.label || ''));

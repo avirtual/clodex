@@ -77,7 +77,7 @@ function answer(f) {
     for (const u of ['https://portal.example.com/typed', 'https://portal.example.com/second']) {
       send({ event: 'operator-nav', service: f.service, url: u, title: 'Typed page' });
     }
-    return send({ event: 'denied', service: f.service, url: 'https://bad.example.com/', pattern: 'bad.example.com', list: 'global', by: 'page' });
+    return send({ event: 'denied', service: f.service, url: 'https://bad.example.com/?token=SECRET', pattern: 'bad.example.com', list: 'global', by: 'page' });
   }
   if (f.op === 'policy') {
     send({ event: 'operator-nav', service: f.service, url: 'https://portal.example.com/after-release', title: JSON.stringify(f.args.policy) });
