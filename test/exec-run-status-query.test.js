@@ -102,6 +102,7 @@ test('status names a live run and a finished one, newest first', async (t) => {
     t.mock.timers.tick(60000);
     children[0].stderr.emit('data', '811/811 green\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
 
     m._handleExecIntent(session, 'digest', '{}');
     await settle();
@@ -129,6 +130,7 @@ test('a seq payload narrows to that run, and says so when it is absent', async (
     t.mock.timers.tick(60000);
     children[0].stderr.emit('data', '811/811 green\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
     m._handleExecIntent(session, 'digest', '{}');
     await settle();
 
@@ -190,6 +192,7 @@ test('the reply stays inside 400 chars, cutting tails and never heads', async (t
       t.mock.timers.tick(1000);
       children[i].stderr.emit('data', `${'x'.repeat(190)}\n`);
       children[i].emit('exit', 0, null);
+      children[i].emit('close', 0, null);
     }
 
     m._handleExecIntent(session, 'status', '{}');
@@ -247,6 +250,7 @@ test('the status reply stays inside 400 chars with three running long-named runs
     await settle();
     b.children[0].stderr.emit('data', `x${'\u{1F600}'.repeat(300)}\n`);
     b.children[0].emit('exit', 0, null);
+    b.children[0].emit('close', 0, null);
     b.m._handleExecIntent(b.session, 'status', '{}');
     await settle();
     const line = statusOf(b.replies);
@@ -315,6 +319,7 @@ test('a narrow tail cut on half a surrogate pair drops the lone high half even w
     await settle();
     children[0].stderr.emit('data', `x${'\u{1F600}'.repeat(150)}\n`);
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
     m._handleExecIntent(session, 'status', '{}');
     await settle();
     const line = statusOf(replies);
