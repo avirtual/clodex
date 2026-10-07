@@ -82,6 +82,7 @@ test('a live tracked run is written to the ledger and leaves it when it ends', a
     assert.deepStrictEqual(readLedger().map((r) => [r.name, r.seq, r.cmd]), [['a', 1, 'digest']]);
     assert.deepStrictEqual(m.inFlightExecRuns(), ['a run #1 (digest)']);
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
     assert.deepStrictEqual(readLedger(), []);
     assert.deepStrictEqual(m.inFlightExecRuns(), []);
   } finally { cleanup(); }

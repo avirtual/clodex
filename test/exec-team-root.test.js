@@ -38,7 +38,7 @@ function harness({ resolveTeam, entry }) {
     ee.stdin = { write() {}, end() {} };
     ee.stderr = new (require('node:events').EventEmitter)();
     ee.kill = () => {};
-    setImmediate(() => ee.emit('exit', 0, null));
+    setImmediate(() => { ee.emit('exit', 0, null); ee.emit('close', 0, null); });
     return ee;
   };
   const SessionManager = createSessionManager({

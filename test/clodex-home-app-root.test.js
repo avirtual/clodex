@@ -103,7 +103,7 @@ test('the exec child is given CLODEX_HOME=REGISTRY_DIR rather than inheriting th
         ee.stdin = { write() {}, end() {} };
         ee.stderr = new (require('node:events').EventEmitter)();
         ee.kill = () => {};
-        setImmediate(() => ee.emit('exit', 0, null));
+        setImmediate(() => { ee.emit('exit', 0, null); ee.emit('close', 0, null); });
         return ee;
       };
       // createSessionManager returns the CLASS; the manager is an instance of it.

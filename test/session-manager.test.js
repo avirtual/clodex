@@ -2281,7 +2281,7 @@ test('exec dispatcher: ${CLODEX_BIN}/${CLODEX_HOME} in argv + cwd expand before 
     ee.stdin = { write() {}, end() {} };
     ee.stderr = new (require('node:events').EventEmitter)();
     ee.kill = () => {};
-    setImmediate(() => ee.emit('exit', 0, null));   // clean success, no re-bill
+    setImmediate(() => { ee.emit('exit', 0, null); ee.emit('close', 0, null); });   // clean success, no re-bill
     return ee;
   };
   const m = mk({
@@ -12532,7 +12532,7 @@ test('_handleExecIntent: ONE over-cap stderr chunk still flags TRUNCATED', async
       child.kill = () => {};
       setImmediate(() => {
         child.stderr.end(chunk);
-        child.stderr.once('end', () => child.emit('exit', 0, null));
+        child.stderr.once('end', () => { child.emit('exit', 0, null); child.emit('close', 0, null); });
         child.stderr.resume();
       });
       return child;
@@ -12545,6 +12545,46 @@ test('_handleExecIntent: ONE over-cap stderr chunk still flags TRUNCATED', async
   const lines = replies.at(-1).replace('[agent:exec] bridge-reply: ', '').split('\n');
   assert.match(lines.at(-1), /or more lines dropped — output also outran the collector/);
   assert.ok(lines.length - 1 < chunk.split('\n').length, `kept ${lines.length - 1} rows`);
+});
+
+const execTrailingStderr = (trailing) => ({
+  spawn: () => {
+    const { PassThrough } = require('node:stream');
+    const { EventEmitter } = require('node:events');
+    const child = new EventEmitter();
+    child.stdin = { write() {}, end() {} };
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    setImmediate(() => {
+      child.stderr.write('row-FIRST\n');
+      setImmediate(() => {
+        child.emit('exit', 0, null);
+        child.stderr.once('end', () => child.emit('close', 0, null));
+        child.stderr.end(trailing);
+      });
+    });
+    return child;
+  },
+});
+
+test('_handleExecIntent: stderr trailing after exit still reaches the reply', async () => {
+  const entry = { argv: ['/bin/true'], replyStderr: true, replyMaxBytes: 6000, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry, childProcess: execTrailingStderr('row-LAST\n') });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  const body = replies.at(-1);
+  assert.match(body, /row-LAST/);
+  assert.doesNotMatch(body, /TRUNCATED|or more/);
+});
+
+test('_handleExecIntent: stderr trailing after exit past the cap flags truncated', async () => {
+  const stderrCap = 6000 + 1024;
+  const rows = Array.from({ length: Math.ceil((stderrCap + 100) / 30) }, (_, i) => `row-${String(i).padStart(4, '0')}-${'x'.repeat(20)}`);
+  const entry = { argv: ['/bin/true'], replyStderr: true, replyMaxBytes: 6000, schema: { type: 'object' } };
+  const { m, session, replies } = mkExec({ grants: ['bridge-reply'], entry, childProcess: execTrailingStderr(`${rows.join('\n')}\n`) });
+  m._handleExecIntent(session, 'bridge-reply', '{}');
+  await waitFor(() => replies.length > 0);
+  assert.match(replies.at(-1).split('\n').at(-1), /or more lines dropped — output also outran the collector/);
 });
 
 test('_handleExecIntent: a clamp that fits keeps the listing FOOTER, not just the head', async () => {

@@ -131,6 +131,7 @@ test('status lines tick with rising elapsed time, and stop dead at exit', async 
     }
 
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
     const after = parked().length;
     t.mock.timers.tick(180000);
     // ENTER: a status line landing AFTER the result would tell the seat its
@@ -168,6 +169,7 @@ test('a status line carries the run\'s latest stderr line, so a queued run says 
     assert.match(last.text, /— run-tests: lock acquired after 2:10\. Do not poll/,
       'the LATEST line wins, so the ping stops saying queued once the lock is taken');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
   } finally { cleanup(); }
 });
 
@@ -185,6 +187,7 @@ test('the ack rides passively while the RESULT still wakes the seat', async (t) 
 
     children[0].stderr.emit('data', '811/811 green\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
 
     assert.deepStrictEqual(replies, ['[agent:exec] digest: run #1 811/811 green'],
       'the digest the seat is waiting for must still arrive under its own power, or the run finishes '
@@ -201,6 +204,7 @@ test('the result line carries the run number, then the unchanged body', async (t
     await settle();
     children[0].stderr.emit('data', 'ignored line\n811/811 green\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
 
     // ENTER: the prefix is what lets a seat pair a digest with the ack it got
     // minutes earlier; the body after it must still be byte-for-byte the old one.
@@ -216,6 +220,7 @@ test('a nonzero exit is stamped with the same run number through fail()', async 
     await settle();
     children[0].stderr.emit('data', 'boom: cannot start\n');
     children[0].emit('exit', 7, null);
+    children[0].emit('close', 7, null);
 
     // ENTER: the failure path is the one a seat most needs to pair with its ack —
     // an unstamped error reads as belonging to whatever it fired last.
@@ -261,6 +266,7 @@ test('session.execRuns records the run while it runs and after it ends', async (
     t.mock.timers.tick(60000);
     children[0].stderr.emit('data', '811/811 green\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
 
     assert.strictEqual(session.execRuns[0].state, 'ok');
     assert.strictEqual(session.execRuns[0].endedAt, 60000);
@@ -277,6 +283,7 @@ test('the record array is capped, dropping the oldest run', async (t) => {
       m._handleExecIntent(session, 'digest', '{}');
       await settle();
       children[i].emit('exit', 0, null);
+      children[i].emit('close', 0, null);
     }
     // ENTER: unbounded, this array grows for the life of a long-lived seat —
     // a lead session runs the suite dozens of times a day.
@@ -306,6 +313,7 @@ test('a narrow def replies its LAST stderr line even after 2KB of progress outpu
     for (let i = 0; i < 3; i++) children[0].stderr.emit('data', `progress ${i} ${'.'.repeat(1400)}\n`);
     children[0].stderr.emit('data', 'DIGEST 42 passed\n');
     children[0].emit('exit', 0, null);
+    children[0].emit('close', 0, null);
     assert.match(replies.at(-1), /DIGEST 42 passed$/);
   } finally { cleanup(); }
 });
@@ -319,6 +327,7 @@ test('a narrow def that fails replies its LAST stderr line even after 2KB of pro
     for (let i = 0; i < 3; i++) children[0].stderr.emit('data', `progress ${i} ${'.'.repeat(1400)}\n`);
     children[0].stderr.emit('data', 'DIGEST 3 failed\n');
     children[0].emit('exit', 1, null);
+    children[0].emit('close', 1, null);
     assert.match(replies.at(-1), /exit 1: DIGEST 3 failed$/);
   } finally { cleanup(); }
 });
