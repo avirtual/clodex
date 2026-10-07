@@ -1077,7 +1077,7 @@ test('INSPECT: in: walks to body, keeps the root and elides the middle', () => {
     return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, matches: () => false, parentElement: parent };
   }, null);
   const leaf = (specs) => ({ parentElement: chain(specs) });
-  assert.deepStrictEqual(ancestorsOf(leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body'])), ['td', 'tr#r1', '…', 'div.gl-drawer', 'div#app']);
+  assert.deepStrictEqual(ancestorsOf(leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body'])), ['td', 'tr#r1', '…', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
   const deep = ['a', 'span', ...Array.from({ length: 14 }, (_, i) => `div#d${i}`), 'div.gl-drawer', 'div#app', 'body'];
   assert.deepStrictEqual(ancestorsOf(leaf(deep)), ['a', 'span', '…', 'div.gl-drawer', 'div#app']);
   assert.deepStrictEqual(ancestorsOf(leaf(['a', 'li', 'ul', 'div.information', 'div.platform', 'section.canvas', 'div.gl-drawer', 'div#app', 'body'])), ['a', 'li', '…', 'div.gl-drawer', 'div#app']);
