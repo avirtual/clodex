@@ -52,7 +52,7 @@ test('an unchanged record keeps its node identity across renders, a new one is a
   m.render([next]);
   assert.strictEqual(m.pane.childNodes.length, 1);
   assert.strictEqual(turn.parentNode, null);
-  assert.strictEqual(m.pane.childNodes[0].childNodes[0].textContent, '●youagain');
+  assert.strictEqual(m.pane.childNodes[0].childNodes[0].textContent, '●again');
 });
 
 test('markup in prompt, prose and tool arguments lands as text, never as elements', () => {
@@ -64,7 +64,7 @@ test('markup in prompt, prose and tool arguments lands as text, never as element
   walk(m.pane);
   assert.deepStrictEqual([...new Set(all.filter((n) => n.nodeType === 1).map((n) => n.tag))].sort(), ['div', 'p', 'span']);
   const turn = m.pane.childNodes[0];
-  assert.strictEqual(turn.childNodes[0].textContent, `●you${evil}`);
+  assert.strictEqual(turn.childNodes[0].textContent, `●${evil}`);
   assert.strictEqual(turn.childNodes[1].textContent, evil);
   assert.strictEqual(turn.childNodes[2].childNodes[0].childNodes[2].textContent, evil);
 });
@@ -224,7 +224,7 @@ test('a prompt head carries its local clock time; a boundary reads its token dro
     { id: 'x1', kind: 'assistant', ts: null, turn: 1, text: 'API Error: 500', apiError: true },
   ]);
   const [head, boundary, notice] = m.pane.childNodes[0].childNodes;
-  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'run it'], ['tr-time', '10:42']]);
+  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-sender tr-sender-operator', '●'], ['tr-head-text', 'run it'], ['tr-time', '10:42']]);
   assert.strictEqual(boundary.textContent, 'compacted · 210k → 8k tokens · manual');
   assert.deepStrictEqual([notice.className, notice.textContent], ['tr-row tr-notice tr-notice-error', 'API Error: 500']);
   assert.deepStrictEqual(notice.childNodes.map((n) => n.className), ['tr-mark', 'tr-notice-text']);
@@ -1215,7 +1215,7 @@ test('a mid-turn prompt row reads mid-turn, its text, its time and delivered, an
   m.render([ask('p1', 1), midAsk('delivered')]);
   const row = rowIn(m, 'q1');
   assert.match(row.className, /\btr-prompt tr-prompt-mid\b/);
-  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'hi'], ['tr-time', '10:42'], ['tr-mid-state', 'delivered']]);
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●'], ['tr-head-text', 'hi'], ['tr-time', '10:42'], ['tr-mid-state', 'delivered']]);
   assert.strictEqual(row.childNodes[4].dataset.state, 'delivered');
 });
 
@@ -1236,7 +1236,7 @@ test('a queued mid-turn prompt row reads mid-turn, its text, its time and queued
   const m = mount();
   m.render([ask('p1', 1), queuedAsk('queued')]);
   const row = rowIn(m, 'queued:1');
-  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●you'], ['tr-head-text', 'hi'], ['tr-time', '10:43'], ['tr-mid-state', 'queued']]);
+  assert.deepStrictEqual(row.childNodes.map((n) => [n.className, n.textContent]), [['tr-mid', 'mid-turn'], ['tr-sender tr-sender-operator', '●'], ['tr-head-text', 'hi'], ['tr-time', '10:43'], ['tr-mid-state', 'queued']]);
   assert.strictEqual(row.childNodes[4].dataset.state, 'queued');
 });
 
