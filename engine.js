@@ -2215,6 +2215,7 @@ const toolCache = createToolCache({ whichBin });
         log,
         requireModule: (p) => require(p),
         https, execFile,
+        hostFeatures: typeof seams.electronChild === 'function' ? ['electron'] : [],
       });
       pluginLoader.loadAll(pluginHost);
       pluginUpdateWatch = createPluginUpdateWatch({

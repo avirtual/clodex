@@ -84,6 +84,7 @@ test('gate 5: engine.js gates plugin construction on pluginsEnabled, and ONLY "0
   assert.match(body, /pluginHost = createPluginHostEngine\(/, 'the host is built inside the branch');
   assert.match(body, /pluginLoader = createPluginLoader\(/, 'and so is the loader');
   assert.match(body, /pluginLoader\.loadAll\(pluginHost\)/, 'and loadAll is only reached inside it');
+  assert.match(body, /hostFeatures: typeof seams\.electronChild === 'function' \? \['electron'\] : \[\]/);
 });
 
 // ── Switch ON: the pilot is really there (non-vacuity for the OFF case) ─────

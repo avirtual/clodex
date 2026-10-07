@@ -80,6 +80,13 @@ function readsOf(manifest) {
   return PLUGIN_CAPABILITIES.filter((cap) => want.has(cap));
 }
 
+const PLUGIN_REQUIREMENTS = Object.freeze(['electron']);
+
+function requiresOf(manifest) {
+  const list = manifest && manifest.requires;
+  return Array.isArray(list) ? list.map(String) : [];
+}
+
 // `:` is what makes a grant token unforgeable as an intent verb and vice versa:
 // PLUGIN_VERB_RE admits no colon, so a grant list and an intents list can never
 // be confused for one another even though they ride the same entry.
@@ -246,6 +253,8 @@ module.exports = {
   scopeOf,
   PLUGIN_CAPABILITIES,
   readsOf,
+  PLUGIN_REQUIREMENTS,
+  requiresOf,
   grantToken,
   isValidCapability,
   sanitizeGrants,

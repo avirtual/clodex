@@ -38,3 +38,7 @@ broken. `fetchAndValidate` renames the extracted dir to the manifest's own id
 old copy aside before the rename-in; on a later failure the possibly-partial
 target is removed before the old copy is renamed back, claiming "restored"
 only if that rename succeeds.
+
+## discoverRoot
+
+An unmet `requires` does `continue` without `note(...)`: a problems row would put the plugin back in the dialog the skip exists to keep it out of. `validateCandidate` refuses the same case by name because an install that then vanishes is worse than a refusal.

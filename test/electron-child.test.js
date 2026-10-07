@@ -60,6 +60,13 @@ test('host parity: both hosts declare the electronChild seam, and headless decla
   assert.match(read('headless-main.js'), /^\s+electronChild: null,$/m);
 });
 
+test('browser-pane declares that it requires electron', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'manifest.json'), 'utf8'));
+  assert.deepStrictEqual(manifest.requires, ['electron']);
+});
+
 test('main.js dispatches the child flag before anything else, including the electron destructure', () => {
   const fs = require('node:fs');
   const path = require('node:path');
