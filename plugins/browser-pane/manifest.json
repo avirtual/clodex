@@ -6,5 +6,6 @@
   "entry": { "engine": "engine.js", "renderer": "renderer.js" },
   "style": "style.css",
   "enabledByDefault": false,
+  "requires": ["electron"],
   "announce": "Gives agents granted the [agent:browser] verb a logged-in browser window per service that you can watch and take over; you sign in yourself."
 }
