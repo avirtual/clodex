@@ -446,6 +446,8 @@ function initStores(userDataPath, {
 } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
+  const LIVING_MIGRATED_FILE = path.join(userDataPath, 'intents-living-migrated');
+  let livingMigrated = false;
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
   const TEMPLATES_DIR = path.join(registryDir, 'library', 'templates');
   const WORKSPACES_FILE = path.join(userDataPath, 'workspaces.json');
@@ -518,13 +520,17 @@ function initStores(userDataPath, {
       if (!Array.isArray(all)) return [];
       let changed = false;
       const touched = [];
+      if (!livingMigrated && fs.existsSync(LIVING_MIGRATED_FILE)) livingMigrated = true;
+      const migrate = !this._unreadable && !livingMigrated;
       for (const e of all) {
         if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
-        const m = migrateLivingAllowlist(e.intents);
-        if (m !== e.intents) { e.intents = m; changed = true; touched.push(e.name); }
+        const m = migrate ? migrateLivingAllowlist(e.intents) : e.intents;
+        if (m !== e.intents) { e.intents = m; changed = true; if (e.name) touched.push(e); }
       }
-      if (changed && !this._unreadable && this._save(all)) {
-        for (const name of touched) this._writeSeatJson(name, all.find((s) => s && s.name === name));
+      const saved = changed && !this._unreadable && this._save(all);
+      if (saved) for (const e of touched) this._writeSeatJson(e.name, e);
+      if (migrate && (saved || !touched.length)) {
+        try { atomicWriteFileSync(LIVING_MIGRATED_FILE, ''); livingMigrated = true; } catch {}
       }
       return all;
     },

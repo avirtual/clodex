@@ -80,8 +80,6 @@ const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
 //   * PRIVILEGED type with an absent list → FALSE. This INVERTS the living default
 //     for reboot & friends: "absent = all-enabled" covers the ordinary verbs, but a
 //     privileged capability must be granted explicitly, never ridden in by default.
-//   * otherwise → membership over LEGACY_INTENT_KEYS-canonicalised entries (a
-//     retired spelling still grants). `[]` is real ("all gated"), not absent.
 function canonicalIntentList(intentsList) {
   if (!Array.isArray(intentsList)) return intentsList;
   if (!intentsList.some((t) => LEGACY_INTENT_KEYS.has(t))) return intentsList;
@@ -113,9 +111,7 @@ function withoutPrivilegedIntents(intentsList) {
 // as a session's `intents` allowlist — the send-side companion of `intentEnabled`.
 // Every gateable box checked → NULL (omit the field): the all-enabled state is
 // stored as ABSENCE, never a frozen array, so a future intent lights up in this
-// seat by default (see the "living default" note above). Otherwise → the enabled
-// subset in CATALOG ORDER (deterministic, and stray/unknown values are dropped
-// since only catalog types are counted). An empty result ([]) is a real value —
+// seat by default (see the "living default" note above). An empty result ([]) is a real value —
 // "everything gated" — distinct from the null all-enabled case.
 function intentsAllowlistFromChecked(checkedTypes) {
   const checked = new Set(checkedTypes);
