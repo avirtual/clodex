@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.116.0 — 2026-10-07
+
 ### CLI
 - The intent-sending CLI verb is now `clodex-send`; `clodex` still works for one release and prints a deprecation line on stderr.
 
