@@ -4,6 +4,8 @@
 
 A subagent drives the browser as its seat; two subagents of one seat share the seat's lease and queue, its held windows, downloads dir and read-file dir. That is why `release` is refused to a subagent (the browser pane is the example; the rule is the plugin's `refuse`).
 
+`replyTo` returning true means accepted into the reply, not received: the write happens later in `respond`, and a hang-up in between is undetectable to the dispatcher. That is why the term waiter does not fall back to the DM after acceptance.
+
 A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this call, not from AsyncLocalStorage: the browser scheduler replies from timers and child IPC, and a queued job starts in the previous job's async context.
 
 A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. Identity fields on a tool call are ignored because the MCP server stamps nothing, so a forged stamp on a tool call must not widen policy.
