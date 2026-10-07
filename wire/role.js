@@ -60,12 +60,20 @@ function billingFingerprint(obj) {
   return m ? m[1] : null;
 }
 
-// The CLI's per-session title-generator side-call: zero tools + the title
-// system prompt. Its response text IS the session title, not a turn.
+// The CLI's title side-call: zero tools + a json_schema output requiring only
+// `title`, or (pre-2.1.280) the old title system prompt. Its text IS the title.
 const TITLE_SYS_PREFIX = 'Generate a concise, sentence-case title';
+
+function titleSchemaRequired(obj) {
+  const fmt = obj.output_config && obj.output_config.format;
+  if (!fmt || fmt.type !== 'json_schema' || !fmt.schema) return null;
+  return Array.isArray(fmt.schema.required) ? fmt.schema.required : null;
+}
 
 function isTitleCall(obj) {
   if (Array.isArray(obj.tools) && obj.tools.length) return false;
+  const req = titleSchemaRequired(obj);
+  if (req && req.length === 1 && req[0] === 'title') return true;
   const sys = obj.system;
   const texts = Array.isArray(sys)
     ? sys.map((b) => (b && typeof b === 'object' ? (b.text || '') : ''))
