@@ -18,6 +18,8 @@ blocks a release.
 
 ### Plugins
 - plugin-api.md: the MCP tool section states that a plugin tool always runs under its subagent policy (the per-call identity stamp is for core tools only), that core tool names are reserved, and how the seat's tool catalog is ordered.
+### Voice
+- A space on an empty prompt in screen mode starts dictation again after a control key (Ctrl-O, Ctrl-L, backspace) or a terminal colour reply: those no longer count as typed text until the next Enter.
 
 ## 5.115.0 — 2026-10-07
 

@@ -386,7 +386,7 @@ test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts o
   assert.strictEqual(spaceTriggerAction(), null);
 });
 
-test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, terminal reports leave it alone', () => {
+test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, bytes that cannot add text and terminal replies leave it alone', () => {
   const rows = [
     [false, 'a', true],
     [true, '\r', false],
@@ -399,7 +399,38 @@ test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, te
     [true, '\x1b[<0;10;5M', true],
     [false, '\x1b[A', false],
     [false, '\x1b[200~hi\x1b[201~', true],
-    [false, '\x7f', true],
+    [false, '\x0f', false],
+    [true, '\x0f', true],
+    [false, '\x12', true],
+    [false, '\x0c', false],
+    [false, '\t', true],
+    [true, '\x7f', true],
+    [false, '\x7f', false],
+    [true, '\x15', true],
+    [false, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', false],
+    [true, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', true],
+    [false, '\x1bP>|xterm.js(5.5.0)\x1b\\', false],
+    [false, '\x1b[?0u', false],
+    [false, '\x1b[4;800;1200t', false],
+    [true, 'ab\x1b]11;rgb:0/0/0\x1b\\', true],
+    [false, 'a\x0f', true],
+    [false, '\x1b[200~a\rb\x1b[201~', true],
+    [true, '\x1b\x7f', true],
+    [false, '\x1b\x7f', true],
+    [false, '\x16', true],
+    [true, '\x16', true],
+    [false, '\x19', true],
+    [true, '\x19', true],
+    [false, '\x10', true],
+    [false, '\x0e', true],
+    [false, '\x17', false],
+    [false, '\x0b', false],
+    [false, '\x01', false],
+    [false, '\x05', false],
+    [true, '\x01', true],
+    [false, '\x14', false],
+    [false, '\x08', false],
+    [false, '\x1f', true],
   ];
   for (const [prev, data, want] of rows) {
     assert.strictEqual(ptyTypedSinceEnter(prev, data), want, JSON.stringify([prev, data]));
