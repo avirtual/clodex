@@ -251,6 +251,21 @@ function teamBodyMode(intent) {
   return 'none';
 }
 
+const TERM_EXEC_TOOL = Object.freeze({
+  name: 'term_exec',
+  description: "Run one command in this seat's operator-visible terminal tab and return its exit code and output. Main agent only: a subagent's call is refused — return and let the seat's main agent run it. Waits up to 120 s; the result is the `[terminal]` line, `exit N`, then the last 40 lines / 4000 chars of output. A result saying `still running after 120s. NOT cancelled` means the command is still going and its output will arrive in the main conversation when it ends: end your turn, do not run it again. A refusal (busy, pending, a bad character) comes back as text and fails the same way on retry.",
+  inputSchema: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'], additionalProperties: false },
+  logKeys: [],
+  toIntent(args) {
+    const a = args == null ? {} : args;
+    const extra = Object.keys(a).find((k) => k !== 'command');
+    if (extra) throw new Error(`unknown argument: ${extra} (use command)`);
+    if (typeof a.command !== 'string' || !a.command.trim()) throw new Error('command must be a non-empty string');
+    if (/[\r\n]/.test(a.command)) throw new Error('command must be one line');
+    return `[agent:term exec] ${a.command.trim()}`;
+  },
+});
+
 const CORE_ROWS = [
   { type: 'dm', parse: parseDm, bodyMode: GREEDY },
   { type: 'sub', parse: parseSub, bodyMode: GREEDY },
@@ -268,7 +283,7 @@ const CORE_ROWS = [
   // prose written under a correct command turned it into a refusal instead of
   // running it. A body that must survive vetting cannot span lines, which is
   // what makes this row different from dm/memory/task.
-  { type: 'term', parse: parseTerm, bodyMode: NONE, classifyReply: (line) => (/^\[agent:term\] /.test(line) ? 'refused' : 'ok') },
+  { type: 'term', parse: parseTerm, bodyMode: NONE, classifyReply: (line) => (/^\[agent:term\] /.test(line) ? 'refused' : 'ok'), tools: [TERM_EXEC_TOOL] },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
   { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/i.test(i.spec) ? 'none' : 'greedy') },
   { type: 'shout', parse: parseShout, bodyMode: GREEDY },
@@ -331,7 +346,8 @@ function validateTools(spec, type, src) {
           : !(tool.logKeys == null || (Array.isArray(tool.logKeys) && tool.logKeys.length <= 4 && tool.logKeys.every((k) => typeof k === 'string' && LOG_KEY_RE.test(k)))) ? 'logKeys'
           : typeof tool.toIntent !== 'function' ? 'toIntent' : null;
     if (missing) throw new Error(`intent verb "${type}": tool ${i} needs a ${missing}`);
-    const holder = seen.has(tool.name) ? { source: src } : pluginRows.find((r) => r.tools.some((x) => x.name === tool.name));
+    const holder = seen.has(tool.name) ? { source: src } : CORE_ROWS.find((r) => Array.isArray(r.tools) && r.tools.some((x) => x.name === tool.name))
+      || pluginRows.find((r) => r.tools.some((x) => x.name === tool.name));
     if (holder) {
       const err = new Error(`tool "${tool.name}" is already registered by plugin "${holder.source}"`);
       err.code = 'ETOOLTAKEN';
@@ -519,7 +535,7 @@ function subagentRefusal(intent, entry) {
 }
 
 function toolRowFor(name) {
-  return pluginRows.find((r) => r.tools.some((t) => t.name === name)) || null;
+  return rows().find((r) => Array.isArray(r.tools) && r.tools.some((t) => t.name === name)) || null;
 }
 
 function toolIntentFor(name, args) {
@@ -540,10 +556,11 @@ function toolIntentFor(name, args) {
 }
 
 function subagentCatalogFor(entry) {
-  const rows = pluginRows.filter((r) => r.tools.length && r.subagent && intentEnabledForSeat(r.type, entry));
+  const core = CORE_ROWS.filter((r) => Array.isArray(r.tools) && r.tools.length && intentEnabledForSeat(r.type, entry));
+  const plugin = pluginRows.filter((r) => r.tools.length && r.subagent && intentEnabledForSeat(r.type, entry));
   return {
-    tools: rows.flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, logKeys: t.logKeys || [] }))),
-    briefs: rows.map((r) => r.subagent.brief),
+    tools: [...core, ...plugin].flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, logKeys: t.logKeys || [] }))),
+    briefs: plugin.map((r) => r.subagent.brief),
   };
 }
 
@@ -666,6 +683,7 @@ module.exports = {
   PLUGIN_REPLY_WAIT_MAX_MS,
   toolRowFor,
   toolIntentFor,
+  TERM_EXEC_TOOL,
   subagentCatalogFor,
   pruneForPlugins,
   withoutPrivilegedIntentsFor,

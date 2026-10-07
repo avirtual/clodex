@@ -95,11 +95,13 @@ function createServer({
       throw e;
     }
     const name = params.name;
-    const key = JSON.stringify([name, canon(args)]);
+    const { ident, ...sent } = args;
+    const stamp = typeof ident === 'string' && ident ? ident : null;
+    const key = JSON.stringify([name, canon(sent)]);
     const f = fails.get(key);
     if (f && f.n >= LOOP_MAX - 1 && now() - f.at < LOOP_WINDOW_MS) {
       fails.set(key, { ...f, n: f.n + 1, at: now() });
-      log(name, 'looped', now() - start, args);
+      log(name, 'looped', now() - start, sent);
       return { result: { content: [{ type: 'text', text: `the same call failed ${LOOP_MAX} times — stop retrying: ${f.text}` }] } };
     }
     if (!env.CLODEX_INTENT_SOCK || !env.CLODEX_INTENT_CRED) {
@@ -107,12 +109,12 @@ function createServer({
     }
     const r = await request({
       sockPath: env.CLODEX_INTENT_SOCK,
-      payload: { cred: env.CLODEX_INTENT_CRED, tool: name, args },
+      payload: { cred: env.CLODEX_INTENT_CRED, tool: name, args: sent, ...(stamp ? { ident: stamp } : {}) },
       timeoutMs,
       ...(connect ? { connect } : {}),
     });
     const st = statusOf(r);
-    log(name, st, now() - start, args);
+    log(name, st, now() - start, sent);
     if (st === 'ok') fails.delete(key); else if (st !== 'invalid') failed(key, toolResult(r).content[0].text);
     return { result: toolResult(r) };
   }

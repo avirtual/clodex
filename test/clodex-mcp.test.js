@@ -557,3 +557,33 @@ test('a stdout error (EPIPE after the parent died) stops the server quietly', as
   assert.strictEqual(exited, 0);
   input.end();
 });
+
+test('tools/call lifts a string ident out of args into the payload; a non-string ident is dropped', async () => {
+  const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: 'x' }));
+  try {
+    const s = server(seat);
+    const ident = 'main.aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb';
+    await s.handle(call(1, { verb: 'read', service: 'svc', ident }));
+    assert.deepStrictEqual(seat.got[0], { cred: CRED, tool: 'browser', args: { verb: 'read', service: 'svc' }, ident });
+    assert.deepStrictEqual(Object.keys(seat.got[0]), ['cred', 'tool', 'args', 'ident']);
+    await s.handle(call(2, { verb: 'read', service: 'svc', ident: 7 }));
+    assert.deepStrictEqual(seat.got[1], { cred: CRED, tool: 'browser', args: { verb: 'read', service: 'svc' } });
+  } finally { await seat.close(); }
+});
+
+test('the loop breaker ignores ident, and mcp.log never carries the stamp or the command', async () => {
+  const { TERM_EXEC_TOOL } = require('../intent-registry');
+  const listed = { name: TERM_EXEC_TOOL.name, description: TERM_EXEC_TOOL.description, inputSchema: TERM_EXEC_TOOL.inputSchema, logKeys: [] };
+  const seat = await fakeSeat(() => ({ ok: true, status: 'refused', reply: '[agent:term] busy' }), undefined, catalog('r1', [listed]));
+  try {
+    const s = server(seat, { now: () => 5000 });
+    const idents = ['main.1111111111111111.aaaaaaaaaaaaaaaa', 'main.2222222222222222.bbbbbbbbbbbbbbbb', 'main.3333333333333333.cccccccccccccccc'];
+    let last;
+    for (const [i, ident] of idents.entries()) last = await s.handle(call(i + 1, { command: 'SENTINELCMD', ident }, 'term_exec'));
+    assert.strictEqual(seat.got.length, 2);
+    assert.strictEqual(last.result.content[0].text, 'the same call failed 3 times — stop retrying: [agent:term] busy');
+    const log = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8');
+    assert.ok(!log.includes('main.') && !log.includes('SENTINELCMD'), log);
+    for (const ident of idents) assert.ok(!log.includes(ident));
+  } finally { await seat.close(); }
+});

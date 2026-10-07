@@ -169,6 +169,8 @@ test('--help with a catalog lists each tool, its verbs and the catch-all line', 
     for (const v of ["  browser  Drive this seat's browser pane. More…\n", '    verbs: open, read, note\n', CATCH_ALL]) assert.ok(r.out.includes(v), v);
     assert.ok(r.out.includes('  ' + 'x'.repeat(64) + '  d\n'));
     assert.ok(!r.out.includes('evil'));
+    assert.ok(r.out.includes("This seat's MCP tools (each description says its intent form and who may call it):"));
+    assert.ok(!r.out.includes('Available to a subagent'));
     for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:name]', '[agent:memory list]']) assert.ok(!r.out.includes(v), v);
     assert.strictEqual(seat.got.length, 0);
   } finally { await seat.close(); }

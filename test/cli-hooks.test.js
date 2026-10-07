@@ -971,6 +971,11 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     matcher: '',
     hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript') }],
   }], 'the matcher-less entry carries the poll guard alone');
+  assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec'), [{
+    matcher: 'mcp__clodex__term_exec',
+    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }],
+  }]);
+  assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec', '']);
 });
 
 // ─── The whole-tree `git add` guard ───────────────────────────
@@ -1449,6 +1454,10 @@ const bashCall = (command, extra = {}) => ({
   hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'sess-1', tool_input: { command, timeout: 300000 }, ...extra,
 });
 
+const mcpCall = (tool_input = { command: 'ls' }, extra = {}) => ({
+  hook_event_name: 'PreToolUse', tool_name: 'mcp__clodex__term_exec', session_id: 'sess-1', tool_input, ...extra,
+});
+
 const identDirOf = (R) => path.join(path.dirname(pathFor(R, 'agent1', 'intentSocket')), 'ident');
 
 function stamped(R, command) {
@@ -1611,7 +1620,7 @@ test('ident hook: the interpreter line hands the seat catalog path to the hook',
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {
   const REGISTRY_DIR = identSeat();
   const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
-  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*) ;; *) exit 0;; esac`);
+  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*) ;; *) exit 0;; esac`);
   const interp = src.indexOf('ELECTRON_RUN_AS_NODE=1');
   assert.ok(gate > 0 && interp > gate, src);
   assert.match(src, /printf '%s' "\$IN" \| ELECTRON_RUN_AS_NODE=1 /);
@@ -1635,8 +1644,11 @@ test('ident hook: a non-clodex call never starts the interpreter; a clodex call 
   };
   assert.strictEqual(runIdent(REGISTRY_DIR, realistic), '');
   assert.strictEqual(fs.existsSync(marker), false, 'a clodex in transcript_path or cwd does not open the gate');
+  assert.strictEqual(runIdent(REGISTRY_DIR, { ...mcpCall(), tool_name: 'mcp__other__x' }), '');
+  assert.strictEqual(fs.existsSync(marker), false, 'another MCP tool does not open the gate');
   assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('clodex x')), 'interp-ran\n');
   assert.strictEqual(fs.existsSync(marker), true);
+  assert.strictEqual(runIdent(REGISTRY_DIR, mcpCall()), 'interp-ran\n');
   const real = identSeat();
   const out = JSON.parse(runIdent(real, bashCall('clodex x')));
   assert.strictEqual(stamped(real, out.hookSpecificOutput.updatedInput.command).shape, 'CLODEX_HOOK_IDENT=@N clodex x');
@@ -1809,4 +1821,37 @@ test('subq hook: a parent TaskStop by name and a SubagentStop park the undeliver
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'a2')), []);
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'names')), []);
   assert.deepStrictEqual(receipts(dir).map(({ id, ev }) => ({ id, ev })), [{ id: 'a2', ev: 'delivered' }, { id: 'a1', ev: 'undelivered' }, { id: 'a2', ev: 'undelivered' }]);
+});
+
+const STAMP_MAIN = /^main\.([0-9a-f]{16})\.[0-9a-f]{16}$/;
+
+test('ident hook: a main term_exec call gets a verified main stamp in updatedInput.ident and no stamp file', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, mcpCall()));
+  const { ident } = out.hookSpecificOutput.updatedInput;
+  const m = STAMP_MAIN.exec(ident);
+  assert.ok(m, ident);
+  assert.deepStrictEqual(out.hookSpecificOutput, { hookEventName: 'PreToolUse', updatedInput: { command: 'ls', ident } });
+  assert.strictEqual(ident, identToken(crypto, ICRED, null, null, 'sess-1', m[1]));
+  assert.strictEqual(identIsMain(crypto, ICRED, ident, 'sess-1'), true);
+  assert.strictEqual(fs.existsSync(identDirOf(REGISTRY_DIR)), false);
+});
+
+test('ident hook: a subagent term_exec call is stamped sub, and a caller-supplied ident is overwritten', () => {
+  const REGISTRY_DIR = identSeat();
+  const sub = JSON.parse(runIdent(REGISTRY_DIR, mcpCall({ command: 'ls' }, { agent_id: 'a1b2', agent_type: 'general-purpose' })));
+  assert.match(sub.hookSpecificOutput.updatedInput.ident, /^sub\.a1b2\.general-purpose\.[0-9a-f]{16}\.[0-9a-f]{16}$/);
+  const forged = JSON.parse(runIdent(REGISTRY_DIR, mcpCall({ command: 'ls', ident: 'main.deadbeef' }, { agent_id: 'a1b2', agent_type: 'general-purpose' })));
+  const { updatedInput } = forged.hookSpecificOutput;
+  assert.ok(updatedInput.ident.startsWith('sub.'), updatedInput.ident);
+  assert.strictEqual(updatedInput.command, 'ls');
+  assert.deepStrictEqual(Object.keys(updatedInput), ['command', 'ident']);
+});
+
+test('ident hook: two term_exec calls carry different nonces; a Bash echo naming the tool is not stamped', () => {
+  const REGISTRY_DIR = identSeat();
+  const a = STAMP_MAIN.exec(JSON.parse(runIdent(REGISTRY_DIR, mcpCall())).hookSpecificOutput.updatedInput.ident)[1];
+  const b = STAMP_MAIN.exec(JSON.parse(runIdent(REGISTRY_DIR, mcpCall())).hookSpecificOutput.updatedInput.ident)[1];
+  assert.notStrictEqual(a, b);
+  assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('echo mcp__clodex__term_exec')), '');
 });
