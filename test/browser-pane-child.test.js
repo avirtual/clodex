@@ -1032,6 +1032,8 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('/\\b(close|dismiss)\\b|^×$/i.test('));
   const drawerAt = lineOf(src, 'const drawerAt = (e) =>');
   assert.ok(drawerAt.indexOf('getBoundingClientRect') < drawerAt.indexOf('getComputedStyle'));
+  assert.ok(drawerAt.includes('/^(fixed|absolute)$/'));
+  assert.ok(!drawerAt.includes("=== 'fixed'"));
   assert.ok(lineOf(src, 'const drawersOf = () =>').includes('.slice(0, 3000)'));
   const coveredBy = 'const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);';
   for (const s of [scripts.READ_INTERACTIVE(false, {}), scripts.FIND(1)]) assert.strictEqual(s.split(coveredBy).length, 2);
@@ -1062,17 +1064,29 @@ function lineOf(src, head) {
   return src.slice(i, src.indexOf('\n', i));
 }
 
-test('INSPECT: in: keeps the first parent and the informative ancestors up to the drawer', () => {
-  const ancestorsOf = new Function('up', 'short', `${lineOf(scripts.INSPECT(1), 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
-    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''));
+test('INSPECT: in: walks to body, keeps the root and elides the middle', () => {
+  const src = scripts.INSPECT(1);
+  assert.strictEqual(src.split('const drawerAt = (e) =>').length, 2);
+  const BODY = { tagName: 'BODY', id: '', className: '', getAttribute: () => null, matches: () => false, parentElement: null };
+  const ancestorsOf = new Function('up', 'short', 'document', 'DIALOG_SEL', 'drawerAt', `${lineOf(src, 'const rootAt = (p) =>')}\n${lineOf(src, 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
+    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''),
+    { body: BODY }, '[role=dialog]', () => false);
   const chain = (specs) => specs.reduceRight((parent, s) => {
+    if (s === 'body') return BODY;
     const [, tag, id = '', cls = ''] = /^(\w+)(?:#([\w-]+))?(?:\.([\w-]+))?$/.exec(s);
-    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, parentElement: parent };
+    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, matches: () => false, parentElement: parent };
   }, null);
-  const leaf = { parentElement: chain(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body']) };
-  assert.deepStrictEqual(ancestorsOf(leaf), ['td', 'tr#r1', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
-  const many = { parentElement: chain(['span', ...Array.from({ length: 9 }, (_, i) => `div#a${i}`), 'body']) };
-  assert.deepStrictEqual(ancestorsOf(many), ['span', 'div#a0', 'div#a1', 'div#a2', 'div#a3', 'div#a8']);
+  const leaf = (specs) => ({ parentElement: chain(specs) });
+  assert.deepStrictEqual(ancestorsOf(leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body'])), ['td', 'tr#r1', '…', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
+  const deep = ['a', 'span', ...Array.from({ length: 14 }, (_, i) => `div#d${i}`), 'div.gl-drawer', 'div#app', 'body'];
+  assert.deepStrictEqual(ancestorsOf(leaf(deep)), ['a', 'span', '…', 'div.gl-drawer', 'div#app']);
+  assert.deepStrictEqual(ancestorsOf(leaf(['a', 'li', 'ul', 'div.information', 'div.platform', 'section.canvas', 'div.gl-drawer', 'div#app', 'body'])), ['a', 'li', '…', 'div.gl-drawer', 'div#app']);
+  assert.deepStrictEqual(ancestorsOf(leaf(['span', 'div#a0', 'body'])), ['span', 'div#a0']);
+  const dialog = leaf(['a', 'li', 'ul', 'div', 'section', 'div#dlg', 'div', 'div#app', 'body']);
+  let n = dialog.parentElement;
+  for (let k = 0; k < 5; k++) n = n.parentElement;
+  n.matches = (s) => s === '[role=dialog]';
+  assert.deepStrictEqual(ancestorsOf(dialog), ['a', 'li', '…', 'div#dlg', 'div', 'div#app']);
 });
 
 test('page scripts: wholeLabel drops an icon-only child from the label, keeps real extra words', () => {
@@ -1157,7 +1171,9 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     const docked = { left: 720, right: 1200, top: 0, bottom: 800, width: 480, height: 800 };
     assert.strictEqual(drawer({ position: 'fixed' }, docked), 'drawer');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 280, width: 920 }), '');
-    assert.strictEqual(drawer({ position: 'absolute' }, docked), '');
+    assert.strictEqual(drawer({ position: 'absolute' }, docked), 'drawer', 'an absolute portal docked by geometry is a drawer');
+    assert.strictEqual(drawer({ position: 'relative' }, docked), '');
+    assert.strictEqual(drawer({ position: 'static' }, docked), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 100, right: 580 }), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
     const paneled = { left: 660, right: 1200, top: 0, bottom: 800, width: 540, height: 800 };
@@ -1166,6 +1182,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(bare({ ...paneled, left: 645, right: 1185 }), 'drawer', 'a classic scrollbar does not undock it');
     const inset = { left: 417, right: 1177, top: 48, bottom: 800, width: 760, height: 752 };
     assert.strictEqual(bare(inset), 'drawer', 'an 8 px inset, 0.63 vw panel is a drawer');
+    assert.strictEqual(bare(inset, { style: { position: 'absolute' } }), 'drawer', 'an absolute inset panel is a drawer');
     assert.strictEqual(bare({ ...inset, left: 405, right: 1165 }), '', 'a 20 px inset is not docked');
     assert.strictEqual(bare({ ...inset, left: 272, width: 920 }), '', 'over 0.75 vw is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
@@ -1743,8 +1760,19 @@ test('GONE: counts read numbers now detached or hidden and groups them by their 
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]] });
-  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8').includes('if (g && g.total) done.removed = g;'));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]], gone: [1, 2, 3] });
+  const drawer = Object.assign(boxEl('div', '', box), { isConnected: false, className: 'paneled-view', querySelector: (s) => (s === 'h1,h2,h3' ? { innerText: 'Bump Go toolchain to the latest patch release' } : null) });
+  const header = boxEl('header', '', box, drawer);
+  const nav = Object.assign(boxEl('nav', '', box, header), { getAttribute: (k) => (k === 'aria-label' ? 'Sidebar' : null) });
+  const inDrawer = [boxEl('button', 'Home', box, nav), boxEl('button', 'Issues', box, nav)];
+  for (const e of inDrawer) e.isConnected = false;
+  ctx.__cxEls[5] = new WeakRef(inDrawer[0]);
+  ctx.__cxEls[6] = new WeakRef(inDrawer[1]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([5, 6]), ctx))), { total: 2, groups: [['drawer "Bump Go toolchain to the late…"', 2]], gone: [5, 6] });
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('if (g && g.total) done.removed = g;'));
+  assert.ok(child.includes('.filter((n) => !svc.num.lastRead.gone.includes(n))'));
+  assert.ok(child.includes('svc.num.lastRead.gone.push(...g.gone)'));
 });
 
 test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {

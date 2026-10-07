@@ -225,6 +225,8 @@ test('replies: an act that stays on the page says what text changed, or that not
   assert.ok(gone([['cookie banner', 20], ['calendar', 11]]).endsWith(' · removed: cookie banner, calendar (31 elements)'));
   assert.ok(gone([['page', 31]]).endsWith(' · same page · idle 0.8s · removed: 31 elements'));
   assert.ok(gone([['a', 5], ['b', 4], ['page', 3], ['c', 3], ['d', 2], ['e', 1]], 18).endsWith(' · removed: a, b, c, +2 more (18 elements)'));
+  assert.ok(gone([['page', 1]], 1).endsWith(' · removed: 1 element'));
+  assert.ok(gone([['drawer "Issue"', 1]], 1).endsWith(' · removed: drawer "Issue" (1 element)'));
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
     '[agent:browser] clicked ebloc [2] link "Next" · navigated → ("Two") https://x/2 · numbers kept where the page repeats · idle 0.8s');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),
@@ -436,6 +438,7 @@ test('replies: inspect renders an empty label as (icon), like read; a waiting ho
   const r = { n: 3, tag: 'label', id: '', classes: [], kind: 'clickable', label: '', attrs: [], listeners: null, cursor: 'pointer', rect: {}, visible: true, ancestors: [], html: '' };
   assert.strictEqual(R.inspectReply('ebloc', r).split('\n')[0], '[agent:browser] inspect ebloc [3]: label · clickable (icon)');
   assert.strictEqual(R.inspectReply('ebloc', { ...r, tag: 'input', kind: 'input:text' }).split('\n')[0], '[agent:browser] inspect ebloc [3]: input · input:text ""');
+  assert.strictEqual(R.inspectReply('ebloc', { ...r, ancestors: ['a', 'span', '…', 'div.gl-drawer', 'div#app'] }).split('\n')[4], '  in: div#app > div.gl-drawer > … > span > a');
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility', true), 'agent hand-b is waiting on utility — wait or ask it to release');
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility'), 'agent hand-b is driving utility — wait or ask it to release');
 });
@@ -545,6 +548,8 @@ test('replies: --path-only on a small read says so; the attached shape is unchan
   const small = R.readReply('wiki', { ...info, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n');
   assert.match(small[0], / → \/t\/r-1\.txt \(not attached: --path-only; read or grep it, or narrow with --filter=\/--page=\)$/);
   assert.deepStrictEqual(small.slice(3), ['  landmarks: Main menu', '  ⚠: [1] "Pay"']);
+  const kinded = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: ['Main menu'] }, first: true }, { service: 'wiki', main: true });
+  assert.deepStrictEqual(R.readReply('wiki', { ...kinded, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n').slice(3), ['  landmarks: Main menu', '  ⚠: [12] button']);
   assert.strictEqual(R.readReply('wiki', info, '/t/r-1.txt', 'claude', { attach: true, budget: 1000 }), R.readReply('wiki', info, '/t/r-1.txt', 'claude'));
   assert.ok(R.readReply('wiki', info, '/t/r-1.txt', 'claude').endsWith(' → @/t/r-1.txt '));
   const codex = R.readReply('wiki', info, '/t/r-1.txt', 'codex', { attach: false, budget: 1000 }).split('\n');

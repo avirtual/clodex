@@ -720,12 +720,16 @@ test('scheduler: a later open of a profile re-stamps the host it was opened as',
 
 test('scheduler: a tab open keeps the host its profile was opened as', async () => {
   const h = harness({
+    open: (a) => ({ ...DEFAULTS.open(a), title: a.url.includes('gist') ? 'Gists' : 'Bills' }),
     read: () => ({ ...PAGE, url: 'https://gist.github.com/', contentType: 'text/html', text: 'Gists', elements: [], truncated: false, frames: [], login: {} }),
   });
   await h.run([['hand-a', '[agent:browser open gh] https://github.com/x']]);
   h.sched.onState({ service: 'gh', state: 'idle', url: 'https://github.com/x' });
   await h.run([['hand-a', '[agent:browser open gh:riot] https://gist.github.com/']]);
   assert.strictEqual(h.storage.get().services.gh.openedHost, 'github.com');
+  assert.strictEqual(h.storage.get().services.gh.lastUrl, 'https://github.com/x');
+  assert.strictEqual(h.storage.get().services.gh.lastTitle, 'Bills');
+  assert.strictEqual(h.storage.get().services.gh.tabs.riot.lastTitle, 'Gists');
 });
 
 test('scheduler replies through the handle each submit was given, even two of one seat', async () => {
@@ -913,10 +917,14 @@ test('scheduler tabs: open x:riot records profile x; two tabs share one storage 
   const h = harness();
   await h.run([['hand-a', '[agent:browser open x:riot] https://x.com/a']]);
   assert.deepStrictEqual(Object.keys(h.storage.get().services), ['x']);
-  assert.strictEqual(h.storage.get().services.x.lastUrl, 'https://x.com/a');
+  assert.strictEqual(h.storage.get().services.x.lastUrl, undefined);
+  assert.strictEqual(h.storage.get().services.x.tabs.riot.lastUrl, 'https://x.com/a');
   await h.run([['hand-a', '[agent:browser open x] https://x.com/b'], ['hand-b', '[agent:browser open x:two] https://x.com/c']]);
   assert.deepStrictEqual(Object.keys(h.storage.get().services), ['x']);
   assert.strictEqual(h.storage.get().services.x.lastSeat, 'hand-b');
+  assert.strictEqual(h.storage.get().services.x.lastUrl, 'https://x.com/b');
+  assert.strictEqual(h.storage.get().services.x.tabs.two.lastUrl, 'https://x.com/c');
+  assert.strictEqual(h.storage.get().services.x.tabs.riot.lastUrl, 'https://x.com/a');
   assert.deepStrictEqual([h.sched.leaseHolder('x'), h.sched.leaseHolder('x:riot'), h.sched.leaseHolder('x:two')], ['hand-a', 'hand-a', 'hand-b']);
   await h.run([['hand-a', '[agent:browser release x:riot]']]);
   assert.deepStrictEqual([h.sched.leaseHolder('x'), h.sched.leaseHolder('x:riot')], ['hand-a', null]);

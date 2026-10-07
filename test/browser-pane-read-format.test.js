@@ -646,7 +646,7 @@ test('read header says how many posts are cloaked placeholders', () => {
 
 test('read digest: a nameless consequential button reaches warn', () => {
   const raw = { ...RAW, elements: ['[3] button ⚠'], cats: { 3: 'delete' } };
-  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, [{ n: 3, label: '', cat: 'delete' }]);
+  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, [{ n: 3, kind: 'button', label: '', cat: 'delete' }]);
 });
 
 test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
@@ -656,7 +656,7 @@ test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', 
     cats: { 30: 'ad', 31: 'ad', 32: 'ad', 40: 'publish', 50: 'ad', 51: 'ad', 52: 'ad' },
   };
   const d = formatRead(raw, { service: 'x' }).digest;
-  assert.deepStrictEqual(d.warn, [{ n: 40, label: 'publish Post', cat: 'publish' }]);
+  assert.deepStrictEqual(d.warn, [{ n: 40, kind: 'button', label: 'publish Post', cat: 'publish' }]);
   assert.deepStrictEqual(d.ads, { posts: 2, elements: 6 });
   assert.deepStrictEqual(formatRead({ ...raw, cats: {} }, { service: 'x' }).digest.ads, { posts: 0, elements: 0 });
 });

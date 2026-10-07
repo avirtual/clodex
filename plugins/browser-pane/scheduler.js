@@ -180,14 +180,15 @@ function createScheduler({
   function recordOpen(service, seat, r, asked) {
     const t = now();
     noteUrl(service, r.url);
+    const tab = tabOf(service);
+    const page = { lastUrl: originPath(r.url), lastTitle: String(r.title || '').slice(0, 200) };
     updateStorage(service, (prev) => ({
       ...prev,
-      openedHost: (tabOf(service) ? '' : hostOf(asked)) || prev.openedHost || hostOf(prev.lastUrl) || hostOf(r.url),
+      openedHost: (tab ? '' : hostOf(asked)) || prev.openedHost || hostOf(prev.lastUrl) || hostOf(r.url),
       createdAt: prev.createdAt || t,
       lastUsedAt: t,
       lastSeat: seat,
-      lastUrl: originPath(r.url),
-      lastTitle: String(r.title || '').slice(0, 200),
+      ...(tab ? { tabs: { ...(prev.tabs || {}), [tab]: { ...((prev.tabs || {})[tab] || {}), ...page, lastUsedAt: t, lastSeat: seat } } } : page),
       login: r.login == null && prev.login ? prev.login : storedLogin(r.login, t),
     }));
   }

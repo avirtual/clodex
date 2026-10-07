@@ -1030,8 +1030,9 @@ function run(electron, ctx) {
           if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }
         }
         if (done.changed === 'text removed' && svc.num && svc.num.lastRead && !wc.isDestroyed()) {
-          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number)));
+          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number).filter((n) => !svc.num.lastRead.gone.includes(n))));
           if (g && g.total) done.removed = g;
+          if (g && g.gone) svc.num.lastRead.gone.push(...g.gone);
         }
         return done;
       }
@@ -1562,7 +1563,7 @@ function run(electron, ctx) {
     } : {};
     if (el) {
       for (const n of el.fresh || []) ent.listed.add(Number(n));
-      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, rows: el.rows || {} };
+      ent.lastRead = { url: el.url, descs: el.descs || [], keys: el.keys || {}, sigs: el.sigs || {}, gone: [], rows: el.rows || {} };
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));

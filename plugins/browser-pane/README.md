@@ -371,7 +371,7 @@ The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}`
 
 ```
 <userData>/plugins/browser-pane/
-  state.json            the services registry: last URL (origin + path), title, sign-in state
+  state.json            the services registry: last URL (origin + path), title, sign-in state · per-tab last URL under tabs
   sites/<hash>.md       site notes, one file per origin (the origin on its first line)
   chromium/             the browser's own profile, separate from Clodex's
     Partitions/<service>/   cookies, storage and cache for one service

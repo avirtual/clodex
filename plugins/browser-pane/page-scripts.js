@@ -471,9 +471,11 @@ const HIT_AT = `
   const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };
   const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);`;
 
+const DRAWER_AT = `const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
+  const drawerAt = (e) => { const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 16 || r.right >= w - 16) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.75 && /^(fixed|absolute)$/.test(getComputedStyle(e).position); };`;
+
 const MODAL_FINDER = `const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
-  const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
-  const drawerAt = (e) => { const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 16 || r.right >= w - 16) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.75 && getComputedStyle(e).position === 'fixed'; };
+  ${DRAWER_AT}
   const drawerKeep = (e) => !e.closest('nav, [role=navigation]') && !e.querySelector('nav, [role=navigation]') && [...e.querySelectorAll('button, a, [role=button]')].some(b => /\\b(close|dismiss)\\b|^×$/i.test((b.getAttribute('aria-label') || b.innerText || b.getAttribute('title') || '').trim()));
   const drawersOf = () => [...document.querySelectorAll('div,aside,section')].slice(0, ${POINTER_SCAN_MAX}).filter(e => !e.matches(DIALOG_SEL) && drawerAt(e) && vis(e) && drawerKeep(e)).filter((e, _i, a) => !a.some(x => x !== e && e.contains(x)));
   const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };
@@ -1196,6 +1198,7 @@ function inspect(n) {
   return `(() => {${DEEP}
   ${REF(n)}
   ${KIND_LABEL}${CQ}
+  ${DRAWER_AT}
   const clip = (s, k) => { s = String(s || '').replace(/\\s+/g, ' ').trim(); return s.length > k ? s.slice(0, k - 1) + '…' : s; };
   const secret = e => e.tagName === 'INPUT' && (e.type === 'password' || e.getAttribute('autocomplete') === 'one-time-code');
   const textual = tag === 'textarea' || (tag === 'input' && !${JSON.stringify(NON_TEXT_TYPES)}.includes(type));
@@ -1207,7 +1210,8 @@ function inspect(n) {
   const attrs = names.slice(0, 8).map(k => [k, clip(el.getAttribute(k), 60)]);
   const short = (e, k) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].slice(0, k).map(c => '.' + c).join('');
   const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-  const ancestorsOf = (e) => { const out = []; for (let p = up(e), k = 0; p && k < 12; p = up(p), k++) if (!k || p.id || p.getAttribute('aria-label') || p.getAttribute('role') || /^(NAV|ASIDE|HEADER|FOOTER|MAIN|FORM|DIALOG)$/.test(p.tagName) || /dialog|drawer|panel|modal|sidebar|nav|form/i.test(p.className || '')) out.push(p); return (out.length > 6 ? [...out.slice(0, 5), out[out.length - 1]] : out).map(p => short(p, 2)); };
+  const rootAt = (p) => (p.matches && p.matches(DIALOG_SEL)) || /\\b(dialog|drawer|modal|sidebar)\\b/i.test(p.className || '') || drawerAt(p);
+  const ancestorsOf = (e) => { const ps = []; for (let p = up(e); p && p !== document.body && ps.length < 64; p = up(p)) ps.push(p); const root = ps.findIndex(rootAt); const keep = new Set([0, 1, root, ps.length - 2, ps.length - 1]); const out = []; ps.forEach((p, i) => { if (keep.has(i)) out.push(short(p, 2)); else if (out[out.length - 1] !== '…') out.push('…'); }); return out; };
   const ancestors = ancestorsOf(el);
   const clone = el.cloneNode(true);
   for (const e of [clone, ...clone.querySelectorAll('*')]) {
@@ -1350,26 +1354,35 @@ const VALUE_ACTIVE = `(() => {${ICON}
 function GONE(nums) {
   return `(() => {${DEEP}
   const groups = new Map();
+  const gone = [];
   let total = 0;
   const groupOf = (el) => {
-    let p = upOf(el);
-    for (let k = 0; p && k < 12; p = upOf(p), k++) {
-      const label = p.getAttribute && p.getAttribute('aria-label');
-      if (label) return label;
-      if (p.getAttribute && p.getAttribute('role') === 'dialog') return 'dialog';
-      if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) return p.tagName.toLowerCase();
+    let last = 'page';
+    for (let p = upOf(el), k = 0; p && k < 64; p = upOf(p), k++) {
+      const label = (p.getAttribute && p.getAttribute('aria-label')) || '';
+      const cls = typeof p.className === 'string' ? p.className : '';
+      const role = p.getAttribute && p.getAttribute('role') === 'dialog';
+      const word = /\\b(dialog|drawer|modal|paneled-view)\\b/i.exec(cls);
+      if (role || word) {
+        const kind = role || /^(dialog|modal)$/i.test(word[1]) ? 'dialog' : 'drawer';
+        const h = label || (p.querySelector && (p.querySelector('h1,h2,h3') || {}).innerText) || '';
+        const name = String(h).replace(/\\s+/g, ' ').trim();
+        last = name ? kind + ' ' + JSON.stringify(name.length > 30 ? name.slice(0, 29) + '…' : name) : kind;
+      } else if (label) last = label;
+      else if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) last = p.tagName.toLowerCase();
     }
-    return 'page';
+    return last;
   };
   for (const n of ${JSON.stringify(nums)}) {
     const ref = window.__cxEls && window.__cxEls[n];
     const el = ref && ref.deref();
     if (el && el.isConnected && vis(el)) continue;
     total++;
+    gone.push(n);
     const g = el ? String(groupOf(el)).slice(0, 40) : 'page';
     groups.set(g, (groups.get(g) || 0) + 1);
   }
-  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]) };
+  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]), gone: gone.sort((x, y) => x - y) };
 })()`;
 }
 

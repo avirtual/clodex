@@ -566,7 +566,7 @@ function siteNote(url, opened) {
   return opened && host && host !== opened ? ` · site: ${host} (opened as ${opened})` : '';
 }
 
-const WARN_RE = /^\[(\d+)\] \S+ ⚠(?: |$)(.*)$/;
+const WARN_RE = /^\[(\d+)\] (\S+) ⚠(?: |$)(.*)$/;
 
 function countsOf(raw) {
   if (raw.restored != null) return { all: 'numbers restored' };
@@ -583,7 +583,7 @@ function digestOf(raw, feed = null) {
   const rows = [];
   for (const l of feed ? outsideFeed(list(raw.elements), feed) : list(raw.elements)) {
     const m = WARN_RE.exec(l);
-    if (m) rows.push({ n: Number(m[1]), label: m[2], cat: String((cats && cats[m[1]]) || 'other') });
+    if (m) rows.push({ n: Number(m[1]), kind: m[2], label: m[3], cat: String((cats && cats[m[1]]) || 'other') });
   }
   const warn = rows.filter((w) => w.cat !== 'ad');
   const adKeys = raw.adKeys && typeof raw.adKeys === 'object' ? raw.adKeys : {};
