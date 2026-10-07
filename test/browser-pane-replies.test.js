@@ -340,6 +340,9 @@ test('replies: an ad click without --confirm is refused as a paid click that lea
     '[5121] "musclebooster @musclebooster_ Ad" is an ad — clicking it is a paid click on the operator\'s account and leaves the site; re-issue with --confirm if the operator asked for it');
   assert.strictEqual(R.TEXT.consequential(5, 'Post', 'publish'), '[5] "Post" publishes as the operator — re-issue with --confirm if the operator asked for it');
   assert.strictEqual(R.TEXT.consequential(4, 'Pay now', 'payment'), '[4] "Pay now" looks consequential (payment) — re-issue with --confirm if the operator asked for it');
+  const download = '[4] "Pay now" looks consequential (payment) — download it with click 4 --to=<dir> --confirm if the operator asked for it';
+  assert.strictEqual(R.TEXT.consequential(4, 'Pay now', 'payment', 'download it with click 4 --to=<dir> --confirm'), download);
+  assert.strictEqual(R.classifyReply('[agent:browser] error: ' + download), 'refused');
 });
 
 test('replies: Enter that would submit a consequential form is refused naming the field and the target', () => {

@@ -24,6 +24,7 @@ test('the four refusal literals', () => {
 const REFUSE_ROWS = [
   ['release x', NO_RELEASE],
   ['click x 1 --confirm', NO_CONFIRM],
+  ['download x 4', null],
   ['type x 3 --confirm --enter', NO_CONFIRM],
   ['key x --confirm', NO_CONFIRM],
   ['click x 26 "--confirm"', NO_CONFIRM],
@@ -49,6 +50,7 @@ test('SUBS is the grammar minus release and close', () => {
   const grammarSubs = ['open', 'read', 'click', 'type', 'key', 'scroll', 'back', 'forward', 'select', 'download', 'screenshot', 'inspect', 'wait', 'services', 'release', 'close', 'note'];
   assert.deepStrictEqual(require('../plugins/browser-pane/grammar').SUBCOMMANDS, grammarSubs);
   assert.deepStrictEqual([...subagent.SUBS].sort(), grammarSubs.filter((s) => s !== 'release' && s !== 'close').sort());
+  assert.deepStrictEqual(subagent.CONFIRM_SUBS, ['click', 'type', 'select', 'key']);
 });
 
 test('the socket brief is the plugin brief plus the refusal sentence', () => {

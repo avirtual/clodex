@@ -75,6 +75,7 @@ const ROWS = [
   ['[agent:browser screenshot --path-only --attach]', { error: '--attach and --path-only cannot be combined' }],
   ['[agent:browser read --path-only=yes]', { error: '--path-only takes no value' }],
   ['[agent:browser click 4 --attach]', { error: 'unknown flag --attach for click — valid: --text --to --confirm' }],
+  ['[agent:browser download 4 --confirm]', { error: 'unknown flag --confirm for download — valid: --to --as' }],
   ['[agent:browser inspect 4 --path-only]', { error: 'unknown flag --path-only for inspect — valid: --text' }],
   ['[agent:browser click ebloc 4 --text=Avizier]', { error: 'click takes an element number or --text, not both' }],
   ['[agent:browser click --text=]', { error: '--text needs the visible text, e.g. --text="Lista de plată"' }],

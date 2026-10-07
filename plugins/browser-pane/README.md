@@ -180,7 +180,9 @@ ipc handlers (step 12).
   ⚠ radio or change a ⚠ select are refused the same way.
   A `click`, `type` or `select` whose click point is covered by another element (a menu
   the page closed on scroll, an overlay) is refused and names what covers it, so the
-  mouse only ever lands on the element the ⚠ check ran on. An element already in view
+  mouse only ever lands on the element the ⚠ check ran on. The point is looked up
+  again just before the mouse goes down; if the page shifted and something else is
+  there now, the click is refused the same way. An element already in view
   is not scrolled before the click. A click whose target our scroll parked under a
   sticky header is scrolled clear first; when the cover is a dialog or consent banner
   the refusal names its buttons.

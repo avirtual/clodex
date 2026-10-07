@@ -10,7 +10,7 @@ const subagentPolicy = require('./subagent');
 const mcpTool = require('./mcp-tool');
 const urlpolicy = require('./urlpolicy');
 const siteNotes = require('./site-notes');
-const { hostOf } = require('./read-format');
+const { hostOf, redactUrl } = require('./read-format');
 
 const PROMPT_LINES = [
   '  [agent:browser open <service> [--show]] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service; the window stays in the background unless --show',
@@ -154,7 +154,7 @@ function activate(host) {
       else if (frame.event === 'operator-nav') onOperatorNav(frame);
       else if (frame.event === 'denied') {
         denials.set(frame.service, (denials.get(frame.service) || 0) + 1);
-        if (host.log) host.log.info(`denied ${frame.by || 'page'} navigation on ${frame.service}: ${frame.url} (pattern ${JSON.stringify(String(frame.pattern || ''))})`);
+        if (host.log) host.log.info(`denied ${frame.by || 'page'} navigation on ${frame.service}: ${redactUrl(String(frame.url || ''))} (pattern ${JSON.stringify(String(frame.pattern || ''))})`);
       }
       changed();
     },

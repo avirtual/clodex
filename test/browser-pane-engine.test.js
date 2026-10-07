@@ -30,6 +30,7 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
   ]);
   const frameLog = path.join(dir, 'frames.log');
   const notes = [];
+  const logs = [];
   const engine = createPluginHostEngine({
     manager: {
       sessions,
@@ -42,7 +43,7 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
       },
     },
     getUiSettings: () => ({ get: () => ({}), set: () => {} }),
-    log: { info: () => {}, error: () => {} },
+    log: { info: (scope, line) => logs.push(String(line)), error: () => {} },
     getNotifications: () => ({ add: (rec) => { notes.push(rec.body); return { id: notes.length }; } }),
     userDataPath: dir,
     fs, path,
@@ -68,7 +69,7 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
   });
   const frames = () => (fs.existsSync(frameLog) ? fs.readFileSync(frameLog, 'utf8').split('\n').filter(Boolean) : []);
   const clearFrames = () => { if (fs.existsSync(frameLog)) fs.truncateSync(frameLog, 0); };
-  return { emit, emitAs, nextReply, injected, dir, tmp, host, engine, notes, frames, clearFrames };
+  return { emit, emitAs, nextReply, injected, dir, tmp, host, engine, notes, frames, clearFrames, logs };
 }
 
 test('engine: the browser row carries the plugin\'s MCP tool and subagent policy', (t) => {
@@ -525,6 +526,17 @@ test('engine: a burst of operator navigations within 5 s tells the lease holder 
     { ok: true, patterns: ['x.com'] });
   mock.timers.tick(engineMod.OPERATOR_NAV_MS);
   assert.strictEqual(injected.length, before, 'no seat holds the other lease: no injection');
+});
+
+test('engine: the denied host-log line redacts a secret query value in the refused url', async (t) => {
+  const { emit, engine, logs } = boot(t);
+  await emit('[agent:browser open utility] https://portal.example.com/opnav');
+  const denied = async () => ((await engine.dispatch('browser-pane', 'status', ['w1'], 'desktop')).services[0] || {}).denied;
+  for (let i = 0; i < 500 && await denied() !== 1; i += 1) await new Promise((r) => setImmediate(r));
+  const line = logs.find((l) => l.includes('denied page navigation on utility'));
+  assert.ok(line, logs.join('\n'));
+  assert.ok(!line.includes('SECRET'), line);
+  assert.ok(line.includes('https://bad.example.com/?token=<redacted>'), line);
 });
 
 test('engine: wait and download hold the socket call for their own ceilings, inside the registry cap', (t) => {

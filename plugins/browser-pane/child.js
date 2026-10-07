@@ -407,9 +407,15 @@ function coveredRefusal(n, el) {
   return el && el.covered ? codedError('COVERED', TEXT.covered(n, el)) : null;
 }
 
-function consequentialRefusal(n, el, confirm) {
+function consequentialRefusal(n, el, confirm, redo) {
   if (!el || !el.consequential || confirm) return null;
-  return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential));
+  return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential, redo));
+}
+
+function liveTarget(n, el, probe, service) {
+  if (probe == null) throw codedError('NO_ELEMENT', TEXT.noElement(service, n));
+  if (probe.covered) throw coveredRefusal(n, { ...el, ...probe });
+  return { ...el, x: probe.x, y: probe.y };
 }
 
 function passwordRefusal(service, n, el, login) {
@@ -811,6 +817,7 @@ function run(electron, ctx) {
   const inIsolated = (wc, code) => driver.withTimeout(
     wc.executeJavaScriptInIsolatedWorld(scripts.ISOLATED_WORLD, [{ code }]).catch(() => null),
     driver.SCRIPT_TIMEOUT_MS, null);
+  const livePoint = async (svc, n, el) => liveTarget(n, el, await inIsolated(svc.wc, scripts.LIVE_POINT(n)), svc.name);
   const inMain = (wc, code) => driver.withTimeout(wc.executeJavaScript(code).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
 
   const snapText = (wc) => driver.withTimeout(wc.executeJavaScript(scripts.PAGE_TEXT).catch(() => null), SNAP_MS, null);
@@ -1014,8 +1021,9 @@ function run(electron, ctx) {
       if (refusedEnter) throw refusedEnter;
       dispatch(svc, { type: 'describe', what: `${op} [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
       const pre = await preAct(svc, op === 'click' ? n : null);
+      const live = op === 'click' || op === 'type' ? await livePoint(svc, n, el) : el;
       if (op === 'click') {
-        const out = await clickWatched(svc, n, el, nav, dir);
+        const out = await clickWatched(svc, n, live, nav, dir);
         if (fresh) out.fresh = true;
         if (byName) out.byName = true;
         if (clickOnly) out.clickOnly = true;
@@ -1042,7 +1050,7 @@ function run(electron, ctx) {
         if (!el.editable) throw codedError('NOT_EDITABLE', TEXT.notEditable(n, el.kind));
         const text = String(args.text || '');
         const { idle } = await act(wc, async () => {
-          driver.click(wc, el);
+          driver.click(wc, live);
           await inIsolated(wc, scripts.CLEAR(n));
           await driver.typeText(wc, text);
           if (args.enter) driver.pressKey(wc, 'Enter');
@@ -1296,6 +1304,8 @@ function run(electron, ctx) {
           const el = await resolve(svc, n);
           const coveredErr = paths.directHref(el.href, svc.wc.getURL()) ? null : coveredRefusal(n, el);
           if (coveredErr) throw coveredErr;
+          const refused = consequentialRefusal(n, el, false, `download it with click ${n} --to=<dir> --confirm`);
+          if (refused) throw refused;
           dispatch(svc, { type: 'describe', what: `download [${n}]${el.label ? ' ' + JSON.stringify(el.label) : ''}` });
           const hint = args.as || el.download || null;
           if (paths.directHref(el.href, svc.wc.getURL())) out = await viaUrl(svc, downloadUrlOf(svc, el.href), dir, hint);
@@ -1694,5 +1704,5 @@ function run(electron, ctx) {
 
 module.exports = {
   run, keepOrFold, settleDownload, scrollCode, checkOpenUrl, wireHost, numberVerdict, inspectKind, retiredOf,
-  signinOf, framesOf, challenged, numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
+  signinOf, framesOf, challenged, numState, mergeNumbers, numberRefusal, notOpenError, loadNumbers, saveNumbers, pruneNumbers, flushNumbers, forgetNumbers, numbersFile, originSlug, genRefusal, NUMBERS_SCHEMA, changedOf, rowChanged, coveredRefusal, liveTarget, consequentialRefusal, passwordRefusal, enterRefusal, signinHold, lateMsFor, navOf, tickersOf, targetDiff, settleChange, LATE_CHANGE_MS, ORIGINS_MAX,
 };

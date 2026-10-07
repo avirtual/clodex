@@ -1388,6 +1388,25 @@ function GONE(nums) {
 })()`;
 }
 
+function livePoint(n) {
+  return `(() => {${DEEP}
+  ${REF(n)}
+  ${clickPoint.toString()}
+  ${KIND_LABEL}${CQ}${HIT_AT}
+  const r = el.getBoundingClientRect();
+  if (!r.width || !r.height) return null;
+  const at = clickPoint(el, r, document);
+  const hit = hitAt(at);
+  if (!coveredBy(el, hit)) return { x: at.x, y: at.y };
+  let hitN = null;
+  for (let e = hit; e && hitN == null; e = upOf(e)) {
+    const m = window.__cxOf && window.__cxOf.get(e);
+    if (m != null && window.__cxEls[m] && window.__cxEls[m].deref() === e) hitN = m;
+  }
+  return { covered: true, hitN, hitLabel: labelOf(hit).slice(0, 60) || hit.tagName.toLowerCase(), hitConsequential: cqOf(hit) };
+})()`;
+}
+
 function UNDER_POINT(n) {
   return `(() => {${DEEP}
   ${REF(n)}
@@ -1896,6 +1915,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, GONE, CHOICE_OF,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, LIVE_POINT: livePoint, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, GONE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
