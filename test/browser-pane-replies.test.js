@@ -195,6 +195,8 @@ test('replies: a click names the element the text resolved to and what the click
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" (matched by label) · same page · idle 0.8s');
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, byName: false }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s');
+  assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, clickOnly: true }),
+    '[agent:browser] clicked ebloc [31] clickable "Lista de plată" (clickable match) · same page · idle 0.8s');
   const dl = { file: '/Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf', bytes: 48213, mime: 'application/pdf', url: 'https://www.e-bloc.ro/lista?id=8' };
   assert.strictEqual(R.actReply('click', 'ebloc', cmd, { ...base, n: 31, download: dl }),
     '[agent:browser] clicked ebloc [31] clickable "Lista de plată" · same page · idle 0.8s · → download /Users/me/Library/Clodex/downloads/ebloc/lista-08.pdf · 48,213 B · application/pdf · from https://www.e-bloc.ro/lista?id=8');

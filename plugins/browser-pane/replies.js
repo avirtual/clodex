@@ -349,7 +349,7 @@ function actReply(sub, service, cmd, r) {
   let head;
   if (sub === 'click') {
     const n = r.n != null ? r.n : cmd.n;
-    head = `clicked ${service} [${n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}${r.byName ? ' (matched by label)' : ''}${r.textChanged ? ` (text under [${n}] changed since your read)` : ''}`;
+    head = `clicked ${service} [${n}]${r.fresh ? ' (numbered now)' : ''} ${r.kind} ${JSON.stringify(String(r.label || ''))}${r.byName ? ' (matched by label)' : ''}${r.clickOnly ? ' (clickable match)' : ''}${r.textChanged ? ` (text under [${n}] changed since your read)` : ''}`;
   }
   else if (sub === 'type') head = `typed ${service} [${cmd.n}] (${[...String(cmd.text)].length} chars)${cmd.enter ? ' + Enter' : ''}`;
   else if (sub === 'select') head = `selected ${service} [${cmd.n}] = ${JSON.stringify(String(r.text || ''))}`;

@@ -1163,6 +1163,8 @@ test('child: a --text target matched by label carries byName onto the click and 
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('byName: !!found.byName'));
   assert.ok(child.includes('if (byName) out.byName = true;'));
+  assert.ok(child.includes('clickOnly: !!found.clickOnly'));
+  assert.ok(child.includes('if (clickOnly) out.clickOnly = true;'));
   assert.ok(child.includes('...(byName ? { byName: true } : {})'));
 });
 

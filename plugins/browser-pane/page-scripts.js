@@ -1288,9 +1288,10 @@ function findText(text, state) {
     found.push({ el: c, text: t, exact: t.toLowerCase() === want });
   }
   const exact = found.filter(x => x.exact);
-  const pick = exact.length ? exact : [...found, ...loose];
+  const pick = exact.length ? exact : found.length ? found : loose;
+  const clickOnly = pick.length > 0 && loose.length > 0 && !pick.some(x => x.loose);
   const clipT = t => (t.length > 60 ? t.slice(0, 59) + '…' : t);
-  return { count: pick.length, byName, hits: pick.slice(0, 5).map(h => {
+  return { count: pick.length, byName, clickOnly, hits: pick.slice(0, 5).map(h => {
     if (h.loose) return { n: null, loose: true, text: clipT(h.text) };
     const s = keyed.get(h.el);
     const ref = known[s] != null && window.__cxEls[known[s]];
