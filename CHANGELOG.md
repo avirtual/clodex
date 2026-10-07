@@ -103,6 +103,7 @@ blocks a release.
 - Hooks: the SubagentStart brief carries a per-subagent trust nonce and a `subq.sh` hook drains a per-subagent queue — groundwork for `[agent:sub]`
 - Browser pane: a nameless consequential button (`[n] button ⚠`) now reaches the ⚠ digest and `note`'s `[n]` resolver, a tab open (`open gh:riot <url>`) no longer re-stamps the profile's "opened as" host, Settings' Show and Hand over fall back to a profile's live tab when its window is closed and the row reads `open · tabs: …`, and the subagent tab rule says the pane (any seat) must have the profile open.
 - Browser pane: a `--text` matching one clickable and several plain-text nodes clicks the clickable (`(clickable match)`), a click that removes elements says `removed: cookie banner, calendar (31 elements)`, a filter-chip Remove is not ⚠, inspect's `in:` reaches the drawer, a busy wait names three held paths, and `note … [n]` resolves a nameless element.
+- Messaging: `[agent:sub <name|agent_id>] body` reaches one of the seat's own running subagents mid-run — it lands tagged `[parent …]` after the subagent's next tool call, and a subagent that finishes or is stopped first bounces the note back to the seat as undelivered. With it, the SendMessage tool can come off seats that only used it to redirect their own subagents.
 
 ## 5.112.2 — 2026-10-04
 

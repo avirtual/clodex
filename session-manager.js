@@ -254,6 +254,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
+const { resolveSubagent } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
@@ -426,7 +427,7 @@ const DENIED_SPILL_CAP = 3;
 function deniedBodyDisposition(intent) {
   if (!intent || !intent.body) return { how: 'none', label: null };
   switch (intent.type) {
-    case 'dm': case 'shout': case 'remind':
+    case 'dm': case 'sub': case 'shout': case 'remind':
       return { how: 'spill', label: intent.type };
     case 'memory':
       if (intent.sub === 'remember') return { how: 'spill', label: 'memory remember' };
@@ -713,6 +714,7 @@ function createSessionManager(deps) {
 
   const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
+  const subqDirFor = (n) => path.join(path.dirname(pathFor(REGISTRY_DIR, n, 'intentSocket')), 'subq');
 
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
@@ -5337,6 +5339,26 @@ function createSessionManager(deps) {
       if (scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
 
       switch (intent.type) {
+        case 'sub': {
+          const dir = subqDirFor(senderName);
+          const id = resolveSubagent(dir, intent.target);
+          if (!id || intent.target.includes('@')) {
+            if (session) {
+              this._injectText(session,
+                `[agent:sub] NOT delivered: no running subagent "${intent.target}" on this seat (the name you gave the Agent tool, or its result's agent_id; a name is known only once the Agent tool has returned).`,
+                { parkable: true });
+            }
+            this._broadcast('ipc-message', {
+              type: 'sub', from: senderName, to: intent.target,
+              body: `UNDELIVERED (no such subagent): ${intent.body}`,
+            });
+            break;
+          }
+          fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(path.join(dir, id), `${intent.body}\n`, { mode: 0o600, flag: 'a' });
+          this._broadcast('ipc-message', { type: 'sub', from: senderName, to: `${senderName}/${id}`, body: intent.body });
+          break;
+        }
         case 'dm': {
           intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
@@ -6612,6 +6634,7 @@ function createSessionManager(deps) {
             if (!await waitExit(name)) throw new Error('old process did not exit in time');
           }
           if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
+          fs.rmSync(subqDirFor(name), { recursive: true, force: true });
           const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
           if (resumeId) this._freshBakeOnce.add(name);
           // Carry the ticket-seat fields across the restart: dropped, a reloaded ticket seat reads as a standing
