@@ -234,6 +234,18 @@ test('the verb is materialized as executables clodex-send and clodex in <root>/b
   assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net', 'fs', 'path'], 'zero local requires: it runs flat from bin/');
 });
 
+test('the materialized alias shim prints the deprecation line and the clodex-send shim does not', () => {
+  const { spawnSync } = require('node:child_process');
+  const r = materializeSeatVerb({ root: mkTmpRoot('verb-argv1-'), srcDir: ROOT });
+  const run = (p) => spawnSync(process.execPath, [p, '--help'], { encoding: 'utf8', env: { PATH: process.env.PATH } });
+  const alias = run(r.aliasPath);
+  const send = run(r.path);
+  assert.strictEqual(alias.status, 0, alias.stderr);
+  assert.strictEqual(send.status, 0, send.stderr);
+  assert.ok(alias.stderr.includes('clodex: deprecated name, use clodex-send'), alias.stderr);
+  assert.ok(!send.stderr.includes('clodex: deprecated name'), send.stderr);
+});
+
 test('the deprecated name prints one stderr line first and changes nothing else', async () => {
   const DEP = 'clodex: deprecated name, use clodex-send\n';
   const seat = await fakeSeat(() => ({ ok: true, reply: '[agent:peers] b' }));

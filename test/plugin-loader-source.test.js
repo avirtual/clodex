@@ -108,7 +108,7 @@ function mkHttpsStub(script, commitsUrls) {
 // listing that root then sees only the dirs it caused: node --test runs test
 // files in parallel processes, and a scan of the shared $TMPDIR attributed
 // another process's live fetch dir to this one (t742).
-function mkSourceLoader({ script, coreIds = [], commitsUrls } = {}) {
+function mkSourceLoader({ script, coreIds = [], coreExtra = {}, commitsUrls } = {}) {
   const base = mkTmpRoot('clodex-loader-source-');
   const coreDir = path.join(base, 'core');
   const userDir = path.join(base, 'plugins');
@@ -119,7 +119,7 @@ function mkSourceLoader({ script, coreIds = [], commitsUrls } = {}) {
   for (const id of coreIds) {
     const d = path.join(coreDir, id);
     fs.mkdirSync(d, { recursive: true });
-    fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify(manifestFor(id)));
+    fs.writeFileSync(path.join(d, 'manifest.json'), JSON.stringify(manifestFor(id, coreExtra)));
     fs.writeFileSync(path.join(d, 'engine.js'), engineFile);
   }
   let ui = {};
@@ -280,6 +280,15 @@ test('installFromSource refuses a core id and leaves the user root untouched', a
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /built into Clodex/);
   assert.ok(!fs.existsSync(path.join(userDir, 'workbench')), 'nothing was written to the user root');
+});
+
+test('installFromSource refuses the id of a built-in plugin this host skipped for an unmet requires', async () => {
+  const bytes = buildTarballBytes('abc1234', 'needs');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }], coreIds: ['needs'], coreExtra: { requires: ['electron'] } });
+  assert.ok(!loader.discover().some((rec) => rec.id === 'needs'), 'ENTER: the core copy is skipped on this host');
+  const r = await loader.installFromSource('owner/repo');
+  assert.deepStrictEqual(r, { ok: false, error: '"needs" is the id of a plugin built into Clodex — give the source plugin a different id.' });
+  assert.ok(!fs.existsSync(path.join(userDir, 'needs')), 'nothing was written to the user root');
 });
 
 test('installFromSource refuses an existing real directory without a sidecar, byte-identical after', async () => {
