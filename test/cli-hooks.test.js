@@ -1752,6 +1752,10 @@ test('subq hook: a subagent payload with a queue drains even when tool_response 
   assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] body' } });
   assert.strictEqual(fs.existsSync(path.join(dir, 'a606bb8c5bfa9764e')), false);
   assert.strictEqual(fs.existsSync(path.join(dir, 'names', 'sub2')), false);
+  fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'body\n');
+  const viaGate = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_response: { agent_id: 'aother-0123456789abcdef' } });
+  assert.deepStrictEqual(JSON.parse(viaGate), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] body' } });
+  assert.strictEqual(fs.existsSync(path.join(dir, 'a606bb8c5bfa9764e')), false);
 });
 
 test('subq recordName: a tool_response carrying only agent_id is written', () => {
