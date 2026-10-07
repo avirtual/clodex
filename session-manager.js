@@ -127,7 +127,7 @@ const {
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
-const { defuseSenderLines } = require('./review-gate');
+const { defuseSenderLines, defangTeammateTag } = require('./review-gate');
 
 const SCRATCH_TAIL_SCAN = 64 * 1024;
 const SCRATCH_MARK_TAIL = 512;
@@ -5363,7 +5363,7 @@ function createSessionManager(deps) {
             break;
           }
           fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-          fs.writeFileSync(path.join(dir, id), `${intent.body}\n`, { mode: 0o600, flag: 'a' });
+          fs.writeFileSync(path.join(dir, id), `${defangTeammateTag(intent.body)}\n`, { mode: 0o600, flag: 'a' });
           this._broadcast('ipc-message', { type: 'sub', from: senderName, to: `${senderName}/${id}`, body: intent.body });
           break;
         }
@@ -8541,6 +8541,7 @@ function createSessionManager(deps) {
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
           reviewGate: isClaude,
+          onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: from [^\]]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
