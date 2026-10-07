@@ -14,7 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const { createPluginLoader, validateManifest, isNewerVersion } = require('../plugin-loader');
-const { HOST_API_VERSION, RESERVED_PLUGIN_IDS, isValidPluginId } = require('../plugin-api');
+const { HOST_API_VERSION, RESERVED_PLUGIN_IDS, isValidPluginId, PLUGIN_REQUIREMENTS, requiresOf } = require('../plugin-api');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A real temp plugins/ tree. Real fs rather than a mock because the thing under
@@ -56,6 +56,7 @@ function mkLoader(pluginsDir, uiState = {}, overrides = {}) {
     getUiSettings: () => ui.store,
     log: { info: (scope, msg) => logged.push(`${scope}: ${msg}`) },
     requireModule: overrides.requireModule || ((p) => require(p)),
+    hostFeatures: overrides.hostFeatures,
   });
   return { loader, ui, logged };
 }
@@ -114,6 +115,67 @@ test('validateManifest refuses invalid ids, missing entry, and an empty entry', 
   assert.match(validateManifest(noEntry, 'alpha'), /entry is missing/);
   assert.match(validateManifest({ ...OK_MANIFEST, entry: {} }, 'alpha'), /neither an engine nor a renderer/);
   assert.match(validateManifest(null, 'alpha'), /not a JSON object/);
+});
+
+test('validateManifest accepts a requires list drawn from the vocabulary, or none', () => {
+  assert.strictEqual(validateManifest({ ...OK_MANIFEST, requires: ['electron'] }, 'alpha'), null);
+  assert.strictEqual(validateManifest({ ...OK_MANIFEST, requires: [] }, 'alpha'), null);
+  assert.strictEqual(validateManifest({ ...OK_MANIFEST, requires: null }, 'alpha'), null);
+});
+
+test('validateManifest refuses a malformed requires by name', () => {
+  assert.match(validateManifest({ ...OK_MANIFEST, requires: 'electron' }, 'alpha'), /must be an array/);
+  const rows = [
+    [['Electron'], 'invalid requirement: "Electron"'],
+    [['desktop'], 'invalid requirement: "desktop"'],
+    [[1], 'invalid requirement: 1'],
+    [[{}], 'invalid requirement: {}'],
+  ];
+  for (const [requires, want] of rows) {
+    const why = validateManifest({ ...OK_MANIFEST, requires }, 'alpha');
+    assert.ok(why && why.startsWith(want), `${JSON.stringify(requires)} → ${why}`);
+  }
+});
+
+test('PLUGIN_REQUIREMENTS and requiresOf', () => {
+  assert.deepStrictEqual([...PLUGIN_REQUIREMENTS], ['electron']);
+  assert.deepStrictEqual(requiresOf({}), []);
+  assert.deepStrictEqual(requiresOf({ requires: 'electron' }), []);
+  assert.deepStrictEqual(requiresOf({ requires: ['electron'] }), ['electron']);
+});
+
+function requiresTree() {
+  const files = { 'engine.js': 'module.exports.activate = () => {};', 'renderer.js': '', 'style.css': 'x{}' };
+  return mkTree({
+    alpha: { manifest: OK_MANIFEST, files },
+    needs: { manifest: { ...OK_MANIFEST, id: 'needs', requires: ['electron'] }, files },
+  });
+}
+
+test('a host without a required feature skips the plugin everywhere, with no problems row', () => {
+  const { loader, logged } = mkLoader(requiresTree(), {}, { hostFeatures: [] });
+  assert.deepStrictEqual(loader.discover().map((p) => p.id), ['alpha']);
+  const host = fakeHost();
+  assert.deepStrictEqual(loader.loadAll(host).map((r) => r.id), ['alpha']);
+  assert.deepStrictEqual(host.registered.map((r) => r.id), ['alpha']);
+  const st = loader.status();
+  assert.deepStrictEqual(st.plugins.map((p) => p.id), ['alpha']);
+  assert.deepStrictEqual(st.problems, []);
+  assert.ok(logged.includes('plugin: skipping needs: requires electron, which this host does not provide'), logged.join('\n'));
+  assert.strictEqual(loader.rendererInfo('needs'), null);
+});
+
+test('a host providing the required feature loads the plugin', () => {
+  const { loader } = mkLoader(requiresTree(), {}, { hostFeatures: ['electron'] });
+  assert.deepStrictEqual(loader.discover().map((p) => p.id), ['alpha', 'needs']);
+  const host = fakeHost();
+  loader.loadAll(host);
+  assert.deepStrictEqual(host.registered.map((r) => r.id), ['alpha', 'needs']);
+});
+
+test('a loader given no hostFeatures provides none', () => {
+  const { loader } = mkLoader(requiresTree());
+  assert.deepStrictEqual(loader.discover().map((p) => p.id), ['alpha']);
 });
 
 // ── t8 F4: `enabled` is a RESERVED id, not merely a documented one ──────────

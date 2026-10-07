@@ -42,7 +42,7 @@ function mkCandidate(id, { manifest = manifestFor(id), dirName = id } = {}) {
   return dir;
 }
 
-function mkLoaderWithUserRoot({ core = null } = {}) {
+function mkLoaderWithUserRoot({ core = null, hostFeatures } = {}) {
   const base = mkTmpRoot('clodex-userroot-');
   const userDir = path.join(base, 'plugins');
   const coreDir = path.join(base, 'core');
@@ -63,6 +63,7 @@ function mkLoaderWithUserRoot({ core = null } = {}) {
     getUiSettings: () => ({ get: () => ui, set: (patch) => { ui = { ...ui, ...patch }; } }),
     log: { info: () => {} },
     requireModule: (p) => require(p),
+    hostFeatures,
   });
   return { loader, userDir, coreDir };
 }
@@ -86,6 +87,15 @@ test('validateCandidate accepts a well-formed folder and reports what it found',
     hasRenderer: true,
     announce: null,
   });
+});
+
+test('validateCandidate refuses a plugin whose requirement this host lacks', () => {
+  const dir = mkCandidate('alpha', { manifest: manifestFor('alpha', { requires: ['electron'] }) });
+  assert.deepStrictEqual(mkLoaderWithUserRoot().loader.validateCandidate(dir), {
+    ok: false,
+    error: 'requires electron, which this host does not provide — install it on the desktop app',
+  });
+  assert.strictEqual(mkLoaderWithUserRoot({ hostFeatures: ['electron'] }).loader.validateCandidate(dir).ok, true);
 });
 
 test('validateCandidate normalises a trailing slash or a .. segment before the entry-path check', () => {
