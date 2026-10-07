@@ -1419,3 +1419,57 @@ test('_execState answers null for a shell that does not exist', () => {
   const { w } = mk();
   assert.strictEqual(w._execState('ws-1', 'nobody'), null);
 });
+
+test('t1703: an exec token rides the settled result, and its absence adds no key', () => {
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  const r = w.exec('ws-1', 'alice', 'ls', 'tok-1');
+  assert.deepStrictEqual(r, { ok: true, command: 'ls' });
+  spawn.spawned[0].emit(`${C('ls')}x\n${D(1)}${A}`);
+  assert.strictEqual(results.length, 1);
+  assert.deepStrictEqual(results[0], ['alice', {
+    status: 'ok',
+    record: { command: 'ls', exitCode: 1, output: 'x\n', depth: 0 },
+    command: 'ls',
+    late: false,
+    token: 'tok-1',
+  }]);
+});
+
+test('t1703: the timeout notice and the late D both carry the token', () => {
+  const { w, spawn, results, timers } = mk({ execTimeoutMs: 30000 });
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'sleep 900', 'tok-t');
+  execTimers(timers)[0].fn();
+  spawn.spawned[0].emit(`${C('sleep 900')}done\n${D(0)}`);
+  assert.deepStrictEqual(results[0], ['alice', {
+    status: 'timeout', command: 'sleep 900', afterMs: 30000, token: 'tok-t',
+  }]);
+  assert.strictEqual(results[1][1].token, 'tok-t');
+  assert.strictEqual(results[1][1].late, true);
+});
+
+for (const order of [['ws-2', 'ws-1'], ['ws-1', 'ws-2']]) {
+  test(`t1703: one seat in two windows keeps each token with its own window (settle ${order.join(' then ')})`, () => {
+    const { w, spawn, results } = mk();
+    w.spawn('ws-1', 'alice', {});
+    w.spawn('ws-2', 'alice', {});
+    assert.strictEqual(w.exec('ws-1', 'alice', 'x', 'tok-A').ok, true);
+    assert.strictEqual(w.exec('ws-2', 'alice', 'x', 'tok-B').ok, true);
+    const proc = { 'ws-1': spawn.spawned[0], 'ws-2': spawn.spawned[1] };
+    const code = { 'ws-1': 1, 'ws-2': 2 };
+    for (const ws of order) proc[ws].emit(`${C('x')}${ws}\n${D(code[ws])}${A}`);
+    const tok = { 'ws-1': 'tok-A', 'ws-2': 'tok-B' };
+    assert.deepStrictEqual(results.map(([seat, res]) => [seat, res.token, res.record.exitCode, res.record.output]),
+      order.map((ws) => ['alice', tok[ws], code[ws], `${ws}\n`]));
+  });
+}
+
+test('t1703: dispose settles nothing for a tokened exec either', () => {
+  const { w, spawn, results } = mk();
+  w.spawn('ws-1', 'alice', {});
+  w.exec('ws-1', 'alice', 'sleep 900', 'tok-d');
+  w.dispose();
+  assert.strictEqual(spawn.spawned[0].killed, true);
+  assert.deepStrictEqual(results, []);
+});

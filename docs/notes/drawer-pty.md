@@ -37,3 +37,7 @@ Shared by both layers because the nested exec IS the local algorithm one hop
 away: the same three clocks, with `depth` choosing which prompt slot the release
 listens on. A special "skip the abandon once after install" path would be a
 second code path to get wrong for a saving of one prompt cycle.
+
+## dispose
+
+The second path that clears `pending` without `settle` (the first is the synchronous `write-failed`, which returns `ok:false` so no caller is waiting): a tokened exec outstanding at dispose gets no result.

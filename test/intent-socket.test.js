@@ -622,3 +622,95 @@ test('stamp: clodex behind a reserved word or a prefix command is stamped; clode
     assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
   }
 });
+
+test('t1703 a term reply waits 130 s and the socket is extended to 140 s', async () => {
+  const timers = [];
+  let extended = null;
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
+    dispatch: async () => {},
+    replyWaitMs: () => 130000,
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimer: () => {},
+  });
+  const pending = handle({ intent: '[agent:term exec] ls' }, { closed: () => false, extend: (ms) => { extended = ms; } });
+  for (let i = 0; i < 5 && !timers.length; i++) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(timers[0].ms, 130000);
+  assert.strictEqual(extended, 140000);
+  timers[0].fn();
+  assert.strictEqual((await pending).ok, true);
+});
+
+test('t1703 a term client gone before the result: replyTo refuses it, leaving the DM fallback to the engine', async () => {
+  let captured = null;
+  let arrived = null;
+  const dispatched = new Promise((r) => { arrived = r; });
+  let ctlRef = null;
+  const inner = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
+    dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
+    replyWaitMs: () => 130000,
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  const { srv, sockPath } = await server({
+    handle: (r, ctl) => { ctlRef = ctl; return inner(r, ctl); },
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  try {
+    const c = net.createConnection(sockPath);
+    c.on('error', () => {});
+    c.on('connect', () => c.write(req({ cred: CRED, intent: '[agent:term exec] ls' })));
+    await dispatched;
+    c.destroy();
+    for (let i = 0; i < 500 && !ctlRef.closed(); i++) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(ctlRef.closed(), true, 'ENTER: the server saw the hang-up');
+    assert.strictEqual(captured('[terminal] ls\nexit 0'), false);
+  } finally { srv.stop(); }
+});
+
+test('t1703 a term client gone after its result was accepted: the reply is built and lost, nothing else happens', async () => {
+  let captured = null;
+  let arrived = null;
+  const dispatched = new Promise((r) => { arrived = r; });
+  let built = null;
+  const builtP = new Promise((r) => { built = r; });
+  let release = null;
+  const gone = new Promise((r) => { release = r; });
+  let ctlRef = null;
+  let responded = false;
+  const inner = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
+    dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
+    replyWaitMs: () => 130000,
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  const { srv, sockPath } = await server({
+    handle: async (r, ctl) => {
+      ctlRef = ctl;
+      const res = await inner(r, ctl);
+      built(res);
+      await gone;
+      responded = true;
+      return res;
+    },
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  try {
+    const got = [];
+    const c = net.createConnection(sockPath);
+    c.on('error', () => {});
+    c.on('data', (d) => got.push(String(d)));
+    c.on('connect', () => c.write(req({ cred: CRED, intent: '[agent:term exec] ls' })));
+    await dispatched;
+    const text = '[terminal] ls\nexit 0';
+    assert.strictEqual(captured(text), true, 'accepted into the reply');
+    assert.deepStrictEqual(await builtP, { ok: true, status: 'ok', reply: text });
+    c.destroy();
+    for (let i = 0; i < 500 && !ctlRef.closed(); i++) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(ctlRef.closed(), true, 'ENTER: the server saw the hang-up');
+    release();
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(responded, true, 'respond ran on the gone socket without throwing');
+    assert.deepStrictEqual(got, [], 'the client received nothing');
+  } finally { srv.stop(); }
+});

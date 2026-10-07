@@ -199,6 +199,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     const mismatch = foreignRecord(p, outcome && outcome.record);
     const res = { ...outcome, command: p.command, late: !!p.timedOut };
     if (p.inside) res.inside = p.inside;
+    if (p.token) res.token = p.token;
     if (mismatch) res.mismatch = true;
     try { onExecResult(rec.seat, res); } catch {}
     return true;
@@ -345,6 +346,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       if (onExecResult) {
         const notice = { status: 'timeout', command: p.command, afterMs: EXEC_TIMEOUT };
         if (p.inside) notice.inside = p.inside;
+        if (p.token) notice.token = p.token;
         try { onExecResult(rec.seat, notice); } catch {}
       }
     }, EXEC_TIMEOUT);
@@ -392,7 +394,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
-    exec(windowId, seat, command) {
+    exec(windowId, seat, command, token) {
       if (!seat) return { ok: false, code: 'no-seat' };
       const vet = vetCommand ? vetCommand(command) : { ok: true, command };
       if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
@@ -434,6 +436,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       }
 
       const p = { command: vet.command, timedOut: false, depth, inside };
+      if (token) p.token = token;
       rec.pending = p;
       if (depth === 1) {
         if (!rec.remote || rec.remote.seq !== rec.marks.outerSeq()) {

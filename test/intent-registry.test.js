@@ -1369,3 +1369,10 @@ test('t1678: sub parses target + greedy body, is a core verb and a near-miss nam
   assert.strictEqual(registry.intentEnabledFor('sub', ['dm']), false);
   assert.strictEqual(registry.intentEnabledFor('sub', null), true);
 });
+
+test('t1703 a term reply is refused only on the verb\'s own refusal prefix; a terminal result is ok whatever its exit', () => {
+  const { classifyReplyLine } = registry;
+  assert.strictEqual(classifyReplyLine('term', '[agent:term] you already have `ls` running in your terminal — wait for its result before sending another.'), 'refused');
+  assert.strictEqual(classifyReplyLine('term', '[terminal] ls\nexit 1\nboom'), 'ok');
+  assert.strictEqual(classifyReplyLine('term', '[agent:term] error: x'), 'refused');
+});

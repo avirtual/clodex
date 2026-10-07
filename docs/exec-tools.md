@@ -202,6 +202,14 @@ program that is not a shell, still refuse by name with nothing typed.
 A closed tab no longer refuses: the shell is opened on demand in the seat's cwd
 and shows in the tab, with its output, when the operator opens it.
 
+Sent through the seat socket (the `clodex` CLI, or any caller inside the reply
+scope), the result is the socket reply in the same turn, the same text the DM
+would carry; typed in a turn it is still the `[terminal]` DM. The reply waits 130 s
+against the terminal's 120 s silence notice, so for a long command the notice is
+the in-turn answer and the eventual output follows as a DM. A disconnect after the
+result was accepted into the reply loses it: completion and output are unknown,
+so look at the terminal and do not re-run it automatically.
+
 ## Known v1 limitations / growth path
 
 - **Invoker identity is self-supplied.** The agent passes its own `agent` name;

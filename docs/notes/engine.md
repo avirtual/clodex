@@ -84,6 +84,14 @@ either report a result or hedge ("whether it ran is unknown"). `write-failed` an
 `it was meant for <session>` instead; "ran inside" one line above "nothing ran"
 is the same confidently-wrong cause in a different dress.
 
+The in-turn reply waiter (`termWaiters`) is keyed by a per-execution token, not by
+seat: `moveToWorkspace` changes a seat's workspace without killing the old drawer
+PTY, and drawer PTYs with their pending records are keyed by window+seat, so one
+seat can hold two pending execs and a seat-keyed waiter would answer one call with
+the other's output. The waiter is registered before `drawerPtys.exec` so a settle
+inside `exec` cannot miss it, and `shutdown` clears the map rather than settling it:
+drawer-pty's `dispose` delivers nothing, and the socket client sees its connection close.
+
 ## diagLines
 
 node-pty ships its `spawn-helper` for macOS only, so the helper path, its
