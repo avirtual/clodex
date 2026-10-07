@@ -362,6 +362,31 @@ test('t1703 a refused exec drops its waiter at once', () => {
   assert.strictEqual(delivered.length, 1);
 });
 
+test('t1704 a thrown exec drops its waiter and rethrows', async () => {
+  reports('all');
+  const { delivered, sess } = t1703Seat();
+  const m = engine.manager;
+  const origExec = stub.exec;
+  stub.exec = (...a) => { stub.calls.push(a); throw new Error('boom'); };
+  const orig = m._handleIntentBody;
+  m.sessions.set(sess.name, sess);
+  m._handleIntentBody = () => m._handleTermIntent(sess, 'exec', 'ls');
+  const got = [];
+  const replyTo = (t) => { got.push(t); return true; };
+  try {
+    await assert.rejects(m._handleIntent('alice', { type: 'term', sub: 'exec', body: 'ls' }, { replyTo }), /boom/);
+  } finally {
+    stub.exec = origExec;
+    m._handleIntentBody = orig;
+    m.sessions.delete(sess.name);
+  }
+  const token = stub.calls.at(-1)[3];
+  assert.strictEqual(typeof token, 'string', 'ENTER: exec received a token');
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, token });
+  assert.deepStrictEqual(got, []);
+  assert.strictEqual(delivered.length, 1);
+});
+
 test('t1703 the timeout ladder: drawer-pty < reply wait < socket < client', () => {
   const { TERM_EXEC_TIMEOUT_MS, TERM_REPLY_WAIT_MS } = require('../drawer-avail');
   const { INTENT_SOCKET_TIMEOUT_MS } = require('../intent-socket');

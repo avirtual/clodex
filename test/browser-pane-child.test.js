@@ -1072,6 +1072,21 @@ test('page scripts: the short-root fallback scores an element with no layout box
   assert.strictEqual(score({ getClientRects: () => [{}], innerText: 'x'.repeat(500), querySelectorAll: () => [] }), 500);
 });
 
+test('page scripts: a display:contents read root is kept, a boxless plain root is still skipped', () => {
+  const src = scripts.READ_TEXT(false);
+  assert.ok(src.includes("find(r => r.getClientRects().length || getComputedStyle(r).display === 'contents')"));
+  const line = lineOf(src, 'let root = forced ||');
+  const pick = new Function('document', 'getComputedStyle', 'forced', `${line}\nreturn root;`);
+  const main = { getClientRects: () => [], style: { display: 'contents' } };
+  const p = { getClientRects: () => [{}], style: { display: 'block' } };
+  const document = { querySelectorAll: () => [main] };
+  const gcs = (e) => e.style;
+  assert.strictEqual(pick(document, gcs, null), main);
+  main.style.display = 'block';
+  assert.strictEqual(pick(document, gcs, null), null);
+  assert.strictEqual(pick({ querySelectorAll: () => [main, p] }, gcs, null), p);
+});
+
 function lineOf(src, head) {
   const i = src.indexOf(head);
   return src.slice(i, src.indexOf('\n', i));
@@ -2796,7 +2811,7 @@ test('page scripts: READ_TEXT skips a non-rendered READ_ROOT_SEL match and reads
   const { text } = run(scripts.READ_TEXT(false), node('body'), [hiddenMain, shownMain]);
   assert.ok(text.includes('SHOWN-MAIN'), text);
   assert.ok(!text.includes('HIDDEN-MAIN'), text);
-  assert.ok(scripts.READ_TEXT(false).includes(`let root = forced || [...document.querySelectorAll(${JSON.stringify(scripts.READ_ROOT_SEL)})].find(r => r.getClientRects().length) || null;`));
+  assert.ok(scripts.READ_TEXT(false).includes(`let root = forced || [...document.querySelectorAll(${JSON.stringify(scripts.READ_ROOT_SEL)})].find(r => r.getClientRects().length || getComputedStyle(r).display === 'contents') || null;`));
 });
 
 test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {

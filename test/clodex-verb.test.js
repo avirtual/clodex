@@ -244,6 +244,12 @@ test('--help documents the streams and the exit codes', async () => {
   assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex: …`\), 2 usage,\n\s+3 refused \(stderr `clodex: …`\), 4 no socket, 5 timeout/);
 });
 
+test('HELP wraps every line at 100 columns and keeps the terminal-command sentence intact', () => {
+  const long = verb.HELP.split('\n').filter((l) => l.length > 100);
+  assert.deepStrictEqual(long, []);
+  assert.match(verb.HELP, /up to 130 s:\ngive Bash a 150 s timeout for a long one\./);
+});
+
 test('the client outlives the largest server-side plugin wait by more than the socket slack', () => {
   const { PLUGIN_REPLY_WAIT_MAX_MS } = require('../intent-registry');
   const { INTENT_SOCKET_TIMEOUT_MS } = require('../intent-socket');
