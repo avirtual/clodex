@@ -1579,7 +1579,7 @@ function run(electron, ctx) {
     }
     if (text == null && el == null) throw codedError('TIMEOUT', `the ${name} page did not answer the read (document replaced?) — read again`);
     const allFrames = framesOf(wc); const inlined = new Set(got && Array.isArray(got.inlined) ? got.inlined : []); const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));
-    const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;
+    const nestedN = got && Array.isArray(got.nested) ? Math.min(20, got.nested.reduce((a, b) => a + (Number.isInteger(b) && b > 0 ? b : 0), 0)) : 0;
     frames.push(...Array(nestedN).fill('nested'));
     const login = challenged(await probe(svc), allFrames, wc.getTitle());
     const elements = el && Array.isArray(el.lines) ? el.lines : [];
