@@ -383,6 +383,7 @@ function createPluginLoader(deps) {
 
   let discoveryProblems = [];
   let discoveryShadowed = [];
+  const skippedCore = new Set();
 
   // A symlinked plugin directory is FOLLOWED. readdirSync(withFileTypes) reports
   // a symlink-to-directory as isSymbolicLink() and NOT isDirectory(), so the
@@ -462,7 +463,11 @@ function createPluginLoader(deps) {
       const escapes = checkEntryPaths(path, dir, manifest);
       if (escapes) { logIt(`skipping ${ent.name}: ${escapes}`); note(ent.name, escapes); continue; }
       const unmet = requiresOf(manifest).find((r) => !features.has(r));
-      if (unmet) { logIt(`skipping ${ent.name}: requires ${unmet}, which this host does not provide`); continue; }
+      if (unmet) {
+        logIt(`skipping ${ent.name}: requires ${unmet}, which this host does not provide`);
+        if (root.id === 'core') skippedCore.add(manifest.id);
+        continue;
+      }
       const entry = manifest.entry || {};
       const rec = {
         id: manifest.id,
@@ -500,6 +505,7 @@ function createPluginLoader(deps) {
   }
 
   function discover() {
+    skippedCore.clear();
     const problems = [];
     const shadowed = [];
     const claimed = new Map(); // id -> { rec, index } — the copy currently winning
@@ -885,7 +891,7 @@ function createPluginLoader(deps) {
     const id = r.manifest.id;
     const root = ensureUserRoot();
     if (!root) { rmQuiet(r.work); return { ok: false, error: 'no user plugin root configured' }; }
-    const core = discover().find((rec) => rec.id === id && rec.root === 'core');
+    const core = discover().find((rec) => rec.id === id && rec.root === 'core') || skippedCore.has(id);
     if (core) {
       rmQuiet(r.work);
       return { ok: false, error: `"${id}" is the id of a plugin built into Clodex — give the source plugin a different id.` };
@@ -1046,6 +1052,7 @@ function createPluginLoader(deps) {
     const root = ensureUserRoot();
     const recs = discover();
     const core = new Set(recs.filter((rec) => rec.root === 'core').map((rec) => rec.id));
+    for (const id of skippedCore) core.add(id);
     const versions = new Map(recs.map((rec) => [rec.id, rec.manifest.version || null]));
     const bare = {
       installed: 'none',
