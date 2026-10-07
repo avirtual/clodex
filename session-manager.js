@@ -6298,7 +6298,7 @@ function createSessionManager(deps) {
           endRun('failed', body);
           fail(body);
         }));
-        child.on('exit', (code, signal) => finish(() => {
+        child.on('close', (code, signal) => finish(() => {
           if (code === 0) {
             // A widened def (replyMaxBytes) replies from the top of stderr because its output is a listing
             // whose last line is a footer; the narrow default keeps the last line, which is its digest.

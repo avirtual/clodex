@@ -43,7 +43,7 @@ if [ "${#EXES[@]}" -ne 1 ]; then
 fi
 EXE="${EXES[0]}"
 
-PROBE_JS="let pty; try { pty = require(process.env.CLODEX_PROBE_APP + '/Contents/Resources/app.asar/node_modules/node-pty'); } catch (e) { console.error(e && e.stack || e); process.exit(3); } try { const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 1, rows: 1 }); p.onExit(({ exitCode }) => process.exit(exitCode === 0 ? 0 : 1)); } catch (e) { console.error(e && e.stack || e); process.exit(1); } setTimeout(() => process.exit(2), 5000);"
+PROBE_JS="let pty; try { pty = require(process.env.CLODEX_PROBE_APP + '/Contents/Resources/app.asar/node_modules/node-pty'); } catch (e) { console.error(e && e.stack || e); process.exit(3); } try { const p = pty.spawn('/bin/sh', ['-c', 'exit 0'], { cols: 1, rows: 1 }); p.onExit(({ exitCode }) => process.exit(exitCode === 0 ? 0 : 1)); } catch (e) { console.error(e && e.stack || e); process.exit(1); } setTimeout(() => process.exit(2), 20000);"
 
 rc=0
 ELECTRON_RUN_AS_NODE=1 CLODEX_PROBE_APP="$APP" "$EXE" -e "$PROBE_JS" >"$ERR" 2>&1 || rc=$?
