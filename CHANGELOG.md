@@ -17,14 +17,12 @@ blocks a release.
 - The headless web host refuses to serve (503 naming the variable) when it is bound to a non-loopback address with no CLODEX_WEB_TOKEN, the same fail-closed rule the remote route has; CLODEX_WEB_INSECURE=1 overrides it for a container whose port map is the boundary, and the docker compose file sets it.
 - The helm chart and the Fargate stack pin the container's web GUI to loopback (CLODEX_WEB_HOST=127.0.0.1), so it is reached only through clodexctl web and never answers in-cluster or on the task ENI.
 
-### Messaging
-- A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
-- Seats on the streaming transport get the same teammate-message defang as pty seats.
-
 ### Browser pane
 - A numbered act on a closed service is refused as "not open" rather than "read first"; a click whose target the page scrolled back out of view says so (`[31] "label" scrolled out of view on np — read again`) instead of calling it gone; and a ⚠ refusal on a nameless control names its kind (`[12] button looks consequential (trading)`) the way the read digest does.
 
 ### Messaging and conversation mode
+- A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
+- Seats on the streaming transport get the same teammate-message defang as pty seats.
 - Conversation mode: a subagent report whose teammate id names no subagent this seat spawned earlier in its transcript is drawn with a warning badge, an `(unverified)` suffix and a tooltip saying so — a pasted `<teammate-message>` no longer passes as a real report.
 
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
