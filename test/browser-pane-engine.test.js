@@ -43,7 +43,7 @@ function boot(t, { headless = false, type = 'claude' } = {}) {
       },
     },
     getUiSettings: () => ({ get: () => ({}), set: () => {} }),
-    log: { info: (line) => logs.push(String(line)), error: () => {} },
+    log: { info: (scope, line) => logs.push(String(line)), error: () => {} },
     getNotifications: () => ({ add: (rec) => { notes.push(rec.body); return { id: notes.length }; } }),
     userDataPath: dir,
     fs, path,
