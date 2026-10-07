@@ -718,6 +718,16 @@ test('scheduler: a later open of a profile re-stamps the host it was opened as',
   assert.strictEqual(line, 'url: https://ghostfol.io/');
 });
 
+test('scheduler: a tab open keeps the host its profile was opened as', async () => {
+  const h = harness({
+    read: () => ({ ...PAGE, url: 'https://gist.github.com/', contentType: 'text/html', text: 'Gists', elements: [], truncated: false, frames: [], login: {} }),
+  });
+  await h.run([['hand-a', '[agent:browser open gh] https://github.com/x']]);
+  h.sched.onState({ service: 'gh', state: 'idle', url: 'https://github.com/x' });
+  await h.run([['hand-a', '[agent:browser open gh:riot] https://gist.github.com/']]);
+  assert.strictEqual(h.storage.get().services.gh.openedHost, 'github.com');
+});
+
 test('scheduler replies through the handle each submit was given, even two of one seat', async () => {
   const h = harness();
   const got = { first: [], second: [] };

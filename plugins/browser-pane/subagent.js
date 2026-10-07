@@ -4,7 +4,7 @@ const SUBS = ['open', 'read', 'click', 'type', 'select', 'key', 'scroll', 'back'
 const CONFIRM_SUBS = ['click', 'type', 'select', 'key'];
 const NO_RELEASE = "release is for the seat's main agent";
 const NO_CLOSE = "close is for the seat's main agent — a subagent may close only a tab it opened (close <profile>:<tab>)";
-const NO_TAB_OPEN = 'a subagent may open a tab only on a profile this seat already has open — ask the main agent to open <profile> first';
+const NO_TAB_OPEN = 'a subagent may open a tab only on a profile the pane already has open — ask the main agent to open <profile> first';
 const NO_CONFIRM = 'a subagent cannot confirm a consequential action — ask the main agent';
 const NO_FORGET = 'a subagent cannot forget a site note — ask the main agent';
 

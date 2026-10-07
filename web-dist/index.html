@@ -13219,7 +13219,7 @@ Its login, last page and downloads are deleted and it leaves this list.`;
           const tabbed = !!(s.tabs && s.tabs.length);
           const win = r.appendChild(el("span", "bp-window", tabbed ? null : windowText(s)));
           if (tabbed) {
-            win.appendChild(el("span", null, windowText(s) + " \xB7 "));
+            win.appendChild(el("span", null, (s.state === "closed" ? "open" : windowText(s)) + " \xB7 "));
             win.appendChild(el("span", "bp-tabs", "tabs: " + s.tabs.map((t) => t.name.split(":")[1] + " (" + t.state + ")").join(", ")));
           }
           const acts = el("span", "bp-actions");

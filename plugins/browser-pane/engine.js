@@ -57,25 +57,28 @@ function removePartition(dataDir, name) {
   return removeUnder(dataDir, name, partitionDir(dataDir, name));
 }
 
+const liveOf = (live, name) => { const v = live.get(name); if (v && v.state !== 'closed') return [name, v]; return [...live.entries()].find(([n, t]) => grammar.profileOf(n) === name && t.state !== 'closed') || null; };
+
 async function handOver({ scheduler, live, request, session }, req) {
   const { service, seat, instruction } = req || {};
   if (!grammar.NAME_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);
   const name = String(service);
   const h = session(String(seat || ''));
   if (!h || !h.isAlive() || (h.type !== 'claude' && h.type !== 'codex')) throw new Error(`no live claude or codex seat named ${seat}`);
-  const v = live.get(name);
-  if (!v || v.state === 'closed') throw new Error(`${name} has no open window — open it first`);
-  const granted = scheduler.grant(name, h.name);
+  const hit = liveOf(live, name);
+  if (!hit) throw new Error(`${name} has no open window — open it first`);
+  const [target, v] = hit;
+  const granted = scheduler.grant(target, h.name);
   let r;
   try {
-    r = (await request('handback', {}, { service: name })) || {};
+    r = (await request('handback', {}, { service: target })) || {};
   } catch (e) {
-    scheduler.restoreLease(name, h.name, granted && granted.prev, granted && granted.prevCurrent);
+    scheduler.restoreLease(target, h.name, granted && granted.prev, granted && granted.prevCurrent);
     return { ok: false, error: String((e && e.message) || e) };
   }
-  const now = live.get(name) || v;
-  h.inject(replies.handover(name, r.url || now.url, r.title || now.title, instruction));
-  return { ok: true, service: name, seat: h.name };
+  const now = live.get(target) || v;
+  h.inject(replies.handover(target, r.url || now.url, r.title || now.title, instruction));
+  return { ok: true, service: target, seat: h.name };
 }
 
 const realTimers = {
@@ -253,15 +256,15 @@ function activate(host) {
     if (!name) return { ok: false, error: 'no browser window is open' };
     if (!grammar.NAME_RE.test(String(name))) throw new Error(`bad service name: ${name}`);
     const notOpen = { ok: false, error: `${name} has no window open — Open it again` };
-    const v = live.get(String(name));
-    if (!v || v.state === 'closed') return notOpen;
+    const hit = liveOf(live, String(name));
+    if (!hit) return notOpen;
     try {
-      await operatorOp('show')(name);
+      await operatorOp('show')(hit[0]);
     } catch (e) {
       if (e && e.code === 'NOT_OPEN') return notOpen;
       throw e;
     }
-    return { ok: true, service: name };
+    return { ok: true, service: hit[0] };
   });
   const checkService = (service) => {
     if (!grammar.SERVICE_RE.test(String(service || ''))) throw new Error(`bad service name: ${service}`);

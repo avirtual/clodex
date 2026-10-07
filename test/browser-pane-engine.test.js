@@ -307,6 +307,13 @@ test('engine: show on a service with no window resolves the service\'s own refus
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });
 });
 
+test('engine: show on a profile whose only live window is a tab shows the tab', async (t) => {
+  const { engine, emit } = boot(t);
+  await emit('[agent:browser open x:riot] https://x.com/drive');
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['x'], 'desktop'), { ok: true, service: 'x:riot' });
+  assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });
+});
+
 test('engine idleStopNotice: the log line always, the toast only when windows closed', () => {
   assert.deepStrictEqual(engineMod.idleStopNotice(900000, 2), {
     log: 'browser child stopped after 15 min idle; 2 window(s) closed, sign-ins kept',
@@ -413,6 +420,16 @@ test('engine handOver: grant, then handback, then one inject — in that order',
     ['handback', 'utility'],
     ['inject', '[agent:browser] the operator opened utility at https://portal.example.com/bills ("My Bills") and handed it to you — check the total — start with [agent:browser read utility]'],
   ]);
+});
+
+test('engine handOver: a closed profile window hands over its live tab', async () => {
+  const { log, deps } = handHarness();
+  deps.live.set('utility', { state: 'closed' });
+  deps.live.set('utility:riot', { state: 'idle', url: 'about:blank', title: '' });
+  assert.deepStrictEqual(await engineMod.handOver(deps, { service: 'utility', seat: 'hand-a' }), { ok: true, service: 'utility:riot', seat: 'hand-a' });
+  assert.deepStrictEqual(log.slice(0, 2), [['grant', 'utility:riot', 'hand-a'], ['handback', 'utility:riot']]);
+  assert.strictEqual(log.length, 3);
+  assert.match(log[2][1], /utility:riot at https:\/\/portal\.example\.com\/bills \("My Bills"\)/);
 });
 
 test('engine handOver: a rejected child handback restores the previous lease and injects nothing', async () => {
