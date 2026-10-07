@@ -1021,6 +1021,10 @@ function run(electron, ctx) {
         if (clickOnly) out.clickOnly = true;
         if (rowChanged(svc.num && svc.num.lastRead, n, el.row)) out.textChanged = true;
         const done = await withChange(svc, pre, out, lateMsFor(op));
+        if (done.changed === 'text removed' && svc.num && svc.num.lastRead && !wc.isDestroyed()) {
+          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number)));
+          if (g && g.total) done.removed = g;
+        }
         if ((done.changed === '' || done.watched) && !wc.isDestroyed()) {
           const value = await inIsolated(wc, scripts.VALUE_CHOICE(n));
           if (value && value.kind === 'choice' && typeof value.label === 'string') {

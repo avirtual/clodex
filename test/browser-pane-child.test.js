@@ -1709,6 +1709,25 @@ function boxEl(tag, text, rect, parent = null) {
   return e;
 }
 
+test('GONE: counts read numbers now detached or hidden and groups them by their nearest named ancestor', () => {
+  const box = { left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 };
+  const banner = Object.assign(boxEl('div', '', box), { isConnected: false, getAttribute: (k) => (k === 'aria-label' ? 'Cookie banner' : null) });
+  const aside = boxEl('aside', '', box);
+  const els = [boxEl('button', 'Accept', box, banner), boxEl('a', 'Policy', box, banner), boxEl('a', 'Day 3', box, aside), boxEl('a', 'Live', box)];
+  els[0].isConnected = false;
+  els[1].isConnected = false;
+  els[2].style = { visibility: 'visible', display: 'none', opacity: '1' };
+  const ctx = {
+    document: { querySelectorAll: () => [], documentElement: {}, body: null }, getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' },
+    innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0, location: { href: 'http://x/', origin: 'http://x' },
+    __cxEls: Object.fromEntries(els.map((e, i) => [i + 1, new WeakRef(e)])), WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]] });
+  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8').includes('if (g && g.total) done.removed = g;'));
+});
+
 test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {
   const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
   const under = (el, hitAt) => {
@@ -2251,7 +2270,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     return {
       tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false, hidden: !!o.hidden,
       getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, querySelectorAll: () => o.inner || [],
-      closest: (sel) => (sel === 'form' && o.inForm ? {} : null),
+      closest: (sel) => ((sel === 'form' ? o.inForm : o.chip) ? {} : null),
       matches: (sel) => !o.plain && sel.split(',').some((x) => x === tag || x.startsWith(tag + '[') || x.startsWith(tag + ':')),
     };
   };
@@ -2281,6 +2300,8 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
     ['role=link quote card with buy deep in 300 chars of text', { ...el('div', ('Markets moved today and traders weigh buy/sell decisions ' + 'x'.repeat(300)).slice(0, 300), { attrs: { role: 'link' } }), matches: () => true }, null],
     ['role=link Buy now', { ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }, 'purchase'],
+    ['filter-chip Remove', el('button', 'Remove', { chip: true }), null],
+    ['bare Remove', el('button', 'Remove'), 'deletion'],
   ];
   for (const [name, e, want] of rows) assert.strictEqual(cqOf(e), want, name);
   const cqHit = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqHit;`)((e) => !e.hidden);
@@ -2370,6 +2391,9 @@ test('page scripts: a sort button\'s third state is not deletion, a plain Remove
   assert.strictEqual(scripts.consequentialHit({ label: 'Age: Activate to remove sorting' }), null);
   assert.strictEqual(scripts.consequentialHit({ label: 'Age', aria: 'Age: Activate to remove sorting' }), null);
   assert.strictEqual(scripts.consequentialOf({ label: 'Remove' }), 'deletion');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Remove', chip: true }), null);
+  assert.strictEqual(scripts.consequentialOf({ label: 'Delete', chip: true }), 'deletion');
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`chip: !!e.closest('[role=search], form[role=search], [class*="filter"], [class*="chip"], [class*="token"], [aria-label*="filter" i], [aria-label*="search" i]'),`));
 });
 
 test('page scripts: clickPoint lands a tall role=link card on its time link, a short one or a plain element at its centre', () => {

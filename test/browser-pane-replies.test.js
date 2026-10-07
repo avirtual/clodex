@@ -221,6 +221,10 @@ test('replies: an act that stays on the page says what text changed, or that not
     '[agent:browser] pressed Tab on ebloc · same page · idle 0.8s · no visible change');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'ab' }, { navigated: false, idle, changed: 'text removed' }),
     '[agent:browser] typed ebloc [2] (2 chars) · same page · idle 0.8s · changed: "text removed"');
+  const gone = (groups, total = 31) => R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'button', label: 'Close', navigated: false, idle, changed: 'text removed', removed: { total, groups } });
+  assert.ok(gone([['cookie banner', 20], ['calendar', 11]]).endsWith(' · removed: cookie banner, calendar (31 elements)'));
+  assert.ok(gone([['page', 31]]).endsWith(' · same page · idle 0.8s · removed: 31 elements'));
+  assert.ok(gone([['a', 5], ['b', 4], ['page', 3], ['c', 3], ['d', 2], ['e', 1]], 18).endsWith(' · removed: a, b, c, +2 more (18 elements)'));
   assert.strictEqual(R.actReply('click', 'ebloc', { sub: 'click', n: 2 }, { kind: 'link', label: 'Next', navigated: true, url: 'https://x/2', title: 'Two', idle, changed: 'x' }),
     '[agent:browser] clicked ebloc [2] link "Next" · navigated → ("Two") https://x/2 · numbers kept where the page repeats · idle 0.8s');
   assert.strictEqual(R.actReply('type', 'ebloc', { sub: 'type', n: 2, text: 'abc' }, { navigated: false, idle, changed: '', value: 'abc' }),

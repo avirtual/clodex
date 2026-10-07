@@ -103,6 +103,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
     if (r.cat === 'deletion' && d.clearer) continue;
+    if (r.cat === 'deletion' && d.chip && /^(remove|clear|reset)\b/.test(hay[0] || '')) continue;
     const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h)) && (!r.unless || !r.unless.test(h));
     const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
     if (!(byText || (r.id && idClass && r.re.test(idClass) && !(r.unless && hay.some(h => r.unless.test(h)))))) continue;
@@ -149,6 +150,7 @@ const CQ = `
       textual,
       button,
       clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),
+      chip: !!e.closest('[role=search], form[role=search], [class*="filter"], [class*="chip"], [class*="token"], [aria-label*="filter" i], [aria-label*="search" i]'),
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
       capped: tg === 'a' || e.getAttribute('role') === 'link' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
@@ -1344,6 +1346,32 @@ const VALUE_ACTIVE = `(() => {${ICON}
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
 
+function GONE(nums) {
+  return `(() => {${DEEP}
+  const groups = new Map();
+  let total = 0;
+  const groupOf = (el) => {
+    let p = upOf(el);
+    for (let k = 0; p && k < 12; p = upOf(p), k++) {
+      const label = p.getAttribute && p.getAttribute('aria-label');
+      if (label) return label;
+      if (p.getAttribute && p.getAttribute('role') === 'dialog') return 'dialog';
+      if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) return p.tagName.toLowerCase();
+    }
+    return 'page';
+  };
+  for (const n of ${JSON.stringify(nums)}) {
+    const ref = window.__cxEls && window.__cxEls[n];
+    const el = ref && ref.deref();
+    if (el && el.isConnected && vis(el)) continue;
+    total++;
+    const g = el ? String(groupOf(el)).slice(0, 40) : 'page';
+    groups.set(g, (groups.get(g) || 0) + 1);
+  }
+  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]) };
+})()`;
+}
+
 function UNDER_POINT(n) {
   return `(() => {${DEEP}
   ${REF(n)}
@@ -1852,6 +1880,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, CHOICE_OF,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, GONE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
