@@ -505,6 +505,7 @@ function initStores(userDataPath, {
 
   let livingMigrated = false;
   function markLivingMigrated() {
+    if (livingMigrated) return;
     try { atomicWriteFileSync(LIVING_MIGRATED_FILE, ''); livingMigrated = true; } catch {}
   }
 
@@ -524,7 +525,7 @@ function initStores(userDataPath, {
         all = bak.value;
         console.error('sessions.json unreadable; recovered from .bak');
       }
-      if (!Array.isArray(all)) return [];
+      if (!Array.isArray(all)) { if (!this._unreadable) markLivingMigrated(); return []; }
       let changed = false;
       const touched = [];
       let rewrote = false;

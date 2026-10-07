@@ -1787,6 +1787,15 @@ test('GONE: counts read numbers now detached or hidden and groups them by their 
   const qGroups = JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([8]), ctx))).groups;
   assert.deepStrictEqual(qGroups, [['drawer "' + '\\"'.repeat(15) + '…"', 1]]);
   assert.strictEqual(qGroups[0][0].length, 40);
+  const fits = 'Bump Go toolchain to the latest';
+  assert.strictEqual(fits.length, 31);
+  const fitView = Object.assign(boxEl('div', '', box), { isConnected: false, className: 'paneled-view', querySelector: (s) => (s === 'h1,h2,h3' ? { innerText: fits } : null) });
+  const fButton = Object.assign(boxEl('button', 'Go', box, fitView), { isConnected: false });
+  ctx.__cxEls[9] = new WeakRef(fButton);
+  const fGroups = JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([9]), ctx))).groups;
+  assert.deepStrictEqual(fGroups, [['drawer "' + fits + '"', 1]]);
+  assert.strictEqual(fGroups[0][0].length, 40);
+  assert.ok(!fGroups[0][0].includes('…'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('if (g && g.total) done.removed = g;'));
   assert.ok(child.includes('.filter((n) => !g0.has(n))'));

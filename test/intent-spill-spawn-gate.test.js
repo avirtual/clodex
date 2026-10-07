@@ -11,7 +11,7 @@ const { buildIpcPrompt } = require('../ipc-prompt');
 const { intentEnabled } = require('../intent-catalog');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-const GRAMMAR = 'A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under';
+const GRAMMAR = 'A long intent body (dm, sub, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under';
 
 function mkManager({ spill = false, backend = null } = {}) {
   const root = mkTmpRoot('clx-spillgate-');
