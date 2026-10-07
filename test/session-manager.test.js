@@ -962,7 +962,14 @@ test('gate: a living list that denies only a privileged verb carries no explicit
 });
 
 test('gate: a living list admits sub', async () => {
-  const { m, injected } = mkGate(['*', 'term']);
+  const injected = [];
+  const m = mk({
+    REGISTRY_DIR: mkTmpRoot('clodex-sm-'), path: pathReal, pathFor: pathForReal,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'a' ? { intents: ['*', 'term'] } : null) }),
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
   await m._handleIntent('a', { type: 'sub', target: 'x', body: 'hi' });
   assert.ok(!injected.some((t) => t.includes('disabled')), JSON.stringify(injected));
   assert.match(injected[0], /^\[agent:sub\] NOT delivered/);

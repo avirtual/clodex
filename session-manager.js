@@ -254,7 +254,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
-const { resolveSubagent } = require('./subq');
+const { resolveSubagent, clearSubq } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
@@ -262,7 +262,7 @@ const {
 } = require('./scratch-mark');
 const SCRATCH_CUT_TEXT_PREFIXES = [...SCRATCH_BRIEFING_PREFIXES, 'Continue from your handoff: @'];
 const { SCRATCH_COST_FILE, scratchCostRecord } = require('./team-cost');
-const { SCRATCH_LABEL_RE } = require('./intent-catalog');
+const { SCRATCH_LABEL_RE, LIVING_MARK } = require('./intent-catalog');
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -2110,6 +2110,7 @@ function createSessionManager(deps) {
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
           this._noteSessionLeft(session, priorSid);
+          try { clearSubq(subqDirFor(name)); } catch {}
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           session._holdRearmed = false;
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
@@ -5303,9 +5304,12 @@ function createSessionManager(deps) {
 
       if (!intentEnabledForSeat(intent.type, getPersistence().get(senderName))) {
         if (session && session.agentType) {
+          const listed = (getPersistence().get(senderName) || {}).intents;
+          const why = intent.type === 'sub' && Array.isArray(listed) && !listed.includes(LIVING_MARK)
+            ? " — this seat's explicit intents list omits it; enable it in Edit Session › Intents" : '';
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
-            : `the ${intent.type} intent is disabled for this session${this._deniedIntentPayload(session, intent)}`;
+            : `the ${intent.type} intent is disabled for this session${why}${this._deniedIntentPayload(session, intent)}`;
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
@@ -5352,6 +5356,10 @@ function createSessionManager(deps) {
               type: 'sub', from: senderName, to: intent.target,
               body: `UNDELIVERED (no such subagent): ${intent.body}`,
             });
+            break;
+          }
+          if (!String(intent.body || '').trim()) {
+            if (session) this._injectText(session, '[agent:sub] nothing queued: empty body', { parkable: true });
             break;
           }
           fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -6634,7 +6642,7 @@ function createSessionManager(deps) {
             if (!await waitExit(name)) throw new Error('old process did not exit in time');
           }
           if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
-          fs.rmSync(subqDirFor(name), { recursive: true, force: true });
+          clearSubq(subqDirFor(name));
           const resumeId = opts.resume === true ? (entry.sessionId || null) : null;
           if (resumeId) this._freshBakeOnce.add(name);
           // Carry the ticket-seat fields across the restart: dropped, a reloaded ticket seat reads as a standing
