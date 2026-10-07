@@ -11,7 +11,7 @@ const { subqHookOutput } = require('../subq');
 const ID = 'a606bb8c5bfa9764e';
 
 function harness(extra = {}) {
-  const root = mkTmpRoot('clodex-subq-');
+  const root = mkTmpRoot('clodex-sm-');
   const injected = [];
   const broadcasts = [];
   const m = mk({ REGISTRY_DIR: root, path, pathFor, ...extra });
