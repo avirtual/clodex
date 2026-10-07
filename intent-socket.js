@@ -52,9 +52,9 @@ function subagentTag(seat) {
 }
 
 function seatOfAgentTag(name) {
-  if (typeof name !== 'string' || name.includes('@') || !name.endsWith(SUBAGENT_TAG_SUFFIX)) return name;
-  const seat = name.slice(0, -SUBAGENT_TAG_SUFFIX.length);
-  return seat || name;
+  if (typeof name !== 'string' || name.includes('@')) return name;
+  const slash = name.indexOf('/');
+  return slash > 0 ? name.slice(0, slash) : name;
 }
 
 function isMainThread(agentId, sessionId) {
@@ -333,7 +333,7 @@ function lateReply(intent) {
 function createIntentRequestHandler({
   seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
   crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout, log = null, identSeen = new Map(), now = Date.now,
-  tools = null, labelFor = null,
+  tools = null, nameFor = null,
 }) {
   const unknownTool = (name) => ({ ok: false, status: 'refused', error: `unknown tool: ${JSON.stringify(String(name).slice(0, 64))}` });
   const oneLineMsg = (e) => String((e && e.message) || 'invalid arguments').replace(/[\r\n]+/g, ' ').slice(0, 300);
@@ -366,12 +366,14 @@ function createIntentRequestHandler({
       req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
     });
-    if (ident.subagent) return unknownTool(name);
-    return run(intents[0], ident, ctl);
+    const tool = row.tools.find((t) => t.name === name);
+    const lifted = tool.subagentOk === true && !!ident.agentId;
+    if (ident.subagent && !lifted) return unknownTool(name);
+    return run(intents[0], ident, ctl, lifted);
   }
 
-  async function run(intent, ident, ctl) {
-    if (ident.subagent) {
+  async function run(intent, ident, ctl, lifted = false) {
+    if (ident.subagent && !lifted) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
       if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)} — return and let the seat's main agent do it` };
     }
@@ -386,7 +388,7 @@ function createIntentRequestHandler({
     };
     try {
       const fromIdent = ident.agentId
-        ? { agentId: ident.agentId, agentType: ident.agentType, label: subagentLabel(seat, ident.agentId, labelFor ? labelFor(ident.agentId) : null) }
+        ? { agentId: ident.agentId, agentType: ident.agentType, label: subagentLabel(seat, ident.agentId, nameFor ? nameFor(ident.agentId) : null) }
         : null;
       await dispatch(intent, { replyTo, fromLabel: ident.subagent ? subagentTag(seat) : null, fromIdent });
       const waitMs = !lines.length && replyWaitMs ? replyWaitMs(intent) : 0;

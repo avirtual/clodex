@@ -2,6 +2,8 @@
 // web-host handleFor builds plain literals, so widen it in the same change and never require('electron') here.
 
 const SHOUT_MAX_BYTES = 16 * 1024;
+const SUB_DM_RATE_MAX = 10;
+const SUB_DM_RATE_MS = 60 * 1000;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
@@ -718,6 +720,7 @@ function createSessionManager(deps) {
   const arm = hintArm || NO_ARM;
   const subqDirFor = (n) => path.join(path.dirname(pathFor(REGISTRY_DIR, n, 'intentSocket')), 'subq');
   let subqSeq = 0;
+  const subDmSent = new Map();
 
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
@@ -5376,6 +5379,22 @@ function createSessionManager(deps) {
           break;
         }
         case 'dm': {
+          const replyScope = intentReplyScope.getStore();
+          const fromIdent = replyScope && replyScope.fromIdent;
+          if (fromIdent) {
+            const subRefusal = (text) => { if (session) this._injectText(session, text, { parkable: true }); };
+            if (intent.urgent) { subRefusal('[agent:dm] refused: a subagent dm is never urgent'); break; }
+            if (intent.target.includes('@')) { subRefusal('[agent:dm] refused: a subagent can dm local seats only (no @peer)'); break; }
+            const t = Date.now();
+            const recent = (subDmSent.get(fromIdent.agentId) || []).filter((at) => t - at < SUB_DM_RATE_MS);
+            if (recent.length >= SUB_DM_RATE_MAX) {
+              subDmSent.set(fromIdent.agentId, recent);
+              subRefusal(`dm: rate limit — ${SUB_DM_RATE_MAX} in ${SUB_DM_RATE_MS / 1000} s from ${fromIdent.label}`);
+              break;
+            }
+            recent.push(t);
+            subDmSent.set(fromIdent.agentId, recent);
+          }
           intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.clone) {
@@ -5383,8 +5402,7 @@ function createSessionManager(deps) {
             break;
           }
           let sup = null;
-          const replyScope = intentReplyScope.getStore();
-          const fromTag = (replyScope && replyScope.fromLabel) || senderName;
+          const fromTag = (fromIdent && fromIdent.label) || (replyScope && replyScope.fromLabel) || senderName;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
             const r = this._gatedDeliver(intent.target, fromTag, intent.body, intent.urgent === true, '',
@@ -5407,7 +5425,7 @@ function createSessionManager(deps) {
                 this._injectText(session, notice, { parkable: true });
               }
               this._broadcast('ipc-message', {
-                type: 'dm', from: senderName, to: intent.target,
+                type: 'dm', from: fromTag, to: intent.target,
                 body: parkId
                   ? `PARKED (${why}, ${parkId}): ${intent.body}`
                   : `HELD (${why}): ${intent.body}`,
@@ -5432,7 +5450,7 @@ function createSessionManager(deps) {
                   { parkable: true });
               }
               this._broadcast('ipc-message', {
-                type: 'dm', from: senderName, to: intent.target,
+                type: 'dm', from: fromTag, to: intent.target,
                 body: `UNDELIVERED (no such agent): ${intent.body}`,
               });
               break;
@@ -5444,7 +5462,7 @@ function createSessionManager(deps) {
                 { parkable: true });
             }
             this._broadcast('ipc-message', {
-              type: 'dm', from: senderName, to: intent.target,
+              type: 'dm', from: fromTag, to: intent.target,
               body: `UNDELIVERED (bash session): ${intent.body}`,
             });
             break;
@@ -5457,7 +5475,7 @@ function createSessionManager(deps) {
               { parkable: true });
           }
           this._broadcast('ipc-message', {
-            type: 'dm', from: senderName, to: intent.target,
+            type: 'dm', from: fromTag, to: intent.target,
             body: sup
               ? (sup.ids.length
                 ? `URGENT (supersedes ${sup.ids.join(', ')}): ${intent.body}`
@@ -5654,7 +5672,7 @@ function createSessionManager(deps) {
         tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
-        labelFor: (id) => nameOfSubagent(subqDirFor(name), id),
+        nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
