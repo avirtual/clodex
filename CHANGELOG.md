@@ -28,6 +28,7 @@ blocks a release.
 - Seats on the streaming transport get the same teammate-message defang as pty seats.
 - Conversation mode: a subagent report whose teammate id names no subagent this seat spawned earlier in its transcript is drawn with a warning badge, an `(unverified)` suffix and a tooltip saying so — a pasted `<teammate-message>` no longer passes as a real report.
 - A remote dm's `client` tag is dropped (and logged) when it names a live seat or a Clodex system sender, so a user line can no longer be drawn as `via team` or `via <seat>`.
+- A note sent to a running subagent with `[agent:sub]` can no longer be lost when it lands while the subagent is draining its queue: notes are one file each and claimed by rename.
 
 ### Terminal
 - A `[agent:term exec]` sent through the `clodex` CLI (or any socket caller) now returns the command's exit code and output as the reply in the same turn; typed in a turn it still arrives as a `[terminal]` line; a disconnect after the result was accepted loses it (completion unknown, do not retry).
