@@ -18,6 +18,7 @@ function initial(text) {
 
 const OPERATOR_GLYPH = '●';
 const PHONE_GLYPH = '▯';
+const REMOTE_GLYPH = '◎';
 
 function classifySender(from, client = null) {
   const name = String(from == null ? '' : from);
@@ -25,7 +26,7 @@ function classifySender(from, client = null) {
   if (system) return { cls: 'system', label: name, glyph: system };
   if (name === 'user') {
     if (client === 'ios') return { cls: 'operator', label: 'phone', glyph: PHONE_GLYPH };
-    return { cls: 'operator', label: client || 'remote', glyph: OPERATOR_GLYPH };
+    return { cls: 'operator', label: client || 'remote', glyph: REMOTE_GLYPH };
   }
   if (name.includes('@')) return { cls: 'peer', label: name, glyph: '⇢' };
   const shape = SEAT_SHAPE.exec(name);

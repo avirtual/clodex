@@ -20,7 +20,7 @@ const TABLE = [
   ['clodex', { cls: 'seat', label: 'clodex', glyph: 'C' }],
   ['review-loop', { cls: 'system', label: 'review-loop', glyph: '⇄' }],
   ['merge-watchdog', { cls: 'system', label: 'merge-watchdog', glyph: '◉' }],
-  ['user', { cls: 'operator', label: 'remote', glyph: '●' }],
+  ['user', { cls: 'operator', label: 'remote', glyph: '◎' }],
   ['clodex-hand-1138-r2', { cls: 'seat', label: 'hand-1138-r2', glyph: 'H' }],
   ['clodex-reviewer-1138-r1', { cls: 'seat', label: 'reviewer-1138-r1', glyph: 'R' }],
   ['clodex-designer', { cls: 'seat', label: 'designer', glyph: 'D' }],
@@ -36,8 +36,8 @@ for (const [from, want] of TABLE) {
 
 const CLIENT_TABLE = [
   ['user', 'ios', { cls: 'operator', label: 'phone', glyph: '▯' }],
-  ['user', 'cli', { cls: 'operator', label: 'cli', glyph: '●' }],
-  ['user', null, { cls: 'operator', label: 'remote', glyph: '●' }],
+  ['user', 'cli', { cls: 'operator', label: 'cli', glyph: '◎' }],
+  ['user', null, { cls: 'operator', label: 'remote', glyph: '◎' }],
   ['reminder', 'ios', { cls: 'system', label: 'reminder', glyph: '◷' }],
 ];
 

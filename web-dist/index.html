@@ -8746,9 +8746,6 @@ body.web-frontend #sidebar-header {
   flex: none;
   white-space: nowrap;
 }
-.tr-prompt > .tr-sender .tr-sender-name {
-  margin-right: 0;
-}
 .tr-inbound[data-via=subagent] .tr-head-text {
   color: var(--text-secondary);
 }
@@ -27037,13 +27034,14 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       }
       var OPERATOR_GLYPH = "\u25CF";
       var PHONE_GLYPH = "\u25AF";
+      var REMOTE_GLYPH = "\u25CE";
       function classifySender(from, client = null) {
         const name = String(from == null ? "" : from);
         const system = systemGlyph(name);
         if (system) return { cls: "system", label: name, glyph: system };
         if (name === "user") {
           if (client === "ios") return { cls: "operator", label: "phone", glyph: PHONE_GLYPH };
-          return { cls: "operator", label: client || "remote", glyph: OPERATOR_GLYPH };
+          return { cls: "operator", label: client || "remote", glyph: REMOTE_GLYPH };
         }
         if (name.includes("@")) return { cls: "peer", label: name, glyph: "\u21E2" };
         const shape = SEAT_SHAPE.exec(name);
@@ -33854,7 +33852,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const mid = rec.source === "mid-turn";
         const row = headRow(doc, mid ? "tr-prompt tr-prompt-mid" : "tr-prompt", rec);
         if (mid) row.appendChild(el(doc, "span", "tr-mid", "mid-turn"));
-        row.appendChild(operatorBadge(doc, "you", "Typed in Clodex"));
+        row.appendChild(operatorBadge(doc, "Typed in Clodex"));
         const text = el(doc, "span", "tr-head-text");
         if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
         else appendProse(doc, text, rec.text, ctx);
@@ -33869,11 +33867,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return row;
       }
-      function operatorBadge(doc, label, title) {
+      function operatorBadge(doc, title) {
         const badge = el(doc, "span", "tr-sender tr-sender-operator");
         badge.title = title;
         badge.appendChild(el(doc, "span", "tr-sender-glyph", OPERATOR_GLYPH));
-        badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
       function senderTitle(from, client) {
@@ -33885,7 +33882,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const badge = el(doc, "span", `tr-sender tr-sender-${cls}`);
         badge.title = senderTitle(from, client);
         badge.appendChild(el(doc, "span", "tr-sender-glyph", glyph));
-        badge.appendChild(el(doc, "span", "tr-sender-name", label));
+        if (cls !== "operator") badge.appendChild(el(doc, "span", "tr-sender-name", label));
         return badge;
       }
       function inboundBadge(doc, rec) {
@@ -33928,7 +33925,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           text.appendChild(el(doc, "span", "tr-dim", `${bytesText(rec.attached.bytes)} `));
           text.appendChild(linkNode(doc, { kind: "path", text: baseName(rec.attached.path), path: rec.attached.path }, "", ctx));
         } else {
-          appendProse(doc, text, rec.text, ctx);
+          if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
+          else appendProse(doc, text, rec.text, ctx);
           cutMark(doc, text, rec);
         }
         row.appendChild(text);

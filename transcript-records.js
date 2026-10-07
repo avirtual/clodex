@@ -19,6 +19,8 @@ const NOTE_CAP = 300;
 const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
+const LEAD_MARKS_RE = /^(?:\[Image #\d+\]|\[Pasted text #\d+ \+\d+ lines\])+/;
+const TAIL_IMAGE_LABEL_RE = /(?:\nImage:[ \t]*)+$/;
 const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message ([^\n]*)>\n?([\s\S]*?)<\/teammate-message>/;
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const CLIENT_TAG_RE = /^\(via ([a-z][a-z0-9-]{0,15})\)[ \t]*/;
@@ -280,14 +282,23 @@ function userRecords(rec, base, tools) {
   if (text.startsWith('<') && !text.startsWith(PASTE_OPEN)) return [];
   const unwrapped = injectedPaste(text);
   if (unwrapped != null) text = unwrapped;
-  const from = INBOUND_RE.exec(text);
+  const lead = LEAD_MARKS_RE.exec(text);
+  const leadFrom = lead ? INBOUND_RE.exec(text.slice(lead[0].length)) : null;
+  const viaLead = Boolean(leadFrom && leadFrom[1] === 'user');
+  const from = viaLead ? leadFrom : INBOUND_RE.exec(text);
   if (from) {
-    const after = text.slice(from[0].length);
-    const { client, text: rest } = from[1] === 'user' ? clientTagOf(after) : { client: null, text: after };
+    const after = text.slice((viaLead ? lead[0].length : 0) + from[0].length);
+    const user = from[1] === 'user';
+    const tagged = user ? clientTagOf(after) : { client: null, text: after };
+    const client = tagged.client;
+    const rest = user ? ((viaLead ? lead[0] : '') + tagged.text).replace(TAIL_IMAGE_LABEL_RE, '') : tagged.text;
     const att = ATTACHED_RE.exec(rest);
     const ticket = ticketOf(rest);
-    const card = capped({ ...base, kind: 'inbound', from: from[1], ...(client ? { client } : {}), ...(ticket ? { ticket } : {}) }, 'text', rest, PROMPT_CAP);
-    return [att ? { ...card, attached: { path: att[2], bytes: Number(att[1]) } } : card];
+    const pasted = user ? pastesOf(rest) : { text: rest, pastes: [] };
+    const images = user ? imagesOf(content, rest) : [];
+    const card = capped({ ...base, kind: 'inbound', from: from[1], ...(client ? { client } : {}), ...(ticket ? { ticket } : {}) }, 'text', pasted.text, PROMPT_CAP);
+    const extra = { ...(pasted.pastes.length ? { pastes: pasted.pastes } : {}), ...(images.length ? { images } : {}) };
+    return [att ? { ...card, ...extra, attached: { path: att[2], bytes: Number(att[1]) } } : { ...card, ...extra }];
   }
   const runtime = RUNTIME_RE.exec(text);
   if (runtime) {

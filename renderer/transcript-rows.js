@@ -503,7 +503,7 @@ function promptRow(doc, rec, ctx) {
   const mid = rec.source === 'mid-turn';
   const row = headRow(doc, mid ? 'tr-prompt tr-prompt-mid' : 'tr-prompt', rec);
   if (mid) row.appendChild(el(doc, 'span', 'tr-mid', 'mid-turn'));
-  row.appendChild(operatorBadge(doc, 'you', 'Typed in Clodex'));
+  row.appendChild(operatorBadge(doc, 'Typed in Clodex'));
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
   else appendProse(doc, text, rec.text, ctx);
@@ -519,11 +519,10 @@ function promptRow(doc, rec, ctx) {
   return row;
 }
 
-function operatorBadge(doc, label, title) {
+function operatorBadge(doc, title) {
   const badge = el(doc, 'span', 'tr-sender tr-sender-operator');
   badge.title = title;
   badge.appendChild(el(doc, 'span', 'tr-sender-glyph', OPERATOR_GLYPH));
-  badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
   return badge;
 }
 
@@ -537,7 +536,7 @@ function senderBadge(doc, from, client) {
   const badge = el(doc, 'span', `tr-sender tr-sender-${cls}`);
   badge.title = senderTitle(from, client);
   badge.appendChild(el(doc, 'span', 'tr-sender-glyph', glyph));
-  badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
+  if (cls !== 'operator') badge.appendChild(el(doc, 'span', 'tr-sender-name', label));
   return badge;
 }
 
@@ -585,7 +584,8 @@ function inboundRow(doc, rec, ctx, boxed) {
     text.appendChild(el(doc, 'span', 'tr-dim', `${bytesText(rec.attached.bytes)} `));
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
   } else {
-    appendProse(doc, text, rec.text, ctx);
+    if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
+    else appendProse(doc, text, rec.text, ctx);
     cutMark(doc, text, rec);
   }
   row.appendChild(text);
