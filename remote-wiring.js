@@ -5,6 +5,7 @@
 // hence get+set. No electron require here: this runs under a headless host.
 
 const { pathFor, projectDirFor } = require('./clodex-paths');
+const { SYSTEM_SENDERS } = require('./system-senders');
 const { spillDirFor } = require('./intent-spill');
 const { durableMessageCopyOf } = require('./file-resolve');
 const { createTicketsStore } = require('./tickets-store');
@@ -488,7 +489,9 @@ function createRemoteWiring(deps) {
         send: (name, text, images, client = null) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
-          const tag = client ? `(via ${client})` : '';
+          const spoof = client && (manager.sessions.has(client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client));
+          if (spoof) log.info('remote', `dm client tag refused: ${client}`);
+          const tag = client && !spoof ? `(via ${client})` : '';
           try {
             if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, null, null, images);
             else manager._deliverMessage(name, 'user', text, 'dm', ...(tag ? [tag] : []));

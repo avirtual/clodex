@@ -21,11 +21,13 @@ blocks a release.
 - A numbered act on a closed service is refused as "not open" rather than "read first"; a click whose target the page scrolled back out of view says so (`[31] "label" scrolled out of view on np — read again`) instead of calling it gone; and a ⚠ refusal on a nameless control names its kind (`[12] button looks consequential (trading)`) the way the read digest does.
 - Reads follow frames two levels deep: a same-origin or srcdoc frame inside an inlined frame is inlined under its own `[frame]` line (frame-mix E's inner "tracking code" text was dropped before), a nested `src=` frame is inlined at that depth and listed by URL below it, and only srcdoc frames a level deeper are still counted as `nested` on the `frames:` line.
 - A nested frame the read cannot open (sandboxed or empty) is counted on the frames: line again; a ⚠ refusal on a control whose only name is a multi-word role prints the first word; on a closed service an act queued behind another act is no longer told to read first — it is dropped under the first act's "not open" unless an open is on its way.
+- A read whose `<main>` or `<article>` is `display:contents` (no box of its own) is scoped to it instead of falling back to the whole body.
 
 ### Messaging and conversation mode
 - A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
 - Seats on the streaming transport get the same teammate-message defang as pty seats.
 - Conversation mode: a subagent report whose teammate id names no subagent this seat spawned earlier in its transcript is drawn with a warning badge, an `(unverified)` suffix and a tooltip saying so — a pasted `<teammate-message>` no longer passes as a real report.
+- A remote dm's `client` tag is dropped (and logged) when it names a live seat or a Clodex system sender, so a user line can no longer be drawn as `via team` or `via <seat>`.
 
 ### Terminal
 - A `[agent:term exec]` sent through the `clodex` CLI (or any socket caller) now returns the command's exit code and output as the reply in the same turn; typed in a turn it still arrives as a `[terminal]` line; a disconnect after the result was accepted loses it (completion unknown, do not retry).

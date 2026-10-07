@@ -494,7 +494,7 @@ function readText(main) {
   };
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
-  let root = forced || [...document.querySelectorAll(${JSON.stringify(READ_ROOT_SEL)})].find(r => r.getClientRects().length) || null;
+  let root = forced || [...document.querySelectorAll(${JSON.stringify(READ_ROOT_SEL)})].find(r => r.getClientRects().length || getComputedStyle(r).display === 'contents') || null;
   ${MODAL_FINDER}
   if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });

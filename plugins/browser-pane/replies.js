@@ -237,7 +237,7 @@ function clipNavUrl(u, max) {
   return `${base.length < max ? base : base.slice(0, max - 1)}…`;
 }
 
-const kindWord = (kind) => oneLine(String(kind || '?').split(/\s+/)[0] || '?');
+const kindWord = (kind) => oneLine(String(kind || '?').trim().split(/\s+/)[0] || '?');
 const named = (n, label, kind) => `[${n}] ${label ? JSON.stringify(String(label)) : kindWord(kind)}`;
 
 const TEXT = {

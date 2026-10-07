@@ -2017,7 +2017,8 @@ function termExec(workspaceId, seat, command, onResult) {
     token = crypto.randomUUID();
     termWaiters.set(token, onResult);
   }
-  const r = token ? drawerPtys.exec(workspaceId, seat, command, token) : drawerPtys.exec(workspaceId, seat, command);
+  let r;
+  try { r = token ? drawerPtys.exec(workspaceId, seat, command, token) : drawerPtys.exec(workspaceId, seat, command); } catch (e) { if (token) termWaiters.delete(token); throw e; }
   if (!r.ok && token) termWaiters.delete(token);
   if (r.ok) {
     const ok = { ok: true, command: r.command };
