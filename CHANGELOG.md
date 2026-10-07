@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Browser pane, Clodex MCP, subagent identity
+## Unreleased
+
+## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
 ### Browser pane
 - The operator can open a service window from the pane's Settings, navigate or sign in by hand, and hand it to any agent in the workspace with an instruction — the agent receives one line naming the service and the page and starts with a read; the window has an address bar with back and reload, so the operator and the agent both steer it, and an agent holding a window is told whenever the operator moves it anywhere (no such chatter during a sign-in hold).
