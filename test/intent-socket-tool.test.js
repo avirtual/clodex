@@ -292,18 +292,88 @@ test('term_exec: the terminal text is ok, an [agent:term] line is refused, and t
 const SUB_STAMP = (sid = 'main-thread') => identToken(crypto, HCRED, 'ageneral-purpose-0123456789abcdef', 'general-purpose', sid);
 
 test('a verified sub stamp: a core term_exec call still answers unknown tool', async () => {
-  const { handle, seen } = termHandler();
+  const { handle, seen, identSeen } = termHandler();
   assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: SUB_STAMP() }, ctl), UNKNOWN_TERM);
   assert.deepStrictEqual(seen, []);
+  assert.strictEqual(identSeen.size, 1);
 });
 
 test('a verified sub stamp on a plugin tool call: fromLabel stays the shared tag and no identity rides along', () => withBrowserVerb(async () => {
   const opts = [];
   const handle = createIntentRequestHandler({
     seat: 'h1', parse, entryOf: () => SEAT, sessionIdOf: () => 'main-thread', cred: HCRED, log,
-    refusal: registry.subagentRefusal, tools: TOOLS, labelFor: () => 'alice',
+    refusal: registry.subagentRefusal, tools: TOOLS, nameFor: () => 'alice',
     dispatch: async (intent, o) => { opts.push({ fromLabel: o.fromLabel, fromIdent: o.fromIdent }); o.replyTo('ok'); },
   });
   assert.deepStrictEqual(await handle({ tool: 'browser', args: { verb: 'read', service: 'ebloc' }, ident: SUB_STAMP() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(opts, [{ fromLabel: 'h1/agent', fromIdent: null }]);
 }));
+
+const DM_SEAT = { intents: ['dm'] };
+const DM_SENT = { ok: true, status: 'ok', reply: "sent to b; a reply arrives in the seat's main conversation" };
+const UNKNOWN_DM = { ok: false, status: 'refused', error: 'unknown tool: "dm"' };
+
+function dmHandler({ sessionIdOf = () => 'main-thread' } = {}) {
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => DM_SEAT, sessionIdOf, cred: HCRED, log, identSeen: new Map(),
+    refusal: registry.subagentRefusal, tools: TOOLS, nameFor: () => 'alice',
+    dispatch: async (intent, opts) => { seen.push({ intent, opts }); },
+  });
+  return { handle, seen };
+}
+
+test('dm tool: a verified sub stamp dispatches the dm as the named subagent', async () => {
+  const { handle, seen } = dmHandler();
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: SUB_STAMP() }, ctl), DM_SENT);
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0].intent.target, 'b');
+  assert.strictEqual(seen[0].intent.body, 'hi');
+  const { replyTo } = seen[0].opts;
+  assert.deepStrictEqual(seen[0].opts, { replyTo, fromLabel: 'h1/agent', fromIdent: { agentId: 'ageneral-purpose-0123456789abcdef', agentType: 'general-purpose', label: 'h1/alice' } });
+});
+
+test('dm tool: a forged, replayed, missing or foreign-session stamp answers unknown tool and dispatches nothing', async () => {
+  const forged = SUB_STAMP().replace(/\.[0-9a-f]+$/, '.deadbeefdeadbeef');
+  for (const ident of [forged, undefined, SUB_STAMP('other-session')]) {
+    const { handle, seen } = dmHandler();
+    assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident }, ctl), UNKNOWN_DM, String(ident));
+    assert.deepStrictEqual(seen, []);
+  }
+  const { handle, seen } = dmHandler();
+  const stamp = SUB_STAMP();
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: stamp }, ctl), DM_SENT);
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: stamp }, ctl), UNKNOWN_DM);
+  assert.strictEqual(seen.length, 1);
+  assert.deepStrictEqual(warns, ['intent-socket h1: replayed identity stamp refused']);
+  warns.length = 0;
+});
+
+test('dm tool: a main stamp dispatches a plain seat dm', async () => {
+  const { handle, seen } = dmHandler();
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), DM_SENT);
+  const { replyTo } = seen[0].opts;
+  assert.deepStrictEqual(seen[0].opts, { replyTo, fromLabel: null, fromIdent: null });
+});
+
+test('dm tool: a decorated intent line in the body is a foreign intent and nothing is dispatched', async () => {
+  const { handle, seen } = dmHandler();
+  const before = warns.length;
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'x\n\u2022 [agent:who]' }, ident: SUB_STAMP() }, ctl), { ok: false, error: 'tool dm emitted a foreign intent' });
+  assert.deepStrictEqual(seen, []);
+  warns.length = before;
+});
+
+test('subagentOk on a plugin tool lifts nothing: the plugin branch dispatches with no identity', async () => {
+  try {
+    registry.registerIntent({ verb: 'zzz', parse: () => null, tools: [fakeTool('x', { subagentOk: true, toIntent: () => '[agent:zzz a]' })], subagent: fakePolicy }, 'zzz-plugin');
+    const opts = [];
+    const handle = createIntentRequestHandler({
+      seat: 'h1', parse: () => [{ type: 'zzz', raw: 'a' }], entryOf: () => ({ intents: ['zzz'], plugins: ['zzz-plugin'] }), sessionIdOf: () => 'main-thread', cred: HCRED, log,
+      refusal: () => null, tools: TOOLS, nameFor: () => 'alice',
+      dispatch: async (intent, o) => { opts.push({ fromLabel: o.fromLabel, fromIdent: o.fromIdent }); o.replyTo('ok'); },
+    });
+    assert.deepStrictEqual(await handle({ tool: 'x', args: {}, ident: SUB_STAMP() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
+    assert.deepStrictEqual(opts, [{ fromLabel: 'h1/agent', fromIdent: null }]);
+  } finally { registry._resetPluginRows(); }
+});

@@ -1,0 +1,60 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert');
+const { mk } = require('./lib/session-fixtures');
+
+const ALICE = { agentId: 'A', agentType: 'gp', label: 'a/alice' };
+
+function harness() {
+  const m = mk();
+  const delivered = [];
+  const broadcasts = [];
+  m._broadcast = (ch, msg) => { if (ch === 'ipc-message') broadcasts.push(msg); };
+  m._gatedDeliver = (target, tag, body, urgent) => { delivered.push({ target, tag, body, urgent }); return {}; };
+  m._armDmConfirm = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws1' });
+  const send = async (intent, fromIdent, fromLabel = null) => {
+    const replies = [];
+    await m._handleIntent('a', { type: 'dm', target: 'b', body: 'hi', ...intent }, { replyTo: (t) => { replies.push(t); return true; }, fromLabel, fromIdent });
+    return replies;
+  };
+  return { m, delivered, broadcasts, send };
+}
+
+function withNow(fn) {
+  const real = Date.now;
+  let t = 1_000_000;
+  Date.now = () => t;
+  return Promise.resolve().then(() => fn((v) => { t = v; })).finally(() => { Date.now = real; });
+}
+
+test('a verified subagent dm is delivered and broadcast as its label; the main agent sends as the seat', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await h.send({}, ALICE, 'a/agent'), []);
+  assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a/alice', body: 'hi', urgent: false }]);
+  assert.deepStrictEqual(h.broadcasts.map((b) => b.from), ['a/alice']);
+  await h.send({}, null, null);
+  assert.strictEqual(h.delivered[1].tag, 'a');
+  assert.strictEqual(h.broadcasts[1].from, 'a');
+});
+
+test('a subagent dm that is urgent or names an @peer is refused to the caller and nothing is sent', async () => {
+  const h = harness();
+  assert.deepStrictEqual(await h.send({ urgent: true }, ALICE), ['[agent:dm] refused: a subagent dm is never urgent']);
+  assert.deepStrictEqual(await h.send({ target: 'b@box' }, ALICE), ['[agent:dm] refused: a subagent can dm local seats only (no @peer)']);
+  assert.deepStrictEqual(h.delivered, []);
+  assert.deepStrictEqual(h.broadcasts, []);
+});
+
+test('a subagent dm is capped at 10 per 60 s per agent', () => withNow(async (setNow) => {
+  const h = harness();
+  for (let i = 0; i < 10; i++) assert.deepStrictEqual(await h.send({}, ALICE), []);
+  assert.deepStrictEqual(await h.send({}, { ...ALICE, agentId: 'B', label: 'a/bob' }), []);
+  setNow(1_000_000 + 59_000);
+  assert.deepStrictEqual(await h.send({}, ALICE), ['dm: rate limit — 10 in 60 s from a/alice']);
+  assert.strictEqual(h.delivered.length, 11);
+  setNow(1_000_000 + 61_000);
+  assert.deepStrictEqual(await h.send({}, ALICE), []);
+  assert.strictEqual(h.delivered.length, 12);
+}));
