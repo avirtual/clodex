@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.117.0 — 2026-10-07
+
 ### Plugins
 - plugin-api.md documents `replyWaitMs` and `classifyReply` on `host.intents.register`: how long a tool call waits for a slow verb's first reply (30 s default, 470 s cap) and how a plugin marks a reply refused or errored for `clodex-send`'s exit code and the MCP log.
 - A plugin can declare `"requires": ["electron"]` in its manifest. A headless Clodex skips such a plugin entirely: it is absent from Manage Plugins, registers no verb, sends no renderer half to the browser client, and is in no seat's plugin list; the app log notes the skip in one line. A GitHub install of one on a headless host is refused by name. A malformed `requires` is refused like `scope` and `surfaces`.
