@@ -10,7 +10,7 @@ const os = require('os');
 const https = require('https');
 const { AsyncLocalStorage } = require('async_hooks');
 const { WebSocketServer } = require('ws');
-const { makeTokenGate } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost } = require('./auth-token');
 const { escapeSafeTail } = require('./session-manager');
 
 const APP_VERSION = require('./package.json').version;
@@ -51,7 +51,7 @@ function contentDisposition(base) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(base).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
 }
 
-function createWebHost({ engine, log, port, host, token, userDataPath, registerHandlers } = {}) {
+function createWebHost({ engine, log, port, host, token, insecure = false, userDataPath, registerHandlers } = {}) {
   const manager = engine.manager;
   const exportsDir = path.join(userDataPath || os.homedir(), 'exports');
   const webDist = path.join(__dirname, 'web-dist'); // P3b esbuild output (may not exist yet)
@@ -69,6 +69,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   const gate = makeTokenGate(token);
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
+  const refusing = !gate.configured && !isLoopbackHost(host) && !insecure;
 
   function fanEvent(workspaceId, channel, args) {
     if (channel === 'pty-data') {
@@ -361,6 +362,11 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     // Unauthenticated liveness probe — exempt from the token gate so a compose
     // healthcheck can hit it without carrying the secret. Leaks only liveness.
     if (pathname === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('ok'); return; }
+    if (refusing) {
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_WEB_TOKEN set. Set CLODEX_WEB_TOKEN, or CLODEX_WEB_INSECURE=1 to override.');
+      return;
+    }
     if (!checkToken(tokenFromReq(req))) { res.writeHead(401).end('unauthorized'); return; }
     if (pathname.startsWith('/exports/')) return serveExports(req, res, pathname.slice('/exports/'.length));
     return serveStatic(req, res, pathname);
@@ -369,7 +375,7 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
   // Manual upgrade so the token gate runs before the WS handshake completes.
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
-    if (!checkToken(tokenFromReq(req))) { socket.destroy(); return; }
+    if (refusing || !checkToken(tokenFromReq(req))) { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 
@@ -407,11 +413,8 @@ function createWebHost({ engine, log, port, host, token, userDataPath, registerH
     ws.on('error', (err) => log.error('web', `socket: ${err.message}`));
   });
 
-// Unset host → Node's all-interfaces bind, which the docker port map
-// (127.0.0.1:HOST_PORT→container:8080) depends on; a loopback container bind
-// breaks it. Deploys pass CLODEX_WEB_HOST=127.0.0.1 explicitly instead.
   const listenArgs = host ? [port, host] : [port];
-  server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : ' (localhost-trust)'}`));
+  server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : refusing ? ' (REFUSING: no token on a non-loopback bind)' : ' (localhost-trust)'}`));
 
   return {
     close() {

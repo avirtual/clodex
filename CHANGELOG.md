@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+### Web host
+- The headless web host refuses to serve (503 naming the variable) when it is bound to a non-loopback address with no CLODEX_WEB_TOKEN, the same fail-closed rule the remote route has; CLODEX_WEB_INSECURE=1 overrides it for a container whose port map is the boundary, and the docker compose file sets it.
+
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
 ### Browser pane

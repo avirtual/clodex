@@ -67,7 +67,9 @@ CLODEX_WEB_TOKEN=$(openssl rand -hex 32) \
 
 and widen the publish (e.g. `"0.0.0.0:7810:8080"`). The browser then loads
 `http://<host>:7810/?token=<secret>`; the token gates every route and the
-WebSocket upgrade. **Never widen the publish without a token.**
+WebSocket upgrade. **Never widen the publish without a token.** The engine binds all
+interfaces inside the container, so with no token it would refuse to serve (503); the
+compose file sets `CLODEX_WEB_INSECURE=1` because its loopback-only publish is the boundary.
 
 This is auth v1 — a shared secret, no TLS, no per-user login. For anything
 serious, front it with a reverse proxy that terminates TLS and adds real
