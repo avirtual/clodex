@@ -1913,7 +1913,15 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
       const why = res.reason || (res.status ? `the terminal reported \`${res.status}\`` : 'the terminal went away');
       text = `[terminal] ${res.command}${insideLine}\n${why} before the command reported back. Whether it ran is unknown.`;
     }
-    deliverExecResult(seat, `${text}${late}`);
+    const out = `${text}${late}`;
+    const w = res.token ? termWaiters.get(res.token) : null;
+    if (w) {
+      termWaiters.delete(res.token);
+      let taken = false;
+      try { taken = w(out) !== false; } catch {}
+      if (taken) return;
+    }
+    deliverExecResult(seat, out);
   },
   remoteAllowed: () => uiSettings.get().terminalRemote === 'on' && uiSettings.get().terminalReports !== 'off',
   shellHost: shellHostOf,
@@ -2000,9 +2008,17 @@ function termRefusalName(running) {
   return sanitizeName(programOf(s) || '');
 }
 
-function termExec(workspaceId, seat, command) {
+const termWaiters = new Map();
+
+function termExec(workspaceId, seat, command, onResult) {
   if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };
-  const r = drawerPtys.exec(workspaceId, seat, command);
+  let token = null;
+  if (typeof onResult === 'function') {
+    token = crypto.randomUUID();
+    termWaiters.set(token, onResult);
+  }
+  const r = token ? drawerPtys.exec(workspaceId, seat, command, token) : drawerPtys.exec(workspaceId, seat, command);
+  if (!r.ok && token) termWaiters.delete(token);
   if (r.ok) {
     const ok = { ok: true, command: r.command };
     if (r.inside) ok.inside = sanitizeName(r.inside);
@@ -2235,6 +2251,7 @@ const toolCache = createToolCache({ whichBin });
     try { stopPeerWirescopeTunnels(); } catch {}
     if (ctlService) { try { ctlService.dispose(); } catch {} }
     if (drawerPtys) { try { drawerPtys.dispose(); } catch {} }
+    termWaiters.clear();
     try { bashLive.stopAll(); } catch {}
     manager.killAll();
     try { speaker.stop(); } catch {}

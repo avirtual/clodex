@@ -490,6 +490,8 @@ const { AsyncLocalStorage } = require('async_hooks');
 const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
 const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
+const { TERM_REPLY_WAIT_MS } = require('./drawer-avail');
+
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
 const streamReap = require('./stream-reap');
@@ -5649,6 +5651,7 @@ function createSessionManager(deps) {
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
         log,
         replyWaitMs: (intent) => {
+          if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
           const row = pluginRowFor(intent.type);
           return row && row.handler ? row.replyWaitMs(intent) : 0;
         },
@@ -6344,7 +6347,9 @@ function createSessionManager(deps) {
         reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
         return;
       }
-      const res = termExec(session.workspaceId, session.name, rawBody);
+      const scope = intentReplyScope.getStore();
+      const onResult = scope && scope.session === session ? (text) => scope.replyTo(text) !== false : null;
+      const res = termExec(session.workspaceId, session.name, rawBody, onResult);
       const where = res.inside ? ` (inside \`${res.inside}\`)` : '';
       this._broadcast('ipc-message', {
         type: 'term', from: session.name, to: session.name,

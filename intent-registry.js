@@ -268,7 +268,7 @@ const CORE_ROWS = [
   // prose written under a correct command turned it into a refusal instead of
   // running it. A body that must survive vetting cannot span lines, which is
   // what makes this row different from dm/memory/task.
-  { type: 'term', parse: parseTerm, bodyMode: NONE },
+  { type: 'term', parse: parseTerm, bodyMode: NONE, classifyReply: (line) => (/^\[agent:term\] /.test(line) ? 'refused' : 'ok') },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
   { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/i.test(i.spec) ? 'none' : 'greedy') },
   { type: 'shout', parse: parseShout, bodyMode: GREEDY },
@@ -552,7 +552,7 @@ function defaultReplyStatus(line) {
 }
 
 function classifyReplyLine(type, line) {
-  const row = pluginRowFor(type);
+  const row = rowFor(type);
   return row && row.classifyReply ? row.classifyReply(line) : defaultReplyStatus(line);
 }
 
