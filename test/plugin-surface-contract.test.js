@@ -606,4 +606,6 @@ test('plugins/plugin-api.md covers the sections the freeze promised', () => {
   // reflowed paragraph must not fail a test about what the document SAYS.
   assert.match(doc.replace(/\s+/g, ' '), /does \*\*not\*\* cap Clodex's own total row count/,
     'the document must say the five-row freeze does not cap core\'s own rows');
+  assert.match(doc, /^\| `requires` \| no \|/m);
+  assert.match(doc, /\*\*`requires` is present but isn't an array, or names a feature that doesn't exist\.\*\*/);
 });

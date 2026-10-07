@@ -25179,6 +25179,11 @@ ${i3.join("\n")}
         const want = new Set(Array.isArray(list) ? list : []);
         return PLUGIN_CAPABILITIES.filter((cap) => want.has(cap));
       }
+      var PLUGIN_REQUIREMENTS = Object.freeze(["electron"]);
+      function requiresOf(manifest) {
+        const list = manifest && manifest.requires;
+        return Array.isArray(list) ? list.map(String) : [];
+      }
       function grantToken(pluginId, capability) {
         return `${pluginId}:${capability}`;
       }
@@ -25263,6 +25268,8 @@ ${i3.join("\n")}
         scopeOf,
         PLUGIN_CAPABILITIES,
         readsOf,
+        PLUGIN_REQUIREMENTS,
+        requiresOf,
         grantToken,
         isValidCapability,
         sanitizeGrants,

@@ -81,8 +81,7 @@ The address bar is UI-driven and not covered by `manual/browser-pane-live.js`:
    privileged (plugin-api §7): until it is ticked, `[agent:browser …]` lines from
    that seat are silently inert.
 
-The desktop app is required. A headless Clodex answers every command with
-`browser unavailable — this Clodex host has no Electron (headless)`.
+The desktop app is required: the manifest declares `"requires": ["electron"]`, so a headless Clodex does not load the plugin at all — no Manage Plugins row, no `browser` verb. A browser client of a desktop Clodex has it; its windows open on the desktop machine.
 
 ## The workflow: sign in once, then hand back
 
