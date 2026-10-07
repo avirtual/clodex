@@ -61,7 +61,7 @@ function billingFingerprint(obj) {
 }
 
 // The CLI's title side-call: zero tools + a json_schema output requiring only
-// `title`, or (pre-2.1.280) the old title system prompt. Its text IS the title.
+// `title`, or (pre-2.1.280) the old title system prompt.
 const TITLE_SYS_PREFIX = 'Generate a concise, sentence-case title';
 
 function titleSchemaRequired(obj) {

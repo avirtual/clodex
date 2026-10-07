@@ -169,7 +169,7 @@ the menu bar has a tick next to it.
 | `scope` | no | `"global"` (the default) or `"session"`. A `session`-scoped plugin **consumes seat data and therefore offers capability grants** — see §2.1. It no longer decides visibility: every plugin is gated by the seat's own plugin list. Absent means `global`. |
 | `reads` | no | An array drawn from `turns`, `thinking`, `toolInputs` — which of the three grants (§2.1) this plugin actually consumes. Declaring it makes the seat's *Plugin Access* block dim the rows you never read, instead of offering all three as equals. A non-empty `reads` requires `"scope": "session"`; `[]` is legal at either scope and says the plugin reads none of them. Absent means undeclared, and every row is offered live — today's behaviour. It is advisory for the UI and **not** the enforcement; see §2.1. |
 | `surfaces` | no | An object mapping a method name to `"any"`. A method listed as `"any"` may be called from the browser surface as well as the desktop app; **anything you do not list is desktop-only**. Absent means the whole plugin is desktop-only. See §2.2 — this is the one manifest field whose default costs you reach rather than granting it. |
-| `requires` | no | An array drawn from `electron`: host capabilities the plugin cannot run without. A host that lacks one **skips** the plugin — not refused, not listed: it does not appear in Manage Plugins, registers no verb, ships no renderer half, and is absent from every seat's plugin list. One line in the app log names it. `"electron"` means `host.runtime.electronChild` works, which the headless host (`node headless-main.js`) never provides; a browser client of a desktop Clodex still has it. Absent means no requirement. |
+| `requires` | no | An array drawn from `electron`: host capabilities the plugin cannot run without. A host that lacks one **skips** the plugin — not refused, not listed: it does not appear in Manage Plugins, registers no verb, ships no renderer half, and is absent from every seat's plugin list. The app log names it. `"electron"` means `host.runtime.electronChild` works, which the headless host (`node headless-main.js`) never provides; a browser client of a desktop Clodex still has it. Absent means no requirement. |
 
 Unknown fields are ignored, not refused. That is deliberate: it lets a future
 version add optional fields without breaking your manifest, and lets you carry
@@ -272,7 +272,11 @@ The refusals, and what to do about each:
   value there resolves to *desktop-only*, so a typo would fail closed — your
   method would simply stop answering in the browser, with nothing to read. An
   array, a bare string, `"web"`, `true` and `"ANY"` are all refusals.
-- **`requires` is present but isn't an array, or names a feature that doesn't exist.** The message names the member you wrote and the allowed set (`"electron"`). A met requirement loads normally; an unmet one is a *skip*, not a refusal — see the table above. Installing such a plugin from GitHub on a host that lacks the feature is refused by name instead.
+- **`requires` is present but isn't an array, or names a feature that doesn't exist.**
+  The message names the member you wrote and the allowed set (`"electron"`). A
+  met requirement loads normally; an unmet one is a *skip*, not a refusal —
+  see the table above. Installing such a plugin from GitHub on a host that
+  lacks the feature is refused by name instead.
 
 ---
 
@@ -1832,7 +1836,7 @@ main agent's too — runs under `subagent.refuse`. A main-only action stays in t
 intent form (`[agent:<verb> …]`); a main agent reaching for the tool sees your
 `refuse` string, or for `''` the default `not available to a subagent` text.
 
-A caller may see four refusal texts: `invalid: <your message>`,
+The refusal texts a caller may see: `invalid: <your message>`,
 `unknown tool: "<name>"` (unregistered OR not granted — one text, so there is no
 existence oracle), `tool <name> emitted a foreign intent`, and your `refuse`
 string. The server stops the 3rd byte-identical failing call within 60 s per
@@ -1867,7 +1871,7 @@ Two more optional fields on `host.intents.register` shape what a socket caller
   `classifyReply`. The browser pane's is `replies.classifyReply`.
 
 The host wraps both, so a plugin can never extend the wait past the cap or
-invent a third status. Both are optional; a verb without them behaves as before.
+invent a new status. Both are optional.
 
 ### Choosing a verb is a compatibility decision
 

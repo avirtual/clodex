@@ -750,7 +750,9 @@ accept teardown removes.
   `resolveUpdate`/`applyUpdate`/`removeSourcePlugin`, plus `libraryCatalog`,
   which decorates the library listing with what the plugins folder already
   holds; plugins/plugin-sources.md §9), built on the **plugin-source.js** leaf
-  below. A manifest `requires` the host cannot meet (`hostFeatures`, wired from `seams.electronChild`) is SKIPPED at discovery, not refused: hidden from the dialog, the catalog and every seat.
+  below. A manifest `requires` the host cannot meet (`hostFeatures`, wired
+  from `seams.electronChild`) is SKIPPED at discovery, not refused: hidden
+  from the dialog, the catalog and every seat.
 - **plugin-source.js** — deps-injected leaf (fs/path/https/execFile/os) parsing a
   GitHub plugin-source spec and fetching/extracting its tarball, and listing the
   plugin folders of the library repo off one such tarball
