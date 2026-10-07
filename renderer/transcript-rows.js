@@ -543,10 +543,10 @@ function senderBadge(doc, from, client) {
 function inboundBadge(doc, rec) {
   if (rec.via !== 'subagent') return senderBadge(doc, rec.from, rec.client);
   const name = String(rec.from);
-  const badge = el(doc, 'span', `tr-sender tr-sender-${classifySender(name).cls}`);
-  badge.title = 'Report from a subagent of this seat — attached by the CLI, not typed';
+  const badge = el(doc, 'span', `tr-sender tr-sender-${classifySender(name).cls}${rec.unverified ? ' tr-unverified' : ''}`);
+  badge.title = rec.unverified ? `unverified: no subagent named ${name} was spawned by this seat` : 'Report from a subagent of this seat — attached by the CLI, not typed';
   badge.appendChild(el(doc, 'span', 'tr-sender-glyph', initial(name)));
-  badge.appendChild(el(doc, 'span', 'tr-sender-name', name));
+  badge.appendChild(el(doc, 'span', 'tr-sender-name', rec.unverified ? `${name} (unverified)` : name));
   return badge;
 }
 
@@ -577,6 +577,7 @@ function inboundRow(doc, rec, ctx, boxed) {
   const row = headRow(doc, 'tr-inbound', rec);
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
+  if (rec.unverified) row.dataset.unverified = '1';
   if (!boxed) text.appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
     const lead = attachedLead(rec).trim();

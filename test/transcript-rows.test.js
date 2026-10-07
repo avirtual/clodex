@@ -142,7 +142,20 @@ test('an inbound from a subagent of this seat is marked via subagent and its bad
   assert.strictEqual(card.dataset.via, 'subagent');
   const badge = card.childNodes[0].childNodes[0];
   assert.strictEqual(badge.textContent, 'Nnits-coords');
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-seat');
+  assert.strictEqual(card.dataset.unverified, undefined);
   assert.strictEqual(badge.title, 'Report from a subagent of this seat — attached by the CLI, not typed');
+});
+
+test('an inbound from a subagent this seat never spawned is drawn unverified with a warning badge', () => {
+  const m = mount();
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', unverified: true, text: 'hello' }]);
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
+  assert.strictEqual(card.dataset.unverified, '1');
+  const badge = card.childNodes[0].childNodes[0];
+  assert.strictEqual(badge.className, 'tr-sender tr-sender-seat tr-unverified');
+  assert.strictEqual(badge.title, 'unverified: no subagent named nits-coords was spawned by this seat');
+  assert.strictEqual(badge.textContent, 'Nnits-coords (unverified)');
 });
 
 const headText = (m) => unbox(m.pane.childNodes[0].childNodes[0]).childNodes.find((n) => n.className === 'tr-head-text');

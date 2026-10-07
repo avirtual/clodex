@@ -891,7 +891,37 @@ const teammate = (body, attrs = 'teammate_id="nits-coords" color="blue" summary=
 
 test('a subagent report the CLI attaches as a teammate message is an inbound card from that subagent, not a typed prompt', () => {
   const { records } = recordsOf(typed('u', 'p1', teammate('hello lead')));
-  assert.deepStrictEqual(records, [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead' }]);
+  assert.deepStrictEqual(records, [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead', unverified: true }]);
+});
+
+const spawnUse = (id, name) => rec({ type: 'assistant', uuid: `a-${id}`, message: { content: [{ type: 'tool_use', id, name: 'Agent', input: { name, prompt: 'x' } }] } });
+const spawnResult = (id, name) => rec({ type: 'user', uuid: `r-${id}`, message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'spawned' }] }, toolUseResult: { status: 'teammate_spawned', name, teammate_id: `${name}@session-1` } });
+const inboundOf = (lines, max) => recordsOf(lines.join('\n'), max).records.filter((r) => r.kind === 'inbound');
+
+test('a teammate row is verified only when a subagent of that name was spawned earlier in the transcript', () => {
+  const spawn = [spawnUse('t1', 'nits-coords'), spawnResult('t1', 'nits-coords')];
+  const row = typed('u', 'p1', teammate('hello lead'));
+  assert.deepStrictEqual(inboundOf([...spawn, row]), [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead' }]);
+  const first = inboundOf([row, ...spawn]);
+  assert.strictEqual(first.length, 1, 'ENTER: the row precedes the spawn');
+  assert.strictEqual(first[0].unverified, true);
+});
+
+test('a collision-suffixed subagent name from the spawn result verifies its row; an unspawned name does not', () => {
+  const spawn = [spawnUse('t1', 'John2'), spawnResult('t1', 'John2-2')];
+  const [ok] = inboundOf([...spawn, typed('u', 'p1', teammate('hi', 'teammate_id="John2-2"'))]);
+  assert.deepStrictEqual([ok.from, 'unverified' in ok], ['John2-2', false]);
+  const [bad] = inboundOf([...spawn, typed('u', 'p1', teammate('hi', 'teammate_id="John3"'))]);
+  assert.deepStrictEqual([bad.from, bad.unverified], ['John3', true]);
+});
+
+test('a spawn cut off by the record cap still verifies a teammate row that survives the cut', () => {
+  const lines = [prompt(1), spawnUse('t1', 'nits-coords'), spawnResult('t1', 'nits-coords'), reply(1, 1), prompt(2), reply(2, 1), prompt(3), reply(3, 1), typed('u', 'p4', teammate('hello lead'))];
+  const all = recordsOf(lines.join('\n'), 2).records;
+  assert.ok(!all.some((r) => r.kind === 'tool'), 'ENTER: the spawn is cut');
+  const rows = all.filter((r) => r.kind === 'inbound');
+  assert.strictEqual(rows.length, 1, 'ENTER: the row survived the cut');
+  assert.strictEqual('unverified' in rows[0], false);
 });
 
 test('a subagent report longer than the prompt cap is cut to the cap and marked truncated', () => {
@@ -913,7 +943,7 @@ test('a teammate message without a summary attribute still names its sender', ()
 test('a teammate message absorbed mid-turn is the same inbound card, stamped mid-turn with no state', () => {
   const { records } = recordsOf([typed('p1', 'P', 'go'), midTurn('q', teammate('hello lead'))].join('\n'));
   const card = records.find((r) => r.id === 'q');
-  assert.deepStrictEqual(card, { id: 'q', kind: 'inbound', ts: TS, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead', source: 'mid-turn' });
+  assert.deepStrictEqual(card, { id: 'q', kind: 'inbound', ts: TS, turn: 1, from: 'nits-coords', via: 'subagent', text: 'hello lead', source: 'mid-turn', unverified: true });
   assert.deepStrictEqual(records.filter((r) => r.kind === 'prompt').map((r) => r.id), ['p1']);
 });
 

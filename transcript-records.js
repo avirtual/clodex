@@ -260,13 +260,15 @@ function injectedPaste(text) {
   return INBOUND_RE.test(body) || RUNTIME_RE.test(body) ? body : null;
 }
 
-function userRecords(rec, base, tools) {
+function userRecords(rec, base, tools, spawned) {
   const content = rec.message.content;
   if (Array.isArray(content)) {
     for (const b of content) {
       if (!b || b.type !== 'tool_result') continue;
       const tool = tools.get(b.tool_use_id);
-      if (tool) settle(tool.rec, tool.input, b, rec.toolUseResult);
+      if (!tool) continue;
+      settle(tool.rec, tool.input, b, rec.toolUseResult);
+      if (isSpawn(tool.rec.name) && typeof rec.toolUseResult?.name === 'string') spawned.add(rec.toolUseResult.name);
     }
   }
   if (rec.isMeta || rec.isCompactSummary) return [];
@@ -277,7 +279,12 @@ function userRecords(rec, base, tools) {
     return [{ ...base, kind: 'notification', text: firstLine(summary || text.replace(/<[^>]*>/g, '\n'), NOTE_CAP) }];
   }
   const mate = TEAMMATE_RE.exec(text);
-  if (mate) return [capped({ ...base, kind: 'inbound', from: (/teammate_id="([^"]+)"/.exec(mate[1]) || [null, 'subagent'])[1], via: 'subagent' }, 'text', teammateText(mate[2].trim()), PROMPT_CAP)];
+  if (mate) {
+    const from = (/teammate_id="([^"]+)"/.exec(mate[1]) || [null, 'subagent'])[1];
+    const fields = { ...base, kind: 'inbound', from, via: 'subagent' };
+    if (!spawned.has(from)) fields.unverified = true;
+    return [capped(fields, 'text', teammateText(mate[2].trim()), PROMPT_CAP)];
+  }
   if (INTERRUPT_RE.test(text)) return [{ ...base, kind: 'notice', level: 'warning', text: INTERRUPT_RE.exec(text)[0].slice(1, -1) }];
   if (text.startsWith('<') && !text.startsWith(PASTE_OPEN)) return [];
   const unwrapped = injectedPaste(text);
@@ -405,7 +412,7 @@ function capSegments(segs) {
   return { segments: out, truncated };
 }
 
-function assistantRecords(rec, base, tools) {
+function assistantRecords(rec, base, tools, spawned) {
   const content = rec.message.content;
   if (!Array.isArray(content)) return [];
   const texts = content.filter((b) => b && b.type === 'text').length;
@@ -426,6 +433,7 @@ function assistantRecords(rec, base, tools) {
     } else if (b.type === 'tool_use' && b.id) {
       const tool = toolRecord(base, b, rec.cwd);
       tools.set(b.id, { rec: tool, input: b.input });
+      if (isSpawn(b.name) && b.input && typeof b.input.name === 'string') spawned.add(b.input.name);
       out.push(tool);
     }
   });
@@ -454,19 +462,23 @@ function systemRecords(rec, base) {
   return [];
 }
 
-function midTurnRecords(rec, base, tools) {
+function midTurnRecords(rec, base, tools, spawned) {
   const a = rec.attachment;
   if (!a || a.type !== 'queued_command' || !a.origin || a.origin.kind !== 'human') return [];
   const user = { type: 'user', uuid: rec.uuid, timestamp: rec.timestamp, message: { role: 'user', content: a.prompt } };
-  return userRecords(user, base, tools).map((r) => (r.kind === 'prompt' ? { ...r, source: 'mid-turn', state: 'delivered' } : { ...r, source: 'mid-turn' }));
+  return userRecords(user, base, tools, spawned).map((r) => (r.kind === 'prompt' ? { ...r, source: 'mid-turn', state: 'delivered' } : { ...r, source: 'mid-turn' }));
 }
 
-function recordsOfLine(rec, base, tools) {
+function isSpawn(name) {
+  return name === 'Agent' || name === 'Task';
+}
+
+function recordsOfLine(rec, base, tools, spawned) {
   if (rec.type === 'system') return systemRecords(rec, base);
-  if (rec.type === 'attachment') return midTurnRecords(rec, base, tools);
+  if (rec.type === 'attachment') return midTurnRecords(rec, base, tools, spawned);
   if (!rec.message) return [];
-  if (rec.type === 'user') return userRecords(rec, base, tools);
-  if (rec.type === 'assistant') return assistantRecords(rec, base, tools);
+  if (rec.type === 'user') return userRecords(rec, base, tools, spawned);
+  if (rec.type === 'assistant') return assistantRecords(rec, base, tools, spawned);
   return [];
 }
 
@@ -527,6 +539,7 @@ function queueStep(queued, rec, n) {
 
 function recordsOf(text, max = RECORD_CAP) {
   const tools = new Map();
+  const spawned = new Set();
   const all = [];
   let turn = 0;
   let typedPrompt = null;
@@ -559,7 +572,7 @@ function recordsOf(text, max = RECORD_CAP) {
       typedPrompt = null;
     }
     const base = { id: rec.uuid || `line:${pushed}`, kind: '', ts: tsOf(rec), turn };
-    const produced = recordsOfLine(rec, base, tools);
+    const produced = recordsOfLine(rec, base, tools, spawned);
     for (const r of produced) {
       if (r.kind === 'prompt' && r.source !== 'mid-turn') typedPrompt = { at: all.length, promptId: rec.promptId || null, record: r };
       const midTurn = r.source === 'mid-turn';
@@ -576,7 +589,7 @@ function recordsOf(text, max = RECORD_CAP) {
   }
   queued.forEach((q) => {
     const user = { type: 'user', message: { role: 'user', content: q.text } };
-    for (const r of userRecords(user, { id: `queued:${q.ts}:${q.n}`, kind: '', ts: q.ts, turn }, tools)) {
+    for (const r of userRecords(user, { id: `queued:${q.ts}:${q.n}`, kind: '', ts: q.ts, turn }, tools, spawned)) {
       if (r.kind === 'prompt') all.push({ ...r, source: 'mid-turn', state: 'queued' });
     }
   });
