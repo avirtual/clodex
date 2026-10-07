@@ -21,6 +21,8 @@ blocks a release.
 
 ### Messaging and conversation mode
 - The host now verifies a subagent's identity stamp (not only the main agent's) and can name the caller as `<seat>/<name>`, the name its parent gave the Agent tool; a forged or replayed stamp still yields no identity. Groundwork for a subagent `dm` tool.
+- Subagents can dm other seats through the Clodex MCP `dm` tool (SendMessage stays off): the recipient sees `<seat>/<name>` and can reply to that name; the reply reaches the seat that spawned the subagent. Local seats only, never urgent, rate-capped at 10 per minute per subagent.
+- A planted non-file under `subq/names/` can no longer stall the host; the caller-name dependency is `nameFor`.
 
 ## 5.117.0 — 2026-10-07
 

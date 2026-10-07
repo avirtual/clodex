@@ -1812,7 +1812,7 @@ verb as an MCP tool:
   matches `/^[a-z][a-z0-9_-]{0,63}$/` and lives in ONE GLOBAL namespace like
   verbs: a name another plugin holds throws `ETOOLTAKEN` with `err.tool` and
   `err.heldBy`, mirroring `EVERBTAKEN`. Core tool names (the host's own
-  `term_exec`) are reserved: claiming one throws `ETOOLTAKEN` with
+  `term_exec`, `dm`) are reserved: claiming one throws `ETOOLTAKEN` with
   `err.heldBy === 'core'` and the message
   `tool "<name>" is already registered by plugin "core"`. `inputSchema` is a plain
   `{ type: 'object', … }` JSON object. `toIntent(args)` returns ONE intent line
@@ -1844,9 +1844,9 @@ server process (one per seat; main and subagents share it); your `invalid`
 rejections are not counted.
 
 A seat's `tools/list` is core tools first — only those whose verb the seat holds
-(`term_exec` needs the `term` grant itself; `'*'` never confers it) — then plugin
-tools in registration order. Only plugin `brief`s are injected at
-`SubagentStart`; a core tool has no brief.
+(`dm` by default; `term_exec` needs the `term` grant itself; `'*'` never confers it) — then plugin
+tools in registration order. Plugin `brief`s and a core tool's own brief (`dm`'s) are injected at
+`SubagentStart`.
 
 ### Reply timing and status: `replyWaitMs` and `classifyReply`
 

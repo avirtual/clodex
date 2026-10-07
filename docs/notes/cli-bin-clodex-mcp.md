@@ -4,7 +4,7 @@
 
 `process.stdout` on a pipe is asynchronous on macOS (synchronous only on Linux and Windows), so the stdio entry point exits through `process.stdout.write('', cb)` rather than a bare `process.exit`, or the last response line can be lost.
 
-The server sends `{cred, tool, args, ident?}`; `ident` is the PreToolUse hook's stamp. A plugin tool row ignores it and runs as a subagent request (intent-socket.js): main's `click --confirm` over MCP is refused too; main confirms through the intent or the CLI. A core tool row (`term_exec`) is main only on a verified stamp.
+The server sends `{cred, tool, args, ident?}`; `ident` is the PreToolUse hook's stamp. A plugin tool row ignores it and runs as a subagent request (intent-socket.js): main's `click --confirm` over MCP is refused too; main confirms through the intent or the CLI. A core tool row (`term_exec`) is main only on a verified stamp; `dm` also runs for a verified sub stamp, as that subagent.
 
 The catalog path is derived from `CLODEX_INTENT_SOCK`'s directory, not passed: `mcp.json` carries no seat-specific env and must not (the cred is inherited, never written). `tools/list` re-reads the file on every call; a missing or malformed file is an empty list — a seat with no tool-declaring plugin has `tools: []`, which is correct, not an error.
 

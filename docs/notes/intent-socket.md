@@ -16,13 +16,15 @@ Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while
 
 ## seatOfAgentTag
 
-A subagent's dm is refused at the socket (`not available to a subagent: dm`): no plugin policy allows it, and a subagent has no inbox to receive a reply. A `<seat>/agent` name that still reaches `_isDmReachable` or the dm arm as a sender or target maps back to the seat, so a reply lands in the seat's main conversation.
+A local `<seat>/<x>` name (a `/` past index 0, no `@`) folds to the seat as a sender or target in `_isDmReachable` and the dm arm, so a reply to a subagent's dm lands in the seat's main conversation until replies route into its note queue. `agent` stays a reserved suffix even though `SUBQ_NAME_RE` admits it as a name: `<seat>/agent` is the shared plugin tag, so it must never resolve to one subagent.
 
 ## callerIsSubagent
 
 Claude Code 2.1.289 exports no agent-id env var to a subagent's shell, so a Claude caller's identity comes only from the hook stamp; the main agent's calls always pass the hook, so an unstamped call is a subagent.
 
 The seat credential is also in every shell's env, a subagent's included: the HMAC stops a guessed or copied stamp, not a subagent that reads the credential and computes one.
+
+The subagent lift for a core tool is a per-tool `subagentOk` flag, not a core `subagent` policy: `row.subagent` is what routes a row into the plugin branch of the tool handler and what `subagentCatalogFor` filters plugin briefs on, so a core row carrying it would run every caller as an unidentified subagent.
 
 A verified sub's label rides `fromIdent`, never `fromLabel`: `_dispatchPluginIntent` copies `fromLabel` to `handle.from`, which browser-pane stamps on open, note and close and owns tabs by, so a per-subagent value would change note stamps and split sibling tab ownership.
 
