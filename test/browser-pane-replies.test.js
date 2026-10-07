@@ -548,6 +548,8 @@ test('replies: --path-only on a small read says so; the attached shape is unchan
   const small = R.readReply('wiki', { ...info, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n');
   assert.match(small[0], / → \/t\/r-1\.txt \(not attached: --path-only; read or grep it, or narrow with --filter=\/--page=\)$/);
   assert.deepStrictEqual(small.slice(3), ['  landmarks: Main menu', '  ⚠: [1] "Pay"']);
+  const kinded = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: ['Main menu'] }, first: true }, { service: 'wiki', main: true });
+  assert.deepStrictEqual(R.readReply('wiki', { ...kinded, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n').slice(3), ['  landmarks: Main menu', '  ⚠: [12] button']);
   assert.strictEqual(R.readReply('wiki', info, '/t/r-1.txt', 'claude', { attach: true, budget: 1000 }), R.readReply('wiki', info, '/t/r-1.txt', 'claude'));
   assert.ok(R.readReply('wiki', info, '/t/r-1.txt', 'claude').endsWith(' → @/t/r-1.txt '));
   const codex = R.readReply('wiki', info, '/t/r-1.txt', 'codex', { attach: false, budget: 1000 }).split('\n');

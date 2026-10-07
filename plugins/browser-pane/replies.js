@@ -125,7 +125,7 @@ function digestLines(info) {
   const landmarks = (d.landmarks || []).slice(0, DIGEST_LANDMARKS).map(clip).filter(Boolean);
   const outline = headings.length ? [`  headings: ${headings.join(' | ')}`] : landmarks.length ? [`  landmarks: ${landmarks.join(' | ')}`] : [];
   const warn = d.warn || [];
-  const row = (w) => `[${w.n}] ${JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL))}`;
+  const row = (w) => `[${w.n}] ${w.label ? JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL)) : oneLine(w.kind || '?')}`;
   const ads = d.ads || {};
   const adLine = ads.posts > 0 ? [`  ⚠ ad: ${ads.posts} ad${ads.posts === 1 ? '' : 's'} (${ads.elements} element${ads.elements === 1 ? '' : 's'}) — clicking any of them is a paid click; the compact feed marks them Ad`] : [];
   const folded = Object.entries(d.folded || {}).filter(([, n]) => n > 0);
