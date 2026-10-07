@@ -242,7 +242,7 @@ test('the deprecated name prints one stderr line first and changes nothing else'
     assert.deepStrictEqual(await run(seat, ['[agent:who]'], { invokedAs: 'clodex-send' }), { code: 0, out: '[agent:peers] b\n', err: '' });
     assert.deepStrictEqual(await run(seat, ['[agent:who]']), { code: 0, out: '[agent:peers] b\n', err: '' });
   } finally { await seat.close(); }
-  const empty = await run(null, [], { invokedAs: 'clodex' });
+  const empty = await run(null, [''], { invokedAs: 'clodex' });
   assert.strictEqual(empty.code, 2);
   assert.ok(empty.err.startsWith(DEP + 'clodex-send: empty intent'), empty.err);
   const help = await run(null, ['--help'], { invokedAs: 'clodex' });
