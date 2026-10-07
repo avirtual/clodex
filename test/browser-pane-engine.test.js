@@ -428,8 +428,7 @@ test('engine handOver: a closed profile window hands over its live tab', async (
   deps.live.set('utility:riot', { state: 'idle', url: 'about:blank', title: '' });
   assert.deepStrictEqual(await engineMod.handOver(deps, { service: 'utility', seat: 'hand-a' }), { ok: true, service: 'utility:riot', seat: 'hand-a' });
   assert.deepStrictEqual(log.slice(0, 2), [['grant', 'utility:riot', 'hand-a'], ['handback', 'utility:riot']]);
-  assert.strictEqual(log.length, 3);
-  assert.match(log[2][1], /utility:riot at https:\/\/portal\.example\.com\/bills \("My Bills"\)/);
+  assert.deepStrictEqual(log[2], ['inject', '[agent:browser] the operator opened utility:riot at https://portal.example.com/bills ("My Bills") and handed it to you — read it and report what you see — start with [agent:browser read utility:riot]']);
 });
 
 test('engine handOver: a rejected child handback restores the previous lease and injects nothing', async () => {
