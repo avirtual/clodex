@@ -348,6 +348,12 @@ test('replies: an ad click without --confirm is refused as a paid click that lea
   const nameless = '[12] button looks consequential (trading) — re-issue with --confirm if the operator asked for it';
   assert.strictEqual(R.TEXT.consequential(12, '', 'trading', undefined, 'button'), nameless);
   assert.strictEqual(R.classifyReply('[agent:browser] error: ' + nameless), 'refused');
+  const multi = R.TEXT.consequential(12, '', 'trading', undefined, 'button menuitem');
+  assert.strictEqual(multi, nameless);
+  assert.strictEqual(R.classifyReply('[agent:browser] error: ' + multi), 'refused');
+  const info = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: [] }, first: true }, { service: 'wiki', main: true });
+  const digest = R.readReply('wiki', { ...info, stripped: true, digest: { ...info.digest, warn: [{ n: 12, label: '', kind: 'button menuitem' }] } }, '/t/r-1.txt', 'claude', { attach: false, budget: null });
+  assert.ok(digest.split('\n').includes('  ⚠: [12] button'), digest);
 });
 
 test('replies: Enter that would submit a consequential form is refused naming the field and the target', () => {

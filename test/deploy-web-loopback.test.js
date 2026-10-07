@@ -10,7 +10,8 @@ const root = path.join(__dirname, '..');
 const chartDir = path.join(root, 'cli/deploy/helm/clodex');
 
 function pickRender(r, raw) {
-  if (r.error) return raw();
+  if (r.error && r.error.code === 'ENOENT') return raw();
+  if (r.error) throw r.error;
   if (r.status !== 0) throw new Error('helm template failed: ' + r.stderr);
   return r.stdout;
 }
@@ -23,7 +24,8 @@ function renderStatefulSet(spawn = spawnSync) {
 test('renderStatefulSet throws when helm runs and fails, and falls back to the raw template only when helm is absent', () => {
   assert.throws(() => renderStatefulSet(() => ({ status: 1, stderr: 'boom' })), /helm template failed: boom/);
   const raw = fs.readFileSync(path.join(chartDir, 'templates/statefulset.yaml'), 'utf8');
-  assert.strictEqual(renderStatefulSet(() => ({ error: new Error('ENOENT') })), raw);
+  assert.strictEqual(renderStatefulSet(() => ({ error: Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) })), raw);
+  assert.throws(() => renderStatefulSet(() => ({ error: Object.assign(new Error('x'), { code: 'EACCES' }) })), /x/);
   assert.strictEqual(renderStatefulSet(() => ({ status: 0, stdout: 'rendered' })), 'rendered');
 });
 

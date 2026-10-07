@@ -717,8 +717,8 @@ test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its
   assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
   assert.ok(scripts.PAGE_TEXT.indexOf(zip) < scripts.PAGE_TEXT.indexOf("clone.querySelectorAll('script,style"));
-  assert.ok(read.includes("cutHidden(fd.body, fb, fd.defaultView); if (depth < 2) fts.forEach("));
-  assert.ok(read.includes("box.append('[frame]\\n', fb); twin.replaceWith(box); inlined.push(url); };"));
+  assert.ok(read.includes("cutHidden(fd.body, fb, fd.defaultView); let unread = 0; if (depth < 2) fts.forEach("));
+  assert.ok(read.includes("box.append('[frame]\\n', fb); twin.replaceWith(box); inlined.push(url); return true; };"));
   for (const src of [read, scripts.PAGE_TEXT]) {
     assert.ok(src.includes('cutHidden(orig.shadowRoot, frag, window); twin.append(frag);'));
     assert.strictEqual(src.split('const cutHidden').length - 1, 1);
@@ -1006,15 +1006,16 @@ test('page scripts: READ_TEXT appends the absolute local time to a relative age 
 test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a [frame] line; read lists only the frames it did not inline', () => {
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("const inlineFrame = (orig, twin, depth, win) => { let fd = null; try { fd = orig.contentDocument; } catch {}"));
-  assert.ok(src.includes("if (!(fd && fd.body && fd.body.innerText.trim())) return;"), 'an empty or hidden frame is not inlined');
-  assert.ok(src.includes("const inner = depth < 2 ? 0 : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) nested.push(inner);"));
+  assert.ok(src.includes("if (!(fd && fd.body && fd.body.innerText.trim())) return false;"), 'an empty or hidden frame is not inlined');
+  assert.ok(src.includes("const inner = depth < 2 ? unread : fos.filter(o => o.tagName === 'IFRAME' && o.srcdoc).length; if (inner) nested.push(inner);"));
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') inlineFrame(orig, twin, 1, window); });"));
   assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));'));
-  assert.ok(src.includes("if (!(depth === 1 ? vis(orig) : frameVis(orig, win))) { hidden.push(url); return; }"));
+  assert.ok(src.includes("if (!(depth === 1 ? vis(orig) : frameVis(orig, win))) { hidden.push(url); return false; }"));
+  assert.ok(src.includes("const h = hidden.length; const ok = inlineFrame(o, t, depth + 1, fd.defaultView); if (!ok && hidden.length === h && o.srcdoc) unread++;"));
   const nestedExpr = "got && Array.isArray(got.nested) ? Math.min(20, got.nested.reduce((a, b) => a + (Number.isInteger(b) && b > 0 ? b : 0), 0)) : 0";
   assert.ok(child.includes(`const nestedN = ${nestedExpr};`));
   const nestedN = new Function('got', 'return ' + nestedExpr);
@@ -2722,6 +2723,24 @@ test('page scripts: READ_TEXT counts a third-level srcdoc frame as nested and dr
   assert.strictEqual(text.split('[frame]').length, 3, text);
   assert.deepStrictEqual([...nested], [1]);
   assert.deepStrictEqual(r.removed.filter((t) => t === 'IFRAME'), ['IFRAME']);
+});
+
+const depth2Dom = (kids, gs = () => ({ display: 'block' })) => {
+  const d = readDom();
+  const fd = { body: d.node('body', [d.node('p', [], 'OUTER-FRAME'), ...kids(d.node)]), defaultView: { getComputedStyle: gs }, querySelectorAll: () => [] };
+  const root = d.node('div', [d.node('p', [], 'ROOT'), d.node('iframe', [], '', { contentDocument: fd, srcdoc: 'x' })]);
+  return d.run(scripts.READ_TEXT(false), root, [root]);
+};
+
+test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as nested and a hidden one only as hidden', () => {
+  const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
+    n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
+  assert.deepStrictEqual([...got.nested], [2]);
+  assert.ok(got.text.includes('OUTER-FRAME'), got.text);
+  const gone = depth2Dom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'GONE-FRAME'), srcdoc: 'x', gone: true })], (e) => ({ display: e.gone ? 'none' : 'block' }));
+  assert.deepStrictEqual([...gone.nested], []);
+  assert.ok([...gone.hidden].includes('about:srcdoc'));
+  assert.ok(!gone.text.includes('GONE-FRAME'), gone.text);
 });
 
 test('page scripts: READ_TEXT inlines a second-level src= frame by URL and never counts a third-level src= frame as nested', () => {

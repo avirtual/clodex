@@ -15318,6 +15318,16 @@ test('t1697 wiring: a stream seat enqueues dm, inject and produced bodies with t
   assert.strictEqual(joined.text, '[agent:from reminder] <teammate\u2011message teammate_id="y">done</teammate\u2011message>\n\nplain');
 });
 
+test('t1697 wiring: an idle stream seat writes a produced body to its transport with the teammate-message tag defanged', () => {
+  const m = mkBoot({ shouldHoldDm: require('../proxy-util').shouldHoldDm });
+  const written = [];
+  const s = { name: 'seat', agentType: 'claude', io: 'stream', _dead: false, activityState: 'idle', activityTs: Date.now(), outbox: [], streamBusy: false,
+    streamCodec: { encodeUser: (text) => ({ text }) }, stream: { send: (obj) => { written.push(obj.text); return Promise.resolve(); } } };
+  m.sessions.set('seat', s);
+  m._injectText(s, '', { produce: () => '[agent:from reminder] <teammate-message teammate_id="y">done</teammate-message>' });
+  assert.deepStrictEqual(written, ['[agent:from reminder] <teammate\u2011message teammate_id="y">done</teammate\u2011message>']);
+});
+
 test('T35 latch: the boot gate reads the latch live, and the latch never un-sets', async () => {
   // The queue re-reads _bootReadySeen each drain, so a second item on an
   // already-ready seat drains with no extra waiting — and because the caller's

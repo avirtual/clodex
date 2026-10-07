@@ -126,7 +126,7 @@ function digestLines(info) {
   const landmarks = (d.landmarks || []).slice(0, DIGEST_LANDMARKS).map(clip).filter(Boolean);
   const outline = headings.length ? [`  headings: ${headings.join(' | ')}`] : landmarks.length ? [`  landmarks: ${landmarks.join(' | ')}`] : [];
   const warn = d.warn || [];
-  const row = (w) => `[${w.n}] ${w.label ? JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL)) : oneLine(w.kind || '?')}`;
+  const row = (w) => `[${w.n}] ${w.label ? JSON.stringify(oneLine(w.label, DIGEST_WARN_LABEL)) : kindWord(w.kind)}`;
   const ads = d.ads || {};
   const adLine = ads.posts > 0 ? [`  ⚠ ad: ${ads.posts} ad${ads.posts === 1 ? '' : 's'} (${ads.elements} element${ads.elements === 1 ? '' : 's'}) — clicking any of them is a paid click; the compact feed marks them Ad`] : [];
   const folded = Object.entries(d.folded || {}).filter(([, n]) => n > 0);
@@ -237,7 +237,8 @@ function clipNavUrl(u, max) {
   return `${base.length < max ? base : base.slice(0, max - 1)}…`;
 }
 
-const named = (n, label, kind) => `[${n}] ${label ? JSON.stringify(String(label)) : oneLine(kind || '?')}`;
+const kindWord = (kind) => oneLine(String(kind || '?').split(/\s+/)[0] || '?');
+const named = (n, label, kind) => `[${n}] ${label ? JSON.stringify(String(label)) : kindWord(kind)}`;
 
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,

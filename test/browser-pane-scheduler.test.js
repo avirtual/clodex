@@ -230,6 +230,21 @@ test('scheduler: an act on a closed service reaches the child and answers not op
     [['hand-a', `[agent:browser] error: ${notOpen}`]]);
 });
 
+test('scheduler: on a closed service an act queued behind an act is dropped under the first act\'s not open; one queued behind an open still asks for a read', async () => {
+  const notOpen = 'utility is not open — [agent:browser open utility] <url>';
+  const h = harness({ click: () => { throw coded('NOT_OPEN', notOpen); } });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]'], ['hand-a', '[agent:browser click utility 5]']]),
+    [['hand-a', `[agent:browser] error: ${notOpen} — dropped 1 queued command after it: click 5`]]);
+  const h2 = harness();
+  assert.deepStrictEqual(await h2.run([
+    ['hand-a', '[agent:browser open utility] https://portal.example.com/bills'],
+    ['hand-a', '[agent:browser click utility 4]'],
+  ]), [
+    ['hand-a', '[agent:browser] error: read utility first — numbers come from your read'],
+    ['hand-a', OPENED],
+  ]);
+});
+
 test('scheduler: a held service refuses everything but wait, services and release', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
