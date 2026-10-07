@@ -1670,7 +1670,7 @@ RE='"agent_id": ?"([A-Za-z0-9@._-]+)"'
 case "$IN" in
   *'"SubagentStop"'*) ;;
   *'"tool_name":"Agent"'*|*'"tool_name": "Agent"'*|*'"tool_name":"TaskStop"'*|*'"tool_name": "TaskStop"'*) ;;
-  *'"agent_id"'*) [[ $IN =~ $RE ]] && [ -e "${dir}/\${BASH_REMATCH[1]}" ] || exit 0;;
+  *'"agent_id"'*) [[ $IN =~ $RE ]] && set -- "${dir}/\${BASH_REMATCH[1]}"/* && [ -e "$1" ] || exit 0;;
   *) exit 0;;
 esac
 IFS= read -r -d '' JS <<'JSEOF' || true
@@ -1687,27 +1687,36 @@ exit 0
 test('subq hook: a subagent PostToolUse drains its queue as one [parent <nonce>] note, echoing the event, and receipts it', () => {
   const { R, dir } = subqSeat();
   fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e.nonce'), '0123456789abcdef');
-  fs.appendFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'first\n');
-  fs.appendFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'second\n');
+  const q = path.join(dir, 'a606bb8c5bfa9764e');
+  fs.mkdirSync(q);
+  fs.writeFileSync(path.join(q, '000000001'), 'first\n');
+  fs.writeFileSync(path.join(q, '000000002'), 'second\n');
   const out = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', agent_type: 'general-purpose', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
   assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] first\nsecond' } });
-  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['a606bb8c5bfa9764e.nonce', 'names', 'receipts.jsonl']);
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['a606bb8c5bfa9764e', 'a606bb8c5bfa9764e.nonce', 'names', 'receipts.jsonl']);
+  assert.deepStrictEqual(fs.readdirSync(q), []);
   assert.deepStrictEqual(receipts(dir).map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: 'a606bb8c5bfa9764e', ev: 'delivered', bytes: 12 }]);
   assert.strictEqual(runSubq(R, { agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
+  fs.writeFileSync(path.join(q, '000000003'), 'third\n');
+  const third = runSubq(R, { agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  assert.deepStrictEqual(JSON.parse(third), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] third' } });
 });
 
-test('subq hook: no queue, a claimed .draining file, a traversal id or a missing nonce deliver nothing', () => {
+test('subq hook: no queue, a claimed .draining dir, a traversal id or a missing nonce deliver nothing', () => {
   const { R, dir } = subqSeat();
-  fs.writeFileSync(path.join(dir, 'a1.draining.999'), 'old\n');
+  fs.mkdirSync(path.join(dir, 'a1.draining.999'));
+  fs.writeFileSync(path.join(dir, 'a1.draining.999', '000000001'), 'old\n');
   assert.strictEqual(runSubq(R, { agent_id: 'a1', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
-  assert.strictEqual(fs.readFileSync(path.join(dir, 'a1.draining.999'), 'utf8'), 'old\n');
+  assert.strictEqual(require('../subq').subqHookOutput(JSON.stringify({ agent_id: 'a1', hook_event_name: 'PostToolUse' }), { dir }), '');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'a1.draining.999', '000000001'), 'utf8'), 'old\n');
   fs.writeFileSync(path.join(path.dirname(dir), 'x'), 'secret\n');
   assert.strictEqual(runSubq(R, { agent_id: '../x', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
   assert.strictEqual(require('../subq').subqHookOutput(JSON.stringify({ agent_id: '../x', hook_event_name: 'PostToolUse' }), { dir }), '');
   assert.strictEqual(fs.readFileSync(path.join(path.dirname(dir), 'x'), 'utf8'), 'secret\n');
-  fs.writeFileSync(path.join(dir, 'a3'), 'hi\n');
+  fs.mkdirSync(path.join(dir, 'a3'));
+  fs.writeFileSync(path.join(dir, 'a3', '000000001'), 'hi\n');
   assert.strictEqual(runSubq(R, { agent_id: 'a3', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
-  assert.strictEqual(fs.existsSync(path.join(dir, 'a3')), false);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'a3')), []);
   assert.deepStrictEqual(receipts(dir).map(({ id, ev }) => ({ id, ev })), [{ id: 'a3', ev: 'no-nonce' }]);
 });
 
@@ -1739,7 +1748,14 @@ test('subq hook: a subagent payload without a queue still exits before node', ()
   fs.mkdirSync(subqOf(R), { recursive: true });
   assert.strictEqual(runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }), '');
   assert.strictEqual(fs.existsSync(marker), false);
-  fs.writeFileSync(path.join(subqOf(R), 'a606bb8c5bfa9764e'), 'hi\n');
+  const q = path.join(subqOf(R), 'a606bb8c5bfa9764e');
+  fs.mkdirSync(q);
+  assert.strictEqual(runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
+  assert.strictEqual(fs.existsSync(marker), false);
+  fs.writeFileSync(path.join(q, '.000000009.tmp'), 'hi\n');
+  assert.strictEqual(runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' }), '');
+  assert.strictEqual(fs.existsSync(marker), false);
+  fs.writeFileSync(path.join(q, '000000001'), 'hi\n');
   runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
   assert.strictEqual(fs.existsSync(marker), true);
 });
@@ -1747,15 +1763,17 @@ test('subq hook: a subagent payload without a queue still exits before node', ()
 test('subq hook: a subagent payload with a queue drains even when tool_response nests another agent_id', () => {
   const { R, dir } = subqSeat();
   fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e.nonce'), '0123456789abcdef');
-  fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'body\n');
+  const q = path.join(dir, 'a606bb8c5bfa9764e');
+  fs.mkdirSync(q);
+  fs.writeFileSync(path.join(q, '000000001'), 'body\n');
   const out = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', agent_type: 'general-purpose', hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { name: 'sub2' }, tool_response: { agentId: 'aother-0123456789abcdef', agent_id: 'aother-0123456789abcdef' } });
   assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] body' } });
-  assert.strictEqual(fs.existsSync(path.join(dir, 'a606bb8c5bfa9764e')), false);
+  assert.deepStrictEqual(fs.readdirSync(q), []);
   assert.strictEqual(fs.existsSync(path.join(dir, 'names', 'sub2')), false);
-  fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'body\n');
+  fs.writeFileSync(path.join(q, '000000002'), 'body\n');
   const viaGate = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_response: { agent_id: 'aother-0123456789abcdef' } });
   assert.deepStrictEqual(JSON.parse(viaGate), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] body' } });
-  assert.strictEqual(fs.existsSync(path.join(dir, 'a606bb8c5bfa9764e')), false);
+  assert.deepStrictEqual(fs.readdirSync(q), []);
 });
 
 test('subq recordName: a tool_response carrying only agent_id is written', () => {
@@ -1769,17 +1787,26 @@ test('subq hook: a parent TaskStop by name and a SubagentStop park the undeliver
   for (const [id, name] of [['a1', 'slow'], ['a2', 'done']]) {
     fs.writeFileSync(path.join(dir, `${id}.nonce`), '0123456789abcdef');
     fs.writeFileSync(path.join(dir, 'names', name), id);
-    fs.writeFileSync(path.join(dir, id), `late ${id}\n`);
+    fs.mkdirSync(path.join(dir, id));
   }
+  fs.writeFileSync(path.join(dir, 'a1', '000000001'), 'late a1\n');
+  fs.writeFileSync(path.join(dir, 'a2', '000000001'), 'early a2\n');
+  fs.writeFileSync(path.join(dir, 'a2', '000000002'), 'next a2\n');
+  const drained = runSubq(R, { agent_id: 'a2', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  assert.strictEqual(JSON.parse(drained).hookSpecificOutput.additionalContext, '[parent 0123456789abcdef] early a2\nnext a2');
+  fs.writeFileSync(path.join(dir, 'a2', '000000003'), 'late a2\n');
+  fs.writeFileSync(path.join(dir, 'a2', '000000004'), 'later a2\n');
   fs.writeFileSync(path.join(dir, 'a4.nonce'), 'fedcba9876543210');
   assert.strictEqual(runSubq(R, { hook_event_name: 'PostToolUse', tool_name: 'TaskStop', tool_input: { task_id: 'slow' }, tool_response: { task_id: 'a1' } }), '');
   assert.strictEqual(runSubq(R, { agent_id: 'a2', hook_event_name: 'SubagentStop' }), '');
   assert.strictEqual(runSubq(R, { agent_id: 'a4', hook_event_name: 'SubagentStop' }), '');
   assert.deepStrictEqual(parkedTexts(path.join(R, 'pending'), 'agent1').sort(), [
     '[agent:sub] undelivered to a1 (it was stopped before its next tool call): late a1',
-    '[agent:sub] undelivered to a2 (it finished before its next tool call): late a2',
+    '[agent:sub] undelivered to a2 (it finished before its next tool call): late a2\nlater a2',
   ]);
-  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['names', 'receipts.jsonl']);
+  assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['a1', 'a2', 'names', 'receipts.jsonl']);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'a1')), []);
+  assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'a2')), []);
   assert.deepStrictEqual(fs.readdirSync(path.join(dir, 'names')), []);
-  assert.deepStrictEqual(receipts(dir).map(({ id, ev }) => ({ id, ev })), [{ id: 'a1', ev: 'undelivered' }, { id: 'a2', ev: 'undelivered' }]);
+  assert.deepStrictEqual(receipts(dir).map(({ id, ev }) => ({ id, ev })), [{ id: 'a2', ev: 'delivered' }, { id: 'a1', ev: 'undelivered' }, { id: 'a2', ev: 'undelivered' }]);
 });
