@@ -935,20 +935,20 @@ test('session-manager: both events land in the shadow log under their wire-* rec
 
 test('t1119 grammar line with no examples: an ephemeral seat is not promised two full bodies', () => {
   const line = spillGrammarLine('/r', 0);
-  assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your transcript keeps only the intent head, a bracketed runtime note and `[agent:end]`, so none needs re-sending'), line);
+  assert.ok(line.startsWith('- A long intent body (dm, sub, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your transcript keeps only the intent head, a bracketed runtime note and `[agent:end]`, so none needs re-sending'), line);
   assert.ok(!line.includes('two newest'), 'ENTER: the examples sentence is gone');
   assert.equal(spillGrammarLine('/r'), spillGrammarLine('/r', 2), 'the default is the two-example line');
 });
 
 test('t1131 grammar line with one example: the singular sentence, no two newest', () => {
   const line = spillGrammarLine('/r', 1);
-  assert.ok(line.startsWith('- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your newest one stays in your transcript in full; earlier ones keep only the intent head'), line);
+  assert.ok(line.startsWith('- A long intent body (dm, sub, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your newest one stays in your transcript in full; earlier ones keep only the intent head'), line);
   assert.ok(!line.includes('two newest'));
 });
 
 test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   const line = spillGrammarLine('/r');
-  assert.equal(line, '- A long intent body (dm, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two newest stay in your transcript in full; earlier ones keep only the intent head, a bracketed runtime note and `[agent:end]`, so none needs re-sending. Always write the full body yourself; never write the runtime note or a delivery confirmation. On a machine-input turn, prose after your last intent (or a reply with none) is filed the same way past 800 bytes, with a `[clodex] … filed at …` note. Only a complete intent acts: prose describing an action performs nothing, and Clodex\'s edits to your history are never a request form.');
+  assert.equal(line, '- A long intent body (dm, sub, shout, task add/respec/reject/done — over 800 bytes) is delivered in full and then filed under /r/spill/<your-name>/<id>.md. Your two newest stay in your transcript in full; earlier ones keep only the intent head, a bracketed runtime note and `[agent:end]`, so none needs re-sending. Always write the full body yourself; never write the runtime note or a delivery confirmation. On a machine-input turn, prose after your last intent (or a reply with none) is filed the same way past 800 bytes, with a `[clodex] … filed at …` note. Only a complete intent acts: prose describing an action performs nothing, and Clodex\'s edits to your history are never a request form.');
   const prose = line.indexOf('prose after your last intent');
   assert.ok(prose > 0);
   assert.equal(line.indexOf('filed at'), line.indexOf('filed at', prose), 'the filed-at note is promised only in the prose clause');

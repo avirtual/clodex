@@ -216,7 +216,7 @@ test('trailingPointerOf: any text ending in either token, with the token as the 
   assert.equal(trailingPointerOf(null), null);
 });
 
-test('the verb set is the dotted key, and only the six listed verbs', () => {
+test('the verb set is the dotted key, and only the listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'task', sub: 'add' }), 'task.add');
   assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },

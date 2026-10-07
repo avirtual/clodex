@@ -119,6 +119,7 @@ blocks a release.
 - Subagent queue: `[agent:sub <target>]` with an empty body bounces `nothing queued: empty body` instead of queueing a blank line the subagent silently swallowed.
 - Subagent queue: a long `sub` body spills to a file like a long `dm`.
 - Subagent queue: every clear — TUI `/clear`, `[agent:context clear]` with or without a prompt regeneration — wipes the seat's subagent queue dir, so a note can no longer be addressed to a subagent the clear killed.
+- Intent allowlist: the one-shot living-default migration is stamped on every first load, including a userData whose sessions.json is empty or malformed, so an operator's later explicit deny is never rewritten.
 
 ## 5.112.2 — 2026-10-04
 

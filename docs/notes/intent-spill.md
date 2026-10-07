@@ -94,7 +94,7 @@ stale title cannot change one byte of what the recipient gets.
 
 ## SPILL_VERBS
 
-The set now holds `dm` and `task.done` too: both have exactly one recipient who
+The set now holds `dm`, `sub` and `task.done` too: each has one recipient who
 reads the text out of a file, so the sender need not carry it. A dm head's SECOND
 token is a target (`[agent:dm bob urgent]`), never a sub-verb, which is why the
 tee tries the one-word key before the two-word form. `proxylab/spill.py`'s

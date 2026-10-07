@@ -1368,7 +1368,7 @@ function GONE(nums) {
         const kind = role || /^(dialog|modal)$/i.test(word[1]) ? 'dialog' : 'drawer';
         const h = label || (p.querySelector && (p.querySelector('h1,h2,h3') || {}).innerText) || '';
         const name = String(h).replace(/\\s+/g, ' ').trim();
-        if (name) { let n = name; while (n && (kind + ' ' + JSON.stringify(n + '…')).length > 40) n = n.slice(0, -1); last = kind + ' ' + JSON.stringify(n.length < name.length ? n + '…' : name); } else last = kind;
+        if (name) { const full = kind + ' ' + JSON.stringify(name); if (full.length <= 40) last = full; else { let n = name; while (n && (kind + ' ' + JSON.stringify(n + '…')).length > 40) n = n.slice(0, -1); last = kind + ' ' + JSON.stringify(n + '…'); } } else last = kind;
       } else if (label) last = label;
       else if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) last = p.tagName.toLowerCase();
     }
