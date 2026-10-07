@@ -222,7 +222,7 @@ const workspaceIds = (process.env.CLODEX_WORKSPACES || DEFAULT_WORKSPACE_ID)
 // CLODEX_WEB_PORT: a plain-Node HTTP+WS server that serves the renderer bundle
 // and speaks the window.api contract over WS onto the same engine. Electron never
 // loads this — it's the headless host's job. Optional CLODEX_WEB_TOKEN gates every
-// route + the WS upgrade + the hello frame; absent = localhost-trust (Phase 4).
+// route + the WS upgrade + the hello frame.
 let webHost = null;
 const webPort = parseInt(process.env.CLODEX_WEB_PORT || '', 10);
 if (Number.isInteger(webPort) && webPort > 0) {

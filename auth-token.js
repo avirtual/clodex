@@ -10,8 +10,7 @@ const crypto = require('crypto');
 
 // Build a gate for one configured token (or null/empty = "no token configured").
 //   check(provided)  → does `provided` match the configured secret?
-//     - no token configured → true (the caller layers its own trust policy on
-//       top: web-host keeps localhost-trust; remote adds the fail-closed rule).
+//     - no token configured → true.
 //     - token configured → a constant-time compare over equal-length buffers.
 //       A length mismatch short-circuits to false WITHOUT a timingSafeEqual call
 //       (it throws on unequal lengths), so the length is the only thing a timing
@@ -21,8 +20,8 @@ const crypto = require('crypto');
 //     `clodex_remote_token` cookie. Same precedence for both hosts; only remote
 //     ever SETS the cookie (web-host never issues it), but reading it here is
 //     harmless and keeps the one extraction path identical.
-//   configured       → whether a token is set, so a caller (remote's fail-closed
-//     rule) can branch on presence without re-deriving it.
+//   configured       → whether a token is set, so a caller can branch on
+//     presence without re-deriving it.
 function makeTokenGate(token) {
   const configured = !!(token && String(token).length);
   const secret = configured ? Buffer.from(String(token), 'utf8') : null;

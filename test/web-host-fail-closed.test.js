@@ -81,3 +81,12 @@ test('non-loopback bind with a token: 401 without it, 200 with it', async () => 
     assert.equal(await upgrade(port, 'sekret'), 'open');
   });
 });
+
+test('insecure override on a non-loopback bind logs INSECURE, not localhost-trust', async () => {
+  const lines = [];
+  const log = { info: (_c, m) => lines.push(m), warn() {}, error() {} };
+  await withHost({ host: '0.0.0.0', insecure: true, log }, async () => {});
+  const listen = lines.find((l) => /web host listening/.test(l));
+  assert.match(listen, /INSECURE/);
+  assert.doesNotMatch(listen, /localhost-trust/);
+});

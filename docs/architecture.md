@@ -116,7 +116,7 @@ bundle), whose packaged form is the Docker image under
   Electron app never loads it. It drives the SAME `registerIpcHandlers` map and
   event-push surface over a WebSocket that the desktop `window.api` speaks over
   ipcRenderer. Optional `CLODEX_WEB_TOKEN` gates every route + the WS upgrade +
-  the hello frame; absent = localhost trust. NOT in the leak-scanner lists (new
+  the hello frame; absent = localhost trust on a loopback bind. NOT in the leak-scanner lists (new
   code, not a move-only extraction) and never imports electron. Packaged as the
   Docker image in [`../docker/web/`](../docker/web/) (a two-stage build of the
   headless host + the web bundle); the peer test-box in `../docker/` is

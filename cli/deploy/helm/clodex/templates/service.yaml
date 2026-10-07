@@ -13,6 +13,7 @@ spec:
       port: {{ .Values.wirePort }}
       targetPort: wire
     {{- if .Values.web.enabled }}
+    # The pod binds web to 127.0.0.1; port-forward svc/NAME still resolves this named port and dials the pod's loopback.
     - name: web
       port: {{ .Values.web.port }}
       targetPort: web

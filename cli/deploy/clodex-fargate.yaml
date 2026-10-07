@@ -295,10 +295,12 @@ Resources:
           Environment: !If
             - IsBedrock
             - - { Name: CLODEX_DATA_DIR, Value: /data }
+              - { Name: CLODEX_WEB_HOST, Value: '127.0.0.1' }
               - { Name: CLAUDE_CODE_USE_BEDROCK, Value: '1' }
               - { Name: AWS_REGION, Value: !Ref AWS::Region }
               - !If [WantNoWirescope, { Name: CLODEX_WIRESCOPE, Value: 'off' }, !Ref 'AWS::NoValue']
             - - { Name: CLODEX_DATA_DIR, Value: /data }
+              - { Name: CLODEX_WEB_HOST, Value: '127.0.0.1' }
               - !If [WantNoWirescope, { Name: CLODEX_WIRESCOPE, Value: 'off' }, !Ref 'AWS::NoValue']
           # Wire token always injected; oauth token only when NOT on Bedrock.
           Secrets: !If
