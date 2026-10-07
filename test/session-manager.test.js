@@ -24541,3 +24541,68 @@ test('t1493: a CLI exit settles a pending seatSetModel, and create() keeps the r
   assert.deepStrictEqual(settled, { ok: false, error: 'the CLI exited' });
   assert.strictEqual(s._controlAcks.size, 0);
 });
+
+function t1703Term() {
+  const calls = [];
+  const m = mk({ termExec: (...a) => { calls.push(a); return { ok: true, command: 'ls' }; } });
+  m._injectText = () => {};
+  m._broadcast = () => {};
+  const session = { name: 'x', type: 'claude', agentType: 'claude', workspaceId: 'ws' };
+  m.sessions.set('x', session);
+  const underScope = async (replyTo) => {
+    const orig = m._handleIntentBody;
+    m._handleIntentBody = () => m._handleTermIntent(session, 'exec', 'ls');
+    try { await m._handleIntent('x', { type: 'term', sub: 'exec', body: 'ls' }, { replyTo }); } finally { m._handleIntentBody = orig; }
+  };
+  return { m, calls, session, underScope };
+}
+
+test('t1703 _handleTermIntent hands termExec a reply callback only inside its own seat\'s reply scope', async () => {
+  const { m, calls, session, underScope } = t1703Term();
+  const got = [];
+  let answer = true;
+  await underScope((t) => { got.push(t); return answer; });
+  assert.strictEqual(calls.length, 1, 'ENTER: termExec was asked');
+  assert.deepStrictEqual(calls[0].slice(0, 3), ['ws', 'x', 'ls']);
+  const onResult = calls[0][3];
+  assert.strictEqual(typeof onResult, 'function');
+  assert.strictEqual(onResult('[terminal] ls\nexit 0'), true);
+  answer = false;
+  assert.strictEqual(onResult('second'), false, 'replyTo refusing is surfaced as false, for the DM fallback');
+  assert.deepStrictEqual(got, ['[terminal] ls\nexit 0', 'second']);
+
+  m._handleTermIntent(session, 'exec', 'ls');
+  assert.strictEqual(calls[1][3], null, 'no scope: no callback');
+
+  m.sessions.set('x', { name: 'x' });
+  await underScope(() => true);
+  assert.strictEqual(calls[2][3], null, 'a scope for a different session object: no callback');
+});
+
+test('t1703 the seat socket\'s reply wait: term is 130 s, a plugin row answers its own, any other core verb 0', () => {
+  const isock = require('../intent-socket');
+  const smPath = require.resolve('../session-manager');
+  const fxPath = require.resolve('./lib/session-fixtures');
+  const saved = { sm: require.cache[smPath], fx: require.cache[fxPath] };
+  const orig = { h: isock.createIntentRequestHandler, s: isock.createIntentSocketServer };
+  let opts = null;
+  isock.createIntentRequestHandler = (o) => { opts = o; return () => {}; };
+  isock.createIntentSocketServer = () => ({ start: () => Promise.resolve() });
+  delete require.cache[smPath];
+  delete require.cache[fxPath];
+  try {
+    const fresh = require('./lib/session-fixtures');
+    const row = { handler: () => {}, replyWaitMs: () => 7777 };
+    const m = fresh.mk({ pluginRowFor: (type) => (type === 'plug' ? row : null) });
+    m._startIntentSocket({ name: 'x', agentType: 'claude' }, { cred: 'c', sockPath: '/nonexistent/x.sock' });
+    assert.ok(opts && typeof opts.replyWaitMs === 'function', 'ENTER: the handler was built with a replyWaitMs');
+    assert.strictEqual(opts.replyWaitMs({ type: 'term', sub: 'exec' }), 130000);
+    assert.strictEqual(opts.replyWaitMs({ type: 'plug' }), 7777);
+    assert.strictEqual(opts.replyWaitMs({ type: 'who' }), 0);
+  } finally {
+    isock.createIntentRequestHandler = orig.h;
+    isock.createIntentSocketServer = orig.s;
+    require.cache[smPath] = saved.sm;
+    require.cache[fxPath] = saved.fx;
+  }
+});

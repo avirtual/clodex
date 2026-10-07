@@ -13,7 +13,7 @@ function boot() {
   if (engine) return engine;
   const dp = require('../drawer-pty');
   const orig = dp.createDrawerPtys;
-  stub = { exec: () => stub.answer, dispose() {} };
+  stub = { calls: [], exec: (...a) => { stub.calls.push(a); return stub.answer; }, dispose() {} };
   dp.createDrawerPtys = (d) => { deps = d; return stub; };
   const tmp = mkTmpRoot('clx-term-busy-');
   try {
@@ -228,6 +228,161 @@ test('a status this file has never heard of names ITSELF rather than blaming the
   assert.match(msg, /the terminal reported `teleported`/,
     'a wrong cause stated confidently is what sends an agent looking in the wrong place');
   assert.ok(!msg.includes('the terminal went away'));
+});
+
+function t1703Scoped(sess, cmd, replyTo) {
+  const m = boot().manager;
+  m.sessions.set(sess.name, sess);
+  const orig = m._handleIntentBody;
+  m._handleIntentBody = () => m._handleTermIntent(sess, 'exec', cmd);
+  try {
+    m._handleIntent(sess.name, { type: 'term', sub: 'exec', body: cmd }, { replyTo });
+  } finally {
+    m._handleIntentBody = orig;
+    m.sessions.delete(sess.name);
+  }
+  const call = stub.calls[stub.calls.length - 1];
+  return call[3];
+}
+
+function t1703Seat() {
+  boot();
+  stub.answer = { ok: true, command: 'ls' };
+  engine.manager._injectText = () => {};
+  const delivered = [];
+  engine.manager._gatedDeliver = (seat, tag, text) => { delivered.push(text); return { queued: true }; };
+  return { delivered, sess: { name: 'alice', type: 'claude', agentType: 'claude', workspaceId: 'ws-1' } };
+}
+
+const T1703_RESULTS = {
+  ok: { status: 'ok', record: { command: 'ls', exitCode: 1, output: 'x\n', depth: 0 }, command: 'ls', late: false },
+  mismatch: { status: 'ok', record: { command: 'pwd', exitCode: 0, output: '/\n', depth: 0 }, command: 'ls', late: false, mismatch: true },
+  timeout: { status: 'timeout', command: 'ls', afterMs: 120000 },
+  abandoned: { status: 'abandoned', command: 'ls' },
+  'shell-gone': { status: 'shell-gone', command: 'ls', reason: 'the window was closed' },
+};
+
+for (const [name, res] of Object.entries(T1703_RESULTS)) {
+  test(`t1703 a scoped term exec answers its reply with the exact DM text (${name})`, () => {
+    reports('all');
+    const { delivered, sess } = t1703Seat();
+    const got = [];
+    const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return true; });
+    assert.strictEqual(typeof token, 'string', 'ENTER: drawer-pty exec received a token');
+    deps.onExecResult('alice', { ...res, token });
+    assert.strictEqual(got.length, 1);
+    assert.deepStrictEqual(delivered, [], 'the DM path was not also taken');
+    assert.deepStrictEqual(got[0], result(res), 'byte-identical to the untokened DM');
+  });
+}
+
+test('t1703 a reply refused before acceptance falls back to the DM, and the waiter is gone', () => {
+  reports('all');
+  const { delivered, sess } = t1703Seat();
+  const got = [];
+  const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return false; });
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, token });
+  assert.deepStrictEqual(got.length, 1);
+  assert.deepStrictEqual(delivered, [got[0]]);
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, token });
+  assert.strictEqual(got.length, 1, 'the waiter fired once and was dropped');
+  assert.strictEqual(delivered.length, 2);
+});
+
+test('t1703 the timeout notice consumes the waiter; the late result supersedes it as a DM', () => {
+  reports('all');
+  const { delivered, sess } = t1703Seat();
+  const got = [];
+  const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return true; });
+  deps.onExecResult('alice', { status: 'timeout', command: 'ls', afterMs: 120000, token });
+  assert.strictEqual(got.length, 1);
+  assert.match(got[0], /still running after 120s/);
+  assert.deepStrictEqual(delivered, []);
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, late: true, token });
+  assert.strictEqual(got.length, 1, 'replyTo is not called again');
+  assert.strictEqual(delivered.length, 1);
+  assert.ok(delivered[0].endsWith('(this supersedes the still-running notice above)'));
+});
+
+for (const firstFirst of [false, true]) {
+  test(`t1703 a seat moved while pending: each reply gets only its own result (${firstFirst ? 'first' : 'second'} settles first)`, () => {
+    reports('all');
+    const { delivered, sess } = t1703Seat();
+    const gotA = [];
+    const gotB = [];
+    const tokA = t1703Scoped(sess, 'ls', (t) => { gotA.push(t); return true; });
+    assert.strictEqual(stub.calls[stub.calls.length - 1][0], 'ws-1');
+    sess.workspaceId = 'ws-2';
+    const tokB = t1703Scoped(sess, 'ls', (t) => { gotB.push(t); return true; });
+    assert.strictEqual(stub.calls[stub.calls.length - 1][0], 'ws-2');
+    assert.notStrictEqual(tokA, tokB);
+    const resA = { status: 'ok', record: { command: 'ls', exitCode: 11, output: 'a\n', depth: 0 }, command: 'ls', late: false, token: tokA };
+    const resB = { status: 'ok', record: { command: 'ls', exitCode: 22, output: 'b\n', depth: 0 }, command: 'ls', late: false, token: tokB };
+    for (const r of firstFirst ? [resA, resB] : [resB, resA]) deps.onExecResult('alice', r);
+    assert.strictEqual(gotA.length, 1);
+    assert.strictEqual(gotB.length, 1);
+    assert.match(gotA[0], /exit 11/);
+    assert.doesNotMatch(gotA[0], /exit 22/);
+    assert.match(gotB[0], /exit 22/);
+    assert.doesNotMatch(gotB[0], /exit 11/);
+    assert.deepStrictEqual(delivered, []);
+  });
+}
+
+for (const scopedFirst of [false, true]) {
+  test(`t1703 a bare exec beside a scoped one: the bare result is a DM, the scoped one a reply (${scopedFirst ? 'scoped' : 'bare'} settles first)`, () => {
+    reports('all');
+    const { delivered, sess } = t1703Seat();
+    const got = [];
+    const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return true; });
+    engine.manager._handleTermIntent(sess, 'exec', 'ls');
+    assert.strictEqual(stub.calls[stub.calls.length - 1].length, 3, 'the bare call carries no token');
+    const scoped = { ...T1703_RESULTS.ok, token };
+    const bare = { status: 'ok', record: { command: 'ls', exitCode: 5, output: 'bare\n', depth: 0 }, command: 'ls', late: false };
+    for (const r of scopedFirst ? [scoped, bare] : [bare, scoped]) deps.onExecResult('alice', r);
+    assert.strictEqual(got.length, 1);
+    assert.match(got[0], /exit 1\b/);
+    assert.strictEqual(delivered.length, 1);
+    assert.match(delivered[0], /exit 5/);
+  });
+}
+
+test('t1703 a refused exec drops its waiter at once', () => {
+  reports('all');
+  const { delivered, sess } = t1703Seat();
+  stub.answer = { ok: false, code: 'pending', running: 'ls' };
+  const injected = [];
+  engine.manager._injectText = (s, t) => injected.push(t);
+  const got = [];
+  const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return true; });
+  assert.strictEqual(typeof token, 'string', 'ENTER: exec received a token');
+  assert.match(injected[0], /already have `ls` running/);
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, token });
+  assert.deepStrictEqual(got, []);
+  assert.strictEqual(delivered.length, 1);
+});
+
+test('t1703 the timeout ladder: drawer-pty < reply wait < socket < client', () => {
+  const { TERM_EXEC_TIMEOUT_MS, TERM_REPLY_WAIT_MS } = require('../drawer-avail');
+  const { INTENT_SOCKET_TIMEOUT_MS } = require('../intent-socket');
+  const { CLIENT_TIMEOUT_MS } = require('../cli/bin/clodex');
+  assert.strictEqual(TERM_EXEC_TIMEOUT_MS, 120000);
+  assert.strictEqual(TERM_REPLY_WAIT_MS, 130000);
+  assert.strictEqual(TERM_REPLY_WAIT_MS + INTENT_SOCKET_TIMEOUT_MS, 140000);
+  assert.strictEqual(CLIENT_TIMEOUT_MS, 500000);
+  boot();
+  assert.strictEqual(deps.execTimeoutMs, 120000, 'engine hands drawer-pty the shared constant');
+});
+
+test('t1703 engine shutdown drops an outstanding waiter: no reply, the result goes to the DM path', () => {
+  reports('all');
+  const { delivered, sess } = t1703Seat();
+  const got = [];
+  const token = t1703Scoped(sess, 'ls', (t) => { got.push(t); return true; });
+  engine.shutdown();
+  deps.onExecResult('alice', { ...T1703_RESULTS.ok, token });
+  assert.deepStrictEqual(got, []);
+  assert.strictEqual(delivered.length, 1);
 });
 
 after(() => {
