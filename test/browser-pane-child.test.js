@@ -1032,6 +1032,8 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('/\\b(close|dismiss)\\b|^×$/i.test('));
   const drawerAt = lineOf(src, 'const drawerAt = (e) =>');
   assert.ok(drawerAt.indexOf('getBoundingClientRect') < drawerAt.indexOf('getComputedStyle'));
+  assert.ok(drawerAt.includes('/^(fixed|absolute)$/'));
+  assert.ok(!drawerAt.includes("=== 'fixed'"));
   assert.ok(lineOf(src, 'const drawersOf = () =>').includes('.slice(0, 3000)'));
   const coveredBy = 'const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);';
   for (const s of [scripts.READ_INTERACTIVE(false, {}), scripts.FIND(1)]) assert.strictEqual(s.split(coveredBy).length, 2);
@@ -1157,7 +1159,9 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     const docked = { left: 720, right: 1200, top: 0, bottom: 800, width: 480, height: 800 };
     assert.strictEqual(drawer({ position: 'fixed' }, docked), 'drawer');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 280, width: 920 }), '');
-    assert.strictEqual(drawer({ position: 'absolute' }, docked), '');
+    assert.strictEqual(drawer({ position: 'absolute' }, docked), 'drawer', 'an absolute portal docked by geometry is a drawer');
+    assert.strictEqual(drawer({ position: 'relative' }, docked), '');
+    assert.strictEqual(drawer({ position: 'static' }, docked), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, left: 100, right: 580 }), '');
     assert.strictEqual(drawer({ position: 'fixed' }, { ...docked, height: 500, bottom: 500 }), '');
     const paneled = { left: 660, right: 1200, top: 0, bottom: 800, width: 540, height: 800 };
@@ -1166,6 +1170,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(bare({ ...paneled, left: 645, right: 1185 }), 'drawer', 'a classic scrollbar does not undock it');
     const inset = { left: 417, right: 1177, top: 48, bottom: 800, width: 760, height: 752 };
     assert.strictEqual(bare(inset), 'drawer', 'an 8 px inset, 0.63 vw panel is a drawer');
+    assert.strictEqual(bare(inset, { style: { position: 'absolute' } }), 'drawer', 'an absolute inset panel is a drawer');
     assert.strictEqual(bare({ ...inset, left: 405, right: 1165 }), '', 'a 20 px inset is not docked');
     assert.strictEqual(bare({ ...inset, left: 272, width: 920 }), '', 'over 0.75 vw is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
