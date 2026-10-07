@@ -20,11 +20,17 @@ function resolveSubagent(dir, target) {
 
 function claimQueue(dir, id, pid) {
   const q = path.join(dir, id);
+  let names = [];
+  try { names = fs.readdirSync(q).filter((n) => !n.startsWith('.')).sort(); } catch { return null; }
+  if (names.length === 0) return null;
   const claim = `${q}.draining.${pid}`;
-  try { fs.renameSync(q, claim); } catch { return null; }
-  let body = '';
-  try { body = fs.readFileSync(claim, 'utf8'); } catch {}
-  return { claim, body: body.replace(/\n+$/, '') };
+  try { fs.mkdirSync(claim, { recursive: true, mode: 0o700 }); } catch { return null; }
+  const parts = [];
+  for (const n of names) {
+    try { fs.renameSync(path.join(q, n), path.join(claim, n)); } catch { continue; }
+    try { parts.push(fs.readFileSync(path.join(claim, n), 'utf8')); } catch {}
+  }
+  return { claim, body: parts.map((s) => s.replace(/\n+$/, '')).join('\n') };
 }
 
 function retireSubagent(dir, id, why, { pendingRoot, seat, born, now, pid }) {
@@ -34,10 +40,10 @@ function retireSubagent(dir, id, why, { pendingRoot, seat, born, now, pid }) {
       const seq = `${now}.${String(pid % 1e9).padStart(9, '0')}`;
       require('./pending-store').parkDelivery(pendingRoot, seat, `[agent:sub] undelivered to ${id} (${why}): ${got.body}`, seq, null, false, born);
       appendReceipt(dir, { id, ev: 'undelivered' }, now);
-      fs.unlinkSync(got.claim);
+      fs.rmSync(got.claim, { recursive: true, force: true });
     } catch {}
   } else if (got) {
-    try { fs.unlinkSync(got.claim); } catch {}
+    try { fs.rmSync(got.claim, { recursive: true, force: true }); } catch {}
   }
   try { fs.unlinkSync(path.join(dir, `${id}.nonce`)); } catch {}
   let names = [];
@@ -79,7 +85,7 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
     }
     const got = claimQueue(dir, id, pid);
     if (!got) return '';
-    try { fs.unlinkSync(got.claim); } catch {}
+    try { fs.rmSync(got.claim, { recursive: true, force: true }); } catch {}
     if (!got.body) return '';
     let nonce = '';
     try { nonce = fs.readFileSync(path.join(dir, `${id}.nonce`), 'utf8').trim(); } catch {}

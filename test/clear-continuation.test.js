@@ -398,6 +398,10 @@ test('t1683 a warm session-id edge wipes subq/, the first id does not', async ()
     fs.mkdirSync(path.join(dir, 'names'), { recursive: true });
     fs.writeFileSync(path.join(dir, 'x.nonce'), 'n');
     fs.writeFileSync(path.join(dir, 'names', 'y'), 'x');
+    fs.mkdirSync(path.join(dir, 'x'));
+    fs.writeFileSync(path.join(dir, 'x', '000000001'), 'queued\n');
+    fs.mkdirSync(path.join(dir, 'x.draining.1'));
+    fs.writeFileSync(path.join(dir, 'x.draining.1', '000000001'), 'stale\n');
     w.onSessionId('conv-1');
     await tick();
     assert.ok(fs.existsSync(path.join(dir, 'x.nonce')), 'the first id is an adoption, not a clear');

@@ -717,6 +717,7 @@ function createSessionManager(deps) {
   const NO_ARM = { onDraft() {}, disarm() {}, onSubmit() {}, onContextReset() {}, forget() {}, holding() { return false; } };
   const arm = hintArm || NO_ARM;
   const subqDirFor = (n) => path.join(path.dirname(pathFor(REGISTRY_DIR, n, 'intentSocket')), 'subq');
+  let subqSeq = 0;
 
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
@@ -5365,8 +5366,12 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, '[agent:sub] nothing queued: empty body', { parkable: true });
             break;
           }
-          fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-          fs.writeFileSync(path.join(dir, id), `${defangTeammateTag(intent.body)}\n`, { mode: 0o600, flag: 'a' });
+          const q = path.join(dir, id);
+          const seq = String(++subqSeq).padStart(9, '0');
+          const tmp = path.join(q, `.${seq}.tmp`);
+          fs.mkdirSync(q, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(tmp, `${defangTeammateTag(intent.body)}\n`, { mode: 0o600 });
+          fs.renameSync(tmp, path.join(q, seq));
           this._broadcast('ipc-message', { type: 'sub', from: senderName, to: `${senderName}/${id}`, body: intent.body });
           break;
         }
