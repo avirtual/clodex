@@ -14,7 +14,7 @@ blocks a release.
 ## Unreleased
 
 ### Voice
-- A space on an empty prompt in screen mode starts dictation again after a control key (Ctrl-O, Tab, backspace) or a terminal colour reply: those no longer count as typed text until the next Enter.
+- A space on an empty prompt in screen mode starts dictation again after a control key (Ctrl-O, Ctrl-L, backspace) or a terminal colour reply: those no longer count as typed text until the next Enter.
 
 ## 5.115.0 — 2026-10-07
 
