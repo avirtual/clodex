@@ -1714,6 +1714,8 @@ test('consequentialRefusal: a tagged element is refused without --confirm, namin
   assert.strictEqual(consequentialRefusal(3, { label: 'Avizier', consequential: null }, false), null);
   assert.strictEqual(consequentialRefusal(4, { label: 'Pay now', consequential: 'payment' }, false, 'download it with click 4 --to=<dir> --confirm').message, '[4] "Pay now" looks consequential (payment) — download it with click 4 --to=<dir> --confirm if the operator asked for it');
   assert.strictEqual(consequentialRefusal(4, { label: 'Pay now', consequential: 'ad' }, false, 'download it with click 4 --to=<dir> --confirm').message, '[4] "Pay now" is an ad — clicking it is a paid click on the operator\'s account and leaves the site; download it with click 4 --to=<dir> --confirm if the operator asked for it');
+  assert.strictEqual(consequentialRefusal(12, { label: '', kind: 'button', consequential: 'trading' }, false, 'download it with click 12 --to=<dir> --confirm').message,
+    '[12] button looks consequential (trading) — download it with click 12 --to=<dir> --confirm if the operator asked for it');
   const act = /const el = await resolve\(svc, n\);\n\s*const coveredErr = coveredRefusal\(n, el\);\n\s*if \(coveredErr\) throw coveredErr;\n\s*const refused = consequentialRefusal\(n, el, !!args\.confirm\);\n\s*if \(refused\) throw refused;/;
   assert.match(CHILD_SRC, act, 'click, --text click and select all pass this check after resolve');
   assert.match(scripts.FIND(1), /consequential: cqOf\(el\),/);
@@ -1743,6 +1745,7 @@ test('liveTarget: the click point comes from the last look; a new occupant is a 
   assert.throws(() => liveTarget(5, el, { covered: true, hitN: 8, hitLabel: 'Delete account', hitConsequential: 'deletion' }, 'x'),
     (e) => e.code === 'COVERED' && e.message === '[5] "Pret crescator" is covered at its click point by [8] ⚠ "Delete account" (deletion) — read again, or click it with --confirm if the operator asked for it');
   assert.throws(() => liveTarget(5, el, null, 'x'), (e) => e.code === 'NO_ELEMENT' && e.message === R.TEXT.noElement('x', 5));
+  assert.throws(() => liveTarget(5, el, { off: true }, 'x'), (e) => e.code === 'NO_ELEMENT' && e.message === '[5] "Pret crescator" scrolled out of view on x — read again');
   assert.match(CHILD_SRC, /const pre = await preAct\(svc, op === 'click' \? n : null\);\n\s*const live = op === 'click' \|\| op === 'type' \? await livePoint\(svc, n, el\) : el;\n\s*if \(op === 'click'\) \{\n\s*const out = await clickWatched\(svc, n, live, nav, dir\);/);
   assert.ok(CHILD_SRC.includes('driver.click(wc, live);'));
   assert.strictEqual(CHILD_SRC.split('driver.click(wc, el)').length - 1, 2, 'clickWatched and viaClick receive the point from their caller');
@@ -1911,7 +1914,7 @@ test('LIVE_POINT: the click point is looked up again where the element is now, a
   assert.deepStrictEqual(live(inView, () => span), { x: 60, y: 115 }, 'the element\'s own child is not a cover');
   const gone = boxEl('button', 'Pret crescator', box(0, 0, 0, 0));
   assert.strictEqual(findOn(gone, () => null, { script: scripts.LIVE_POINT }), null);
-  assert.strictEqual(findOn(inView, () => null, { script: scripts.LIVE_POINT }), null, 'an element scrolled out of the viewport has no live point');
+  assert.deepStrictEqual(live(inView, () => null), { off: true }, 'an element scrolled out of the viewport is off, not gone');
 });
 
 test('FIND: a target our scroll parked under a sticky header is scrolled clear once; a modal cover is retried once at centre and still refused; an overlay names its numbered buttons', async () => {

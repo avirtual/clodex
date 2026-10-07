@@ -574,7 +574,7 @@ function createScheduler({
       handle.inject(replies.errorReply(replies.TEXT.held(heldTab[0], heldTab[1].reason)));
       return;
     }
-    if (needsRead(cmd) && !seatState(handle.name).hasRead[service]) {
+    if (needsRead(cmd) && s.state !== 'closed' && !seatState(handle.name).hasRead[service]) {
       handle.inject(replies.errorReply(replies.TEXT.readFirst(service)));
       return;
     }

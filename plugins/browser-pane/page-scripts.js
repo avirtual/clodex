@@ -1400,7 +1400,7 @@ function livePoint(n) {
   if (!r.width || !r.height) return null;
   const at = clickPoint(el, r, document);
   const hit = hitAt(at);
-  if (!hit) return null;
+  if (!hit) return { off: true };
   if (!coveredBy(el, hit)) return { x: at.x, y: at.y };
   let hitN = null;
   for (let e = hit; e && hitN == null; e = upOf(e)) {

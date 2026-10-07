@@ -237,9 +237,12 @@ function clipNavUrl(u, max) {
   return `${base.length < max ? base : base.slice(0, max - 1)}…`;
 }
 
+const named = (n, label, kind) => `[${n}] ${label ? JSON.stringify(String(label)) : oneLine(kind || '?')}`;
+
 const TEXT = {
   lease: (service, seat, agoMs) => `${service} is in use by ${seat} (last command ${ago(agoMs)} ago). It frees after 5 min without commands, when they emit [agent:browser release ${service}], or when their session ends.`,
   noElement: (service, n) => `[${n}] is no longer on this page of ${service} — read again`,
+  scrolledOut: (service, n, label, kind) => `${named(n, label, kind)} scrolled out of view on ${service} — read again`,
   covered: (n, el) => {
     const label = JSON.stringify(String(el.hitLabel || ''));
     const head = `[${n}] ${JSON.stringify(String(el.label || ''))} is covered at its click point by`;
@@ -264,7 +267,7 @@ const TEXT = {
   readFirst: (service) => `read ${service} first — numbers come from your read`,
   denied: (url, pattern, service, verb = 'open') => `${verb} refused: ${redactUrl(url)} matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'}) — ask the operator to change the browser pane denylist in Settings`,
   deniedBar: (pattern, service) => `Refused: matches denylist pattern ${JSON.stringify(String(pattern))} (${service ? `service ${service}` : 'global'})`,
-  consequential: (n, label, category, redo = 're-issue with --confirm') => `[${n}] ${JSON.stringify(String(label || ''))} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} ${redo} if the operator asked for it`,
+  consequential: (n, label, category, redo = 're-issue with --confirm', kind = '') => `${named(n, label, kind)} ${category === 'ad' ? 'is an ad — clicking it is a paid click on the operator\'s account and leaves the site;' : category === 'publish' ? 'publishes as the operator —' : `looks consequential (${category}) —`} ${redo} if the operator asked for it`,
   submitUnknown: (key = 'Enter') => `could not tell what ${key} would ${key === 'Space' ? 'press' : key.startsWith('Arrow') ? 'choose' : 'submit'} — read again, or add --confirm if the operator asked for it`,
   consequentialSubmit: (from, sub, key = 'Enter') => {
     const label = JSON.stringify(String(sub.label || ''));
@@ -574,7 +577,7 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
 
 const REFUSED_RES = [
   /^\S+ refused: .* matches denylist pattern /,
-  /^\[\d+\] ".*" (publishes as the operator|looks consequential \(|is an ad — )/,
+  /^\[\d+\] (".*"|\S+) (publishes as the operator|looks consequential \(|is an ad — )/,
   /^(Enter|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight) (in|on) .+ would (press|submit|choose|change) .* (publishes as the operator|looks consequential \(|is an ad — )/,
   /^\[\d+\] on \S+ no longer points at one element/,
   /^\[\d+\] retired: its text changed since your read/,

@@ -565,6 +565,7 @@ test('engine: browser refusals classify as refused, a plain error as error, a no
     TEXT.consequential(4, 'Pay now', 'payment'),
     TEXT.consequential(5, 'Post', 'publish'),
     TEXT.consequential(6, 'musclebooster Ad', 'ad'),
+    TEXT.consequential(12, '', 'trading', undefined, 'button'),
     TEXT.consequentialSubmit(26, { n: 27, label: 'Card bancar', consequential: 'payment' }),
     TEXT.consequentialSubmit(null, { n: null, label: 'plata', consequential: 'payment' }),
     TEXT.consequentialSubmit(null, { n: 5, press: true, label: 'Post', consequential: 'publish' }),

@@ -21,6 +21,9 @@ blocks a release.
 - A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
 - Seats on the streaming transport get the same teammate-message defang as pty seats.
 
+### Browser pane
+- A numbered act on a closed service is refused as "not open" rather than "read first"; a click whose target the page scrolled back out of view says so (`[31] "label" scrolled out of view on np — read again`) instead of calling it gone; and a ⚠ refusal on a nameless control names its kind (`[12] button looks consequential (trading)`) the way the read digest does.
+
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
 ### Browser pane
