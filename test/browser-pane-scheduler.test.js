@@ -392,6 +392,7 @@ test('scheduler: a closed window forgets the seats\' numbers for it', async () =
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
   h.sched.onClosed('utility');
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
 });
@@ -470,6 +471,7 @@ test('scheduler inspect: needs a read first, then asks the child by text without
       cursor: 'pointer', rect: { x: 1, y: 2, w: 30, h: 10 }, visible: true, ancestors: ['body'], html: '<div id="go">Go</div>',
     }),
   });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser inspect utility 4]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
   const early = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);
