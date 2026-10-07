@@ -1557,6 +1557,7 @@ function run(electron, ctx) {
       changed: changedOf(prev && prev.sigs, el.sigs),
       chrome: el.chrome || [],
       covered: el.covered || [],
+      dialog: el.dialog || [],
       cats: el.cats || {},
       adKeys: el.adKeys || {},
       keys: el.keys || {},
