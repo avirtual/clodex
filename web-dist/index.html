@@ -30981,6 +30981,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "intent-catalog.js"(exports, module) {
       var GATEABLE_INTENTS = [
         { type: "dm", label: "Direct messages (dm)" },
+        { type: "sub", label: "Message your own running subagents (sub)" },
         { type: "who", label: "List peers (who)" },
         { type: "context", label: "Self context control (compact/clear/reload)" },
         { type: "scratch", label: "Scratch episodes \u2014 rewind the transcript to a research result (scratch)" },
@@ -31053,6 +31054,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function parseDm(cleaned) {
         const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
         return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
+      }
+      function parseSub(cleaned) {
+        const m = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
+        return m ? { type: "sub", target: m[1], body: m[2] } : null;
       }
       function parseResend(cleaned) {
         const m = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
@@ -31234,6 +31239,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var CORE_ROWS = [
         { type: "dm", parse: parseDm, bodyMode: GREEDY },
+        { type: "sub", parse: parseSub, bodyMode: GREEDY },
         { type: "resend", parse: parseResend, bodyMode: NONE },
         { type: "who", parse: parseWho, bodyMode: NONE },
         { type: "name", parse: parseName, bodyMode: NONE },
@@ -31548,6 +31554,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var CORE_VALID_INTENT_NAMES = [
         "dm",
+        "sub",
         "resend",
         "who",
         "name",

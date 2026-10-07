@@ -31,6 +31,9 @@ function parseIntentLegacy(rawLine) {
   const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
   if (dmMatch) return { type: 'dm', target: dmMatch[1], urgent: !!dmMatch[2], body: dmMatch[3] };
 
+  const subMatch = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
+  if (subMatch) return { type: 'sub', target: subMatch[1], body: subMatch[2] };
+
   const resendMatch = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
   if (resendMatch) return { type: 'resend', id: resendMatch[1].toLowerCase() };
 
@@ -337,6 +340,8 @@ const ADVERSARIAL = [
   '[agent:dm bob]', '[agent:dm bob] hello', '[agent:dm bob urgent] hello',
   '[agent:dm bob  urgent]', '[agent:dm bob@peer urgent] x', '[agent:dm]',
   '[agent:dm a b c] body', '[agent:dm bob] line1\nline2',
+  '[agent:sub subq-live] hi', '[agent:sub a606bb8c5bfa9764e] line one\nline two',
+  '[agent:sub ../x] y', '[agent:sub]', '[agent:sub  x]',
   '[agent:resend abc123]', '[agent:resend ABC123]', '[agent:resend abc-123]',
   '[agent:resend abc123] trailing', '[agent:resend]',
   '[agent:context compact]', '[agent:context compact] pickup note',
@@ -878,6 +883,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create'
+    || i.type === 'sub'
     || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'));
   const deliberatelyNarrowed = (i) => (i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
@@ -1349,4 +1355,13 @@ test('t222 — the second argument is optional, and no other verb reads it', () 
     { type: 'dm', target: 'bob', urgent: false, body: 'hi' });
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:exec c] {}', '[agent:exec other] {"x":1}'),
     { type: 'exec', cmd: 'c', body: '{}' });
+});
+
+test('t1678: sub parses target + greedy body, is a core verb and a near-miss name', () => {
+  assert.deepStrictEqual(parseIntent('[agent:sub subq-live] Reply PINEAPPLE'), { type: 'sub', target: 'subq-live', body: 'Reply PINEAPPLE' });
+  assert.deepStrictEqual(parseIntent('[agent:sub a606bb8c5bfa9764e]'), { type: 'sub', target: 'a606bb8c5bfa9764e', body: '' });
+  assert.strictEqual(registry.rowFor('sub').bodyMode, registry.rowFor('dm').bodyMode);
+  assert.ok(registry.CORE_VALID_INTENT_NAMES.includes('sub'));
+  assert.strictEqual(registry.intentEnabledFor('sub', ['dm']), false);
+  assert.strictEqual(registry.intentEnabledFor('sub', null), true);
 });
