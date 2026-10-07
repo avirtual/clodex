@@ -17167,6 +17167,23 @@ test('t313: `team role-rm` with distinct roles both fire', async () => {
   assert.deepStrictEqual(warns, []);
 });
 
+test('t1706: two distinct browser intents in one turn both fire; an exact repeat still collapses with no echo', async () => {
+  const { registerIntent, unregisterSource } = require('../intent-registry');
+  const grammar = require('../plugins/browser-pane/grammar');
+  registerIntent({ verb: 'browser', parse: grammar.parseLine }, 'browser-pane-test');
+  try {
+    const two = await wireRig('[agent:browser click np 3]\n[agent:browser click np 5]');
+    assert.strictEqual(two.fired.length, 2);
+    assert.deepStrictEqual(two.warns, []);
+    const dup = await wireRig('[agent:browser click np 3]\n[agent:browser click np 3]');
+    assert.strictEqual(dup.fired.length, 1);
+    assert.deepStrictEqual(dup.warns, ['intra-turn dup browser a — swallowed']);
+    assert.deepStrictEqual(dup.injected, []);
+  } finally {
+    unregisterSource('browser-pane-test');
+  }
+});
+
 // The recovery loop takes the same bkey from the same function, so the fix has
 // to land there too — a wire-path-only change would leave the replayed tail
 // collapsing siblings. Its dedupe is stricter (no exec exemption, and claim
