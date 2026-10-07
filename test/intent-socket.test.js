@@ -356,6 +356,19 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
 });
 
+test('a Codex caller with a known session id and no agentId is a subagent', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
+  });
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x' }, { closed: () => false }), { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
+  assert.deepStrictEqual(seen, []);
+  assert.strictEqual((await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false })).ok, true);
+  assert.deepStrictEqual(seen, [null]);
+});
+
 test('a Codex clone (no persistence entry) keeps its main thread: isCodex comes from the session, not entryOf', async () => {
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const handle = createIntentRequestHandler({
@@ -380,6 +393,22 @@ test('_startIntentSocket marks a codex session as Codex even with no persistence
     const main = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid });
     assert.strictEqual(main.code, 0, main.err);
     assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a', body: 'hi' }]);
+  } finally { h.a.intentSocket.stop(); }
+});
+
+test('a Codex clodex call with no CODEX_THREAD_ID is refused as a subagent over the live socket', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const h = seatHarness();
+  h.a.agentType = 'codex';
+  h.a.type = 'codex';
+  h.a.sessionId = `rollout-2026-10-05T01-00-00-${uuid}`;
+  fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
+  const cred = mintIntentCredential(crypto);
+  await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
+  try {
+    const sub = await viaVerb(h, cred, ['[agent:dm b] hi'], {});
+    assert.deepStrictEqual(h.delivered, []);
+    assert.match(sub.out + sub.err, /not available to a subagent: dm/);
   } finally { h.a.intentSocket.stop(); }
 });
 
