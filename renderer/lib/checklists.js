@@ -287,6 +287,7 @@ function collectExecChecklist(container) {
 const LEGACY_INTENT_KEYS = { 'notify-user': 'shout' };
 function intentRowChecked(row, intentsList) {
   if (!Array.isArray(intentsList)) return !row.privileged;
+  if (intentsList.includes('*') && !row.privileged) return true;
   return intentsList.some((t) => (LEGACY_INTENT_KEYS[t] || t) === row.type);
 }
 function renderPluginChecklist(container, pluginsList) {

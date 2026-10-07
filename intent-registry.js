@@ -5,6 +5,7 @@
 const {
   GATEABLE_INTENTS,
   PRIVILEGED_INTENTS,
+  LIVING_MARK,
   intentEnabled,
   intentsAllowlistFromChecked,
   withoutPrivilegedIntents,
@@ -612,9 +613,7 @@ function allowlistFromChecked(checkedTypes) {
   const pluginChecked = pluginRows.filter((r) => checked.has(r.type)).map((r) => r.type);
   const core = intentsAllowlistFromChecked(checkedTypes);
   if (!pluginChecked.length) return core;
-  const coreEnabled = Array.isArray(core)
-    ? core
-    : GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
+  const coreEnabled = Array.isArray(core) ? core : [LIVING_MARK];
   return [...coreEnabled, ...pluginChecked];
 }
 

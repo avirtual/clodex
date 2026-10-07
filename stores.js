@@ -28,6 +28,7 @@ const {
 const { deferredSkillDeny, isSkillDenyDirective } = require('./skills-off');
 const { seatDirFor } = require('./clodex-paths');
 const { seatLayoutActive } = require('./seat-layout');
+const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
 
 const PROMPT_KINDS = ['system', 'append'];
@@ -516,10 +517,15 @@ function initStores(userDataPath, {
       }
       if (!Array.isArray(all)) return [];
       let changed = false;
+      const touched = [];
       for (const e of all) {
         if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
+        const m = migrateLivingAllowlist(e.intents);
+        if (m !== e.intents) { e.intents = m; changed = true; touched.push(e.name); }
       }
-      if (changed && !this._unreadable) this._save(all);
+      if (changed && !this._unreadable && this._save(all)) {
+        for (const name of touched) this._writeSeatJson(name, all.find((s) => s && s.name === name));
+      }
       return all;
     },
     _save(entries, touched = null) {
