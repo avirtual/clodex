@@ -193,6 +193,23 @@ test('an operator inbound carrying a (via client) tag lands the client on the re
   assert.strictEqual('client' in records[1], false);
 });
 
+test('a phone message with an image keeps its inbound: lead marks move after the prefix and the empty Image: tail drops', () => {
+  const img = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } };
+  const { records } = recordsOf([
+    rec({ type: 'user', uuid: 'i1', message: { role: 'user', content: [{ type: 'text', text: '[Image #2][agent:from user] (via ios) Test\nImage:' }, img] } }),
+    rec({ type: 'user', uuid: 'i2', message: { role: 'user', content: '[agent:from user] hi\nImage:' } }),
+    rec({ type: 'user', uuid: 'i3', message: { role: 'user', content: '[agent:from user] hi\nImage: still here' } }),
+    rec({ type: 'user', uuid: 'i4', message: { role: 'user', content: '[Image #1][agent:from bob] hi' } }),
+  ].join('\n'));
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.client, r.text, (r.images || []).map((i) => i.n)]), [
+    ['inbound', 'user', 'ios', '[Image #2]Test', [2]],
+    ['inbound', 'user', undefined, 'hi', []],
+    ['inbound', 'user', undefined, 'hi\nImage: still here', []],
+    ['prompt', undefined, undefined, '[Image #1][agent:from bob] hi', []],
+  ]);
+  assert.deepStrictEqual(records[0].images, [{ n: 2, mediaType: 'image/png', data: 'iVBORw0KGgo=' }]);
+});
+
 test('a compact boundary opens its own turn: the turn before it ends at the compact and the next prompt opens the one after', () => {
   const { records } = recordsOf([
     rec({ type: 'user', uuid: 'i1', message: { role: 'user', content: '[agent:from bob] hi' } }),
