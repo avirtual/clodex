@@ -344,6 +344,11 @@ function dropSuffix(labels) {
   return ` — dropped ${n} queued command${n === 1 ? '' : 's'} after it: ${labels.join(', ')}`;
 }
 
+function droppedReply(label, firstLabel, firstText) {
+  const why = oneLine(String(firstText).split('\n')[0]).replace(PREFIX, '').trim().replace(/^error: /, '');
+  return errorReply(`${label} dropped — queued behind ${firstLabel} which failed: ${oneLine(why, 160)}`);
+}
+
 function pageLabel(r) {
   if (!r || !r.navigated) return 'same page';
   const u = clipNavUrl(redactUrl(r.url), 120);
@@ -594,6 +599,6 @@ module.exports = {
   classifyReply,
   oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
-  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
+  PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
 };

@@ -451,6 +451,7 @@ function createScheduler({
     const dropped = s.queue.filter(drops);
     s.queue = s.queue.filter((j) => !drops(j));
     handle.inject(text + replies.dropSuffix(dropped.map((j) => cmdLabel(j.cmd))));
+    for (const j of dropped) if (j.handle.from != null) j.handle.inject(replies.droppedReply(cmdLabel(j.cmd), cmdLabel(s.inflight.cmd), text));
   }
 
   function errText(service, e) {
