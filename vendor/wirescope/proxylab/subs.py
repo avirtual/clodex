@@ -390,7 +390,8 @@ def _hints_receipt(session_id):
 
 def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
                                   stop, status_code, text, role, title_call,
-                                  session_totals, context):
+                                  session_totals, context, request_class=None,
+                                  agent_type=None):
     subs = _match(agent, "turn.completed")
     if not subs:
         return 0
@@ -422,6 +423,8 @@ def emit_turn_completed_anthropic(agent, session_id, request_id, *, meta, bill,
             "turn_end": bool(stop.get("is_turn")),
             "role": role,
             "title_call": bool(title_call),
+            "request_class": request_class,
+            "agent_type": agent_type,
             "text": text or "",
             "tool_uses": meta.get("tool_uses") or [],
             "usage": bill.get("tokens"),

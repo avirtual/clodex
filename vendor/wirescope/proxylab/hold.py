@@ -56,7 +56,7 @@ WARMTH_HOLD_MAX_FAILURES = 2   # consecutive ping FAILURES (not declines) -> dis
 WARMTH_AUTH_BOOTSTRAP = os.environ.get(
     "WARMTH_AUTH_BOOTSTRAP", "1") not in ("0", "no", "off", "false")
 WARMTH_AUTH_BOOTSTRAP_MODEL = os.environ.get(
-    "WARMTH_AUTH_BOOTSTRAP_MODEL", "claude-haiku-4-5-20251001")
+    "WARMTH_AUTH_BOOTSTRAP_MODEL", "claude-haiku-5-5")
 _AUTH_BOOTSTRAP_MAX = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_MAX", "2"))
 _AUTH_BOOTSTRAP_COOLDOWN = int(os.environ.get("WARMTH_AUTH_BOOTSTRAP_COOLDOWN", "600"))
 # How long since the last spawn before the budget is considered a NEW outage.
@@ -99,8 +99,7 @@ def _bootstrap_state(config_dir=None):
 # first tick after expiry: wire-probed 2026-09-07, a CLI turn with 2h20m left on
 # the token did NOT refresh it, so pre-expiry firing buys nothing)
 # spend the existing bootstrap turn. Unconditional on purpose (~3 haiku turns a
-# day, ~$0.04 each — the one-shot still carries a ~20k-tok system prompt;
-# gating on "anyone holding" would couple this to consumer state the proxy
+# day; gating on "anyone holding" would couple this to consumer state the proxy
 # can't see). Bounded by the same budget/cooldown as the reactive
 # path. Success = expiresAt moved forward on re-read; a lapsed token that no
 # spawn moves is surfaced as `stalled` (refresh token dead → real login needed).

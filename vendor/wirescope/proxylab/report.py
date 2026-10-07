@@ -34,7 +34,7 @@ from . import core as core_mod
 from . import meta as meta_mod
 from . import status as status_mod
 
-REPORT_VERSION = 4          # v2: added `waste` section; cache_misses finding
+REPORT_VERSION = 5          # v2: added `waste` section; cache_misses finding
 #                             reclaimable is MARGINAL (net of the warm read), while
 #                             cost_decomposition.cache_misses stays gross.
 #                           v3: carriage multiplier is REQUESTS, not turns (each
@@ -52,6 +52,13 @@ REPORT_VERSION = 4          # v2: added `waste` section; cache_misses finding
 #                             an informational, NON-additive finding (new category
 #                             main_claudemd_carriage / main_useremail_carriage,
 #                             reclaimable_usd 0, excluded from waste $ and the score).
+#                           v5: `requests` on every scope.agents[] line (main
+#                             included) EXCLUDES side-calls; the new per-line
+#                             `sidecalls` counts them (est_usd still includes them).
+#                             deadweight_tools/_skills reclaim now multiplies by the
+#                             requests that CARRIED the roster, side-calls included
+#                             (finding `requests`); evidence.evaluable_requests stays
+#                             the utilization denominator and leaves them out.
 
 # Verdict thresholds, driven by reclaimable_pct of HIGH+MEDIUM-confidence
 # findings only (low-conf heuristics inform prose, never the rating — clodex's
@@ -316,10 +323,11 @@ def _cost_decomposition(pairs):
     last_ts = None                       # ts of previous MAIN turn (idle gap)
     misses = []                          # [{where, suspected_cause, usd, tokens}]
     miss_by_cause = collections.Counter()
+    miss_read_equiv = 0.0
 
     for p in pairs:
         t, model = p["tokens"], p["model"]
-        rates = billing_mod._price_for(model)
+        rates = billing_mod._price_for(model, prompt_tokens=billing_mod._prompt_tokens(t))
         if not rates:
             continue                     # unpriced (codex/unknown) — totals guard
         cr = t.get("cache_read_input_tokens") or 0
@@ -355,6 +363,7 @@ def _cost_decomposition(pairs):
             where = "preamble" if (sysseg and sysseg in warm_segs) else "conversation"
             buckets["cache_write_rewrite"] += write_usd
             bucket_tokens["cache_write_rewrite"] += write_tok
+            miss_read_equiv += _usd(write_tok, rates["cache_read"])
             misses.append({"line": "main", "where": where, "usd": round(write_usd, 6),
                            "tokens": write_tok, "suspected_cause": cause,
                            "idle_gap_s": round(gap, 1) if gap is not None else None})
@@ -385,7 +394,7 @@ def _cost_decomposition(pairs):
                  if misses else None,
         "events": misses[:20],            # localised, capped
     }
-    return {"total_usd": round(total, 6), "by_bucket": by_bucket}, miss_summary
+    return {"total_usd": round(total, 6), "by_bucket": by_bucket}, miss_summary, miss_read_equiv
 
 
 # ---------------------------------------------------------------------------
@@ -457,13 +466,31 @@ def _token_decomposition(pairs, util_by_line, skutil_by_line):
 # ---------------------------------------------------------------------------
 # findings
 # ---------------------------------------------------------------------------
-def _line_rates(pairs, line):
+def _line_rate_index(pairs):
+    acc = {}
     for p in pairs:
-        if p["line"] == line and p["model"]:
-            r = billing_mod._price_for(p["model"])
-            if r:
-                return r, p["model"]
-    return None, None
+        if not p["model"]:
+            continue
+        k = (p["line"], p["model"])
+        if k not in acc:
+            base = billing_mod._price_for(p["model"])
+            acc[k] = (base, []) if base else None
+        if acc[k] is None or not p["tokens"]:
+            continue
+        acc[k][1].append(billing_mod._price_for(
+            p["model"], prompt_tokens=billing_mod._prompt_tokens(p["tokens"])))
+    out = {}
+    for k, v in acc.items():
+        if v is None:
+            continue
+        base, per = v
+        out[k] = (base if all(r is base for r in per)
+                  else {f: sum(r[f] for r in per) / len(per) for f in base})
+    return out
+
+
+def _line_rates(index, line):
+    return next(((r, m) for (ln, m), r in index.items() if ln == line), (None, None))
 
 
 def _line_write_key(pairs, line):
@@ -652,6 +679,7 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
     # detector found. Only the main line is miss-tracked; subagents default to the
     # one establish. Each cold write re-pays the carriage; the rest are warm reads.
     main_preamble_cold = 1 + (misses or {}).get("preamble_rewrites", 0)
+    rate_index = _line_rate_index(pairs)
 
     def _carriage(tokens_per_request, requests, rates, line):
         return _reclaimable_carriage_usd(
@@ -662,7 +690,7 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
     # per-line deadweight tools + skills (high confidence, additive)
     lines = set(util_by_line) | set(skutil_by_line)
     for line in sorted(lines):
-        rates, model = _line_rates(pairs, line)
+        rates, model = _line_rates(rate_index, line)
         is_sub = line != "main"
         body = _representative_body(pairs, line)
         if body is None:
@@ -673,7 +701,8 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
         s_roll = status_mod._apply_skill_utilization(skills, skutil_by_line.get(line)) if skills else None
         attr = attribution.get(line, {})
         if t_roll and t_roll["deadweight_tokens"] > 0:
-            reqs = t_roll["evaluable_turns"]      # tool-loaded requests (the multiplier)
+            evaluable = t_roll["evaluable_turns"]
+            reqs = (util_by_line.get(line) or {}).get("carried_requests", 0)
             dead = [pp for pp in tools["per_tool"] if pp["used"] == 0]
             evid = [{"name": pp["name"], "est_tokens": pp["est_tokens"],
                      "calls": attr.get(pp["name"], {}).get("calls", 0)}
@@ -684,32 +713,33 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
                 "title": f"{len(dead)} of {t_roll['loaded']} tools loaded, never called"
                          + (" (subagent)" if is_sub else ""),
                 "detail": "Schemas re-sent every request, 0 calls over "
-                          f"{reqs} requests: " + ", ".join(pp["name"] for pp in dead[:8]),
+                          f"{evaluable} requests: " + ", ".join(pp["name"] for pp in dead[:8]),
                 "reclaimable_tokens_per_request": t_roll["deadweight_tokens"],
                 "reclaimable_tokens": t_roll["deadweight_tokens"] * reqs,
                 "reclaimable_usd": _carriage(t_roll["deadweight_tokens"], reqs, rates, line),
                 "requests": reqs,
                 "evidence": {"loaded": t_roll["loaded"], "used": t_roll["used_distinct"],
-                             "evaluable_requests": reqs, "per_tool": evid},
+                             "evaluable_requests": evaluable, "per_tool": evid},
                 "confidence": "high", "additive": True,
                 "lever": ("[wirescope:strip-tools …] on the spawn prompt" if is_sub
                           else '--tools "Read Edit Write Bash Glob Grep"'),
             })
         if s_roll and s_roll["deadweight_tokens"] > 0:
-            reqs = s_roll["evaluable_turns"]
+            evaluable = s_roll["evaluable_turns"]
+            reqs = (skutil_by_line.get(line) or {}).get("carried_requests", 0)
             dead = [pp for pp in skills["per_skill"] if pp["used"] == 0]
             out.append({
                 "id": f"deadweight_skills:{line}",
                 "category": "deadweight_skills", "line": line,
                 "title": f"{len(dead)} of {s_roll['loaded']} skills loaded, never invoked",
                 "detail": "Skills list re-sent every request, 0 invocations over "
-                          f"{reqs} requests: " + ", ".join(pp["name"] for pp in dead[:8]),
+                          f"{evaluable} requests: " + ", ".join(pp["name"] for pp in dead[:8]),
                 "reclaimable_tokens_per_request": s_roll["deadweight_tokens"],
                 "reclaimable_tokens": s_roll["deadweight_tokens"] * reqs,
                 "reclaimable_usd": _carriage(s_roll["deadweight_tokens"], reqs, rates, line),
                 "requests": reqs,
                 "evidence": {"loaded": s_roll["loaded"], "used": s_roll["used_distinct"],
-                             "evaluable_requests": reqs},
+                             "evaluable_requests": evaluable},
                 "confidence": "high", "additive": True,
                 "lever": "skillOverrides:{\"<name>\":\"off\"} in settings (reclaims tokens; "
                          "permissions.deny only gates invocation)",
@@ -729,7 +759,7 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
     main_comp = (td_extra or {}).get("comp")
     if main_comp:
         cats = {c["category"]: c["tokens"] for c in main_comp["by_category"]}
-        m_rates, _ = _line_rates(pairs, "main")
+        m_rates, _ = _line_rates(rate_index, "main")
         reqs = ((util_by_line.get("main") or {}).get("evaluable_turns", 0)
                 or sum(1 for p in pairs if p["line"] == "main"))
         for cat in ("claudemd", "useremail"):
@@ -767,7 +797,7 @@ def _findings(pairs, util_by_line, skutil_by_line, td_extra, attribution, hints,
         if not scomp:
             continue
         cats = {c["category"]: c["tokens"] for c in scomp["by_category"]}
-        s_rates, _ = _line_rates(pairs, line)
+        s_rates, _ = _line_rates(rate_index, line)
         reqs = ((util_by_line.get(line) or {}).get("evaluable_turns", 0)
                 or sum(1 for p in pairs if p["line"] == line))
         for cat, lever in (("claudemd", "[wirescope:omit claudemd] on the spawn prompt"),
@@ -967,8 +997,8 @@ def _scope(pairs):
                                  "role": summ.get("role"),
                                  "agent_id": summ.get("agent_id"),
                                  "model": p["model"], "requests": 0,
-                                 "est_usd": 0.0})
-        e["requests"] += 1
+                                 "sidecalls": 0, "est_usd": 0.0})
+        e["sidecalls" if summ.get("sidecall") else "requests"] += 1
         # per-line cost share (exact: summed per-request billing blocks), so a
         # COLD session's "where did the money go" split survives on disk — the
         # offline twin of the live by_line bucket /_status carries.
@@ -1069,10 +1099,10 @@ def _series(pairs):
     for p in pairs:
         if p["line"] != "main":
             continue
-        rates = billing_mod._price_for(p["model"])
+        t = p["tokens"]
+        rates = billing_mod._price_for(p["model"], prompt_tokens=billing_mod._prompt_tokens(t))
         if not rates:
             continue
-        t = p["tokens"]
         cr = t.get("cache_read_input_tokens") or 0
         w5 = t.get("cache_write_5m_tokens") or 0
         w1 = t.get("cache_write_1h_tokens") or 0
@@ -1170,6 +1200,8 @@ def _is_seat_request(p):
     # transition, and pairing the next real turn against it hides nothing
     # (same prefix) but pairing IT against a stale stash reads as a bust
     if summ.get("keepwarm"):
+        return False
+    if summ.get("sidecall") in ("agent_summary", "auxiliary"):
         return False
     names = [n for n in (summ.get("tool_names") or []) if isinstance(n, str)]
     if names:
@@ -1729,7 +1761,7 @@ def bust_series(session, detail=True, scan=None, loci=True):
 
 def line_split(scan):
     lines = {"main": {"key": "main", "role": None, "agent_id": None, "model": None,
-                      "requests": 0, "est_usd": 0.0}}
+                      "requests": 0, "sidecalls": 0, "est_usd": 0.0}}
     side = {k: {"requests": 0, "est_usd": 0.0, "model": None}
             for k in ("classifier", "keepwarm")}
     total = 0.0
@@ -1745,13 +1777,14 @@ def line_split(scan):
             b = lines.setdefault(p["line"], {"key": p["line"], "role": summ.get("role"),
                                              "agent_id": summ.get("agent_id"),
                                              "model": None, "requests": 0,
-                                             "est_usd": 0.0})
-        b["requests"] += 1
+                                             "sidecalls": 0, "est_usd": 0.0})
+        b["sidecalls" if not kind and summ.get("sidecall") else "requests"] += 1
         b["est_usd"] += usd
         b["model"] = p.get("model") or b["model"]
     for b in (*lines.values(), *side.values()):
         b["est_usd"] = round(b["est_usd"], 6)
-    return {"lines": list(lines.values()), **side, "requests": len(scan),
+    return {"lines": list(lines.values()), **side,
+            "requests": sum(b["requests"] for b in (*lines.values(), *side.values())),
             "est_usd": round(total, 6)}
 
 
@@ -1767,7 +1800,7 @@ def session_report(session, detail=False):
     util, skutil = status_mod._capture_scan(session)
     scope = _scope(pairs)
     totals = _totals(pairs)
-    cost, misses = _cost_decomposition(pairs)
+    cost, misses, miss_read_equiv = _cost_decomposition(pairs)
     token_decomp, td_extra = _token_decomposition(pairs, util, skutil)
     attribution, hints = _tool_result_attribution(pairs)
     findings = _findings(pairs, util, skutil, td_extra, attribution, hints, misses)
@@ -1782,8 +1815,7 @@ def session_report(session, detail=False):
         lever = ("/warm-cache N (or POST /_hold) — keep the prefix warm across idle gaps"
                  if cause == "idle_gap_gt_ttl"
                  else "stabilise the prefix (relocate volatile env to tail — on by default)")
-        mrates, _ = _line_rates(pairs, "main")
-        read_equiv = _usd(misses["tokens"], mrates["cache_read"]) if mrates else 0.0
+        read_equiv = miss_read_equiv
         marginal = round(max(0.0, misses["usd"] - read_equiv), 6)
         findings.append({
             "id": "cache_misses", "category": "cache_misses", "line": "main",

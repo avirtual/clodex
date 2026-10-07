@@ -228,6 +228,10 @@ PRICES = {
     # platform.claude.com/docs/en/about-claude/pricing + models/overview (id).
     "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
     "claude-sonnet-5": {"in": 2.0,  "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
+    # haiku-5.5 (2026-10-07, id `claude-haiku-5-5`): short-prompt rates; over
+    # 100k prompt tokens see PRICES_PROMPT_TIER. Read off
+    # platform.claude.com/docs/en/about-claude/pricing (== CLI 2.1.293 `haiku_55`).
+    "claude-haiku-5-5": {"in": 0.10, "out": 0.50, "cache_write_5m": 0.125, "cache_write_1h": 0.20, "cache_read": 0.01},
     "claude-haiku-4":  {"in": 1.0,  "out": 5.0,  "cache_write_5m": 1.25,  "cache_write_1h": 2.0,  "cache_read": 0.10},
 }
 
@@ -333,8 +337,20 @@ PRICES_DATED = {
     # session looks. The base PRICES row ($2/$10) is now simply correct.
 }
 
+PRICES_PROMPT_TIER = {
+    "claude-haiku-5-5": {"above_prompt_tokens": 100_000,
+                         "rates": {"in": 0.50, "out": 2.50, "cache_write_5m": 0.625, "cache_write_1h": 1.00, "cache_read": 0.05}},
+}
 
-def _price_for(model, table=None, now=None, speed=None):
+
+def _prompt_tokens(tokens):
+    t = tokens or {}
+    writes = (((t.get("cache_write_5m_tokens") or 0) + (t.get("cache_write_1h_tokens") or 0))
+              or (t.get("cache_write_flat_tokens") or 0))
+    return (t.get("input_tokens") or 0) + (t.get("cache_read_input_tokens") or 0) + writes
+
+
+def _price_for(model, table=None, now=None, speed=None, *, prompt_tokens=None):
     """Longest-prefix match (the old first-dict-hit walk silently shadowed
     "claude-opus-4-8" with the legacy "claude-opus-4" entry). None = unpriced.
     Scheduled repricings (PRICES_DATED) overlay the base PRICES table once
@@ -358,6 +374,9 @@ def _price_for(model, table=None, now=None, speed=None):
                 p = dated
     if table is None and speed == "fast" and pfx in PRICES_SPEED_FAST:
         p = PRICES_SPEED_FAST[pfx]
+    tier = PRICES_PROMPT_TIER.get(pfx) if table is None else None
+    if tier and prompt_tokens is not None and prompt_tokens > tier["above_prompt_tokens"]:
+        p = tier["rates"]
     return p
 
 
@@ -399,7 +418,8 @@ def _billing(kind, model_resolved=None, usage_final=None, usage_start=None, coun
         # fast mode (premium rates); final wins, absent => standard
         "speed": uf.get("speed", us.get("speed")),
     }
-    p = _price_for(model_resolved, speed=tokens["speed"])
+    p = _price_for(model_resolved, speed=tokens["speed"],
+                   prompt_tokens=_prompt_tokens(tokens))
     est = None
     unpriced = False
     basis = "approx public list USD/1M; edit PRICES"
@@ -410,7 +430,8 @@ def _billing(kind, model_resolved=None, usage_final=None, usage_start=None, coun
             # the flat total at the cheaper 5m premium and say so in the basis.
             w5 = tokens["cache_write_flat_tokens"]
             basis += "; cache_creation split absent, flat total priced at 5m rate"
-        if tokens["speed"] == "fast" and p is not _price_for(model_resolved):
+        if tokens["speed"] == "fast" and p is not _price_for(
+                model_resolved, prompt_tokens=_prompt_tokens(tokens)):
             basis += "; FAST MODE premium rates (usage.speed=fast)"
         est = round(_usd(tokens["input_tokens"], p["in"])
                     + _usd(tokens["output_tokens"], p["out"])

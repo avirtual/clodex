@@ -1380,6 +1380,8 @@ async def handler(request: Request) -> Response:
     # subagent key + the display-name slot the chain fills in.
     ws_display_name = None
     agent_id = request.headers.get("x-claude-code-agent-id")
+    request_class = request.headers.get("x-claude-code-request-class")
+    agent_type = request.headers.get("x-claude-code-agent-type")
     try:
         nudge_pre = transforms_mod._nudge_pre(obj, upstream_path, m is not None)
     except Exception as e:
@@ -1807,15 +1809,15 @@ async def handler(request: Request) -> Response:
         msgs = obj.get("messages", []) or []
         msg_chars = len(json.dumps(msgs))
         keepwarm = meta_mod._is_keepwarm_ping(obj)
-        sidecall_kind = meta_mod._transient_kind(obj)
+        sidecall_kind = meta_mod._transient_kind(obj, request_class=request_class)
         record["summary"] = {
             # a keep-warm ping (max_tokens:1 replay of a seat request): priced
             # like a request, excluded from turns / replay stash / hold anchor /
             # bust lineage; the offline tools read it off this cheap sidecar
             "keepwarm": keepwarm,
-            # transient non-agent request sharing the session_id: "title" /
-            # "probe" / "classifier" (the auto-mode permission grader), else None
             "sidecall": sidecall_kind,
+            "request_class": request_class,
+            "agent_type": agent_type,
             "model": model,
             "session_id": session_id,
             "account_uuid": account_uuid,
@@ -1837,11 +1839,6 @@ async def handler(request: Request) -> Response:
         # harvest the session title the CLI generates anyway.
         if upstream_path.split("?")[0].endswith("/v1/messages"):
             title_call = sidecall_kind == "title"
-            # side_call = any transient non-agent request sharing the session_id:
-            # the title generator, a health/quota probe, or the auto-mode
-            # permission classifier. All must stay out of the durable
-            # identity/replay/view/turn-count state; only the TRUE title call
-            # additionally harvests its answer as the session title.
             side_call = sidecall_kind is not None
             # subagents (Task-spawned) share the parent's session_id; pass role
             # so a sub turn is logged distinctly and never overwrites the parent
@@ -1851,8 +1848,10 @@ async def handler(request: Request) -> Response:
             meta_mod._capture_session_meta(session_id, obj, model,
                                            agent=(agent if m else None),
                                            role=role, side_call=side_call,
+                                           sidecall=sidecall_kind,
                                            agent_id=agent_id,
-                                           display_name=ws_display_name)
+                                           display_name=ws_display_name,
+                                           agent_type=agent_type)
             # heaviness snapshot from the model-visible history (main line
             # only: a subagent's small history must not clobber the parent's;
             # a keep-warm ping carries the same history and changes nothing)
@@ -2077,6 +2076,7 @@ async def handler(request: Request) -> Response:
                     session_id=session_id, session_key=session_key, obj=obj,
                     agent_header_id=agent_id, keepwarm=keepwarm,
                     title_call=title_call, side_call=side_call, sidecall=sidecall_kind,
+                    request_class=request_class, agent_type=agent_type,
                     is_messages=is_messages,
                     routed=(m is not None), out_dir=out_dir, stem=stem,
                     status_code=up.status_code, resp_headers=dict(up.headers),

@@ -1095,7 +1095,7 @@ def _strip_thinking_panel(obj, scale, total):
     ratio = round(pb_ch / pt_ch, 2)
     mbr = transforms_mod.STRIP_THINK_MAX_BODY_RATIO
     prior_tok = round((pt_ch // _CHARS_PER_TOK) * scale)
-    p = billing_mod._price_for(obj.get("model"))
+    p = billing_mod._price_for(obj.get("model"), prompt_tokens=total)
     est_usd = round(prior_tok / 1e6 * p["cache_read"], 4) if p else None
     return {"prior_thinking_tokens": prior_tok,
             "current_thinking_tokens": round((cur_ch // _CHARS_PER_TOK) * scale),
@@ -1163,7 +1163,7 @@ def _strip_tool_errors_panel(obj, scale, total):
     if reclaim_ch <= 0:
         return None
     reclaim_tok = round((reclaim_ch // _CHARS_PER_TOK) * scale)
-    p = billing_mod._price_for(obj.get("model"))
+    p = billing_mod._price_for(obj.get("model"), prompt_tokens=total)
     est_usd = round(reclaim_tok / 1e6 * p["cache_read"], 4) if p else None
     return {"failed_calls": n_calls, "error_results": n_results,
             "failed_call_tokens": round((call_ch // _CHARS_PER_TOK) * scale),
@@ -1220,7 +1220,7 @@ def _strip_edit_acks_panel(obj, scale, total):
     if ack_ch <= 0:
         return None
     reclaim_tok = round((ack_ch // _CHARS_PER_TOK) * scale)
-    p = billing_mod._price_for(obj.get("model"))
+    p = billing_mod._price_for(obj.get("model"), prompt_tokens=total)
     est_usd = round(reclaim_tok / 1e6 * p["cache_read"], 4) if p else None
     return {"collapsed_acks": n_acks,
             "edit_ack_tokens": reclaim_tok,
@@ -1349,7 +1349,8 @@ def _capture_scan(session, since_ts=None, _only_stems=None):
     turn is not evidence of waste. `used` is the RAW invocation count (3 Reads in
     one turn = 3), per clodex's contract.
 
-    Returns (tools, skills), each {key -> {evaluable_turns, by_tool|by_skill}},
+    Returns (tools, skills), each {key -> {evaluable_turns, carried_requests,
+    by_tool|by_skill}},
     keyed by agent line: 'main' for routed parent/unknown-role turns, else the
     subagent INSTANCE's x-claude-code-agent-id (fallback role) — the same key
     _context_snapshot resolves per agent, so the merge lines up. Empty maps for a
@@ -1403,20 +1404,27 @@ def _capture_scan(session, since_ts=None, _only_stems=None):
                     receipt = (False, [])
             return receipt
 
-        if summ.get("n_tools") or 0:       # no tools loaded => not a use-chance
-            g = tools.setdefault(key, {"evaluable_turns": 0,
+        side = bool(summ.get("sidecall"))
+        if summ.get("n_tools") or 0:
+            g = tools.setdefault(key, {"evaluable_turns": 0, "carried_requests": 0,
                                        "by_tool": collections.Counter()})
             ok, called = _resp()
             if ok:
+                g["carried_requests"] += 1
+            if ok and not side:
                 g["evaluable_turns"] += 1
                 for name in called:
                     if name:
                         g["by_tool"][name] += 1
 
-        g = skills.setdefault(key, {"evaluable_turns": 0,
+        g = skills.setdefault(key, {"evaluable_turns": 0, "carried_requests": 0,
                                     "by_skill": collections.Counter()})
         if _file_contains(f, _SKILLS_NEEDLE) and _resp()[0]:
-            g["evaluable_turns"] += 1
+            g["carried_requests"] += 1
+            if not side:
+                g["evaluable_turns"] += 1
+        if side:
+            continue
         for name in _sse_skill_names(
                 f.with_name(f.name.replace(".request.json", ".response.sse"))):
             g["by_skill"][name] += 1
@@ -1475,9 +1483,10 @@ _LIFETIME_MEMO_MAX = 32
 def _merge_tally(dst, src, kind):
     """Fold one scan's tally into a running one, in place."""
     for key, g in src.items():
-        d = dst.setdefault(key, {"evaluable_turns": 0,
+        d = dst.setdefault(key, {"evaluable_turns": 0, "carried_requests": 0,
                                  kind: collections.Counter()})
         d["evaluable_turns"] += g["evaluable_turns"]
+        d["carried_requests"] += g["carried_requests"]
         d[kind].update(g[kind])
     return dst
 
@@ -1486,6 +1495,7 @@ def _copy_tally(t, kind):
     """A deep-enough copy that a caller mutating the result (the _apply_*
     functions sort and stamp in place) cannot corrupt the memo."""
     return {k: {"evaluable_turns": g["evaluable_turns"],
+                "carried_requests": g["carried_requests"],
                 kind: collections.Counter(g[kind])} for k, g in t.items()}
 
 

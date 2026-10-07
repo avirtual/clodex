@@ -629,11 +629,13 @@ def _load_last_request_disk(session_id, subkey=None):
         if subkey is not None:
             if subkey not in (summ.get("agent_id"), summ.get("role")):
                 continue
+            if summ.get("sidecall"):
+                side_call = side_call or (rf, rec)
+                continue
         elif not codex_mod._is_openai_body(obj):  # codex: no roles/subagents
             if summ.get("role") not in ("parent", "unknown"):
                 continue
-            if not summ.get("n_tools"):
-                # title/probe side-call shape — keep only as a last resort
+            if not summ.get("n_tools") or summ.get("sidecall"):
                 side_call = side_call or (rf, rec)
                 continue
         pick = (rf, rec)
@@ -829,7 +831,7 @@ def _is_real_call(summ):
     """Does this captured request represent a REAL main-line API call whose
     payload is part of the session's growing conversation?
 
-    Excludes two populations that would otherwise shift every ordinal after
+    Excludes populations that would otherwise shift every ordinal after
     them:
       * SUBAGENT lines — they share the parent's session_id but carry their own
         private message array (see meta.py's main-line identity guard).
@@ -844,6 +846,8 @@ def _is_real_call(summ):
 
     Reads ONLY the capture's tail `summary` (report._tail_summary) — no body."""
     if (summ or {}).get("role") not in ("parent", "unknown", None):
+        return False
+    if summ.get("sidecall"):
         return False
     return not ((summ.get("n_tools") or 0) <= 1
                 and (summ.get("n_messages") or 0) <= 1)

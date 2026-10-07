@@ -49,22 +49,22 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
               obj, title_call, is_messages, routed, out_dir, stem,
               status_code, resp_headers, tee_text=None, response_injection=None,
               side_call=None, agent_header_id=None, keepwarm=False,
-              sidecall=None):
+              sidecall=None, request_class=None, agent_type=None):
     """Finalize an anthropic-wire response (messages OR count_tokens).
     `routed` = /agent/<name>/ traffic (the only kind subscribers receive);
     `tee_text` = the subscriber tee's full reassembled turn text, when one ran
     (meta's own text is capped); `resp_headers` = upstream response headers
-    (lowercased keys), never the request's. `side_call` = title OR probe (the
-    transient non-agent class); `title_call` is the title generator alone (its
-    answer is the session title). side_call gates view-state/turn-count; only
+    (lowercased keys), never the request's. `side_call` = the transient
+    non-agent class; `title_call` is the title generator alone (its answer is
+    the session title). side_call gates view-state/turn-count; only
     title_call harvests a title — a probe's 1-token answer must never become one.
     `agent_header_id` = the request's x-claude-code-agent-id (present iff a
     subagent instance); with `role` it derives the per-line cost bucket key
     (same vocabulary as report._line_key)."""
     # back-compat: callers that pass only title_call get the old behavior
     side_call = title_call if side_call is None else side_call
-    # the CLI's startup quota probe: the side-call that is not the title call
-    probe = bool(side_call) and not title_call
+    probe = (sidecall in ("probe", "classifier") if sidecall
+             else bool(side_call) and not title_call)
     # Feed the upstream-health hint provider: every forwarded outcome, so the
     # "upstream is shedding" fact is measured from real traffic, not a probe.
     hints_native_mod.note_outcome(status_code, probe=probe)
@@ -130,9 +130,6 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
             # priced apart in the totals (billing._bump): the keep-warm bill is
             # the one line item a seat pays while nobody is talking to it
             "keepwarm": bool(keepwarm),
-            # "title" / "probe" / "classifier" / None — the classifier (auto-mode
-            # permission grader) is priced apart too: it is what a seat pays
-            # for NOT running --dangerously-skip-permissions
             "sidecall": sidecall}
     # per-line cost decomposition key — mirror report._line_key so the live
     # by_line buckets and the disk report agree: main line (parent/unknown)
@@ -147,7 +144,9 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
          "endpoint": "messages" if is_messages else "count_tokens",
          "status_code": status_code,
          "keepwarm": bool(keepwarm),   # a ping's receipt, not a turn's
-         "sidecall": sidecall,         # title / probe / classifier, else None
+         "sidecall": sidecall,
+         "request_class": request_class,
+         "agent_type": agent_type,
          # full headers Anthropic returned — request-id,
          # anthropic-ratelimit-*, billing/tier hints, etc.
          "response_headers": core_mod._safe_headers(resp_headers),
@@ -170,6 +169,7 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
             status_code=status_code,
             text=(tee_text if tee_text is not None else meta.get("text")),
             role=role, title_call=side_call,
+            request_class=request_class, agent_type=agent_type,
             session_totals=billing_mod._SESSION_TOTALS.get(session_key),
             context=(meta_mod._CONTEXT_STATS.get(session_id)
                      if session_id else None))

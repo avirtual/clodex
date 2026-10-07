@@ -3,6 +3,7 @@ import json
 import re
 import time
 
+from proxylab import billing as billing_mod
 from proxylab import pinger as pinger_mod
 from proxylab import store as store_mod
 from proxylab import writer as writer_mod
@@ -95,12 +96,7 @@ def _input_token_total(usage):
     can never disagree. None when there's no usage yet."""
     if not usage:
         return None
-    rd = usage.get("cache_read_input_tokens") or 0
-    wr = ((usage.get("cache_write_5m_tokens") or 0)
-          + (usage.get("cache_write_1h_tokens") or 0)) \
-        or usage.get("cache_write_flat_tokens") or 0
-    inp = usage.get("input_tokens") or 0
-    return rd + wr + inp
+    return billing_mod._prompt_tokens(usage)
 
 
 def _context_stats(session_id):
@@ -199,15 +195,31 @@ def _title_from_text(text):
     return t
 
 
+_TITLE_SYS_PREFIXES = (_TITLE_SYS_PREFIX,
+                       "You are naming a coding session so the user can pick it out",
+                       "Lead with the most specific thing the user named")
+
+
+def _is_title_schema(obj):
+    oc = obj.get("output_config")
+    fmt = oc.get("format") if isinstance(oc, dict) else None
+    if not isinstance(fmt, dict) or fmt.get("type") != "json_schema":
+        return False
+    schema = fmt.get("schema")
+    return isinstance(schema, dict) and schema.get("required") == ["title"]
+
+
 def _is_title_call(obj):
-    """The CLI's per-session title-generator side-call: zero tools + the title
-    system prompt. Its response text IS the session title."""
+    """The CLI's per-session title-generator side-call. Its response text IS
+    the session title."""
     if obj.get("tools"):
         return False
+    if _is_title_schema(obj):
+        return True
     sys = obj.get("system")
     texts = ([b.get("text", "") for b in sys if isinstance(b, dict)]
              if isinstance(sys, list) else [sys or ""])
-    return any(t.startswith(_TITLE_SYS_PREFIX) for t in texts)
+    return any(t.startswith(_TITLE_SYS_PREFIXES) for t in texts)
 
 
 # A health/availability PROBE (seen in the wild: an editor firing a one-token
@@ -256,12 +268,33 @@ def _is_classifier_call(obj):
     return any(t.startswith(_CLASSIFIER_SYS_PREFIX) for t in texts)
 
 
-def _transient_kind(obj):
-    """Which transient non-agent request this is — "title" / "probe" /
-    "classifier" — or None for a real seat/subagent turn. One vocabulary for
-    the capture summary, the receipt and the totals decomposition. (Not named
-    `_sidecall_*`: transforms owns that prefix for the WebFetch/WebSearch
-    downshift, and the logproxy shim resolves names across modules by order.)"""
+_AGENT_SUMMARY_OPENER = "Describe your most recent action in 3-5 words"
+_AGENT_SUMMARY_CLOSER = 'Bad (branch name): "Analyzed adam/background-summary branch diff"'
+
+
+def _is_agent_summary_call(obj):
+    msgs = obj.get("messages")
+    if not isinstance(msgs, list):
+        return False
+    i = len(msgs) - 1
+    while i >= 0 and isinstance(msgs[i], dict) and msgs[i].get("role") == "system":
+        i -= 1
+    last = msgs[i] if i >= 0 else None
+    if not isinstance(last, dict) or last.get("role") != "user":
+        return False
+    c = last.get("content")
+    blocks = c if isinstance(c, list) else [{"type": "text", "text": c}]
+    texts = [b.get("text") for b in blocks
+             if isinstance(b, dict) and b.get("type") == "text"]
+    return any(isinstance(t, str) and t.startswith(_AGENT_SUMMARY_OPENER)
+               and t.rstrip().endswith(_AGENT_SUMMARY_CLOSER) for t in texts)
+
+
+def _transient_kind(obj, request_class=None):
+    """One vocabulary for the capture summary, the receipt and the totals
+    decomposition. (Not named `_sidecall_*`: transforms owns that prefix for
+    the WebFetch/WebSearch downshift, and the logproxy shim resolves names
+    across modules by order.)"""
     if not isinstance(obj, dict):
         return None
     if _is_title_call(obj):
@@ -270,6 +303,10 @@ def _transient_kind(obj):
         return "probe"
     if _is_classifier_call(obj):
         return "classifier"
+    if _is_agent_summary_call(obj):
+        return "agent_summary"
+    if request_class == "auxiliary":
+        return "auxiliary"
     return None
 
 
@@ -319,7 +356,7 @@ def _agent_id_label(agent_id):
 
 
 def _note_subagent(session_id, role, model, now=None, obj=None, agent_id=None,
-                   display_name=None):
+                   display_name=None, agent_type=None):
     """Record one subagent turn under its parent session (never touches the
     parent's own identity row). Keyed by INSTANCE — the x-claude-code-agent-id
     header when the wire carries one (present iff subagent, distinct per spawn,
@@ -348,17 +385,25 @@ def _note_subagent(session_id, role, model, now=None, obj=None, agent_id=None,
     e = roles.get(key)
     if e is None:
         roles[key] = {"key": key, "role": role, "agent_id": agent_id,
-                      "display_name": name, "model": model, "requests": 1,
+                      "display_name": name, "agent_type": agent_type,
+                      "model": model, "requests": 1,
                       "last_seen": now, "first_seen": now}
     else:
         e["model"] = model or e["model"]
         e["role"] = role or e.get("role")
         e["display_name"] = name or e.get("display_name")   # sticky once seen
+        e["agent_type"] = agent_type or e.get("agent_type")
         e["requests"] += 1
         e["last_seen"] = now
     if isinstance(obj, dict):
         _SUBAGENT_LAST_REQ.setdefault(session_id, {})[key] = {
             "obj": obj, "ts": now, "needs_auth": False}
+
+
+def _touch_subagent(session_id, key, now=None):
+    e = _SUBAGENTS.get(session_id, {}).get(key)
+    if e is not None:
+        e["last_seen"] = now or time.time()
 
 
 def _subagent_request(session_id, key):
@@ -403,13 +448,14 @@ def _subagent_request_objs(session_id):
 
 
 def _capture_session_meta(session_id, obj, model, agent=None, role=None,
-                          side_call=False, agent_id=None, display_name=None):
+                          side_call=False, agent_id=None, display_name=None,
+                          agent_type=None, sidecall=None):
     """Per-request meta hook (handler, post-parse). The MAIN LINE (the parent
-    agent, role parent/unknown, not a title/probe side-call) owns the durable
+    agent, role parent/unknown, not a side-call) owns the durable
     identity row: it bumps last_seen + model and hunts the cwd. A SUBAGENT turn
     (Plan/general-purpose/verification/custom — same session_id on the wire) or a
-    side-call (title generator, health/quota probe) must NOT overwrite the
-    parent's model/identity; we only bump last_seen (the session is alive) and,
+    side-call must NOT overwrite the parent's model/identity; we only bump
+    last_seen (the session is alive) and,
     for a real subagent, log its activity so /_status can show it distinctly.
     `agent` = the /agent/<name>/ route; `agent_id` = the x-claude-code-agent-id
     header (per-instance subagent key)."""
@@ -422,9 +468,11 @@ def _capture_session_meta(session_id, obj, model, agent=None, role=None,
     if not side_call:
         pinger_mod._clear_session_ended(session_id)
     if side_call or writer_mod._is_subagent_role(role):
-        if writer_mod._is_subagent_role(role):
+        if not side_call and writer_mod._is_subagent_role(role):
             _note_subagent(session_id, role, model, obj=obj, agent_id=agent_id,
-                           display_name=display_name)
+                           display_name=display_name, agent_type=agent_type)
+        elif sidecall == "agent_summary" and writer_mod._is_subagent_role(role):
+            _touch_subagent(session_id, agent_id or role)
         # last_seen only (model/cwd left untouched -> COALESCE keeps the parent's)
         writer_mod._enqueue_meta(session_id, agent=agent)
         return
