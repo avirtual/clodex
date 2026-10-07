@@ -903,6 +903,34 @@ test('persistence: a fresh userData stamps the living marker, so a post-sub save
   } finally { cleanup(); }
 });
 
+test('persistence: a non-array sessions.json still stamps the living marker', () => {
+  const { userData, registryDir, stores, cleanup } = freshStores();
+  const boot = () => initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
+  try {
+    const preSub = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+    fs.writeFileSync(path.join(userData, 'sessions.json'), '{}');
+    stores.persistence.list();
+    assert.ok(fs.existsSync(path.join(userData, 'intents-living-migrated')));
+    stores.persistence.upsert({ name: 'ops', workspaceId: 'default', intents: [...preSub, 'term'] });
+    assert.deepStrictEqual(stores.persistence.get('ops').intents, [...preSub, 'term']);
+    assert.deepStrictEqual(boot().persistence.get('ops').intents, [...preSub, 'term']);
+  } finally { cleanup(); }
+});
+
+test('persistence: a fresh userData writes the living marker once, not on every load', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    const marker = path.join(userData, 'intents-living-migrated');
+    stores.persistence.list();
+    const ino = fs.statSync(marker).ino;
+    stores.persistence.list();
+    assert.strictEqual(fs.statSync(marker).ino, ino);
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {
