@@ -1057,6 +1057,19 @@ function lineOf(src, head) {
   return src.slice(i, src.indexOf('\n', i));
 }
 
+test('INSPECT: in: keeps the first parent and the informative ancestors up to the drawer', () => {
+  const ancestorsOf = new Function('up', 'short', `${lineOf(scripts.INSPECT(1), 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
+    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''));
+  const chain = (specs) => specs.reduceRight((parent, s) => {
+    const [, tag, id = '', cls = ''] = /^(\w+)(?:#([\w-]+))?(?:\.([\w-]+))?$/.exec(s);
+    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, parentElement: parent };
+  }, null);
+  const leaf = { parentElement: chain(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body']) };
+  assert.deepStrictEqual(ancestorsOf(leaf), ['td', 'tr#r1', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
+  const many = { parentElement: chain(['span', ...Array.from({ length: 9 }, (_, i) => `div#a${i}`), 'body']) };
+  assert.deepStrictEqual(ancestorsOf(many), ['span', 'div#a0', 'div#a1', 'div#a2', 'div#a3', 'div#a8']);
+});
+
 test('page scripts: wholeLabel drops an icon-only child from the label, keeps real extra words', () => {
   const src = scripts.READ_TEXT(false);
   const wholeLabel = new Function(`${lineOf(src, 'const norm = s =>')}\n${lineOf(src, 'const wholeLabel = t =>')}\nreturn wholeLabel;`)();

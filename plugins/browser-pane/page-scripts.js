@@ -1206,8 +1206,8 @@ function inspect(n) {
   const attrs = names.slice(0, 8).map(k => [k, clip(el.getAttribute(k), 60)]);
   const short = (e, k) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].slice(0, k).map(c => '.' + c).join('');
   const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-  const ancestors = [];
-  for (let p = up(el); p && ancestors.length < 5; p = up(p)) ancestors.push(short(p, 2));
+  const ancestorsOf = (e) => { const out = []; for (let p = up(e), k = 0; p && k < 12; p = up(p), k++) if (!k || p.id || p.getAttribute('aria-label') || p.getAttribute('role') || /^(NAV|ASIDE|HEADER|FOOTER|MAIN|FORM|DIALOG)$/.test(p.tagName) || /dialog|drawer|panel|modal|sidebar|nav|form/i.test(p.className || '')) out.push(p); return (out.length > 6 ? [...out.slice(0, 5), out[out.length - 1]] : out).map(p => short(p, 2)); };
+  const ancestors = ancestorsOf(el);
   const clone = el.cloneNode(true);
   for (const e of [clone, ...clone.querySelectorAll('*')]) {
     e.removeAttribute('data-cx');
