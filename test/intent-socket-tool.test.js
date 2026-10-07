@@ -288,3 +288,22 @@ test('term_exec: the terminal text is ok, an [agent:term] line is refused, and t
     assert.deepStrictEqual(seen.map((s) => s.hasIdent), [false]);
   }
 });
+
+const SUB_STAMP = (sid = 'main-thread') => identToken(crypto, HCRED, 'ageneral-purpose-0123456789abcdef', 'general-purpose', sid);
+
+test('a verified sub stamp: a core term_exec call still answers unknown tool', async () => {
+  const { handle, seen } = termHandler();
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: SUB_STAMP() }, ctl), UNKNOWN_TERM);
+  assert.deepStrictEqual(seen, []);
+});
+
+test('a verified sub stamp on a plugin tool call: fromLabel stays the shared tag and no identity rides along', () => withBrowserVerb(async () => {
+  const opts = [];
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => SEAT, sessionIdOf: () => 'main-thread', cred: HCRED, log,
+    refusal: registry.subagentRefusal, tools: TOOLS, labelFor: () => 'alice',
+    dispatch: async (intent, o) => { opts.push({ fromLabel: o.fromLabel, fromIdent: o.fromIdent }); o.replyTo('ok'); },
+  });
+  assert.deepStrictEqual(await handle({ tool: 'browser', args: { verb: 'read', service: 'ebloc' }, ident: SUB_STAMP() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
+  assert.deepStrictEqual(opts, [{ fromLabel: 'h1/agent', fromIdent: null }]);
+}));

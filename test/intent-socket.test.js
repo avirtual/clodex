@@ -729,3 +729,99 @@ test('t1703 a term client gone after its result was accepted: the reply is built
     assert.deepStrictEqual(got, [], 'the client received nothing');
   } finally { srv.stop(); }
 });
+
+const { callerIdentity, callerIsSubagent, subagentLabel } = require('../intent-socket');
+const SUB_ID = 'ageneral-purpose-0123456789abcdef';
+const SUB_TYPE = 'general-purpose';
+
+function subHarness({ sessionId = 'sess-1', labelFor = () => 'alice' } = {}) {
+  const warns = [];
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => sessionId, allows: subagentAllows, cred: CRED,
+    dispatch: async (intent, opts) => { seen.push(opts); },
+    log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen: new Map(), now: () => 1000, labelFor,
+  });
+  const call = (intent, ident) => handle({ intent, ident }, { closed: () => false });
+  return { call, seen, warns };
+}
+
+const ALLOWED = TABLE.find(([, , allowed]) => allowed)[0];
+const SHOUT_REFUSED = { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" };
+
+test('sub stamp: a verified stamp dispatches fromIdent beside the unchanged fromLabel', async () => {
+  const h = subHarness();
+  const r = await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(h.seen.length, 1);
+  const { replyTo, ...rest } = h.seen[0];
+  assert.strictEqual(typeof replyTo, 'function');
+  assert.deepStrictEqual(h.seen[0], { replyTo, fromLabel: 'h1/agent', fromIdent: { agentId: SUB_ID, agentType: SUB_TYPE, label: 'h1/alice' } });
+  assert.deepStrictEqual(Object.keys(rest), ['fromLabel', 'fromIdent']);
+  assert.deepStrictEqual(await h.call('[agent:shout] x', identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1')), SHOUT_REFUSED, 'a verified sub is still a subagent');
+});
+
+test('sub stamp: a forged mac yields no identity and is still refused', async () => {
+  const h = subHarness();
+  const nonce = '0123456789abcdef';
+  const forged = `sub.${SUB_ID}.${SUB_TYPE}.${nonce}.deadbeefdeadbeef`;
+  assert.strictEqual((await h.call(ALLOWED, forged)).ok, true);
+  assert.strictEqual(h.seen[0].fromIdent, null);
+  assert.strictEqual(h.seen[0].fromLabel, 'h1/agent');
+  assert.deepStrictEqual(await h.call('[agent:shout] x', forged), SHOUT_REFUSED);
+});
+
+test('sub stamp: a replayed nonce yields no identity and warns once', async () => {
+  const h = subHarness();
+  const stamp = identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
+  await h.call(ALLOWED, stamp);
+  await h.call(ALLOWED, stamp);
+  assert.strictEqual(h.seen[0].fromIdent.agentId, SUB_ID);
+  assert.strictEqual(h.seen[1].fromIdent, null);
+  assert.strictEqual(h.seen[1].fromLabel, 'h1/agent');
+  assert.deepStrictEqual(h.warns, ['intent-socket: h1: replayed identity stamp refused']);
+});
+
+test('sub stamp: a rewritten agent_id segment yields no identity', async () => {
+  const h = subHarness();
+  const stamp = identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
+  const tampered = stamp.replace(SUB_ID, 'ageneral-purpose-fedcba9876543210');
+  assert.notStrictEqual(tampered, stamp);
+  await h.call(ALLOWED, tampered);
+  assert.strictEqual(h.seen[0].fromIdent, null);
+});
+
+test('sub stamp: a stamp minted for another session yields no identity', async () => {
+  const h = subHarness();
+  await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-0'));
+  assert.strictEqual(h.seen[0].fromIdent, null);
+});
+
+test('callerIsSubagent: the same booleans for every caller of the main-stamp table', () => {
+  const base = { isCodex: false, sessionId: 'sess-1', cred: CRED, crypto };
+  const rows = [
+    [{}, true],
+    [{ agentId: 'sess-1' }, true],
+    [{ ident: identToken(crypto, 'd'.repeat(64), null, null, 'sess-1') }, true],
+    [{ ident: identToken(crypto, CRED, null, null, 'sess-0') }, true],
+    [{ ident: 'main.deadbeefdeadbeef' }, true],
+    [{ ident: identToken(crypto, CRED, 'ag1', 'gp', 'sess-1') }, true],
+    [{ ident: identToken(crypto, CRED, null, null, 'sess-1') }, false],
+  ];
+  for (const [req, want] of rows) assert.strictEqual(callerIsSubagent({ ...base, req }), want, JSON.stringify(req));
+});
+
+test('sub stamp: with no name the label falls back to agent-<id8>, never the shared tag', async () => {
+  const h = subHarness({ labelFor: () => null });
+  await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
+  assert.strictEqual(h.seen[0].fromIdent.label, 'h1/agent-89abcdef');
+  assert.notStrictEqual(subagentLabel('h1', SUB_ID, null), 'h1/agent');
+  assert.strictEqual(subagentLabel('h1', SUB_ID, 'alice'), 'h1/alice');
+});
+
+test('callerIdentity: a Codex caller never carries an agentId', () => {
+  const sid = 'rollout-1-0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: 'x' }, sessionId: sid }), { subagent: true });
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, sessionId: sid }), { subagent: false });
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: {}, sessionId: sid }), { subagent: true });
+});

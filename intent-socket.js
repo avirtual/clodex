@@ -14,6 +14,8 @@ const IDENT_HEX = 16;
 const IDENT_SEEN_MAX = 512;
 const IDENT_SEEN_MS = 10 * 60 * 1000;
 const MAIN_IDENT_RE = /^main\.(?:([0-9a-f]{16})\.)?([0-9a-f]+)$/;
+const SUB_IDENT_RE = /^sub\.([A-Za-z0-9_:-]+)\.([A-Za-z0-9_:-]+)\.([0-9a-f]{16})\.([0-9a-f]+)$/;
+const SUB_ID_TAIL_RE = /-([0-9a-f]{16})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup'];
@@ -85,29 +87,50 @@ function rememberIdentNonce(seen, nonce, now) {
 }
 
 function identVerdict(crypto, cred, ident, sessionId, seen, now) {
-  if (!cred || typeof ident !== 'string' || typeof sessionId !== 'string' || !sessionId) return 'sub';
+  if (!cred || typeof ident !== 'string' || typeof sessionId !== 'string' || !sessionId) return { verdict: 'sub' };
+  const sub = SUB_IDENT_RE.exec(ident);
+  if (sub) {
+    if (!credMatches(crypto, identToken(crypto, cred, sub[1], sub[2], sessionId, sub[3]), ident)) return { verdict: 'sub' };
+    if (seen) {
+      if (seen.has(sub[3])) return { verdict: 'replay' };
+      rememberIdentNonce(seen, sub[3], now);
+    }
+    return { verdict: 'sub', agentId: sub[1], agentType: sub[2] };
+  }
   const m = MAIN_IDENT_RE.exec(ident);
-  if (!m || !m[1]) return 'sub';
-  if (!credMatches(crypto, identToken(crypto, cred, null, null, sessionId, m[1]), ident)) return 'sub';
-  if (!seen) return 'main';
-  if (seen.has(m[1])) return 'replay';
+  if (!m || !m[1]) return { verdict: 'sub' };
+  if (!credMatches(crypto, identToken(crypto, cred, null, null, sessionId, m[1]), ident)) return { verdict: 'sub' };
+  if (!seen) return { verdict: 'main' };
+  if (seen.has(m[1])) return { verdict: 'replay' };
   rememberIdentNonce(seen, m[1], now);
-  return 'main';
+  return { verdict: 'main' };
 }
 
 function identIsMain(crypto, cred, ident, sessionId, seen = null, now = Date.now()) {
-  return identVerdict(crypto, cred, ident, sessionId, seen, now) === 'main';
+  return identVerdict(crypto, cred, ident, sessionId, seen, now).verdict === 'main';
 }
 
-function callerIsSubagent({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null }) {
+function callerIdentity({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null }) {
   if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
-    if (!sessionId || !agentId) return true;
-    return !!agentId && !isMainThread(agentId, sessionId);
+    if (!sessionId || !agentId) return { subagent: true };
+    return { subagent: !isMainThread(agentId, sessionId) };
   }
-  const verdict = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
-  if (verdict === 'replay' && onReplay) onReplay();
-  return verdict !== 'main';
+  const v = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
+  if (v.verdict === 'replay' && onReplay) onReplay();
+  if (v.verdict === 'main') return { subagent: false };
+  return v.agentId ? { subagent: true, agentId: v.agentId, agentType: v.agentType } : { subagent: true };
+}
+
+function callerIsSubagent(opts) {
+  return callerIdentity(opts).subagent;
+}
+
+function subagentLabel(seat, agentId, name) {
+  if (typeof name === 'string') return `${seat}/${name}`;
+  const id = String(agentId || '');
+  const tail = SUB_ID_TAIL_RE.exec(id);
+  return `${seat}/agent-${tail ? tail[1].slice(-8) : id.slice(0, 8)}`;
 }
 
 function heredocWord(cmd, i) {
@@ -310,7 +333,7 @@ function lateReply(intent) {
 function createIntentRequestHandler({
   seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
   crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout, log = null, identSeen = new Map(), now = Date.now,
-  tools = null,
+  tools = null, labelFor = null,
 }) {
   const unknownTool = (name) => ({ ok: false, status: 'refused', error: `unknown tool: ${JSON.stringify(String(name).slice(0, 64))}` });
   const oneLineMsg = (e) => String((e && e.message) || 'invalid arguments').replace(/[\r\n]+/g, ' ').slice(0, 300);
@@ -338,17 +361,17 @@ function createIntentRequestHandler({
     }
     const intents = parse(text).filter((i) => i && i.type !== 'end' && i.type !== 'escape');
     if (intents.length !== 1 || intents[0].type !== row.type) return foreign(toolName);
-    if (row.subagent) return run(intents[0], true, ctl);
-    const subagent = callerIsSubagent({
+    if (row.subagent) return run(intents[0], { subagent: true }, ctl);
+    const ident = callerIdentity({
       req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
     });
-    if (subagent) return unknownTool(name);
-    return run(intents[0], false, ctl);
+    if (ident.subagent) return unknownTool(name);
+    return run(intents[0], ident, ctl);
   }
 
-  async function run(intent, subagent, ctl) {
-    if (subagent) {
+  async function run(intent, ident, ctl) {
+    if (ident.subagent) {
       const why = refusal ? refusal(intent, entryOf()) : (allows(intent, entryOf()) ? null : '');
       if (why !== null) return { ok: false, status: 'refused', error: why || `not available to a subagent: ${intentLabel(intent)} — return and let the seat's main agent do it` };
     }
@@ -362,7 +385,10 @@ function createIntentRequestHandler({
       return true;
     };
     try {
-      await dispatch(intent, { replyTo, fromLabel: subagent ? subagentTag(seat) : null });
+      const fromIdent = ident.agentId
+        ? { agentId: ident.agentId, agentType: ident.agentType, label: (labelFor && labelFor(ident.agentId)) || subagentLabel(seat, ident.agentId, null) }
+        : null;
+      await dispatch(intent, { replyTo, fromLabel: ident.subagent ? subagentTag(seat) : null, fromIdent });
       const waitMs = !lines.length && replyWaitMs ? replyWaitMs(intent) : 0;
       if (waitMs > 0 && !(ctl && ctl.closed())) {
         if (ctl && ctl.extend) ctl.extend(waitMs + INTENT_SOCKET_TIMEOUT_MS);
@@ -389,11 +415,11 @@ function createIntentRequestHandler({
     if (intents.length > 1) return { ok: false, error: 'one intent per call' };
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
-    const subagent = callerIsSubagent({
+    const ident = callerIdentity({
       req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
     });
-    return run(intent, subagent, ctl);
+    return run(intent, ident, ctl);
   };
 }
 
@@ -506,6 +532,8 @@ module.exports = {
   identToken,
   identIsMain,
   callerIsSubagent,
+  callerIdentity,
+  subagentLabel,
   shellSegments,
   stampClodexCommand,
   hookIdentOutput,
