@@ -19,6 +19,7 @@ blocks a release.
 
 ### Browser pane
 - A numbered act on a closed service is refused as "not open" rather than "read first"; a click whose target the page scrolled back out of view says so (`[31] "label" scrolled out of view on np — read again`) instead of calling it gone; and a ⚠ refusal on a nameless control names its kind (`[12] button looks consequential (trading)`) the way the read digest does.
+- Reads follow frames two levels deep: a same-origin or srcdoc frame inside an inlined frame is inlined under its own `[frame]` line (frame-mix E's inner "tracking code" text was dropped before), a nested `src=` frame is inlined at that depth and listed by URL below it, and only srcdoc frames a level deeper are still counted as `nested` on the `frames:` line.
 
 ### Messaging and conversation mode
 - A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
