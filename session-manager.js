@@ -8541,7 +8541,7 @@ function createSessionManager(deps) {
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
           reviewGate: isClaude,
-          onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: from [^\]]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
+          onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
