@@ -20,7 +20,7 @@ const ONLY_MAX = 80;
 const INPUT_KEYS = ['command', 'file_path', 'path', 'pattern', 'url', 'query', 'description', 'prompt'];
 const INBOUND_RE = /^\[agent:from ([^\]\s]+)\][ \t]*/;
 const LEAD_MARKS_RE = /^(?:\[Image #\d+\]|\[Pasted text #\d+ \+\d+ lines\])+/;
-const TAIL_IMAGE_LABEL_RE = /\nImage:[ \t]*$/;
+const TAIL_IMAGE_LABEL_RE = /(?:\nImage:[ \t]*)+$/;
 const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message ([^\n]*)>\n?([\s\S]*?)<\/teammate-message>/;
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const CLIENT_TAG_RE = /^\(via ([a-z][a-z0-9-]{0,15})\)[ \t]*/;
@@ -284,13 +284,14 @@ function userRecords(rec, base, tools) {
   if (unwrapped != null) text = unwrapped;
   const lead = LEAD_MARKS_RE.exec(text);
   const leadFrom = lead ? INBOUND_RE.exec(text.slice(lead[0].length)) : null;
-  const from = leadFrom && leadFrom[1] === 'user' ? leadFrom : INBOUND_RE.exec(text);
+  const viaLead = Boolean(leadFrom && leadFrom[1] === 'user');
+  const from = viaLead ? leadFrom : INBOUND_RE.exec(text);
   if (from) {
-    const after = text.slice((from === leadFrom ? lead[0].length : 0) + from[0].length);
+    const after = text.slice((viaLead ? lead[0].length : 0) + from[0].length);
     const user = from[1] === 'user';
     const tagged = user ? clientTagOf(after) : { client: null, text: after };
     const client = tagged.client;
-    const rest = user ? ((from === leadFrom ? lead[0] : '') + tagged.text).replace(TAIL_IMAGE_LABEL_RE, '') : tagged.text;
+    const rest = user ? ((viaLead ? lead[0] : '') + tagged.text).replace(TAIL_IMAGE_LABEL_RE, '') : tagged.text;
     const att = ATTACHED_RE.exec(rest);
     const ticket = ticketOf(rest);
     const pasted = user ? pastesOf(rest) : { text: rest, pastes: [] };
