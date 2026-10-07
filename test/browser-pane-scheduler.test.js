@@ -230,7 +230,7 @@ test('scheduler: an act on a closed service reaches the child and answers not op
     [['hand-a', `[agent:browser] error: ${notOpen}`]]);
 });
 
-test('scheduler: on a closed service an act queued behind an act is dropped under the first act's not open; one queued behind an open still asks for a read', async () => {
+test('scheduler: on a closed service an act queued behind an act is dropped under the first act\'s not open; one queued behind an open still asks for a read', async () => {
   const notOpen = 'utility is not open — [agent:browser open utility] <url>';
   const h = harness({ click: () => { throw coded('NOT_OPEN', notOpen); } });
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]'], ['hand-a', '[agent:browser click utility 5]']]),
