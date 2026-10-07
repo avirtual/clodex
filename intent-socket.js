@@ -269,6 +269,12 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath
     const ctx = [composeSubagentBrief(briefs), subagentTrustLine(fs, crypto, subqDir, d.agent_id)].filter(Boolean).join('\n\n');
     return ctx ? JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: ctx } }) : '';
   }
+  if (typeof d.tool_name === 'string' && d.tool_name.startsWith('mcp__clodex__')) {
+    if (!cred) return '';
+    const input = d.tool_input && typeof d.tool_input === 'object' && !Array.isArray(d.tool_input) ? d.tool_input : {};
+    const agentId = typeof d.agent_id === 'string' && d.agent_id ? d.agent_id : null;
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, ident: identToken(crypto, cred, agentId, d.agent_type, d.session_id) } } });
+  }
   const input = d.tool_input;
   const cmd = input && input.command;
   if (typeof cmd !== 'string' || !cmd || !cred || !identDir) return '';
@@ -332,7 +338,13 @@ function createIntentRequestHandler({
     }
     const intents = parse(text).filter((i) => i && i.type !== 'end' && i.type !== 'escape');
     if (intents.length !== 1 || intents[0].type !== row.type) return foreign(toolName);
-    return run(intents[0], true, ctl);
+    if (row.subagent) return run(intents[0], true, ctl);
+    const subagent = callerIsSubagent({
+      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
+      onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
+    });
+    if (subagent) return unknownTool(name);
+    return run(intents[0], false, ctl);
   }
 
   async function run(intent, subagent, ctl) {

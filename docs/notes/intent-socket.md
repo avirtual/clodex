@@ -8,7 +8,7 @@ A subagent drives the browser as its seat; two subagents of one seat share the s
 
 A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this call, not from AsyncLocalStorage: the browser scheduler replies from timers and child IPC, and a queued job starts in the previous job's async context.
 
-A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. Identity fields on a tool call are ignored because the MCP server stamps nothing, so a forged stamp on a tool call must not widen policy.
+A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. A plugin tool row ignores identity fields and always runs as a subagent call: the browser pane's `release`/`close`/`--confirm` refusals rely on main's MCP calls being subagent-shaped. A core tool row (`term_exec`) has no subagent policy, so the verified one-shot `main.` stamp decides; a failed stamp answers the catalog's `unknown tool` text rather than `run`'s subagent refusal, so a subagent cannot learn from the refusal that the tool exists. The grant check runs before identity, so an ungranted call consumes no nonce.
 
 ## isMainThread
 
@@ -37,6 +37,8 @@ The seen-nonce set is bounded FIFO at `IDENT_SEEN_MAX` (512) and drops entries o
 Measured on Claude Code 2.1.289: a PreToolUse `updatedInput` with no `permissionDecision` rewrites the Bash command, and replaces the whole `tool_input` — so the output spreads the original input to keep `timeout` and `run_in_background`.
 
 A stamp file is consumed by its first read, so one stamped segment the shell runs more than once (a loop body, a function) is main only on its first run; later runs go unstamped as a subagent.
+
+The `mcp__clodex__` branch writes no stamp file: an MCP input has no argv or shell history to keep the stamp out of, and a stamp seen in a transcript is already spent. `ident` is spread after the input, so a caller-supplied `ident` is overwritten. Measured on CLI 2.1.292 (t1708 probe): the rewrite replaces the whole input and is not re-validated against `additionalProperties: false`.
 
 The SubagentStart brief comes from the seat's catalog file (`catalogPath`), not a constant, so a plugin's sentence reaches the subagent without a core edit.
 

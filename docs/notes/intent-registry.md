@@ -30,3 +30,7 @@ operator never saw the plugin to re-tick it. This module sees verbs only, so a
 loaded plugin that happens to register none is exempted by the same test — that
 widens what is RETAINED, never what is revoked, and a grant for a registered
 plugin the seat unticked is still dropped.
+
+## subagentCatalogFor
+
+Lists core tool rows (`term_exec`, for a seat whose intents name `term`) ahead of plugin tools; briefs come from plugin rows only, since a SubagentStart brief for a main-only tool would spend tokens on every spawn. The name is kept because every caller and three tests pin it.

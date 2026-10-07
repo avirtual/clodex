@@ -1376,3 +1376,46 @@ test('t1703 a term reply is refused only on the verb\'s own refusal prefix; a te
   assert.strictEqual(classifyReplyLine('term', '[terminal] ls\nexit 1\nboom'), 'ok');
   assert.strictEqual(classifyReplyLine('term', '[agent:term] error: x'), 'refused');
 });
+
+test('term_exec: the term core row owns the tool, its schema is closed and it logs no argument', () => {
+  const { TERM_EXEC_TOOL } = registry;
+  const { TERM_EXEC_TIMEOUT_MS } = require('../drawer-avail');
+  assert.strictEqual(registry.toolRowFor('term_exec'), registry.rowFor('term'));
+  assert.deepStrictEqual(TERM_EXEC_TOOL.inputSchema, { type: 'object', properties: { command: { type: 'string' } }, required: ['command'], additionalProperties: false });
+  assert.deepStrictEqual(TERM_EXEC_TOOL.logKeys, []);
+  assert.ok(!TERM_EXEC_TOOL.description.includes('\n'));
+  assert.ok(TERM_EXEC_TOOL.description.split('. ')[0].length <= 100);
+  assert.ok(TERM_EXEC_TOOL.description.includes(`${TERM_EXEC_TIMEOUT_MS / 1000} s`));
+  assert.strictEqual(TERM_EXEC_TOOL.toIntent({ command: ' ls ' }), '[agent:term exec] ls');
+  const out = registry.toolIntentFor('term_exec', { command: 'ls' });
+  assert.strictEqual(out.text, '[agent:term exec] ls');
+  const { scanIntentLines } = require('../intent-segments');
+  const parsed = scanIntentLines([out.text], {}).filter((s) => s.kind === 'intent').map((s) => s.intent);
+  assert.deepStrictEqual(parsed.map((i) => [i.type, i.sub]), [['term', 'exec']]);
+});
+
+test('subagentCatalogFor lists term_exec only for a seat whose intents name term, before plugin tools and without a brief', () => {
+  const { TERM_EXEC_TOOL } = registry;
+  const listed = { name: 'term_exec', description: TERM_EXEC_TOOL.description, inputSchema: TERM_EXEC_TOOL.inputSchema, logKeys: [] };
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['term'] }), { tools: [listed], briefs: [] });
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listed], briefs: [] });
+  for (const entry of [{ intents: ['*'] }, { intents: [] }, undefined]) {
+    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [], briefs: [] }, JSON.stringify(entry));
+  }
+  const { TOOL } = require('../plugins/browser-pane/mcp-tool');
+  const subagent = require('../plugins/browser-pane/subagent');
+  try {
+    registry.registerIntent({ verb: 'browser', parse: () => null, tools: [TOOL], subagent }, 'browser-pane', { shipped: true });
+    const cat = registry.subagentCatalogFor({ intents: ['term', 'browser'], plugins: ['browser-pane'] });
+    assert.deepStrictEqual(cat.tools.map((t) => t.name), ['term_exec', 'browser']);
+    assert.deepStrictEqual(cat.briefs, [subagent.brief]);
+  } finally { registry._resetPluginRows(); }
+});
+
+test('a plugin tool named term_exec is refused as held by core', () => {
+  try {
+    assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('term_exec')], subagent: fakePolicy }, 'p'),
+      (e) => e.code === 'ETOOLTAKEN' && e.tool === 'term_exec' && e.heldBy === 'core' && e.message === 'tool "term_exec" is already registered by plugin "core"');
+    assert.strictEqual(registry.pluginRowFor('aaa'), null);
+  } finally { registry._resetPluginRows(); }
+});
