@@ -1354,26 +1354,35 @@ const VALUE_ACTIVE = `(() => {${ICON}
 function GONE(nums) {
   return `(() => {${DEEP}
   const groups = new Map();
+  const gone = [];
   let total = 0;
   const groupOf = (el) => {
-    let p = upOf(el);
-    for (let k = 0; p && k < 12; p = upOf(p), k++) {
-      const label = p.getAttribute && p.getAttribute('aria-label');
-      if (label) return label;
-      if (p.getAttribute && p.getAttribute('role') === 'dialog') return 'dialog';
-      if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) return p.tagName.toLowerCase();
+    let last = 'page';
+    for (let p = upOf(el), k = 0; p && k < 64; p = upOf(p), k++) {
+      const label = (p.getAttribute && p.getAttribute('aria-label')) || '';
+      const cls = typeof p.className === 'string' ? p.className : '';
+      const role = p.getAttribute && p.getAttribute('role') === 'dialog';
+      const word = /\\b(dialog|drawer|modal|paneled-view)\\b/i.exec(cls);
+      if (role || word) {
+        const kind = role || /^(dialog|modal)$/i.test(word[1]) ? 'dialog' : 'drawer';
+        const h = label || (p.querySelector && (p.querySelector('h1,h2,h3') || {}).innerText) || '';
+        const name = String(h).replace(/\\s+/g, ' ').trim();
+        last = name ? kind + ' ' + JSON.stringify(name.length > 30 ? name.slice(0, 29) + '…' : name) : kind;
+      } else if (label) last = label;
+      else if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) last = p.tagName.toLowerCase();
     }
-    return 'page';
+    return last;
   };
   for (const n of ${JSON.stringify(nums)}) {
     const ref = window.__cxEls && window.__cxEls[n];
     const el = ref && ref.deref();
     if (el && el.isConnected && vis(el)) continue;
     total++;
+    gone.push(n);
     const g = el ? String(groupOf(el)).slice(0, 40) : 'page';
     groups.set(g, (groups.get(g) || 0) + 1);
   }
-  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]) };
+  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]), gone: gone.sort((x, y) => x - y) };
 })()`;
 }
 

@@ -1760,8 +1760,19 @@ test('GONE: counts read numbers now detached or hidden and groups them by their 
   };
   ctx.window = ctx;
   vm.createContext(ctx);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]] });
-  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8').includes('if (g && g.total) done.removed = g;'));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]], gone: [1, 2, 3] });
+  const drawer = Object.assign(boxEl('div', '', box), { isConnected: false, className: 'paneled-view', querySelector: (s) => (s === 'h1,h2,h3' ? { innerText: 'Bump Go toolchain to the latest patch release' } : null) });
+  const header = boxEl('header', '', box, drawer);
+  const nav = Object.assign(boxEl('nav', '', box, header), { getAttribute: (k) => (k === 'aria-label' ? 'Sidebar' : null) });
+  const inDrawer = [boxEl('button', 'Home', box, nav), boxEl('button', 'Issues', box, nav)];
+  for (const e of inDrawer) e.isConnected = false;
+  ctx.__cxEls[5] = new WeakRef(inDrawer[0]);
+  ctx.__cxEls[6] = new WeakRef(inDrawer[1]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([5, 6]), ctx))), { total: 2, groups: [['drawer "Bump Go toolchain to the late…"', 2]], gone: [5, 6] });
+  const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
+  assert.ok(child.includes('if (g && g.total) done.removed = g;'));
+  assert.ok(child.includes('.filter((n) => !svc.num.lastRead.gone.includes(n))'));
+  assert.ok(child.includes('svc.num.lastRead.gone.push(...g.gone)'));
 });
 
 test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {

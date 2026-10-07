@@ -433,8 +433,8 @@ function changeTail(sub, r, key) {
   if (r.changed === 'text removed' && r.removed && r.removed.total) {
     const named = r.removed.groups.filter((g) => g[0] !== 'page').map((g) => oneLine(g[0], 40));
     const total = r.removed.total;
-    if (!named.length) return ` · removed: ${total} elements${target}`;
-    return ` · removed: ${named.slice(0, 3).join(', ')}${named.length > 3 ? `, +${named.length - 3} more` : ''} (${total} elements)${target}`;
+    if (!named.length) return ` · removed: ${total} element${total === 1 ? '' : 's'}${target}`;
+    return ` · removed: ${named.slice(0, 3).join(', ')}${named.length > 3 ? `, +${named.length - 3} more` : ''} (${total} element${total === 1 ? '' : 's'})${target}`;
   }
   if (r.changed) return ` · changed: ${r.changed === MOST_OF_PAGE ? r.changed : JSON.stringify(r.changed)}${target}`;
   if ((sub === 'key' || sub === 'click') && typeof r.choice === 'string') return ` · ${r.choiceKind === 'select' ? 'selected' : 'checked'} now ${JSON.stringify(clip60(r.choice))}`;
