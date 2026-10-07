@@ -738,7 +738,7 @@ function subHarness({ sessionId = 'sess-1', labelFor = () => 'alice' } = {}) {
   const warns = [];
   const seen = [];
   const handle = createIntentRequestHandler({
-    seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => sessionId, allows: subagentAllows, cred: CRED,
+    seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => sessionId, allows: (i) => i.type !== 'shout', cred: CRED,
     dispatch: async (intent, opts) => { seen.push(opts); },
     log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen: new Map(), now: () => 1000, labelFor,
   });
@@ -746,7 +746,7 @@ function subHarness({ sessionId = 'sess-1', labelFor = () => 'alice' } = {}) {
   return { call, seen, warns };
 }
 
-const ALLOWED = TABLE.find(([, , allowed]) => allowed)[0];
+const ALLOWED = '[agent:who]';
 const SHOUT_REFUSED = { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" };
 
 test('sub stamp: a verified stamp dispatches fromIdent beside the unchanged fromLabel', async () => {

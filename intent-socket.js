@@ -386,7 +386,7 @@ function createIntentRequestHandler({
     };
     try {
       const fromIdent = ident.agentId
-        ? { agentId: ident.agentId, agentType: ident.agentType, label: (labelFor && labelFor(ident.agentId)) || subagentLabel(seat, ident.agentId, null) }
+        ? { agentId: ident.agentId, agentType: ident.agentType, label: subagentLabel(seat, ident.agentId, labelFor ? labelFor(ident.agentId) : null) }
         : null;
       await dispatch(intent, { replyTo, fromLabel: ident.subagent ? subagentTag(seat) : null, fromIdent });
       const waitMs = !lines.length && replyWaitMs ? replyWaitMs(intent) : 0;

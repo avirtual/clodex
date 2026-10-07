@@ -487,7 +487,7 @@ const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
-const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag, subagentLabel } = require('./intent-socket');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
 const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
 const { TERM_REPLY_WAIT_MS } = require('./drawer-avail');
@@ -5654,7 +5654,7 @@ function createSessionManager(deps) {
         tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
-        labelFor: (id) => subagentLabel(name, id, nameOfSubagent(subqDirFor(name), id)),
+        labelFor: (id) => nameOfSubagent(subqDirFor(name), id),
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
