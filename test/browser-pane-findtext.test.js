@@ -196,6 +196,26 @@ test('FIND_TEXT: a cell of a clickable row targets the row; a link the read fold
     /\(not clickable\) — read x and use a number$/);
 });
 
+test('FIND_TEXT: one inexact clickable outranks loose text hits and says clickOnly', () => {
+  const page = mkPage();
+  const { mk } = page;
+  const a = mk('a', { href: '/i' }, ['Issues 12'], [10, 40, 100, 20]);
+  const spans = ['Open issues', 'Closed issues', 'All issues'].map((t, i) => mk('span', {}, [t], [10, 100 + i * 40, 100, 20]));
+  const body = mk('body', {}, [a, ...spans], [0, 0, 1200, 800]);
+  Object.assign(mk('html', {}, [body], [0, 0, 1200, 800]), { scrollWidth: 1200, scrollHeight: 800 });
+  const ctx = context(page);
+  const read = vm.runInContext(scripts.READ_INTERACTIVE(false, { known: {}, next: 1 }), ctx);
+  const state = merged({ known: {} }, read);
+  const hit = vm.runInContext(scripts.FIND_TEXT('Issues', state), ctx);
+  assert.strictEqual(hit.count, 1);
+  assert.strictEqual(hit.clickOnly, true);
+  assert.strictEqual(hit.hits[0].n, ctx.__cxOf.get(a));
+  const closed = vm.runInContext(scripts.FIND_TEXT('Closed', state), ctx);
+  assert.strictEqual(closed.count, 1);
+  assert.strictEqual(closed.hits[0].loose, true);
+  assert.strictEqual(closed.clickOnly, false);
+});
+
 test('READ_INTERACTIVE: a link label joins an https:// split from its host', () => {
   const page = mkPage();
   const { mk } = page;

@@ -181,7 +181,7 @@ test('driver armIdle: a page polling up to three paths of any method goes idle w
   assert.ok(src.includes('const POLL_MIN_MS = 100;'));
 });
 
-test('driver armIdle: a timed-out wait names the top two requests completed in the last 2 s; with none it carries no held', async () => {
+test('driver armIdle: a timed-out wait names the top three requests completed in the last 2 s; with none it carries no held', async () => {
   let t = 1000;
   const { wc, sent, finished } = fakeWc();
   const w = await driver.armIdle(wc, { now: () => t, sleepFn: async () => { t += 100; } });
@@ -203,7 +203,14 @@ test('driver armIdle: a timed-out wait names the top two requests completed in t
   [['POST', 'https://x/a'], ['GET', 'https://x/b'], ['GET', 'https://x/a'], ['POST', 'https://x/a'], ['GET', 'https://x/b'], ['GET', 'https://x/a']].forEach(([method, url], i) => { tie.sent(`q${i}`, url, 'XHR', method); t += 50; tie.finished(`q${i}`); t += 50; });
   tie.sent('open', 'https://x/api/slow');
   const r4 = await w4.wait({ quietMs: 500, timeoutMs: 100 });
-  assert.deepStrictEqual(r4.held, { n: 6, more: 1, top: [{ method: 'GET', path: 'https://x/a', n: 2 }, { method: 'GET', path: 'https://x/b', n: 2 }] });
+  assert.deepStrictEqual(r4.held, { n: 6, top: [{ method: 'GET', path: 'https://x/a', n: 2 }, { method: 'GET', path: 'https://x/b', n: 2 }, { method: 'POST', path: 'https://x/a', n: 2 }] });
+  const four = fakeWc();
+  const w5 = await driver.armIdle(four.wc, { now: () => t, sleepFn: async () => { t += 100; } });
+  [['POST', 'https://x/a'], ['GET', 'https://x/b'], ['GET', 'https://x/a'], ['PUT', 'https://x/c'], ['GET', 'https://x/b'], ['GET', 'https://x/a']].forEach(([method, url], i) => { four.sent(`f${i}`, url, 'XHR', method); t += 50; four.finished(`f${i}`); t += 50; });
+  four.sent('open', 'https://x/api/slow');
+  const r5 = await w5.wait({ quietMs: 500, timeoutMs: 100 });
+  assert.strictEqual(r5.held.more, 1);
+  assert.strictEqual(r5.held.top.length, 3);
   const many = fakeWc();
   const w3 = await driver.armIdle(many.wc, { now: () => t, sleepFn: async () => { t += 100; } });
   for (let i = 0; i < 64; i++) { many.sent(`m${i}`, 'https://x/api/graphql', 'XHR', 'POST'); t += 10; many.finished(`m${i}`); t += 10; }

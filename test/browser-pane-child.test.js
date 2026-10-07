@@ -78,7 +78,7 @@ test('page scripts: FIND_TEXT hits say whether this find assigned the number, an
   assert.match(src, /return \{ n, fresh: n != null && fresh\.includes\(n\), text: /);
   assert.match(src, /if \(!window\.__cxEls \|\| !window\.__cxKeys\) return \{ unstamped: true \};/);
   assert.match(src, /const nameOf = el => String\(el\.getAttribute\('aria-label'\) \|\| el\.getAttribute\('title'\) \|\| ''\)/);
-  assert.match(src, /return \{ count: pick\.length, byName, hits: /);
+  assert.match(src, /return \{ count: pick\.length, byName, clickOnly, hits: /);
   assert.ok(src.indexOf('textOf = flatOf') < src.indexOf('textOf = nameOf'));
 });
 
@@ -1029,7 +1029,12 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
   assert.ok(src.includes("[...document.querySelectorAll('div,aside,section')]"));
-  assert.ok(src.includes('/close|dismiss|^×$/i.test('));
+  assert.ok(src.includes('/\\b(close|dismiss)\\b|^×$/i.test('));
+  const drawerAt = lineOf(src, 'const drawerAt = (e) =>');
+  assert.ok(drawerAt.indexOf('getBoundingClientRect') < drawerAt.indexOf('getComputedStyle'));
+  assert.ok(lineOf(src, 'const drawersOf = () =>').includes('.slice(0, 3000)'));
+  const coveredBy = 'const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);';
+  for (const s of [scripts.READ_INTERACTIVE(false, {}), scripts.FIND(1)]) assert.strictEqual(s.split(coveredBy).length, 2);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.strictEqual(lineOf(ri, 'const modalBy = (e) =>'), lineOf(src, 'const modalBy = (e) =>'));
   assert.strictEqual(lineOf(ri, 'const modal = forced ? null :'), lineOf(src, 'const modal = forced ? null :'));
@@ -1056,6 +1061,19 @@ function lineOf(src, head) {
   const i = src.indexOf(head);
   return src.slice(i, src.indexOf('\n', i));
 }
+
+test('INSPECT: in: keeps the first parent and the informative ancestors up to the drawer', () => {
+  const ancestorsOf = new Function('up', 'short', `${lineOf(scripts.INSPECT(1), 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
+    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''));
+  const chain = (specs) => specs.reduceRight((parent, s) => {
+    const [, tag, id = '', cls = ''] = /^(\w+)(?:#([\w-]+))?(?:\.([\w-]+))?$/.exec(s);
+    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, parentElement: parent };
+  }, null);
+  const leaf = { parentElement: chain(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body']) };
+  assert.deepStrictEqual(ancestorsOf(leaf), ['td', 'tr#r1', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
+  const many = { parentElement: chain(['span', ...Array.from({ length: 9 }, (_, i) => `div#a${i}`), 'body']) };
+  assert.deepStrictEqual(ancestorsOf(many), ['span', 'div#a0', 'div#a1', 'div#a2', 'div#a3', 'div#a8']);
+});
 
 test('page scripts: wholeLabel drops an icon-only child from the label, keeps real extra words', () => {
   const src = scripts.READ_TEXT(false);
@@ -1153,6 +1171,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'has' }), '', 'a panel holding a nav is not a drawer');
     assert.strictEqual(bare(paneled, { controls: ['Save'] }), '', 'a panel with no close control is not a drawer');
+    assert.strictEqual(bare(paneled, { controls: ['Closed issues'] }), '', 'a Closed issues link is not a close control');
     assert.strictEqual(drawer({ position: 'fixed' }, paneled), 'drawer', 'a role=dialog drawer needs no close control');
   }
   assert.ok(scripts.READ_TEXT(false).includes('r.right >= w - 16') && scripts.READ_TEXT(false).includes('innerWidth * 0.75'));
@@ -1163,6 +1182,8 @@ test('child: a --text target matched by label carries byName onto the click and 
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('byName: !!found.byName'));
   assert.ok(child.includes('if (byName) out.byName = true;'));
+  assert.ok(child.includes('clickOnly: !!found.clickOnly'));
+  assert.ok(child.includes('if (clickOnly) out.clickOnly = true;'));
   assert.ok(child.includes('...(byName ? { byName: true } : {})'));
 });
 
@@ -1707,6 +1728,25 @@ function boxEl(tag, text, rect, parent = null) {
   return e;
 }
 
+test('GONE: counts read numbers now detached or hidden and groups them by their nearest named ancestor', () => {
+  const box = { left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 };
+  const banner = Object.assign(boxEl('div', '', box), { isConnected: false, getAttribute: (k) => (k === 'aria-label' ? 'Cookie banner' : null) });
+  const aside = boxEl('aside', '', box);
+  const els = [boxEl('button', 'Accept', box, banner), boxEl('a', 'Policy', box, banner), boxEl('a', 'Day 3', box, aside), boxEl('a', 'Live', box)];
+  els[0].isConnected = false;
+  els[1].isConnected = false;
+  els[2].style = { visibility: 'visible', display: 'none', opacity: '1' };
+  const ctx = {
+    document: { querySelectorAll: () => [], documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: null }, getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' },
+    innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0, location: { href: 'http://x/', origin: 'http://x' },
+    __cxEls: Object.fromEntries(els.map((e, i) => [i + 1, new WeakRef(e)])), WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
+  };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([1, 2, 3, 4]), ctx))), { total: 3, groups: [['Cookie banner', 2], ['aside', 1]] });
+  assert.ok(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8').includes('if (g && g.total) done.removed = g;'));
+});
+
 test('UNDER_POINT: names the element under the click point when it is not the target or its kin; the click watch asks for it', () => {
   const box = (left, top, w, h) => ({ left, top, right: left + w, bottom: top + h, width: w, height: h });
   const under = (el, hitAt) => {
@@ -2249,7 +2289,7 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     return {
       tagName: tag.toUpperCase(), type: o.type || '', form: o.form || null, labels: null, innerText: text, value: o.value || '', isContentEditable: false, hidden: !!o.hidden,
       getAttribute: (k) => (k in attrs ? attrs[k] : null), hasAttribute: (k) => k in attrs, querySelectorAll: () => o.inner || [],
-      closest: (sel) => (sel === 'form' && o.inForm ? {} : null),
+      closest: (sel) => ((sel === 'form' ? o.inForm : o.chip) ? {} : null),
       matches: (sel) => !o.plain && sel.split(',').some((x) => x === tag || x.startsWith(tag + '[') || x.startsWith(tag + ':')),
     };
   };
@@ -2279,6 +2319,8 @@ test('page scripts: cqOf tags payment nouns only on a button or submit inside a 
     ['div around two submits takes neither', el('div', '', { plain: true, inner: [el('button', 'Plătește'), el('button', 'Caută')] }), null],
     ['role=link quote card with buy deep in 300 chars of text', { ...el('div', ('Markets moved today and traders weigh buy/sell decisions ' + 'x'.repeat(300)).slice(0, 300), { attrs: { role: 'link' } }), matches: () => true }, null],
     ['role=link Buy now', { ...el('div', 'Buy now', { attrs: { role: 'link' } }), matches: () => true }, 'purchase'],
+    ['filter-chip Remove', el('button', 'Remove', { chip: true }), null],
+    ['bare Remove', el('button', 'Remove'), 'deletion'],
   ];
   for (const [name, e, want] of rows) assert.strictEqual(cqOf(e), want, name);
   const cqHit = new Function('vis', `${src.slice(src.indexOf('  const SIGN_OUT'), src.indexOf('  const rowText'))}\nreturn cqHit;`)((e) => !e.hidden);
@@ -2368,6 +2410,9 @@ test('page scripts: a sort button\'s third state is not deletion, a plain Remove
   assert.strictEqual(scripts.consequentialHit({ label: 'Age: Activate to remove sorting' }), null);
   assert.strictEqual(scripts.consequentialHit({ label: 'Age', aria: 'Age: Activate to remove sorting' }), null);
   assert.strictEqual(scripts.consequentialOf({ label: 'Remove' }), 'deletion');
+  assert.strictEqual(scripts.consequentialHit({ label: 'Remove', chip: true }), null);
+  assert.strictEqual(scripts.consequentialOf({ label: 'Delete', chip: true }), 'deletion');
+  assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`chip: !!e.closest('[role=search], form[role=search], [class*="filter"], [class*="chip"], [class*="token"], [aria-label*="filter" i], [aria-label*="search" i]'),`));
 });
 
 test('page scripts: clickPoint lands a tall role=link card on its time link, a short one or a plain element at its centre', () => {

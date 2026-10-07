@@ -181,7 +181,7 @@ function screen(text) {
 function elementLabel(elements, n) {
   const line = (Array.isArray(elements) ? elements : []).map(String).find((l) => l.startsWith(`[${n}] `));
   if (!line) return null;
-  const m = /^\[\d+\] (\S+) (?:⚠(?: |$))?(.*?)(?: → \S.*)?$/s.exec(line);
+  const m = /^\[\d+\] (\S+)(?: |$)(?:⚠(?: |$))?(.*?)(?: → \S.*)?$/s.exec(line);
   return m ? { kind: m[1], label: m[2] } : null;
 }
 

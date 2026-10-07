@@ -1003,7 +1003,8 @@ function run(electron, ctx) {
       }
       let fresh = false;
       let byName = false;
-      if (byText != null) ({ n, fresh, byName } = await textTarget(svc, byText));
+      let clickOnly = false;
+      if (byText != null) ({ n, fresh, byName, clickOnly } = await textTarget(svc, byText));
       const el = await resolve(svc, n);
       const coveredErr = coveredRefusal(n, el);
       if (coveredErr) throw coveredErr;
@@ -1017,6 +1018,7 @@ function run(electron, ctx) {
         const out = await clickWatched(svc, n, el, nav, dir);
         if (fresh) out.fresh = true;
         if (byName) out.byName = true;
+        if (clickOnly) out.clickOnly = true;
         if (rowChanged(svc.num && svc.num.lastRead, n, el.row)) out.textChanged = true;
         const done = await withChange(svc, pre, out, lateMsFor(op));
         if ((done.changed === '' || done.watched) && !wc.isDestroyed()) {
@@ -1026,6 +1028,10 @@ function run(electron, ctx) {
             if (value.select) done.choiceKind = 'select';
           }
           if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }
+        }
+        if (done.changed === 'text removed' && svc.num && svc.num.lastRead && !wc.isDestroyed()) {
+          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number)));
+          if (g && g.total) done.removed = g;
         }
         return done;
       }
@@ -1174,7 +1180,7 @@ function run(electron, ctx) {
     if (found.count > 1) throw codedError('AMBIGUOUS', TEXT.manyText(svc.name, text, found.count, found.hits, verb));
     if (found.hits[0].loose) throw codedError('NO_ELEMENT', TEXT.looseText(svc.name, text, found.hits[0]));
     if (found.hits[0].n == null) throw codedError('AMBIGUOUS', TEXT.twinText(svc.name, text));
-    return { n: found.hits[0].n, fresh: !!found.hits[0].fresh, byName: !!found.byName };
+    return { n: found.hits[0].n, fresh: !!found.hits[0].fresh, byName: !!found.byName, clickOnly: !!found.clickOnly };
   }
 
   async function clickWatched(svc, n, el, nav, dir) {

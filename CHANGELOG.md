@@ -102,6 +102,7 @@ blocks a release.
 - Browser pane: a side drawer may be inset up to 16 px from the edge and 75 % of the viewport wide (GitLab's work-item panel), the read head counts hidden elements under the dialog, `open` on an open profile refreshes its "opened as" host, a nameless button never takes its CSS class as a name, `services` names a tab's subagent opener, and a subagent closing a closed tab is told it is not open.
 - Hooks: the SubagentStart brief carries a per-subagent trust nonce and a `subq.sh` hook drains a per-subagent queue — groundwork for `[agent:sub]`
 - Browser pane: a nameless consequential button (`[n] button ⚠`) now reaches the ⚠ digest and `note`'s `[n]` resolver, a tab open (`open gh:riot <url>`) no longer re-stamps the profile's "opened as" host, Settings' Show and Hand over fall back to a profile's live tab when its window is closed and the row reads `open · tabs: …`, and the subagent tab rule says the pane (any seat) must have the profile open.
+- Browser pane: a `--text` matching one clickable and several plain-text nodes clicks the clickable (`(clickable match)`), a click that removes elements says `removed: cookie banner, calendar (31 elements)`, a filter-chip Remove is not ⚠, inspect's `in:` reaches the drawer, a busy wait names three held paths, and `note … [n]` resolves a nameless element.
 
 ## 5.112.2 — 2026-10-04
 

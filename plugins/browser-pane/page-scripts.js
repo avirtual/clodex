@@ -103,6 +103,7 @@ function consequentialHit(d, res = cqCompile(CONSEQUENTIAL, ID_TERMS, LEAD_CATS)
     if (r.noun && !d.control) continue;
     if (lead && r.lead) continue;
     if (r.cat === 'deletion' && d.clearer) continue;
+    if (r.cat === 'deletion' && d.chip && /^(remove|clear|reset)\b/.test(hay[0] || '')) continue;
     const inText = (h) => r.re.test(h) && (!r.with || r.with.test(h)) && (!r.unless || !r.unless.test(h));
     const byText = !r.idOnly && (hay.some(inText) || (!r.lead && !!fa && r.re.test(fa)));
     if (!(byText || (r.id && idClass && r.re.test(idClass) && !(r.unless && hay.some(h => r.unless.test(h)))))) continue;
@@ -149,6 +150,7 @@ const CQ = `
       textual,
       button,
       clearer: button && tg !== 'input' && !String(e.innerText || '').replace(/[×✕✖⨯x\\s]/gi, '') && !!(e.parentElement && (e.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox],[contenteditable=true]') || (e.parentElement.parentElement && e.parentElement.parentElement.querySelector('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),[role=combobox]')))),
+      chip: !!e.closest('[role=search], form[role=search], [class*="filter"], [class*="chip"], [class*="token"], [aria-label*="filter" i], [aria-label*="search" i]'),
       control: button && !doc && (!!(form || e.closest('form')) || e.hasAttribute('formaction')),
       capped: tg === 'a' || e.getAttribute('role') === 'link' || !e.matches(${JSON.stringify(STD_SEL)}),
       label: (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || e.innerText || e.getAttribute('title') || '',
@@ -466,13 +468,14 @@ const HIT_AT = `
     }
     return hit;
   };
-  const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };`;
+  const within = (outer, e) => { for (; e; e = upOf(e)) if (e === outer) return true; return false; };
+  const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);`;
 
 const MODAL_FINDER = `const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== 'none' && s.backgroundColor !== 'rgba(0, 0, 0, 0)') return (r => r.width * r.height)(e.getBoundingClientRect()); let best = 0; const w = document.createTreeWalker(e, NodeFilter.SHOW_ELEMENT); for (let n = w.nextNode(), k = 0; n && k < 400; n = w.nextNode(), k++) { if (!vis(n)) continue; const r = n.getBoundingClientRect(); const a = r.width * r.height; if (a > best) best = a; } return best; };
   const DIALOG_SEL = '[role=dialog], [role=alertdialog], dialog[open], [aria-modal=true]';
-  const drawerAt = (e) => { if (getComputedStyle(e).position !== 'fixed') return false; const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 16 || r.right >= w - 16) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.75; };
-  const drawerKeep = (e) => !e.closest('nav, [role=navigation]') && !e.querySelector('nav, [role=navigation]') && [...e.querySelectorAll('button, a, [role=button]')].some(b => /close|dismiss|^×$/i.test((b.getAttribute('aria-label') || b.innerText || b.getAttribute('title') || '').trim()));
-  const drawersOf = () => [...document.querySelectorAll('div,aside,section')].filter(e => !e.matches(DIALOG_SEL) && drawerAt(e) && vis(e) && drawerKeep(e)).filter((e, _i, a) => !a.some(x => x !== e && e.contains(x)));
+  const drawerAt = (e) => { const r = e.getBoundingClientRect(), w = Math.min(innerWidth, (document.documentElement && document.documentElement.clientWidth) || innerWidth); return r.height >= innerHeight * 0.8 && (r.left <= 16 || r.right >= w - 16) && r.width >= innerWidth * 0.2 && r.width <= innerWidth * 0.75 && getComputedStyle(e).position === 'fixed'; };
+  const drawerKeep = (e) => !e.closest('nav, [role=navigation]') && !e.querySelector('nav, [role=navigation]') && [...e.querySelectorAll('button, a, [role=button]')].some(b => /\\b(close|dismiss)\\b|^×$/i.test((b.getAttribute('aria-label') || b.innerText || b.getAttribute('title') || '').trim()));
+  const drawersOf = () => [...document.querySelectorAll('div,aside,section')].slice(0, ${POINTER_SCAN_MAX}).filter(e => !e.matches(DIALOG_SEL) && drawerAt(e) && vis(e) && drawerKeep(e)).filter((e, _i, a) => !a.some(x => x !== e && e.contains(x)));
   const modalBy = (e) => { for (let n = e; n && n !== document.body; n = n.parentElement) { const sib = [...n.parentElement ? n.parentElement.children : []].filter(x => x !== n && vis(x)); if (sib.length && sib.some(x => (x.innerText || '').trim().length >= 40) && sib.every(x => x.getAttribute('aria-hidden') === 'true' || x.hasAttribute('inert'))) return 'hidden'; } const prev = e.previousElementSibling; if (prev && vis(prev)) { const s = getComputedStyle(prev), r = prev.getBoundingClientRect(); if ((s.position === 'fixed' || s.position === 'absolute') && r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) return 'backdrop'; } if (e.matches('[aria-modal=true], dialog[open]')) return 'aria'; if (drawerAt(e) && (e.matches('[role=dialog]') || drawerKeep(e))) return 'drawer'; return ''; };
   const modal = forced ? null : [...document.querySelectorAll(DIALOG_SEL), ...drawersOf()].filter(vis).map(e => ({ e, by: modalBy(e), a: paintedArea(e) })).filter(x => x.by && (x.by !== 'aria' ? x.a >= innerWidth * innerHeight / 16 : x.a >= innerWidth * innerHeight / 4)).sort((a, b) => (a.by === 'drawer') - (b.by === 'drawer') || b.a - a.a)[0];`;
 
@@ -888,7 +891,7 @@ function readInteractive(main, state) {
       rowsOut[n] = rowOf(it.el);
       sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
-      if (cover && !within(cover, it.el) && !within(it.el, hitAt((r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(it.el.getBoundingClientRect())))) covered.push(n);
+      if (cover && !within(cover, it.el) && coveredBy(it.el, hitAt((r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(it.el.getBoundingClientRect())))) covered.push(n);
     }
   });
   return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
@@ -1070,7 +1073,7 @@ function find(n) {
     const r = el.getBoundingClientRect();
     const at = r.width && r.height ? clickPoint(el, r, document) : first;
     const hit = hitAt(at);
-    const covered = !!hit && !within(el, hit) && !within(hit, el);
+    const covered = coveredBy(el, hit);
     lastHit = covered ? hit : null;
     let hitN = null;
     for (let e = covered ? hit : null; e && hitN == null; e = upOf(e)) hitN = numberOf(e);
@@ -1204,8 +1207,8 @@ function inspect(n) {
   const attrs = names.slice(0, 8).map(k => [k, clip(el.getAttribute(k), 60)]);
   const short = (e, k) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].slice(0, k).map(c => '.' + c).join('');
   const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
-  const ancestors = [];
-  for (let p = up(el); p && ancestors.length < 5; p = up(p)) ancestors.push(short(p, 2));
+  const ancestorsOf = (e) => { const out = []; for (let p = up(e), k = 0; p && k < 12; p = up(p), k++) if (!k || p.id || p.getAttribute('aria-label') || p.getAttribute('role') || /^(NAV|ASIDE|HEADER|FOOTER|MAIN|FORM|DIALOG)$/.test(p.tagName) || /dialog|drawer|panel|modal|sidebar|nav|form/i.test(p.className || '')) out.push(p); return (out.length > 6 ? [...out.slice(0, 5), out[out.length - 1]] : out).map(p => short(p, 2)); };
+  const ancestors = ancestorsOf(el);
   const clone = el.cloneNode(true);
   for (const e of [clone, ...clone.querySelectorAll('*')]) {
     e.removeAttribute('data-cx');
@@ -1288,9 +1291,10 @@ function findText(text, state) {
     found.push({ el: c, text: t, exact: t.toLowerCase() === want });
   }
   const exact = found.filter(x => x.exact);
-  const pick = exact.length ? exact : [...found, ...loose];
+  const pick = exact.length ? exact : found.length ? found : loose;
+  const clickOnly = pick.length > 0 && loose.length > 0 && !pick.some(x => x.loose);
   const clipT = t => (t.length > 60 ? t.slice(0, 59) + '…' : t);
-  return { count: pick.length, byName, hits: pick.slice(0, 5).map(h => {
+  return { count: pick.length, byName, clickOnly, hits: pick.slice(0, 5).map(h => {
     if (h.loose) return { n: null, loose: true, text: clipT(h.text) };
     const s = keyed.get(h.el);
     const ref = known[s] != null && window.__cxEls[known[s]];
@@ -1342,6 +1346,32 @@ const VALUE_ACTIVE = `(() => {${ICON}
   const v = el.isContentEditable ? el.textContent : String(el.value == null ? '' : el.value);
   return v.length > ${VALUE_MAX} ? v.slice(0, ${VALUE_MAX - 1}) + '…' : v;
 })()`;
+
+function GONE(nums) {
+  return `(() => {${DEEP}
+  const groups = new Map();
+  let total = 0;
+  const groupOf = (el) => {
+    let p = upOf(el);
+    for (let k = 0; p && k < 12; p = upOf(p), k++) {
+      const label = p.getAttribute && p.getAttribute('aria-label');
+      if (label) return label;
+      if (p.getAttribute && p.getAttribute('role') === 'dialog') return 'dialog';
+      if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) return p.tagName.toLowerCase();
+    }
+    return 'page';
+  };
+  for (const n of ${JSON.stringify(nums)}) {
+    const ref = window.__cxEls && window.__cxEls[n];
+    const el = ref && ref.deref();
+    if (el && el.isConnected && vis(el)) continue;
+    total++;
+    const g = el ? String(groupOf(el)).slice(0, 40) : 'page';
+    groups.set(g, (groups.get(g) || 0) + 1);
+  }
+  return { total, groups: [...groups].sort((x, y) => y[1] - x[1]) };
+})()`;
+}
 
 function UNDER_POINT(n) {
   return `(() => {${DEEP}
@@ -1851,6 +1881,6 @@ const CONTENT_TYPE = 'document.contentType';
 
 module.exports = {
   ISOLATED_WORLD, TEXT_MAX, BOX_SEL, CHROME_SEL, CHROME_MARK, ELEMENTS_MAX, VALUE_MAX, OVERLAY_ID, MAIN_ROOT, OVERLAY, OVERLAY_OFF, LOGIN_PROBE, CONTENT_TYPE, READ_ROOT_SEL, WALL_RE, WALL_WEAK_RE, SCROLL_INFO, MAIN_SCROLLER, SCROLLER_INFO, POINTER_SCAN_MAX, PAGE_TEXT, DEEP, BUSY,
-  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, CHOICE_OF,
+  READ_TEXT: readText, INSPECT: inspect, READ_INTERACTIVE: readInteractive, FEED: feed, CHECK: check, numbering, FIND: find, SUBMIT_TARGET: submitTarget, ARROW_KEYS, FIND_TEXT: findText, CLEAR: clear, SELECT: select, VALUE: value, VALUE_ACTIVE, VALUE_CHOICE, UNDER_POINT, GONE, CHOICE_OF,
   TARGET_STATE: targetState, TILE_SEL, STATE_ATTRS, CONSEQUENTIAL, SIGN_OUT, consequentialOf, consequentialHit, clickPoint, signOutOf, labelFrom, distinctClips, inputLine, bulletItems,
 };
