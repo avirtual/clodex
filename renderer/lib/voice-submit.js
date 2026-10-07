@@ -212,7 +212,7 @@ function ptyTypedSinceEnter(prev, data) {
     .replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1bO./g, '');
   const cut = Math.max(text.lastIndexOf('\r'), text.lastIndexOf('\x1b'), text.lastIndexOf('\x03'));
   const rest = text.slice(cut + 1);
-  const typed = /[^\x00-\x1f\x7f]|[\x16\x19]/.test(rest) || (cut !== -1 && text[cut] === '\x1b' && rest.length > 0);
+  const typed = /[^\x00-\x02\x04-\x06\x08\x0b\x0c\x0f\x14\x15\x17\x1a\x1c-\x1f\x7f]/.test(rest) || (cut !== -1 && text[cut] === '\x1b' && rest.length > 0);
   if (cut !== -1) return typed;
   return typed ? true : prev === true;
 }

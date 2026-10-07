@@ -386,7 +386,7 @@ test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts o
   assert.strictEqual(spaceTriggerAction(), null);
 });
 
-test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, control keys and terminal replies leave it alone', () => {
+test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, bytes that cannot add text and terminal replies leave it alone', () => {
   const rows = [
     [false, 'a', true],
     [true, '\r', false],
@@ -401,9 +401,9 @@ test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, co
     [false, '\x1b[200~hi\x1b[201~', true],
     [false, '\x0f', false],
     [true, '\x0f', true],
-    [false, '\x12', false],
+    [false, '\x12', true],
     [false, '\x0c', false],
-    [false, '\t', false],
+    [false, '\t', true],
     [true, '\x7f', true],
     [false, '\x7f', false],
     [true, '\x15', true],
@@ -421,6 +421,15 @@ test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, co
     [true, '\x16', true],
     [false, '\x19', true],
     [true, '\x19', true],
+    [false, '\x10', true],
+    [false, '\x0e', true],
+    [false, '\x17', false],
+    [false, '\x0b', false],
+    [false, '\x01', false],
+    [false, '\x05', false],
+    [true, '\x01', true],
+    [false, '\x14', false],
+    [false, '\x08', false],
   ];
   for (const [prev, data, want] of rows) {
     assert.strictEqual(ptyTypedSinceEnter(prev, data), want, JSON.stringify([prev, data]));
