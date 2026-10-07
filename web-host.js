@@ -65,7 +65,6 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   const ringWorkspace = new Map();
   let menuSeq = 0, dialogSeq = 0;
 
-// Absent token = localhost-trust. The compare is constant-time; do not revert to `===`.
   const gate = makeTokenGate(token);
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
