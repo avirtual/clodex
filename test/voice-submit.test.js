@@ -415,6 +415,8 @@ test('ptyTypedSinceEnter: typed text sets it, Enter, Esc, Ctrl-C and Ctrl-U clea
     [true, 'ab\x1b]11;rgb:0/0/0\x1b\\', true],
     [false, 'a\x0f', true],
     [false, '\x1b[200~a\rb\x1b[201~', true],
+    [true, '\x1b\x7f', true],
+    [false, '\x1b\x7f', true],
   ];
   for (const [prev, data, want] of rows) {
     assert.strictEqual(ptyTypedSinceEnter(prev, data), want, JSON.stringify([prev, data]));
