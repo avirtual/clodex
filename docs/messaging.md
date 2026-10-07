@@ -539,9 +539,6 @@ drifting from the literal. It reaches the CLI via `--append-system-prompt-file`
 (Claude) / `model_instructions_file` (Codex); the agent's NAME arrives separately
 via SessionStart `additionalContext`. SETTLED: the transcript symlink is the
 hook's job; the prompt rides the append file.
-The PREAMBLE's transport sentence names the `sub` intent for a seat's own
-subagents and `dm` for clodex agents; the `sub` grammar line renders only for a
-seat whose allowlist admits `sub`.
 
 ## 7. Hook drains (cli-hooks.js, per Claude session)
 
@@ -681,7 +678,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   tools from `run/<seat>/mcp-tools.json`.
 - **SubagentStart:** the same `hook-ident.sh` answers `SubagentStart` with one
   `additionalContext` line composed from the seat's `run/<name>/mcp-tools.json` briefs (one sentence per granted plugin that declares a tool), followed by the parent trust line. A seat with no such plugin gets only the trust line.
-- **Parent → subagent (`sub`):** SubagentStart mints a 16-hex nonce into `run/<name>/subq/<agent_id>.nonce` (0600; an existing one is reused) and the trust line names it: notes starting `[parent <nonce>]` after a tool call come from the spawning agent. `subq.sh` drains `subq/<agent_id>` at the subagent's next PostToolUse. Hook inputs carry only the hex `agent_id`, so a name resolves only after the parent's `Agent` tool has returned, through `subq/names/<name>`. A killed subagent fires no SubagentStop, so the parent's `TaskStop` hook parks its queued note for the seat. A note queued after the subagent's last tool call is parked by SubagentStop. The seat's `[agent:sub <target>]` (session-manager `_handleIntent`) resolves the target with subq.js `resolveSubagent` — an id with a `.nonce`, or `names/<target>` pointing at one — appends the body to `subq/<agent_id>` (0600), and otherwise bounces `NOT delivered: no running subagent`. `_coldRespawn` removes `subq/` before the new process starts, since the killed subagents fire no SubagentStop.
+- **Parent → subagent (`sub`):** SubagentStart mints a 16-hex nonce into `run/<name>/subq/<agent_id>.nonce` (0600; an existing one is reused) and the trust line names it: notes starting `[parent <nonce>]` after a tool call come from the spawning agent. `subq.sh` drains `subq/<agent_id>` at the subagent's next PostToolUse. Hook inputs carry only the hex `agent_id`, so a name resolves only after the parent's `Agent` tool has returned, through `subq/names/<name>`. A killed subagent fires no SubagentStop, so the parent's `TaskStop` hook parks its queued note for the seat. A note queued after the subagent's last tool call is parked by SubagentStop.
 - **MCP (Claude):** `run/<name>/mcp.json` names `cli/bin/clodex-mcp.js` under the hooks' interpreter; pushed as `--mcp-config` unless the seat's extra args carry their own `--mcp-config`/`--strict-mcp-config` (then a `MCP:` system row says the tool is unavailable); with the claude_design strip fallback it rides `--strict-mcp-config --mcp-config` and is the only server. Next to it, `mcp-tools.json` is the seat's tool catalog, written from its grants at spawn and rewritten on every grant change (content `rev`; unchanged content is not rewritten). `clodex-mcp` reads `mcp-tools.json` for `tools/list`, forwards `tools/call` as `{cred, tool, args}`, and sends `notifications/tools/list_changed` within 2 s of a `rev` change once the client has initialised.
 - **Client hang-up:** a caller that disconnects before the reply (its tool timeout)
   closes the reply sink, so a late plugin reply falls back to the seat's PTY.

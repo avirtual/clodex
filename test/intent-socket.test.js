@@ -167,7 +167,6 @@ const TABLE = [
   ['[agent:scratch begin]', 'scratch begin', false],
   ['[agent:file view x.md]', 'file view', false],
   ['[agent:resend abc123]', 'resend', false],
-  ['[agent:sub x] hi', 'sub', false],
 ];
 
 for (const [line, label, allowed] of TABLE) {

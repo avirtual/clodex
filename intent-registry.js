@@ -22,11 +22,6 @@ function parseDm(cleaned) {
   return m ? { type: 'dm', target: m[1], urgent: !!m[2], body: m[3] } : null;
 }
 
-function parseSub(cleaned) {
-  const m = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
-  return m ? { type: 'sub', target: m[1], body: m[2] } : null;
-}
-
 function parseResend(cleaned) {
   const m = cleaned.match(/^\[agent:resend\s+([a-z0-9]+)\]\s*$/i);
   return m ? { type: 'resend', id: m[1].toLowerCase() } : null;
@@ -252,7 +247,6 @@ function teamBodyMode(intent) {
 
 const CORE_ROWS = [
   { type: 'dm', parse: parseDm, bodyMode: GREEDY },
-  { type: 'sub', parse: parseSub, bodyMode: GREEDY },
   { type: 'resend', parse: parseResend, bodyMode: NONE },
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
@@ -632,7 +626,7 @@ function pluginGrammarLines(intentsList, plugins) {
 // parse nor catalog order, and its omission of `team` is a known gap left as-is.
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
-  'dm', 'sub', 'resend', 'who', 'name', 'context', 'scratch', 'memory', 'spawn', 'file', 'exec',
+  'dm', 'resend', 'who', 'name', 'context', 'scratch', 'memory', 'spawn', 'file', 'exec',
   'remind', 'shout', 'team-review', 'review-done', 'task', 'term', 'reboot',
 ];
 

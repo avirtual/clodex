@@ -23,7 +23,6 @@
 // _handleIntent) — so the prompt builder skips it while the gate still honors it.
 const GATEABLE_INTENTS = [
   { type: 'dm', label: 'Direct messages (dm)' },
-  { type: 'sub', label: 'Message your own running subagents (sub)' },
   { type: 'who', label: 'List peers (who)' },
   { type: 'context', label: 'Self context control (compact/clear/reload)' },
   { type: 'scratch', label: 'Scratch episodes — rewind the transcript to a research result (scratch)' },
