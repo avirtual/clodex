@@ -51,7 +51,7 @@ ELECTRON_RUN_AS_NODE=1 CLODEX_PROBE_APP="$APP" "$EXE" -e "$PROBE_JS" >"$ERR" 2>&
 case "$rc" in
   0) echo "dmg probe: $APP_NAME spawned /bin/sh"; exit 0 ;;
   1) echo "dmg probe: spawn failed — $APP_NAME loaded node-pty but could not spawn /bin/sh (exit $rc)" ;;
-  2) echo "dmg probe: timed out — $APP_NAME spawned /bin/sh but it never exited within 5s (exit $rc)" ;;
+  2) echo "dmg probe: timed out — $APP_NAME spawned /bin/sh but it never exited within 20s (exit $rc)" ;;
   *) echo "dmg probe: load failed — $APP_NAME could not load node-pty from app.asar (exit $rc)" ;;
 esac
 cat "$ERR"
