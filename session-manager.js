@@ -6288,8 +6288,9 @@ function createSessionManager(deps) {
               if (stderrLine.trim()) stderrDone = stderrLine.trim();
               stderrLine = part.slice(0, 4000);
             }
-            if (stderr.length < stderrCap) stderr += d.toString();
-            else stderrTruncated = true;
+            if (stderrTruncated) return;
+            stderr += d.toString();
+            if (stderr.length > stderrCap) { stderr = stderr.slice(0, stderrCap); stderrTruncated = true; }
           });
         }
         child.on('error', (e) => finish(() => {
