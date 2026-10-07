@@ -102,7 +102,7 @@ function identIsMain(crypto, cred, ident, sessionId, seen = null, now = Date.now
 function callerIsSubagent({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null }) {
   if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
-    if (!sessionId) return true;
+    if (!sessionId || !agentId) return true;
     return !!agentId && !isMainThread(agentId, sessionId);
   }
   const verdict = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
