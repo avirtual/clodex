@@ -1669,8 +1669,8 @@ IN=$(cat)
 RE='"agent_id": ?"([A-Za-z0-9@._-]+)"'
 case "$IN" in
   *'"SubagentStop"'*) ;;
+  *'"tool_name":"Agent"'*|*'"tool_name": "Agent"'*|*'"tool_name":"TaskStop"'*|*'"tool_name": "TaskStop"'*) ;;
   *'"agent_id"'*) [[ $IN =~ $RE ]] && [ -e "${dir}/\${BASH_REMATCH[1]}" ] || exit 0;;
-  *'"tool_name"'*) case "$IN" in *'"Agent"'*|*'"TaskStop"'*) ;; *) exit 0;; esac;;
   *) exit 0;;
 esac
 IFS= read -r -d '' JS <<'JSEOF' || true
@@ -1720,6 +1720,44 @@ test('subq hook: the parent Agent result maps name to id; a main-line non-Agent 
   fs.rmSync(dir, { recursive: true });
   assert.strictEqual(runSubq(R, { hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }), '');
   assert.strictEqual(fs.existsSync(dir), false);
+});
+
+test('subq hook: parent Agent result with a nested agent_id still records the name', () => {
+  const { R, dir } = subqSeat();
+  const id = 'aprobe1-0123456789abcdef';
+  const out = runSubq(R, { session_id: 's', hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { name: 'probe1', prompt: 'x' }, tool_response: { status: 'teammate_spawned', agentId: id, agent_id: id, name: 'probe1' } });
+  assert.strictEqual(out, '');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'names', 'probe1'), 'utf8'), id);
+});
+
+test('subq hook: a subagent payload without a queue still exits before node', () => {
+  const R = tmp();
+  const stub = path.join(R, 'fake-interp.sh');
+  const marker = path.join(R, 'interp-ran');
+  fs.writeFileSync(stub, `#!/bin/bash\ntouch "${marker}"\n`, { mode: 0o755 });
+  createCliHooks({ REGISTRY_DIR: R, memoryStore: { list: () => [] }, getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }), nodeInterp: stub }).setupClaudeHook('agent1');
+  fs.mkdirSync(subqOf(R), { recursive: true });
+  assert.strictEqual(runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash', tool_input: { command: 'ls' } }), '');
+  assert.strictEqual(fs.existsSync(marker), false);
+  fs.writeFileSync(path.join(subqOf(R), 'a606bb8c5bfa9764e'), 'hi\n');
+  runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
+  assert.strictEqual(fs.existsSync(marker), true);
+});
+
+test('subq hook: a subagent payload with a queue drains even when tool_response nests another agent_id', () => {
+  const { R, dir } = subqSeat();
+  fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e.nonce'), '0123456789abcdef');
+  fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e'), 'body\n');
+  const out = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', agent_type: 'general-purpose', hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { name: 'sub2' }, tool_response: { agentId: 'aother-0123456789abcdef', agent_id: 'aother-0123456789abcdef' } });
+  assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] body' } });
+  assert.strictEqual(fs.existsSync(path.join(dir, 'a606bb8c5bfa9764e')), false);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'names', 'sub2')), false);
+});
+
+test('subq recordName: a tool_response carrying only agent_id is written', () => {
+  const { dir } = subqSeat();
+  assert.strictEqual(require('../subq').subqHookOutput(JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Agent', tool_input: { name: 'snake' }, tool_response: { agent_id: 'asnake-0123456789abcdef' } }), { dir }), '');
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'names', 'snake'), 'utf8'), 'asnake-0123456789abcdef');
 });
 
 test('subq hook: a parent TaskStop by name and a SubagentStop park the undelivered note for the seat and drop nonce and name', () => {

@@ -219,8 +219,8 @@ IN=$(cat)
 RE='"agent_id": ?"([A-Za-z0-9@._-]+)"'
 case "$IN" in
   *'"SubagentStop"'*) ;;
+  *'"tool_name":"Agent"'*|*'"tool_name": "Agent"'*|*'"tool_name":"TaskStop"'*|*'"tool_name": "TaskStop"'*) ;;
   *'"agent_id"'*) [[ $IN =~ $RE ]] && [ -e "${subqDir}/\${BASH_REMATCH[1]}" ] || exit 0;;
-  *'"tool_name"'*) case "$IN" in *'"Agent"'*|*'"TaskStop"'*) ;; *) exit 0;; esac;;
   *) exit 0;;
 esac
 IFS= read -r -d '' JS <<'JSEOF' || true
