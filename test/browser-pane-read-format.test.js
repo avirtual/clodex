@@ -674,6 +674,15 @@ test('read digest: a nameless consequential button reaches warn', () => {
   assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, [{ n: 3, kind: 'button', label: '', cat: 'delete' }]);
 });
 
+test('read digest: a multi-word role kind reaches warn, and a ⚠ inside a label stays in the label', () => {
+  const raw = { ...RAW, elements: ['[38] button menuitem ⚠', '[39] menuitem button ⚠ Delete', '[40] link ⚠ Buy ⚠ now'], cats: { 38: 'delete', 39: 'delete', 40: 'payment' } };
+  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, [
+    { n: 38, kind: 'button menuitem', label: '', cat: 'delete' },
+    { n: 39, kind: 'menuitem button', label: 'Delete', cat: 'delete' },
+    { n: 40, kind: 'link', label: 'Buy ⚠ now', cat: 'payment' },
+  ]);
+});
+
 test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
   const raw = {
     ...RAW, url: 'https://x.com/home',
