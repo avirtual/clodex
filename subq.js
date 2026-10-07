@@ -67,6 +67,18 @@ function recordName(dir, name, id, pid) {
   }
 }
 
+function nameOfSubagent(dir, id) {
+  if (typeof dir !== 'string' || !dir || typeof id !== 'string' || !SUBQ_ID_RE.test(id)) return null;
+  if (!fs.existsSync(path.join(dir, `${id}.nonce`))) return null;
+  let names = [];
+  try { names = fs.readdirSync(path.join(dir, 'names')).sort(); } catch { return null; }
+  for (const n of names) {
+    if (!SUBQ_NAME_RE.test(n)) continue;
+    try { if (fs.readFileSync(path.join(dir, 'names', n), 'utf8').trim() === id) return n; } catch {}
+  }
+  return null;
+}
+
 function clearSubq(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -106,4 +118,4 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
   return '';
 }
 
-module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, resolveSubagent, clearSubq, subqHookOutput };
+module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, resolveSubagent, nameOfSubagent, clearSubq, subqHookOutput };

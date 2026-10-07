@@ -254,7 +254,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
-const { resolveSubagent, clearSubq } = require('./subq');
+const { resolveSubagent, nameOfSubagent, clearSubq } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
@@ -5241,7 +5241,7 @@ function createSessionManager(deps) {
 
     async _handleIntent(senderName, intent, opts = {}) {
       if (!opts || typeof opts.replyTo !== 'function') return this._handleIntentBody(senderName, intent);
-      const scope = { session: this.sessions.get(senderName) || null, replyTo: opts.replyTo, fromLabel: opts.fromLabel || null };
+      const scope = { session: this.sessions.get(senderName) || null, replyTo: opts.replyTo, fromLabel: opts.fromLabel || null, fromIdent: opts.fromIdent || null };
       return intentReplyScope.run(scope, () => this._handleIntentBody(senderName, intent));
     }
 
@@ -5654,6 +5654,7 @@ function createSessionManager(deps) {
         tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+        labelFor: (id) => nameOfSubagent(subqDirFor(name), id),
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;

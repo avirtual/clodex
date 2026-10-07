@@ -681,6 +681,7 @@ stores-reg-
 stores-res-
 stores-skillres-
 stores-ud-
+subq-names-
 svcport-
 sysdeps-apt-
 sysdeps-apt-noensurepip-
