@@ -32078,7 +32078,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const text = String(data).replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[P_^X][\s\S]*?\x1b\\/g, "").replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1bO./g, "");
         const cut = Math.max(text.lastIndexOf("\r"), text.lastIndexOf("\x1B"), text.lastIndexOf(""));
         const rest = text.slice(cut + 1);
-        const typed = /[^\x00-\x1f\x7f]|\x16/.test(rest) || cut !== -1 && text[cut] === "\x1B" && rest.length > 0;
+        const typed = /[^\x00-\x1f\x7f]|[\x16\x19]/.test(rest) || cut !== -1 && text[cut] === "\x1B" && rest.length > 0;
         if (cut !== -1) return typed;
         return typed ? true : prev === true;
       }
