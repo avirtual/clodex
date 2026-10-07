@@ -24544,7 +24544,7 @@ test('t1493: a CLI exit settles a pending seatSetModel, and create() keeps the r
 
 function t1703Term() {
   const calls = [];
-  const m = mk({ termExec: (...a) => { calls.push(a); return { ok: true, command: 'ls' }; } });
+  const m = mk({ termExec: (...a) => { calls.push(a); return { ok: true, command: 'ls' }; }, log: { info() {}, warn() {}, error() {}, debug() {} } });
   m._injectText = () => {};
   m._broadcast = () => {};
   const session = { name: 'x', type: 'claude', agentType: 'claude', workspaceId: 'ws' };
@@ -24593,7 +24593,11 @@ test('t1703 the seat socket\'s reply wait: term is 130 s, a plugin row answers i
   try {
     const fresh = require('./lib/session-fixtures');
     const row = { handler: () => {}, replyWaitMs: () => 7777 };
-    const m = fresh.mk({ pluginRowFor: (type) => (type === 'plug' ? row : null) });
+    const m = fresh.mk({
+      pluginRowFor: (type) => (type === 'plug' ? row : null),
+      pathFor: () => '/nonexistent/intentCred',
+      log: { info() {}, warn() {}, error() {}, debug() {} },
+    });
     m._startIntentSocket({ name: 'x', agentType: 'claude' }, { cred: 'c', sockPath: '/nonexistent/x.sock' });
     assert.ok(opts && typeof opts.replyWaitMs === 'function', 'ENTER: the handler was built with a replyWaitMs');
     assert.strictEqual(opts.replyWaitMs({ type: 'term', sub: 'exec' }), 130000);
