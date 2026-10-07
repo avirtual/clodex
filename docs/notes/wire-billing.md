@@ -7,3 +7,9 @@
 ## PRICES_SPEED_FAST
 
 The `claude-opus-5-5` fast row's cache columns (10.0/16.0 writes, 0.40 read on $8/$40) are DERIVED by wirescope — the pricing page prints only $8/$40 — and are kept byte-for-byte with the vendor's row. To be verified on the first real fast receipt.
+
+## priceFor
+
+The `PRICES_LONG_PROMPT` tier is per REQUEST: prompt tokens = input + cache_read + cache_creation of that one request (the CLI's own rule, read off its binary by wirescope), so a mostly-cached long request crosses `LONG_PROMPT_TOKENS`.
+Over the boundary every category bills at the long row for the whole request, not only the tokens past 100k.
+Nothing sums usage across requests before pricing today; any future aggregation must price each request before summing.
