@@ -135,8 +135,11 @@ ipc handlers (step 12).
   window (Gmail works); when Google rejects the embedded browser ("This browser
   or app may not be secure") the agent is told to stop and the operator uses the
   site's own login.
-- **iframes are not read.** The read file's header names the frames it skipped;
-  the agent may open a frame's URL in the same service.
+- **Frames are read two levels deep.** A same-origin or srcdoc frame, and a
+  frame inside it, are inlined under a `[frame]` line; cross-origin, hidden and
+  deeper frames are not read — the read file's `frames:` line names them (deeper
+  srcdoc ones as `nested`) and the agent may open a frame's URL in the same
+  service.
 - **Closed shadow roots are not read** (open ones are).
 - **Tabs share the site's cross-tab state**: a logout in one tab of a profile logs out all
   of them, as in a real browser.
