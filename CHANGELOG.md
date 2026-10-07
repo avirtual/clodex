@@ -105,6 +105,7 @@ blocks a release.
 - Browser pane: a `--text` matching one clickable and several plain-text nodes clicks the clickable (`(clickable match)`), a click that removes elements says `removed: cookie banner, calendar (31 elements)`, a filter-chip Remove is not ⚠, inspect's `in:` reaches the drawer, a busy wait names three held paths, and `note … [n]` resolves a nameless element.
 - Messaging: `[agent:sub <name|agent_id>] body` reaches one of the seat's own running subagents mid-run — it lands tagged `[parent …]` after the subagent's next tool call, and a subagent that finishes or is stopped first bounces the note back to the seat as undelivered. With it, the SendMessage tool can come off seats that only used it to redirect their own subagents.
 - Messaging: `[agent:sub <name>]` resolves the name on current Claude Code builds — the Agent tool's result nests an `agent_id`, which made the queue hook skip the parent's name bookkeeping.
+- Intents: stock hand and lead templates grant `sub`; a seat granted a privileged verb (term, reboot, team create) or a plugin verb no longer freezes its ordinary intents — the allowlist carries a `*` for "every ordinary intent, including ones added later", and seats saved before `sub` existed are rewritten once at launch so `sub` works there too. `*` never grants a privileged or plugin verb.
 
 ## 5.112.2 — 2026-10-04
 

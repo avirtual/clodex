@@ -54,6 +54,10 @@ const GATEABLE_INTENTS = [
 // peer holding a capability nobody granted it.
 const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create']);
 
+const LIVING_MARK = '*';
+
+const LIVING_MIGRATION_SET = new Set(['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout']);
+
 const LEGACY_INTENT_KEYS = new Map([['notify-user', 'shout']]);
 
 const SCRATCH_LABEL_RE = /^(?!replay$)[A-Za-z0-9._-]{1,32}$/;
@@ -76,8 +80,6 @@ const GATEABLE_TYPES = new Set(GATEABLE_INTENTS.map((i) => i.type));
 //   * PRIVILEGED type with an absent list → FALSE. This INVERTS the living default
 //     for reboot & friends: "absent = all-enabled" covers the ordinary verbs, but a
 //     privileged capability must be granted explicitly, never ridden in by default.
-//   * otherwise → membership over LEGACY_INTENT_KEYS-canonicalised entries (a
-//     retired spelling still grants). `[]` is real ("all gated"), not absent.
 function canonicalIntentList(intentsList) {
   if (!Array.isArray(intentsList)) return intentsList;
   if (!intentsList.some((t) => LEGACY_INTENT_KEYS.has(t))) return intentsList;
@@ -87,7 +89,9 @@ function canonicalIntentList(intentsList) {
 function intentEnabled(type, intentsList) {
   if (!GATEABLE_TYPES.has(type)) return true;
   if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-  return canonicalIntentList(intentsList).includes(type);
+  const list = canonicalIntentList(intentsList);
+  if (list.includes(LIVING_MARK) && !PRIVILEGED_INTENTS.has(type)) return true;
+  return list.includes(type);
 }
 
 // Strip privileged intents from a REQUESTED allowlist (Task 27). Applied at every
@@ -107,22 +111,27 @@ function withoutPrivilegedIntents(intentsList) {
 // as a session's `intents` allowlist — the send-side companion of `intentEnabled`.
 // Every gateable box checked → NULL (omit the field): the all-enabled state is
 // stored as ABSENCE, never a frozen array, so a future intent lights up in this
-// seat by default (see the "living default" note above). Otherwise → the enabled
-// subset in CATALOG ORDER (deterministic, and stray/unknown values are dropped
-// since only catalog types are counted). An empty result ([]) is a real value —
+// seat by default (see the "living default" note above). An empty result ([]) is a real value —
 // "everything gated" — distinct from the null all-enabled case.
 function intentsAllowlistFromChecked(checkedTypes) {
   const checked = new Set(checkedTypes);
+  const nonPriv = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
+  if (checked.has(LIVING_MARK)) nonPriv.forEach((t) => checked.add(t));
   const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
-  // Collapse to null (the living all-enabled default) ONLY when the selection is
-  // exactly what ABSENCE already means: every NON-privileged intent enabled and no
-  // privileged one. A privileged grant (reboot checked) can't be represented by
-  // absence — intentEnabled reads absent as "privileged off" — so it forces an
-  // explicit array. Without this, checking every box including reboot would
-  // collapse to null and SILENTLY drop the grant.
-  const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
-  const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
-  return isDefault ? null : enabled;
+  // A privileged grant cannot ride absence, so it rides `*`.
+  const allNonPriv = nonPriv.every((t) => checked.has(t));
+  const isDefault = allNonPriv && enabled.length === nonPriv.length;
+  if (isDefault) return null;
+  if (allNonPriv) return [LIVING_MARK, ...enabled.filter((t) => PRIVILEGED_INTENTS.has(t))];
+  return enabled;
+}
+
+function migrateLivingAllowlist(intentsList) {
+  if (!Array.isArray(intentsList) || intentsList.includes(LIVING_MARK)) return intentsList;
+  const c = canonicalIntentList(intentsList);
+  const rest = c.filter((t) => !LIVING_MIGRATION_SET.has(t));
+  const hasAll = [...LIVING_MIGRATION_SET].every((t) => c.includes(t));
+  return hasAll && rest.length > 0 ? [LIVING_MARK, ...rest] : intentsList;
 }
 
 // How many gateable intents a session/template with allowlist `intentsList`
@@ -139,4 +148,4 @@ function deniedIntentCount(intentsList) {
   ).length;
 }
 
-module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
+module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist };

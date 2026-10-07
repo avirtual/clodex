@@ -29297,6 +29297,7 @@ ${String(body || "").trim()}
       var LEGACY_INTENT_KEYS = { "notify-user": "shout" };
       function intentRowChecked(row, intentsList) {
         if (!Array.isArray(intentsList)) return !row.privileged;
+        if (intentsList.includes("*") && !row.privileged) return true;
         return intentsList.some((t) => (LEGACY_INTENT_KEYS[t] || t) === row.type);
       }
       function renderPluginChecklist(container, pluginsList) {
@@ -31000,6 +31001,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "team-create", label: "Create teams (team create) \u2014 privileged, off by default" }
       ];
       var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term", "team-create"]);
+      var LIVING_MARK = "*";
+      var LIVING_MIGRATION_SET = /* @__PURE__ */ new Set(["dm", "who", "context", "scratch", "memory", "spawn", "file", "resend", "exec", "remind", "shout"]);
       var LEGACY_INTENT_KEYS = /* @__PURE__ */ new Map([["notify-user", "shout"]]);
       var SCRATCH_LABEL_RE = /^(?!replay$)[A-Za-z0-9._-]{1,32}$/;
       function canonicalIntentKey(type) {
@@ -31014,7 +31017,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function intentEnabled(type, intentsList) {
         if (!GATEABLE_TYPES.has(type)) return true;
         if (!Array.isArray(intentsList)) return !PRIVILEGED_INTENTS.has(type);
-        return canonicalIntentList(intentsList).includes(type);
+        const list = canonicalIntentList(intentsList);
+        if (list.includes(LIVING_MARK) && !PRIVILEGED_INTENTS.has(type)) return true;
+        return list.includes(type);
       }
       function withoutPrivilegedIntents(intentsList) {
         if (!Array.isArray(intentsList)) return intentsList;
@@ -31022,17 +31027,28 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       function intentsAllowlistFromChecked(checkedTypes) {
         const checked = new Set(checkedTypes);
+        const nonPriv = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
+        if (checked.has(LIVING_MARK)) nonPriv.forEach((t) => checked.add(t));
         const enabled = GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
-        const nonPrivCount = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).length;
-        const isDefault = enabled.length === nonPrivCount && enabled.every((t) => !PRIVILEGED_INTENTS.has(t));
-        return isDefault ? null : enabled;
+        const allNonPriv = nonPriv.every((t) => checked.has(t));
+        const isDefault = allNonPriv && enabled.length === nonPriv.length;
+        if (isDefault) return null;
+        if (allNonPriv) return [LIVING_MARK, ...enabled.filter((t) => PRIVILEGED_INTENTS.has(t))];
+        return enabled;
+      }
+      function migrateLivingAllowlist(intentsList) {
+        if (!Array.isArray(intentsList) || intentsList.includes(LIVING_MARK)) return intentsList;
+        const c = canonicalIntentList(intentsList);
+        const rest = c.filter((t) => !LIVING_MIGRATION_SET.has(t));
+        const hasAll = [...LIVING_MIGRATION_SET].every((t) => c.includes(t));
+        return hasAll && rest.length > 0 ? [LIVING_MARK, ...rest] : intentsList;
       }
       function deniedIntentCount(intentsList) {
         return GATEABLE_INTENTS.filter(
           (i) => !PRIVILEGED_INTENTS.has(i.type) && !intentEnabled(i.type, intentsList)
         ).length;
       }
-      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount };
+      module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist };
     }
   });
 
@@ -31042,6 +31058,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var {
         GATEABLE_INTENTS,
         PRIVILEGED_INTENTS,
+        LIVING_MARK,
         intentEnabled,
         intentsAllowlistFromChecked,
         withoutPrivilegedIntents
@@ -31546,7 +31563,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const pluginChecked = pluginRows.filter((r) => checked.has(r.type)).map((r) => r.type);
         const core = intentsAllowlistFromChecked(checkedTypes);
         if (!pluginChecked.length) return core;
-        const coreEnabled = Array.isArray(core) ? core : GATEABLE_INTENTS.filter((i) => checked.has(i.type)).map((i) => i.type);
+        const coreEnabled = Array.isArray(core) ? core : [LIVING_MARK];
         return [...coreEnabled, ...pluginChecked];
       }
       function pluginGrammarLines(intentsList, plugins) {

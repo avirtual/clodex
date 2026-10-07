@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount } = require('../intent-catalog');
+const { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist } = require('../intent-catalog');
 
 const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // The ordinary (non-privileged) types — what "absent = all-enabled" covers, and
@@ -137,7 +137,7 @@ test('intentsAllowlistFromChecked: a privileged grant forces an explicit array (
   assert.ok(Array.isArray(r));
   assert.ok(r.includes('reboot'), 'the reboot grant survives collection');
   assert.ok(r.includes('team-create'), 'and so does the team-create grant');
-  assert.deepStrictEqual(r, ALL_TYPES); // catalog order, reboot last
+  assert.deepStrictEqual(r, ['*', 'term', 'reboot', 'team-create']);
 });
 
 test('intentsAllowlistFromChecked: a subset → the enabled list in CATALOG order', () => {
@@ -231,4 +231,42 @@ test('intentsAllowlistFromChecked: the retired spelling is NOT re-persisted on s
   assert.deepStrictEqual(intentsAllowlistFromChecked(['dm', 'notify-user']), ['dm'],
     'the checklist collects catalog types, so a stray legacy token drops like any other stray — '
     + 'an edit-save is what finally rewrites the stored list to the new key');
+});
+
+test('living mark: * enables every ordinary intent, never a privileged one', () => {
+  assert.strictEqual(LIVING_MARK, '*');
+  assert.strictEqual(intentEnabled('sub', ['*', 'term']), true);
+  assert.strictEqual(intentEnabled('term', ['*']), false);
+  assert.strictEqual(intentEnabled('reboot', ['*', 'term']), false);
+  assert.strictEqual(intentEnabled('term', ['*', 'term']), true);
+  assert.strictEqual(intentEnabled('shout', ['*', 'notify-user']), true);
+  assert.deepStrictEqual(withoutPrivilegedIntents(['*', 'term']), ['*']);
+  assert.strictEqual(deniedIntentCount(['*']), 0);
+});
+
+test('intentsAllowlistFromChecked: grants ride beside *, and * round-trips', () => {
+  assert.deepStrictEqual(intentsAllowlistFromChecked([...NONPRIV_TYPES, 'term']), ['*', 'term']);
+  assert.strictEqual(intentsAllowlistFromChecked(['*']), null);
+  assert.deepStrictEqual(intentsAllowlistFromChecked(['*', 'term']), ['*', 'term']);
+});
+
+const PRE_SUB = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+
+test('LIVING_MIGRATION_SET: the ordinary types that predate sub', () => {
+  assert.deepStrictEqual(LIVING_MIGRATION_SET, new Set(PRE_SUB));
+  assert.deepStrictEqual(LIVING_MIGRATION_SET, new Set(NONPRIV_TYPES.filter((t) => t !== 'sub')));
+});
+
+test('migrateLivingAllowlist: rewrites only an all-ordinary-plus-grant array', () => {
+  assert.deepStrictEqual(
+    migrateLivingAllowlist([...PRE_SUB, 'term', 'reboot', 'team-create', 'gh']),
+    ['*', 'term', 'reboot', 'team-create', 'gh'],
+  );
+  const subset = [...PRE_SUB.filter((t) => t !== 'exec'), 'term'];
+  assert.strictEqual(migrateLivingAllowlist(subset), subset);
+  const exact = PRE_SUB.slice();
+  assert.strictEqual(migrateLivingAllowlist(exact), exact);
+  const living = ['*', 'term'];
+  assert.strictEqual(migrateLivingAllowlist(living), living);
+  assert.strictEqual(migrateLivingAllowlist(null), null);
 });

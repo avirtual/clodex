@@ -863,6 +863,46 @@ test('persistence: ephemeral + reviewFor survive upsert spread-merge (Task 24)',
   } finally { cleanup(); }
 });
 
+test('persistence: a pre-sub all-ordinary-plus-grant allowlist is rewritten to * once at load', () => {
+  const userData = mkTmpRoot('stores-ud-');
+  const registryDir = mkTmpRoot('stores-reg-');
+  const boot = () => initStores(userData, { log: console, registryDir,
+    resourcesDir: path.join(registryDir, '__no_seed__'),
+    skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+    envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
+  try {
+    const preSub = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+    const partial = [...preSub.filter((t) => t !== 'exec'), 'term'];
+    fs.writeFileSync(path.join(userData, 'sessions.json'), JSON.stringify([
+      { name: 'lead', workspaceId: 'default', intents: [...preSub, 'term'] },
+      { name: 'hand', workspaceId: 'default', intents: partial },
+    ]));
+    const stores = boot();
+    assert.deepStrictEqual(stores.persistence.get('lead').intents, ['*', 'term']);
+    assert.deepStrictEqual(stores.persistence.get('hand').intents, partial);
+    const disk = JSON.parse(fs.readFileSync(path.join(userData, 'sessions.json'), 'utf8'));
+    assert.deepStrictEqual(disk.find((e) => e.name === 'lead').intents, ['*', 'term']);
+    assert.ok(fs.existsSync(path.join(userData, 'intents-living-migrated')));
+    stores.persistence.upsert({ name: 'ops', workspaceId: 'default', intents: [...preSub, 'term'] });
+    assert.deepStrictEqual(stores.persistence.get('ops').intents, [...preSub, 'term']);
+    assert.deepStrictEqual(boot().persistence.get('ops').intents, [...preSub, 'term']);
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('persistence: a fresh userData stamps the living marker, so a post-sub save is never rewritten', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    const preSub = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+    stores.persistence.list();
+    stores.persistence.upsert({ name: 'ops', workspaceId: 'default', intents: [...preSub, 'term'] });
+    assert.deepStrictEqual(stores.persistence.get('ops').intents, [...preSub, 'term']);
+    assert.ok(fs.existsSync(path.join(userData, 'intents-living-migrated')));
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {

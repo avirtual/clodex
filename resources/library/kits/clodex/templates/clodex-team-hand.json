@@ -16,6 +16,7 @@
   ],
   "intents": [
     "dm",
+    "sub",
     "who",
     "context",
     "memory",
