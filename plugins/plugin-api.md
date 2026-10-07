@@ -1821,17 +1821,14 @@ verb as an MCP tool:
   `brief` is one sentence a subagent reads at `SubagentStart`. `tools` without
   `subagent` is a registration error.
 
-What the host does with them: it writes `run/<seat>/mcp-tools.json`
-`{ v: 1, rev, tools, briefs }` from the seat's effective grants (plugin granted
-AND verb enabled) and rewrites it on every grant change. The `clodex-mcp` server
-lists that file and forwards `{ cred, tool, args, ident? }` to the seat socket,
-which checks the live grant BEFORE calling your `toIntent`, then runs your
-`refuse`, then dispatches as the seat. `ident` is a per-call identity stamp the
-socket verifies for core tools only; for a plugin tool it is ignored, so every
-call — the seat's main agent included — runs under your `subagent.refuse`. A
-plugin cannot declare a main-only tool: a main-only action stays the intent form
-(`[agent:<verb> …]` typed by the main agent), and your `refuse` text is what a
-main agent sees when it reaches for the tool.
+What the host does: it writes `run/<seat>/mcp-tools.json` `{ v: 1, rev, tools,
+briefs }` from the seat's effective grants (plugin granted AND verb enabled), on
+every grant change. `clodex-mcp` lists it and forwards `{ cred, tool, args, ident? }`
+to the seat socket: live grant check, then your `toIntent`, `refuse`, dispatch as
+the seat. `ident` is verified for core tools only, so every plugin-tool call — the
+main agent's too — runs under `subagent.refuse`. A main-only action stays in the
+intent form (`[agent:<verb> …]`); a main agent reaching for the tool sees your
+`refuse` string, or for `''` the default `not available to a subagent` text.
 
 A caller may see four refusal texts: `invalid: <your message>`,
 `unknown tool: "<name>"` (unregistered OR not granted — one text, so there is no
@@ -1844,6 +1841,31 @@ A seat's `tools/list` is core tools first — only those whose verb the seat hol
 (`term_exec` needs the `term` grant itself; `'*'` never confers it) — then plugin
 tools in registration order. Only plugin `brief`s are injected at
 `SubagentStart`; a core tool has no brief.
+
+### Reply timing and status: `replyWaitMs` and `classifyReply`
+
+Two more optional fields on `host.intents.register` shape what a socket caller
+(an MCP tool call or `clodex-send`) gets back from your verb:
+
+- **`replyWaitMs(intent)`** → milliseconds. How long the call waits for your
+  handler's FIRST `handle.inject` when no reply line arrived during dispatch.
+  Default 30 000 (`PLUGIN_REPLY_WAIT_MS`), cap 470 000
+  (`PLUGIN_REPLY_WAIT_MAX_MS`); a non-finite value, ≤ 0, or a throw gets the
+  default. When the wait expires the caller gets
+  `<verb> accepted; its reply will arrive in the seat's main conversation`, and
+  the late line is injected into the seat as usual. The MCP client's own 500 s
+  timeout sits above the cap. The browser pane sets it per sub-verb.
+- **`classifyReply(line)`** → `'refused'`, `'error'`, or anything else. It sees
+  only the FIRST reply line. Any other return, or a throw, falls back to the
+  default: `'error'` when the line matches `/^\[agent:[^\]]+\] error: /` (the
+  shape a thrown handler produces), else `'ok'`. The status drives
+  `clodex-send`'s exit code (`refused` → 3, `error` → 1), the status column in
+  `run/<seat>/mcp.log`, and the server's stop-after-3-identical-failures counter
+  (`ok` resets it; `invalid` is not counted). A `refuse()` refusal never reaches
+  `classifyReply`. The browser pane's is `replies.classifyReply`.
+
+The host wraps both, so a plugin can never extend the wait past the cap or
+invent a third status. Both are optional; a verb without them behaves as before.
 
 ### Choosing a verb is a compatibility decision
 

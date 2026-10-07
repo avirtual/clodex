@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+### Plugins
+- plugin-api.md documents `replyWaitMs` and `classifyReply` on `host.intents.register`: how long a tool call waits for a slow verb's first reply (30 s default, 470 s cap) and how a plugin marks a reply refused or errored for `clodex-send`'s exit code and the MCP log.
+
 ## 5.116.0 — 2026-10-07
 
 ### CLI

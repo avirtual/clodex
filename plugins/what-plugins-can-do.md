@@ -109,7 +109,7 @@ Three properties make it safe to build on:
 
 A verb can also be offered to the seat's agents as an MCP tool (`tools:` on the
 registration), always under the plugin's subagent policy — see
-[plugin-api.md](plugin-api.md#declaring-an-mcp-tool).
+[`plugin-api.md`](plugin-api.md#declaring-an-mcp-tool).
 
 Verbs share **one global namespace** across every installed plugin, so picking a
 generic one (`run`, `sync`, `open`) is a latent conflict with a plugin that does
