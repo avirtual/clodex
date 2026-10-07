@@ -102,6 +102,7 @@ blocks a release.
 - Browser pane: a side drawer may be inset up to 16 px from the edge and 75 % of the viewport wide (GitLab's work-item panel), the read head counts hidden elements under the dialog, `open` on an open profile refreshes its "opened as" host, a nameless button never takes its CSS class as a name, `services` names a tab's subagent opener, and a subagent closing a closed tab is told it is not open.
 - Hooks: the SubagentStart brief carries a per-subagent trust nonce and a `subq.sh` hook drains a per-subagent queue — groundwork for `[agent:sub]`
 - Browser pane: a nameless consequential button (`[n] button ⚠`) now reaches the ⚠ digest and `note`'s `[n]` resolver, a tab open (`open gh:riot <url>`) no longer re-stamps the profile's "opened as" host, Settings' Show and Hand over fall back to a profile's live tab when its window is closed and the row reads `open · tabs: …`, and the subagent tab rule says the pane (any seat) must have the profile open.
+- Messaging: `[agent:sub <name|agent_id>] body` reaches one of the seat's own running subagents mid-run — it lands tagged `[parent …]` after the subagent's next tool call, and a subagent that finishes or is stopped first bounces the note back to the seat as undelivered. With it, the SendMessage tool can come off seats that only used it to redirect their own subagents.
 
 ## 5.112.2 — 2026-10-04
 
