@@ -14,11 +14,9 @@ blocks a release.
 ## Unreleased
 
 ### Plugins
-
 - A built-in plugin a headless host skips (an unmet `requires`) still reserves its id: installing a library plugin with the same id is refused as before.
 
 ### Wire
-
 - Replay treats the `auxiliary` request class as a side-call, matching the live proxy.
 
 ## 5.117.0 — 2026-10-07

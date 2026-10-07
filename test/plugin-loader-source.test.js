@@ -977,6 +977,16 @@ test('libraryCatalog decorates each row with what the plugins folder holds', asy
   assert.strictEqual(by.get('notes').upToDate, false, 'the sidecar is at 9999999, the library at abc1234');
 });
 
+test('libraryCatalog marks a built-in plugin this host skipped for an unmet requires as core', async () => {
+  const bytes = buildLibraryBytes('abc1234', { needs: 'needs' });
+  const { loader } = mkSourceLoader({ script: [{ bytes }], coreIds: ['needs'], coreExtra: { requires: ['electron'] } });
+  assert.ok(!loader.discover().some((rec) => rec.id === 'needs'), 'ENTER: the core copy is skipped on this host');
+  const r = await loader.libraryCatalog();
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.plugins.length, 1, 'ENTER: the one row is present');
+  assert.strictEqual(r.plugins[0].installed, 'core');
+});
+
 test('libraryCatalog carries the sidecar\'s own ref and subpath, which the row\'s Update names', async () => {
   // The catalog is read at the default branch, so cat.ref is null. A row
   // installed at a tag updates from that tag: passing the catalog's ref to
