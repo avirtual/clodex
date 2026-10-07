@@ -9,11 +9,23 @@ const { spawnSync } = require('node:child_process');
 const root = path.join(__dirname, '..');
 const chartDir = path.join(root, 'cli/deploy/helm/clodex');
 
-function renderStatefulSet() {
-  const r = spawnSync('helm', ['template', 't', chartDir, '--show-only', 'templates/statefulset.yaml'], { encoding: 'utf8' });
-  if (!r.error && r.status === 0) return r.stdout;
-  return fs.readFileSync(path.join(chartDir, 'templates/statefulset.yaml'), 'utf8');
+function pickRender(r, raw) {
+  if (r.error) return raw();
+  if (r.status !== 0) throw new Error('helm template failed: ' + r.stderr);
+  return r.stdout;
 }
+
+function renderStatefulSet(spawn = spawnSync) {
+  const r = spawn('helm', ['template', 't', chartDir, '--show-only', 'templates/statefulset.yaml'], { encoding: 'utf8' });
+  return pickRender(r, () => fs.readFileSync(path.join(chartDir, 'templates/statefulset.yaml'), 'utf8'));
+}
+
+test('renderStatefulSet throws when helm runs and fails, and falls back to the raw template only when helm is absent', () => {
+  assert.throws(() => renderStatefulSet(() => ({ status: 1, stderr: 'boom' })), /helm template failed: boom/);
+  const raw = fs.readFileSync(path.join(chartDir, 'templates/statefulset.yaml'), 'utf8');
+  assert.strictEqual(renderStatefulSet(() => ({ error: new Error('ENOENT') })), raw);
+  assert.strictEqual(renderStatefulSet(() => ({ status: 0, stdout: 'rendered' })), 'rendered');
+});
 
 test('helm statefulset pins the web host to loopback', () => {
   const text = renderStatefulSet();

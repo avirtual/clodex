@@ -2676,6 +2676,7 @@ function createSessionManager(deps) {
 
     _streamEnqueueSystem(s, text, produce, where, onSend = null, parkKey = null) {
       if (this._refuseStreamInject(s, text, where)) return;
+      if (!produce) text = defangTeammateTag(text == null ? '' : text);
       if (!produce && !String(text || '').trim()) return;
       this._streamEnqueue(s, { text: produce ? '' : String(text), images: [], origin: 'system' }, onSend, produce, parkKey);
     }
@@ -2685,7 +2686,7 @@ function createSessionManager(deps) {
         if (typeof q.produce !== 'function') return q.text;
         let t = null;
         try { t = q.produce(); } catch { t = null; }
-        return t ? String(t) : '';
+        return t ? defangTeammateTag(t) : '';
       });
       return {
         text: texts.filter((t) => t.trim()).join('\n\n'),
@@ -8281,7 +8282,7 @@ function createSessionManager(deps) {
           : plainText();
       };
       if (target.io === 'stream') {
-        this._streamEnqueue(target, { text: plainText(), images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
+        this._streamEnqueue(target, { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
           fire ? () => fire('injected') : null, null, parkKey);
       } else if (!this._maybeParkDelivery(target, () => textFor('parked'), parkKey)) {
         this._injectText(target, fire && rebody ? '' : plainText(), {
@@ -8541,7 +8542,7 @@ function createSessionManager(deps) {
         const isClaude = session.agentType === 'claude';
         session._injectPtyQueue = new InjectQueue({
           reviewGate: isClaude,
-          onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
+          onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]\n]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,

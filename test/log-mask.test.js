@@ -31,6 +31,7 @@ test('these real ops-log lines carry a key word in PROSE and survive byte-identi
   for (const line of [
     'web host listening on 127.0.0.1:8080 (token required)',
     'web host listening on 127.0.0.1:8080 (localhost-trust)',
+    'web host listening on 0.0.0.0:8080 (INSECURE: no token on a non-loopback bind)',
     'CLODEX_REMOTE_INSECURE=1 — the remote wire will serve with NO operator token on a non-loopback '
       + 'bind. This is insecure; set CLODEX_REMOTE_TOKEN and remove the flag.',
     'web view up for a1 → https://h:7777/ (token required — not opened)',
