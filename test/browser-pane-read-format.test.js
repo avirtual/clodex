@@ -169,7 +169,7 @@ test('read-format: clickable element lines and one-line table rows pass through,
     '== elements ==', ...raw.elements]);
   assert.match(out.content.split('\n')[3], /elements: 4 \(numbers: stable per site; new since your last read: none\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
-    ['== text ==', 'Contor | Index precedent | Index curent', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+    ['== text (1 hit for lista) ==', 'Contor | Index precedent | Index curent', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
 });
 
 test('read-format: changedRegion strips the common line prefix and suffix and returns what is new', () => {
