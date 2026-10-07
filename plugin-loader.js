@@ -3,7 +3,7 @@
 const os = require('os');
 const {
   isValidPluginId, HOST_API_VERSION, RESERVED_PLUGIN_IDS, PLUGIN_SCOPES, scopeOf,
-  PLUGIN_METHOD_SURFACES, PLUGIN_CAPABILITIES, readsOf,
+  PLUGIN_METHOD_SURFACES, PLUGIN_CAPABILITIES, readsOf, PLUGIN_REQUIREMENTS, requiresOf,
 } = require('./plugin-api');
 const { AGENT_NAME_RE } = require('./catalogs');
 const { createPluginSource } = require('./plugin-source');
@@ -46,6 +46,14 @@ function validateManifest(m, dirName, hasBundle = false) {
     for (const [method, want] of Object.entries(m.surfaces)) {
       if (!PLUGIN_METHOD_SURFACES.includes(want)) {
         return `invalid surface for method ${JSON.stringify(method)}: ${JSON.stringify(want)} — must be ${PLUGIN_METHOD_SURFACES.map((s) => JSON.stringify(s)).join(' or ')}`;
+      }
+    }
+  }
+  if (m.requires != null) {
+    if (!Array.isArray(m.requires)) return 'manifest.requires must be an array of host feature names';
+    for (const r of m.requires) {
+      if (!PLUGIN_REQUIREMENTS.includes(r)) {
+        return `invalid requirement: ${JSON.stringify(r)} — must be ${PLUGIN_REQUIREMENTS.map((x) => JSON.stringify(x)).join(' or ')}`;
       }
     }
   }
@@ -269,9 +277,11 @@ function createPluginLoader(deps) {
     requireModule,     // seam: node's require, injectable so tests load fakes
     https, execFile,
     os: osIn,
+    hostFeatures,
   } = deps;
 
   const osApi = osIn || os;
+  const features = new Set(Array.isArray(hostFeatures) ? hostFeatures.map(String) : []);
 
   const roots = (Array.isArray(rootsIn) && rootsIn.length
     ? rootsIn
@@ -451,6 +461,8 @@ function createPluginLoader(deps) {
       if (why) { logIt(`skipping ${ent.name}: ${why}`); note(ent.name, why); continue; }
       const escapes = checkEntryPaths(path, dir, manifest);
       if (escapes) { logIt(`skipping ${ent.name}: ${escapes}`); note(ent.name, escapes); continue; }
+      const unmet = requiresOf(manifest).find((r) => !features.has(r));
+      if (unmet) { logIt(`skipping ${ent.name}: requires ${unmet}, which this host does not provide`); continue; }
       const entry = manifest.entry || {};
       const rec = {
         id: manifest.id,
@@ -730,6 +742,8 @@ function createPluginLoader(deps) {
     }
     const escapes = checkEntryPaths(path, abs, manifest);
     if (escapes) return { ok: false, error: escapes };
+    const unmet = requiresOf(manifest).find((r) => !features.has(r));
+    if (unmet) return { ok: false, error: `requires ${unmet}, which this host does not provide — install it on the desktop app` };
     const entry = manifest.entry || {};
     return {
       ok: true,
