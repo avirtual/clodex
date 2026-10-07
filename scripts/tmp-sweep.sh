@@ -423,6 +423,7 @@ clx-console-
 clx-createdat-
 clx-createdat-mgr-
 clx-mcpcat-
+clx-headless-gate-
 clx-stream-restart-
 clx-ctl-
 clx-ctx-timeout-
