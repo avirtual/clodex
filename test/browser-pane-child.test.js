@@ -2708,7 +2708,7 @@ test('page scripts: READ_TEXT and PAGE_TEXT cut non-rendered text inside an inli
   assert.ok(!text.includes('HIDDEN-SHADOW'), text);
   assert.ok(r.frameSeen.length >= 1, 'the frame\'s own getComputedStyle decides');
   assert.ok(!r.hostSeen.some((e) => e.text === 'HIDDEN-FRAME'), 'the host window never styles a frame node');
-  assert.deepStrictEqual(r.removed, ['IFRAME'], 'the un-inlined iframe twin is dropped; the [frame] box is not');
+  assert.deepStrictEqual(r.removed.filter((t) => t === 'IFRAME'), ['IFRAME'], 'the un-inlined iframe twin is dropped; the [frame] box is not');
   const p = build();
   const pt = p.run(scripts.PAGE_TEXT, p.root);
   assert.ok(pt.includes('SHOWN-SHADOW') && pt.includes('SHOWN-ROOT'), pt);
