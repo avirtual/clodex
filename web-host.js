@@ -413,7 +413,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   });
 
   const listenArgs = host ? [port, host] : [port];
-  server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : refusing ? ' (REFUSING: no token on a non-loopback bind)' : ' (localhost-trust)'}`));
+  server.listen(...listenArgs, () => log.info('web', `web host listening on ${host || '*'}:${port}${token ? ' (token required)' : refusing ? ' (REFUSING: no token on a non-loopback bind)' : !isLoopbackHost(host) ? ' (INSECURE: no token on a non-loopback bind)' : ' (localhost-trust)'}`));
 
   return {
     close() {

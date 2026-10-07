@@ -39,6 +39,10 @@ spec:
                 secretKeyRef:
                   name: {{ include "clodex.secretName" . }}
                   key: wire-token
+            {{- if .Values.web.enabled }}
+            - name: CLODEX_WEB_HOST
+              value: "127.0.0.1"
+            {{- end }}
             # Optional: absent from the Secret (Bedrock / external model
             # credential) → no env var, engine runs tokenless.
             - name: CLAUDE_CODE_OAUTH_TOKEN
