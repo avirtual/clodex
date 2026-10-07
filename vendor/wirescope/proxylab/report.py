@@ -1551,11 +1551,7 @@ def _bust_scan(session):
     parsed-but-non-object body (the summary block raises on `.get`) BOTH end up with
     no summary — i.e. **summary present iff body is a dict**. Verified across the
     whole corpus: 0 violations in 124,026 records. So a tail-read that finds a
-    summary proves a dict body, and the fallback parse establishes it directly.
-
-    Yields dicts shaped {stem, path, ts, line, summary, tokens, ok, n_messages, has_body,
-    body} where `body` is None until _bust_body fills it in for the pairs that need
-    one."""
+    summary proves a dict body, and the fallback parse establishes it directly."""
     d = core_mod._session_dir(session)
     if not d.is_dir():
         return []
@@ -1585,6 +1581,8 @@ def _bust_scan(session):
             "line": _line_key(summ),
             "summary": summ if summ else None,
             "tokens": billing.get("tokens") or {},
+            "est_usd": billing.get("est_usd") or 0,
+            "model": billing.get("model") or summ.get("model"),
             "ok": (resp.get("status_code") == 200 and "nudge_swallowed" not in resp
                    and "shortcircuit" not in resp),
             "n_messages": summ.get("n_messages") or 0,
@@ -1608,7 +1606,7 @@ def _bust_body(p):
     return p["body"] or None
 
 
-def bust_series(session, detail=True):
+def bust_series(session, detail=True, scan=None, loci=True):
     """Per-transition cache-divergence forensics for a session's MAIN line, in
     chronological order. For each adjacent request pair it reports WHERE the
     prefix first diverged (the locus) and HOW MUCH the receipt then re-wrote (the
@@ -1625,8 +1623,8 @@ def bust_series(session, detail=True):
     vs the previous forwarded turn — the human-readable WHAT changed: a model swap,
     a date rollover, a transform toggle)."""
     from . import warmth as warmth_mod          # lazy: fault map + compact ratio
-    pairs = [p for p in _bust_scan(session) if p["line"] == "main" and p["ok"]
-             and _is_seat_request(p)]
+    pairs = [p for p in (_bust_scan(session) if scan is None else scan)
+             if p["line"] == "main" and p["ok"] and _is_seat_request(p)]
     transitions = []
     prev = None
     for idx, p in enumerate(pairs):
@@ -1655,13 +1653,13 @@ def bust_series(session, detail=True):
         # Bodies are loaded HERE and nowhere else — only a bust computes a locus, so
         # only a bust pays for the parse (~100 of 7,132 transitions on the profiled
         # session). Everything above came from receipts + sidecar reads.
-        b = _bust_body(p) if bust else None
-        a = _bust_body(prev) if bust else None
+        b = _bust_body(p) if bust and loci else None
+        a = _bust_body(prev) if bust and loci else None
         # survived-prefix depth from the receipt (bill's own locus)
         surv = _survived_prefix(cr, _prefix_marks(b)) if (bust and b) else None
         survived_prefix = ({"boundary": surv[0], "est_tokens": surv[1]}
                            if surv else ({"boundary": "none", "est_tokens": 0}
-                                         if bust else None))
+                                         if bust and loci else None))
         # structural N-1 diff (what byte first changed vs the previous turn)
         loc = _first_divergence(a, b) if (bust and isinstance(a, dict) and b) else None
         # A STATIC-PREFIX bust changed the cached PREAMBLE (tools / system / the
@@ -1727,6 +1725,34 @@ def bust_series(session, detail=True):
     if detail:
         res["transitions"] = transitions
     return res
+
+
+def line_split(scan):
+    lines = {"main": {"key": "main", "role": None, "agent_id": None, "model": None,
+                      "requests": 0, "est_usd": 0.0}}
+    side = {k: {"requests": 0, "est_usd": 0.0, "model": None}
+            for k in ("classifier", "keepwarm")}
+    total = 0.0
+    for p in scan:
+        summ = p.get("summary") or {}
+        usd = p.get("est_usd") or 0
+        total += usd
+        kind = ("keepwarm" if summ.get("keepwarm")
+                else "classifier" if summ.get("sidecall") == "classifier" else None)
+        if kind:
+            b = side[kind]
+        else:
+            b = lines.setdefault(p["line"], {"key": p["line"], "role": summ.get("role"),
+                                             "agent_id": summ.get("agent_id"),
+                                             "model": None, "requests": 0,
+                                             "est_usd": 0.0})
+        b["requests"] += 1
+        b["est_usd"] += usd
+        b["model"] = p.get("model") or b["model"]
+    for b in (*lines.values(), *side.values()):
+        b["est_usd"] = round(b["est_usd"], 6)
+    return {"lines": list(lines.values()), **side, "requests": len(scan),
+            "est_usd": round(total, 6)}
 
 
 def session_report(session, detail=False):

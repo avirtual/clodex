@@ -3658,11 +3658,15 @@ _NUDGE_SPENT = collections.OrderedDict()
 _NUDGE_PRIOR_MAX = 2000
 
 
-def _nudge_digest(msgs, drop_trailing_system=False):
+def _nudge_drop_trailing_system(msgs):
     msgs = list(msgs)
-    while (drop_trailing_system and msgs and isinstance(msgs[-1], dict)
-           and msgs[-1].get("role") == "system"):
+    while msgs and isinstance(msgs[-1], dict) and msgs[-1].get("role") == "system":
         msgs.pop()
+    return msgs
+
+
+def _nudge_digest(msgs, drop_trailing_system=False):
+    msgs = _nudge_drop_trailing_system(msgs) if drop_trailing_system else list(msgs)
     h = hashlib.blake2b(digest_size=20)
     for m in msgs:
         if isinstance(m, dict) and isinstance(m.get("content"), str):
@@ -3673,6 +3677,7 @@ def _nudge_digest(msgs, drop_trailing_system=False):
 
 
 def _nudge_candidate(msgs):
+    msgs = _nudge_drop_trailing_system(msgs)
     last = msgs[-1] if msgs else None
     if not isinstance(last, dict) or last.get("role") != "user":
         return None
@@ -3961,51 +3966,6 @@ def _inject_into_last_user(obj, text, sep="\n\n"):
         c.append({"type": "text", "text": text})
         return ""
     return None
-
-
-# ---- THROWAWAY PROTOTYPE: mid-flight DM delivery (scratch port ONLY) ---------
-# Gates the wire-delivery feature's ONE open risk: does the model double-react
-# when it sees DM content injected on the wire THIS turn AND a slim durable
-# record next turn? This is deliberately minimal — NO delivery.rode receipt, NO
-# ack, NO dedup, NO leak-guard (those are the real build, spec'd-but-uncoded
-# until this test clears). Off by default (DELIVER_PROTOTYPE unset) → inert on
-# :7800; only the scratch experiment port sets it. In-memory, non-durable,
-# fire-once: an enqueued item rides the NEXT request for its session then clears
-# (a throwaway approximation of the real transient tail-copy). The proxy never
-# parses `text` — it's opaque; clodex frames it.
-DELIVER_PROTOTYPE = os.environ.get("DELIVER_PROTOTYPE", "0") not in (
-    "0", "no", "off", "false")
-_DELIVER_QUEUE = {}          # session_id -> list[str]  (throwaway, in-memory)
-
-
-def _deliver_enqueue(session_id, text):
-    """Queue `text` for injection into `session_id`'s next request. Returns the
-    resulting queue depth. Throwaway prototype only."""
-    _DELIVER_QUEUE.setdefault(session_id, []).append(text)
-    return len(_DELIVER_QUEUE[session_id])
-
-
-def _deliver_tail_inject(obj):
-    """THROWAWAY: append any pending delivery text for this request's session as
-    a TRAILING text block on the last user message (tail-only → cache-safe;
-    appended AFTER any tool_result blocks, so tool_use pairing is untouched —
-    the exact shape the CLI itself uses for out-of-band notes). Fire-once: clears
-    the queue after injecting. Returns a log dict, or None if nothing pending /
-    the flag is off. NOT the real mechanism — no receipt/ack/dedup here."""
-    if not DELIVER_PROTOTYPE:
-        return None
-    sid = (writer_mod._session_ids(obj) or [None])[0]
-    if not sid:
-        return None
-    pending = _DELIVER_QUEUE.get(sid)
-    if not pending:
-        return None
-    text = "\n\n".join(pending)
-    orig = _inject_into_last_user(obj, text, sep="\n\n")
-    if orig is None:                 # no user message to ride (shouldn't happen)
-        return None
-    _DELIVER_QUEUE.pop(sid, None)    # fire-once
-    return {"session": sid, "items": len(pending), "chars": len(text)}
 
 
 def _decide_injection(obj):

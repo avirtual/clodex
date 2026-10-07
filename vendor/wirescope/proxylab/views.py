@@ -1,5 +1,6 @@
 import html
 import json
+import math
 import os
 import re
 import time
@@ -568,6 +569,11 @@ details.more>summary{color:#69707d;font-size:12px}
 .bustp{border-left-color:#e5c07b}
 .bustp pre.diff{font-size:12px;max-height:14em}
 .bustp pre.diff{color:#aab2c0}
+.bustc{margin-left:.8em}
+.bustc a{border-color:#5a3a20;background:#1f1410}
+table.lines{table-layout:auto;width:auto;margin:.3em 0 .6em}
+table.lines th,table.lines td{width:auto;padding:.18em .9em .18em 0;text-align:left}
+table.lines tr.total td{border-top:1px solid #2a2e36}
 """
 
 _MD_HEADING_RE = re.compile(r"(?m)^#{1,3} .+$")
@@ -674,7 +680,7 @@ def _entry_resp_usage(rf, rec):
     return entry, resp, usage
 
 
-def _main_line_turns(session_id):
+def _main_line_turns(session_id, scan=None):
     """Chronological (restart-stable ts order) list of this session's MAIN-line
     captured requests: [{stem, seq, ts}]. The spine for /_session turn navigation
     — every request is captured, so 'turns' here are just positions in that
@@ -687,12 +693,73 @@ def _main_line_turns(session_id):
     line filter — which is what keeps `?turn=` off a full-corpus parse."""
     from proxylab import report as report_mod            # lazy: avoid import cycle
     out = []
-    for p in report_mod._bust_scan(session_id):
+    for p in report_mod._bust_scan(session_id) if scan is None else scan:
         if p["line"] != "main":
             continue
         out.append({"stem": p["stem"], "seq": report_mod._seq_of(p["stem"]),
                     "ts": report_mod._epoch(p["ts"])})
     return out
+
+
+def _bust_turn_indices(turns, busts):
+    stem_to_i = {t["stem"]: j for j, t in enumerate(turns)}
+    return sorted(stem_to_i[t["stem"]] for t in busts if t["stem"] in stem_to_i)
+
+
+def _session_overview(session_id):
+    from proxylab import report as report_mod
+    scan = report_mod._bust_scan(session_id)
+    series = report_mod.bust_series(session_id, detail=False, scan=scan, loci=False)
+    turns = _main_line_turns(session_id, scan=scan)
+    return {"split": report_mod.line_split(scan), "n_busts": len(series["busts"]),
+            "bust_turns": _bust_turn_indices(turns, series["busts"])}
+
+
+def _cents_summing_to(amounts, total):
+    want = round(total * 100)
+    raw = [a * 100 for a in amounts]
+    cents = [math.floor(r) for r in raw]
+    order = sorted(range(len(raw)), key=lambda j: cents[j] - raw[j])
+    for j in order[:max(0, want - sum(cents))]:
+        cents[j] += 1
+    return cents, want
+
+
+def _session_lines_html(sid, split, live_subs):
+    e = html.escape
+    subs = [ln for ln in split["lines"] if ln["key"] != "main"]
+    if not subs:
+        return ""
+    live = {sa.get("key"): sa for sa in live_subs or []}
+    main = next(ln for ln in split["lines"] if ln["key"] == "main")
+    specs = [("<b>main</b>", "", main["model"], main["requests"], main["est_usd"], "")]
+    for ln in subs:
+        aid = ln["agent_id"] or ""
+        lbl = ((live.get(ln["key"]) or {}).get("display_name")
+               or meta_mod._agent_id_label(aid) or ln["role"] or ln["key"])
+        specs.append((f'&#8627; <a href="/_session?session={e(sid)}&amp;sub='
+                      f'{e(ln["key"])}">{e(lbl)}</a>',
+                      f'#{e(aid[:8])}' if aid else "", ln["model"],
+                      ln["requests"], ln["est_usd"], "subrow"))
+    for kind in ("classifier", "keepwarm"):
+        b = split[kind]
+        if b["requests"]:
+            specs.append((f'<span class="dim">{kind}</span>', "", b["model"],
+                          b["requests"], b["est_usd"], kind))
+    cents, total_c = _cents_summing_to([sp[4] for sp in specs], split["est_usd"])
+    rows = [f'<tr class="{cls}"><td>{name}</td><td class="dim">{aid}</td>'
+            f'<td>{e(writer_mod._short_model(model))}</td><td>{req}</td>'
+            f'<td>${c // 100}.{c % 100:02d}</td></tr>'
+            for (name, aid, model, req, _, cls), c in zip(specs, cents)]
+    total = f'${total_c // 100}.{total_c % 100:02d}'
+    rows.append(f'<tr class="total"><td><b>total</b></td><td></td><td></td>'
+                f'<td><b>{split["requests"]}</b></td><td><b>{total}</b></td></tr>')
+    opened = " open" if len(subs) <= ADMIN_SUB_MAX_SHOWN else ""
+    return (f'<details class="lines"{opened}><summary>{len(subs)} subagent'
+            f'{"s" if len(subs) != 1 else ""} · {total} total '
+            f'<span class="dim">(from disk capture)</span></summary>'
+            '<table class="lines"><tr><th>line</th><th>agent</th><th>model</th>'
+            '<th>req</th><th>est</th></tr>' + "".join(rows) + '</table></details>')
 
 
 def _turn_clock(session_id, render_ts=None):
@@ -1602,7 +1669,7 @@ def _session_nav_html(sid, nav, bust_t):
 
 
 def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
-                         nav=None, bust_t=None):
+                         nav=None, bust_t=None, overview=None):
     e = html.escape
     s = (snap.get("sessions") or [{}])[0]
     nav_html = _session_nav_html(sid, nav, bust_t) if nav else ""
@@ -1652,9 +1719,19 @@ def _render_session_html(sid, entry, snap, resp=None, usage=None, subrole=None,
         # TOP-of-page entry into the turn navigator, so the forensic controls
         # aren't buried in the footer (you'd have to scroll the whole transcript
         # to find them). turn=-1 = latest turn WITH the arrow bar + bust jumps.
+        bustc = ""
+        if overview:
+            nb, bt = overview["n_busts"], overview["bust_turns"]
+            word = f'bust{"s" if nb != 1 else ""}'
+            bustc = (f' <span class="bustc"><a href="/_session?session={e(sid)}'
+                     f'&turn={bt[0]}"><b>{nb}</b> {word}</a></span>' if nb and bt
+                     else f' <span class="bustc dim"><b>{nb}</b> {word}</span>')
         head += ('<p class="naventry">'
                  f'<a href="/_session?session={e(sid)}&turn=-1">'
-                 '&#8635; step through turns &#183; jump to cache busts</a></p>')
+                 '&#8635; step through turns &#183; jump to cache busts</a>'
+                 f'{bustc}</p>')
+        if overview:
+            head += _session_lines_html(sid, overview["split"], s.get("sub_agents"))
     if usage:    # token receipts from the last response (in-memory; see
                  # meta._LAST_USAGE) — what actually got read vs (re)written
         rd = usage.get("cache_read_input_tokens") or 0

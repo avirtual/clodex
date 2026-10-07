@@ -964,9 +964,7 @@ async def handler(request: Request) -> Response:
                 # bust_series filters p["ok"] while _main_line_turns doesn't, so
                 # the two index spaces can diverge — map bust STEMS back to
                 # turn-navigator indices (the space &turn= addresses).
-                stem_to_i = {t["stem"]: j for j, t in enumerate(turns)}
-                bi = sorted(stem_to_i[t["stem"]] for t in series["busts"]
-                            if t["stem"] in stem_to_i)
+                bi = views_mod._bust_turn_indices(turns, series["busts"])
                 ci = nav["i"]
                 nav["prev_bust"] = max((j for j in bi if j < ci), default=None)
                 nav["next_bust"] = min((j for j in bi if j > ci), default=None)
@@ -1005,12 +1003,14 @@ async def handler(request: Request) -> Response:
         disk_resp = disk_usage = None
         if entry is None and recon is None:
             entry, disk_resp, disk_usage = views_mod._load_last_request_disk(sess)
+        overview = await run_in_threadpool(views_mod._session_overview, sess)
         return Response(views_mod._render_session_html(
                             sess, recon or entry,
                             status_mod._status_snapshot(session=sess),
                             resp=None if recon else (meta_mod._LAST_RESPONSE.get(sess)
                                                      or disk_resp),
-                            usage=meta_mod._LAST_USAGE.get(sess) or disk_usage),
+                            usage=meta_mod._LAST_USAGE.get(sess) or disk_usage,
+                            overview=overview),
                         media_type="text/html; charset=utf-8")
 
     # ---- warmth read endpoint (local consumers: statusline / hook / pinger) ---
@@ -1315,36 +1315,6 @@ async def handler(request: Request) -> Response:
                                              mode=mode)
             return Response(json.dumps(body, indent=2), status_code=code,
                             media_type="application/json")
-
-    # ---- THROWAWAY PROTOTYPE: POST /_deliver?session= — mid-flight DM inject ---
-    # Enqueue an opaque `text` for injection into the session's NEXT request
-    # (double-reaction test; scratch port only, gated by DELIVER_PROTOTYPE). This
-    # is the minimal enqueue half — NO ack/receipt/dedup/leak-guard yet (the real
-    # build, uncoded until the test clears). 400 only on malformed; outcome in the
-    # body (action-endpoint convention).
-    if request.method == "POST" and request.url.path.rstrip("/") == "/_deliver":
-        sess = request.query_params.get("session")
-        if not sess:
-            return Response(json.dumps({"ok": False, "reason": "missing ?session="}),
-                            status_code=400, media_type="application/json")
-        if not transforms_mod.DELIVER_PROTOTYPE:
-            return Response(json.dumps({"ok": False, "reason": "DELIVER_PROTOTYPE off"}),
-                            status_code=400, media_type="application/json")
-        try:
-            payload = json.loads(await request.body() or b"{}")
-        except ValueError:
-            return Response(json.dumps({"ok": False, "reason": "bad JSON body"}),
-                            status_code=400, media_type="application/json")
-        text = payload.get("text")
-        if not isinstance(text, str) or not text:
-            return Response(json.dumps({"ok": False, "reason": "missing/empty text"}),
-                            status_code=400, media_type="application/json")
-        depth = transforms_mod._deliver_enqueue(sess, text)
-        print(f"[deliver] session={sess[:12]}… queued (depth={depth}, {len(text)}ch)",
-              flush=True)
-        return Response(json.dumps({"ok": True, "queued": True, "session": sess,
-                                    "queue_depth": depth}),
-                        media_type="application/json")
 
     # ---- subscriber registry: app-agnostic push feed (see SUBSCRIBERS.md) -----
     # GET/POST/DELETE /_subscribe — consumers register an endpoint + agent globs
@@ -1780,17 +1750,6 @@ async def handler(request: Request) -> Response:
                     else:
                         print(f"[hints] #{n} {agent} DECLINED: "
                               f"{th.get('declined')}", flush=True)
-            # THROWAWAY PROTOTYPE (scratch port only, DELIVER_PROTOTYPE): inject
-            # any pending mid-flight DM as a trailing block — LAST in the chain so
-            # it's the final text the model reads. Inert unless the flag is set.
-            if upstream_path.split("?")[0].endswith("/v1/messages"):
-                dlv = transforms_mod._deliver_tail_inject(obj)
-                if dlv:
-                    record["deliver_inject"] = dlv
-                    changed = True
-                    print(f"[deliver] #{n} injected {dlv['items']} item(s) "
-                          f"({dlv['chars']}ch) into session={dlv['session'][:12]}…",
-                          flush=True)
             if changed:
                 raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
     except Exception as e:
@@ -1984,8 +1943,7 @@ async def handler(request: Request) -> Response:
         return StreamingResponse(iter([blob]), status_code=200,
                                  media_type="text/event-stream")
 
-    nudge = ("deliver_inject" not in record
-             and transforms_mod._nudge_swallow_decision(nudge_pre, session_id))
+    nudge = transforms_mod._nudge_swallow_decision(nudge_pre, session_id)
     if nudge:
         msg_id = f"msg_nudgeswallow_{n:06d}"
         blob = transforms_mod._synth_empty_end_turn_sse(model, msg_id)
