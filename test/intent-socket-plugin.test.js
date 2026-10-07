@@ -311,10 +311,10 @@ test('the plugin handle carries from: <seat>/agent for a subagent, the seat for 
 test('a Claude seat without the hook stamp: release and --confirm exit 3 and dispatch nothing, read goes through', async () => {
   await withSeat(async (h, cred) => {
     const rel = await viaVerb(h, cred, ['[agent:browser release one]']);
-    assert.deepStrictEqual(rel, { code: verb.EXIT.DENIED, out: '', err: "clodex: release is for the seat's main agent\n" });
+    assert.deepStrictEqual(rel, { code: verb.EXIT.DENIED, out: '', err: "clodex-send: release is for the seat's main agent\n" });
     const conf = await viaVerb(h, cred, ['[agent:browser click one 3 --confirm]']);
     assert.strictEqual(conf.code, verb.EXIT.DENIED);
-    assert.strictEqual(conf.err, 'clodex: a subagent cannot confirm a consequential action — ask the main agent\n');
+    assert.strictEqual(conf.err, 'clodex-send: a subagent cannot confirm a consequential action — ask the main agent\n');
     for (const env of [mainStamp('e'.repeat(64)), mainStamp(cred, 'sess-other'), { CLODEX_HOOK_IDENT: 'main.deadbeefdeadbeef' }]) {
       const r = await viaVerb(h, cred, ['[agent:browser release one]'], env);
       assert.strictEqual(r.code, verb.EXIT.DENIED, env.CLODEX_HOOK_IDENT);

@@ -542,6 +542,8 @@ test('the server requires nothing above cli/bin', () => {
 test('cli/package.json ships clodex-mcp as a bin', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'cli', 'package.json'), 'utf8'));
   assert.strictEqual(pkg.bin['clodex-mcp'], 'bin/clodex-mcp.js');
+  assert.strictEqual(pkg.bin['clodex-send'], 'bin/clodex.js');
+  assert.strictEqual(pkg.bin['clodex'], 'bin/clodex.js');
   assert.ok(fs.statSync(SERVER).mode & 0o111);
 });
 

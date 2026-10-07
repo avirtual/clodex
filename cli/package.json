@@ -7,6 +7,7 @@
   "type": "commonjs",
   "bin": {
     "clodexctl": "bin/clodexctl.js",
+    "clodex-send": "bin/clodex.js",
     "clodex": "bin/clodex.js",
     "clodex-mcp": "bin/clodex-mcp.js"
   },

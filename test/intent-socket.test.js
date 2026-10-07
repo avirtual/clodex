@@ -293,7 +293,7 @@ test('a subagent is refused a lead verb with exit 3, and the main agent is not',
     assert.strictEqual(granted.code, verb.EXIT.DENIED);
     const bad = await viaVerb(h, 'e'.repeat(64), ['[agent:who]']);
     assert.strictEqual(bad.code, verb.EXIT.DENIED);
-    assert.strictEqual(bad.err, 'clodex: unauthorized\n');
+    assert.strictEqual(bad.err, 'clodex-send: unauthorized\n');
   });
 });
 
@@ -618,6 +618,14 @@ test('stamp: clodex behind a reserved word or a prefix command is stamped; clode
     ['echo clodex', null],
     ['which clodex', null],
     ['grep clodex f', null],
+    ['clodex-send x', `${T} clodex-send x`],
+    ['/abs/clodex-send x', `${T} /abs/clodex-send x`],
+    ['~/.clodex/bin/clodex-send a; clodex b', `${T} ~/.clodex/bin/clodex-send a; ${T} clodex b`],
+    ['clodex-sendx x', null],
+    ['clodexx x', null],
+    ['node cli/bin/clodex.js x', null],
+    ['timeout 300 clodex-send x', `${T} timeout 300 clodex-send x`],
+    ['echo clodex-send', null],
   ]) {
     assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
   }

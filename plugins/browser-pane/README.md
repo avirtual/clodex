@@ -373,9 +373,9 @@ credential words and account numbers are best-effort. Forget login keeps the not
 
 The policy is `subagent.js`, declared to the host at `host.intents.register`. `refuse` is the ONE denial site for a subagent's browser call, whether it arrives as an intent or through the tool: a subagent may open a tab (`open x:riot <url>`) only on a profile the pane already has open — any seat's window counts, main agent or operator — and may close only a tab it opened (`close x:riot`, stamped with its `<seat>/agent` identity at open). Every subagent of a seat shares that one identity — the server cannot tell siblings apart — so the stamp keeps subagents off the main agent's tabs, not sibling subagents off each other's. `release`, bare `close`, `--confirm` on click/type/select/key, and `note --forget` stay with the main agent; every other verb in `SUBS` is allowed. The text rules live in `refuse`; the "profile has a window" precondition and the opener check need the pane's live state, so the scheduler (`submit`) enforces them — the same split as `readFirst`. `brief` is the sentence a subagent is told at start.
 
-The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}` render to the same line `clodex '[agent:browser …]'` would send. Its validation messages are the `invalid:` texts a caller sees; `release` and `close` render and are then refused by `refuse`. The intent registry only applies the generic rules: no policy means refused, a tool name belongs to one plugin, and a tool may emit only its own plugin's intent.
+The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}` render to the same line `clodex-send '[agent:browser …]'` would send. Its validation messages are the `invalid:` texts a caller sees; `release` and `close` render and are then refused by `refuse`. The intent registry only applies the generic rules: no policy means refused, a tool name belongs to one plugin, and a tool may emit only its own plugin's intent.
 
-`SUBS` and `CONFIRM_SUBS` in `subagent.js` are the single source for the tool's schema enum, the verbs `clodex --help` lists from the seat's catalog, and the refusals.
+`SUBS` and `CONFIRM_SUBS` in `subagent.js` are the single source for the tool's schema enum, the verbs `clodex-send --help` lists from the seat's catalog, and the refusals.
 
 ## Where data lives
 

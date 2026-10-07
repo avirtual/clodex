@@ -46,6 +46,6 @@ The SubagentStart brief comes from the seat's catalog file (`catalogPath`), not 
 
 The socket is chmod 0600 right after `listen`; the credential, not the mode, is the gate during that window.
 
-The seat's socket is bound after `pty.spawn`, so a `clodex` call in the first milliseconds of a seat answers exit 4. Keep the env minted before the spawn.
+The seat's socket is bound after `pty.spawn`, so a `clodex-send` call in the first milliseconds of a seat answers exit 4. Keep the env minted before the spawn.
 
-The materialized `~/.clodex/bin/clodex` runs on `#!/usr/bin/env node` (ambient node), like the exec defs; it does not bake `nodeInterp` the way cli-hooks.js's hook scripts do.
+The materialized `~/.clodex/bin/clodex-send` (and its alias `clodex`) runs on `#!/usr/bin/env node` (ambient node), like the exec defs; it does not bake `nodeInterp` the way cli-hooks.js's hook scripts do.
