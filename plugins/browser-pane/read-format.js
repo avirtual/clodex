@@ -579,7 +579,7 @@ function siteNote(url, opened) {
   return opened && host && host !== opened ? ` · site: ${host} (opened as ${opened})` : '';
 }
 
-const WARN_RE = /^\[(\d+)\] (\S+) ⚠(?: |$)(.*)$/;
+const WARN_RE = /^\[(\d+)\] (\S+(?: \S+)*?) ⚠(?: |$)(.*)$/;
 
 function countsOf(raw) {
   if (raw.restored != null) return { all: 'numbers restored' };
