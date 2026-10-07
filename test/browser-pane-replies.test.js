@@ -436,6 +436,7 @@ test('replies: inspect renders an empty label as (icon), like read; a waiting ho
   const r = { n: 3, tag: 'label', id: '', classes: [], kind: 'clickable', label: '', attrs: [], listeners: null, cursor: 'pointer', rect: {}, visible: true, ancestors: [], html: '' };
   assert.strictEqual(R.inspectReply('ebloc', r).split('\n')[0], '[agent:browser] inspect ebloc [3]: label · clickable (icon)');
   assert.strictEqual(R.inspectReply('ebloc', { ...r, tag: 'input', kind: 'input:text' }).split('\n')[0], '[agent:browser] inspect ebloc [3]: input · input:text ""');
+  assert.strictEqual(R.inspectReply('ebloc', { ...r, ancestors: ['a', 'span', '…', 'div.gl-drawer', 'div#app'] }).split('\n')[4], '  in: div#app > div.gl-drawer > … > span > a');
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility', true), 'agent hand-b is waiting on utility — wait or ask it to release');
   assert.strictEqual(R.TEXT.driving('hand-b', 'utility'), 'agent hand-b is driving utility — wait or ask it to release');
 });

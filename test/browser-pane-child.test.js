@@ -1064,17 +1064,29 @@ function lineOf(src, head) {
   return src.slice(i, src.indexOf('\n', i));
 }
 
-test('INSPECT: in: keeps the first parent and the informative ancestors up to the drawer', () => {
-  const ancestorsOf = new Function('up', 'short', `${lineOf(scripts.INSPECT(1), 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
-    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''));
+test('INSPECT: in: walks to body, keeps the root and elides the middle', () => {
+  const src = scripts.INSPECT(1);
+  assert.strictEqual(src.split('const drawerAt = (e) =>').length, 2);
+  const BODY = { tagName: 'BODY', id: '', className: '', getAttribute: () => null, matches: () => false, parentElement: null };
+  const ancestorsOf = new Function('up', 'short', 'document', 'DIALOG_SEL', 'drawerAt', `${lineOf(src, 'const rootAt = (p) =>')}\n${lineOf(src, 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
+    (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''),
+    { body: BODY }, '[role=dialog]', () => false);
   const chain = (specs) => specs.reduceRight((parent, s) => {
+    if (s === 'body') return BODY;
     const [, tag, id = '', cls = ''] = /^(\w+)(?:#([\w-]+))?(?:\.([\w-]+))?$/.exec(s);
-    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, parentElement: parent };
+    return { tagName: tag.toUpperCase(), id, className: cls, getAttribute: () => null, matches: () => false, parentElement: parent };
   }, null);
-  const leaf = { parentElement: chain(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body']) };
-  assert.deepStrictEqual(ancestorsOf(leaf), ['td', 'tr#r1', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
-  const many = { parentElement: chain(['span', ...Array.from({ length: 9 }, (_, i) => `div#a${i}`), 'body']) };
-  assert.deepStrictEqual(ancestorsOf(many), ['span', 'div#a0', 'div#a1', 'div#a2', 'div#a3', 'div#a8']);
+  const leaf = (specs) => ({ parentElement: chain(specs) });
+  assert.deepStrictEqual(ancestorsOf(leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body'])), ['td', 'tr#r1', '…', 'div.gl-drawer', 'div#app']);
+  const deep = ['a', 'span', ...Array.from({ length: 14 }, (_, i) => `div#d${i}`), 'div.gl-drawer', 'div#app', 'body'];
+  assert.deepStrictEqual(ancestorsOf(leaf(deep)), ['a', 'span', '…', 'div.gl-drawer', 'div#app']);
+  assert.deepStrictEqual(ancestorsOf(leaf(['a', 'li', 'ul', 'div.information', 'div.platform', 'section.canvas', 'div.gl-drawer', 'div#app', 'body'])), ['a', 'li', '…', 'div.gl-drawer', 'div#app']);
+  assert.deepStrictEqual(ancestorsOf(leaf(['span', 'div#a0', 'body'])), ['span', 'div#a0']);
+  const dialog = leaf(['a', 'li', 'ul', 'div', 'section', 'div#dlg', 'div', 'div#app', 'body']);
+  let n = dialog.parentElement;
+  for (let k = 0; k < 5; k++) n = n.parentElement;
+  n.matches = (s) => s === '[role=dialog]';
+  assert.deepStrictEqual(ancestorsOf(dialog), ['a', 'li', '…', 'div#dlg', 'div', 'div#app']);
 });
 
 test('page scripts: wholeLabel drops an icon-only child from the label, keeps real extra words', () => {
