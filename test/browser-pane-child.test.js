@@ -78,7 +78,7 @@ test('page scripts: FIND_TEXT hits say whether this find assigned the number, an
   assert.match(src, /return \{ n, fresh: n != null && fresh\.includes\(n\), text: /);
   assert.match(src, /if \(!window\.__cxEls \|\| !window\.__cxKeys\) return \{ unstamped: true \};/);
   assert.match(src, /const nameOf = el => String\(el\.getAttribute\('aria-label'\) \|\| el\.getAttribute\('title'\) \|\| ''\)/);
-  assert.match(src, /return \{ count: pick\.length, byName, hits: /);
+  assert.match(src, /return \{ count: pick\.length, byName, clickOnly, hits: /);
   assert.ok(src.indexOf('textOf = flatOf') < src.indexOf('textOf = nameOf'));
 });
 
@@ -1737,7 +1737,7 @@ test('GONE: counts read numbers now detached or hidden and groups them by their 
   els[1].isConnected = false;
   els[2].style = { visibility: 'visible', display: 'none', opacity: '1' };
   const ctx = {
-    document: { querySelectorAll: () => [], documentElement: {}, body: null }, getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' },
+    document: { querySelectorAll: () => [], documentElement: { scrollWidth: 1200, scrollHeight: 800 }, body: null }, getComputedStyle: (e) => e.style || { visibility: 'visible', display: 'block', opacity: '1' },
     innerWidth: 1200, innerHeight: 800, scrollX: 0, scrollY: 0, location: { href: 'http://x/', origin: 'http://x' },
     __cxEls: Object.fromEntries(els.map((e, i) => [i + 1, new WeakRef(e)])), WeakRef, URL, Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
   };
