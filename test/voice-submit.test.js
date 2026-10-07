@@ -386,7 +386,7 @@ test('spaceTriggerAction: a space on an empty prompt of a voice-on seat starts o
   assert.strictEqual(spaceTriggerAction(), null);
 });
 
-test('ptyTypedSinceEnter: typed text sets it, Enter, Esc, Ctrl-C and Ctrl-U clear it, control keys and terminal replies leave it alone', () => {
+test('ptyTypedSinceEnter: typed text sets it, Enter, Esc and Ctrl-C clear it, control keys and terminal replies leave it alone', () => {
   const rows = [
     [false, 'a', true],
     [true, '\r', false],
@@ -406,7 +406,7 @@ test('ptyTypedSinceEnter: typed text sets it, Enter, Esc, Ctrl-C and Ctrl-U clea
     [false, '\t', false],
     [true, '\x7f', true],
     [false, '\x7f', false],
-    [true, '\x15', false],
+    [true, '\x15', true],
     [false, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', false],
     [true, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\', true],
     [false, '\x1bP>|xterm.js(5.5.0)\x1b\\', false],
