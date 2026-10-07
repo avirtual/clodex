@@ -266,8 +266,26 @@ const TERM_EXEC_TOOL = Object.freeze({
   },
 });
 
+const DM_TOOL = Object.freeze({
+  name: 'dm',
+  description: 'Send a direct message to another Clodex seat on this host as yourself. The recipient sees you as <seat>/<name> and can reply to that name. Local seats only, never urgent, at most 10 per minute; a refusal comes back as text and will not succeed on retry.',
+  inputSchema: { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false },
+  logKeys: ['to'],
+  subagentOk: true,
+  brief: 'To message another Clodex seat use the `dm` MCP tool (to, body); a reply reaches the seat that spawned you.',
+  toIntent(args) {
+    const a = args == null ? {} : args;
+    const extra = Object.keys(a).find((k) => k !== 'to' && k !== 'body');
+    if (extra) throw new Error(`unknown argument: ${extra} (use to, body)`);
+    if (typeof a.to !== 'string' || !/^[A-Za-z0-9@._/-]{1,200}$/.test(a.to)) throw new Error('to must be a seat name');
+    if (typeof a.body !== 'string' || !a.body.trim()) throw new Error('body must be a non-empty string');
+    if (a.body.split(/\r?\n|\r/).some((l) => l.trim().startsWith('[agent:'))) throw new Error('body must not contain an [agent:…] line');
+    return `[agent:dm ${a.to}] ${a.body.trim()}\n[agent:end]`;
+  },
+});
+
 const CORE_ROWS = [
-  { type: 'dm', parse: parseDm, bodyMode: GREEDY },
+  { type: 'dm', parse: parseDm, bodyMode: GREEDY, tools: [DM_TOOL] },
   { type: 'sub', parse: parseSub, bodyMode: GREEDY },
   { type: 'resend', parse: parseResend, bodyMode: NONE },
   { type: 'who', parse: parseWho, bodyMode: NONE },
@@ -560,7 +578,7 @@ function subagentCatalogFor(entry) {
   const plugin = pluginRows.filter((r) => r.tools.length && r.subagent && intentEnabledForSeat(r.type, entry));
   return {
     tools: [...core, ...plugin].flatMap((r) => r.tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema, logKeys: t.logKeys || [] }))),
-    briefs: plugin.map((r) => r.subagent.brief),
+    briefs: [...core.flatMap((r) => r.tools.map((t) => t.brief).filter(Boolean)), ...plugin.map((r) => r.subagent.brief)],
   };
 }
 
@@ -684,6 +702,7 @@ module.exports = {
   toolRowFor,
   toolIntentFor,
   TERM_EXEC_TOOL,
+  DM_TOOL,
   subagentCatalogFor,
   pruneForPlugins,
   withoutPrivilegedIntentsFor,

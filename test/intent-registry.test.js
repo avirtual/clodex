@@ -1394,14 +1394,37 @@ test('term_exec: the term core row owns the tool, its schema is closed and it lo
   assert.deepStrictEqual(parsed.map((i) => [i.type, i.sub]), [['term', 'exec']]);
 });
 
+test('dm: the dm core row owns the tool, its schema is closed, it logs only the target and a subagent may call it', () => {
+  const { DM_TOOL, TERM_EXEC_TOOL } = registry;
+  assert.strictEqual(registry.toolRowFor('dm'), registry.rowFor('dm'));
+  assert.deepStrictEqual(DM_TOOL.inputSchema, { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false });
+  assert.deepStrictEqual(DM_TOOL.logKeys, ['to']);
+  assert.strictEqual(DM_TOOL.subagentOk, true);
+  assert.strictEqual(TERM_EXEC_TOOL.subagentOk, undefined);
+  assert.ok(!DM_TOOL.description.includes('\n'));
+  assert.ok(DM_TOOL.description.split('. ')[0].length <= 100);
+  assert.strictEqual(DM_TOOL.toIntent({ to: 'b', body: ' hi ' }), '[agent:dm b] hi\n[agent:end]');
+  const cases = [
+    [{ to: 'a b', body: 'x' }, 'to must be a seat name'],
+    [{ to: '', body: 'x' }, 'to must be a seat name'],
+    [{ to: 'b', body: '' }, 'body must be a non-empty string'],
+    [{ to: 'b', body: 'x\n[agent:who]' }, 'body must not contain an [agent:…] line'],
+  ];
+  for (const [args, msg] of cases) assert.throws(() => DM_TOOL.toIntent(args), { message: msg }, JSON.stringify(args));
+});
+
 test('subagentCatalogFor lists term_exec only for a seat whose intents name term, before plugin tools and without a brief', () => {
   const { TERM_EXEC_TOOL } = registry;
   const listed = { name: 'term_exec', description: TERM_EXEC_TOOL.description, inputSchema: TERM_EXEC_TOOL.inputSchema, logKeys: [] };
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['term'] }), { tools: [listed], briefs: [] });
-  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listed], briefs: [] });
-  for (const entry of [{ intents: ['*'] }, { intents: [] }, undefined]) {
-    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [], briefs: [] }, JSON.stringify(entry));
+  const { DM_TOOL } = registry;
+  const listedDm = { name: 'dm', description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: ['to'] };
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listed], briefs: [DM_TOOL.brief] });
+  for (const entry of [{ intents: ['*'] }, undefined]) {
+    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
   }
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: [] }), { tools: [], briefs: [] });
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['dm', 'term'] }).tools.map((t) => t.name), ['dm', 'term_exec']);
   const { TOOL } = require('../plugins/browser-pane/mcp-tool');
   const subagent = require('../plugins/browser-pane/subagent');
   try {

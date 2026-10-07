@@ -971,11 +971,13 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     matcher: '',
     hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript') }],
   }], 'the matcher-less entry carries the poll guard alone');
-  assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec'), [{
-    matcher: 'mcp__clodex__term_exec',
+  assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec|mcp__clodex__dm'), [{
+    matcher: 'mcp__clodex__term_exec|mcp__clodex__dm',
     hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }],
   }]);
-  assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec', '']);
+  assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec|mcp__clodex__dm', '']);
+  const registry = require('../intent-registry');
+  assert.deepStrictEqual(settings.hooks.PreToolUse[1].matcher.split('|').sort(), registry.CORE_ROWS.flatMap((r) => r.tools || []).map((t) => 'mcp__clodex__' + t.name).sort());
 });
 
 // ─── The whole-tree `git add` guard ───────────────────────────
@@ -1620,7 +1622,7 @@ test('ident hook: the interpreter line hands the seat catalog path to the hook',
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {
   const REGISTRY_DIR = identSeat();
   const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
-  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*) ;; *) exit 0;; esac`);
+  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*|*mcp__clodex__dm*) ;; *) exit 0;; esac`);
   const interp = src.indexOf('ELECTRON_RUN_AS_NODE=1');
   assert.ok(gate > 0 && interp > gate, src);
   assert.match(src, /printf '%s' "\$IN" \| ELECTRON_RUN_AS_NODE=1 /);
@@ -1849,6 +1851,14 @@ test('ident hook: a subagent term_exec call is stamped sub, and a caller-supplie
   assert.ok(updatedInput.ident.startsWith('sub.'), updatedInput.ident);
   assert.strictEqual(updatedInput.command, 'ls');
   assert.deepStrictEqual(Object.keys(updatedInput), ['command', 'ident']);
+});
+
+test('ident hook: a subagent dm tool call is stamped sub.', () => {
+  const REGISTRY_DIR = identSeat();
+  const call = mcpCall({ to: 'b', body: 'hi' }, { tool_name: 'mcp__clodex__dm', agent_id: 'ageneral-purpose-0123456789abcdef', agent_type: 'general-purpose' });
+  const { updatedInput } = JSON.parse(runIdent(REGISTRY_DIR, call)).hookSpecificOutput;
+  assert.match(updatedInput.ident, /^sub\./);
+  assert.deepStrictEqual(Object.keys(updatedInput), ['to', 'body', 'ident']);
 });
 
 test('ident hook: two term_exec calls carry different nonces; a Bash echo naming the tool is not stamped', () => {

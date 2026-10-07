@@ -15,6 +15,7 @@ const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
   createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
+  callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag,
 } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -280,6 +281,29 @@ test('an async verb says where its answer arrives for the main agent; a subagent
     assert.strictEqual(h.delivered[0].tag, 'a', 'the main agent still sends as the seat');
     assert.deepStrictEqual(h.injected, []);
   });
+});
+
+test('a verified subagent stamp on the socket verb is still refused dm', async () => {
+  await withSeat(async (h, cred) => {
+    const stamp = identToken(crypto, cred, 'ageneral-purpose-0123456789abcdef', 'general-purpose', 'sess-a');
+    const r = await viaVerb(h, cred, ['[agent:dm b] hi'], { CLODEX_HOOK_IDENT: stamp });
+    assert.strictEqual(r.code, verb.EXIT.DENIED);
+    assert.strictEqual(r.err, "clodex-send: not available to a subagent: dm — return and let the seat's main agent do it\n");
+    assert.deepStrictEqual(h.delivered, []);
+  });
+});
+
+test('seatOfAgentTag folds a local <seat>/<x> to the seat and leaves the rest', () => {
+  const rows = [
+    ['h1/agent', 'h1'],
+    ['h1/alice', 'h1'],
+    ['h1/agent-89abcdef', 'h1'],
+    ['h1', 'h1'],
+    ['a@box', 'a@box'],
+    ['h1/alice@box', 'h1/alice@box'],
+    ['/x', '/x'],
+  ];
+  for (const [name, want] of rows) assert.strictEqual(seatOfAgentTag(name), want, name);
 });
 
 test('a subagent is refused a lead verb with exit 3, and the main agent is not', async () => {
@@ -730,17 +754,16 @@ test('t1703 a term client gone after its result was accepted: the reply is built
   } finally { srv.stop(); }
 });
 
-const { callerIdentity, callerIsSubagent, subagentLabel } = require('../intent-socket');
 const SUB_ID = 'ageneral-purpose-0123456789abcdef';
 const SUB_TYPE = 'general-purpose';
 
-function subHarness({ sessionId = 'sess-1', labelFor = () => 'alice' } = {}) {
+function subHarness({ sessionId = 'sess-1', nameFor = () => 'alice' } = {}) {
   const warns = [];
   const seen = [];
   const handle = createIntentRequestHandler({
     seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => sessionId, allows: (i) => i.type !== 'shout', cred: CRED,
     dispatch: async (intent, opts) => { seen.push(opts); },
-    log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen: new Map(), now: () => 1000, labelFor,
+    log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen: new Map(), now: () => 1000, nameFor,
   });
   const call = (intent, ident) => handle({ intent, ident }, { closed: () => false });
   return { call, seen, warns };
@@ -754,10 +777,9 @@ test('sub stamp: a verified stamp dispatches fromIdent beside the unchanged from
   const r = await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(h.seen.length, 1);
-  const { replyTo, ...rest } = h.seen[0];
+  const { replyTo } = h.seen[0];
   assert.strictEqual(typeof replyTo, 'function');
   assert.deepStrictEqual(h.seen[0], { replyTo, fromLabel: 'h1/agent', fromIdent: { agentId: SUB_ID, agentType: SUB_TYPE, label: 'h1/alice' } });
-  assert.deepStrictEqual(Object.keys(rest), ['fromLabel', 'fromIdent']);
   assert.deepStrictEqual(await h.call('[agent:shout] x', identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1')), SHOUT_REFUSED, 'a verified sub is still a subagent');
 });
 
@@ -812,7 +834,7 @@ test('callerIsSubagent: the same booleans for every caller of the main-stamp tab
 });
 
 test('sub stamp: with no name the label falls back to agent-<id8>, never the shared tag', async () => {
-  const h = subHarness({ labelFor: () => null });
+  const h = subHarness({ nameFor: () => null });
   await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
   assert.strictEqual(h.seen[0].fromIdent.label, 'h1/agent-89abcdef');
   assert.notStrictEqual(subagentLabel('h1', SUB_ID, null), 'h1/agent');

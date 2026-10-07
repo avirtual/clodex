@@ -33,4 +33,4 @@ plugin the seat unticked is still dropped.
 
 ## subagentCatalogFor
 
-Lists core tool rows (`term_exec`, for a seat whose intents name `term`) ahead of plugin tools; briefs come from plugin rows only, since a SubagentStart brief for a main-only tool would spend tokens on every spawn. The name is kept because every caller and three tests pin it.
+Lists core tool rows (`dm` for a seat holding `dm`, `term_exec` for one whose intents name `term`) ahead of plugin tools; a core tool's brief rides only when the tool declares one (`dm` does, main-only `term_exec` does not), since a SubagentStart brief for a main-only tool would spend tokens on every spawn. The name is kept because every caller and three tests pin it.

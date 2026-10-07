@@ -589,3 +589,19 @@ test('the loop breaker ignores ident, and mcp.log never carries the stamp or the
     for (const ident of idents) assert.ok(!log.includes(ident));
   } finally { await seat.close(); }
 });
+
+test('the dm tool lists name/description/inputSchema only and mcp.log names the target, never the body or the stamp', async () => {
+  const { DM_TOOL } = require('../intent-registry');
+  const listed = { name: DM_TOOL.name, description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: DM_TOOL.logKeys };
+  const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: 'sent to bob' }), undefined, catalog('r1', [listed]));
+  try {
+    const s = server(seat);
+    assert.deepStrictEqual(await list(s), [{ name: 'dm', description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema }]);
+    const ident = 'sub.ageneral-purpose-0123456789abcdef.general-purpose.1111111111111111.aaaaaaaaaaaaaaaa';
+    await s.handle(call(1, { to: 'bob', body: 'SENTINELBODY', ident }, 'dm'));
+    const lines = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^\S+ dm bob ok \d+ms$/);
+    assert.ok(!lines[0].includes('SENTINELBODY') && !lines[0].includes('sub.'), lines[0]);
+  } finally { await seat.close(); }
+});

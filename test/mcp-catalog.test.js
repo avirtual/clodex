@@ -211,11 +211,13 @@ test('spawn: a seat granted browser writes the browser catalog from the create()
   assert.deepStrictEqual(catalogs, [{ name: 'cat1', catalog: JSON.parse(JSON.stringify(BROWSER_CATALOG())), changed: true }]);
 }));
 
-test('spawn: a seat with no intents list still writes, and writes the empty catalog', () => withBrowserVerb(async () => {
+test('spawn: a seat with no intents list still writes, and writes the default catalog', () => withBrowserVerb(async () => {
   const { m, catalogs, stop } = mkManager();
   await spawn(m, 'cat2', { intents: null, plugins: ['browser-pane'] });
   stop('cat2');
-  assert.deepStrictEqual(catalogs.map((c) => [c.name, c.catalog]), [['cat2', { tools: [], briefs: [] }]]);
+  const { DM_TOOL } = require('../intent-registry');
+  const dm = { name: DM_TOOL.name, description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: DM_TOOL.logKeys };
+  assert.deepStrictEqual(catalogs.map((c) => [c.name, c.catalog]), [['cat2', { tools: [dm], briefs: [DM_TOOL.brief] }]]);
 }));
 
 test('spawn: a seat whose args carry --mcp-config still writes its catalog', () => withBrowserVerb(async () => {

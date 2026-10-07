@@ -74,7 +74,11 @@ function nameOfSubagent(dir, id) {
   try { names = fs.readdirSync(path.join(dir, 'names')).sort(); } catch { return null; }
   for (const n of names) {
     if (!SUBQ_NAME_RE.test(n)) continue;
-    try { if (fs.readFileSync(path.join(dir, 'names', n), 'utf8').trim() === id) return n; } catch {}
+    try {
+      const p = path.join(dir, 'names', n);
+      if (!fs.lstatSync(p).isFile()) continue;
+      if (fs.readFileSync(p, 'utf8').trim() === id) return n;
+    } catch {}
   }
   return null;
 }

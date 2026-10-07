@@ -217,7 +217,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 
 ## 3. Local DM delivery
 
-The pipeline for a message addressed to a local agent, in order:
+A `<seat>/<x>` target folds to the seat (`seatOfAgentTag`): the reserved `agent`, or any subagent name until replies route into its note queue. The pipeline for a message addressed to a local agent, in order:
 
 **Gate** — `_gatedDeliver(target, senderTag, body, urgent)` (shared by local
 dm, the wire `/api/dm` entry, and claimed federated mail) consults
@@ -574,7 +574,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | UserPromptSubmit | `run/<name>/poll-guard.sh` | clears `run/<name>/poll-state` — a new turn resets the repeat counter, so an operator's own reply can never be what trips the PreToolUse deny |
 | PreToolUse (`matcher: Bash`) | `run/<name>/bash-live.sh` | an OBSERVER for the live console: records the call under `run/<name>/bash-live/`, then exits 0 having printed NOTHING. A PreToolUse that emits `updatedInput` or exits 2 alters or blocks the Bash call, so silence is the safety property, not a style choice. Bails on `[ -e .watching ]` BEFORE reading stdin: unlike `bash-console.sh` it spawns an interpreter, so it earns that cost only while a pane is reading — `bash-live.js` writes the sentinel as it reads and removes it when the SEAT is reaped, which is per-seat rather than per-watch precisely because a tab sits watchless between calls |
 | PreToolUse (`matcher: Bash`, after the observer) | `run/<name>/bash-guard.sh` | the one PreToolUse hook allowed to SPEAK: on a seat whose env carries `CLODEX_TICKET` (set only by `_spawnTicketSeat`, never by the reviewer path or by a template), a `git add` with `-A`/`--all`/`--no-ignore-removal`/`-u`/`--update`/`.`/`:/`/`*` or a `git commit` with `-a` returns `permissionDecision: deny` naming the ticket, and every other command passes. The command is tokenized with real quote handling and split on `;`, `&&`, `|` AND newlines, so `git status\ngit add -A` — the default shape a hand writes — is examined per command rather than collapsing into one whose subcommand is `status`; a backslash-newline stays a continuation. Registered AFTER `bash-live.sh` so a denied call is still in the live console that explains the deny. Gated on `[ -n "$CLODEX_TICKET" ]` before reading stdin, so a lead or a bash tab pays nothing and can never be denied; fail-OPEN on an unparseable payload, since a hook in front of every Bash call that denied on garbage would wedge the seat |
-| PreToolUse (`matcher: Bash`, after the guard), PreToolUse (`matcher: mcp__clodex__term_exec`), SubagentStart | `run/<name>/hook-ident.sh` | stamps `CLODEX_HOOK_IDENT=@<nonce>` onto every `clodex-send` (or `clodex`, the deprecated alias) segment, never inside a heredoc body; a looped segment is main only on its first run (the stamp itself in `run/<name>/ident/<nonce>`) through `updatedInput` (§7b); silent for any other command; on `mcp__clodex__term_exec`, the stamp goes straight into `updatedInput.ident`, with no `ident/` file. On SubagentStart, `additionalContext` = the subagent brief (`composeSubagentBrief`: the granted tools' briefs joined on one line, then a refusal tail), plus the `[parent <nonce>]` trust line (§7b) |
+| PreToolUse (`matcher: Bash`, after the guard), PreToolUse (`matcher: mcp__clodex__term_exec|mcp__clodex__dm`), SubagentStart | `run/<name>/hook-ident.sh` | stamps `CLODEX_HOOK_IDENT=@<nonce>` onto every `clodex-send` (or `clodex`, the deprecated alias) segment, never inside a heredoc body; a looped segment is main only on its first run (the stamp itself in `run/<name>/ident/<nonce>`) through `updatedInput` (§7b); silent for any other command; on `mcp__clodex__term_exec` or `mcp__clodex__dm`, the stamp goes straight into `updatedInput.ident`, with no `ident/` file. On SubagentStart, `additionalContext` = the subagent brief (`composeSubagentBrief`: the granted tools' briefs joined on one line, then a refusal tail), plus the `[parent <nonce>]` trust line (§7b) |
 | PreToolUse (`matcher: ''`, all tools, registered after the Bash block) | `run/<name>/poll-guard.sh` | counts CONSECUTIVE identical Bash commands in `poll-state` and returns `permissionDecision: deny` on the third, naming the ticket (or, on a seat without `CLODEX_TICKET`, the seat) and the first 60 chars of the command; any non-Bash tool resets the count, so it fires only on a genuine poll loop. Runs on every Claude seat, not only ticket hands, and exits silently on a payload carrying `agent_id` — a subagent's own calls are exempt |
 | PostToolUse (`matcher: ''`) | `run/<name>/pending.sh` | the same parked-DM drain at every main-agent tool boundary (a subagent's call, which carries `agent_id`, is skipped), and spools one `delivered.jsonl` line per handed-over entry (`{ts, ev, file, head}`), tailed by the seat's ctxWatcher into an `ipc-message` `kind:'delivered'` row |
 | PostToolUse (`matcher: ''`, after pending.sh), SubagentStop | `run/<name>/subq.sh` | in a subagent (`agent_id`): lists `run/<name>/subq/<agent_id>/` and rename-claims each listed note file into `subq/<agent_id>.draining.<pid>/` and returns them as one `additionalContext` note `[parent <nonce>] <body>` under the firing event's name. On the parent's `Agent` result: writes `subq/names/<name>` = the agent id. On the parent's `TaskStop`, and on SubagentStop: parks a still-queued note into `pending/<name>/` as `[agent:sub] undelivered to <id> (…)` and removes the nonce and name files. Each delivery, undelivered park and missing nonce appends one `subq/receipts.jsonl` line |
@@ -669,8 +669,10 @@ seats get a request/response channel whose reply is the caller's own tool result
   agent only when `ident` verifies as `main` for the seat's current `sessionId` and its nonce has
   not been seen (512 nonces, 10 min); anything else — no stamp, a forged, old-shape or replayed
   one, or no `sessionId` yet — is a subagent, and a replay logs a warn. A `sub.` stamp verifies the
-  same way (mac over `sub + agent_id + session_id + nonce`, same nonce set) and yields `{agentId, agentType}`
-  plus the label `<seat>/<name>` from `subq/names/`, else `<seat>/agent-<id8>`; a forged, replayed, re-keyed
+  same way (mac over `sub + agent_id + session_id + nonce`, same nonce set) and yields `{agentId, agentType}` —
+  only `agent_id` is under the mac, the type is asserted and nothing is granted on it —
+  plus the label `<seat>/<name>` from `subq/names/`, else `<seat>/agent-<id8>`; the name exists only after the
+  parent's Agent tool returns, so a foreground subagent labels as `<seat>/agent-<id8>`; a forged, replayed, re-keyed
   or other-session sub stamp yields no identity. The label travels as `fromIdent` beside `fromLabel`, which
   stays `<seat>/agent`, so plugins see no change. The stamp is single-use
   and file-backed: copying a `CLODEX_HOOK_IDENT` value from `time`, `set -x`, `ps` or any other
@@ -679,8 +681,8 @@ seats get a request/response channel whose reply is the caller's own tool result
   function) is main only on its first run: every later run finds the file consumed and drops to
   subagent with the "stamp missing" line. A stamped call first sweeps `ident/` files older than
   `IDENT_SEEN_MS` (10 min), which could never verify as fresh.
-  The same script is the PreToolUse hook for matcher `mcp__clodex__term_exec` (its fast path also
-  opens on that tool name): the stamp goes straight into `updatedInput.ident`, spread after the
+  The same script is the PreToolUse hook for matcher `mcp__clodex__term_exec|mcp__clodex__dm` (its fast path also
+  opens on those tool names): the stamp goes straight into `updatedInput.ident`, spread after the
   model's own input so a caller-supplied `ident` is overwritten, with no `ident/` file; `clodex-mcp`
   lifts it out of `args` into the payload's top-level `ident`.
 - **Identity (Codex):** the seat is Codex by `session.agentType` (a clone has no persistence
@@ -689,7 +691,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   with no `sessionId` yet, is a subagent. Codex identity is asserted by the caller's environment,
   not proven: there is no HMAC on the Codex path, so a subagent that learns the rollout uuid can
   pass as main; the Claude stamp (`hook-ident.sh`) is the proven one.
-- **Subagent filter:** a subagent call is refused unless the intent's plugin row declares a `subagent` policy that allows it (`subagentAllows`, intent-registry.js); the browser policy lives in plugins/browser-pane/subagent.js. Everything else answers `not available to a subagent: <verb> — return and let the seat's main agent do it`; a core tool call (`term_exec`) answers `unknown tool` instead (Wire above): a subagent has no inbox, so a dm from it could never receive a reply (Claude Code's SendMessage carries subagent↔parent traffic), and an exec result would arrive as input it never sees.
+- **Subagent filter:** a subagent call is refused unless the intent's plugin row declares a `subagent` policy that allows it (`subagentAllows`, intent-registry.js); the browser policy lives in plugins/browser-pane/subagent.js. Everything else answers `not available to a subagent: <verb> — return and let the seat's main agent do it`; a core tool call answers `unknown tool` unless the tool carries `subagentOk` and the stamp verified — today only `dm`: a verified subagent sends as `<seat>/<name>`, local seats only, never urgent, 10 per 60 s per agent; the tool is listed for the whole seat, and the main agent's call is a normal dm. The socket verb still refuses `dm` to a subagent.
 - **Verb:** `clodex-send '<intent>' [more words…]` (args joined with spaces into one line) or `clodex-send -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
   agent-id env var as of 2.1.289), and `CLODEX_HOOK_IDENT` as `ident` (an `@<nonce>` value resolved

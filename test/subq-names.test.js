@@ -50,3 +50,21 @@ test('subagentLabel: a name, else the last 8 of the hex tail, else the first 8 â
   assert.strictEqual(subagentLabel('h1', 'a606bb8c5bfa9764e', null), 'h1/agent-a606bb8c');
   for (const id of [ID, 'x', '']) assert.notStrictEqual(subagentLabel('h1', id, null), 'h1/agent');
 });
+
+test('nameOfSubagent: a FIFO planted in names/ is skipped unread and the valid name still resolves', () => {
+  const dir = seat();
+  const fifo = path.join(dir, 'names', 'aaa');
+  require('node:child_process').execFileSync('mkfifo', [fifo]);
+  fs.writeFileSync(path.join(dir, 'names', 'alice'), ID);
+  const real = fs.readFileSync;
+  const reads = [];
+  fs.readFileSync = (p, ...rest) => {
+    reads.push(String(p));
+    if (String(p) === fifo) throw new Error('read a FIFO');
+    return real.call(fs, p, ...rest);
+  };
+  try {
+    assert.strictEqual(nameOfSubagent(dir, ID), 'alice');
+  } finally { fs.readFileSync = real; }
+  assert.ok(!reads.includes(fifo), reads.join(','));
+});
