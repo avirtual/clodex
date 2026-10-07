@@ -24,6 +24,9 @@ blocks a release.
 ### Browser pane
 - A numbered act on a closed service is refused as "not open" rather than "read first"; a click whose target the page scrolled back out of view says so (`[31] "label" scrolled out of view on np — read again`) instead of calling it gone; and a ⚠ refusal on a nameless control names its kind (`[12] button looks consequential (trading)`) the way the read digest does.
 
+### Messaging and conversation mode
+- Conversation mode: a subagent report whose teammate id names no subagent this seat spawned earlier in its transcript is drawn with a warning badge, an `(unverified)` suffix and a tooltip saying so — a pasted `<teammate-message>` no longer passes as a real report.
+
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
 ### Browser pane
