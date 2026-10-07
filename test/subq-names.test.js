@@ -37,7 +37,7 @@ test('nameOfSubagent: no nonce, a retired id, or another id answers null', () =>
   const dir = seat();
   fs.writeFileSync(path.join(dir, 'names', 'alice'), ID);
   assert.strictEqual(nameOfSubagent(dir, 'aother-0123456789abcdef'), null);
-  subqHookOutput(JSON.stringify({ hook_event_name: 'SubagentStop', agent_id: ID }), { dir, pendingRoot: mkTmpRoot('subq-names-p-'), seat: 'h1' });
+  subqHookOutput(JSON.stringify({ hook_event_name: 'SubagentStop', agent_id: ID }), { dir, pendingRoot: path.join(path.dirname(dir), 'pending'), seat: 'h1' });
   assert.strictEqual(fs.existsSync(path.join(dir, 'names', 'alice')), false);
   assert.strictEqual(nameOfSubagent(dir, ID), null);
   fs.writeFileSync(path.join(dir, 'names', 'alice'), ID);
