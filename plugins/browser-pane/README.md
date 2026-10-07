@@ -231,7 +231,7 @@ opens a second window on profile `x`. Tabs of one profile share the login and co
 numbers store, site notes, the denylist and the downloads folder; each tab has its own window,
 lease, sign-in hold and your read state (`read x:riot` before acting on its numbers). `close x`
 closes every tab of `x`, `close x:riot` only that tab, and `services` lists the open tabs under
-their profile. Tabs are never saved: Settings shows profiles only.
+their profile. Tabs are not restored across restarts: Settings shows profiles only; a tab's last URL and title live under its profile's `tabs` entry and are never pruned.
 
 `scroll` moves the page by viewports (default `down`, `--pages=N` up to 20 for
 `up`/`down`) and replies with the position (`1868–2736 of 9500 px (20–29%)`, or

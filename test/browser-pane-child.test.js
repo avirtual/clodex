@@ -1068,7 +1068,7 @@ test('INSPECT: in: walks to body, keeps the root and elides the middle', () => {
   const src = scripts.INSPECT(1);
   assert.strictEqual(src.split('const drawerAt = (e) =>').length, 2);
   const BODY = { tagName: 'BODY', id: '', className: '', getAttribute: () => null, matches: () => false, parentElement: null };
-  const ancestorsOf = new Function('up', 'short', 'document', 'DIALOG_SEL', 'drawerAt', `${lineOf(src, 'const rootAt = (p) =>')}\n${lineOf(src, 'const ancestorsOf = (e) =>')}\nreturn ancestorsOf;`)(
+  const [ancestorsOf, nearOf] = new Function('up', 'short', 'document', 'DIALOG_SEL', 'drawerAt', `${lineOf(src, 'const rootAt = (p) =>')}\n${lineOf(src, 'const ancestorsOf = (e) =>')}\n${lineOf(src, 'const nearOf = (e) =>')}\nreturn [ancestorsOf, nearOf];`)(
     (e) => e.parentElement, (e) => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (e.className ? '.' + e.className.split(' ').slice(0, 2).join('.') : ''),
     { body: BODY }, '[role=dialog]', () => false);
   const chain = (specs) => specs.reduceRight((parent, s) => {
@@ -1078,6 +1078,12 @@ test('INSPECT: in: walks to body, keeps the root and elides the middle', () => {
   }, null);
   const leaf = (specs) => ({ parentElement: chain(specs) });
   assert.deepStrictEqual(ancestorsOf(leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body'])), ['td', 'tr#r1', '…', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app']);
+  const deepLeaf = leaf(['td', 'tr#r1', 'tbody', 'table', 'div.content', 'div.gl-drawer-body', 'div.gl-drawer', 'div#app', 'body']);
+  const near = nearOf(deepLeaf);
+  const anc = ancestorsOf(deepLeaf);
+  assert.deepStrictEqual(near, ['td', 'tr#r1', 'tbody', 'table']);
+  assert.strictEqual(near[2], 'tbody');
+  assert.strictEqual(anc[2], '…');
   const deep = ['a', 'span', ...Array.from({ length: 14 }, (_, i) => `div#d${i}`), 'div.gl-drawer', 'div#app', 'body'];
   assert.deepStrictEqual(ancestorsOf(leaf(deep)), ['a', 'span', '…', 'div.gl-drawer', 'div#app']);
   assert.deepStrictEqual(ancestorsOf(leaf(['a', 'li', 'ul', 'div.information', 'div.platform', 'section.canvas', 'div.gl-drawer', 'div#app', 'body'])), ['a', 'li', '…', 'div.gl-drawer', 'div#app']);
@@ -1768,10 +1774,25 @@ test('GONE: counts read numbers now detached or hidden and groups them by their 
   for (const e of inDrawer) e.isConnected = false;
   ctx.__cxEls[5] = new WeakRef(inDrawer[0]);
   ctx.__cxEls[6] = new WeakRef(inDrawer[1]);
-  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([5, 6]), ctx))), { total: 2, groups: [['drawer "Bump Go toolchain to the late…"', 2]], gone: [5, 6] });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([5, 6]), ctx))), { total: 2, groups: [['drawer "Bump Go toolchain to the lates…"', 2]], gone: [5, 6] });
+  const body = Object.assign(boxEl('body', '', box), { className: 'modal-open', querySelector: (s) => (s === 'h1,h2,h3' ? { innerText: 'Merge requests' } : null) });
+  ctx.document.body = body;
+  const hidden = boxEl('a', 'Filter', box, boxEl('div', '', box, body));
+  hidden.style = { visibility: 'visible', display: 'none', opacity: '1' };
+  ctx.__cxEls[7] = new WeakRef(hidden);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([7]), ctx))), { total: 1, groups: [['page', 1]], gone: [7] });
+  const quoted = Object.assign(boxEl('div', '', box), { isConnected: false, className: 'paneled-view', querySelector: (s) => (s === 'h1,h2,h3' ? { innerText: '"'.repeat(35) } : null) });
+  const qButton = Object.assign(boxEl('button', 'Go', box, quoted), { isConnected: false });
+  ctx.__cxEls[8] = new WeakRef(qButton);
+  const qGroups = JSON.parse(JSON.stringify(vm.runInContext(scripts.GONE([8]), ctx))).groups;
+  assert.deepStrictEqual(qGroups, [['drawer "' + '\\"'.repeat(15) + '…"', 1]]);
+  assert.strictEqual(qGroups[0][0].length, 40);
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('if (g && g.total) done.removed = g;'));
-  assert.ok(child.includes('.filter((n) => !svc.num.lastRead.gone.includes(n))'));
+  assert.ok(child.includes('.filter((n) => !g0.has(n))'));
+  assert.ok(child.includes('const g0 = new Set(svc.num.lastRead.gone);'));
+  assert.ok(child.includes("listeners.ancestor = (r.nearAncestors || [])[listeners.ancestorAt - 1] || '?'"));
+  assert.ok(!child.includes('r.ancestors[listeners.ancestorAt - 1]'));
   assert.ok(child.includes('svc.num.lastRead.gone.push(...g.gone)'));
 });
 
