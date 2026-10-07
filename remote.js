@@ -7,7 +7,7 @@ const path = require('path');
 
 const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender } = require('./relay-protocol');
-const { makeTokenGate } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
@@ -24,15 +24,6 @@ function parseJsonObject(body) {
 
 function decodeSeg(s) {
   try { return decodeURIComponent(s); } catch { return null; }
-}
-
-// A bind host counts as loopback when nothing off-box can reach it — the case
-// where "trust is the tunnel" still holds and no token is required. 0.0.0.0 / ::
-// (the container's CLODEX_REMOTE_HOST) and any specific LAN address are NOT
-// loopback, so they trip the fail-closed rule when no token is configured.
-function isLoopbackHost(h) {
-  const host = String(h || '').toLowerCase();
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
 }
 
 const REMOTE_BASE_PATH_ENV = 'CLODEX_REMOTE_BASE_PATH';

@@ -232,11 +232,12 @@ if (Number.isInteger(webPort) && webPort > 0) {
       engine, log, port: webPort,
       // CLODEX_WEB_HOST pins the bind interface (a deploy sets 127.0.0.1 so the
       // node's web GUI is loopback-only = tunnel-only). Unset OR empty/blank →
-      // all-interfaces (the docker web path's port-map relies on it) — trim so
-      // a hand-edited `CLODEX_WEB_HOST=` drop-in reads as the documented unset
-      // case rather than an accidental widen hidden behind a falsy check.
+      // all-interfaces (the docker web path's port-map relies on it); trimmed so
+      // a hand-edited `CLODEX_WEB_HOST=` reads as unset. A non-loopback bind with no
+      // CLODEX_WEB_TOKEN refuses to serve (503) unless CLODEX_WEB_INSECURE=1.
       host: (process.env.CLODEX_WEB_HOST || '').trim() || null,
       token: process.env.CLODEX_WEB_TOKEN || null,
+      insecure: process.env.CLODEX_WEB_INSECURE === '1',
       userDataPath,
     });
   } catch (e) { log.error('app', `web host failed to start: ${e && e.message}`); }

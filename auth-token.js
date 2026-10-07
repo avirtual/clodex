@@ -53,4 +53,9 @@ function makeTokenGate(token) {
   return { check, fromReq, configured };
 }
 
-module.exports = { makeTokenGate };
+function isLoopbackHost(h) {
+  const host = String(h || '').toLowerCase();
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
+}
+
+module.exports = { makeTokenGate, isLoopbackHost };

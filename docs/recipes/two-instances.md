@@ -18,7 +18,8 @@ edit, no build flag.
 | `CLODEX_LABEL` | the origin this instance announces to the peers it **dials** — the address their agents reach ours at, and the hello `host` field they display. Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
 | `CLODEX_WEB_PORT` | the browser frontend's port (headless only) | unset — no web host is started |
 | `CLODEX_WEB_HOST` | the interface the web host binds | unset — all interfaces |
-| `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust |
+| `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust on a loopback bind; a non-loopback bind refuses to serve (503) |
+| `CLODEX_WEB_INSECURE` | `1` serves a non-loopback bind with no `CLODEX_WEB_TOKEN` anyway, for a container whose port map is the boundary | unset — fail closed |
 | `CLODEX_WORKSPACES` | comma-separated workspace ids to restore at boot | the single default workspace |
 | `CLODEX_REMOTE_ENABLE` | `1` brings the peer wire up with no settings write (the headless-container door) | unset — the wire follows the persisted `remoteEnabled` setting |
 | `CLODEX_REMOTE_HOST` | the interface the peer wire binds | `127.0.0.1` |

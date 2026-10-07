@@ -37,6 +37,8 @@ services:
       # Empty = localhost trust. Set a strong secret before widening the publish;
       # the browser then needs ?token=<secret> on the page URL.
       CLODEX_WEB_TOKEN: "${CLODEX_WEB_TOKEN:-}"
+      # The loopback-only port map above is the boundary; exposing on the LAN means setting the token (then this override is moot).
+      CLODEX_WEB_INSECURE: "${CLODEX_WEB_INSECURE:-1}"
       # Comma-separated workspace ids to restore (single-workspace by convention).
       # NOTE: browser-created workspaces are NOT auto-added here, so they don't
       # survive a container relaunch unless you extend this list (see README).

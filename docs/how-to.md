@@ -95,7 +95,7 @@ export CLODEX_HOME=~/clodex-a          # registry root (default ~/.clodex)
 export CLODEX_DATA_DIR=~/clodex-a/data # persistence dir (sessions.json + stores)
 export CLODEX_LABEL=box-a              # the name peers see
 export CLODEX_WEB_PORT=8080            # unset ⇒ no browser GUI at all
-export CLODEX_WEB_HOST=127.0.0.1       # unset ⇒ all interfaces
+export CLODEX_WEB_HOST=127.0.0.1       # unset ⇒ all interfaces; without CLODEX_WEB_TOKEN the host refuses to serve unless CLODEX_WEB_INSECURE=1
 export CLODEX_REMOTE_ENABLE=1          # bring the peer wire up
 export CLODEX_REMOTE_PORT=7900         # wire port (default 7900)
 export CLODEX_REMOTE_TOKEN=$(openssl rand -hex 16)
