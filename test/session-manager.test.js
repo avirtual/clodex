@@ -949,6 +949,25 @@ test('gate: a disabled intent bounces loudly naming the gate, and does NOT run',
   assert.strictEqual(injected[0], '[agent:who] the who intent is disabled for this session');
 });
 
+test('gate: a sub denied by an explicit list names the list and the fix', async () => {
+  const { m, injected } = mkGate(['dm']);
+  await m._handleIntent('a', { type: 'sub', target: 'x' });
+  assert.deepStrictEqual(injected, ["[agent:sub] the sub intent is disabled for this session — this seat's explicit intents list omits it; enable it in Edit Session › Intents"]);
+});
+
+test('gate: a living list that denies only a privileged verb carries no explicit-list suffix', async () => {
+  const { m, injected } = mkGate(['*']);
+  await m._handleIntent('a', { type: 'term' });
+  assert.deepStrictEqual(injected, ['[agent:term] the term intent is disabled for this session']);
+});
+
+test('gate: a living list admits sub', async () => {
+  const { m, injected } = mkGate(['*', 'term']);
+  await m._handleIntent('a', { type: 'sub', target: 'x', body: 'hi' });
+  assert.ok(!injected.some((t) => t.includes('disabled')), JSON.stringify(injected));
+  assert.match(injected[0], /^\[agent:sub\] NOT delivered/);
+});
+
 test('gate: an empty array gates everything', async () => {
   const { m, injected } = mkGate([]);
   await m._handleIntent('a', { type: 'who' });

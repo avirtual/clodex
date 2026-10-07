@@ -389,3 +389,20 @@ test('clear continuation: a MULTI-LINE body is captured greedily by the real sca
     assert.ok(rest.every((i) => i.type !== 'context'), 'the [agent:end] closes the body');
   } finally { h.stop('a'); }
 });
+
+test('t1683 a warm session-id edge wipes subq/, the first id does not', async () => {
+  const h = mkManager();
+  try {
+    const { w } = await spawned(h);
+    const dir = path.join(path.dirname(pathFor(h.root, 'a', 'intentSocket')), 'subq');
+    fs.mkdirSync(path.join(dir, 'names'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'x.nonce'), 'n');
+    fs.writeFileSync(path.join(dir, 'names', 'y'), 'x');
+    w.onSessionId('conv-1');
+    await tick();
+    assert.ok(fs.existsSync(path.join(dir, 'x.nonce')), 'the first id is an adoption, not a clear');
+    w.onSessionId('conv-2');
+    await tick();
+    assert.strictEqual(fs.existsSync(dir), false);
+  } finally { h.stop('a'); }
+});
