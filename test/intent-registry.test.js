@@ -1217,6 +1217,8 @@ test('P2 — allowlistFromChecked matches intent-catalog exactly when no plugin 
     ['dm', 'who'],
     GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type),
     GATEABLE_INTENTS.map((i) => i.type),
+    [...GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type), 'term'],
+    ['*', 'term'],
   ];
   for (const c of cases) {
     assert.deepStrictEqual(registry.allowlistFromChecked(c), intentsAllowlistFromChecked(c), JSON.stringify(c));
@@ -1239,8 +1241,10 @@ test('P2 — a checked plugin verb forces an explicit array, never the null coll
     const got = registry.allowlistFromChecked([...allCore, 'branch']);
     assert.ok(Array.isArray(got));
     assert.ok(got.includes('branch'));
-    assert.deepStrictEqual(got.slice(0, -1), allCore, 'core half stays in catalog order');
+    assert.deepStrictEqual(got, ['*', 'branch']);
     assert.strictEqual(registry.intentEnabledFor('branch', got), true);
+    assert.strictEqual(registry.intentEnabledFor('sub', got), true);
+    assert.strictEqual(registry.intentEnabledFor('branch', ['*']), false);
     // A subset + the plugin verb keeps both halves.
     const sub = registry.allowlistFromChecked(['dm', 'branch']);
     assert.deepStrictEqual(sub, ['dm', 'branch']);

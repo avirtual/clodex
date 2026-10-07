@@ -1578,6 +1578,29 @@ test('t8 F1: an agent [agent:spawn] template carrying a PLUGIN verb has it strip
   });
 });
 
+test('t1680: an agent spawn template carrying [*, term] creates with [*]', async () => {
+  let createdIntents = 'UNSET';
+  const m = mk({
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'child' ? null : { extraArgs: [] }) }),
+    getTemplates: () => ({ list: () => [{ name: 'living', type: 'claude', cwd: '/tmp/spawn-x', intents: ['*', 'term'] }] }),
+    ensureDir: () => {},
+    os: require('node:os'),
+    path: require('node:path'),
+    log: { info: () => {}, error: () => {} },
+  });
+  m._injectText = () => {};
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  m.create = async (...args) => { createdIntents = args[17]; return { name: args[0], type: args[1] }; };
+  const spawner = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
+  m.sessions.set('a', spawner);
+  m._handleSpawnIntent(spawner, { name: 'child', cwd: '/tmp/spawn-x', template: 'living' });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(createdIntents, ['*']);
+});
+
 // ── Task 28: the one-shot post-reboot notice ────────────────────────────────
 // [agent:reboot] arms uiSettings.pendingRebootNotice just before relaunch; on the
 // next launch, engine.restoreSessionsForWorkspace calls maybeDeliverRebootNotice()

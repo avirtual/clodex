@@ -41,6 +41,8 @@ test("the renderer's checked-state matches the engine's gate for every core row"
     ['dm', 'notify-user'],
     GATEABLE_INTENTS.map((i) => i.type),
     GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type),
+    ['*'],
+    ['*', 'term'],
   ];
   // CORE rows only, and the filter is load-bearing rather than defensive: for a
   // PLUGIN row these two deliberately DISAGREE, which is the point of the very
@@ -63,6 +65,10 @@ test("the renderer's checked-state matches the engine's gate for every core row"
       );
     }
   }
+  for (const row of coreRows) {
+    const want = !PRIVILEGED_INTENTS.has(row.type) || row.type === 'term';
+    assert.strictEqual(intentRowChecked(row, ['*', 'term']), want, `row ${row.type} under ['*','term']`);
+  }
 });
 
 test('a PLUGIN row is unchecked under an absent list — where intent-catalog would say true', () => {
@@ -75,6 +81,7 @@ test('a PLUGIN row is unchecked under an absent list — where intent-catalog wo
   assert.strictEqual(intentRowChecked(row, []), false);
   assert.strictEqual(intentRowChecked(row, ['dm']), false);
   assert.strictEqual(intentRowChecked(row, ['branch']), true);
+  assert.strictEqual(intentRowChecked(row, ['*']), false);
   assert.strictEqual(intentEnabled('branch', null), true, 'the leaf really would say true — this is the trap');
 });
 

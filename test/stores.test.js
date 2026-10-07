@@ -863,6 +863,24 @@ test('persistence: ephemeral + reviewFor survive upsert spread-merge (Task 24)',
   } finally { cleanup(); }
 });
 
+test('persistence: a pre-sub all-ordinary-plus-grant allowlist is rewritten to * once at load', () => {
+  const { userData, registryDir, stores, cleanup } = freshStores();
+  try {
+    const preSub = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+    const partial = [...preSub.filter((t) => t !== 'exec'), 'term'];
+    stores.persistence.upsert({ name: 'lead', workspaceId: 'default', intents: [...preSub, 'term'] });
+    stores.persistence.upsert({ name: 'hand', workspaceId: 'default', intents: partial });
+    const again = initStores(userData, { log: console, registryDir,
+      resourcesDir: path.join(registryDir, '__no_seed__'),
+      skillsResourcesDir: path.join(registryDir, '__no_seed_skills__'),
+      envDefaultsFile: path.join(registryDir, '__no_env_defaults__.json') });
+    assert.deepStrictEqual(again.persistence.get('lead').intents, ['*', 'term']);
+    assert.deepStrictEqual(again.persistence.get('hand').intents, partial);
+    const disk = JSON.parse(fs.readFileSync(path.join(userData, 'sessions.json'), 'utf8'));
+    assert.deepStrictEqual(disk.find((e) => e.name === 'lead').intents, ['*', 'term']);
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {
