@@ -892,6 +892,17 @@ test('persistence: a pre-sub all-ordinary-plus-grant allowlist is rewritten to *
   }
 });
 
+test('persistence: a fresh userData stamps the living marker, so a post-sub save is never rewritten', () => {
+  const { userData, stores, cleanup } = freshStores();
+  try {
+    const preSub = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout'];
+    stores.persistence.list();
+    stores.persistence.upsert({ name: 'ops', workspaceId: 'default', intents: [...preSub, 'term'] });
+    assert.deepStrictEqual(stores.persistence.get('ops').intents, [...preSub, 'term']);
+    assert.ok(fs.existsSync(path.join(userData, 'intents-living-migrated')));
+  } finally { cleanup(); }
+});
+
 test('persistence: setIntents persists an array, removes the key on null', () => {
   const { stores, cleanup } = freshStores();
   try {

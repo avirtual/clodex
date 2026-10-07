@@ -447,7 +447,6 @@ function initStores(userDataPath, {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
   const LIVING_MIGRATED_FILE = path.join(userDataPath, 'intents-living-migrated');
-  let livingMigrated = false;
   const TEMPLATES_FILE = path.join(userDataPath, 'templates.json'); // legacy — migration only
   const TEMPLATES_DIR = path.join(registryDir, 'library', 'templates');
   const WORKSPACES_FILE = path.join(userDataPath, 'workspaces.json');
@@ -504,6 +503,11 @@ function initStores(userDataPath, {
     throw new Error(`${path.basename(file)} could not be read; refusing to save over it`);
   }
 
+  let livingMigrated = false;
+  function markLivingMigrated() {
+    try { atomicWriteFileSync(LIVING_MIGRATED_FILE, ''); livingMigrated = true; } catch {}
+  }
+
   const persistence = {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
@@ -513,25 +517,27 @@ function initStores(userDataPath, {
       if (bak && bak.state === 'unreadable') this._unreadable = true;
       if (!this._unreadable) persistRefusedLogged = false;
       if (bak) {
-        if (bak.state !== 'ok') return [];
+        if (bak.state !== 'ok') {
+          if (!this._unreadable) markLivingMigrated();
+          return [];
+        }
         all = bak.value;
         console.error('sessions.json unreadable; recovered from .bak');
       }
       if (!Array.isArray(all)) return [];
       let changed = false;
       const touched = [];
+      let rewrote = false;
       if (!livingMigrated && fs.existsSync(LIVING_MIGRATED_FILE)) livingMigrated = true;
       const migrate = !this._unreadable && !livingMigrated;
       for (const e of all) {
         if (!e.workspaceId) { e.workspaceId = DEFAULT_WORKSPACE_ID; changed = true; }
         const m = migrate ? migrateLivingAllowlist(e.intents) : e.intents;
-        if (m !== e.intents) { e.intents = m; changed = true; if (e.name) touched.push(e); }
+        if (m !== e.intents) { e.intents = m; changed = rewrote = true; if (e.name) touched.push(e); }
       }
       const saved = changed && !this._unreadable && this._save(all);
       if (saved) for (const e of touched) this._writeSeatJson(e.name, e);
-      if (migrate && (saved || !touched.length)) {
-        try { atomicWriteFileSync(LIVING_MIGRATED_FILE, ''); livingMigrated = true; } catch {}
-      }
+      if (migrate && (saved || !rewrote)) markLivingMigrated();
       return all;
     },
     _save(entries, touched = null) {
