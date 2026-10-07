@@ -183,7 +183,7 @@ Two spawn-time grants (both ride templates / persisted config):
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 
-A subagent reaches the same grants through the seat's `clodex` shell verb, limited to
+A subagent reaches the same grants through the seat's `clodex-send` shell verb, limited to
 the seat's `execCommands` (docs/messaging.md §7b).
 
 ## Terminal commands inside an open session
@@ -202,7 +202,7 @@ program that is not a shell, still refuse by name with nothing typed.
 A closed tab no longer refuses: the shell is opened on demand in the seat's cwd
 and shows in the tab, with its output, when the operator opens it.
 
-Sent through the seat socket (the `clodex` CLI, or any caller inside the reply
+Sent through the seat socket (the `clodex-send` CLI, or any caller inside the reply
 scope), the result is the socket reply in the same turn, the same text the DM
 would carry; typed in a turn it is still the `[terminal]` DM. The reply waits 130 s
 against the terminal's 120 s silence notice, so for a long command the notice is

@@ -36,12 +36,12 @@ async function fakeSeat(answer, { catalog } = {}) {
   return { sockPath, got, close: () => new Promise((r) => srv.close(r)) };
 }
 
-async function run(seat, argv, { env = {}, stdin } = {}) {
+async function run(seat, argv, { env = {}, stdin, invokedAs } = {}) {
   const out = sink();
   const err = sink();
   const code = await verb.main(argv, {
     env: { CLODEX_INTENT_SOCK: seat && seat.sockPath, CLODEX_INTENT_CRED: 'k1', CLODEX_SEAT: 'a', ...env },
-    out, err, stdin,
+    out, err, stdin, invokedAs,
   });
   return { code, out: out.buf, err: err.buf };
 }
@@ -81,11 +81,11 @@ test('an @<nonce> stamp resolves to its run/<seat>/ident file, which is consumed
     assert.strictEqual(seat.got[0].ident, 'main.0123456789abcdef.fedcba9876543210');
     assert.strictEqual(fs.existsSync(file), false, 'the stamp file is unlinked');
     const again = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: '@0123456789abcdef' } });
-    assert.strictEqual(again.err, 'clodex: identity stamp missing (hook not installed?)\n');
+    assert.strictEqual(again.err, 'clodex-send: identity stamp missing (hook not installed?)\n');
     assert.ok(!('ident' in seat.got[1]), 'a consumed stamp sends no ident');
     for (const bad of ['@../i.sock', '@0123']) {
       const b = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: bad } });
-      assert.strictEqual(b.err, 'clodex: identity stamp missing (hook not installed?)\n', bad);
+      assert.strictEqual(b.err, 'clodex-send: identity stamp missing (hook not installed?)\n', bad);
     }
     assert.ok(seat.got.slice(1).every((g) => !('ident' in g)));
     assert.ok(fs.existsSync(seat.sockPath), 'a path-shaped nonce reads nothing outside ident/');
@@ -100,7 +100,7 @@ test('an empty @<nonce> stamp file is treated as missing: message, no ident sent
     const file = path.join(dir, '0123456789abcdef');
     fs.writeFileSync(file, '  \n', { mode: 0o600 });
     const r = await run(seat, ['[agent:who]'], { env: { CLODEX_HOOK_IDENT: '@0123456789abcdef' } });
-    assert.strictEqual(r.err, 'clodex: identity stamp missing (hook not installed?)\n');
+    assert.strictEqual(r.err, 'clodex-send: identity stamp missing (hook not installed?)\n');
     assert.ok(!('ident' in seat.got[0]), 'an empty stamp sends no ident');
     assert.strictEqual(fs.existsSync(file), false, 'the empty stamp file is unlinked');
   } finally { await seat.close(); }
@@ -122,7 +122,7 @@ test('a reply status of error exits 1 and refused exits 3, with the reply text p
   try {
     const r = await run(seat, ['[agent:browser click x 3 --confirm]']);
     assert.strictEqual(r.code, verb.EXIT.DENIED);
-    assert.strictEqual(r.err, 'clodex: a subagent cannot confirm a consequential action — ask the main agent\n');
+    assert.strictEqual(r.err, 'clodex-send: a subagent cannot confirm a consequential action — ask the main agent\n');
   } finally { await seat.close(); }
 });
 
@@ -146,7 +146,7 @@ test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', as
     try {
       const r = await run(seat, ['[agent:shout] x']);
       assert.strictEqual(r.code, code, answer.error);
-      assert.strictEqual(r.err, `clodex: ${answer.error}\n`);
+      assert.strictEqual(r.err, `clodex-send: ${answer.error}\n`);
       assert.strictEqual(r.out, '');
     } finally { await seat.close(); }
   }
@@ -160,7 +160,7 @@ test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', as
 const CATCH_ALL = "Everything else is refused to a subagent: return and let the seat's main agent do it.";
 
 test('--help with a catalog lists each tool, its verbs and the catch-all line', async () => {
-  const catalog = { v: 1, rev: 'r', tools: [{ name: 'browser', description: "Drive this seat's browser pane. More…", inputSchema: { type: 'object', properties: { verb: { type: 'string', enum: ['open', 'read', 'note'] } } } }, { name: 'x'.repeat(80) + '\nevil', description: 'd' }], briefs: [] };
+  const catalog = { v: 1, rev: 'r', tools: [{ name: 'browser', description: "Drive this seat's browser pane. More…", inputSchema: { type: 'object', properties: { verb: { type: 'string', enum: ['open', 'read', 'note'] } } } }, { name: 'x'.repeat(80) + '\nevil', description: 'd' }, { name: 'long', description: 'R'.repeat(99) + '. ' + 'x'.repeat(19) }], briefs: [] };
   const seat = await fakeSeat(() => ({ ok: true }), { catalog });
   try {
     const r = await run(seat, ['--help']);
@@ -169,7 +169,10 @@ test('--help with a catalog lists each tool, its verbs and the catch-all line', 
     for (const v of ["  browser  Drive this seat's browser pane. More…\n", '    verbs: open, read, note\n', CATCH_ALL]) assert.ok(r.out.includes(v), v);
     assert.ok(r.out.includes('  ' + 'x'.repeat(64) + '  d\n'));
     assert.ok(!r.out.includes('evil'));
-    assert.ok(r.out.includes("This seat's MCP tools (each description says its intent form and who may call it):"));
+    assert.ok(r.out.includes("This seat's MCP tools (name, then the first 100 characters of its description):"));
+    assert.ok(r.out.includes('  Call a tool by its MCP name, or send the intent its description names through this verb.\n'));
+    assert.ok(!r.out.includes('[agent:<name>'));
+    assert.ok(r.out.includes('  long  ' + 'R'.repeat(99) + '.\n'));
     assert.ok(!r.out.includes('Available to a subagent'));
     for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:name]', '[agent:memory list]']) assert.ok(!r.out.includes(v), v);
     assert.strictEqual(seat.got.length, 0);
@@ -217,19 +220,40 @@ test('the verb carries no browser knowledge: its help comes from the catalog', (
   assert.ok(!/browser|release|confirm|wiki/.test(fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8')));
 });
 
-test('the verb is materialized as an executable `clodex` in <root>/bin', () => {
+test('the verb is materialized as executables clodex-send and clodex in <root>/bin', () => {
   const root = mkTmpRoot('verb-bin-');
   const r = materializeSeatVerb({ root, srcDir: ROOT });
-  assert.strictEqual(r.path, path.join(root, 'bin', 'clodex'));
-  assert.strictEqual(fs.statSync(r.path).mode & 0o111, 0o111);
-  assert.strictEqual(fs.readFileSync(r.path, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'));
+  assert.strictEqual(r.path, path.join(root, 'bin', 'clodex-send'));
+  assert.strictEqual(r.aliasPath, path.join(root, 'bin', 'clodex'));
+  for (const p of [r.path, r.aliasPath]) {
+    assert.strictEqual(fs.statSync(p).mode & 0o111, 0o111, p);
+    assert.strictEqual(fs.readFileSync(p, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'), p);
+  }
+  assert.strictEqual(require('../bin-materialize').SEAT_VERB_ALIAS, 'clodex');
   const src = fs.readFileSync(r.path, 'utf8');
   assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net', 'fs', 'path'], 'zero local requires: it runs flat from bin/');
 });
 
-test('reply shapes: a refusal is stderr `clodex: <reason>` exit 3; an error reply is stdout exit 1', async () => {
+test('the deprecated name prints one stderr line first and changes nothing else', async () => {
+  const DEP = 'clodex: deprecated name, use clodex-send\n';
+  const seat = await fakeSeat(() => ({ ok: true, reply: '[agent:peers] b' }));
+  try {
+    assert.deepStrictEqual(await run(seat, ['[agent:who]'], { invokedAs: 'clodex' }), { code: 0, out: '[agent:peers] b\n', err: DEP });
+    assert.deepStrictEqual(await run(seat, ['[agent:who]'], { invokedAs: 'clodex-send' }), { code: 0, out: '[agent:peers] b\n', err: '' });
+    assert.deepStrictEqual(await run(seat, ['[agent:who]']), { code: 0, out: '[agent:peers] b\n', err: '' });
+  } finally { await seat.close(); }
+  const empty = await run(null, [''], { invokedAs: 'clodex' });
+  assert.strictEqual(empty.code, 2);
+  assert.ok(empty.err.startsWith(DEP + 'clodex-send: empty intent'), empty.err);
+  const help = await run(null, ['--help'], { invokedAs: 'clodex' });
+  assert.strictEqual(help.code, 0);
+  assert.match(help.out, /^usage: clodex-send /);
+  assert.strictEqual(help.err, DEP);
+});
+
+test('reply shapes: a refusal is stderr `clodex-send: <reason>` exit 3; an error reply is stdout exit 1', async () => {
   for (const [answer, code, out, err] of [
-    [{ ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action' }, 3, '', 'clodex: a subagent cannot confirm a consequential action\n'],
+    [{ ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action' }, 3, '', 'clodex-send: a subagent cannot confirm a consequential action\n'],
     [{ ok: true, status: 'error', reply: '[agent:browser] error: no such service' }, 1, '[agent:browser] error: no such service\n', ''],
   ]) {
     const seat = await fakeSeat(() => answer);
@@ -242,8 +266,9 @@ test('reply shapes: a refusal is stderr `clodex: <reason>` exit 3; an error repl
 
 test('--help documents the streams and the exit codes', async () => {
   const r = await run(null, ['--help']);
-  assert.match(r.out, /stdout: the intent's reply\. stderr: this verb's own lines, each `clodex: <reason>`/);
-  assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex: …`\), 2 usage,\n\s+3 refused \(stderr `clodex: …`\), 4 no socket, 5 timeout/);
+  assert.match(r.out, /^usage: clodex-send '<\[agent:…\] intent line>' \[more words…\]\n {7}clodex-send - /);
+  assert.match(r.out, /stdout: the intent's reply\. stderr: this verb's own lines, each `clodex-send: <reason>`/);
+  assert.match(r.out, /exit codes: 0 ok, 1 error \(the reply, or stderr `clodex-send: …`\), 2 usage,\n\s+3 refused \(stderr `clodex-send: …`\), 4 no socket, 5 timeout/);
 });
 
 test('HELP wraps every line at 100 columns and keeps the terminal-command sentence intact', () => {

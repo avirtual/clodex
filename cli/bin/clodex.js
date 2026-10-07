@@ -9,8 +9,8 @@ const EXIT = { OK: 0, ERROR: 1, USAGE: 2, DENIED: 3, NO_SOCKET: 4, TIMEOUT: 5 };
 const CLIENT_TIMEOUT_MS = 500 * 1000;
 
 const HELP_HEAD = [
-  'usage: clodex \'<[agent:…] intent line>\' [more words…]',
-  '       clodex -            read the intent (and a multi-line body) from stdin',
+  'usage: clodex-send \'<[agent:…] intent line>\' [more words…]',
+  '       clodex-send -       read the intent (and a multi-line body) from stdin',
   'Remaining args are joined with spaces into ONE line; use - for a multi-line body.',
   '',
   'Sends ONE Clodex intent as this seat ($CLODEX_SEAT) and prints the reply.',
@@ -27,9 +27,9 @@ const HELP_TAIL = [
   'A terminal command ([agent:term exec]) answers here with its exit code and output, up to 130 s:',
   'give Bash a 150 s timeout for a long one.',
   '',
-  'stdout: the intent\'s reply. stderr: this verb\'s own lines, each `clodex: <reason>`.',
-  'exit codes: 0 ok, 1 error (the reply, or stderr `clodex: …`), 2 usage,',
-  '            3 refused (stderr `clodex: …`), 4 no socket, 5 timeout',
+  'stdout: the intent\'s reply. stderr: this verb\'s own lines, each `clodex-send: <reason>`.',
+  'exit codes: 0 ok, 1 error (the reply, or stderr `clodex-send: …`), 2 usage,',
+  '            3 refused (stderr `clodex-send: …`), 4 no socket, 5 timeout',
 ];
 
 const HELP_DESC_MAX = 100;
@@ -69,8 +69,8 @@ function toolLines(t) {
 function helpText(env, fsImpl) {
   const tools = readCatalogTools(env, fsImpl);
   const mid = tools.length
-    ? ['This seat\'s MCP tools (each description says its intent form and who may call it):', ...tools.flatMap(toolLines),
-      '  Call a tool by its MCP name, or as the intent `[agent:<name> …]` through this verb.']
+    ? [`This seat's MCP tools (name, then the first ${HELP_DESC_MAX} characters of its description):`, ...tools.flatMap(toolLines),
+      '  Call a tool by its MCP name, or send the intent its description names through this verb.']
     : ['No MCP tools on this seat: the plugins that declare one are not enabled for it.'];
   return [...HELP_HEAD, ...mid, 'Everything else is refused to a subagent: return and let the seat\'s main agent do it.', ...HELP_TAIL].join('\n');
 }
@@ -104,7 +104,7 @@ function resolveIdent(env, sockPath, fs, err) {
     if (!stamp) throw new Error('empty');
     return stamp;
   } catch {
-    err.write('clodex: identity stamp missing (hook not installed?)\n');
+    err.write('clodex-send: identity stamp missing (hook not installed?)\n');
     return null;
   }
 }
@@ -146,35 +146,36 @@ function readStdin(stdin) {
   });
 }
 
-async function main(argv, { env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
+async function main(argv, { invokedAs = '', env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
+  if (invokedAs === 'clodex') err.write('clodex: deprecated name, use clodex-send\n');
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
     (argv.length ? out : err).write(helpText(env, fs) + '\n');
     return argv.length ? EXIT.OK : EXIT.USAGE;
   }
   const text = buildIntentText(argv, argv.length === 1 && argv[0] === '-' ? await readStdin(stdin) : '');
-  if (!text) { err.write('clodex: empty intent\n' + helpText(env, fs) + '\n'); return EXIT.USAGE; }
+  if (!text) { err.write('clodex-send: empty intent\n' + helpText(env, fs) + '\n'); return EXIT.USAGE; }
   const sockPath = env.CLODEX_INTENT_SOCK;
   const cred = env.CLODEX_INTENT_CRED;
   if (!sockPath || !cred) {
-    err.write('clodex: no seat channel (CLODEX_INTENT_SOCK / CLODEX_INTENT_CRED unset) — run inside a Clodex seat\n');
+    err.write('clodex-send: no seat channel (CLODEX_INTENT_SOCK / CLODEX_INTENT_CRED unset) — run inside a Clodex seat\n');
     return EXIT.NO_SOCKET;
   }
   const agentId = agentIdFrom(env);
   const ident = resolveIdent(env, sockPath, fs, err);
   const payload = { cred, intent: text, ...(agentId ? { agentId } : {}), ...(ident ? { ident } : {}) };
   const r = await request({ sockPath, payload, connect, ...(timeoutMs ? { timeoutMs } : {}) });
-  if (r.transport === 'no-socket') { err.write(`clodex: cannot reach ${sockPath} (${r.message})\n`); return EXIT.NO_SOCKET; }
-  if (r.transport === 'timeout') { err.write('clodex: timeout\n'); return EXIT.TIMEOUT; }
-  if (r.transport) { err.write('clodex: unreadable reply from the seat socket\n'); return EXIT.ERROR; }
+  if (r.transport === 'no-socket') { err.write(`clodex-send: cannot reach ${sockPath} (${r.message})\n`); return EXIT.NO_SOCKET; }
+  if (r.transport === 'timeout') { err.write('clodex-send: timeout\n'); return EXIT.TIMEOUT; }
+  if (r.transport) { err.write('clodex-send: unreadable reply from the seat socket\n'); return EXIT.ERROR; }
   const code = exitFor(r.res);
   if (r.res.ok) out.write(String(r.res.reply == null ? '' : r.res.reply) + '\n');
-  else err.write(`clodex: ${r.res.error || 'failed'}\n`);
+  else err.write(`clodex-send: ${r.res.error || 'failed'}\n`);
   return code;
 }
 
 if (require.main === module) {
-  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
-    process.stderr.write(`clodex: fatal: ${(e && e.message) || e}\n`);
+  main(process.argv.slice(2), { invokedAs: path.basename(process.argv[1] || '') }).then((code) => { process.exitCode = code; }, (e) => {
+    process.stderr.write(`clodex-send: fatal: ${(e && e.message) || e}\n`);
     process.exitCode = EXIT.ERROR;
   });
 }

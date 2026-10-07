@@ -1551,8 +1551,8 @@ test('ident hook: only the clodex segments are prefixed, each with its own stamp
   const REGISTRY_DIR = identSeat();
   const cmd = (c) => stamped(REGISTRY_DIR, JSON.parse(runIdent(REGISTRY_DIR, bashCall(c))).hookSpecificOutput.updatedInput.command);
   assert.strictEqual(cmd("cd x && clodex '[agent:name]' | head").shape, "cd x && CLODEX_HOOK_IDENT=@N clodex '[agent:name]' | head");
-  const two = cmd('~/.clodex/bin/clodex a; clodex b');
-  assert.strictEqual(two.shape, 'CLODEX_HOOK_IDENT=@N ~/.clodex/bin/clodex a; CLODEX_HOOK_IDENT=@N clodex b');
+  const two = cmd('~/.clodex/bin/clodex-send a; clodex b');
+  assert.strictEqual(two.shape, 'CLODEX_HOOK_IDENT=@N ~/.clodex/bin/clodex-send a; CLODEX_HOOK_IDENT=@N clodex b');
   assert.strictEqual(new Set(two.nonces).size, 2);
 });
 
@@ -1647,11 +1647,14 @@ test('ident hook: a non-clodex call never starts the interpreter; a clodex call 
   assert.strictEqual(runIdent(REGISTRY_DIR, { ...mcpCall(), tool_name: 'mcp__other__x' }), '');
   assert.strictEqual(fs.existsSync(marker), false, 'another MCP tool does not open the gate');
   assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('clodex x')), 'interp-ran\n');
+  assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('clodex-send x')), 'interp-ran\n');
   assert.strictEqual(fs.existsSync(marker), true);
   assert.strictEqual(runIdent(REGISTRY_DIR, mcpCall()), 'interp-ran\n');
   const real = identSeat();
   const out = JSON.parse(runIdent(real, bashCall('clodex x')));
   assert.strictEqual(stamped(real, out.hookSpecificOutput.updatedInput.command).shape, 'CLODEX_HOOK_IDENT=@N clodex x');
+  const sendOut = JSON.parse(runIdent(real, bashCall('clodex-send x')));
+  assert.strictEqual(stamped(real, sendOut.hookSpecificOutput.updatedInput.command).shape, 'CLODEX_HOOK_IDENT=@N clodex-send x');
 });
 
 const { parkedTexts } = require('../pending-store');

@@ -193,7 +193,7 @@ function termHandler(entry = TERM_SEAT, { reply = '[terminal] ls\nexit 0', sessi
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf, cred: HCRED, log, identSeen,
     refusal: registry.subagentRefusal, tools: TOOLS,
     classifyReply: (i, l) => registry.classifyReplyLine(i.type, l),
-    dispatch: async (intent, opts) => { seen.push({ type: intent.type, sub: intent.sub, body: intent.body, fromLabel: opts.fromLabel }); opts.replyTo(reply); },
+    dispatch: async (intent, opts) => { seen.push({ type: intent.type, sub: intent.sub, body: intent.body, fromLabel: opts.fromLabel, hasIdent: 'ident' in intent }); opts.replyTo(reply); },
   });
   return { handle, seen, identSeen };
 }
@@ -206,7 +206,7 @@ test('term_exec: a verified main stamp dispatches as main and the reply comes ba
   const ident = freshMain();
   const r = await handle({ tool: 'term_exec', args: { command: 'ls' }, ident }, ctl);
   assert.deepStrictEqual(r, { ok: true, status: 'ok', reply: 'ok' });
-  assert.deepStrictEqual(seen, [{ type: 'term', sub: 'exec', body: 'ls', fromLabel: null }]);
+  assert.deepStrictEqual(seen, [{ type: 'term', sub: 'exec', body: 'ls', fromLabel: null, hasIdent: false }]);
 });
 
 test('term_exec: no stamp, a replay, a sub stamp, another session and a bare agentId all answer unknown tool', async () => {
@@ -246,8 +246,9 @@ test('term_exec: only a seat whose intents list term may call it, and an ungrant
     assert.deepStrictEqual(seen, []);
     assert.strictEqual(identSeen.size, 0);
   }
-  const { handle } = termHandler({ intents: ['*', 'term'] }, { reply: 'ok' });
+  const { handle, identSeen } = termHandler({ intents: ['*', 'term'] }, { reply: 'ok' });
   assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
+  assert.strictEqual(identSeen.size, 1);
 });
 
 test('term_exec: the mapper rejects a second line, an empty command and any key but command', async () => {
@@ -271,19 +272,19 @@ test('a main stamp lifts the core term_exec row to main but never a plugin row',
   assert.deepStrictEqual(browser.seen, []);
   const term = termHandler({ intents: ['browser', 'term'], plugins: ['browser-pane'] }, { reply: 'ok' });
   assert.deepStrictEqual(await term.handle({ tool: 'term_exec', args: { command: 'ls' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
-  assert.deepStrictEqual(term.seen, [{ type: 'term', sub: 'exec', body: 'ls', fromLabel: null }]);
+  assert.deepStrictEqual(term.seen, [{ type: 'term', sub: 'exec', body: 'ls', fromLabel: null, hasIdent: false }]);
 }));
 
-test('term_exec: the terminal text is ok, an [agent:term] line is refused, and no reply carries the stamp', async () => {
+test('term_exec: the terminal text is ok, an [agent:term] line is refused, and the dispatched intent carries no ident', async () => {
   const cases = [
     ['[terminal] ls\nexit 1\noutput (last 1 of 1 lines):\nx', 'ok'],
     ['[agent:term] busy: a command is already running', 'refused'],
   ];
   for (const [reply, status] of cases) {
-    const { handle } = termHandler(TERM_SEAT, { reply });
+    const { handle, seen } = termHandler(TERM_SEAT, { reply });
     const ident = freshMain();
     const r = await handle({ tool: 'term_exec', args: { command: 'ls' }, ident }, ctl);
     assert.deepStrictEqual(r, { ok: true, status, reply });
-    assert.ok(!JSON.stringify(r).includes(ident.split('.')[1]));
+    assert.deepStrictEqual(seen.map((s) => s.hasIdent), [false]);
   }
 });

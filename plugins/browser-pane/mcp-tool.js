@@ -40,7 +40,7 @@ function validate(args) {
 const TOOL = {
   name: 'browser',
   description: [
-    "Drive this seat's browser pane. Same verbs, replies and refusals as `clodex '[agent:browser …]'`.",
+    "Drive this seat's browser pane. Same verbs, replies and refusals as `clodex-send '[agent:browser …]'`.",
     'A call waits up to 500 s; a browser `wait` may take up to 30 min server-side, so a result starting `completion unknown — do not retry` means the action may still have run: read the page before repeating a click, type or download.',
     'A refusal or error comes back as text, not as a tool error; the same call will fail the same way — do not retry it, return and let the seat\'s main agent decide.',
     '`bracket` holds the tokens that go INSIDE the intent bracket after the service (element number, direction, --flag, --flag=value; for click/inspect --text=<text> as ONE item); `body` is the one-line text AFTER the bracket (the URL for open/download, the text for type, the option for select, the key name for key, the note text for note).',

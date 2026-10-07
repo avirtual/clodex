@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+### CLI
+- The intent-sending CLI verb is now `clodex-send`; `clodex` still works for one release and prints a deprecation line on stderr.
+
 ## 5.115.0 — 2026-10-07
 
 ### Browser pane

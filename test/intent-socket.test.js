@@ -272,7 +272,7 @@ test('an async verb says where its answer arrives for the main agent; a subagent
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:dm', 'b]', 'which', 'file'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(r.code, verb.EXIT.DENIED);
-    assert.strictEqual(r.err, "clodex: not available to a subagent: dm — return and let the seat's main agent do it\n");
+    assert.strictEqual(r.err, "clodex-send: not available to a subagent: dm — return and let the seat's main agent do it\n");
     assert.deepStrictEqual(h.delivered, []);
     const main = await viaVerb(h, cred, ['[agent:dm b] hi'], mainEnv(cred));
     assert.strictEqual(main.code, 0);
@@ -286,14 +286,14 @@ test('a subagent is refused a lead verb with exit 3, and the main agent is not',
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:shout] approve?'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(r.code, verb.EXIT.DENIED);
-    assert.strictEqual(r.err, "clodex: not available to a subagent: shout — return and let the seat's main agent do it\n");
+    assert.strictEqual(r.err, "clodex-send: not available to a subagent: shout — return and let the seat's main agent do it\n");
     const g = await viaVerb(h, cred, ['[agent:exec clodex-team] {}'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(g.code, verb.EXIT.DENIED);
     const granted = await viaVerb(h, cred, ['[agent:exec clodex-run-tests] {}'], { CLODEX_AGENT_ID: 'agent-7' });
     assert.strictEqual(granted.code, verb.EXIT.DENIED);
     const bad = await viaVerb(h, 'e'.repeat(64), ['[agent:who]']);
     assert.strictEqual(bad.code, verb.EXIT.DENIED);
-    assert.strictEqual(bad.err, 'clodex: unauthorized\n');
+    assert.strictEqual(bad.err, 'clodex-send: unauthorized\n');
   });
 });
 
@@ -618,6 +618,14 @@ test('stamp: clodex behind a reserved word or a prefix command is stamped; clode
     ['echo clodex', null],
     ['which clodex', null],
     ['grep clodex f', null],
+    ['clodex-send x', `${T} clodex-send x`],
+    ['/abs/clodex-send x', `${T} /abs/clodex-send x`],
+    ['~/.clodex/bin/clodex-send a; clodex b', `${T} ~/.clodex/bin/clodex-send a; ${T} clodex b`],
+    ['clodex-sendx x', null],
+    ['clodexx x', null],
+    ['node cli/bin/clodex.js x', null],
+    ['timeout 300 clodex-send x', `${T} timeout 300 clodex-send x`],
+    ['echo clodex-send', null],
   ]) {
     assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
   }
