@@ -17,6 +17,9 @@ blocks a release.
 - The headless web host refuses to serve (503 naming the variable) when it is bound to a non-loopback address with no CLODEX_WEB_TOKEN, the same fail-closed rule the remote route has; CLODEX_WEB_INSECURE=1 overrides it for a container whose port map is the boundary, and the docker compose file sets it.
 - The helm chart and the Fargate stack pin the container's web GUI to loopback (CLODEX_WEB_HOST=127.0.0.1), so it is reached only through clodexctl web and never answers in-cluster or on the task ENI.
 
+### Messaging
+- A delivered message can no longer impersonate a subagent's result: the teammate-message tag the CLI recognises is defanged with a non-breaking hyphen in every body Clodex types into a seat (dm, ticket, file, exec, reminder, sub), so a peer or a pasted file cannot forge a "Teammate finished" row.
+
 ## 5.113.0 — 2026-10-07 — Browser pane, Clodex MCP, subagent identity
 
 ### Browser pane

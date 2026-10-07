@@ -227,4 +227,8 @@ function defuseSenderLines(text) {
   return parts.join('');
 }
 
-module.exports = { stripReviewGated, defuseSenderLines };
+function defangTeammateTag(text) {
+  return String(text).replace(/<(\/?)(teammate)-(message)\b/gi, '<$1$2\u2011$3');
+}
+
+module.exports = { stripReviewGated, defuseSenderLines, defangTeammateTag };
