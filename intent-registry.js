@@ -268,7 +268,7 @@ const TERM_EXEC_TOOL = Object.freeze({
 
 const DM_TOOL = Object.freeze({
   name: 'dm',
-  description: 'Send a direct message to another Clodex seat on this host as yourself; the recipient sees you as <seat>/<name> and can reply to that name. Local seats only, never urgent, at most 10 per minute; a refusal comes back as text and will not succeed on retry.',
+  description: 'Send a direct message to another Clodex seat on this host as yourself. The recipient sees you as <seat>/<name> and can reply to that name. Local seats only, never urgent, at most 10 per minute; a refusal comes back as text and will not succeed on retry.',
   inputSchema: { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false },
   logKeys: ['to'],
   subagentOk: true,

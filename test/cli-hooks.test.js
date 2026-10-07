@@ -977,7 +977,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   }]);
   assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec|mcp__clodex__dm', '']);
   const registry = require('../intent-registry');
-  assert.strictEqual(settings.hooks.PreToolUse[1].matcher, registry.CORE_ROWS.flatMap((r) => r.tools || []).map((t) => 'mcp__clodex__' + t.name).join('|'));
+  assert.deepStrictEqual(settings.hooks.PreToolUse[1].matcher.split('|').sort(), registry.CORE_ROWS.flatMap((r) => r.tools || []).map((t) => 'mcp__clodex__' + t.name).sort());
 });
 
 // ─── The whole-tree `git add` guard ───────────────────────────
