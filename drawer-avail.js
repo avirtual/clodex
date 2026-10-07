@@ -62,6 +62,8 @@ function termBackendFor(seat) {
 // not characters: the PTY is a byte stream and a multi-byte payload that passes
 // a length check can still be four times this on the wire.
 const TERM_EXEC_MAX = 2048;
+const TERM_EXEC_TIMEOUT_MS = 120000;
+const TERM_REPLY_WAIT_MS = TERM_EXEC_TIMEOUT_MS + 10000;
 
 // Built from a STRING, never a regex literal with the bytes in it. A literal
 // control character in source is invisible and does not reliably survive
@@ -157,4 +159,4 @@ function sanitizeName(s, max = 80) {
   return `${points.slice(0, max - 1).join('')}…`;
 }
 
-module.exports = { termAvailableFor, termBackendFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX };
+module.exports = { termAvailableFor, termBackendFor, vetTermCommand, sanitizeName, TERM_EXEC_MAX, TERM_EXEC_TIMEOUT_MS, TERM_REPLY_WAIT_MS };

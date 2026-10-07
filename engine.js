@@ -1018,7 +1018,7 @@ function spillToFile(sender, body, recipient) {
 
 // Required here, not beside createDrawerPtys: the deps object below reads
 // `termAvailableFor` eagerly, and a later const destructure is still in its TDZ.
-const { termAvailableFor, vetTermCommand, sanitizeName } = require('./drawer-avail');
+const { termAvailableFor, vetTermCommand, sanitizeName, TERM_EXEC_TIMEOUT_MS } = require('./drawer-avail');
 
 const { createSessionManager } = require('./session-manager');
 
@@ -1836,6 +1836,7 @@ const { shellHostOf, programOf } = require('./term-host');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
 const drawerPtys = enableLocalTerminal ? createDrawerPtys({
+  execTimeoutMs: TERM_EXEC_TIMEOUT_MS,
   spawn: pty.spawn.bind(pty),
   send: (workspaceId, channel, ...args) => {
     const win = manager.windowForWorkspace(workspaceId);
