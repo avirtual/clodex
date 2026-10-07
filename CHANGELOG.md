@@ -16,6 +16,9 @@ blocks a release.
 ### CLI
 - The intent-sending CLI verb is now `clodex-send`; `clodex` still works for one release and prints a deprecation line on stderr.
 
+### Plugins
+- plugin-api.md: the MCP tool section states that a plugin tool always runs under its subagent policy (the per-call identity stamp is for core tools only), that core tool names are reserved, and how the seat's tool catalog is ordered.
+
 ## 5.115.0 — 2026-10-07
 
 ### Browser pane

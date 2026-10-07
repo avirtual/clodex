@@ -1797,15 +1797,18 @@ message than your exception's.
 session hooks. An `async handler` will run, but nothing awaits it: its rejection
 escapes every guard above, so its failure becomes silence rather than a bounce.
 
-### Declaring an MCP tool for subagents
+### Declaring an MCP tool
 
-Two optional fields on `host.intents.register` let a seat's subagents call your
+Two optional fields on `host.intents.register` let a seat's agents call your
 verb as an MCP tool:
 
 - **`tools: [{ name, description, inputSchema, toIntent(args) }]`**. `name`
   matches `/^[a-z][a-z0-9_-]{0,63}$/` and lives in ONE GLOBAL namespace like
   verbs: a name another plugin holds throws `ETOOLTAKEN` with `err.tool` and
-  `err.heldBy`, mirroring `EVERBTAKEN`. `inputSchema` is a plain
+  `err.heldBy`, mirroring `EVERBTAKEN`. Core tool names (the host's own
+  `term_exec`) are reserved: claiming one throws `ETOOLTAKEN` with
+  `err.heldBy === 'core'` and the message
+  `tool "<name>" is already registered by plugin "core"`. `inputSchema` is a plain
   `{ type: 'object', … }` JSON object. `toIntent(args)` returns ONE intent line
   of YOUR verb (`[agent:<verb> …]` then `[agent:end]`), or throws an Error whose
   message the caller sees as `invalid: <message>`. Anything else is a foreign
@@ -1821,9 +1824,14 @@ verb as an MCP tool:
 What the host does with them: it writes `run/<seat>/mcp-tools.json`
 `{ v: 1, rev, tools, briefs }` from the seat's effective grants (plugin granted
 AND verb enabled) and rewrites it on every grant change. The `clodex-mcp` server
-lists that file and forwards `{ tool, args }` to the seat socket, which checks
-the live grant BEFORE calling your `toIntent`, then runs your `refuse`, then
-dispatches as the seat (never as the subagent).
+lists that file and forwards `{ cred, tool, args, ident? }` to the seat socket,
+which checks the live grant BEFORE calling your `toIntent`, then runs your
+`refuse`, then dispatches as the seat. `ident` is a per-call identity stamp the
+socket verifies for core tools only; for a plugin tool it is ignored, so every
+call — the seat's main agent included — runs under your `subagent.refuse`. A
+plugin cannot declare a main-only tool: a main-only action stays the intent form
+(`[agent:<verb> …]` typed by the main agent), and your `refuse` text is what a
+main agent sees when it reaches for the tool.
 
 A caller may see four refusal texts: `invalid: <your message>`,
 `unknown tool: "<name>"` (unregistered OR not granted — one text, so there is no
@@ -1831,6 +1839,11 @@ existence oracle), `tool <name> emitted a foreign intent`, and your `refuse`
 string. The server stops the 3rd byte-identical failing call within 60 s per
 server process (one per seat; main and subagents share it); your `invalid`
 rejections are not counted.
+
+A seat's `tools/list` is core tools first — only those whose verb the seat holds
+(`term_exec` needs the `term` grant itself; `'*'` never confers it) — then plugin
+tools in registration order. Only plugin `brief`s are injected at
+`SubagentStart`; a core tool has no brief.
 
 ### Choosing a verb is a compatibility decision
 
