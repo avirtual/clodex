@@ -10,10 +10,10 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 14 gateable types in grammar order (privileged last), name excluded', () => {
+test('catalog: the 15 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
+    ['dm', 'sub', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -32,6 +32,7 @@ test('catalog: the 14 gateable types in grammar order (privileged last), name ex
   for (const i of GATEABLE_INTENTS) assert.ok(i.label && typeof i.label === 'string');
   // GATEABLE_TYPES is the type set of the ordered list.
   assert.strictEqual(GATEABLE_TYPES.size, GATEABLE_INTENTS.length);
+  assert.strictEqual(intentEnabled('sub', ['dm']), false);
 });
 
 test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (Task 27)', () => {
@@ -39,6 +40,7 @@ test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (T
     assert.strictEqual(intentEnabled('dm', list), true);
     assert.strictEqual(intentEnabled('exec', list), true);
     assert.strictEqual(intentEnabled('shout', list), true);
+    assert.strictEqual(intentEnabled('sub', list), true);
     // reboot does NOT ride the all-enabled default — it must be granted explicitly.
     assert.strictEqual(intentEnabled('reboot', list), false);
   }
