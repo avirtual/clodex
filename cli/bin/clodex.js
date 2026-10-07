@@ -69,8 +69,8 @@ function toolLines(t) {
 function helpText(env, fsImpl) {
   const tools = readCatalogTools(env, fsImpl);
   const mid = tools.length
-    ? ['This seat\'s MCP tools (each description says its intent form and who may call it):', ...tools.flatMap(toolLines),
-      '  Call a tool by its MCP name, or as the intent `[agent:<name> …]` through this verb.']
+    ? [`This seat's MCP tools (name, then the first ${HELP_DESC_MAX} characters of its description):`, ...tools.flatMap(toolLines),
+      '  Call a tool by its MCP name, or send the intent its description names through this verb.']
     : ['No MCP tools on this seat: the plugins that declare one are not enabled for it.'];
   return [...HELP_HEAD, ...mid, 'Everything else is refused to a subagent: return and let the seat\'s main agent do it.', ...HELP_TAIL].join('\n');
 }

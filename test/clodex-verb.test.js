@@ -160,7 +160,7 @@ test('exit codes: usage 2, refused 3, no socket 4, timeout 5, other error 1', as
 const CATCH_ALL = "Everything else is refused to a subagent: return and let the seat's main agent do it.";
 
 test('--help with a catalog lists each tool, its verbs and the catch-all line', async () => {
-  const catalog = { v: 1, rev: 'r', tools: [{ name: 'browser', description: "Drive this seat's browser pane. More…", inputSchema: { type: 'object', properties: { verb: { type: 'string', enum: ['open', 'read', 'note'] } } } }, { name: 'x'.repeat(80) + '\nevil', description: 'd' }], briefs: [] };
+  const catalog = { v: 1, rev: 'r', tools: [{ name: 'browser', description: "Drive this seat's browser pane. More…", inputSchema: { type: 'object', properties: { verb: { type: 'string', enum: ['open', 'read', 'note'] } } } }, { name: 'x'.repeat(80) + '\nevil', description: 'd' }, { name: 'long', description: 'R'.repeat(99) + '. ' + 'x'.repeat(19) }], briefs: [] };
   const seat = await fakeSeat(() => ({ ok: true }), { catalog });
   try {
     const r = await run(seat, ['--help']);
@@ -169,7 +169,10 @@ test('--help with a catalog lists each tool, its verbs and the catch-all line', 
     for (const v of ["  browser  Drive this seat's browser pane. More…\n", '    verbs: open, read, note\n', CATCH_ALL]) assert.ok(r.out.includes(v), v);
     assert.ok(r.out.includes('  ' + 'x'.repeat(64) + '  d\n'));
     assert.ok(!r.out.includes('evil'));
-    assert.ok(r.out.includes("This seat's MCP tools (each description says its intent form and who may call it):"));
+    assert.ok(r.out.includes("This seat's MCP tools (name, then the first 100 characters of its description):"));
+    assert.ok(r.out.includes('  Call a tool by its MCP name, or send the intent its description names through this verb.\n'));
+    assert.ok(!r.out.includes('[agent:<name>'));
+    assert.ok(r.out.includes('  long  ' + 'R'.repeat(99) + '.\n'));
     assert.ok(!r.out.includes('Available to a subagent'));
     for (const v of ['[agent:dm', '[agent:who]', '[agent:task list]', '[agent:exec', '[agent:memory recall]', '[agent:name]', '[agent:memory list]']) assert.ok(!r.out.includes(v), v);
     assert.strictEqual(seat.got.length, 0);
