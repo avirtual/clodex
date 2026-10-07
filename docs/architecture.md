@@ -381,7 +381,7 @@ bundle), whose packaged form is the Docker image under
 - **subq.js** — the parent → subagent queue run by `run/<seat>/subq.sh`: drains
   `subq/<agent_id>/` (one file per note, claimed by rename into
   `subq/<agent_id>.draining.<pid>/`)
-  as one `[parent <nonce>]` note, maps Agent names to ids, and
+  as one `[parent <nonce>]` note, maps Agent names to ids (and back, `nameOfSubagent`, for the caller label), and
   parks a note left at TaskStop/SubagentStop; see docs/messaging.md §7b.
 - **intent-glyphs.js** — the glyph vocabulary: `glyphFor`, `headOf` (glyph,
   label, target, chips for a card head), `REPLY_GLYPHS` for runtime replies,

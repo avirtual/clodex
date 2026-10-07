@@ -19,6 +19,9 @@ blocks a release.
 ### Wire
 - Replay treats the `auxiliary` request class as a side-call, matching the live proxy.
 
+### Messaging and conversation mode
+- The host now verifies a subagent's identity stamp (not only the main agent's) and can name the caller as `<seat>/<name>`, the name its parent gave the Agent tool; a forged or replayed stamp still yields no identity. Groundwork for a subagent `dm` tool.
+
 ## 5.117.0 — 2026-10-07
 
 ### Plugins

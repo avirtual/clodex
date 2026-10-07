@@ -24,6 +24,12 @@ Claude Code 2.1.289 exports no agent-id env var to a subagent's shell, so a Clau
 
 The seat credential is also in every shell's env, a subagent's included: the HMAC stops a guessed or copied stamp, not a subagent that reads the credential and computes one.
 
+A verified sub's label rides `fromIdent`, never `fromLabel`: `_dispatchPluginIntent` copies `fromLabel` to `handle.from`, which browser-pane stamps on open, note and close and owns tabs by, so a per-subagent value would change note stamps and split sibling tab ownership.
+
+## subagentLabel
+
+The fallback is `<seat>/agent-<id8>`, never `<seat>/agent`: the shared tag names every subagent of the seat, so a recipient could not tell callers apart. `subq/names/` is writable by the subagent's own shell, so subq.js `nameOfSubagent` re-checks each entry against `SUBQ_NAME_RE` on read; a planted `@`, `[` or newline never reaches a label.
+
 ## identToken
 
 Before t1589 the mac covered only `agent_id + session_id`, so one `main.<mac>` held for a whole session; zsh's `time` echoed it into the seat's own context and anyone who saw a transcript could replay it. The per-call nonce makes each stamp single-use.
