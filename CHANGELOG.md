@@ -125,6 +125,8 @@ blocks a release.
 - Subagent queue: every clear — TUI `/clear`, `[agent:context clear]` with or without a prompt regeneration — wipes the seat's subagent queue dir, so a note can no longer be addressed to a subagent the clear killed.
 - Intent allowlist: the one-shot living-default migration is stamped on every first load, including a userData whose sessions.json is empty or malformed, so an operator's later explicit deny is never rewritten.
 - Subagent socket: on a Codex seat a `clodex` call carrying no `CODEX_THREAD_ID` is now treated as a subagent (refused the main-only verbs) instead of as the main thread — the same fail-closed rule the Claude stamp already applied.
+- Conversation mode: an operator row shows only its origin glyph — ● typed in Clodex, ▯ sent from the phone app, ◎ sent through the remote API — with the words in the tooltip; the `you`/`phone`/`remote` labels are gone.
+- Conversation mode: a phone message that carries an image is drawn as one operator row with the image inline; the raw `[agent:from user] (via ios)` prefix and the empty `Image:` tail no longer show.
 
 ## 5.112.2 — 2026-10-04
 
