@@ -115,7 +115,7 @@ test('a Claude seat spawned with the setting OFF still registers spill on the wi
     assert.ok(spill, 'the registration is no longer gated on the setting — the proxy gates per request');
     assert.equal(spill.root, h.root);
     assert.deepEqual([...spill.verbs].sort(),
-      ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
+      ['dm', 'shout', 'sub', 'task.add', 'task.done', 'task.reject', 'task.respec']);
   } finally { h.stop('seat'); }
 });
 
@@ -195,7 +195,7 @@ test('a loop-minted seat (persisted ephemeral: true) registers spill with exampl
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
     assert.deepStrictEqual(spillShape(h.registered[0].spill), {
       root: h.root,
-      verbs: ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec'],
+      verbs: ['dm', 'shout', 'sub', 'task.add', 'task.done', 'task.reject', 'task.respec'],
       turnInjected: 'function',
       examples: 1,
     });
@@ -209,7 +209,7 @@ test('a standing seat (no ephemeral record) registers spill with examples: 2', a
     assert.equal(h.registered.length, 1, 'ENTER: the spawn reached the wire registration');
     assert.deepStrictEqual(spillShape(h.registered[0].spill), {
       root: h.root,
-      verbs: ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec'],
+      verbs: ['dm', 'shout', 'sub', 'task.add', 'task.done', 'task.reject', 'task.respec'],
       turnInjected: 'function',
       examples: 2,
     });

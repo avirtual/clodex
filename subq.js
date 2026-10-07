@@ -61,6 +61,10 @@ function recordName(dir, name, id, pid) {
   }
 }
 
+function clearSubq(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
+
 function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.now(), pid = process.pid } = {}) {
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
@@ -96,4 +100,4 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
   return '';
 }
 
-module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, resolveSubagent, subqHookOutput };
+module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, resolveSubagent, clearSubq, subqHookOutput };

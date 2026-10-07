@@ -221,7 +221,7 @@ test('the verb set is the dotted key, and only the six listed verbs', () => {
   assert.equal(verbKeyOf({ type: 'shout' }), 'shout');
   for (const v of [{ type: 'task', sub: 'add' }, { type: 'task', sub: 'respec' },
     { type: 'task', sub: 'reject' }, { type: 'task', sub: 'done' },
-    { type: 'shout' }, { type: 'dm', target: 'bob' }]) {
+    { type: 'shout' }, { type: 'dm', target: 'bob' }, { type: 'sub', target: 'x' }]) {
     assert.equal(isSpillVerb(v), true, JSON.stringify(v));
   }
   assert.equal(isSpillVerb({ type: 'memory', sub: 'remember' }), false,
@@ -234,7 +234,7 @@ test('the verb set is the dotted key, and only the six listed verbs', () => {
       `context ${sub} is out: the action it triggers discards the body, so no later request carries it`);
   }
   assert.deepStrictEqual([...SPILL_VERBS].sort(),
-    ['dm', 'shout', 'task.add', 'task.done', 'task.reject', 'task.respec']);
+    ['dm', 'shout', 'sub', 'task.add', 'task.done', 'task.reject', 'task.respec']);
   assert.equal(validAgent('t42.fix'), true);
   assert.equal(validAgent('..'), false);
 });

@@ -16,7 +16,7 @@ const SPILL_FILLER = '[Runtime note: action text omitted from retained history.]
 
 const SPILL_VERBS = new Set([
   'task.add', 'task.respec', 'task.reject', 'task.done',
-  'shout', 'dm',
+  'shout', 'dm', 'sub',
 ]);
 
 const SPILL_CATEGORY_OF = Object.freeze({
@@ -26,6 +26,7 @@ const SPILL_CATEGORY_OF = Object.freeze({
   'task.done': 'tickets',
   shout: 'messages',
   dm: 'messages',
+  sub: 'messages',
 });
 
 const ID_RE = /^[0-9a-f]{16}$/;

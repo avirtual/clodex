@@ -6,7 +6,7 @@ const path = require('node:path');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { pathFor } = require('../clodex-paths');
-const { subqHookOutput } = require('../subq');
+const { subqHookOutput, clearSubq } = require('../subq');
 
 const ID = 'a606bb8c5bfa9764e';
 
@@ -41,6 +41,33 @@ test('t1678 sub by id appends to subq/<id> 0600, in order, and broadcasts seat/i
   assert.ok(!JSON.stringify(ipc).includes('feedfacecafebeef'));
   const out = JSON.parse(subqHookOutput(JSON.stringify({ agent_id: ID, hook_event_name: 'PostToolUse' }), { dir: h.dir }));
   assert.strictEqual(out.hookSpecificOutput.additionalContext, '[parent feedfacecafebeef] first\nsecond');
+});
+
+for (const body of ['', '  \n']) {
+  test(`t1683 sub with an empty body ${JSON.stringify(body)} bounces and writes nothing`, async () => {
+    const h = harness();
+    await h.send(ID, body);
+    assert.ok(fs.existsSync(path.join(h.dir, `${ID}.nonce`)), 'ENTER: the harness has a live target');
+    assert.deepStrictEqual(h.injected, ['[agent:sub] nothing queued: empty body']);
+    assert.deepStrictEqual(h.broadcasts, []);
+    assert.strictEqual(fs.existsSync(path.join(h.dir, ID)), false);
+  });
+}
+
+test('t1683 clearSubq removes the whole dir and is a no-op on a missing one', () => {
+  const h = harness();
+  fs.mkdirSync(path.join(h.dir, 'names'));
+  fs.writeFileSync(path.join(h.dir, 'x.nonce'), 'n');
+  fs.writeFileSync(path.join(h.dir, 'names', 'y'), 'x');
+  clearSubq(h.dir);
+  assert.strictEqual(fs.existsSync(h.dir), false);
+  assert.doesNotThrow(() => clearSubq(h.dir));
+});
+
+test('t1683 both conversation-replacement sites call clearSubq', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  assert.match(src, /const \{[^}]*\bclearSubq\b[^}]*\} = require\('\.\/subq'\);/, 'ENTER: clearSubq is imported from ./subq');
+  assert.strictEqual((src.match(/clearSubq\(subqDirFor\(/g) || []).length, 2);
 });
 
 test('t1678 sub by name resolves through subq/names/<name>', async () => {
