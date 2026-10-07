@@ -87,7 +87,8 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
     return JSON.stringify({ hookSpecificOutput: { hookEventName: d.hook_event_name || 'PostToolUse', additionalContext: `[parent ${nonce}] ${got.body}` } });
   }
   if (d.tool_name === 'Agent') {
-    recordName(dir, d.tool_input && d.tool_input.name, d.tool_response && d.tool_response.agentId, pid);
+    const r = d.tool_response || {};
+    recordName(dir, d.tool_input && d.tool_input.name, r.agentId || r.agent_id, pid);
   } else if (d.tool_name === 'TaskStop') {
     const id = resolveSubagent(dir, d.tool_input && d.tool_input.task_id);
     if (id) retireSubagent(dir, id, 'it was stopped before its next tool call', ctx);
