@@ -95,6 +95,21 @@ test('replies: services line from storage plus mirror', () => {
   assert.strictEqual(R.servicesReply(refused, new Map([['g1', 'idle']])), '[agent:browser] services: g1 — accounts.google.com · Google sign-in refused · window open · idle');
 });
 
+test('servicesReply: clips each profile to one 160-char line and ends with +N more instead of cutting mid-word', () => {
+  const services = Object.fromEntries(Array.from({ length: 12 }, (_, k) => [`s${String(k + 1).padStart(2, '0')}`, { lastUsedAt: k + 1, login: { state: 'unknown' } }]));
+  const tabsOf = () => Array.from({ length: 8 }, (_, k) => ({ tab: `tab-with-a-long-name-${k}`, state: 'idle' }));
+  const r = R.servicesReply(services, new Map(), () => '', tabsOf);
+  const parts = r.slice('[agent:browser] services: '.length).split(' │ ');
+  assert.strictEqual(parts.length, 4);
+  assert.strictEqual(parts[3], '+9 more');
+  assert.ok(parts[0].startsWith('s12 — unknown · closed · tabs: tab-with-a-long-name-0 (idle), '));
+  assert.strictEqual(parts[0].length, 160);
+  assert.ok(parts[0].endsWith('…'));
+  assert.ok(parts.slice(0, 3).every((p) => p.length <= 160));
+  assert.ok(r.length <= 600);
+  assert.ok(!r.endsWith('...'));
+});
+
 function withTmp(fn) {
   const root = mkTmpRoot('clodex-bp-replies-');
   const prev = process.env.TMPDIR;

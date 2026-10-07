@@ -108,6 +108,10 @@ blocks a release.
 - Browser pane: a click that removes elements names the outermost group (`removed: drawer "Bump Go toolchain…" (77 elements)`), reports each removal once, and says `1 element`.
 - Browser pane: a nameless ⚠ element in the read digest shows its kind (`⚠: [12] button`) instead of empty quotes.
 - Browser pane: a tab open (`open gl:v <url>`) records the page on the tab, not on the profile; the profile's last URL and title change only from its own window.
+- Browser pane: inspect's `listeners: click on ancestor …` names the actual parent at that depth instead of the `…` elision mark.
+- Browser pane: a click that hides elements on a page whose `<body>` carries a class like `modal-open` reports `removed: page`, not `dialog "<page heading>"`; a removed group's heading is clipped so the label never ends in a broken quote.
+- Browser pane: `services` clips each profile to one line of 160 characters and, past the reply cap, keeps whole lines and ends with `+N more` instead of cutting mid-word.
+- Browser pane: README says tabs are not restored across restarts while their last URL and title persist under the profile's `tabs` entry.
 - Messaging: `[agent:sub <name|agent_id>] body` reaches one of the seat's own running subagents mid-run — it lands tagged `[parent …]` after the subagent's next tool call, and a subagent that finishes or is stopped first bounces the note back to the seat as undelivered. With it, the SendMessage tool can come off seats that only used it to redirect their own subagents.
 - Messaging: `[agent:sub <name>]` resolves the name on current Claude Code builds — the Agent tool's result nests an `agent_id`, which made the queue hook skip the parent's name bookkeeping.
 - Intents: stock hand and lead templates grant `sub`; a seat granted a privileged verb (term, reboot, team create) or a plugin verb no longer freezes its ordinary intents — the allowlist carries a `*` for "every ordinary intent, including ones added later", and seats saved before `sub` existed are rewritten once at launch so `sub` works there too. `*` never grants a privileged or plugin verb.

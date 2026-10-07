@@ -12,6 +12,7 @@ const RUNS = new RegExp('\\s+', 'g');
 
 const PREFIX = '[agent:browser]';
 const REPLY_MAX = 600;
+const SERVICE_ITEM_MAX = 160;
 const SEAT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const KEEP_FILES = 50;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -207,7 +208,10 @@ function servicesReply(services, mirror, urlOf = () => '', tabsOf = () => []) {
     const tabs = tabsOf(n);
     return `${n} — ${site}${sign} · ${win}${tabs.length ? ` · tabs: ${tabs.map((t) => `${t.tab} (${t.state}${t.openedBy && t.openedBy.includes('/') ? `, by ${t.openedBy}` : ''})`).join(', ')}` : ''}`;
   });
-  return reply(`services: ${items.join(' │ ')}`);
+  const lines = items.map((s) => (s.length > SERVICE_ITEM_MAX ? s.slice(0, SERVICE_ITEM_MAX - 1) + '…' : s));
+  const room = REPLY_MAX - `${PREFIX} services: `.length; const more = (k) => ` │ +${k} more`;
+  let out = lines[0], i = 1; for (; i < lines.length; i++) { const next = `${out} │ ${lines[i]}`; const rest = lines.length - i - 1; if (next.length + (rest ? more(rest).length : 0) > room) break; out = next; }
+  return reply(`services: ${out}${i < lines.length ? more(lines.length - i) : ''}`);
 }
 
 function closedReply(service, rec, windows, also = []) {

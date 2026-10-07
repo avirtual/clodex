@@ -1212,7 +1212,8 @@ function inspect(n) {
   const up = e => e.parentElement || (e.parentNode && e.parentNode.host) || null;
   const rootAt = (p) => (p.matches && p.matches(DIALOG_SEL)) || /\\b(dialog|drawer|modal|sidebar)\\b/i.test(p.className || '') || drawerAt(p);
   const ancestorsOf = (e) => { const ps = []; for (let p = up(e); p && p !== document.body && ps.length < 64; p = up(p)) ps.push(p); const root = ps.findIndex(rootAt); const keep = new Set([0, 1, root, ps.length - 2, ps.length - 1]); const out = []; ps.forEach((p, i) => { if (keep.has(i)) out.push(short(p, 2)); else if (out[out.length - 1] !== '…') out.push('…'); }); return out; };
-  const ancestors = ancestorsOf(el);
+  const nearOf = (e) => { const out = []; for (let p = up(e); p && out.length < 4; p = up(p)) out.push(short(p, 2)); return out; };
+  const ancestors = ancestorsOf(el); const nearAncestors = nearOf(el);
   const clone = el.cloneNode(true);
   for (const e of [clone, ...clone.querySelectorAll('*')]) {
     e.removeAttribute('data-cx');
@@ -1225,7 +1226,7 @@ function inspect(n) {
     cursor: getComputedStyle(el).cursor,
     marked: el.matches(${JSON.stringify(X_SEL)}),
     rect: { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) },
-    visible: vis(el), clipped: !!list && outOf(r, list.rect), ancestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
+    visible: vis(el), clipped: !!list && outOf(r, list.rect), ancestors, nearAncestors, html: clip(clone.outerHTML, 300), warn: cqHit(el),
     ...(textual && !secret(el) ? { value: String(el.value == null ? '' : el.value) } : {}),
   };
 })()`;
@@ -1358,7 +1359,7 @@ function GONE(nums) {
   let total = 0;
   const groupOf = (el) => {
     let last = 'page';
-    for (let p = upOf(el), k = 0; p && k < 64; p = upOf(p), k++) {
+    for (let p = upOf(el), k = 0; p && p !== document.body && k < 64; p = upOf(p), k++) {
       const label = (p.getAttribute && p.getAttribute('aria-label')) || '';
       const cls = typeof p.className === 'string' ? p.className : '';
       const role = p.getAttribute && p.getAttribute('role') === 'dialog';
@@ -1367,7 +1368,7 @@ function GONE(nums) {
         const kind = role || /^(dialog|modal)$/i.test(word[1]) ? 'dialog' : 'drawer';
         const h = label || (p.querySelector && (p.querySelector('h1,h2,h3') || {}).innerText) || '';
         const name = String(h).replace(/\\s+/g, ' ').trim();
-        last = name ? kind + ' ' + JSON.stringify(name.length > 30 ? name.slice(0, 29) + '…' : name) : kind;
+        if (name) { let n = name; while (n && (kind + ' ' + JSON.stringify(n + '…')).length > 40) n = n.slice(0, -1); last = kind + ' ' + JSON.stringify(n.length < name.length ? n + '…' : name); } else last = kind;
       } else if (label) last = label;
       else if (/^(NAV|ASIDE|HEADER|FOOTER)$/.test(p.tagName || '')) last = p.tagName.toLowerCase();
     }

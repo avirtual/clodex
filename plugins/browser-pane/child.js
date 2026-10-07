@@ -1030,7 +1030,8 @@ function run(electron, ctx) {
           if (done.watched) { const under = await inIsolated(wc, scripts.UNDER_POINT(n)); if (typeof under === 'string' && under) done.under = under; }
         }
         if (done.changed === 'text removed' && svc.num && svc.num.lastRead && !wc.isDestroyed()) {
-          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number).filter((n) => !svc.num.lastRead.gone.includes(n))));
+          const g0 = new Set(svc.num.lastRead.gone);
+          const g = await inIsolated(wc, scripts.GONE(Object.keys(svc.num.lastRead.keys).map(Number).filter((n) => !g0.has(n))));
           if (g && g.total) done.removed = g;
           if (g && g.gone) svc.num.lastRead.gone.push(...g.gone);
         }
@@ -1419,8 +1420,8 @@ function run(electron, ctx) {
       const r = await inIsolated(svc.wc, scripts.INSPECT(n));
       if (!r) throw codedError('NO_ELEMENT', TEXT.noElement(svc.name, n));
       const listeners = await driver.withTimeout(listenersOf(svc, n).catch(() => null), driver.SCRIPT_TIMEOUT_MS, null);
-      if (listeners && listeners.ancestorAt) listeners.ancestor = r.ancestors[listeners.ancestorAt - 1] || '?';
-      const { marked, ...shown } = r;
+      if (listeners && listeners.ancestorAt) listeners.ancestor = (r.nearAncestors || [])[listeners.ancestorAt - 1] || '?';
+      const { marked, nearAncestors, ...shown } = r;
       return { n, ...shown, kind: inspectKind(r, listeners), listeners, ...(fresh ? { fresh: true } : {}), ...(byName ? { byName: true } : {}) };
     } finally {
       svc.reading -= 1;
