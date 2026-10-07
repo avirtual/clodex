@@ -59,10 +59,31 @@ test('read-format: --text keeps only text', () => {
 test('read-format: --filter is case-insensitive on text and elements, keeps numbers and markers and a text match\'s block', () => {
   const out = fmt({ filter: 'SEP' });
   assert.deepStrictEqual(bodyOf(out.content), [
-    '== text ==', 'My Bills', 'Account ending 5678', 'Statements for Sep 2026',
+    '== text (1 hit for SEP) ==', 'My Bills', 'Account ending 5678', 'Statements for Sep 2026',
     '== elements ==', '[3] select Statement month = "September 2026" {September 2026|August 2026}',
   ]);
   assert.match(out.content.split('\n')[3], /elements: 5 \(numbers: stable per site; new since your last read: none\) · mode: default · filter: "SEP"$/);
+});
+
+const NEEDLES = Array.from({ length: 80 }, (_v, i) => `row ${i + 1} holds the needle ${'z'.repeat(150)}`).join('\n');
+
+test('read-format: under --filter the text marker counts the hits of the full text, quoted like the filter', () => {
+  const body = bodyOf(formatRead({ ...RAW, text: NEEDLES }, { service: 'utility', filter: 'needle' }).content);
+  assert.strictEqual(body[0], '== text (80 hits for needle) ==');
+  const spaced = bodyOf(formatRead({ ...RAW, text: NEEDLES }, { service: 'utility', filter: 'the needle' }).content);
+  assert.strictEqual(spaced[0], '== text (80 hits for "the needle") ==');
+});
+
+test('read-format: --filter skips the 1,200-char head and pages every matching line', () => {
+  const opts = { service: 'utility', filter: 'needle', max: 2500 };
+  const out = formatRead({ ...RAW, text: NEEDLES }, opts);
+  assert.ok(out.pages >= 2);
+  assert.match(bodyOf(out.content)[1], /^row 1 holds the needle/);
+  const last = formatRead({ ...RAW, text: NEEDLES }, { ...opts, page: out.pages }).content;
+  assert.ok(last.split('\n').some((l) => l.startsWith('row 80 holds the needle')));
+  assert.doesNotMatch(out.content + last, /first 1,200 of/);
+  const deep = [...Array(60).fill('Filler paragraph of text.'), 'The needle sentence lives here.', ...Array(60).fill('Filler paragraph of text.')].join('\n\n');
+  assert.match(formatRead({ ...RAW, text: deep }, opts).content, /The needle sentence lives here\./);
 });
 
 test('read-format: login and frames lines report the raw probe', () => {
@@ -148,7 +169,7 @@ test('read-format: clickable element lines and one-line table rows pass through,
     '== elements ==', ...raw.elements]);
   assert.match(out.content.split('\n')[3], /elements: 4 \(numbers: stable per site; new since your last read: none\)/);
   assert.deepStrictEqual(bodyOf(formatRead(raw, { service: 'ebloc', filter: 'lista' }).content),
-    ['== text ==', 'Contor | Index precedent | Index curent', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
+    ['== text (1 hit for lista) ==', 'Contor | Index precedent | Index curent', '| | Lista de plată 08/2026 11:09:38', '== elements ==', '[22] clickable "Lista de plată 08/2026"']);
 });
 
 test('read-format: changedRegion strips the common line prefix and suffix and returns what is new', () => {
@@ -284,6 +305,10 @@ test('read-format: elementStrip hides lines whose number and key the previous re
   assert.deepStrictEqual(elementStrip(null, cur, null, null, { covered: ['3'] }).lines.includes('[3] input:text Cauta'), false);
   assert.deepStrictEqual(elementStrip(prev, cur, null, null, { chrome: ['1'], covered: ['2'] }), { lines: cur.slice(2), hidden: 2, covered: 1 });
   assert.deepStrictEqual(elementStrip(null, cur.slice(0, 2), null, null, { covered: ['1', '2'] }), { lines: ['[1] link Acasa → /?t=222'], hidden: 1, covered: 1 });
+  const three = cur.slice(0, 3);
+  assert.deepStrictEqual(elementStrip(null, three, null, null, { covered: ['1'], dialog: ['3'] }),
+    { lines: ['dialog: 1 control — the page\'s 1 follow', three[2], three[1]], hidden: 1, covered: 1 });
+  assert.deepStrictEqual(elementStrip(null, cur, null, null, { dialog: ['3'] }), { lines: cur, hidden: 0 });
 });
 
 const K = require('../plugins/browser-pane/keys');

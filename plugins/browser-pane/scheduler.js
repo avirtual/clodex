@@ -338,7 +338,7 @@ function createScheduler({
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
       : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
     if (stripping && cmd.mode === 'default') {
-      const e = elementStrip(elBase ? elBase.elements : null, raw.elements, elBase ? elBase.keys : null, raw.keys, { chrome: raw.chrome, covered: raw.covered });
+      const e = elementStrip(elBase ? elBase.elements : null, raw.elements, elBase ? elBase.keys : null, raw.keys, { chrome: raw.chrome, covered: raw.covered, dialog: raw.dialog });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; covered = e.covered || 0; }
     }
     if (hasText) st.lastText[service] = { text: raw.text, title: raw.title, origin, where, page: pageKey(raw.url), elements: raw.elements, keys: raw.keys, elBase, base, gen: raw.gen == null ? null : raw.gen, idp: !!(raw.login && raw.login.idp) };

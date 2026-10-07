@@ -293,7 +293,7 @@ function sections(raw, opts) {
   const out = [];
   const feed = compactFeed(raw, opts);
   if (feed) {
-    const rest = outsideFeed(elements, feed);
+    const rest = outsideFeed(elements, feed).filter((l) => !DIALOG_RE.test(l));
     const fk = feedKept(feed, opts.filter);
     if (opts.feedSeen) {
       const sec = seenSection(feed, opts.feedSeen, fk, { ...opts, url: raw.url });
@@ -317,6 +317,11 @@ function sections(raw, opts) {
     const text = textLines.join('\n');
     if (opts.mode === 'text' || opts.all) {
       out.push({ marker: '== text ==', lines: text ? text.split('\n') : ['(no text)'] });
+    } else if (opts.filter) {
+      const needle = opts.filter.toLowerCase();
+      const n = String(raw.text || '').split('\n').filter((l) => unmark(l).toLowerCase().includes(needle)).length;
+      const marker = n ? `== text (${n} hit${n === 1 ? '' : 's'} for ${quoteFilter(opts.filter)}) ==` : '== text ==';
+      out.push({ marker, lines: text ? text.split('\n') : ['(no text)'] });
     } else {
       const head = textHead(rawLines);
       const missed = head.cut ? headingsPast(rawLines.slice(head.cutAt), opts.headings) : [];
@@ -501,12 +506,13 @@ function chromeStrip(prev, text, { minLines = CHROME_MIN_LINES, maxLines = CHROM
 
 const FORM_KINDS = new Set(['select', 'textarea', 'combobox', 'checkbox']);
 const ELEMENT_RE = /^\[(\d+)\] (\S+)/;
+const DIALOG_RE = /^dialog: \d+ controls? — the page's \d+ follow$/;
 
 function elementKey(line) {
   return String(line).replace(/^\[\d+\] /, '').replace(/([?&](?:t|_|ts)=)\d+/g, '$1');
 }
 
-function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null, covered = null } = {}) {
+function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null, covered = null, dialog = null } = {}) {
   const lines = Array.isArray(elements) ? elements.map(String) : [];
   const under = new Set(Array.isArray(covered) || covered instanceof Set ? [...covered].map(String) : []);
   const isUnder = lines.map((l) => { const m = ELEMENT_RE.exec(l); return !!m && under.has(m[1]); });
@@ -532,7 +538,14 @@ function elementStrip(prevElements, elements, prevKeys, curKeys, { chrome = null
   let hidden = hide.filter(Boolean).length;
   let coveredN = hide.filter((h, i) => h && isUnder[i]).length;
   if (hidden && hidden >= lines.length) { if (isUnder[0]) coveredN -= 1; hide[0] = false; hidden -= 1; }
-  return { lines: lines.filter((_l, i) => !hide[i]), hidden, ...(coveredN ? { covered: coveredN } : {}) };
+  const kept = lines.filter((_l, i) => !hide[i]);
+  const own = new Set(Array.isArray(dialog) || dialog instanceof Set ? [...dialog].map(String) : []);
+  const inDialog = (l) => { const m = ELEMENT_RE.exec(l); return !!m && own.has(m[1]); };
+  const dialogLines = coveredN > 0 ? kept.filter(inDialog) : [];
+  const restLines = kept.filter((l) => !inDialog(l));
+  const k = dialogLines.length;
+  const out = k ? [`dialog: ${k} control${k === 1 ? '' : 's'} — the page's ${restLines.length} follow`, ...dialogLines, ...restLines] : kept;
+  return { lines: out, hidden, ...(coveredN ? { covered: coveredN } : {}) };
 }
 
 const NUMBERS_LISTED = 10;
@@ -632,7 +645,7 @@ function formatRead(raw, opts) {
   if (o.page > total) throw new Error(`page ${o.page} of ${total}`);
   const body = pages[o.page - 1];
   const hidden = opts.hidden > 0 ? opts.hidden : 0;
-  const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.length : 0) + hidden;
+  const elementsTotal = (Array.isArray(raw.elements) ? raw.elements.filter((l) => !DIALOG_RE.test(String(l))).length : 0) + hidden;
   const under = opts.covered > 0 ? Math.min(opts.covered, hidden) : 0;
   const range = (under ? `${fmt(hidden)} hidden (${under} under the dialog, ${hidden - under} repeated) — read --all lists them; ` : hidden ? `${fmt(hidden)} repeated, hidden — still clickable by number; read --all lists them; ` : '')
     + (raw.restored != null ? `numbers: stable per site; numbers restored${savedLabel(raw.restored)}`

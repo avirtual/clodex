@@ -193,11 +193,11 @@ ipc handlers (step 12).
 - **Filter**: `read --filter=<s>` keeps matching element lines, and in the text
   a matching table row with its table's header row, or a matching line with its
   paragraph (or the line before and after it when the paragraph is long); a
-  matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows. The default read's hint names the first heading its 1,200-char cut hid, as `--filter="<heading>"`.
+  matching list item comes alone (its lines up to the next bullet), and under a filter no `stripped:` line shows and the 1,200-char head cut does not apply — every matching line is listed, paged by `--max`, and the text marker counts the hits. The default read's hint names the first heading its 1,200-char cut hid, as `--filter="<heading>"`.
 - **Repeated text**: a read strips only navigation, header, footer and sidebar
   lines repeated from the last read of the site; page body text is never
   hidden. `read --all` shows everything, the full text included. Text inside forms is
-  read; only the controls are left to the element list.
+  read; only the controls are left to the element list. When a dialog covers the page, its own controls come first under a `dialog:` line; `read --all` lists everything in page order.
 - **The verb is privileged**: until `browser` is ticked in a seat's intent
   checklist, that seat's `[agent:browser …]` lines are silently inert, with no
   error reply.

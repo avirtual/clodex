@@ -880,7 +880,7 @@ function readInteractive(main, state) {
   });
   const parts = items.map(i => partsOf(i.el));
   const stored = storedKeysOf(items.map(i => i.el), parts.map(keyOf));
-  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const covered = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
+  const out = []; const keys = {}; const descs = []; const sigs = {}; const chrome = []; const covered = []; const dialog = []; const rowsOut = {}; const cats = {}; const adKeys = {};${ROW}
   items.forEach((it, i) => {
     const n = place(it.el, stored[i], it.line != null);
     keys[n] = stored[i];
@@ -894,9 +894,10 @@ function readInteractive(main, state) {
       sigs[n] = counterMask(it.sig == null ? it.line : it.sig) + '\u0000' + counterMask(rowsOut[n]);
       if (it.el.closest(${JSON.stringify(CHROME_SEL)})) chrome.push(n);
       if (cover && !within(cover, it.el) && coveredBy(it.el, hitAt((r => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 }))(it.el.getBoundingClientRect())))) covered.push(n);
+      if (cover && within(cover, it.el)) dialog.push(n);
     }
   });
-  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
+  return { lines: out, truncated, assigned, next, fresh, keys, descs, sigs, rows: rowsOut, chrome, covered, cats, adKeys, dialog, posts: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article')].filter(a => !(a.parentElement && a.parentElement.closest('article'))).length, cloaked: [...(${main ? 'mainRootOf() || document' : 'document'}).querySelectorAll('article, [data-post-number], [id^=post_], .post-stream--cloaked')].filter(a => !(a.parentElement && a.parentElement.closest('article, [data-post-number]')) && (a.innerText || '').trim().length < 40 && a.getBoundingClientRect().height >= 200).length, url: location.href };
 })()`;
 }
 

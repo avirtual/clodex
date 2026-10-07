@@ -395,4 +395,5 @@ test('READ_INTERACTIVE: links under an aria-modal dialog\'s backdrop are numbere
   assert.strictEqual(read.lines.length, 3);
   assert.deepStrictEqual(Array.from(read.covered).map(Number), [num('Portfolio app'), num('Accounts')]);
   assert.ok(!Array.from(read.covered).map(Number).includes(num('Close')));
+  assert.deepStrictEqual(Array.from(read.dialog).map(Number), [num('Close')]);
 });
