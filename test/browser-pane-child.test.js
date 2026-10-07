@@ -2694,12 +2694,12 @@ const readDom = () => {
   return { node, removed, hostSeen, run };
 };
 
-const nestDom = (inner2 = [], o2 = { srcdoc: 'x' }) => {
+const nestDom = (mk = () => [], o2 = { srcdoc: 'x' }) => {
   const d = readDom();
   const { node } = d;
   const frameSeen = [];
   const frameSeen2 = [];
-  const fd2 = { body: node('body', [node('p', [], 'INNER-FRAME'), ...inner2]), defaultView: { getComputedStyle: (e) => { frameSeen2.push(e); return { display: 'block' }; } }, querySelectorAll: () => [] };
+  const fd2 = { body: node('body', [node('p', [], 'INNER-FRAME'), ...mk(node)]), defaultView: { getComputedStyle: (e) => { frameSeen2.push(e); return { display: 'block' }; } }, querySelectorAll: () => [] };
   const fd = { body: node('body', [node('p', [], 'OUTER-FRAME'), node('iframe', [], '', { contentDocument: fd2, ...o2 })]),
     defaultView: { getComputedStyle: (e) => { frameSeen.push(e); return { display: 'block' }; } }, querySelectorAll: () => [] };
   const root = node('div', [node('p', [], 'ROOT'), node('iframe', [], '', { contentDocument: fd, srcdoc: 'x' })]);
@@ -2716,8 +2716,7 @@ test('page scripts: READ_TEXT inlines a frame inside an inlined frame under its 
 });
 
 test('page scripts: READ_TEXT counts a third-level srcdoc frame as nested and drops its twin instead of inlining it', () => {
-  const d = readDom();
-  const r = nestDom([d.node('iframe', [], '', { contentDocument: leafDoc(d.node, 'DEEP-FRAME'), srcdoc: 'x' })]);
+  const r = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-FRAME'), srcdoc: 'x' })]);
   const { text, nested } = r.out();
   assert.ok(!text.includes('DEEP-FRAME'), text);
   assert.strictEqual(text.split('[frame]').length, 3, text);
@@ -2726,19 +2725,17 @@ test('page scripts: READ_TEXT counts a third-level srcdoc frame as nested and dr
 });
 
 test('page scripts: READ_TEXT inlines a second-level src= frame by URL and never counts a third-level src= frame as nested', () => {
-  const r = nestDom([], { src: 'https://a.example/x' });
+  const r = nestDom(undefined, { src: 'https://a.example/x' });
   const got = r.out();
   assert.deepStrictEqual([...got.inlined], ['https://a.example/x', 'about:srcdoc']);
   assert.ok(got.text.includes('INNER-FRAME'), got.text);
-  const d = readDom();
-  const r3 = nestDom([d.node('iframe', [], '', { contentDocument: leafDoc(d.node, 'DEEP-A'), srcdoc: 'x' }),
-    d.node('iframe', [], '', { contentDocument: leafDoc(d.node, 'DEEP-B'), src: 'https://b.example/y' })]);
+  const r3 = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-A'), srcdoc: 'x' }),
+    n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-B'), src: 'https://b.example/y' })]);
   assert.deepStrictEqual([...r3.out().nested], [1]);
 });
 
 test('page scripts: READ_TEXT cuts hidden text in a second-level frame by that frame\'s own window', () => {
-  const d = readDom();
-  const r = nestDom([d.node('p', [], 'HIDDEN-INNER', { hidden: true })]);
+  const r = nestDom((n) => [n('p', [], 'HIDDEN-INNER', { hidden: true })]);
   const { text } = r.out();
   assert.ok(text.includes('INNER-FRAME'), text);
   assert.ok(!text.includes('HIDDEN-INNER'), text);
