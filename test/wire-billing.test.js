@@ -586,14 +586,14 @@ test('prefix-shadow audit: no PRICES row strictly extends a fast-mode overlay ke
     'at standard rates with no warning');
 });
 
-// PRICES_DATED is empty, so running the detector over it live asserts nothing.
-// withDated puts a real schedule on 'claude-opus-4' — which four opus-4-N rows
-// already extend — so the orphan is not synthetic: were that schedule real, every
-// opus-4.5+ receipt would miss the repricing while legacy opus-4.0/4.1 took it.
 test('prefix-shadow audit: no PRICES row strictly extends a long-prompt overlay key', () => {
   assert.deepEqual(orphanedOverlayRows(Object.keys(PRICES), Object.keys(PRICES_LONG_PROMPT)), []);
 });
 
+// PRICES_DATED is empty, so running the detector over it live asserts nothing.
+// withDated puts a real schedule on 'claude-opus-4' — which four opus-4-N rows
+// already extend — so the orphan is not synthetic: were that schedule real, every
+// opus-4.5+ receipt would miss the repricing while legacy opus-4.0/4.1 took it.
 test('prefix-shadow audit: the dated overlay is checked on the same rule, and the check bites', () => {
   const schedule = [['2026-09-01', { in: 9.0, out: 45.0, cache_write_5m: 11.25, cache_write_1h: 18.0, cache_read: 0.9 }]];
   withDated('claude-opus-4', schedule, () => {
