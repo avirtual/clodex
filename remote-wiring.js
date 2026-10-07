@@ -489,7 +489,7 @@ function createRemoteWiring(deps) {
         send: (name, text, images, client = null) => {
           const sess = manager.sessions.get(name);
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
-          const spoof = client && (manager.sessions.has(client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client));
+          const spoof = client && ([...manager.sessions.keys()].some((k) => k.toLowerCase() === client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client));
           if (spoof) log.info('remote', `dm client tag refused: ${client}`);
           const tag = client && !spoof ? `(via ${client})` : '';
           try {

@@ -596,7 +596,7 @@ function digestOf(raw, feed = null) {
   const rows = [];
   for (const l of feed ? outsideFeed(list(raw.elements), feed) : list(raw.elements)) {
     const m = WARN_RE.exec(l);
-    if (m) rows.push({ n: Number(m[1]), kind: m[2], label: m[3], cat: String((cats && cats[m[1]]) || 'other') });
+    if (m && (!cats || cats[m[1]] != null)) rows.push({ n: Number(m[1]), kind: m[2], label: m[3], cat: String((cats && cats[m[1]]) || 'other') });
   }
   const warn = rows.filter((w) => w.cat !== 'ad');
   const adKeys = raw.adKeys && typeof raw.adKeys === 'object' ? raw.adKeys : {};

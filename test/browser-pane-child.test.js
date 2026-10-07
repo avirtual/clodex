@@ -2752,7 +2752,7 @@ const depth2Dom = (kids, gs = () => ({ display: 'block' })) => {
   return d.run(scripts.READ_TEXT(false), root, [root]);
 };
 
-test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as nested and a hidden one only as hidden', () => {
+test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as unreadable and a hidden one only as hidden', () => {
   const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
     n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
   assert.deepStrictEqual([...got.nested], []);
@@ -2766,10 +2766,6 @@ test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc 
 });
 
 test('page scripts: READ_TEXT keeps an unreadable second-level frame apart from a third-level srcdoc one, and child.js labels it nested (unreadable)', () => {
-  const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
-    n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
-  assert.deepStrictEqual([...got.unreadable], [2]);
-  assert.deepStrictEqual([...got.nested], []);
   const deep = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-FRAME'), srcdoc: 'x' })]).out();
   assert.deepStrictEqual([...deep.nested], [1]);
   assert.deepStrictEqual([...deep.unreadable], []);
