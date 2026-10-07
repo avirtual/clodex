@@ -266,6 +266,8 @@ const DEEP = `
     return true;
   };`;
 
+const CUT = `const cutHidden = (o, t, win) => { const gs = win.getComputedStyle.bind(win); const os = [...o.querySelectorAll('*')]; [...t.querySelectorAll('*')].forEach((twin, i) => { const orig = os[i]; if (orig && !orig.getClientRects().length && gs(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } }); };`;
+
 const TABLES = `
   const cellText = c => {
     if (!c.getClientRects().length) return '';
@@ -484,14 +486,15 @@ const MODAL_FINDER = `const paintedArea = (e) => { const s = getComputedStyle(e)
 function readText(main) {
   return `(() => {${DEEP}${BUSY}${WALL}
   ${bulletItems.toString()}
-  const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc';
+  ${CUT}
+  const DROP = 'script,style,noscript,select,button,svg,[aria-hidden=true],.navbox,.mw-editsection,.reference,.reflist,#toc,.toc,iframe,object,embed,video,audio';
   const score = el => { if (!el.getClientRects().length) return -1; const t = (el.innerText || '').length;
     let l = 0; el.querySelectorAll('a').forEach(a => l += (a.innerText || '').length);
     return t - 2 * l;
   };
   ${main ? MAIN_ROOT : ''}
   const forced = ${main ? 'mainRootOf()' : 'null'};
-  let root = forced || document.querySelector(${JSON.stringify(READ_ROOT_SEL)});
+  let root = forced || [...document.querySelectorAll(${JSON.stringify(READ_ROOT_SEL)})].find(r => r.getClientRects().length) || null;
   ${MODAL_FINDER}
   if (modal) root = modal.e;
   const framed = el => [...el.querySelectorAll('iframe')].some(f => { try { return !!(f.contentDocument && f.contentDocument.body && f.contentDocument.body.innerText.trim()); } catch { return false; } });
@@ -538,7 +541,7 @@ function readText(main) {
   const inlined = [];
   const nested = [];
   const hidden = [];
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend(Object.assign(document.createElement('div'), { textContent: '(hidden)' })); twin.append(Object.assign(document.createElement('div'), { textContent: '(end hidden)' })); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend(Object.assign(document.createElement('div'), { textContent: '(hidden)' })); twin.append(Object.assign(document.createElement('div'), { textContent: '(end hidden)' })); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) { const frag = document.createDocumentFragment(); frag.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); cutHidden(orig.shadowRoot, frag, window); twin.append(frag); } if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {} if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || ''); if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box = document.createElement('div'); const fb = fd.body.cloneNode(true); cutHidden(fd.body, fb, fd.defaultView); box.append('[frame]\\n', fb); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box); inlined.push(orig.srcdoc ? 'about:srcdoc' : (fd.location && fd.location.href) || orig.src || ''); } } });
   clone.querySelectorAll('sup').forEach(c => {
     const p = c.previousSibling ? String(c.previousSibling.textContent || '') : '';
     if (/^\\d{2}$/.test(String(c.textContent || '').trim()) && /\\d$/.test(p)) c.prepend(/\\d,\\d{3}$/.test(p) ? '.' : ',');
@@ -1233,11 +1236,11 @@ function inspect(n) {
 })()`;
 }
 
-const PAGE_TEXT = `(() => {
+const PAGE_TEXT = `(() => {${CUT}
   if (!document.body) return '';
   const clone = document.body.cloneNode(true);
   const root = document.body;
-  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });
+  const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; } else if (orig && orig.shadowRoot) { const frag = document.createDocumentFragment(); frag.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); cutHidden(orig.shadowRoot, frag, window); twin.append(frag); } });
   clone.querySelectorAll('script,style,noscript,template,iframe,object,embed,video,audio,[aria-hidden=true],[inert]').forEach(n => n.remove());
   const host = document.createElement('div');
   host.style.cssText = 'position:absolute;left:-99999px;top:0;width:1000px';
@@ -1397,6 +1400,7 @@ function livePoint(n) {
   if (!r.width || !r.height) return null;
   const at = clickPoint(el, r, document);
   const hit = hitAt(at);
+  if (!hit) return null;
   if (!coveredBy(el, hit)) return { x: at.x, y: at.y };
   let hitN = null;
   for (let e = hit; e && hitN == null; e = upOf(e)) {

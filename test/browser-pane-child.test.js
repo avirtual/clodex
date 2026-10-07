@@ -710,13 +710,18 @@ test('page scripts: READ_TEXT and PAGE_TEXT render content-visibility:auto subtr
 
 test('page scripts: READ_TEXT and PAGE_TEXT carry each open shadow root into its host\'s clone twin', () => {
   const cut = "if (orig && !orig.getClientRects().length && getComputedStyle(orig).display !== 'contents' && !(twin.parentElement && twin.parentElement.closest('[data-cxb-cut]'))) { twin.setAttribute('data-cxb-cut', ''); twin.textContent = ''; }";
-  const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && orig.shadowRoot) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); });";
+  const zip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && orig.shadowRoot) { const frag = document.createDocumentFragment(); frag.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); cutHidden(orig.shadowRoot, frag, window); twin.append(frag); } });";
   const read = scripts.READ_TEXT(false);
-  const readZip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend(Object.assign(document.createElement('div'), { textContent: '(hidden)' })); twin.append(Object.assign(document.createElement('div'), { textContent: '(end hidden)' })); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) twin.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true)));";
+  const readZip = "const origs = [...root.querySelectorAll('*')]; [...clone.querySelectorAll('*')].forEach((twin, i) => { const orig = origs[i]; " + cut + " else if (orig && getComputedStyle(orig).visibility === 'hidden' && (orig.innerText || '').trim() === '') { twin.textContent = ''; } else if (orig && getComputedStyle(orig).opacity === '0' && !faded(orig) && (orig.innerText || '').trim().length >= 3) { twin.prepend(Object.assign(document.createElement('div'), { textContent: '(hidden)' })); twin.append(Object.assign(document.createElement('div'), { textContent: '(end hidden)' })); } if (orig && orig.shadowRoot && !twin.hasAttribute('data-cxb-cut')) { const frag = document.createDocumentFragment(); frag.append(...[...orig.shadowRoot.childNodes].map(n => n.cloneNode(true))); cutHidden(orig.shadowRoot, frag, window); twin.append(frag); }";
   assert.ok(read.includes(readZip));
   assert.ok(read.indexOf("c.prepend('(was ')") < read.indexOf(readZip) && read.indexOf(readZip) < read.indexOf('clone.querySelectorAll(DROP)'));
   assert.ok(scripts.PAGE_TEXT.includes('const root = document.body;\n  ' + zip));
   assert.ok(scripts.PAGE_TEXT.indexOf(zip) < scripts.PAGE_TEXT.indexOf("clone.querySelectorAll('script,style"));
+  assert.ok(read.includes("cutHidden(fd.body, fb, fd.defaultView); box.append('[frame]\\n', fb);"));
+  for (const src of [read, scripts.PAGE_TEXT]) {
+    assert.ok(src.includes('cutHidden(orig.shadowRoot, frag, window); twin.append(frag);'));
+    assert.strictEqual(src.split('const cutHidden').length - 1, 1);
+  }
 });
 
 test('page scripts: READ_TEXT gives two-digit superscript cents a decimal separator', () => {
@@ -1001,14 +1006,19 @@ test('page scripts: READ_TEXT inlines a same-origin or srcdoc frame body under a
   const src = scripts.READ_TEXT(false);
   assert.ok(src.includes("if (orig && orig.tagName === 'IFRAME') { let fd = null; try { fd = orig.contentDocument; } catch {}"));
   assert.ok(src.includes('if (vis(orig) && fd && fd.body && fd.body.innerText.trim()) { const box'), 'an empty or hidden frame is not inlined');
-  assert.ok(src.includes("box.append('[frame]\\n', fd.body.cloneNode(true)); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
+  assert.ok(src.includes("const fb = fd.body.cloneNode(true); cutHidden(fd.body, fb, fd.defaultView); box.append('[frame]\\n', fb); const inner = [...fd.querySelectorAll('iframe[srcdoc]')].length; if (inner) nested.push(inner); twin.replaceWith(box);"));
   assert.ok(src.includes("if (!forced && !modal && (!root || ((root.innerText || '').length < 200 && !framed(root)))) {"));
   assert.ok(src.includes('return { text, busy, outline, wall, inlined, nested, hidden };'));
   assert.ok(src.indexOf("orig.tagName === 'IFRAME'") < src.indexOf('clone.querySelectorAll(DROP)'));
   const child = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'child.js'), 'utf8');
   assert.ok(child.includes('const hidden = new Set(got && Array.isArray(got.hidden) ? got.hidden : []); const frames = allFrames.filter((u) => !inlined.has(u) && !hidden.has(u));'));
   assert.ok(src.includes("if (!vis(orig)) hidden.push(orig.srcdoc ? 'about:srcdoc' : (fd && fd.location && fd.location.href) || orig.src || '');"));
-  assert.ok(child.includes("const nestedN = got && Array.isArray(got.nested) ? got.nested.reduce((a, b) => a + b, 0) : 0;"));
+  const nestedExpr = "got && Array.isArray(got.nested) ? Math.min(20, got.nested.reduce((a, b) => a + (Number.isInteger(b) && b > 0 ? b : 0), 0)) : 0";
+  assert.ok(child.includes(`const nestedN = ${nestedExpr};`));
+  const nestedN = new Function('got', 'return ' + nestedExpr);
+  assert.strictEqual(nestedN({ nested: [1e12] }), 20);
+  assert.strictEqual(nestedN({ nested: [1.5, 'x', -3, 2] }), 2);
+  assert.strictEqual(nestedN({ nested: [2, 3] }), 5);
   assert.ok(child.includes("frames.push(...Array(nestedN).fill('nested'))"));
   assert.ok(child.includes('const login = challenged(await probe(svc), allFrames, wc.getTitle());'));
 });
@@ -1901,6 +1911,7 @@ test('LIVE_POINT: the click point is looked up again where the element is now, a
   assert.deepStrictEqual(live(inView, () => span), { x: 60, y: 115 }, 'the element\'s own child is not a cover');
   const gone = boxEl('button', 'Pret crescator', box(0, 0, 0, 0));
   assert.strictEqual(findOn(gone, () => null, { script: scripts.LIVE_POINT }), null);
+  assert.strictEqual(findOn(inView, () => null, { script: scripts.LIVE_POINT }), null, 'an element scrolled out of the viewport has no live point');
 });
 
 test('FIND: a target our scroll parked under a sticky header is scrolled clear once; a modal cover is retried once at centre and still refused; an overlay names its numbered buttons', async () => {
@@ -2597,6 +2608,7 @@ test('page scripts: READ_TEXT keeps chrome landmarks and marks each of their tex
   for (const sel of scripts.CHROME_SEL.split(',')) assert.ok(!drop.includes(sel), sel);
   assert.ok(!drop.includes('form'), 'text inside a form is read');
   assert.ok(drop.includes('button') && drop.includes('select'), 'button labels and options stay element rows');
+  for (const t of ['iframe', 'object', 'embed', 'video', 'audio']) assert.ok(drop.includes(t), t);
   assert.ok(src.includes(`clone.querySelectorAll(${JSON.stringify(scripts.CHROME_SEL)})`));
   assert.ok(src.includes(`t.data = ${JSON.stringify(scripts.CHROME_MARK)} + t.data`));
   assert.ok(scripts.READ_INTERACTIVE(false, {}).includes(`if (it.el.closest(${JSON.stringify(scripts.CHROME_SEL)})) chrome.push(n);`));
@@ -2621,12 +2633,96 @@ test('page scripts: READ_TEXT reads the text of a table inside a form and drops 
     node('p', [], 'Datorii curente '.repeat(15)),
     node('form', [node('table', [node('tr', [node('td', [], 'Întreţinere August 2026'), node('td', [], '315,90 Lei')])]), node('button', [], 'Plăteşte')]),
   ]);
-  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: () => [], body: { appendChild() {} }, head: { appendChild() {} },
+  const document = { title: 'e-bloc', querySelector: () => root, querySelectorAll: (sel) => (sel === scripts.READ_ROOT_SEL ? [root] : []), body: { appendChild() {} }, head: { appendChild() {} },
     createElement: () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {} }) };
   const ctx = vm.createContext({ document, getComputedStyle: () => ({}), scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 });
   const { text } = vm.runInContext(src, ctx);
   assert.ok(text.includes('Întreţinere August 2026\n315,90 Lei'), text);
   assert.ok(!text.includes('Plăteşte'));
+});
+
+const readDom = () => {
+  const removed = [];
+  const node = (tag, kids = [], text = '', o = {}) => {
+    const n = {
+      tagName: tag.toUpperCase(), nodeType: tag === '#text' ? 3 : 1, kids, text, parentElement: null, attrs: {}, style: {}, ...o,
+      get childNodes() { return this.kids; },
+      get data() { return this.text; },
+      getClientRects() { return this.hidden ? [] : [1]; },
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 100, height: 20, right: 100, bottom: 20 }),
+      get innerText() { return [this.text, ...this.kids.map((k) => k.innerText)].filter(Boolean).join('\n'); },
+      get textContent() { return this.innerText; },
+      set textContent(v) { this.text = v; this.kids = []; },
+      setAttribute(k, v) { this.attrs[k] = v; },
+      hasAttribute(k) { return k in this.attrs; },
+      getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+      matches: () => false,
+      querySelector: () => null,
+      closest(sel) { for (let e = this; e; e = e.parentElement) if (sel === '[data-cxb-cut]' && e.hasAttribute('data-cxb-cut')) return e; return null; },
+      all() { return this.kids.filter((k) => k.nodeType === 1).flatMap((k) => [k, ...k.all()]); },
+      querySelectorAll(sel) {
+        if (sel === '*') return this.all();
+        const tags = sel.split(',').map((x) => x.trim().toUpperCase());
+        return tags.every((t) => /^[A-Z]+$/.test(t) || /^[.#[]/.test(t)) ? this.all().filter((e) => tags.includes(e.tagName)) : [];
+      },
+      adopt(xs) { return xs.flatMap((x) => (typeof x === 'string' ? [node('#text', [], x)] : x.tagName === '#FRAG' ? x.kids.splice(0) : [x])).map((x) => { x.parentElement = this; return x; }); },
+      append(...xs) { this.kids.push(...this.adopt(xs)); },
+      appendChild(x) { this.append(x); },
+      prepend(...xs) { this.kids.unshift(...this.adopt(xs)); },
+      remove() { removed.push(this.tagName); if (this.parentElement) this.parentElement.kids = this.parentElement.kids.filter((k) => k !== this); },
+      replaceWith(x) { const p = this.parentElement; p.kids[p.kids.indexOf(this)] = x; x.parentElement = p; },
+      cloneNode() { return node(tag, this.kids.map((k) => k.cloneNode()), this.text, { hidden: this.hidden }); },
+    };
+    kids.forEach((k) => { k.parentElement = n; });
+    return n;
+  };
+  const hostSeen = [];
+  const getComputedStyle = (e) => { hostSeen.push(e); return {}; };
+  const run = (src, root, roots = [root]) => {
+    const document = { title: 'T', body: root, head: node('head'), documentElement: { scrollWidth: 1200, scrollHeight: 3000 },
+      querySelector: () => roots[0] || null, querySelectorAll: (sel) => (sel === scripts.READ_ROOT_SEL ? roots : []),
+      createElement: (t) => node(t), createDocumentFragment: () => node('#frag') };
+    const sandbox = { document, getComputedStyle, scrollX: 0, scrollY: 0, innerWidth: 1200, innerHeight: 800 };
+    sandbox.window = sandbox;
+    return vm.runInContext(src, vm.createContext(sandbox));
+  };
+  return { node, removed, hostSeen, run };
+};
+
+test('page scripts: READ_TEXT and PAGE_TEXT cut non-rendered text inside an inlined frame (by the frame\'s own styles) and an open shadow root', () => {
+  const build = () => {
+    const d = readDom();
+    const { node } = d;
+    const frameSeen = [];
+    const fbody = node('body', [node('p', [], 'HIDDEN-FRAME', { hidden: true }), node('p', [], 'SHOWN-FRAME')]);
+    const fd = { body: fbody, defaultView: { getComputedStyle: (e) => { frameSeen.push(e); return { display: 'block' }; } }, querySelectorAll: () => [] };
+    const shadow = node('#shadow', [node('p', [], 'HIDDEN-SHADOW', { hidden: true }), node('p', [], 'SHOWN-SHADOW')]);
+    const root = node('div', [node('p', [], 'SHOWN-ROOT'), node('iframe', [], '', { contentDocument: fd }), node('div', [], '', { shadowRoot: shadow }),
+      node('iframe', [], '', { contentDocument: null })]);
+    return { ...d, root, frameSeen };
+  };
+  const r = build();
+  const { text } = r.run(scripts.READ_TEXT(false), r.root, [r.root]);
+  for (const s of ['[frame]', 'SHOWN-FRAME', 'SHOWN-SHADOW', 'SHOWN-ROOT']) assert.ok(text.includes(s), s + ' in ' + text);
+  assert.ok(!text.includes('HIDDEN-FRAME'), text);
+  assert.ok(!text.includes('HIDDEN-SHADOW'), text);
+  assert.ok(r.frameSeen.length >= 1, 'the frame\'s own getComputedStyle decides');
+  assert.ok(!r.hostSeen.some((e) => e.text === 'HIDDEN-FRAME'), 'the host window never styles a frame node');
+  assert.deepStrictEqual(r.removed.filter((t) => t === 'IFRAME'), ['IFRAME'], 'the un-inlined iframe twin is dropped; the [frame] box is not');
+  const p = build();
+  const pt = p.run(scripts.PAGE_TEXT, p.root);
+  assert.ok(pt.includes('SHOWN-SHADOW') && pt.includes('SHOWN-ROOT'), pt);
+  assert.ok(!pt.includes('HIDDEN-SHADOW'), pt);
+});
+
+test('page scripts: READ_TEXT skips a non-rendered READ_ROOT_SEL match and reads the first rendered one', () => {
+  const { node, run } = readDom();
+  const hiddenMain = node('main', [node('p', [], 'HIDDEN-MAIN')], '', { hidden: true });
+  const shownMain = node('main', [node('p', [], 'SHOWN-MAIN '.repeat(30))]);
+  const { text } = run(scripts.READ_TEXT(false), node('body'), [hiddenMain, shownMain]);
+  assert.ok(text.includes('SHOWN-MAIN'), text);
+  assert.ok(!text.includes('HIDDEN-MAIN'), text);
+  assert.ok(scripts.READ_TEXT(false).includes(`let root = forced || [...document.querySelectorAll(${JSON.stringify(scripts.READ_ROOT_SEL)})].find(r => r.getClientRects().length) || null;`));
 });
 
 test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {
