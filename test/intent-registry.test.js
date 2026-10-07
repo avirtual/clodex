@@ -883,6 +883,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create'
+    || i.type === 'sub'
     || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'));
   const deliberatelyNarrowed = (i) => (i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')

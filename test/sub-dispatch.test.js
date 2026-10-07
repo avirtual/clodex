@@ -10,11 +10,11 @@ const { subqHookOutput } = require('../subq');
 
 const ID = 'a606bb8c5bfa9764e';
 
-function harness() {
+function harness(extra = {}) {
   const root = mkTmpRoot('clodex-subq-');
   const injected = [];
   const broadcasts = [];
-  const m = mk({ REGISTRY_DIR: root, path, pathFor });
+  const m = mk({ REGISTRY_DIR: root, path, pathFor, ...extra });
   m._injectText = (_s, text) => injected.push(text);
   m._broadcast = (ch, msg) => broadcasts.push({ ch, msg });
   const session = { name: 'seat', agentType: 'claude', workspaceId: 'ws1' };
@@ -73,16 +73,33 @@ for (const [label, target, setup] of [
 }
 
 test('t1678 _coldRespawn removes subq/ before the new process is created', async () => {
-  const h = harness();
+  const h = harness({
+    stripLevelOf: () => 0,
+    getPersistence: () => ({ list: () => [], get: () => null, upsert() {}, setStripLevel() {} }),
+  });
   fs.writeFileSync(path.join(h.dir, ID), 'queued\n');
   let existedAtCreate = null;
   h.m.sessions.delete('seat');
   h.m._preserveAcrossRestart = () => {};
   h.m.resumeCwdOf = () => '/tmp';
+  h.m._sendToSession = () => {};
   const created = new Promise((resolve) => {
     h.m.create = async () => { existedAtCreate = fs.existsSync(h.dir); resolve(); };
   });
   assert.strictEqual(h.m._coldRespawn('seat', { type: 'claude' }, h.session, '', 'reload'), true);
   await created;
+  await new Promise((r) => setImmediate(r));
   assert.strictEqual(existedAtCreate, false);
+});
+
+test('t1678 a denied sub body is spilled like a dm', () => {
+  const { deniedBodyDisposition } = require('../session-manager');
+  assert.deepStrictEqual(deniedBodyDisposition({ type: 'sub', body: 'x' }), { how: 'spill', label: 'sub' });
+});
+
+test('t1678 the sub grammar line renders only for a seat granted sub', () => {
+  const { buildIpcPrompt, IPC_PROMPT } = require('../ipc-prompt');
+  assert.ok(!buildIpcPrompt(['dm']).includes('[agent:sub'));
+  assert.ok(buildIpcPrompt(['sub']).includes('[agent:sub TARGET] body'));
+  assert.ok(IPC_PROMPT.includes('[agent:sub TARGET] body'));
 });
