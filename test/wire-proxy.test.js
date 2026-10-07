@@ -492,6 +492,31 @@ test('a duplicated (comma-joined) request-class header is ignored, not a crash',
   assert.equal(turn.role, 'parent');
 });
 
+test('request-class auxiliary marks an unrecognised body a side-call; turn.started carries the class', async (t) => {
+  const up = await startFakeUpstream();
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.started', 'turn.completed']);
+
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY,
+    { 'x-claude-code-request-class': 'auxiliary' });
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY,
+    { 'x-claude-code-request-class': 'main' });
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed', 3), 'three turns observed');
+
+  const started = events['turn.started'];
+  const base = { agent: 'tester', provider: 'anthropic', sessionId: SESSION_ID, model: 'claude-test' };
+  assert.deepStrictEqual(started[0], { ...base, reqId: started[0].reqId, role: started[0].role,
+    sideCall: true, sideKind: 'auxiliary', requestClass: 'auxiliary' });
+  assert.deepStrictEqual(started[1], { ...base, reqId: started[1].reqId, role: 'parent',
+    sideCall: false, requestClass: 'main' });
+  assert.deepStrictEqual(started[2], { ...base, reqId: started[2].reqId, role: 'parent', sideCall: false });
+  assert.deepStrictEqual(events['turn.completed'].map((e) => e.requestClass), ['auxiliary', 'main', undefined]);
+});
+
 test('warmth head: a subagent turn stamps the ledger but never repoints the session head', async (t) => {
   const { WarmthStore } = require('../wire/warmth');
   const up = await startFakeUpstream();

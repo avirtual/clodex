@@ -53,6 +53,8 @@ const PRICES = {
   // legacy opus 4.0 / 4.1 (also catches their dated full ids)
   'claude-opus-4':   { in: 15.0, out: 75.0, cache_write_5m: 18.75, cache_write_1h: 30.0, cache_read: 1.50 },
   'claude-sonnet-4': { in: 3.0,  out: 15.0, cache_write_5m: 3.75,  cache_write_1h: 6.0,  cache_read: 0.30 },
+  'claude-haiku-5-5': { in: 0.10, out: 0.50, cache_write_5m: 0.125, cache_write_1h: 0.20, cache_read: 0.01 },
+  'claude-haiku-5':  { in: 0.10, out: 0.50, cache_write_5m: 0.125, cache_write_1h: 0.20, cache_read: 0.01 },
   'claude-haiku-4':  { in: 1.0,  out: 5.0,  cache_write_5m: 1.25,  cache_write_1h: 2.0,  cache_read: 0.10 },
 };
 
@@ -82,6 +84,12 @@ const PRICES_SPEED_FAST = {
   'claude-opus-5':   { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
 };
+
+const PRICES_LONG_PROMPT = {
+  'claude-haiku-5-5': { in: 0.50, out: 2.50, cache_write_5m: 0.625, cache_write_1h: 1.00, cache_read: 0.05 },
+  'claude-haiku-5':  { in: 0.50, out: 2.50, cache_write_5m: 0.625, cache_write_1h: 1.00, cache_read: 0.05 },
+};
+const LONG_PROMPT_TOKENS = 100000;
 
 // Scheduled repricings: prefix -> [(effective_from "YYYY-MM-DD", row)], later
 // dates LAST (the walk keeps the last row whose date has been reached). Live
@@ -124,7 +132,7 @@ function localDay(now) {
 // prefix, so fast wins where both could apply. Matching on the winning prefix
 // (not re-walking) is what keeps a fast request against a model with no premium
 // entry on standard rates instead of falling through to a shorter prefix's.
-function priceFor(model, { table = null, now = null, speed = null } = {}) {
+function priceFor(model, { table = null, now = null, speed = null, promptTokens = null } = {}) {
   if (!model) return null;
   let best = null;
   for (const [pfx, p] of Object.entries(table || PRICES)) {
@@ -146,6 +154,9 @@ function priceFor(model, { table = null, now = null, speed = null } = {}) {
     }
   }
   if (!table && speed === 'fast' && PRICES_SPEED_FAST[best[0]]) row = PRICES_SPEED_FAST[best[0]];
+  if (!table && promptTokens != null && promptTokens > LONG_PROMPT_TOKENS && PRICES_LONG_PROMPT[best[0]]) {
+    row = PRICES_LONG_PROMPT[best[0]];
+  }
   return row;
 }
 
@@ -235,24 +246,29 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     // fast mode (premium rates); final wins, absent => standard
     speed: norm(getOr(uf, 'speed', us.speed)),
   };
-  const p = priceFor(modelResolved, { speed: tokens.speed });
   let est = null;
   let unpriced = false;
   let basis = 'approx public list USD/1M; edit PRICES';
+  let w5 = tokens.cache_write_5m_tokens;
+  const w1 = tokens.cache_write_1h_tokens;
+  const flatFallback = w5 == null && w1 == null && !!tokens.cache_write_flat_tokens;
+  if (flatFallback) w5 = tokens.cache_write_flat_tokens;
+  const promptTokens = (tokens.input_tokens || 0) + (tokens.cache_read_input_tokens || 0) + (w5 || 0) + (w1 || 0);
+  const p = priceFor(modelResolved, { speed: tokens.speed, promptTokens });
   if (p) {
-    let w5 = tokens.cache_write_5m_tokens;
-    const w1 = tokens.cache_write_1h_tokens;
-    if (w5 == null && w1 == null && tokens.cache_write_flat_tokens) {
+    if (flatFallback) {
       // no TTL split returned: don't silently drop the write cost — price
       // the flat total at the cheaper 5m premium and say so in the basis.
-      w5 = tokens.cache_write_flat_tokens;
       basis += '; cache_creation split absent, flat total priced at 5m rate';
     }
     // Identity check against the standard row, not `speed === 'fast'` alone: a
     // fast request on a model with no premium entry is billed standard, and
     // saying otherwise in the basis would misreport what was actually charged.
-    if (tokens.speed === 'fast' && p !== priceFor(modelResolved, {})) {
+    if (tokens.speed === 'fast' && p !== priceFor(modelResolved, { promptTokens })) {
       basis += '; FAST MODE premium rates (usage.speed=fast)';
+    }
+    if (p !== priceFor(modelResolved, { speed: tokens.speed })) {
+      basis += '; LONG PROMPT tier (>100k prompt tokens, 5x)';
     }
     est = round6(usd(tokens.input_tokens, p.in)
       + usd(tokens.output_tokens, p.out)
@@ -392,6 +408,6 @@ class Ledger {
 }
 
 module.exports = {
-  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, priceFor, usd, round6,
+  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, PRICES_LONG_PROMPT, LONG_PROMPT_TOKENS, priceFor, usd, round6,
   billing, billingOpenai, newTotals, bump, Ledger,
 };

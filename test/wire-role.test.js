@@ -195,6 +195,24 @@ test('title side-call detection', () => {
   assert.equal(isTitleCall({ system: 'You are Claude Code.' }), false);
 });
 
+function structuralTitleCall({ tools = [], required = ['title'] } = {}) {
+  return {
+    tools,
+    system: 'You are naming a coding session so the user can pick it out of a list.',
+    output_config: { format: { type: 'json_schema', schema: {
+      type: 'object', required, properties: { title: { type: 'string' } },
+    } } },
+    messages: [{ role: 'user', content: 'fix the flaky test' }],
+  };
+}
+
+test('title side-call detection: structural (no tools, json_schema requiring only title)', () => {
+  assert.equal(isTitleCall(structuralTitleCall()), true);
+  assert.equal(isTitleCall(structuralTitleCall({ tools: [{ name: 'x' }] })), false);
+  assert.equal(isTitleCall(structuralTitleCall({ required: ['title', 'summary'] })), false);
+  assert.equal(isTitleCall({ tools: [], output_config: {}, messages: [] }), false);
+});
+
 const CLASSIFIER_SYS = 'You are a security monitor for autonomous AI coding agents. Your job is to '
   + 'classify whether a proposed tool call is safe to run without asking the operator. '
   + '[…127 KB of policy…]';

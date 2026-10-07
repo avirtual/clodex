@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
+const { PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, PRICES_LONG_PROMPT, LONG_PROMPT_TOKENS, priceFor, round6, billing, billingOpenai, newTotals, bump, Ledger } = require('../wire/billing');
 
 // Both sides of the WITHDRAWN sonnet-5 repricing's old effective date, as LOCAL
 // noon so no timezone offset can carry either across the boundary. Every dated
@@ -623,4 +623,41 @@ test('vendor parity: every vendored PRICES row is an own row of ours at the same
       assert.equal(PRICES[key][field], row[field], `${key}.${field}: ours ${PRICES[key][field]}, vendor ${row[field]}`);
     }
   }
+});
+
+test('priceFor: claude-haiku-5-5 has a long-prompt tier above 100k prompt tokens', () => {
+  assert.equal(LONG_PROMPT_TOKENS, 100000);
+  assert.ok(PRICES_LONG_PROMPT['claude-haiku-5-5']);
+  assert.equal(priceFor('claude-haiku-5-5').in, 0.10);
+  assert.equal(priceFor('claude-haiku-5-5', { promptTokens: 100000 }).in, 0.10);
+  assert.equal(priceFor('claude-haiku-5-5', { promptTokens: 100001 }).in, 0.50);
+  assert.equal(priceFor('claude-haiku-5-5', { table: PRICES_OPENAI, promptTokens: 200000 }), null);
+  assert.strictEqual(priceFor('claude-sonnet-5-5', { promptTokens: 500000 }), priceFor('claude-sonnet-5-5'));
+});
+
+test('billing: a haiku-5-5 request over 100k prompt tokens bills every category at the long tier', () => {
+  const long = billing('messages', {
+    modelResolved: 'claude-haiku-5-5',
+    usageStart: { input_tokens: 20000, cache_read_input_tokens: 90000 },
+    usageFinal: { output_tokens: 100 },
+  });
+  assert.equal(long.est_usd, 0.01475);
+  assert.match(long.price_basis, /LONG PROMPT tier/);
+  assert.doesNotMatch(long.price_basis, /FAST MODE/);
+
+  const short = billing('messages', {
+    modelResolved: 'claude-haiku-5-5',
+    usageStart: { input_tokens: 20000, cache_read_input_tokens: 70000 },
+    usageFinal: { output_tokens: 100 },
+  });
+  assert.equal(short.est_usd, 0.00275);
+  assert.doesNotMatch(short.price_basis, /LONG PROMPT tier/);
+
+  const fast = billing('messages', {
+    modelResolved: 'claude-haiku-5-5',
+    usageStart: { input_tokens: 20000, cache_read_input_tokens: 90000 },
+    usageFinal: { output_tokens: 100, speed: 'fast' },
+  });
+  assert.equal(fast.est_usd, 0.01475);
+  assert.doesNotMatch(fast.price_basis, /FAST MODE/);
 });

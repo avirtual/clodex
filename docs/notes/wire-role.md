@@ -21,3 +21,8 @@ The billing flag and fingerprint are read from the billing block (`system[0]`, s
 
 WebFetch's page summariser, measured on CLI 2.1.288: no tools, system = billing block (70 chars) + `You are Claude Code, Anthropic's official CLI for Claude.` (57 chars), one user message whose text starts `\nWeb page content:\n---\n`, `max_tokens` 64000, no thinking, the parent's session_id.
 The proxy keys on "no tools + one message + every system block ≤ 200 chars" rather than the WebFetch prefix alone because every CLI helper call shares that shape and no agent turn has it (an agent turn carries tools and a kilobytes-long system), so a future summariser is excluded without a new needle; `isWebFetchCall` only names the kind (`sideKind`).
+
+## isTitleCall
+
+`TITLE_SYS_PREFIX` has matched nothing since CLI 2.1.280 rewrote the title prompt; the call is now recognised by structure (no tools, `output_config.format` a `json_schema` whose `required` is exactly `['title']`), and the prefix is kept only for replayed pre-2.1.280 captures.
+From CLI 2.1.286 the proxy also treats `x-claude-code-request-class: auxiliary` as a side-call: over 8 days it carried only side-calls (classifier, probe, progress summary, title, count_tokens, WebSearch/WebFetch).

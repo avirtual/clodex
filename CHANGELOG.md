@@ -18,6 +18,10 @@ blocks a release.
 - A plugin can declare `"requires": ["electron"]` in its manifest. A headless Clodex skips such a plugin entirely: it is absent from Manage Plugins, registers no verb, sends no renderer half to the browser client, and is in no seat's plugin list; the app log notes the skip in one line. A GitHub install of one on a headless host is refused by name. A malformed `requires` is refused like `scope` and `surfaces`.
 - The Browser Pane declares it, so a headless host no longer shows a plugin whose every command answered "browser unavailable".
 
+### Wire
+- `claude-haiku-5-5` is priced, by prompt length as the API bills it: up to 100k prompt tokens at $0.10/$0.50 per million, above that every category at 5× for the whole request; the receipt's basis says when the long tier applied.
+- The CLI's session-title side-call is recognised by its structure (no tools, a JSON-schema output whose only required field is `title`) and, from CLI 2.1.286, by the `auxiliary` request class, so title and other auxiliary calls are no longer counted as turns; `turn.started` and the receipt carry the request class.
+
 ## 5.116.0 — 2026-10-07
 
 ### CLI
