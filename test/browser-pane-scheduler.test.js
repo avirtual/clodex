@@ -1008,3 +1008,9 @@ test('scheduler tabs: a close x queued behind an inflight op is refused at pump 
   assert.ok(h.out.some(([, t]) => t === `[agent:browser] error: ${R.TEXT.held('x:riot', 'takeover')}`), JSON.stringify(h.out));
   assert.ok(!h.calls.some((c) => c[1] === 'close'));
 });
+
+test('scheduler: the element strip runs on the stripping default read alone', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'scheduler.js'), 'utf8');
+  assert.ok(!src.includes('elBase || ('));
+  assert.ok(src.includes("    if (stripping && cmd.mode === 'default') {\n"));
+});

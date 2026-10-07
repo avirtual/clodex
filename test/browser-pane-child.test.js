@@ -1029,7 +1029,12 @@ test('page scripts: READ_TEXT reads a visible modal dialog covering a quarter of
   assert.ok(src.includes('const paintedArea = (e) => { const s = getComputedStyle(e); if (s.pointerEvents !== \'none\' && s.backgroundColor !== \'rgba(0, 0, 0, 0)\') return'));
   assert.ok(src.includes('const modalBy = (e) =>'));
   assert.ok(src.includes("[...document.querySelectorAll('div,aside,section')]"));
-  assert.ok(src.includes('/close|dismiss|^×$/i.test('));
+  assert.ok(src.includes('/\\b(close|dismiss)\\b|^×$/i.test('));
+  const drawerAt = lineOf(src, 'const drawerAt = (e) =>');
+  assert.ok(drawerAt.indexOf('getBoundingClientRect') < drawerAt.indexOf('getComputedStyle'));
+  assert.ok(lineOf(src, 'const drawersOf = () =>').includes('.slice(0, 3000)'));
+  const coveredBy = 'const coveredBy = (el, hit) => !!hit && !within(el, hit) && !within(hit, el);';
+  for (const s of [scripts.READ_INTERACTIVE(false, {}), scripts.FIND(1)]) assert.strictEqual(s.split(coveredBy).length, 2);
   const ri = scripts.READ_INTERACTIVE(false, {});
   assert.strictEqual(lineOf(ri, 'const modalBy = (e) =>'), lineOf(src, 'const modalBy = (e) =>'));
   assert.strictEqual(lineOf(ri, 'const modal = forced ? null :'), lineOf(src, 'const modal = forced ? null :'));
@@ -1166,6 +1171,7 @@ test('page scripts: modalBy proves a dialog modal by aria-modal, aria-hidden pag
     assert.strictEqual(bare(paneled, { nav: 'in' }), '', 'a panel inside a nav is not a drawer');
     assert.strictEqual(bare(paneled, { nav: 'has' }), '', 'a panel holding a nav is not a drawer');
     assert.strictEqual(bare(paneled, { controls: ['Save'] }), '', 'a panel with no close control is not a drawer');
+    assert.strictEqual(bare(paneled, { controls: ['Closed issues'] }), '', 'a Closed issues link is not a close control');
     assert.strictEqual(drawer({ position: 'fixed' }, paneled), 'drawer', 'a role=dialog drawer needs no close control');
   }
   assert.ok(scripts.READ_TEXT(false).includes('r.right >= w - 16') && scripts.READ_TEXT(false).includes('innerWidth * 0.75'));

@@ -336,7 +336,7 @@ function createScheduler({
     const samePage = !!last && last.page === pageKey(raw && raw.url);
     const elBase = !stripping || cmd.mode !== 'default' || !last || last.origin !== origin ? null
       : !samePage ? { elements: last.elements, keys: last.keys } : (cmd.page > 1 && last.text === raw.text ? last.elBase : null);
-    if (elBase || (stripping && cmd.mode === 'default')) {
+    if (stripping && cmd.mode === 'default') {
       const e = elementStrip(elBase ? elBase.elements : null, raw.elements, elBase ? elBase.keys : null, raw.keys, { chrome: raw.chrome, covered: raw.covered });
       if (e.hidden) { page = { ...page, elements: e.lines }; hidden = e.hidden; covered = e.covered || 0; }
     }
