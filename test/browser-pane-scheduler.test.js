@@ -219,6 +219,17 @@ test('scheduler: an act before any read is refused with read first', async () =>
   ]);
 });
 
+test('scheduler: an act on a closed service reaches the child and answers not open', async () => {
+  const notOpen = 'utility is not open — [agent:browser open utility] <url>';
+  const h = harness({ click: () => { throw coded('NOT_OPEN', notOpen); } });
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]']]),
+    [['hand-a', `[agent:browser] error: ${notOpen}`]]);
+  assert.deepStrictEqual(h.calls.map((c) => c[1]), ['click']);
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click utility 4]']]),
+    [['hand-a', `[agent:browser] error: ${notOpen}`]]);
+});
+
 test('scheduler: a held service refuses everything but wait, services and release', async () => {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
@@ -381,6 +392,7 @@ test('scheduler: a closed window forgets the seats\' numbers for it', async () =
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills'], ['hand-a', '[agent:browser read]']]);
   h.sched.onClosed('utility');
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser click 1]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
 });
@@ -459,6 +471,7 @@ test('scheduler inspect: needs a read first, then asks the child by text without
       cursor: 'pointer', rect: { x: 1, y: 2, w: 30, h: 10 }, visible: true, ancestors: ['body'], html: '<div id="go">Go</div>',
     }),
   });
+  await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser inspect utility 4]']]),
     [['hand-a', '[agent:browser] error: read utility first — numbers come from your read']]);
   const early = await h.run([['hand-a', '[agent:browser inspect utility --text=Go]']]);

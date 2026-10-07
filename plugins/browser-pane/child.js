@@ -409,11 +409,12 @@ function coveredRefusal(n, el) {
 
 function consequentialRefusal(n, el, confirm, redo) {
   if (!el || !el.consequential || confirm) return null;
-  return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential, redo));
+  return codedError('CONSEQUENTIAL', TEXT.consequential(n, el.label, el.consequential, redo, el.kind));
 }
 
 function liveTarget(n, el, probe, service) {
   if (probe == null) throw codedError('NO_ELEMENT', TEXT.noElement(service, n));
+  if (probe.off) throw codedError('NO_ELEMENT', TEXT.scrolledOut(service, n, el.label, el.kind));
   if (probe.covered) throw coveredRefusal(n, { ...el, ...probe });
   return { ...el, x: probe.x, y: probe.y };
 }

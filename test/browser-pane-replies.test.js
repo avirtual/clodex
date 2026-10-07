@@ -152,6 +152,8 @@ test('replies: the T3 refusal texts, verbatim', () => {
   assert.strictEqual(R.TEXT.noElement('utility', 12), '[12] is no longer on this page of utility — read again');
   assert.strictEqual(R.TEXT.retiredN('utility', 10, 23), '[10] retired: its text changed since your read (now [23]?) — read again');
   assert.strictEqual(R.TEXT.unknownN('utility', 10), '[10] was not in your read of utility — read again');
+  assert.strictEqual(R.TEXT.scrolledOut('np', 31, 'Next page', 'link'), '[31] "Next page" scrolled out of view on np — read again');
+  assert.strictEqual(R.TEXT.scrolledOut('np', 31, '', 'button'), '[31] button scrolled out of view on np — read again');
   assert.strictEqual(R.TEXT.ambiguousN('utility', 7, 'Delete', 'Factura 08 | 120 lei'),
     '[7] on utility no longer points at one element (was "Delete" in "Factura 08 | 120 lei") — read again and use the new number');
   assert.strictEqual(R.TEXT.held('utility', 'login'),
@@ -343,6 +345,9 @@ test('replies: an ad click without --confirm is refused as a paid click that lea
   const download = '[4] "Pay now" looks consequential (payment) — download it with click 4 --to=<dir> --confirm if the operator asked for it';
   assert.strictEqual(R.TEXT.consequential(4, 'Pay now', 'payment', 'download it with click 4 --to=<dir> --confirm'), download);
   assert.strictEqual(R.classifyReply('[agent:browser] error: ' + download), 'refused');
+  const nameless = '[12] button looks consequential (trading) — re-issue with --confirm if the operator asked for it';
+  assert.strictEqual(R.TEXT.consequential(12, '', 'trading', undefined, 'button'), nameless);
+  assert.strictEqual(R.classifyReply('[agent:browser] error: ' + nameless), 'refused');
 });
 
 test('replies: Enter that would submit a consequential form is refused naming the field and the target', () => {

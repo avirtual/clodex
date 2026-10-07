@@ -171,6 +171,8 @@ ipc handlers (step 12).
   `Sponsored` line), other than its buttons and its `/status/` links, is `⚠ ad`:
   a click is a paid click on the operator's account and leaves the site, so it is
   refused unless the agent adds `--confirm`, which it should only when the operator asked.
+  A refusal names a control with no label by its kind (`[12] button looks consequential
+  (trading)`), as the read digest does.
   An ad's profile links (@handle, name) and its card are `⚠ ad` too — any click inside a
   promoted post is billed — so open the advertiser by URL instead. The read digest folds
   them into one `⚠ ad: M ads (N elements)` line.
@@ -182,7 +184,10 @@ ipc handlers (step 12).
   the page closed on scroll, an overlay) is refused and names what covers it, so the
   mouse only ever lands on the element the ⚠ check ran on. The point is looked up
   again just before the mouse goes down; if the page shifted and something else is
-  there now, the click is refused the same way. An element already in view
+  there now, the click is refused the same way; if the page scrolled the element back
+  out of view, the refusal says so (`[31] "Next page" scrolled out of view on np — read
+  again`) rather than calling it gone. An act by number on a closed service answers
+  that it is not open, not that it needs a read. An element already in view
   is not scrolled before the click. A click whose target our scroll parked under a
   sticky header is scrolled clear first; when the cover is a dialog or consent banner
   the refusal names its buttons.
