@@ -60,7 +60,9 @@ test('t1705 sub by id writes one 0600 file per note under subq/<id>/, in counter
     assert.strictEqual(path.dirname(r[0][0]), q);
     assert.match(path.basename(r[0][0]), /^\..*\.tmp$/);
   }
-  assert.ok(writes.filter((w) => path.dirname(w) === q).every((w) => path.basename(w).startsWith('.')));
+  const qWrites = writes.filter((w) => path.dirname(w) === q);
+  assert.ok(qWrites.length >= 2, 'ENTER: writes recorded');
+  assert.ok(qWrites.every((w) => path.basename(w).startsWith('.')));
   assert.deepStrictEqual(h.injected, []);
   const ipc = h.broadcasts.filter((b) => b.ch === 'ipc-message').map((b) => b.msg);
   assert.deepStrictEqual(ipc[0], { type: 'sub', from: 'seat', to: `seat/${ID}`, body: 'first' });

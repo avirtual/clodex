@@ -16,6 +16,8 @@ blocks a release.
 ### Browser pane
 - Two browser-pane commands in one reply both run; only an exact repeat is dropped as a duplicate.
 - A command queued behind one that failed answers its own caller (a `clodex` CLI or MCP call no longer waits out the reply timeout for a line that never comes), the read digest's `⚠:` line now lists consequential elements whose role has more than one word, and the `frames:` line says `nested (unreadable)` for a nested frame that was empty or could not be read.
+- The read digest's ⚠ line lists only elements the pane itself flagged; a page label containing ⚠ no longer puts a row there.
+- A `display:contents` `<main>` or `<article>` becomes the read root only when something inside it is painted; one hidden with its ancestor falls back to the body scoring as before.
 
 ## 5.114.0 — 2026-10-07
 

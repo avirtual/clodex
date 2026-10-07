@@ -688,6 +688,13 @@ test('read digest: a multi-word role kind reaches warn, and a ⚠ inside a label
   ]);
 });
 
+test('read digest: a ⚠ row reaches warn only when the pane flagged that element', () => {
+  const raw = { ...RAW, elements: ['[41] button Server ⚠ down'], cats: {} };
+  assert.deepStrictEqual(formatRead(raw, { service: 'x' }).digest.warn, []);
+  assert.deepStrictEqual(formatRead({ ...raw, elements: ['[41] button ⚠ Pay'], cats: {} }, { service: 'x' }).digest.warn, []);
+  assert.deepStrictEqual(formatRead({ ...raw, cats: undefined }, { service: 'x' }).digest.warn, [{ n: 41, kind: 'button Server', label: 'down', cat: 'other' }]);
+});
+
 test('read digest: consecutive ⚠ ad rows fold into one ad each, out of warn', () => {
   const raw = {
     ...RAW, url: 'https://x.com/home',

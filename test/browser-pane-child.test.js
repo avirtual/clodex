@@ -1074,14 +1074,17 @@ test('page scripts: the short-root fallback scores an element with no layout box
 
 test('page scripts: a display:contents read root is kept, a boxless plain root is still skipped', () => {
   const src = scripts.READ_TEXT(false);
-  assert.ok(src.includes("find(r => r.getClientRects().length || getComputedStyle(r).display === 'contents')"));
+  assert.ok(src.includes("find(r => r.getClientRects().length || (getComputedStyle(r).display === 'contents' && [...r.children].some(c => c.getClientRects().length)))"));
   const line = lineOf(src, 'let root = forced ||');
   const pick = new Function('document', 'getComputedStyle', 'forced', `${line}\nreturn root;`);
-  const main = { getClientRects: () => [], style: { display: 'contents' } };
   const p = { getClientRects: () => [{}], style: { display: 'block' } };
+  const main = { getClientRects: () => [], style: { display: 'contents' }, children: [p] };
   const document = { querySelectorAll: () => [main] };
   const gcs = (e) => e.style;
   assert.strictEqual(pick(document, gcs, null), main);
+  const dark = { getClientRects: () => [], style: { display: 'contents' }, children: [{ getClientRects: () => [] }] };
+  assert.strictEqual(pick({ querySelectorAll: () => [dark] }, gcs, null), null);
+  assert.strictEqual(pick({ querySelectorAll: () => [dark, p] }, gcs, null), p);
   main.style.display = 'block';
   assert.strictEqual(pick(document, gcs, null), null);
   assert.strictEqual(pick({ querySelectorAll: () => [main, p] }, gcs, null), p);
@@ -2749,7 +2752,7 @@ const depth2Dom = (kids, gs = () => ({ display: 'block' })) => {
   return d.run(scripts.READ_TEXT(false), root, [root]);
 };
 
-test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as nested and a hidden one only as hidden', () => {
+test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc frame as unreadable and a hidden one only as hidden', () => {
   const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
     n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
   assert.deepStrictEqual([...got.nested], []);
@@ -2763,10 +2766,6 @@ test('page scripts: READ_TEXT counts an unreadable or empty second-level srcdoc 
 });
 
 test('page scripts: READ_TEXT keeps an unreadable second-level frame apart from a third-level srcdoc one, and child.js labels it nested (unreadable)', () => {
-  const got = depth2Dom((n) => [n('iframe', [], '', { contentDocument: null, srcdoc: 'x' }),
-    n('iframe', [], '', { contentDocument: { body: n('body'), defaultView: { getComputedStyle: () => ({ display: 'block' }) }, querySelectorAll: () => [] }, srcdoc: 'x' })]);
-  assert.deepStrictEqual([...got.unreadable], [2]);
-  assert.deepStrictEqual([...got.nested], []);
   const deep = nestDom((n) => [n('iframe', [], '', { contentDocument: leafDoc(n, 'DEEP-FRAME'), srcdoc: 'x' })]).out();
   assert.deepStrictEqual([...deep.nested], [1]);
   assert.deepStrictEqual([...deep.unreadable], []);
@@ -2834,7 +2833,7 @@ test('page scripts: READ_TEXT skips a non-rendered READ_ROOT_SEL match and reads
   const { text } = run(scripts.READ_TEXT(false), node('body'), [hiddenMain, shownMain]);
   assert.ok(text.includes('SHOWN-MAIN'), text);
   assert.ok(!text.includes('HIDDEN-MAIN'), text);
-  assert.ok(scripts.READ_TEXT(false).includes(`let root = forced || [...document.querySelectorAll(${JSON.stringify(scripts.READ_ROOT_SEL)})].find(r => r.getClientRects().length || getComputedStyle(r).display === 'contents') || null;`));
+  assert.ok(scripts.READ_TEXT(false).includes(`let root = forced || [...document.querySelectorAll(${JSON.stringify(scripts.READ_ROOT_SEL)})].find(r => r.getClientRects().length || (getComputedStyle(r).display === 'contents' && [...r.children].some(c => c.getClientRects().length))) || null;`));
 });
 
 test('notOpenError: a name never opened here and without saved numbers is not a service; a known closed one is not open', () => {
