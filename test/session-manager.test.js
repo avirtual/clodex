@@ -8427,7 +8427,7 @@ test('t535: accepting a no-branch ticket clears it too — terminal by a differe
   const f = mkAccept({ ok: true, merged: true, base: 'master' }, {
     getPersistence: () => ({
       list: () => [],
-      get: (n) => (n === 'team-hand' ? { name: 'team-hand', sessionId: 'sess-abc', ephemeral: true } : null),
+      get: (n) => (n === 'team-hand' ? { name: 'team-hand', sessionId: 'sess-abc' } : null),
     }),
   });
   openAndDone(f);
@@ -20039,9 +20039,8 @@ test('task done: a spawn seat on a branchless ticket is ARCHIVED at done, and a 
   // and report a teardown that never ran — which is exactly how it first failed.
   assert.strictEqual(f.record('team-hand-1').ephemeral, true,
     'ENTER: the seat record carries `ephemeral`, which is what done reads');
-  f.m._taskDone(f.m.sessions.get('team-hand-1'), f.team,
+  await f.m._taskDone(f.m.sessions.get('team-hand-1'), f.team,
     { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' }, (msg) => doneSaid.push(msg));
-  await until(() => f.one('t1').closedOut);
 
   assert.strictEqual(f.one('t1').state, 'done');
   assert.deepStrictEqual(archived, ['team-hand-1'],
