@@ -12,6 +12,12 @@
       "template": "hand",
       "dispatch": "worktree"
     },
+    "scout": {
+      "prompt": "scout",
+      "brief": "lookup scout on Haiku; verifies file:line coordinates, call sites and test pins at a named commit and writes one table; edits nothing, decides nothing.",
+      "template": "scout",
+      "dispatch": "spawn"
+    },
     "reviewer": {
       "prompt": "reviewer",
       "brief": "reviewer; an independent verification pass, invoked on demand.",
