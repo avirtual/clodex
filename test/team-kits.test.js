@@ -27,7 +27,7 @@ const readTpl = (kit, stem) => JSON.parse(fs.readFileSync(path.join(KITS, kit, '
 
 // ── kit `clodex`: pinned against drift from the flat library ────────────────
 
-const STOCK_STEMS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer'];
+const STOCK_STEMS = ['clodex-team-lead', 'clodex-team-hand', 'clodex-team-reviewer', 'clodex-team-scout'];
 
 test('ENTER: the clodex kit really holds a file per stock stem', () => {
   // Without this, the byte comparisons below would pass vacuously over a kit
@@ -137,6 +137,11 @@ test('the default kit\'s hand lifts the plugin and builtin restrictions, its lea
   assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, libLead.disabledTools);
 });
 
+test('the default kit\'s scout template is the flat library scout under its role name', () => {
+  const flat = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-scout.json'), 'utf-8'));
+  assert.deepStrictEqual(readTpl('default', 'scout'), { ...flat, name: 'scout' });
+});
+
 test('ticket hands ship with wire stripping off, leads keep level 2', () => {
   const rows = [
     ['templates/clodex-team-hand.json', false, undefined],
@@ -178,7 +183,7 @@ test('the default kit\'s reviewer names the FLAT library\'s template, which is w
     't891: the role names the LIBRARY stem rather than a kit-local one, so copyRoleTemplates falls through sourceDirs to <home>/library/templates and seeds the team a reviewer.json with no new file shipping in the kit');
   assert.strictEqual(fs.existsSync(path.join(KITS, 'default', 'templates', 'reviewer.json')), false);
   assert.deepStrictEqual(fs.readdirSync(path.join(KITS, 'default', 'templates')).sort(),
-    ['hand.json', 'lead.json']);
+    ['hand.json', 'lead.json', 'scout.json']);
 });
 
 test('every kit role names stems its OWN kit ships, except where the library covers it', () => {
@@ -711,6 +716,12 @@ test('a brief create keeps a kit\'s extra role', async () => {
       brief: 'implementer; executes a spec to done, one distilled report per task.',
       template: 'hand',
       dispatch: 'worktree',
+    },
+    scout: {
+      prompt: 'scout',
+      brief: 'lookup scout on Haiku; verifies file:line coordinates, call sites and test pins at a named commit and writes one table; edits nothing, decides nothing.',
+      template: 'scout',
+      dispatch: 'spawn',
     },
     reviewer: {
       prompt: 'reviewer',

@@ -1,0 +1,85 @@
+{
+  "name": "scout",
+  "type": "claude",
+  "cwd": "${TEAM_ROOT}",
+  "proxy": null,
+  "agents": [],
+  "plugins": [],
+  "execCommands": [],
+  "intents": [
+    "dm"
+  ],
+  "effort": "high",
+  "tools": [
+    "Bash",
+    "Read",
+    "Write",
+    "Grep",
+    "Glob"
+  ],
+  "denyBuiltins": [
+    "Plan",
+    "claude",
+    "claude-code-guide",
+    "statusline-setup"
+  ],
+  "disabledTools": [
+    "Edit",
+    "NotebookEdit",
+    "LSP",
+    "PowerShell",
+    "Monitor",
+    "WebFetch",
+    "WebSearch",
+    "Agent",
+    "SendMessage",
+    "ListAgents",
+    "Skill",
+    "Workflow",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "EnterWorktree",
+    "ExitWorktree",
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskUpdate",
+    "TaskStop",
+    "TodoWrite",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "ScheduleWakeup",
+    "PushNotification",
+    "RemoteTrigger",
+    "ShareOnboardingGuide",
+    "AskUserQuestion",
+    "EndConversation",
+    "SendFeedback",
+    "Artifact",
+    "ReportFindings",
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    "WaitForMcpServers",
+    "DesignSync"
+  ],
+  "disabledSkills": [
+    "*"
+  ],
+  "extraArgs": [
+    "--model",
+    "claude-haiku-5-5[1m]",
+    "--dangerously-skip-permissions"
+  ],
+  "injectSkills": [],
+  "systemPromptFile": "clodex-team-scout",
+  "appendPromptFiles": [],
+  "env": {
+    "CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1",
+    "FORCE_PROMPT_CACHING_5M": "1",
+    "CLODEX_DISABLE_IPC_PROMPT": "1",
+    "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS": "4000",
+    "CLODEX_SPAWNER_HINT": "off"
+  },
+  "io": "stream"
+}

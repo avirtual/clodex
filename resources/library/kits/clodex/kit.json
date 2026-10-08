@@ -12,6 +12,12 @@
       "template": "clodex-team-hand",
       "dispatch": "worktree"
     },
+    "scout": {
+      "prompt": "clodex-team-scout",
+      "brief": "lookup scout on Haiku; verifies file:line coordinates, call sites and test pins at a named commit and writes one table; edits nothing, decides nothing.",
+      "template": "clodex-team-scout",
+      "dispatch": "spawn"
+    },
     "reviewer": {
       "prompt": "clodex-team-reviewer",
       "brief": "reviewer; an independent verification pass, invoked on demand.",

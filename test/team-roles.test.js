@@ -1757,3 +1757,28 @@ test('roleSummaries: a live seat on a HELD verify reads "held", not "working"', 
   const out = roleSummaries(WT, [], { activity: act, now: NOW });
   assert.strictEqual(out[0].note, 'shop-hand-783 on t783 (held)');
 });
+
+test('the stock scout role is a spawn-dispatched Haiku seat', () => {
+  const { STOCK_ROLE_DEFS } = require('../team-manifest');
+  assert.deepStrictEqual(STOCK_ROLE_DEFS.scout, {
+    prompt: 'clodex-team-scout',
+    brief: 'lookup scout on Haiku; verifies file:line coordinates, call sites and test pins at a named commit and writes one table; edits nothing, decides nothing.',
+    template: 'clodex-team-scout',
+    dispatch: 'spawn',
+  });
+  const tpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-scout.json'), 'utf-8'));
+  assert.strictEqual(tpl.io, 'stream');
+  assert.strictEqual(tpl.extraArgs[tpl.extraArgs.indexOf('--model') + 1], 'claude-haiku-5-5[1m]');
+  assert.ok(tpl.tools.includes('Write'));
+  assert.ok(!tpl.tools.includes('Edit'));
+  assert.ok(tpl.disabledTools.includes('Skill'));
+  assert.ok(tpl.disabledTools.includes('Agent'));
+  assert.strictEqual(tpl.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, '1');
+});
+
+test('the three shipped scout prompts are byte-identical and open with the wirescope directive after two blank lines', () => {
+  const lib = (...p) => fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', ...p), 'utf-8');
+  const flat = lib('prompts', 'system', 'clodex-team-scout.md');
+  assert.deepStrictEqual([lib('kits', 'clodex', 'prompts', 'system', 'clodex-team-scout.md'), lib('kits', 'default', 'prompts', 'system', 'scout.md')], [flat, flat]);
+  assert.ok(flat.startsWith('\n\n[wirescope:omit useremail]\n'));
+});

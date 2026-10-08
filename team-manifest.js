@@ -67,6 +67,7 @@ const STOCK_ROLE_DEFS = {
   // clodex-team-hand.json writes "${TEAM_ROOT}", so a new team's hand boots in
   // its own root, not the project the template was authored against.
   hand: { prompt: 'clodex-team-hand', brief: 'implementer; executes a spec to done, one distilled report per task.', template: 'clodex-team-hand', dispatch: 'worktree' },
+  scout: { prompt: 'clodex-team-scout', brief: 'lookup scout on Haiku; verifies file:line coordinates, call sites and test pins at a named commit and writes one table; edits nothing, decides nothing.', template: 'clodex-team-scout', dispatch: 'spawn' },
   reviewer: { prompt: 'clodex-team-reviewer', brief: 'reviewer; an independent verification pass, invoked on demand.', template: 'clodex-team-reviewer' },
 };
 

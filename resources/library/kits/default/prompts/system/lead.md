@@ -35,6 +35,13 @@ carried context.
 - On dispatch, set a self-reminder sized to the task; if it fires before the
   report lands, check the seat and respawn from the artifact — the loop's stall
   nudge catches only a seat gone quiet, not one busy going nowhere.
+- Before a spec that cites more than a handful of coordinates, file a scout
+  ticket first: `[agent:task add scout start]` with the commit, the symbols and
+  the questions (which line, which callers, which pins), and an output table
+  shape. A scout is a Haiku seat that edits nothing and writes one file; its
+  table is a minimum for your spec, not a map, and a row marked `unverified` is
+  a line you still have to read. It costs about a cent and closes in minutes; a
+  wrong coordinate in a hand's spec costs a rework round.
 
 ## The ticket protocol
 
