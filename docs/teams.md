@@ -147,7 +147,11 @@ Two ship. `default` builds the team on your own Claude Code — plugins and
 builtin agents left as you have them, but every skill off and the hand's 35
 tools (plan mode among them) off. `clodex` is the aggressive ticket-loop
 profile the stock templates used to impose on every team: 35 tools off, every
-skill off, no plan mode. `[agent:team create <name> root:<abs> kit:<name>]`
+skill off, no plan mode. Both kits seed a fourth role, `scout`, a one-shot
+Haiku 5.5 lookup seat (dispatch spawn, stream io, no CLAUDE.md, tools
+Bash/Read/Write/Grep/Glob, every skill off) that a lead files
+`[agent:task add scout start]` tickets to before writing a spec; its prompt
+makes it edit nothing and write one table. `[agent:team create <name> root:<abs> kit:<name>]`
 picks one, `kit:?` (or an unknown name) lists what is installed, and an unknown
 name creates nothing at all. The create IPC takes the same `kit` field.
 
