@@ -14,7 +14,7 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 
 const DESIGN_PROMPT_LINES = [
   '  [agent:browser open <service> [--show]] <url>      Open url in the logged-in browser window for <service> (a-z0-9-); logins persist per service; the window stays in the background unless --show',
-  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--attach|--path-only]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file; --attach forces it inline, --path-only saves it as an identified snapshot (p-<id>.txt, kept 7 days) and sends path, id and a digest',
+  '  [agent:browser read [service] [--text|--links] [--main] [--all] [--filter=<s>] [--page=N] [--attach|--path-only]]   Page text + numbered elements, ≈2.5k tokens/page, delivered as a file; --attach forces it inline, --path-only saves it as an identified snapshot (p-<id>.txt under the plugin\'s data dir, kept 7 days) and sends path, id and a digest',
   '  A read hides navigation/header/footer/sidebar text and elements repeated from your previous read of that site (header says how many; numbers stay valid); page body text is never hidden; --all shows everything.',
   '  [agent:browser click [service] <n> [--to=<dir in your cwd>] [--confirm]]  [agent:browser click [service] --text="<visible text>" [--confirm]]  [agent:browser type [service] <n> [--enter] [--confirm]] <text>  [agent:browser key [service] [--confirm]] <Enter|Tab|Escape|…>  [agent:browser scroll [service] [down|up|top|bottom] [--pages=N]]  [agent:browser back [service]]  [agent:browser forward [service]]',
   '  [agent:browser select [service] <n> [--confirm]] <option>   [agent:browser download [service] [<n>] [--to=<dir in your cwd>] [--as=<name>]] [<url>]',

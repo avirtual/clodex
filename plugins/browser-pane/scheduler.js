@@ -96,7 +96,7 @@ function needsRead(cmd) {
 }
 
 function createScheduler({
-  client, storage, mirror, now = () => Date.now(), log, timers = realTimers, fsScope = () => ({ error: 'Session not found' }), downloadsDir = null, notes = null,
+  client, storage, mirror, now = () => Date.now(), log, timers = realTimers, fsScope = () => ({ error: 'Session not found' }), downloadsDir = null, notes = null, snapshotsRoot = null,
 }) {
   const services = new Map();
   const seats = new Map();
@@ -351,7 +351,7 @@ function createScheduler({
     rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
-    const file = replies.writeReplyFile(handle.name, out.content, { snapshot: cmd.attach === false });
+    const file = replies.writeReplyFile(handle.name, out.content, cmd.attach === false ? { snapshot: true, root: snapshotsRoot } : {});
     const budget = attachBudget(storage.get(), handle.name);
     const attach = cmd.attach === true || (cmd.attach !== false && out.tokens <= budget);
     return replies.readReply(service, out, file, handle.type, { attach, budget: cmd.attach === false ? null : budget });
