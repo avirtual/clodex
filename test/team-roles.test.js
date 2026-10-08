@@ -1782,3 +1782,24 @@ test('the three shipped scout prompts are byte-identical and open with the wires
   assert.deepStrictEqual([lib('kits', 'clodex', 'prompts', 'system', 'clodex-team-scout.md'), lib('kits', 'default', 'prompts', 'system', 'scout.md')], [flat, flat]);
   assert.ok(flat.startsWith('\n\n[wirescope:omit useremail]\n'));
 });
+
+test('the stock page-scout role is a spawn-dispatched Haiku seat with Read and Write only', () => {
+  const { STOCK_ROLE_DEFS } = require('../team-manifest');
+  assert.deepStrictEqual(STOCK_ROLE_DEFS['page-scout'], {
+    prompt: 'clodex-team-page-scout',
+    brief: 'page scout on Haiku; projects one saved web-page snapshot onto a ticket\'s question and writes one file of verbatim cells with line provenance, coverage and notices; Read and Write only, never the browser, edits nothing.',
+    template: 'clodex-team-page-scout',
+    dispatch: 'spawn',
+  });
+  const tpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-page-scout.json'), 'utf-8'));
+  assert.deepStrictEqual(tpl.tools, ['Read', 'Write']);
+  for (const t of ['Bash', 'Grep', 'Glob']) assert.ok(tpl.disabledTools.includes(t), t);
+  assert.strictEqual(tpl.extraArgs[tpl.extraArgs.indexOf('--model') + 1], 'claude-haiku-5-5[1m]');
+});
+
+test('the three shipped page-scout prompts are byte-identical and open with the wirescope directive after two blank lines', () => {
+  const lib = (...p) => fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', ...p), 'utf-8');
+  const flat = lib('prompts', 'system', 'clodex-team-page-scout.md');
+  assert.deepStrictEqual([lib('kits', 'clodex', 'prompts', 'system', 'clodex-team-page-scout.md'), lib('kits', 'default', 'prompts', 'system', 'page-scout.md')], [flat, flat]);
+  assert.ok(flat.startsWith('\n\n[wirescope:omit useremail]\n'));
+});
