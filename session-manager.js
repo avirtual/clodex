@@ -256,7 +256,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
-const { resolveSubagent, nameOfSubagent, clearSubq } = require('./subq');
+const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
@@ -489,7 +489,7 @@ const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
 const nodeNet = require('net');
 const { AsyncLocalStorage } = require('async_hooks');
-const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag } = require('./intent-socket');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, createIntentSocketServer, seatOfAgentTag, splitAgentTarget } = require('./intent-socket');
 const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
 const { TERM_REPLY_WAIT_MS } = require('./drawer-avail');
@@ -720,7 +720,6 @@ function createSessionManager(deps) {
   const arm = hintArm || NO_ARM;
   const subqDirFor = (n) => path.join(path.dirname(pathFor(REGISTRY_DIR, n, 'intentSocket')), 'subq');
   let subqSeq = 0;
-  const subDmSent = new Map();
 
   const NO_SELECTION_ARM = {
     arm: () => Promise.resolve({ armed: false, reason: 'selection hints are unavailable on this host' }),
@@ -778,6 +777,7 @@ function createSessionManager(deps) {
       // Box-wide, separate from the per-seat field of the same name: audio has no seat.
       this._lastVoiceRecordingTs = 0;
       this._knownDmOrigins = new Set();
+      this._subDmSent = new Map();
       this._relayRosters = new Map();
       this._lastPendingCounts = new Map();
       this._ticketWatch = new Map();
@@ -5369,12 +5369,7 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, '[agent:sub] nothing queued: empty body', { parkable: true });
             break;
           }
-          const q = path.join(dir, id);
-          const seq = String(++subqSeq).padStart(9, '0');
-          const tmp = path.join(q, `.${seq}.tmp`);
-          fs.mkdirSync(q, { recursive: true, mode: 0o700 });
-          fs.writeFileSync(tmp, `${defangTeammateTag(intent.body)}\n`, { mode: 0o600 });
-          fs.renameSync(tmp, path.join(q, seq));
+          this._queueSubagentNote(senderName, id, intent.body);
           this._broadcast('ipc-message', { type: 'sub', from: senderName, to: `${senderName}/${id}`, body: intent.body });
           break;
         }
@@ -5386,14 +5381,35 @@ function createSessionManager(deps) {
             if (intent.urgent) { subRefusal('[agent:dm] refused: a subagent dm is never urgent'); break; }
             if (intent.target.includes('@')) { subRefusal('[agent:dm] refused: a subagent can dm local seats only (no @peer)'); break; }
             const t = Date.now();
-            const recent = (subDmSent.get(fromIdent.agentId) || []).filter((at) => t - at < SUB_DM_RATE_MS);
+            for (const [k, v] of this._subDmSent) if (t - v[v.length - 1] >= SUB_DM_RATE_MS) this._subDmSent.delete(k);
+            const recent = (this._subDmSent.get(fromIdent.agentId) || []).filter((at) => t - at < SUB_DM_RATE_MS);
             if (recent.length >= SUB_DM_RATE_MAX) {
-              subDmSent.set(fromIdent.agentId, recent);
+              this._subDmSent.set(fromIdent.agentId, recent);
               subRefusal(`dm: rate limit — ${SUB_DM_RATE_MAX} in ${SUB_DM_RATE_MS / 1000} s from ${fromIdent.label}`);
               break;
             }
             recent.push(t);
-            subDmSent.set(fromIdent.agentId, recent);
+            this._subDmSent.set(fromIdent.agentId, recent);
+          }
+          const fromTag = (fromIdent && fromIdent.label) || (replyScope && replyScope.fromLabel) || senderName;
+          const split = splitAgentTarget(intent.target);
+          let routedNotice = null;
+          if (split.sub) {
+            const host = this.sessions.get(split.seat);
+            const live = host && host.agentType === 'claude' && !host._dead && !host.clone;
+            const subId = live ? resolveSubagent(subqDirFor(split.seat), split.sub) : null;
+            if (subId) {
+              if (!String(intent.body || '').trim()) {
+                if (session) this._injectText(session, '[agent:dm] nothing queued: empty body', { parkable: true });
+                break;
+              }
+              this._queueSubagentNote(split.seat, subId, defuseSenderLines(intent.body), fromTag);
+              if (session) this._injectText(session, `[agent:dm] delivered to ${split.seat}/${split.sub} (a note after its next tool call)`, { parkable: true });
+              this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: `${split.seat}/${subId}`, body: intent.body });
+              break;
+            }
+            intent.target = split.seat;
+            routedNotice = `[agent:dm] subagent ${split.sub} is not running; routed to ${split.seat}`;
           }
           intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
@@ -5402,7 +5418,6 @@ function createSessionManager(deps) {
             break;
           }
           let sup = null;
-          const fromTag = (fromIdent && fromIdent.label) || (replyScope && replyScope.fromLabel) || senderName;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
             const r = this._gatedDeliver(intent.target, fromTag, intent.body, intent.urgent === true, '',
@@ -5415,14 +5430,19 @@ function createSessionManager(deps) {
                 if (parkId) {
                   notice = r.noUrgent
                     ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered after the human answers the dialog.`
+                    : fromIdent
+                    ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn.`
                     : `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
                 } else {
                   const retry = r.noUrgent
                     ? `Nothing was kept. Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
+                    : fromIdent
+                    ? `Nothing was kept (${intent.target} cannot park messages).`
                     : `Nothing was kept (${intent.target} cannot park messages). Resend as \`[agent:dm ${intent.target} urgent] <message>\` to deliver it now.`;
                   notice = `[agent:dm] NOT delivered to ${intent.target}: ${why}. ${retry}`;
                 }
                 this._injectText(session, notice, { parkable: true });
+                if (routedNotice) this._injectText(session, routedNotice, { parkable: true });
               }
               this._broadcast('ipc-message', {
                 type: 'dm', from: fromTag, to: intent.target,
@@ -5474,6 +5494,7 @@ function createSessionManager(deps) {
                 : `[agent:dm] delivered urgent to ${intent.target}; its parked copy was claimed, so ${intent.target} reads it once.`,
               { parkable: true });
           }
+          if (routedNotice && session) this._injectText(session, routedNotice, { parkable: true });
           this._broadcast('ipc-message', {
             type: 'dm', from: fromTag, to: intent.target,
             body: sup
@@ -5655,6 +5676,15 @@ function createSessionManager(deps) {
       }
 
       if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
+    }
+
+    _queueSubagentNote(seat, id, text, from = null) {
+      const q = path.join(subqDirFor(seat), id);
+      const seq = String(++subqSeq).padStart(9, '0');
+      const tmp = path.join(q, `.${seq}.tmp`);
+      fs.mkdirSync(q, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(tmp, `${from == null ? '' : `${from}\n`}${defangTeammateTag(text)}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, path.join(q, from == null ? seq : `${seq}${SUBQ_DM_SUFFIX}`));
     }
 
     _startIntentSocket(session, channel) {

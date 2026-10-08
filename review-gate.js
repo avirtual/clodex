@@ -216,7 +216,7 @@ function stripReviewGated(text) {
 }
 
 const LINE_BREAK = /(\r\n|[\n\v\f\r\x85\u2028\u2029])/;
-const SENDER_LINE = /^\[agent:from\b/i;
+const SENDER_LINE = /^\[(?:agent:from|dm (?:[0-9a-f]+ )?from)\b/i;
 
 function defuseSenderLines(text) {
   const parts = String(text).split(LINE_BREAK);

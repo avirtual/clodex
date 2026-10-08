@@ -272,7 +272,7 @@ const DM_TOOL = Object.freeze({
   inputSchema: { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false },
   logKeys: ['to'],
   subagentOk: true,
-  brief: 'To message another Clodex seat use the `dm` MCP tool (to, body); a reply reaches the seat that spawned you.',
+  brief: 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm <nonce> from <seat>].',
   toIntent(args) {
     const a = args == null ? {} : args;
     const extra = Object.keys(a).find((k) => k !== 'to' && k !== 'body');
@@ -285,7 +285,7 @@ const DM_TOOL = Object.freeze({
 });
 
 const CORE_ROWS = [
-  { type: 'dm', parse: parseDm, bodyMode: GREEDY, tools: [DM_TOOL] },
+  { type: 'dm', parse: parseDm, bodyMode: GREEDY, classifyReply: (line) => (/^\[agent:dm\] refused: |^dm: rate limit — /.test(line) ? 'refused' : /^\[agent:dm\] NOT delivered/.test(line) ? 'error' : defaultReplyStatus(line)), tools: [DM_TOOL] },
   { type: 'sub', parse: parseSub, bodyMode: GREEDY },
   { type: 'resend', parse: parseResend, bodyMode: NONE },
   { type: 'who', parse: parseWho, bodyMode: NONE },

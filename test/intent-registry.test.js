@@ -1442,3 +1442,20 @@ test('a plugin tool named term_exec is refused as held by core', () => {
     assert.strictEqual(registry.pluginRowFor('aaa'), null);
   } finally { registry._resetPluginRows(); }
 });
+
+test('t1719 the dm brief tells a subagent where replies land', () => {
+  assert.strictEqual(registry.DM_TOOL.brief, 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm <nonce> from <seat>].');
+});
+
+test('t1719 a dm refusal or rate limit is refused, an undelivered dm is an error, a delivery or park is ok', () => {
+  const { classifyReplyLine } = registry;
+  for (const [line, want] of [
+    ['[agent:dm] refused: a subagent dm is never urgent', 'refused'],
+    ['dm: rate limit — 10 in 60 s from a/alice', 'refused'],
+    ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).', 'error'],
+    ['[agent:dm] NOT delivered: no agent named "b". Check [agent:who] for reachable peers.', 'error'],
+    ['[agent:dm] delivered to b/alice (a note after its next tool call)', 'ok'],
+    ["[agent:dm] parked for b (cold) as p1 — it'll be delivered with b's next turn.", 'ok'],
+    ['[agent:dm] error: x', 'error'],
+  ]) assert.strictEqual(classifyReplyLine('dm', line), want, line);
+});

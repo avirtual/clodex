@@ -15,7 +15,7 @@ const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
   createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
-  callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag,
+  callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag, splitAgentTarget,
 } = require('../intent-socket');
 const verb = require('../cli/bin/clodex.js');
 
@@ -846,4 +846,22 @@ test('callerIdentity: a Codex caller never carries an agentId', () => {
   assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: 'x' }, sessionId: sid }), { subagent: true });
   assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, sessionId: sid }), { subagent: false });
   assert.deepStrictEqual(callerIdentity({ isCodex: true, req: {}, sessionId: sid }), { subagent: true });
+});
+
+test('splitAgentTarget names the subagent part of a local <seat>/<x>; agent is reserved for the seat', () => {
+  const rows = [
+    ['h1/alice', { seat: 'h1', sub: 'alice' }],
+    ['h1/agent', { seat: 'h1', sub: null }],
+    ['h1/agent-89abcdef', { seat: 'h1', sub: 'agent-89abcdef' }],
+    ['h1', { seat: 'h1', sub: null }],
+    ['a@box', { seat: 'a@box', sub: null }],
+    ['h1/alice@box', { seat: 'h1/alice@box', sub: null }],
+    ['h1/', { seat: 'h1/', sub: null }],
+    ['/x', { seat: '/x', sub: null }],
+    ['h1/a/b', { seat: 'h1', sub: 'a/b' }],
+  ];
+  for (const [name, want] of rows) assert.deepStrictEqual(splitAgentTarget(name), want, name);
+  for (const name of ['h1/agent', 'h1/alice', 'h1/agent-89abcdef', 'h1', 'a@box', 'h1/alice@box', '/x']) {
+    assert.strictEqual(seatOfAgentTag(name), splitAgentTarget(name).seat, name);
+  }
 });

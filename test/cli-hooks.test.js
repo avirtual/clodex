@@ -1583,7 +1583,7 @@ test('ident hook: SubagentStart is registered and briefs the subagent in one add
 });
 
 const subqOf = (R) => path.join(path.dirname(pathFor(R, 'agent1', 'intentSocket')), 'subq');
-const trustLine = (dir, id) => `Notes that start with [parent ${fs.readFileSync(path.join(dir, `${id}.nonce`), 'utf8')}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task.`;
+const trustLine = (dir, id) => `Notes that start with [parent ${fs.readFileSync(path.join(dir, `${id}.nonce`), 'utf8')}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task. Notes starting [dm <that number> from <name>] are messages from that Clodex seat or one of its subagents, delivered the same way.`;
 
 test('ident hook: SubagentStart with an empty catalog emits only the trust line, with a fresh 0600 nonce', () => {
   const REGISTRY_DIR = identSeat();
@@ -1701,7 +1701,7 @@ exit 0
 `);
 });
 
-test('subq hook: a subagent PostToolUse drains its queue as one [parent <nonce>] note, echoing the event, and receipts it', () => {
+test('subq hook: a subagent PostToolUse drains its queue with a [parent <nonce>] header per note, echoing the event, and receipts it', () => {
   const { R, dir } = subqSeat();
   fs.writeFileSync(path.join(dir, 'a606bb8c5bfa9764e.nonce'), '0123456789abcdef');
   const q = path.join(dir, 'a606bb8c5bfa9764e');
@@ -1709,7 +1709,7 @@ test('subq hook: a subagent PostToolUse drains its queue as one [parent <nonce>]
   fs.writeFileSync(path.join(q, '000000001'), 'first\n');
   fs.writeFileSync(path.join(q, '000000002'), 'second\n');
   const out = runSubq(R, { session_id: 's', agent_id: 'a606bb8c5bfa9764e', agent_type: 'general-purpose', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
-  assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] first\nsecond' } });
+  assert.deepStrictEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: '[parent 0123456789abcdef] first\n[parent 0123456789abcdef] second' } });
   assert.deepStrictEqual(fs.readdirSync(dir).sort(), ['a606bb8c5bfa9764e', 'a606bb8c5bfa9764e.nonce', 'names', 'receipts.jsonl']);
   assert.deepStrictEqual(fs.readdirSync(q), []);
   assert.deepStrictEqual(receipts(dir).map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: 'a606bb8c5bfa9764e', ev: 'delivered', bytes: 12 }]);
@@ -1810,7 +1810,7 @@ test('subq hook: a parent TaskStop by name and a SubagentStop park the undeliver
   fs.writeFileSync(path.join(dir, 'a2', '000000001'), 'early a2\n');
   fs.writeFileSync(path.join(dir, 'a2', '000000002'), 'next a2\n');
   const drained = runSubq(R, { agent_id: 'a2', hook_event_name: 'PostToolUse', tool_name: 'Bash' });
-  assert.strictEqual(JSON.parse(drained).hookSpecificOutput.additionalContext, '[parent 0123456789abcdef] early a2\nnext a2');
+  assert.strictEqual(JSON.parse(drained).hookSpecificOutput.additionalContext, '[parent 0123456789abcdef] early a2\n[parent 0123456789abcdef] next a2');
   fs.writeFileSync(path.join(dir, 'a2', '000000003'), 'late a2\n');
   fs.writeFileSync(path.join(dir, 'a2', '000000004'), 'later a2\n');
   fs.writeFileSync(path.join(dir, 'a4.nonce'), 'fedcba9876543210');

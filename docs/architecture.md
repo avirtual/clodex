@@ -382,7 +382,10 @@ bundle), whose packaged form is the Docker image under
   `subq/<agent_id>/` (one file per note, claimed by rename into
   `subq/<agent_id>.draining.<pid>/`)
   as one `[parent <nonce>]` note, maps Agent names to ids (and back, `nameOfSubagent`, for the caller label), and
-  parks a note left at TaskStop/SubagentStop; see docs/messaging.md §7b.
+  parks a note left at TaskStop/SubagentStop; resolves an `agent-<id8>` target
+  by a unique id tail, reads names through `readNameFile` (non-blocking open,
+  fstat check), and carries dm replies to a subagent as `[dm <nonce> from …]` notes;
+  see docs/messaging.md §7b.
 - **intent-glyphs.js** — the glyph vocabulary: `glyphFor`, `headOf` (glyph,
   label, target, chips for a card head), `REPLY_GLYPHS` for runtime replies,
   and the plugin-glyph check `registerIntent` applies. Main-side, no deps.
