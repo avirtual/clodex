@@ -4295,6 +4295,30 @@ test('composeRosterFor: renders for the NAMED seat, live or persistence-only', (
     'a seat with NO entry stays UNKNOWN and keeps the advertisement');
 });
 
+test('composeRosterFor: an ephemeral ticket seat gets the brief roster; a standing seat keeps the full one', () => {
+  const { m } = mkPark({
+    ...teamDeps,
+    getPersistence: () => ({
+      get: (n) => (n === 'team-dev-7' ? { cwd: '/proj/t', ephemeral: true } : (n === 'team-dev' ? { cwd: '/proj/b' } : null)),
+    }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
+  m.sessions.set('team-dev-7', { name: 'team-dev-7', agentType: 'claude', cwd: '/proj/t' });
+  const brief = m.composeRosterFor('team-dev-7');
+  assert.match(brief, /you: dev \(ticket seat\); your lead: lead/);
+  assert.ok(!/role definition only/.test(brief) && !/- lead \(session\)/.test(brief));
+  assert.strictEqual(m.sessions.get('team-dev-7')._ephemeralSeat, true);
+  const delivered = [];
+  m._deliverPassive = (to, from, body) => delivered.push(body);
+  m._rebakeDigest = () => {};
+  m._injectRoster(m.sessions.get('team-dev-7'), teamStub);
+  assert.match(delivered[0], /you: dev \(ticket seat\)/);
+  const full = m.composeRosterFor('team-dev');
+  assert.match(full, /- lead \(session\) — the lead · live: lead/);
+  assert.ok(!/ticket seat/.test(full));
+});
+
 // MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes
 // the boot window (re-opening the seat to deltas), delivering nothing.
 test('_settleBoot: a resumed seat (no stashed roster) closes the window, delivers nothing', () => {

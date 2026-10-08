@@ -1150,7 +1150,14 @@ function retiredFieldLines(team, role) {
 
 // The label is never computed here — team-manifest is a pure leaf and warmth is a
 // wire-layer property, so it arrives as data.
-function formatRoster(team, liveSeats = [], { seat = null, grants = null, efforts = null } = {}) {
+function formatRoster(team, liveSeats = [], { seat = null, grants = null, efforts = null, brief = false } = {}) {
+  if (brief) {
+    const role = seat ? matchSeatRole(team, seat) : null;
+    return [
+      `[team ${team.name}] roster (lead: ${team.lead})`,
+      `- you: ${role ? `${role} (ticket seat)` : 'ticket seat'}; your lead: ${team.lead} — dm it with [agent:dm ${team.lead}]; the full roster is not shipped to a ticket seat`,
+    ].join('\n');
+  }
   const byRole = new Map();
   const roleless = [];
   for (const entry of liveSeats) {
