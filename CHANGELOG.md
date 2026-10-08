@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.119.0 — 2026-10-08
+
 ### Messaging
 
 - The Clodex MCP `dm` tool is for subagents only: a main agent's call is refused with a pointer to the `[agent:dm <seat>]` intent, which dispatches in the same request without an extra API round trip. Subagent dms are unchanged.
