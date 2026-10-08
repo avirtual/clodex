@@ -11,12 +11,15 @@ const KNOWN = [
   'kits/clodex/templates/clodex-team-hand.json',
   'kits/clodex/templates/clodex-team-lead.json',
   'kits/clodex/templates/clodex-team-reviewer.json',
+  'kits/clodex/templates/clodex-team-scout.json',
   'kits/default/templates/hand.json',
   'kits/default/templates/lead.json',
+  'kits/default/templates/scout.json',
   'templates/clodex-team-hand.json',
   'templates/clodex-team-lead.json',
   'templates/clodex-team-reviewer-shell.json',
   'templates/clodex-team-reviewer.json',
+  'templates/clodex-team-scout.json',
 ];
 
 function walk() {
