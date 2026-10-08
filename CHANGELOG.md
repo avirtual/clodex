@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Sessions
+
+- A Haiku 5.5 seat is warned at 75k context tokens and told to stop and hand in its work at 100k, where that model's price rises 5x; the warning reaches the loop's ephemeral seats, which the compact nudges deliberately skip.
+
 ### Teams
 
 - The `haiku` model alias (`model:haiku` on a role, `--model haiku`) now resolves to Haiku 5.5 with the 1M context, like the other aliases; it used to name Haiku 4.5.

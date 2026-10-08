@@ -226,6 +226,9 @@ popovers the owner will answer.
   `test/ephemeral-ctxwarn.test.js`); and the record is read once per seat once it
   answers — memoized on the session at the first over-threshold tick, since `get()`
   re-parses the whole of sessions.json.
+  The Haiku 5.5 row (75k/100k) is a `stop` row: its wording tells the seat to
+  finish and close its ticket rather than compact (that model is priced 5x past
+  100k), and it reaches ephemeral seats, which the compact nudges do not.
 - **Update checker** (update-checker.js, data layer only): startup + 6h;
   `updateInfo` drives the banner/tray/notification (side effects stay in
   main.js); `releasesCache` feeds the peer ⓘ popover's version-severity
