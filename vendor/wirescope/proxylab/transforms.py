@@ -1564,9 +1564,8 @@ def _ws_strip_lines(text):
     from `text` — the same set _ws_directive_pairs honors, so strip == parse by
     construction (a mention the parser treats as content stays on the wire).
     Returns (new_text, n_removed)."""
-    lines = text.split("\n")
-    kept = [l for l in lines
-            if not writer_mod._WS_LINE_RE.match(l.rstrip())]
+    lines = writer_mod._ws_line_matches(text)
+    kept = [l for l, m in lines if not m]
     return "\n".join(kept), len(lines) - len(kept)
 
 
@@ -1587,14 +1586,14 @@ def _ws_strip_directives(obj):
     if isinstance(sys, list):
         for bi, b in enumerate(sys):
             if not (isinstance(b, dict) and isinstance(b.get("text"), str)
-                    and "[wirescope:" in b["text"]):
+                    and "[wirescope:" in b["text"].lower()):
                 continue
             new, n = _ws_strip_lines(b["text"])
             if n:
                 b["text"] = re.sub(r"[ \t]*\n{3,}", "\n\n", new)
                 total += n
                 blocks.append(bi)
-    elif isinstance(sys, str) and "[wirescope:" in sys:
+    elif isinstance(sys, str) and "[wirescope:" in sys.lower():
         new, n = _ws_strip_lines(sys)
         if n:
             obj["system"] = re.sub(r"[ \t]*\n{3,}", "\n\n", new)

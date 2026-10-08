@@ -279,17 +279,25 @@ def _ws_directive_pairs(text):
     order) — the form the action resolver needs (one target may carry several
     verbs across lines). Inline/indented/backticked mentions are content, not
     directives (see _WS_LINE_RE)."""
-    out = []
-    for raw in text.splitlines():
-        m = _WS_LINE_RE.match(raw.rstrip())
-        if m:
-            out.append((m.group(1).lower(), (m.group(2) or "").strip()))
-    return out
+    return [(m.group(1).lower(), (m.group(2) or "").strip())
+            for _, m in _ws_line_matches(text) if m]
+
+
+def _ws_line_matches(text):
+    return [(raw, _WS_LINE_RE.match(raw.rstrip())) for raw in text.split("\n")]
+
+
+def _sys_block_texts(obj):
+    sys = obj.get("system")
+    if isinstance(sys, list):
+        return [b["text"] for b in sys
+                if isinstance(b, dict) and isinstance(b.get("text"), str)]
+    return [sys] if isinstance(sys, str) else []
 
 
 def _ws_body_pairs(obj):
     """Ordered directives from the request's system body."""
-    return _ws_directive_pairs(_sys_text(obj))
+    return [p for t in _sys_block_texts(obj) for p in _ws_directive_pairs(t)]
 
 
 def _ws_directives(obj):
