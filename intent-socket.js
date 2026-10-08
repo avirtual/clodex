@@ -375,7 +375,7 @@ function createIntentRequestHandler({
     if (ident.subagent && !lifted) return unknownTool(name);
     if (tool.subagentOnly === true && !ident.subagent) {
       const res = await run(intents[0], ident, ctl, false);
-      if (!res.ok || res.status !== 'ok') return res;
+      if (!res.ok || res.status !== 'ok' || res.reply !== defaultReply(intents[0], false)) return res;
       return { ...res, reply: `${defaultReply(intents[0], false)}. Do not use this tool again: as the main agent, write [agent:dm <seat>] body … [agent:end] in your reply — it dispatches in the same request.` };
     }
     return run(intents[0], ident, ctl, lifted);
