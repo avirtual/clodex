@@ -2,7 +2,7 @@
 
 const nodeCrypto = require('node:crypto');
 const nodePath = require('node:path');
-const { SUBQ_ID_RE } = require('./subq');
+const { SUBQ_ID_RE, id8Of } = require('./subq');
 
 const INTENT_SOCKET_MAX_BYTES = 64 * 1024;
 const INTENT_SOCKET_MAX_CONNS = 8;
@@ -15,7 +15,6 @@ const IDENT_SEEN_MAX = 512;
 const IDENT_SEEN_MS = 10 * 60 * 1000;
 const MAIN_IDENT_RE = /^main\.(?:([0-9a-f]{16})\.)?([0-9a-f]+)$/;
 const SUB_IDENT_RE = /^sub\.([A-Za-z0-9_:-]+)\.([A-Za-z0-9_:-]+)\.([0-9a-f]{16})\.([0-9a-f]+)$/;
-const SUB_ID_TAIL_RE = /-([0-9a-f]{16})$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup'];
@@ -51,10 +50,17 @@ function subagentTag(seat) {
   return `${seat}${SUBAGENT_TAG_SUFFIX}`;
 }
 
-function seatOfAgentTag(name) {
-  if (typeof name !== 'string' || name.includes('@')) return name;
+function splitAgentTarget(name) {
+  if (typeof name !== 'string' || name.includes('@')) return { seat: name, sub: null };
   const slash = name.indexOf('/');
-  return slash > 0 ? name.slice(0, slash) : name;
+  if (slash <= 0) return { seat: name, sub: null };
+  const sub = name.slice(slash + 1);
+  if (!sub) return { seat: name, sub: null };
+  return { seat: name.slice(0, slash), sub: sub === 'agent' ? null : sub };
+}
+
+function seatOfAgentTag(name) {
+  return splitAgentTarget(name).seat;
 }
 
 function isMainThread(agentId, sessionId) {
@@ -128,9 +134,7 @@ function callerIsSubagent(opts) {
 
 function subagentLabel(seat, agentId, name) {
   if (typeof name === 'string') return `${seat}/${name}`;
-  const id = String(agentId || '');
-  const tail = SUB_ID_TAIL_RE.exec(id);
-  return `${seat}/agent-${tail ? tail[1].slice(-8) : id.slice(0, 8)}`;
+  return `${seat}/agent-${id8Of(agentId)}`;
 }
 
 function heredocWord(cmd, i) {
@@ -278,7 +282,7 @@ function subagentTrustLine(fs, crypto, subqDir, id) {
       if (!e || e.code !== 'EEXIST') return '';
       nonce = fs.readFileSync(p, 'utf8').trim();
     }
-    return nonce ? `Notes that start with [parent ${nonce}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task.` : '';
+    return nonce ? `Notes that start with [parent ${nonce}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task. Notes starting [dm from <name>] are messages from that Clodex seat or one of its subagents, delivered the same way.` : '';
   } catch { return ''; }
 }
 
@@ -321,8 +325,8 @@ function intentLabel(intent) {
   return intent.sub ? `${intent.type} ${intent.sub}` : intent.type;
 }
 
-function defaultReply(intent) {
-  if (intent.type === 'dm') return `sent to ${intent.target}; ${ASYNC_TAIL}`;
+function defaultReply(intent, sub) {
+  if (intent.type === 'dm') return sub ? `sent to ${intent.target}; a reply arrives as a note after your next tool call` : `sent to ${intent.target}; ${ASYNC_TAIL}`;
   return `${intentLabel(intent)} accepted; ${RESULT_TAIL}`;
 }
 
@@ -386,10 +390,10 @@ function createIntentRequestHandler({
       if (wake) wake();
       return true;
     };
+    const fromIdent = ident.agentId
+      ? { agentId: ident.agentId, agentType: ident.agentType, label: subagentLabel(seat, ident.agentId, nameFor ? nameFor(ident.agentId) : null) }
+      : null;
     try {
-      const fromIdent = ident.agentId
-        ? { agentId: ident.agentId, agentType: ident.agentType, label: subagentLabel(seat, ident.agentId, nameFor ? nameFor(ident.agentId) : null) }
-        : null;
       await dispatch(intent, { replyTo, fromLabel: ident.subagent ? subagentTag(seat) : null, fromIdent });
       const waitMs = !lines.length && replyWaitMs ? replyWaitMs(intent) : 0;
       if (waitMs > 0 && !(ctl && ctl.closed())) {
@@ -403,7 +407,7 @@ function createIntentRequestHandler({
     } finally {
       open = false;
     }
-    if (!lines.length) return { ok: true, status: 'ok', reply: defaultReply(intent) };
+    if (!lines.length) return { ok: true, status: 'ok', reply: defaultReply(intent, !!fromIdent) };
     const status = classifyReply ? classifyReply(intent, lines[0]) : 'ok';
     return { ok: true, status: status === 'error' || status === 'refused' ? status : 'ok', reply: lines.join('\n') };
   }
@@ -524,6 +528,7 @@ module.exports = {
   seatChannelEnv,
   credMatches,
   subagentTag,
+  splitAgentTarget,
   seatOfAgentTag,
   isMainThread,
   IDENT_ENV,

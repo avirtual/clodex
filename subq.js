@@ -5,6 +5,25 @@ const path = require('node:path');
 
 const SUBQ_ID_RE = /^[A-Za-z0-9][A-Za-z0-9@._-]{0,127}$/;
 const SUBQ_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const SUBQ_ID8_RE = /^agent-([0-9a-f]{8})$/;
+const SUBQ_RESERVED_NAME_RE = /^agent(-|$)/;
+const SUB_ID_TAIL_RE = /-([0-9a-f]{16})$/;
+
+function id8Of(id) {
+  const s = String(id || '');
+  const tail = SUB_ID_TAIL_RE.exec(s);
+  return tail ? tail[1].slice(-8) : s.slice(0, 8);
+}
+
+function readNameFile(p) {
+  const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
+  try {
+    if (!fs.fstatSync(fd).isFile()) return null;
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
 
 function appendReceipt(dir, rec, now) {
   try { fs.appendFileSync(path.join(dir, 'receipts.jsonl'), JSON.stringify({ ts: now, ...rec }) + '\n', { mode: 0o600 }); } catch {}
@@ -13,9 +32,17 @@ function appendReceipt(dir, rec, now) {
 function resolveSubagent(dir, target) {
   if (typeof target !== 'string' || !SUBQ_ID_RE.test(target)) return null;
   if (fs.existsSync(path.join(dir, `${target}.nonce`))) return target;
-  let id;
-  try { id = fs.readFileSync(path.join(dir, 'names', target), 'utf8').trim(); } catch { return null; }
-  return SUBQ_ID_RE.test(id) && fs.existsSync(path.join(dir, `${id}.nonce`)) ? id : null;
+  if (!SUBQ_RESERVED_NAME_RE.test(target)) {
+    let id;
+    try { id = String(readNameFile(path.join(dir, 'names', target)) || '').trim(); } catch { return null; }
+    return SUBQ_ID_RE.test(id) && fs.existsSync(path.join(dir, `${id}.nonce`)) ? id : null;
+  }
+  const m = SUBQ_ID8_RE.exec(target);
+  if (!m) return null;
+  let ids = [];
+  try { ids = fs.readdirSync(dir).filter((n) => n.endsWith('.nonce')).map((n) => n.slice(0, -'.nonce'.length)); } catch { return null; }
+  const hits = ids.filter((id) => SUBQ_ID_RE.test(id) && id8Of(id) === m[1]);
+  return hits.length === 1 ? hits[0] : null;
 }
 
 function claimQueue(dir, id, pid) {
@@ -50,7 +77,7 @@ function retireSubagent(dir, id, why, { pendingRoot, seat, born, now, pid }) {
   try { names = fs.readdirSync(path.join(dir, 'names')); } catch {}
   for (const n of names) {
     const p = path.join(dir, 'names', n);
-    try { if (fs.readFileSync(p, 'utf8').trim() === id) fs.unlinkSync(p); } catch {}
+    try { if (String(readNameFile(p) || '').trim() === id) fs.unlinkSync(p); } catch {}
   }
 }
 
@@ -73,11 +100,9 @@ function nameOfSubagent(dir, id) {
   let names = [];
   try { names = fs.readdirSync(path.join(dir, 'names')).sort(); } catch { return null; }
   for (const n of names) {
-    if (!SUBQ_NAME_RE.test(n)) continue;
+    if (!SUBQ_NAME_RE.test(n) || SUBQ_RESERVED_NAME_RE.test(n)) continue;
     try {
-      const p = path.join(dir, 'names', n);
-      if (!fs.lstatSync(p).isFile()) continue;
-      if (fs.readFileSync(p, 'utf8').trim() === id) return n;
+      if (String(readNameFile(path.join(dir, 'names', n)) || '').trim() === id) return n;
     } catch {}
   }
   return null;
@@ -122,4 +147,4 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
   return '';
 }
 
-module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, resolveSubagent, nameOfSubagent, clearSubq, subqHookOutput };
+module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, SUBQ_RESERVED_NAME_RE, id8Of, resolveSubagent, nameOfSubagent, clearSubq, subqHookOutput };
