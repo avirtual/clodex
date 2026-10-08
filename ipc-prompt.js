@@ -68,7 +68,9 @@ RULES:
 - Messages are plain text, max 64KB.
 
 SHELL COMMANDS:
-Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.`;
+Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.
+
+[wirescope:strip-tools mcp__clodex__dm]`;
 
 // ── Per-seat prompt assembly ─────────────────────────────────────────────────
 // The canonical literal above is decomposed into these authored pieces so
@@ -224,7 +226,9 @@ const TRAILER = `RULES:
 - Messages are plain text, max 64KB.
 
 SHELL COMMANDS:
-Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.`;
+Your Bash tool starts in the session's working directory (the project root) and stays there unless you \`cd\` elsewhere — so don't prefix commands with \`cd <project-root>\`; you're already there. It's a no-op that re-bills as tokens in your history every turn. For a one-off in another directory, prefer an absolute path inline (\`git -C PATH …\`, \`ls PATH\`) over a \`cd\` — it doesn't move your working directory.
+
+[wirescope:strip-tools mcp__clodex__dm]`;
 
 // Assemble the append blob for a seat whose persisted intent allowlist is
 // `intentsList` (array | null; null/absent = all enabled — the interpretation

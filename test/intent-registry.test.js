@@ -1401,7 +1401,7 @@ test('dm: the dm core row owns the tool, its schema is closed, it logs only the 
   assert.deepStrictEqual(DM_TOOL.logKeys, ['to']);
   assert.strictEqual(DM_TOOL.subagentOk, true);
   assert.strictEqual(DM_TOOL.subagentOnly, true);
-  assert.ok(DM_TOOL.description.endsWith(' Subagents only: a main agent writes the [agent:dm <seat>] intent in its reply instead, which dispatches at the same request.'));
+  assert.ok(DM_TOOL.description.endsWith(' For subagents. A main agent should write the [agent:dm <seat>] intent in its reply instead; a main call is still delivered, once, with a reminder.'));
   assert.strictEqual(TERM_EXEC_TOOL.subagentOk, undefined);
   assert.ok(!DM_TOOL.description.includes('\n'));
   assert.ok(DM_TOOL.description.split('. ')[0].length <= 100);
