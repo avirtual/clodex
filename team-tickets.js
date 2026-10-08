@@ -4447,12 +4447,12 @@ function createTicketMethods(deps, shared) {
           log.warn('intent', `task done ${ticket.id}: closing out ${facts.seatName} failed: ${why}`);
           const line = `closing out ${facts.seatName} failed (${why}) — [agent:task accept ${ticket.id}] retries`;
           reply(`${head}; ${line}${nextSuffix}`);
-          this._gatedDeliver(lead, 'ticket-loop', `[ticket ${ticket.id}] ${line}`, false, `[ticket ${ticket.id} close-out failed]`);
+          if (!isLead) this._gatedDeliver(lead, 'ticket-loop', `[ticket ${ticket.id}] ${line}`, false, `[ticket ${ticket.id} close-out failed]`);
         };
         return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).then((r) => {
           if (r.archiveError) return failed(r.archiveError);
           reply(head + (r.archived ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '') + nextSuffix);
-        }, failed);
+        }, failed).catch((e) => log.warn('intent', `task done ${ticket.id}: close-out reply failed: ${String((e && e.message) || e).split('\n')[0]}`));
       }
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
@@ -5801,7 +5801,7 @@ function createTicketMethods(deps, shared) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
       if (cancelsMerge) log.info('ticket', `task reject ${ticket.id}: the round ${ticket.reviewRound} ACCEPT is stale — its queued auto-merge will not run, and the rework's next task done is reviewed again`);
-      const archivedSeat = !seat && wasClosedOut && wasAccepted
+      const archivedSeat = !seat && wasClosedOut && wasAccepted && !ticket.worktree
         ? ` — NOTE: no live seat; its one-shot seat ${this._acceptSeatFacts(ticket).seatName || 'the seat'} was archived at close-out. Resume it from the sidebar, or [agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role>'}] to mint a fresh one.`
         : '';
       ack(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}${archivedSeat}`);
@@ -6001,11 +6001,12 @@ function createTicketMethods(deps, shared) {
 
     async _closeOutBranchless(team, ticket, tickets, { by, note }) {
       if (!this._closingOut) this._closingOut = new Set();
-      if (this._closingOut.has(ticket.id)) {
+      const key = `${team.root}\0${ticket.id}`;
+      if (this._closingOut.has(key)) {
         return { archived: false, already: true,
           text: `ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt || Date.now()).toLocaleTimeString()} — nothing was changed` };
       }
-      this._closingOut.add(ticket.id);
+      this._closingOut.add(key);
       try {
         const { seatName, ephemeralSeat } = this._acceptSeatFacts(ticket);
         if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
@@ -6028,7 +6029,7 @@ function createTicketMethods(deps, shared) {
         log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
         return { archived, archiveError, text: dropped ? `${msg} ${dropped}` : msg };
       } finally {
-        this._closingOut.delete(ticket.id);
+        this._closingOut.delete(key);
       }
     },
 
