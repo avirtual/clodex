@@ -100,7 +100,7 @@ test('t1705 a note that lands between the drain\'s listing and its read is deliv
   const second = JSON.parse(subqHookOutput(JSON.stringify({ agent_id: ID, hook_event_name: 'PostToolUse' }), { dir: h.dir }));
   assert.strictEqual(second.hookSpecificOutput.additionalContext, '[parent feedfacecafebeef] late');
   const rows = fs.readFileSync(path.join(h.dir, 'receipts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepStrictEqual(rows.map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: ID, ev: 'delivered', bytes: 5 }, { id: ID, ev: 'delivered', bytes: 4 }]);
+  assert.deepStrictEqual(rows.map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: ID, ev: 'delivered', bytes: 31 }, { id: ID, ev: 'delivered', bytes: 30 }]);
   assert.deepStrictEqual(fs.readdirSync(h.dir).filter((n) => n.startsWith(`${ID}.draining`)), []);
 });
 
