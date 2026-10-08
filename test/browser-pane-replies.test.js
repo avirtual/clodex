@@ -206,6 +206,26 @@ test('replies: a repeat snapshot save touches the file instead of rewriting it',
   } finally { fs.chmodSync(snap, 0o600); }
 }));
 
+test('replies: a snapshot save prunes old snapshots of every seat and drops emptied seat dirs', () => withTmp((root) => {
+  const day = 24 * 60 * 60 * 1000;
+  const other = path.join(root, 'snapshots', 'other-seat');
+  fs.mkdirSync(other, { recursive: true });
+  const stale = path.join(other, `p-${R.snapshotId('stale')}.txt`);
+  fs.writeFileSync(stale, 'stale');
+  const now = Date.now();
+  fs.utimesSync(stale, (now - 8 * day) / 1000, (now - 8 * day) / 1000);
+  const mine = R.writeReplyFile('seat', 'mine', { snapshot: true, root, now });
+  assert.strictEqual(fs.existsSync(stale), false);
+  assert.strictEqual(fs.existsSync(other), false);
+  assert.strictEqual(fs.readFileSync(mine, 'utf8'), 'mine');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(mine)), [path.basename(mine)]);
+}));
+
+test('replies: pruneAllSnapshots on a missing base is a no-op', () => withTmp((root) => {
+  R.pruneAllSnapshots(path.join(root, 'snapshots'), Date.now());
+  assert.strictEqual(fs.existsSync(path.join(root, 'snapshots')), false);
+}));
+
 test('replies: snapshotDir refuses a bad seat name', () => withTmp((root) => {
   assert.throws(() => R.snapshotDir('..', root), /bad seat name/);
 }));

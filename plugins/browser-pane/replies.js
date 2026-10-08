@@ -562,6 +562,16 @@ function pruneSnapshots(dir, now) {
   }
 }
 
+function pruneAllSnapshots(base, now) {
+  let seats;
+  try { seats = fs.readdirSync(base); } catch { return; }
+  for (const s of seats) {
+    const dir = path.join(base, s);
+    pruneSnapshots(dir, now);
+    try { fs.rmdirSync(dir); } catch {}
+  }
+}
+
 function prune(dir, now) {
   let files;
   try { files = fs.readdirSync(dir); } catch { return; }
@@ -589,8 +599,13 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
     fs.chmodSync(sdir, 0o700);
     const snap = path.join(sdir, `p-${snapshotId(content)}.txt`);
     if (fs.existsSync(snap)) fs.utimesSync(snap, now / 1000, now / 1000);
-    else fs.writeFileSync(snap, content, { mode: 0o600, flag: 'w' });
-    pruneSnapshots(sdir, now);
+    else {
+      const tmp = path.join(sdir, `.p-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`);
+      fs.writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+      fs.renameSync(tmp, snap);
+    }
+    if (root) pruneAllSnapshots(path.dirname(sdir), now);
+    else pruneSnapshots(sdir, now);
     return snap;
   }
   const dir = replyDir(seat, root);
@@ -632,7 +647,7 @@ function classifyReply(line) {
 module.exports = {
   closedReply,
   classifyReply,
-  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, loginState, stamp,
+  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,

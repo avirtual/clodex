@@ -351,9 +351,10 @@ resumes it); a subagent gets neither.
 Omitting `[service]` means the last service that seat opened or read. Only
 `http:` and `https:` URLs open, and a URL carrying `user:pass@` is refused.
 
-Each `read` writes `$TMPDIR/clodex-browser-pane/<seat>/r-<n>.txt` (directory
-0700, files 0600; the 50 newest per seat are kept, and nothing older than a day)
-and replies with one line pointing at it.
+Each `read` without `--path-only` writes
+`$TMPDIR/clodex-browser-pane/<seat>/r-<n>.txt` (directory 0700, files 0600; the
+50 newest per seat are kept, and nothing older than a day) and replies with one
+line pointing at it.
 
 ## Page scouts
 

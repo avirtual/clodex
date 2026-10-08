@@ -1101,12 +1101,16 @@ test('scheduler: with snapshotsRoot, read --path-only writes under <root>/snapsh
   const seat = `hand-snaproot-${process.pid}`;
   const dir = R.replyDir(seat);
   fs.rmSync(dir, { recursive: true, force: true });
-  const out = await h.run([[seat, '[agent:browser read gh --path-only]']]);
-  await h.run([[seat, '[agent:browser read gh]']]);
-  const snaps = fs.readdirSync(path.join(root, 'snapshots', seat));
-  const plain = fs.readdirSync(dir);
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.rmSync(root, { recursive: true, force: true });
+  let out, snaps, plain;
+  try {
+    out = await h.run([[seat, '[agent:browser read gh --path-only]']]);
+    await h.run([[seat, '[agent:browser read gh]']]);
+    snaps = fs.readdirSync(path.join(root, 'snapshots', seat));
+    plain = fs.readdirSync(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
   assert.strictEqual(snaps.length, 1);
   assert.ok(R.SNAP_RE.test(snaps[0]), snaps[0]);
   assert.ok(String(out[0][1]).includes(path.join('snapshots', seat, snaps[0])), out[0][1]);

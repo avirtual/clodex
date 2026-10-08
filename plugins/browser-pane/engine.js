@@ -136,6 +136,7 @@ function activate(host) {
   const dataDir = path.join(host.paths.dataDir, 'chromium');
   const downloadsDir = path.join(host.paths.dataDir, 'downloads');
   const notes = siteNotes.createStore({ dir: path.join(host.paths.dataDir, 'sites') });
+  replies.pruneAllSnapshots(path.join(host.paths.dataDir, 'snapshots'), Date.now());
   const client = createClient({
     spawnSpec: () => {
       const spec = host.runtime.electronChild(childScript, ['--cxb-data=' + dataDir, '--cxb-downloads=' + downloadsDir, '--cxb-proto=1']);

@@ -14,9 +14,10 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 const FAKE = path.join(__dirname, 'fixtures', 'browser-pane', 'fake-child');
 const engineMod = require('../plugins/browser-pane/engine');
 
-function boot(t, { headless = false, type = 'claude' } = {}) {
+function boot(t, { headless = false, type = 'claude', seed = null } = {}) {
   unregisterSource('browser-pane');
   const dir = mkTmpRoot('clodex-bp-engine-');
+  if (seed) seed(dir);
   const tmp = path.join(dir, 'tmp');
   fs.mkdirSync(tmp);
   const prevTmp = process.env.TMPDIR;
@@ -238,6 +239,28 @@ test('engine: screenshot writes s-<seq>.jpg and replies with its size and @path'
   assert.ok(m, reply);
   assert.strictEqual(m[1], path.join(tmp, 'clodex-browser-pane', 'clodex-hand', 's-0001.jpg'));
   assert.strictEqual(fs.readFileSync(m[1], 'utf8'), 'fake-jpeg');
+});
+
+test('engine: activate prunes snapshots older than 7 days left by any seat', (t) => {
+  const day = 24 * 60 * 60 * 1000;
+  let stale, fresh;
+  const { host } = boot(t, {
+    seed: (dir) => {
+      const base = path.join(dir, 'plugins', 'browser-pane', 'snapshots');
+      fs.mkdirSync(path.join(base, 'gone-seat'), { recursive: true });
+      fs.mkdirSync(path.join(base, 'kept-seat'), { recursive: true });
+      stale = path.join(base, 'gone-seat', 'p-0123456789abcdef.txt');
+      fresh = path.join(base, 'kept-seat', 'p-fedcba9876543210.txt');
+      fs.writeFileSync(stale, 'stale');
+      fs.writeFileSync(fresh, 'fresh');
+      const old = (Date.now() - 8 * day) / 1000;
+      fs.utimesSync(stale, old, old);
+    },
+  });
+  assert.strictEqual(path.dirname(path.dirname(path.dirname(stale))), host.paths.dataDir);
+  assert.strictEqual(fs.existsSync(stale), false);
+  assert.strictEqual(fs.existsSync(path.dirname(stale)), false);
+  assert.strictEqual(fs.existsSync(fresh), true);
 });
 
 test('engine: forget with the child stopped removes only chromium/Partitions/<service> and keeps downloads', async (t) => {
