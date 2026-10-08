@@ -255,8 +255,8 @@ test('invariant 3: no model id reaches a row belonging to another family', () =>
   }
 });
 
-// The whole table as one literal, not a membership check: "there is fable 5.1
-// and everyone else" is the shipped claim, so a second row arriving must break
+// The whole table as one literal, not a membership check: the shipped rows are
+// the claim, so another row arriving must break
 // this rather than pass alongside it. Each id carries its expected family as a
 // literal, because the row is only reachable through modelFamily's output.
 const FABLE_IDS = [

@@ -4319,6 +4319,29 @@ test('composeRosterFor: an ephemeral ticket seat gets the brief roster; a standi
   assert.ok(!/ticket seat/.test(full));
 });
 
+test('_settleBoot: an ephemeral codex ticket seat settles to the brief roster; a standing codex seat gets the full one', () => {
+  const { m } = mkPark({
+    ...teamDeps,
+    getPersistence: () => ({
+      get: (n) => (n === 'team-dev-7' ? { cwd: '/proj/t', ephemeral: true } : (n === 'team-dev' ? { cwd: '/proj/b' } : null)),
+    }),
+  });
+  m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+  const eph = { name: 'team-dev-7', agentType: 'codex', cwd: '/proj/t', _bootSettling: true, _pendingRoster: teamStub };
+  const std = { name: 'team-dev', agentType: 'codex', cwd: '/proj/b', _bootSettling: true, _pendingRoster: teamStub };
+  m.sessions.set(eph.name, eph);
+  m.sessions.set(std.name, std);
+  const delivered = {};
+  m._deliverMessage = (t, _sn, b) => { delivered[t] = b; };
+  m._settleBoot(eph);
+  m._settleBoot(std);
+  assert.deepStrictEqual([m._isEphemeralSeat('team-dev-7'), m._isEphemeralSeat('team-dev')], [true, false]);
+  assert.match(delivered['team-dev-7'], /you: dev \(ticket seat\); your lead: lead/);
+  assert.ok(!/- lead \(session\)/.test(delivered['team-dev-7']));
+  assert.match(delivered['team-dev'], /- lead \(session\) — the lead · live: lead/);
+  assert.ok(!/ticket seat/.test(delivered['team-dev']));
+});
+
 // MUST-FIX 1: a RESUMED codex seat has no stashed roster — _settleBoot just closes
 // the boot window (re-opening the seat to deltas), delivering nothing.
 test('_settleBoot: a resumed seat (no stashed roster) closes the window, delivers nothing', () => {

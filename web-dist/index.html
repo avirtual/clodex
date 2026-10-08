@@ -8988,7 +8988,7 @@ body.web-frontend #sidebar-header {
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 0;
+  min-width: 8ch;
 }
 .intent-card-inline {
   color: var(--text-secondary);
@@ -34593,7 +34593,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               const clean = plainMarked ? { rec: { segments: end.segs }, empty: false } : withoutEchoes({ ...end.rec, segments: end.segs });
               if (clean.empty) return echoRow(doc, end.rec, " tr-turn-end-prose");
               const row = el(doc, "div", "tr-row tr-prose tr-segs tr-turn-end-prose");
-              appendSegments(doc, row, clean.rec.segments, deps, end.rec);
+              appendSegments(doc, row, clean.rec.segments, deps);
               return row;
             }
           };

@@ -1394,7 +1394,7 @@ test('term_exec: the term core row owns the tool, its schema is closed and it lo
   assert.deepStrictEqual(parsed.map((i) => [i.type, i.sub]), [['term', 'exec']]);
 });
 
-test('dm: the dm core row owns the tool, its schema is closed, it logs only the target and a subagent may call it', () => {
+test('dm: the dm core row owns the tool, its schema is closed, it logs only the target and only a subagent may call it', () => {
   const { DM_TOOL, TERM_EXEC_TOOL } = registry;
   assert.strictEqual(registry.toolRowFor('dm'), registry.rowFor('dm'));
   assert.deepStrictEqual(DM_TOOL.inputSchema, { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false });

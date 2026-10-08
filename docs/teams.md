@@ -144,7 +144,8 @@ A kit is a team directory in miniature, under `~/.clodex/library/kits/<kit>/`:
 `kit.json` (a description and a `roles` map shaped exactly like `team.json`'s),
 plus `templates/`, `prompts/system/`, optionally `prompts/append/` and `exec/`.
 Two ship. `default` builds the team on your own Claude Code — plugins and
-builtin agents left as you have them, but every skill off and the hand's 35 tools (plan mode among them) off. `clodex` is the aggressive ticket-loop
+builtin agents left as you have them, but every skill off and the hand's 35
+tools (plan mode among them) off. `clodex` is the aggressive ticket-loop
 profile the stock templates used to impose on every team: 35 tools off, every
 skill off, no plan mode. `[agent:team create <name> root:<abs> kit:<name>]`
 picks one, `kit:?` (or an unknown name) lists what is installed, and an unknown

@@ -2268,7 +2268,7 @@ function createSessionManager(deps) {
               }
               const thresholds = ctxThresholdsFor(c.model, ctxOverrides);
               let warn = ctxReminderFor(c.tok, thresholds);
-              // Ephemeral seats are never nudged to compact (a compact costs the context their rework needs); a `stop` row asks for no compact, so it is exempt from this skip, kept here so ctxReminderFor stays pure.
+              // Ephemeral seats are never nudged to compact (a compact costs the context their rework needs); a `stop` row asks for no compact, so it is exempt from this skip.
               // Read the record lazily and memoize only a returned one, so a failed read leaves the seat nudged rather than silenced.
               if (warn) {
                 if (session._ephemeralSeat === undefined) {

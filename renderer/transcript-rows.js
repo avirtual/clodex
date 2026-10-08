@@ -1233,7 +1233,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         const clean = plainMarked ? { rec: { segments: end.segs }, empty: false } : withoutEchoes({ ...end.rec, segments: end.segs });
         if (clean.empty) return echoRow(doc, end.rec, ' tr-turn-end-prose');
         const row = el(doc, 'div', 'tr-row tr-prose tr-segs tr-turn-end-prose');
-        appendSegments(doc, row, clean.rec.segments, deps, end.rec);
+        appendSegments(doc, row, clean.rec.segments, deps);
         return row;
       },
     };

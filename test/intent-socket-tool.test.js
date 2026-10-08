@@ -360,10 +360,11 @@ test('dm tool: a main stamp delivers the dm and the reply carries the do-not-use
 });
 
 test('dm tool: a main stamp whose dm is parked gets the handler line unchanged', async () => {
-  const reply = "[agent:dm] parked for b (busy) as p1 — it'll be delivered with b's next turn.";
-  const { handle, seen } = dmHandler({ reply });
-  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply });
-  assert.strictEqual(seen.length, 1);
+  for (const reply of ["[agent:dm] parked for b (busy) as p1 — it'll be delivered with b's next turn.", '[agent:dm] delivered to b/alice (a note for its queue)']) {
+    const { handle, seen } = dmHandler({ reply });
+    assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply });
+    assert.strictEqual(seen.length, 1);
+  }
 });
 
 test('dm tool: a main stamp whose dm is not delivered gets the handler line and no correction', async () => {

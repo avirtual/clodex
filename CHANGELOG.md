@@ -21,6 +21,10 @@ blocks a release.
 
 - A main agent calling the Clodex MCP `dm` tool now gets its message delivered, with the ack telling it to write the `[agent:dm <seat>]` intent next time instead of a refusal; behind wirescope the tool is removed from main-line requests entirely, so a main agent never sees it and subagents keep it.
 
+### Conversation mode
+
+- A long dm target name on an intent card ellipsizes instead of pushing the time stamp off the row.
+
 ## 5.120.0 — 2026-10-08
 
 ### Sessions
