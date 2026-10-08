@@ -2177,7 +2177,7 @@ function createTicketMethods(deps, shared) {
             if (!name) { reply('error: role-add needs a role name — [agent:team role-add <name>] <brief>'); return; }
             const brief = String(intent.body == null ? '' : intent.body).trim();
             if (brief.length > BRIEF_MAX) { reply(`error: brief too long (${brief.length} > ${BRIEF_MAX} chars)`); return; }
-            const def = {
+            let def = {
               prompt: intent.prompt || null,
               template: intent.template || null,
               brief: brief || null,
@@ -2189,6 +2189,11 @@ function createTicketMethods(deps, shared) {
               if (!acct.ok) { reply(`error: ${acct.error}`); return; }
               if (acct.label) def.account = acct.label;
             }
+            const stockDef = STOCK_ROLE_DEFS[name];
+            const stockSubstituted = !!stockDef && !team.roles[name] && !RESERVED_ROLE_KEYS.has(name)
+              && !brief && !intent.prompt && !intent.template && !intent.dispatch && !intent.cwd
+              && !intent.account && !intent.model && !intent.effort;
+            if (stockSubstituted) def = { ...stockDef };
             let addClause = '';
             let addUndo = null;
             if (intent.model) {
@@ -2215,7 +2220,7 @@ function createTicketMethods(deps, shared) {
               + (Array.isArray(added && added.promptsCopied) && added.promptsCopied.length
                 ? `; prompts copied to prompts/system/<role>.md for ${added.promptsCopied.join(', ')}`
                 : '');
-            reply(`role "${name}" added to ${team.name}${addClause}${addCopied}`);
+            reply(`role "${name}" added to ${team.name}${addClause}${addCopied}${stockSubstituted ? ' (stock definition)' : ''}`);
             return;
           }
           case 'role-set': {

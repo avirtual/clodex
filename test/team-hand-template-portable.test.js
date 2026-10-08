@@ -243,7 +243,7 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // it throws "already exists" on a team.json it can read, so this site is
     // reachable only for a team that does not exist yet. It never sees a live
     // team's role, so it can neither rewrite nor refuse one.
-    'team-tickets.js': 2,
+    'team-tickets.js': 3,
   }, 'a NEW read site means the stock def stopped being seed-only — verify it cannot rewrite '
     + 'or refuse a live team\'s role (addRole is exact-match-or-throw), then update this set.');
 });
