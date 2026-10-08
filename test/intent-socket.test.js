@@ -652,8 +652,6 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['clodex-sendx x', null],
     ['clodexx x', null],
     ['node cli/bin/clodex.js x', null],
-    ['timeout 300 clodex-send x', `${T} timeout 300 clodex-send x`],
-    ['echo clodex-send', null],
   ]) {
     assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
   }

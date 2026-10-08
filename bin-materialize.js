@@ -50,7 +50,7 @@ function materializeSeatVerb({ root, srcDir = __dirname, log } = {}) {
     const bytes = fs.readFileSync(path.join(srcDir, SEAT_VERB_SRC));
     fs.writeFileSync(dest, bytes);
     fs.chmodSync(dest, 0o755);
-    fs.rmSync(path.join(binDir, 'clodex'), { force: true });
+    try { fs.rmSync(path.join(binDir, 'clodex'), { force: true }); } catch {}
     return { binDir, path: dest };
   } catch (e) {
     if (log) log.info('bin', `seat verb materialize skipped (${e && e.message})`);

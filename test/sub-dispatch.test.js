@@ -140,7 +140,7 @@ test('t1720 _queueSubagentNote requires its from argument: a three-argument call
   assert.throws(() => h.m._queueSubagentNote('seat', ID, 'x'), { name: 'TypeError', message: '_queueSubagentNote: from must be a string or null' });
   assert.strictEqual(fs.existsSync(path.join(h.dir, ID)), false);
   h.m._queueSubagentNote('seat', ID, 'y', null);
-  assert.deepStrictEqual(fs.readdirSync(path.join(h.dir, ID)).length, 1);
+  assert.strictEqual(fs.readdirSync(path.join(h.dir, ID)).length, 1);
 });
 
 test('t1683 both conversation-replacement sites call clearSubq', () => {
