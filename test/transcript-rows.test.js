@@ -346,8 +346,10 @@ test('consecutive intents form one stack of cards: head of glyph, label, target 
   assert.deepStrictEqual(row.childNodes.map(cls), ['intent-stack', 'tr-seg-prose']);
   const [dm, done] = row.childNodes[0].childNodes;
   assert.deepStrictEqual(dm.childNodes[0].childNodes.map((n) => [n.className, n.textContent]),
-    [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-card-inline', 'hi'], ['intent-chip', 'urgent']]);
-  assert.strictEqual(dm.childNodes.length, 1);
+    [['intent-card-glyph', '→'], ['intent-card-label', 'message'], ['intent-card-target', 'bob'], ['intent-chip', 'urgent']]);
+  assert.strictEqual(dm.childNodes.length, 2);
+  assert.strictEqual(dm.childNodes[1].className, 'intent-card-body');
+  assert.strictEqual(dm.childNodes[1].textContent, 'hi');
   assert.strictEqual(done.childNodes[0].textContent, '✓t4doneok');
   assert.strictEqual(row.childNodes[1].textContent, 'tail words');
   assert.ok(!row.textContent.includes('[agent:'), row.textContent);
@@ -1545,11 +1547,48 @@ test('inline: a two-line dm body keeps its block under the head', () => {
 test('inline: 120 chars renders inline, 121 renders the block', () => {
   const at = (body) => {
     const m = mount();
-    m.render([said('a1', 0, `[agent:dm bob] ${body}\n[agent:end]`)]);
+    m.render([said('a1', 0, `[agent:remind in 10m] ${body}\n[agent:end]`)]);
     return cardAt(m).childNodes.map(cls);
   };
   assert.deepStrictEqual(at('x'.repeat(120)), ['intent-card-head']);
   assert.deepStrictEqual(at('x'.repeat(121)), ['intent-card-head', 'intent-card-body']);
+});
+
+test('dm card: a 20-char and a 300-char single-line body render the same shape', () => {
+  const shape = (text) => {
+    const m = mount();
+    m.render([said('a1', 0, `${text}\n[agent:end]`)]);
+    return cardAt(m);
+  };
+  const short = shape(`[agent:dm bob] ${'s'.repeat(20)}`);
+  const long = shape(`[agent:dm bob] ${'l'.repeat(300)}`);
+  assert.deepStrictEqual(short.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  assert.deepStrictEqual(long.childNodes.map(cls), ['intent-card-head', 'intent-card-body intent-card-clamped', 'intent-card-more']);
+  assert.deepStrictEqual(headCls(short), headCls(long));
+  assert.deepStrictEqual(findCls(short, 'intent-card-inline'), []);
+  assert.deepStrictEqual(findCls(long, 'intent-card-inline'), []);
+  const sub = shape('[agent:sub a1] note');
+  assert.deepStrictEqual(sub.childNodes.map(cls), ['intent-card-head', 'intent-card-body']);
+  assert.deepStrictEqual(findCls(sub, 'intent-card-inline'), []);
+});
+
+test('dm card: a mid-turn dm and the turn\'s closing dm get the same head classes and a tr-time', () => {
+  const t1 = new Date(2026, 9, 8, 9, 5).getTime();
+  const t2 = new Date(2026, 9, 8, 10, 42).getTime();
+  const m = mount({ mode: 'conversation' });
+  m.render([
+    inb('i1', 1, 'ticket-loop', '[ticket t1 ACCEPT] x'),
+    { ...said('a0', 1, '[agent:dm bob] mid\n[agent:end]'), ts: t1 },
+    call('t1', 'Bash', 'ls'),
+    { ...said('a1', 1, '[agent:dm bob] end\n[agent:end]'), ts: t2 },
+    ended('e1', 1, 1000),
+  ]);
+  const mid = findCls(rowIn(m, 'a0'), 'intent-card')[0];
+  const fin = findCls(rowIn(m, 'a1'), 'intent-card')[0];
+  assert.deepStrictEqual(headCls(mid), headCls(fin));
+  assert.deepStrictEqual(headCls(mid), ['intent-card-glyph', 'intent-card-label', 'intent-card-target', 'tr-time']);
+  assert.strictEqual(mid.childNodes[0].childNodes[3].textContent, '09:05');
+  assert.strictEqual(fin.childNodes[0].childNodes[3].textContent, '10:42');
 });
 
 test('inline: an exec one-liner keeps the mono block', () => {
