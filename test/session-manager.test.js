@@ -11559,7 +11559,7 @@ test('t751 create: a granted seat writes team.json with the root and the default
   const raw = f.readTeam('shop');
   assert.strictEqual(raw.root, pathReal.resolve(f.projectRoot), 'the root the seat named, resolved');
   assert.strictEqual(raw.lead, 'shop-lead', 'the default lead is <name>-lead');
-  assert.deepStrictEqual(Object.keys(raw.roles).sort(), ['hand', 'lead', 'reviewer', 'scout'],
+  assert.deepStrictEqual(Object.keys(raw.roles).sort(), ['hand', 'lead', 'reviewer'],
     'the stock roles are seeded, exactly as Create Team… seeds them');
   assert.strictEqual(f.refreshes.length, 1, 'the app menu is rebuilt once — the Teams menu is a template with no open-time hook');
   const reply = f.injected.find((t) => /team "shop" created/.test(t));
