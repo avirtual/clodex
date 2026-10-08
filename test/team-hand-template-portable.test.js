@@ -233,16 +233,16 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // rewrite or refuse a role any live team already has.
     'team-manifest.js': 6,
     'ipc-handlers.js': 5,
-    // t803: import + ONE fallback. _handleTeamCreate still builds the three role
-    // defaults it hands to createTeam on a kickstart brief, but it now reads
-    // them from the named KIT and falls back to this constant only for a home
-    // with no kits seeded. (The hand's copy gains `dispatch: 'worktree'`; the
-    // def itself is untouched, kit or fallback.)
+    // t803: import + ONE fallback; t1747: role-add's absent-key stock substitution.
+    // _handleTeamCreate still builds the three role defaults it hands to createTeam
+    // on a kickstart brief, but reads them from the named KIT and falls back to
+    // this constant only for a home with no kits seeded. (The hand's copy gains
+    // `dispatch: 'worktree'`; the def itself is untouched, kit or fallback.)
     //
     // Checked against the question this message asks: createTeam is the MINT, and
     // it throws "already exists" on a team.json it can read, so this site is
-    // reachable only for a team that does not exist yet. It never sees a live
-    // team's role, so it can neither rewrite nor refuse one.
+    // reachable only for a team that does not exist yet. The t1747 site is gated
+    // on `!team.roles[name]`, so neither can rewrite or refuse a live team's role.
     'team-tickets.js': 3,
   }, 'a NEW read site means the stock def stopped being seed-only — verify it cannot rewrite '
     + 'or refuse a live team\'s role (addRole is exact-match-or-throw), then update this set.');

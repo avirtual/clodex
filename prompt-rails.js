@@ -25,11 +25,11 @@ function railOf(body) {
 }
 
 // Stock role prompts that are NOT session-class and so must never appear in the
-// join picker: the lead prompt (there is one lead, not a join role) and the
-// reviewer prompt (subagent-class). Both qualify by the clodex-team-* stock-name
-// rule below, but their derived role keys (lead/reviewer) carry defs that differ
-// from a custom session role — addRole would refuse with a raw bounce — so the
-// picker excludes them. The join picker offers SESSION-CLASS deltas only.
+// join picker: lead, reviewer and the one-shot scout/page-scout prompts. All
+// qualify by the clodex-team-* stock-name rule below, but their derived role keys
+// carry defs that differ from a custom session role — addRole would refuse with a
+// raw bounce — so the picker excludes them. The join picker offers SESSION-CLASS
+// deltas only.
 const NON_SESSION_STOCK = new Set(['clodex-team-lead', 'clodex-team-reviewer', 'clodex-team-reviewer-shell', 'clodex-team-scout', 'clodex-team-page-scout']);
 
 // Is this prompt offered by the append-rail picker? Stock clodex-team-* deltas

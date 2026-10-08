@@ -1794,12 +1794,9 @@ test('the stock page-scout role is a spawn-dispatched Haiku seat with Read and W
     dispatch: 'spawn',
   });
   const tpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-page-scout.json'), 'utf-8'));
-  assert.deepStrictEqual(tpl.tools, ['Read', 'Write']);
-  for (const t of ['Bash', 'Grep', 'Glob']) assert.ok(tpl.disabledTools.includes(t), t);
   assert.strictEqual(tpl.extraArgs[tpl.extraArgs.indexOf('--model') + 1], 'claude-haiku-5-5[1m]');
   const scoutTpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-scout.json'), 'utf-8'));
-  const pageScoutTpl = tpl;
-  assert.deepStrictEqual(pageScoutTpl, { ...scoutTpl, name: 'clodex-team-page-scout', systemPromptFile: 'clodex-team-page-scout', tools: ['Read', 'Write'], disabledTools: [...scoutTpl.disabledTools, 'Bash', 'Grep', 'Glob'] });
+  assert.deepStrictEqual(tpl, { ...scoutTpl, name: 'clodex-team-page-scout', systemPromptFile: 'clodex-team-page-scout', tools: ['Read', 'Write'], disabledTools: [...scoutTpl.disabledTools, 'Bash', 'Grep', 'Glob'] });
 });
 
 test('the three shipped page-scout prompts are byte-identical and open with the wirescope directive after two blank lines', () => {
