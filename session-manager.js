@@ -256,7 +256,7 @@ const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
-const { resolveSubagent, nameOfSubagent, clearSubq } = require('./subq');
+const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
   parseTranscriptTail: scratchParseTail, validateScratchCut, scratchBriefing, scratchReArmLine,
@@ -5393,6 +5393,7 @@ function createSessionManager(deps) {
           }
           const fromTag = (fromIdent && fromIdent.label) || (replyScope && replyScope.fromLabel) || senderName;
           const split = splitAgentTarget(intent.target);
+          let routedNotice = null;
           if (split.sub) {
             const host = this.sessions.get(split.seat);
             const live = host && host.agentType === 'claude' && !host._dead && !host.clone;
@@ -5402,13 +5403,13 @@ function createSessionManager(deps) {
                 if (session) this._injectText(session, '[agent:dm] nothing queued: empty body', { parkable: true });
                 break;
               }
-              this._queueSubagentNote(split.seat, subId, `[dm from ${fromTag}] ${intent.body}`);
+              this._queueSubagentNote(split.seat, subId, defuseSenderLines(intent.body), fromTag);
               if (session) this._injectText(session, `[agent:dm] delivered to ${split.seat}/${split.sub} (a note after its next tool call)`, { parkable: true });
               this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: `${split.seat}/${subId}`, body: intent.body });
               break;
             }
             intent.target = split.seat;
-            if (session) this._injectText(session, `[agent:dm] subagent ${split.sub} is not running; delivered to ${split.seat}`, { parkable: true });
+            routedNotice = `[agent:dm] subagent ${split.sub} is not running; routed to ${split.seat}`;
           }
           intent.target = seatOfAgentTag(intent.target);
           const localTarget = this.sessions.get(intent.target);
@@ -5441,6 +5442,7 @@ function createSessionManager(deps) {
                   notice = `[agent:dm] NOT delivered to ${intent.target}: ${why}. ${retry}`;
                 }
                 this._injectText(session, notice, { parkable: true });
+                if (routedNotice) this._injectText(session, routedNotice, { parkable: true });
               }
               this._broadcast('ipc-message', {
                 type: 'dm', from: fromTag, to: intent.target,
@@ -5492,6 +5494,7 @@ function createSessionManager(deps) {
                 : `[agent:dm] delivered urgent to ${intent.target}; its parked copy was claimed, so ${intent.target} reads it once.`,
               { parkable: true });
           }
+          if (routedNotice && session) this._injectText(session, routedNotice, { parkable: true });
           this._broadcast('ipc-message', {
             type: 'dm', from: fromTag, to: intent.target,
             body: sup
@@ -5675,13 +5678,13 @@ function createSessionManager(deps) {
       if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
     }
 
-    _queueSubagentNote(seat, id, text) {
+    _queueSubagentNote(seat, id, text, from = null) {
       const q = path.join(subqDirFor(seat), id);
       const seq = String(++subqSeq).padStart(9, '0');
       const tmp = path.join(q, `.${seq}.tmp`);
       fs.mkdirSync(q, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(tmp, `${defangTeammateTag(text)}\n`, { mode: 0o600 });
-      fs.renameSync(tmp, path.join(q, seq));
+      fs.writeFileSync(tmp, `${from == null ? '' : `${from}\n`}${defangTeammateTag(text)}\n`, { mode: 0o600 });
+      fs.renameSync(tmp, path.join(q, from == null ? seq : `${seq}${SUBQ_DM_SUFFIX}`));
     }
 
     _startIntentSocket(session, channel) {

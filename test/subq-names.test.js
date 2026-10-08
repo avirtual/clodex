@@ -75,15 +75,15 @@ test('nameOfSubagent: a reader-less FIFO in names/ never blocks the open (real f
 test('nameOfSubagent: a FIFO in names/ is opened but its fd is never read; the valid name still resolves', () => {
   const { dir, fifo } = withFifo();
   const realOpen = fs.openSync;
-  const realRead = fs.readFileSync;
+  const realRead = fs.readSync;
   const opened = [];
   const fdPath = new Map();
   const readPaths = [];
   fs.openSync = (p, ...rest) => { const fd = realOpen.call(fs, p, ...rest); opened.push(String(p)); fdPath.set(fd, String(p)); return fd; };
-  fs.readFileSync = (p, ...rest) => { if (typeof p === 'number') readPaths.push(fdPath.get(p)); return realRead.call(fs, p, ...rest); };
+  fs.readSync = (fd, ...rest) => { readPaths.push(fdPath.get(fd)); return realRead.call(fs, fd, ...rest); };
   try {
     assert.strictEqual(nameOfSubagent(dir, ID), 'alice');
-  } finally { fs.openSync = realOpen; fs.readFileSync = realRead; }
+  } finally { fs.openSync = realOpen; fs.readSync = realRead; }
   assert.ok(opened.includes(fifo), 'ENTER: the FIFO was opened');
   assert.ok(!readPaths.includes(fifo));
   assert.ok(readPaths.includes(path.join(dir, 'names', 'alice')));
@@ -135,4 +135,15 @@ test('resolveSubagent: a reserved names/agent-<id8> entry is ignored in favour o
   fs.writeFileSync(path.join(dir, 'aother-ffffffffffffffff.nonce'), 'n');
   fs.writeFileSync(path.join(dir, 'names', 'agent-89abcdef'), 'aother-ffffffffffffffff');
   assert.strictEqual(resolveSubagent(dir, 'agent-89abcdef'), ID);
+});
+
+test('readNameFile reads at most 256 bytes of a planted name', () => {
+  const dir = seat();
+  fs.writeFileSync(path.join(dir, 'names', 'alice'), ID + ' '.repeat(1 << 20));
+  assert.strictEqual(nameOfSubagent(dir, ID), 'alice');
+  const realRead = fs.readSync;
+  let asked = 0;
+  fs.readSync = (fd, buf, off, len, ...rest) => { asked = Math.max(asked, len); return realRead.call(fs, fd, buf, off, len, ...rest); };
+  try { nameOfSubagent(dir, ID); } finally { fs.readSync = realRead; }
+  assert.strictEqual(asked, 256);
 });

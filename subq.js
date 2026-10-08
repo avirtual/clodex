@@ -8,6 +8,8 @@ const SUBQ_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SUBQ_ID8_RE = /^agent-([0-9a-f]{8})$/;
 const SUBQ_RESERVED_NAME_RE = /^agent(-|$)/;
 const SUB_ID_TAIL_RE = /-([0-9a-f]{16})$/;
+const SUBQ_DM_SUFFIX = '.dm';
+const NAME_FILE_MAX = 256;
 
 function id8Of(id) {
   const s = String(id || '');
@@ -19,7 +21,8 @@ function readNameFile(p) {
   const fd = fs.openSync(p, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW);
   try {
     if (!fs.fstatSync(fd).isFile()) return null;
-    return fs.readFileSync(fd, 'utf8');
+    const buf = Buffer.alloc(NAME_FILE_MAX);
+    return buf.toString('utf8', 0, fs.readSync(fd, buf, 0, NAME_FILE_MAX, 0));
   } finally {
     fs.closeSync(fd);
   }
@@ -52,12 +55,16 @@ function claimQueue(dir, id, pid) {
   if (names.length === 0) return null;
   const claim = `${q}.draining.${pid}`;
   try { fs.mkdirSync(claim, { recursive: true, mode: 0o700 }); } catch { return null; }
-  const parts = [];
+  const notes = [];
   for (const n of names) {
     try { fs.renameSync(path.join(q, n), path.join(claim, n)); } catch { continue; }
-    try { parts.push(fs.readFileSync(path.join(claim, n), 'utf8')); } catch {}
+    let raw;
+    try { raw = fs.readFileSync(path.join(claim, n), 'utf8').replace(/\n+$/, ''); } catch { continue; }
+    if (!n.endsWith(SUBQ_DM_SUFFIX)) { notes.push({ from: null, text: raw }); continue; }
+    const nl = raw.indexOf('\n');
+    notes.push({ from: nl < 0 ? raw : raw.slice(0, nl), text: nl < 0 ? '' : raw.slice(nl + 1) });
   }
-  return { claim, body: parts.map((s) => s.replace(/\n+$/, '')).join('\n') };
+  return { claim, notes, body: notes.map((x) => (x.from == null ? x.text : `[dm from ${x.from}] ${x.text}`)).join('\n') };
 }
 
 function retireSubagent(dir, id, why, { pendingRoot, seat, born, now, pid }) {
@@ -135,7 +142,8 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
       return '';
     }
     appendReceipt(dir, { id, ev: 'delivered', bytes: Buffer.byteLength(got.body) }, now);
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: d.hook_event_name || 'PostToolUse', additionalContext: `[parent ${nonce}] ${got.body}` } });
+    const context = got.notes.map((x) => (x.from == null ? `[parent ${nonce}] ${x.text}` : `[dm ${nonce} from ${x.from}] ${x.text}`)).join('\n');
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: d.hook_event_name || 'PostToolUse', additionalContext: context } });
   }
   if (d.tool_name === 'Agent') {
     const r = d.tool_response || {};
@@ -147,4 +155,4 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
   return '';
 }
 
-module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, SUBQ_RESERVED_NAME_RE, id8Of, resolveSubagent, nameOfSubagent, clearSubq, subqHookOutput };
+module.exports = { SUBQ_ID_RE, SUBQ_NAME_RE, SUBQ_RESERVED_NAME_RE, SUBQ_DM_SUFFIX, id8Of, resolveSubagent, nameOfSubagent, clearSubq, subqHookOutput };

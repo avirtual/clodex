@@ -89,3 +89,17 @@ test('the subagent rate map drops an agent whose newest send left the window', (
   await h2.send({}, { ...ALICE, agentId: 'B', label: 'a/bob' });
   assert.ok(h2.m._subDmSent.has('A'));
 }));
+
+test('a subagent dm to <gone>/<name> reports NOT delivered first, so it classifies as error', async () => {
+  const h = harness();
+  const replies = await h.send({ target: 'gone/alice' }, ALICE);
+  assert.match(replies[0], /^\[agent:dm\] NOT delivered: no agent named "gone"/);
+  assert.strictEqual(require('../intent-registry').classifyReplyLine('dm', replies[0]), 'error');
+  assert.ok(!replies.some((l) => /not running/.test(l)));
+});
+
+test('on the fallback the outcome line comes first and the routed notice after it', async () => {
+  const h = harness();
+  h.verdicts.push({ held: 'cold' });
+  assert.deepStrictEqual(await h.send({ target: 'b/alice' }, ALICE), ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).', '[agent:dm] subagent alice is not running; routed to b']);
+});

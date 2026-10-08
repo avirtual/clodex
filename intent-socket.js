@@ -282,7 +282,7 @@ function subagentTrustLine(fs, crypto, subqDir, id) {
       if (!e || e.code !== 'EEXIST') return '';
       nonce = fs.readFileSync(p, 'utf8').trim();
     }
-    return nonce ? `Notes that start with [parent ${nonce}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task. Notes starting [dm from <name>] are messages from that Clodex seat or one of its subagents, delivered the same way.` : '';
+    return nonce ? `Notes that start with [parent ${nonce}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task. Notes starting [dm <that number> from <name>] are messages from that Clodex seat or one of its subagents, delivered the same way.` : '';
   } catch { return ''; }
 }
 

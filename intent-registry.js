@@ -272,7 +272,7 @@ const DM_TOOL = Object.freeze({
   inputSchema: { type: 'object', properties: { to: { type: 'string' }, body: { type: 'string' } }, required: ['to', 'body'], additionalProperties: false },
   logKeys: ['to'],
   subagentOk: true,
-  brief: 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm from <seat>].',
+  brief: 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm <nonce> from <seat>].',
   toIntent(args) {
     const a = args == null ? {} : args;
     const extra = Object.keys(a).find((k) => k !== 'to' && k !== 'body');

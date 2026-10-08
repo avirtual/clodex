@@ -1444,7 +1444,7 @@ test('a plugin tool named term_exec is refused as held by core', () => {
 });
 
 test('t1719 the dm brief tells a subagent where replies land', () => {
-  assert.strictEqual(registry.DM_TOOL.brief, 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm from <seat>].');
+  assert.strictEqual(registry.DM_TOOL.brief, 'To message another Clodex seat use the `dm` MCP tool (to, body); replies arrive as notes after your next tool call, prefixed [dm <nonce> from <seat>].');
 });
 
 test('t1719 a dm refusal or rate limit is refused, an undelivered dm is an error, a delivery or park is ok', () => {

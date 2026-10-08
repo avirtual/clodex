@@ -22,7 +22,7 @@ Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while
 
 ## subagentTrustLine
 
-The `[dm from <name>]` sentence rides the trust line, not the `dm` tool brief: the brief is per-tool and absent on a seat without `dm`, while any subagent can receive a dm reply.
+The `[dm <nonce> from <name>]` sentence rides the trust line, not the `dm` tool brief: the brief is per-tool and absent on a seat without `dm`, while any subagent can receive a dm reply.
 
 ## callerIsSubagent
 
