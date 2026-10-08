@@ -654,7 +654,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   answers `sent to <target>; a reply arrives in the seat's main conversation` — for a verified subagent,
   `sent to <target>; a reply arrives as a note after your next tool call`.
 - **Identity (Claude):** the PreToolUse Bash hook `run/<name>/hook-ident.sh` prefixes every
-  `clodex-send` segment of the command (`clodex`, the alias, is matched the same way) with `CLODEX_HOOK_IDENT=@<nonce>` through `updatedInput`
+  `clodex-send` segment of the command with `CLODEX_HOOK_IDENT=@<nonce>` through `updatedInput`
   (a pre-existing `CLODEX_HOOK_IDENT=` in the segment is removed). The shell wrapper exits
   before starting the interpreter unless `clodex` appears after the input's `"command"` key, or the input is `SubagentStart`
   (`transcript_path` and `cwd` come first and may contain `.clodex`).
