@@ -135,6 +135,14 @@ test('t1683 clearSubq removes the whole dir and is a no-op on a missing one', ()
   assert.doesNotThrow(() => clearSubq(h.dir));
 });
 
+test('t1720 _queueSubagentNote requires its from argument: a three-argument call throws and writes nothing', () => {
+  const h = harness();
+  assert.throws(() => h.m._queueSubagentNote('seat', ID, 'x'), { name: 'TypeError', message: '_queueSubagentNote: from must be a string or null' });
+  assert.strictEqual(fs.existsSync(path.join(h.dir, ID)), false);
+  h.m._queueSubagentNote('seat', ID, 'y', null);
+  assert.deepStrictEqual(fs.readdirSync(path.join(h.dir, ID)).length, 1);
+});
+
 test('t1683 both conversation-replacement sites call clearSubq', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   assert.match(src, /const \{[^}]*\bclearSubq\b[^}]*\} = require\('\.\/subq'\);/, 'ENTER: clearSubq is imported from ./subq');

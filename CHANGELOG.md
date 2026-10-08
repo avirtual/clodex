@@ -19,10 +19,14 @@ blocks a release.
 ### Wire
 - Replay treats the `auxiliary` request class as a side-call, matching the live proxy.
 
+### CLI
+- The `clodex` name for the intent-sending verb (deprecated in 5.116.0) is removed: only `clodex-send` is materialized under `<registry>/bin/`, a stale `clodex` shim there is deleted at host start, and the hook stamp no longer recognises a bare `clodex` segment.
+
 ### Messaging and conversation mode
 - The host now verifies a subagent's identity stamp (not only the main agent's) and can name the caller as `<seat>/<name>`, the name its parent gave the Agent tool; a forged or replayed stamp still yields no identity. Groundwork for a subagent `dm` tool.
 - Subagents can dm other seats through the Clodex MCP `dm` tool (SendMessage stays off): the recipient sees `<seat>/<name>` and can reply to that name; replies land in the subagent's note queue after its next tool call, prefixed `[dm <nonce> from <seat>]` (the same secret number as the parent's notes, so tool output cannot forge it), and a `<seat>/agent-<id8>` name (a subagent whose parent has not yet learned its name) resolves the same way. Local seats only, never urgent, rate-capped at 10 per minute per subagent; a refused or undelivered dm now reports `refused`/`error` to the MCP log and `clodex-send`'s exit code, and a parked or held one no longer tells the subagent to resend urgent.
 - A planted non-file or FIFO under `subq/names/` — even one swapped in mid-read — can no longer stall the host: names are opened non-blocking and checked by fstat before they are read; a subagent named `agent` or `agent-…` is labelled by its id instead. The caller-name dependency is `nameFor`.
+- The subagent drain receipt's `bytes` now counts what was delivered (headers included).
 
 ## 5.117.0 — 2026-10-07
 

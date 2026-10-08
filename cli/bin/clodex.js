@@ -146,8 +146,7 @@ function readStdin(stdin) {
   });
 }
 
-async function main(argv, { invokedAs = '', env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
-  if (invokedAs === 'clodex') err.write('clodex: deprecated name, use clodex-send\n');
+async function main(argv, { env = process.env, stdin = process.stdin, out = process.stdout, err = process.stderr, connect, timeoutMs, fs = nodeFs } = {}) {
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') {
     (argv.length ? out : err).write(helpText(env, fs) + '\n');
     return argv.length ? EXIT.OK : EXIT.USAGE;
@@ -174,7 +173,7 @@ async function main(argv, { invokedAs = '', env = process.env, stdin = process.s
 }
 
 if (require.main === module) {
-  main(process.argv.slice(2), { invokedAs: path.basename(process.argv[1] || '') }).then((code) => { process.exitCode = code; }, (e) => {
+  main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => {
     process.stderr.write(`clodex-send: fatal: ${(e && e.message) || e}\n`);
     process.exitCode = EXIT.ERROR;
   });

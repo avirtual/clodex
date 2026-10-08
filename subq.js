@@ -141,8 +141,8 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
       appendReceipt(dir, { id, ev: 'no-nonce' }, now);
       return '';
     }
-    appendReceipt(dir, { id, ev: 'delivered', bytes: Buffer.byteLength(got.body) }, now);
     const context = got.notes.map((x) => (x.from == null ? `[parent ${nonce}] ${x.text}` : `[dm ${nonce} from ${x.from}] ${x.text}`)).join('\n');
+    appendReceipt(dir, { id, ev: 'delivered', bytes: Buffer.byteLength(context) }, now);
     return JSON.stringify({ hookSpecificOutput: { hookEventName: d.hook_event_name || 'PostToolUse', additionalContext: context } });
   }
   if (d.tool_name === 'Agent') {

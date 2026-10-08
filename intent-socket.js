@@ -203,7 +203,7 @@ function shellSegments(cmd) {
 }
 
 function isClodexWord(w) {
-  return typeof w === 'string' && ['clodex-send', 'clodex'].some((n) => w === n || w.endsWith(`/${n}`));
+  return typeof w === 'string' && ['clodex-send'].some((n) => w === n || w.endsWith(`/${n}`));
 }
 
 function prefixLength(word, i) {
