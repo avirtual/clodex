@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.118.0 — 2026-10-08
+
 ### Plugins
 - A built-in plugin a headless host skips (an unmet `requires`) still reserves its id: installing a library plugin with the same id is refused as before.
 
