@@ -16,6 +16,7 @@ blocks a release.
 ### Messaging
 
 - The Clodex MCP `dm` tool is for subagents only: a main agent's call is refused with a pointer to the `[agent:dm <seat>]` intent, which dispatches in the same request without an extra API round trip. Subagent dms are unchanged.
+
 ### Conversation mode
 
 - A dm card in conversation mode has one layout — head with the target and the time, body wrapped below — whether the message is short or long and whether it was sent mid-turn or at the end of the turn; previously a short dm was clipped onto the head line and the target name could be cut to "Cod…".
