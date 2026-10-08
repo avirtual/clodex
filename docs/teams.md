@@ -3,8 +3,8 @@
 A **team** is a lead agent, one or more implementer seats, and a ticket loop
 that carries a spec from the lead to a working branch and back. The engine
 itself is project-neutral: tickets, git worktrees, branch-per-ticket, spawn,
-review, escalation and merge-forward know nothing about Clodex. The three
-shipped role prompts describe how a lead, a hand and a reviewer *behave*, and
+review, escalation and merge-forward know nothing about Clodex. The four
+shipped role prompts describe how a lead, a hand, a scout and a reviewer *behave*, and
 name no repository, no test command and no file of ours.
 
 So most of a working team arrives for free. What does not — the handful of

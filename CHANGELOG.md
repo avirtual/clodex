@@ -17,7 +17,7 @@ blocks a release.
 
 - Rejecting a ticket whose one-shot seat was already archived now says so in the ack and points at resume or reassign; the close-out stamps the ticket before archiving the seat, and a failed archive is reported to the lead instead of only logged.
 - A branchless accept no longer archives a one-shot seat that is still working another ticket; the seat is archived when its last ticket closes.
-- A `scout` role ships with both kits and the stock role set: a one-shot Haiku 5.5 lookup seat that verifies file:line coordinates, call sites and test pins at a named commit and writes one table, for a lead to run before it writes a spec. `[agent:team role-add scout]` on an existing team gets the stock definition.
+- A `scout` role ships with both kits and the stock role set: a one-shot Haiku 5.5 lookup seat that verifies file:line coordinates, call sites and test pins at a named commit and writes one table, for a lead to run before it writes a spec. An existing team adds it with `[agent:team role-add scout prompt:clodex-team-scout template:clodex-team-scout dispatch:spawn] <brief>`.
 
 ### Messaging
 

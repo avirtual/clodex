@@ -137,6 +137,11 @@ test('the default kit\'s hand lifts the plugin and builtin restrictions, its lea
   assert.deepStrictEqual(readTpl('default', 'lead').disabledTools, libLead.disabledTools);
 });
 
+test('the default kit\'s scout template is the flat library scout under its role name', () => {
+  const flat = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-team-scout.json'), 'utf-8'));
+  assert.deepStrictEqual(readTpl('default', 'scout'), { ...flat, name: 'scout' });
+});
+
 test('ticket hands ship with wire stripping off, leads keep level 2', () => {
   const rows = [
     ['templates/clodex-team-hand.json', false, undefined],
