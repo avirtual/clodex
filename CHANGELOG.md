@@ -27,6 +27,10 @@ blocks a release.
 
 - A long dm target name on an intent card ellipsizes instead of pushing the time stamp off the row.
 
+### Browser
+
+- `[agent:browser read … --path-only]` saves the page as an identified snapshot, `p-<id>.txt` with `<id>` the first 16 hex of its sha256, kept seven days and outside the 50-file prune, and the reply names the id so a page-scout ticket can be pinned to exact bytes.
+
 ## 5.120.0 — 2026-10-08
 
 ### Sessions

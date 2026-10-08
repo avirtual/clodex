@@ -50,6 +50,9 @@ test('replies: a long reply is capped at 600 chars but the path is never cut', (
   const file = '/t/' + 'p'.repeat(700) + '.txt';
   const out = R.readReply('utility', { page: 1, pages: 1, elements: 1, tokens: 10 }, file, 'claude');
   assert.ok(out.endsWith(`@${file} `));
+  const snapFile = '/t/' + 'q'.repeat(700) + '/p-0123456789abcdef.txt';
+  assert.ok(R.readReply('utility', { page: 1, pages: 1, elements: 1, tokens: 10 }, snapFile, 'claude', { attach: false, budget: null }).split('\n')[0]
+    .endsWith(`${snapFile} · snapshot 0123456789abcdef (not attached: --path-only; hand the path and id to a page-scout ticket, or read it yourself)`));
   const open = R.openReply('utility', { status: 200, title: 't'.repeat(900), url: 'https://x.example/', login: {}, idle: { ok: true, ms: 1900 } });
   assert.strictEqual(open.length, 600);
 });
@@ -146,6 +149,33 @@ test('replies: writing 55 keeps the 50 newest, and a file older than 24 h is pru
   assert.strictEqual(fs.existsSync(old), false);
   assert.strictEqual(fs.readdirSync(dir).length, 50);
   assert.ok(fs.existsSync(path.join(dir, 'r-0006.txt')), 'the age prune made room, so the oldest young file stays');
+}));
+
+test('replies: snapshotId is the first 16 hex of the content sha256', () => {
+  assert.strictEqual(R.snapshotId('clodex snapshot'), 'f2b66ab44ae80167');
+});
+
+test('replies: a snapshot write is idempotent by content and survives the 50-file prune', () => withTmp(() => {
+  const a = R.writeReplyFile('seat', 'same', { snapshot: true });
+  const b = R.writeReplyFile('seat', 'same', { snapshot: true });
+  assert.strictEqual(a, b);
+  assert.strictEqual(path.basename(a), `p-${R.snapshotId('same')}.txt`);
+  assert.strictEqual(fs.statSync(a).mode & 0o777, 0o600);
+  for (let i = 0; i < 55; i++) R.writeReplyFile('seat', `n${i}`);
+  assert.strictEqual(fs.readFileSync(a, 'utf8'), 'same');
+  assert.strictEqual(fs.readdirSync(path.dirname(a)).filter((f) => f.startsWith('r-')).length, 50);
+}));
+
+test('replies: a snapshot older than 7 days is pruned, one 6 days old is kept', () => withTmp(() => {
+  const day = 24 * 60 * 60 * 1000;
+  const old = R.writeReplyFile('seat', 'old', { snapshot: true });
+  const young = R.writeReplyFile('seat', 'young', { snapshot: true });
+  const now = Date.now();
+  fs.utimesSync(old, (now - 8 * day) / 1000, (now - 8 * day) / 1000);
+  fs.utimesSync(young, (now - 6 * day) / 1000, (now - 6 * day) / 1000);
+  R.writeReplyFile('seat', 'x', { now });
+  assert.strictEqual(fs.existsSync(old), false);
+  assert.strictEqual(fs.existsSync(young), true);
 }));
 
 test('replies: the T3 refusal texts, verbatim', () => {
@@ -578,8 +608,10 @@ test('replies: a path-only read names the path without @ and adds a digest with 
 
 test('replies: --path-only on a small read says so; the attached shape is unchanged; codex keeps its Read-tool tail', () => {
   const info = formatRead({ ...BIG, text: 'tiny', elements: ['[1] button ⚠ Pay'], outline: { headings: [], landmarks: ['Main menu'] }, first: true }, { service: 'wiki', main: true });
-  const small = R.readReply('wiki', { ...info, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n');
-  assert.match(small[0], / → \/t\/r-1\.txt \(not attached: --path-only; read or grep it, or narrow with --filter=\/--page=\)$/);
+  const small = R.readReply('wiki', { ...info, stripped: true }, '/t/p-0123456789abcdef.txt', 'claude', { attach: false, budget: null }).split('\n');
+  const snapTail = ' → /t/p-0123456789abcdef.txt · snapshot 0123456789abcdef (not attached: --path-only; hand the path and id to a page-scout ticket, or read it yourself)';
+  assert.ok(small[0].endsWith(snapTail), small[0]);
+  assert.ok(R.readReply('wiki', info, '/t/p-0123456789abcdef.txt', 'codex', { attach: false, budget: null }).split('\n')[0].endsWith(snapTail));
   assert.deepStrictEqual(small.slice(3), ['  landmarks: Main menu', '  ⚠: [1] "Pay"']);
   const kinded = formatRead({ ...BIG, text: 'tiny', elements: ['[12] button ⚠'], cats: { 12: 'delete' }, outline: { headings: [], landmarks: ['Main menu'] }, first: true }, { service: 'wiki', main: true });
   assert.deepStrictEqual(R.readReply('wiki', { ...kinded, stripped: true }, '/t/r-1.txt', 'claude', { attach: false, budget: null }).split('\n').slice(3), ['  landmarks: Main menu', '  ⚠: [12] button']);
