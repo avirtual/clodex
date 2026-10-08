@@ -228,7 +228,7 @@ function mkFixture(world) {
 // The board a rework lands on: the hand has closed, the loop verified, the ticket
 // is `done` at `loopStep: 'review'` and pinned to a seat holding a real tree.
 //
-// `tok`/`ephemeral` are the two inputs the gate reads; `standing` drops the
+// `tok`/`ephemeral`/`model` are the three inputs the gate reads; `standing` drops the
 // persistence record's `ephemeral` flag, which is what a lead's own long-lived
 // seat looks like.
 function ready(f, world, { tok = OVER, model = null, standing = false, noCtx = false, noTree = false } = {}) {

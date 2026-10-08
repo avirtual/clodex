@@ -48,7 +48,7 @@ const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
 
 // Per-model thresholds, keyed by `modelFamily`'s output and never by the display
 // name (vendor prose), so `claude-fable-5-1[1m]` and a Bedrock-prefixed id both
-// land on the one row below.
+// land on the same row.
 //
 // Fable 5.1's price shape is INVERTED against Opus: a warm cache read is 1/40 of
 // a cold read and a cache write is 80x a warm read, so Fable reads at about half

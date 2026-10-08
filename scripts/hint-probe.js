@@ -83,7 +83,7 @@ async function main() {
   let pool = all;
   if (flags.get('semantic')) {
     const t0 = Date.now();
-    const { topics, catalog, raw } = topicsFor(draft, all, flags.get('model') || 'claude-haiku-4-5-20251001');
+    const { topics, catalog, raw } = topicsFor(draft, all, flags.get('model') || 'claude-haiku-5-5[1m]');
     console.log(`semantic pass: ${Date.now() - t0}ms, ${catalog.length} topics offered`
       + ` -> [${topics.join(', ') || 'none'}]${topics.length ? '' : ` (raw: ${JSON.stringify((raw || '').slice(0, 60))})`}`);
     if (!topics.length) { console.log('no relevant topic — nothing armed'); return; }
