@@ -300,10 +300,13 @@ first 10); and a `--main`/`--filter=`/`--page=` hint, where `--filter=` names a
 word shared by at least two headings. `--main` picks the column holding the page's
 articles (on X: the timeline, not the Trending / Who to follow sidebar). `--attach`
 forces the `@`, `--path-only` drops it. With `--path-only` the file is written as
-`p-<id>.txt`, `<id>` being the first 16 hex of the content's sha256, kept seven
-days and outside the 50-file prune, so a page-scout ticket can name a snapshot
-that will still be there and still be the same bytes. A screenshot attaches
-unless `--path-only` is given.
+`p-<id>.txt`, `<id>` being the first 16 hex of the content's sha256, written
+under the plugin's data dir (not `$TMPDIR`, which macOS purges after about three
+days of no access), kept seven days from its last save, and outside the 50-file
+prune, so a page-scout ticket can name a snapshot that will still be there and
+still be the same bytes. A screenshot attaches unless `--path-only` is given. On
+an over-budget read a Codex seat still gets the "read it with your Read tool"
+line; with `--path-only` both seat types get the same path-and-id line.
 
 The read root is normally the page's main column. When a modal dialog is open —
 `[role=dialog]`/`[role=alertdialog]`/`dialog[open]`/`[aria-modal=true]`, proven by
@@ -348,9 +351,10 @@ resumes it); a subagent gets neither.
 Omitting `[service]` means the last service that seat opened or read. Only
 `http:` and `https:` URLs open, and a URL carrying `user:pass@` is refused.
 
-Each `read` writes `$TMPDIR/clodex-browser-pane/<seat>/r-<n>.txt` (directory
-0700, files 0600; the 50 newest per seat are kept, and nothing older than a day)
-and replies with one line pointing at it.
+Each `read` without `--path-only` writes
+`$TMPDIR/clodex-browser-pane/<seat>/r-<n>.txt` (directory 0700, files 0600; the
+50 newest per seat are kept, and nothing older than a day) and replies with one
+line pointing at it.
 
 ## Page scouts
 
@@ -398,7 +402,8 @@ The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}`
   sites/<hash>.md       site notes, one file per origin (the origin on its first line)
   chromium/             the browser's own profile, separate from Clodex's
     Partitions/<service>/   cookies, storage and cache for one service
-$TMPDIR/clodex-browser-pane/<seat>/   read files (r-NNNN.txt, 50 newest, 24 h) and identified snapshots (p-<id>.txt, 7 days)
+  snapshots/<seat>/p-<id>.txt   identified page snapshots from read --path-only, 7 days from their last save
+$TMPDIR/clodex-browser-pane/<seat>/   read files (r-NNNN.txt, 50 newest, 24 h)
 ```
 
 Logins persist across restarts: session cookies are re-saved with a 30-day

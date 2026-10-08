@@ -166,16 +166,68 @@ test('replies: a snapshot write is idempotent by content and survives the 50-fil
   assert.strictEqual(fs.readdirSync(path.dirname(a)).filter((f) => f.startsWith('r-')).length, 50);
 }));
 
-test('replies: a snapshot older than 7 days is pruned, one 6 days old is kept', () => withTmp(() => {
+test('replies: a snapshot older than 7 days is pruned, one 6 days old is kept, an r- file beside them is not touched', () => withTmp((root) => {
   const day = 24 * 60 * 60 * 1000;
-  const old = R.writeReplyFile('seat', 'old', { snapshot: true });
-  const young = R.writeReplyFile('seat', 'young', { snapshot: true });
+  const old = R.writeReplyFile('seat', 'old', { snapshot: true, root });
+  const young = R.writeReplyFile('seat', 'young', { snapshot: true, root });
+  const stray = path.join(path.dirname(old), 'r-0001.txt');
+  fs.writeFileSync(stray, 'stray');
   const now = Date.now();
   fs.utimesSync(old, (now - 8 * day) / 1000, (now - 8 * day) / 1000);
   fs.utimesSync(young, (now - 6 * day) / 1000, (now - 6 * day) / 1000);
-  R.writeReplyFile('seat', 'x', { now });
+  fs.utimesSync(stray, (now - 8 * day) / 1000, (now - 8 * day) / 1000);
+  R.writeReplyFile('seat', 'x', { snapshot: true, root, now });
   assert.strictEqual(fs.existsSync(old), false);
   assert.strictEqual(fs.existsSync(young), true);
+  assert.strictEqual(fs.existsSync(stray), true);
+}));
+
+test('replies: with a root, a snapshot lands under <root>/snapshots/<seat> and r- files stay under replyDir', () => withTmp((root) => {
+  const snap = R.writeReplyFile('seat', 'page', { snapshot: true, root });
+  const plain = R.writeReplyFile('seat', 'page', { root });
+  assert.strictEqual(snap, path.join(root, 'snapshots', 'seat', `p-${R.snapshotId('page')}.txt`));
+  assert.strictEqual(R.snapshotDir('seat', root), path.dirname(snap));
+  assert.strictEqual(fs.statSync(path.dirname(snap)).mode & 0o777, 0o700);
+  assert.strictEqual(fs.statSync(snap).mode & 0o777, 0o600);
+  assert.strictEqual(plain, path.join(R.replyDir('seat', root), 'r-0001.txt'));
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(snap)), [path.basename(snap)]);
+}));
+
+test('replies: a repeat snapshot save touches the file instead of rewriting it', () => withTmp((root) => {
+  const day = 24 * 60 * 60 * 1000;
+  const snap = R.writeReplyFile('seat', 'same', { snapshot: true, root });
+  const now = Date.now();
+  fs.utimesSync(snap, (now - 3 * day) / 1000, (now - 3 * day) / 1000);
+  fs.chmodSync(snap, 0o400);
+  try {
+    assert.strictEqual(R.writeReplyFile('seat', 'same', { snapshot: true, root, now }), snap);
+    assert.ok(fs.statSync(snap).mtimeMs >= now - 1000, 'mtime moved to now');
+    assert.strictEqual(fs.readFileSync(snap, 'utf8'), 'same');
+  } finally { fs.chmodSync(snap, 0o600); }
+}));
+
+test('replies: a snapshot save prunes old snapshots of every seat and drops emptied seat dirs', () => withTmp((root) => {
+  const day = 24 * 60 * 60 * 1000;
+  const other = path.join(root, 'snapshots', 'other-seat');
+  fs.mkdirSync(other, { recursive: true });
+  const stale = path.join(other, `p-${R.snapshotId('stale')}.txt`);
+  fs.writeFileSync(stale, 'stale');
+  const now = Date.now();
+  fs.utimesSync(stale, (now - 8 * day) / 1000, (now - 8 * day) / 1000);
+  const mine = R.writeReplyFile('seat', 'mine', { snapshot: true, root, now });
+  assert.strictEqual(fs.existsSync(stale), false);
+  assert.strictEqual(fs.existsSync(other), false);
+  assert.strictEqual(fs.readFileSync(mine, 'utf8'), 'mine');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(mine)), [path.basename(mine)]);
+}));
+
+test('replies: pruneAllSnapshots on a missing base is a no-op', () => withTmp((root) => {
+  R.pruneAllSnapshots(path.join(root, 'snapshots'), Date.now());
+  assert.strictEqual(fs.existsSync(path.join(root, 'snapshots')), false);
+}));
+
+test('replies: snapshotDir refuses a bad seat name', () => withTmp((root) => {
+  assert.throws(() => R.snapshotDir('..', root), /bad seat name/);
 }));
 
 test('replies: the T3 refusal texts, verbatim', () => {

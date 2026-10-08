@@ -547,13 +547,34 @@ function replyDir(seat, root) {
   return path.join(root || os.tmpdir(), 'clodex-browser-pane', seat);
 }
 
-function prune(dir, now) {
+function snapshotDir(seat, root) {
+  if (!root) return replyDir(seat);
+  if (!SEAT_RE.test(String(seat || ''))) throw new Error(`bad seat name for a reply file: ${seat}`);
+  return path.join(root, 'snapshots', seat);
+}
+
+function pruneSnapshots(dir, now) {
   let files;
   try { files = fs.readdirSync(dir); } catch { return; }
   for (const f of files.filter((n) => SNAP_RE.test(n))) {
     const p = path.join(dir, f);
     try { if (now - fs.statSync(p).mtimeMs > SNAP_MAX_AGE_MS) fs.unlinkSync(p); } catch {}
   }
+}
+
+function pruneAllSnapshots(base, now) {
+  let seats;
+  try { seats = fs.readdirSync(base); } catch { return; }
+  for (const s of seats) {
+    const dir = path.join(base, s);
+    pruneSnapshots(dir, now);
+    try { fs.rmdirSync(dir); } catch {}
+  }
+}
+
+function prune(dir, now) {
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return; }
   files = files.filter((f) => FILE_RE.test(f));
   const rows = [];
   for (const f of files) {
@@ -572,15 +593,24 @@ function snapshotId(content) {
 }
 
 function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Date.now(), snapshot = false } = {}) {
+  if (snapshot === true) {
+    const sdir = snapshotDir(seat, root);
+    fs.mkdirSync(sdir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(sdir, 0o700);
+    const snap = path.join(sdir, `p-${snapshotId(content)}.txt`);
+    if (fs.existsSync(snap)) fs.utimesSync(snap, now / 1000, now / 1000);
+    else {
+      const tmp = path.join(sdir, `.p-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`);
+      fs.writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+      fs.renameSync(tmp, snap);
+    }
+    if (root) pruneAllSnapshots(path.dirname(sdir), now);
+    else pruneSnapshots(sdir, now);
+    return snap;
+  }
   const dir = replyDir(seat, root);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
-  if (snapshot === true) {
-    const snap = path.join(dir, `p-${snapshotId(content)}.txt`);
-    fs.writeFileSync(snap, content, { mode: 0o600, flag: 'w' });
-    prune(dir, now);
-    return snap;
-  }
   let seq = 0;
   for (const f of fs.readdirSync(dir)) {
     const m = FILE_RE.exec(f);
@@ -617,7 +647,7 @@ function classifyReply(line) {
 module.exports = {
   closedReply,
   classifyReply,
-  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, loginState, stamp,
+  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,
