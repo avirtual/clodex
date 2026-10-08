@@ -4048,7 +4048,17 @@ function createSessionManager(deps) {
       if (!cwd) return null;
       let team; try { team = resolveTeam(cwd); } catch { return null; }
       if (!team) return null;
-      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name), efforts: this._teamRoleEfforts(team) });
+      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(name) });
+    }
+
+    _isEphemeralSeat(name) {
+      const s = this.sessions.get(name);
+      if (s && s._ephemeralSeat !== undefined) return s._ephemeralSeat;
+      let rec = null;
+      try { rec = getPersistence().get(name); } catch {}
+      if (!rec) return false;
+      if (s) s._ephemeralSeat = !!rec.ephemeral;
+      return !!rec.ephemeral;
     }
 
     _rebakeDigest(name) {
@@ -4115,7 +4125,7 @@ function createSessionManager(deps) {
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm');
           // The message is the first conversation's roster; the re-bake is what every conversation
           // after a context reset gets, since the message is discarded with the history.
           this._rebakeDigest(session.name);
@@ -4148,7 +4158,7 @@ function createSessionManager(deps) {
       if (team) {
         session._pendingRoster = null;
         try {
-          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team) }), 'dm',
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);

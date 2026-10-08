@@ -21,6 +21,7 @@ blocks a release.
 ### Teams
 
 - The `haiku` model alias (`model:haiku` on a role, `--model haiku`) now resolves to Haiku 5.5 with the 1M context, like the other aliases; it used to name Haiku 4.5.
+- A ticket seat (hand, scout, reviewer) is given a two-line roster naming its role and its lead instead of the whole team composition, which it cannot act on and which cost every one of its requests about 2k tokens.
 
 ## 5.119.0 — 2026-10-08
 

@@ -1860,6 +1860,17 @@ test('formatRoster lists roles, briefs, class, and live seats per role', () => {
   assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\]/);
 });
 
+test('formatRoster brief: a ticket seat gets exactly its role and its lead', () => {
+  const live = ['clodex', 'shop-hand-3', 'shop-reviewer-1'];
+  assert.strictEqual(formatRoster(TEAM(), live, { seat: 'shop-hand-3', brief: true, grants: [] }), [
+    '[team shop] roster (lead: clodex)',
+    '- you: hand (ticket seat); your lead: clodex — dm it with [agent:dm clodex]; the full roster is not shipped to a ticket seat',
+  ].join('\n'));
+  assert.strictEqual(formatRoster(TEAM(), live, { seat: 'outsider', brief: true }).split('\n')[1],
+    '- you: ticket seat; your lead: clodex — dm it with [agent:dm clodex]; the full roster is not shipped to a ticket seat');
+  assert.match(formatRoster(TEAM(), live, { seat: 'shop-hand-3' }), /- reviewer \(lead-only\)/);
+});
+
 // A definition row and a live row used to differ only by the ABSENCE of a
 // `· live:` tail, so a reader scanning for teammates read the role key as an
 // addressable name and dm'd a seat that did not exist. Liveness must be stated
