@@ -235,3 +235,24 @@ test('a report fetch superseded by a newer open of the same session does not ove
   await first;
   assert.ok(body.innerHTML.includes('NEW') && !body.innerHTML.includes('OLD'));
 });
+
+test('a v5 session report shows the summed per-line side-calls beside the unsubtracted request total', async () => {
+  const { open, body } = reportRig(async () => ({ ok: true, data: { report_version: 5, scope: { requests: 19, turns: 4, agents: [{ line: 'main', requests: 12, sidecalls: 3, est_usd: 1 }, { line: 'subagent', requests: 3, sidecalls: 1, est_usd: 0.2 }] } } }));
+  await open('s');
+  assert.ok(body.innerHTML.includes('rep-verdict'), 'ENTER: the report rendered rather than the catch arm');
+  assert.ok(body.innerHTML.includes('<div class="rep-scope">19 requests (4 side-calls) · 4 turns · 1 subagent line</div>'), body.innerHTML);
+});
+
+test('a v4 session report without sidecalls renders its scope line as before', async () => {
+  const { open, body } = reportRig(async () => ({ ok: true, data: { report_version: 4, scope: { requests: 19, turns: 4, agents: [{ line: 'main', requests: 19, est_usd: 1 }] } } }));
+  await open('s');
+  assert.ok(body.innerHTML.includes('rep-verdict'), 'ENTER: the report rendered rather than the catch arm');
+  assert.ok(body.innerHTML.includes('<div class="rep-scope">19 requests · 4 turns</div>'), body.innerHTML);
+});
+
+test('only numeric sidecalls fields count toward the side-call total', async () => {
+  const { open, body } = reportRig(async () => ({ ok: true, data: { report_version: 5, scope: { agents: [{ line: 'main', sidecalls: 2 }, { line: 'subagent' }, { line: 'subagent', sidecalls: '7' }] } } }));
+  await open('s');
+  assert.ok(body.innerHTML.includes('rep-verdict'), 'ENTER: the report rendered rather than the catch arm');
+  assert.ok(body.innerHTML.includes('<div class="rep-scope">0 requests (2 side-calls) · 0 turns · 2 subagent lines</div>'), body.innerHTML);
+});
