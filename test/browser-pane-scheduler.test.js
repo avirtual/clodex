@@ -1089,3 +1089,26 @@ test('scheduler: read --path-only writes an identified p- snapshot and a plain r
   assert.deepStrictEqual(names, [snaps[0], 'r-0001.txt'].sort());
   assert.ok(!String(plain[0][1]).includes('snapshot'));
 });
+
+test('scheduler: with snapshotsRoot, read --path-only writes under <root>/snapshots/<seat> and a plain read still writes r-0001.txt under replyDir', async () => {
+  const root = fs.realpathSync(mkTmpRoot('clodex-bp-sched-'));
+  const h = harness({
+    read: () => ({ ...PAGE, url: 'https://ghostfol.io/', contentType: 'text/html', text: 'Portfolio', elements: [], truncated: false, frames: [], login: {} }),
+  }, { snapshotsRoot: root });
+  await h.run([['hand-a', '[agent:browser open gh] https://ghostfol.io/']]);
+  h.sched.onState({ service: 'gh', state: 'idle', url: 'https://ghostfol.io/' });
+  await h.run([['hand-a', '[agent:browser release gh]']]);
+  const seat = `hand-snaproot-${process.pid}`;
+  const dir = R.replyDir(seat);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const out = await h.run([[seat, '[agent:browser read gh --path-only]']]);
+  await h.run([[seat, '[agent:browser read gh]']]);
+  const snaps = fs.readdirSync(path.join(root, 'snapshots', seat));
+  const plain = fs.readdirSync(dir);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true });
+  assert.strictEqual(snaps.length, 1);
+  assert.ok(R.SNAP_RE.test(snaps[0]), snaps[0]);
+  assert.ok(String(out[0][1]).includes(path.join('snapshots', seat, snaps[0])), out[0][1]);
+  assert.deepStrictEqual(plain, ['r-0001.txt']);
+});
