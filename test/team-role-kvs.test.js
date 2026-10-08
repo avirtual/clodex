@@ -125,7 +125,7 @@ test('t1747: role-add scout with an empty body takes the stock definition', (t) 
   const { STOCK_ROLE_DEFS } = require('../team-manifest');
   const b = mkBox(t);
   b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'scout', body: '' });
-  assert.deepStrictEqual(b.roles().scout, STOCK_ROLE_DEFS.scout);
+  assert.deepStrictEqual(b.roles().scout, { ...STOCK_ROLE_DEFS.scout, cwd: null, account: null });
   assert.ok(/\(stock definition\)$/.test(b.last()), `got: ${b.last()}`);
 });
 
