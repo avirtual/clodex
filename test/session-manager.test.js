@@ -20060,7 +20060,7 @@ test('task done: a spawn seat on a branchless ticket is ARCHIVED at done, and a 
   fsReal.rmSync(root, { recursive: true, force: true });
 });
 
-test('a second accept on a no-branch ticket changes nothing', async () => {
+test('the done close-out accepts a no-branch ticket, and a second accept changes nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo, { dispatch: 'spawn' });
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
