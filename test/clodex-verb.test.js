@@ -36,12 +36,12 @@ async function fakeSeat(answer, { catalog } = {}) {
   return { sockPath, got, close: () => new Promise((r) => srv.close(r)) };
 }
 
-async function run(seat, argv, { env = {}, stdin, invokedAs } = {}) {
+async function run(seat, argv, { env = {}, stdin } = {}) {
   const out = sink();
   const err = sink();
   const code = await verb.main(argv, {
     env: { CLODEX_INTENT_SOCK: seat && seat.sockPath, CLODEX_INTENT_CRED: 'k1', CLODEX_SEAT: 'a', ...env },
-    out, err, stdin, invokedAs,
+    out, err, stdin,
   });
   return { code, out: out.buf, err: err.buf };
 }
@@ -220,47 +220,19 @@ test('the verb carries no browser knowledge: its help comes from the catalog', (
   assert.ok(!/browser|release|confirm|wiki/.test(fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8')));
 });
 
-test('the verb is materialized as executables clodex-send and clodex in <root>/bin', () => {
+test('the verb is materialized as executable clodex-send in <root>/bin, and a stale clodex shim is removed', () => {
   const root = mkTmpRoot('verb-bin-');
+  fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'bin', 'clodex'), 'stale');
   const r = materializeSeatVerb({ root, srcDir: ROOT });
   assert.strictEqual(r.path, path.join(root, 'bin', 'clodex-send'));
-  assert.strictEqual(r.aliasPath, path.join(root, 'bin', 'clodex'));
-  for (const p of [r.path, r.aliasPath]) {
-    assert.strictEqual(fs.statSync(p).mode & 0o111, 0o111, p);
-    assert.strictEqual(fs.readFileSync(p, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'), p);
-  }
-  assert.strictEqual(require('../bin-materialize').SEAT_VERB_ALIAS, 'clodex');
+  assert.strictEqual(r.aliasPath, undefined);
+  assert.strictEqual(fs.statSync(r.path).mode & 0o111, 0o111);
+  assert.strictEqual(fs.readFileSync(r.path, 'utf8'), fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex.js'), 'utf8'));
+  assert.deepStrictEqual(fs.readdirSync(path.join(root, 'bin')), ['clodex-send']);
+  assert.strictEqual(require('../bin-materialize').SEAT_VERB_ALIAS, undefined);
   const src = fs.readFileSync(r.path, 'utf8');
   assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net', 'fs', 'path'], 'zero local requires: it runs flat from bin/');
-});
-
-test('the materialized alias shim prints the deprecation line and the clodex-send shim does not', () => {
-  const { spawnSync } = require('node:child_process');
-  const r = materializeSeatVerb({ root: mkTmpRoot('verb-bin-'), srcDir: ROOT });
-  const run = (p) => spawnSync(process.execPath, [p, '--help'], { encoding: 'utf8', env: process.env });
-  const alias = run(r.aliasPath);
-  const send = run(r.path);
-  assert.strictEqual(alias.status, 0, alias.stderr);
-  assert.strictEqual(send.status, 0, send.stderr);
-  assert.ok(alias.stderr.includes('clodex: deprecated name, use clodex-send'), alias.stderr);
-  assert.ok(!send.stderr.includes('clodex: deprecated name'), send.stderr);
-});
-
-test('the deprecated name prints one stderr line first and changes nothing else', async () => {
-  const DEP = 'clodex: deprecated name, use clodex-send\n';
-  const seat = await fakeSeat(() => ({ ok: true, reply: '[agent:peers] b' }));
-  try {
-    assert.deepStrictEqual(await run(seat, ['[agent:who]'], { invokedAs: 'clodex' }), { code: 0, out: '[agent:peers] b\n', err: DEP });
-    assert.deepStrictEqual(await run(seat, ['[agent:who]'], { invokedAs: 'clodex-send' }), { code: 0, out: '[agent:peers] b\n', err: '' });
-    assert.deepStrictEqual(await run(seat, ['[agent:who]']), { code: 0, out: '[agent:peers] b\n', err: '' });
-  } finally { await seat.close(); }
-  const empty = await run(null, [''], { invokedAs: 'clodex' });
-  assert.strictEqual(empty.code, 2);
-  assert.ok(empty.err.startsWith(DEP + 'clodex-send: empty intent'), empty.err);
-  const help = await run(null, ['--help'], { invokedAs: 'clodex' });
-  assert.strictEqual(help.code, 0);
-  assert.match(help.out, /^usage: clodex-send /);
-  assert.strictEqual(help.err, DEP);
 });
 
 test('reply shapes: a refusal is stderr `clodex-send: <reason>` exit 3; an error reply is stdout exit 1', async () => {

@@ -381,7 +381,7 @@ bundle), whose packaged form is the Docker image under
 - **subq.js** — the parent → subagent queue run by `run/<seat>/subq.sh`: drains
   `subq/<agent_id>/` (one file per note, claimed by rename into
   `subq/<agent_id>.draining.<pid>/`)
-  as one `[parent <nonce>]` note, maps Agent names to ids (and back, `nameOfSubagent`, for the caller label), and
+  with a `[parent <nonce>]` or `[dm <nonce> from …]` header per note, maps Agent names to ids (and back, `nameOfSubagent`, for the caller label), and
   parks a note left at TaskStop/SubagentStop; resolves an `agent-<id8>` target
   by a unique id tail, reads names through `readNameFile` (non-blocking open,
   fstat check), and carries dm replies to a subagent as `[dm <nonce> from …]` notes;

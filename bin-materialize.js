@@ -41,24 +41,21 @@ function materializeExecScripts({ root, srcDir = __dirname, files = EXEC_SCRIPTS
 
 const SEAT_VERB_SRC = 'cli/bin/clodex.js';
 const SEAT_VERB_NAME = 'clodex-send';
-const SEAT_VERB_ALIAS = 'clodex';
 
 function materializeSeatVerb({ root, srcDir = __dirname, log } = {}) {
   const binDir = path.join(root, 'bin');
   const dest = path.join(binDir, SEAT_VERB_NAME);
-  const alias = path.join(binDir, SEAT_VERB_ALIAS);
   try {
     fs.mkdirSync(binDir, { recursive: true });
     const bytes = fs.readFileSync(path.join(srcDir, SEAT_VERB_SRC));
-    for (const p of [dest, alias]) {
-      fs.writeFileSync(p, bytes);
-      fs.chmodSync(p, 0o755);
-    }
-    return { binDir, path: dest, aliasPath: alias };
+    fs.writeFileSync(dest, bytes);
+    fs.chmodSync(dest, 0o755);
+    try { fs.rmSync(path.join(binDir, 'clodex'), { force: true }); } catch {}
+    return { binDir, path: dest };
   } catch (e) {
     if (log) log.info('bin', `seat verb materialize skipped (${e && e.message})`);
-    return { binDir, path: null, aliasPath: null };
+    return { binDir, path: null };
   }
 }
 
-module.exports = { EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, SEAT_VERB_ALIAS, materializeExecScripts, materializeSeatVerb };
+module.exports = { EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, materializeExecScripts, materializeSeatVerb };

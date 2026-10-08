@@ -100,7 +100,7 @@ test('t1705 a note that lands between the drain\'s listing and its read is deliv
   const second = JSON.parse(subqHookOutput(JSON.stringify({ agent_id: ID, hook_event_name: 'PostToolUse' }), { dir: h.dir }));
   assert.strictEqual(second.hookSpecificOutput.additionalContext, '[parent feedfacecafebeef] late');
   const rows = fs.readFileSync(path.join(h.dir, 'receipts.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepStrictEqual(rows.map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: ID, ev: 'delivered', bytes: 5 }, { id: ID, ev: 'delivered', bytes: 4 }]);
+  assert.deepStrictEqual(rows.map(({ id, ev, bytes }) => ({ id, ev, bytes })), [{ id: ID, ev: 'delivered', bytes: 31 }, { id: ID, ev: 'delivered', bytes: 30 }]);
   assert.deepStrictEqual(fs.readdirSync(h.dir).filter((n) => n.startsWith(`${ID}.draining`)), []);
 });
 
@@ -133,6 +133,14 @@ test('t1683 clearSubq removes the whole dir and is a no-op on a missing one', ()
   clearSubq(h.dir);
   assert.strictEqual(fs.existsSync(h.dir), false);
   assert.doesNotThrow(() => clearSubq(h.dir));
+});
+
+test('t1720 _queueSubagentNote requires its from argument: a three-argument call throws and writes nothing', () => {
+  const h = harness();
+  assert.throws(() => h.m._queueSubagentNote('seat', ID, 'x'), { name: 'TypeError', message: '_queueSubagentNote: from must be a string or null' });
+  assert.strictEqual(fs.existsSync(path.join(h.dir, ID)), false);
+  h.m._queueSubagentNote('seat', ID, 'y', null);
+  assert.strictEqual(fs.readdirSync(path.join(h.dir, ID)).length, 1);
 });
 
 test('t1683 both conversation-replacement sites call clearSubq', () => {

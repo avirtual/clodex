@@ -5369,7 +5369,7 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, '[agent:sub] nothing queued: empty body', { parkable: true });
             break;
           }
-          this._queueSubagentNote(senderName, id, intent.body);
+          this._queueSubagentNote(senderName, id, intent.body, null);
           this._broadcast('ipc-message', { type: 'sub', from: senderName, to: `${senderName}/${id}`, body: intent.body });
           break;
         }
@@ -5678,7 +5678,8 @@ function createSessionManager(deps) {
       if (scratchWatched && !scratchEarly) this._recordScratchDispatch(session, intent, scratchBefore);
     }
 
-    _queueSubagentNote(seat, id, text, from = null) {
+    _queueSubagentNote(seat, id, text, from) {
+      if (from !== null && typeof from !== 'string') throw new TypeError('_queueSubagentNote: from must be a string or null');
       const q = path.join(subqDirFor(seat), id);
       const seq = String(++subqSeq).padStart(9, '0');
       const tmp = path.join(q, `.${seq}.tmp`);
