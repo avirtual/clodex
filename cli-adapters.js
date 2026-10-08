@@ -16,7 +16,7 @@ const ADAPTERS = {
       aliases: {
         opus: 'claude-opus-5-5[1m]',
         sonnet: 'claude-sonnet-5-5[1m]',
-        haiku: 'claude-haiku-4-5-20251001',
+        haiku: 'claude-haiku-5-5[1m]',
         fable: 'claude-fable-5-1[1m]',
       },
       idRe: MODEL_ID_RE,
