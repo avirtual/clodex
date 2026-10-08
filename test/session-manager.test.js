@@ -4335,6 +4335,7 @@ test('_settleBoot: an ephemeral codex ticket seat settles to the brief roster; a
   m._deliverMessage = (t, _sn, b) => { delivered[t] = b; };
   m._settleBoot(eph);
   m._settleBoot(std);
+  assert.deepStrictEqual([m._isEphemeralSeat('team-dev-7'), m._isEphemeralSeat('team-dev')], [true, false]);
   assert.match(delivered['team-dev-7'], /you: dev \(ticket seat\); your lead: lead/);
   assert.ok(!/- lead \(session\)/.test(delivered['team-dev-7']));
   assert.match(delivered['team-dev'], /- lead \(session\) — the lead · live: lead/);
