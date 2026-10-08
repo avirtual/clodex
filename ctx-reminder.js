@@ -60,6 +60,7 @@ const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
 // operator's price data (2026-09-20).
 const CTX_MODEL_THRESHOLDS = new Map([
   ['fable-5-1', { nudge: 200_000, escalate: 250_000 }],
+  ['haiku-5-5', { nudge: 75_000, escalate: 100_000, stop: true }],
 ]);
 
 // A nudge below this fires on a session that has merely loaded its system prompt
@@ -113,7 +114,7 @@ function sanitizeThresholdPair(raw) {
   if (!Number.isInteger(nudge) || nudge < CTX_THRESHOLD_MIN || nudge > CTX_THRESHOLD_MAX) return null;
   const wanted = Number.isInteger(raw.escalate) ? raw.escalate : 0;
   const escalate = Math.min(Math.max(wanted, nudge + CTX_ESCALATE_MIN_GAP), CTX_THRESHOLD_MAX + CTX_ESCALATE_MIN_GAP);
-  return { nudge, escalate };
+  return raw.stop === true ? { nudge, escalate, stop: true } : { nudge, escalate };
 }
 
 // Sanitize the whole persisted override map. Rows are sparse by design: an
@@ -128,7 +129,7 @@ function sanitizeCtxThresholds(raw) {
   for (const key of Object.keys(raw)) {
     if (key !== 'default' && !/^[a-z]+-\d{1,3}(?:-\d{1,3})?$/.test(key)) continue;
     const pair = sanitizeThresholdPair(raw[key]);
-    if (pair) out[key] = pair;
+    if (pair) out[key] = { nudge: pair.nudge, escalate: pair.escalate };
   }
   return out;
 }
@@ -174,6 +175,15 @@ function ctxReminderFor(tokens, thresholds) {
   const t = Number(tokens);
   if (!Number.isFinite(t) || t < nudgeAt) return null;
   const k = Math.round(t / 1000);
+  if (thresholds?.stop === true) {
+    if (t >= escalateAt) {
+      return `<system-reminder>Your context is ~${k}k tokens, past the 100k line where this model is priced 5x. `
+        + 'Stop now: write your output file as it stands, mark every unfilled row unverified, and close the ticket with '
+        + '[agent:task done <id>] and the report. Do not compact and do not continue reading.</system-reminder>';
+    }
+    return `<system-reminder>Your context is ~${k}k tokens; this model is priced 5x past 100k. `
+      + 'Finish the table with the commands you have already planned, read nothing new, and write the output file.</system-reminder>';
+  }
   if (t >= escalateAt) {
     return '<system-reminder>'
       + `Your context is very heavy (~${k}k tokens) — well past the point where you should have compacted. `

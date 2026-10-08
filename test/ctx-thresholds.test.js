@@ -265,9 +265,11 @@ const FABLE_IDS = [
   ['us.anthropic.claude-fable-5-1-20260601-v1:0', 'fable-5-1'],
 ];
 
-test('the shipped table carries exactly one row, fable 5.1, and it resolves through builtin-model', () => {
-  assert.deepStrictEqual([...CTX_MODEL_THRESHOLDS],
-    [['fable-5-1', { nudge: 200_000, escalate: 250_000 }]]);
+test('the shipped table carries two rows, fable 5.1 and haiku 5.5, and fable resolves through builtin-model', () => {
+  assert.deepStrictEqual([...CTX_MODEL_THRESHOLDS], [
+    ['fable-5-1', { nudge: 200_000, escalate: 250_000 }],
+    ['haiku-5-5', { nudge: 75_000, escalate: 100_000, stop: true }],
+  ]);
 
   for (const [id, family] of FABLE_IDS) {
     assert.deepStrictEqual(ctxThresholdsFor(id, {}),
@@ -294,6 +296,29 @@ test('the shipped table carries exactly one row, fable 5.1, and it resolves thro
   const over = ctxThresholdsFor('claude-fable-5-1', { 'fable-5-1': { nudge: 400_000, escalate: 500_000 } });
   assert.strictEqual(over.source, 'settings-model');
   assert.strictEqual(over.nudge, 400_000);
+});
+
+test('haiku 5.5 is a stop row: warned at 75k, told to hand in at 100k, never told to compact', () => {
+  const row = ctxThresholdsFor('claude-haiku-5-5[1m]', {});
+  assert.deepStrictEqual(row,
+    { nudge: 75_000, escalate: 100_000, stop: true, family: 'haiku-5-5', source: 'builtin-model' });
+  assert.strictEqual(ctxReminderFor(74_000, row), null);
+  const nudge = ctxReminderFor(90_000, row);
+  assert.ok(nudge.includes('priced 5x past 100k'), nudge);
+  assert.ok(!nudge.includes('compact'), nudge);
+  const stop = ctxReminderFor(101_000, row);
+  assert.ok(stop.includes('Stop now'), stop);
+  assert.ok(stop.includes('[agent:task done'), stop);
+  assert.ok(!stop.includes('[agent:context compact]'), stop);
+  const fable = ctxThresholdsFor('claude-fable-5-1', {});
+  assert.ok(ctxReminderFor(260_000, fable).includes('[agent:context compact]'));
+  assert.ok(ctxReminderFor(160_000, ctxThresholdsFor('claude-opus-5', {})).includes('[agent:context compact]'));
+});
+
+test('an operator row never carries stop, even for the haiku 5.5 family', () => {
+  const over = ctxThresholdsFor('claude-haiku-5-5', { 'haiku-5-5': { nudge: 90_000, escalate: 120_000, stop: true } });
+  assert.deepStrictEqual(over,
+    { nudge: 90_000, escalate: 120_000, family: 'haiku-5-5', source: 'settings-model' });
 });
 
 // The defect this file exists to prevent, stated over the SHIPPED price table

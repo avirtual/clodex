@@ -147,9 +147,9 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     // Written BEFORE create so the arm's initial readCtx() sees it. The poll is
     // otherwise fs.watch-driven, which is not synchronous enough to assert on.
     uiReads,
-    writeCtx: (tokens) => {
+    writeCtx: (tokens, model = FIXTURE_MODEL) => {
       fs.mkdirSync(runDirFor(root, 'seat'), { recursive: true });
-      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\t${FIXTURE_MODEL}`);
+      fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\t${model}`);
     },
     spawn: async () => {
       try {
@@ -203,6 +203,24 @@ test('an EPHEMERAL seat at the SAME token count gets no ctxwarn file', async (t)
   await h.spawn();
   assert.ok(!fs.existsSync(h.warnPath()),
     'a seat sized to one ticket is never nudged: it would compact at `done`, discarding exactly the context the rework needs');
+});
+
+test('an EPHEMERAL haiku 5.5 seat past 100k DOES get the stop warning', async (t) => {
+  const h = harness(t, { ephemeral: true });
+  h.writeCtx(101_000, 'claude-haiku-5-5[1m]');
+  await h.spawn();
+  assert.ok(fs.existsSync(h.warnPath()), 'a stop row asks for no compact, so the ephemeral skip does not apply');
+  const body = fs.readFileSync(h.warnPath(), 'utf8');
+  assert.strictEqual(body, ctxReminderFor(101_000, ctxThresholdsFor('claude-haiku-5-5[1m]', {})));
+  assert.ok(body.includes('Stop now'), body);
+});
+
+test('an EPHEMERAL fable 5.1 seat at 260k still gets no ctxwarn file', async (t) => {
+  const h = harness(t, { ephemeral: true });
+  h.writeCtx(260_000, 'claude-fable-5-1');
+  await h.spawn();
+  assert.ok(ctxReminderFor(260_000, ctxThresholdsFor('claude-fable-5-1', {})), 'ENTER: the count is over the fable row');
+  assert.ok(!fs.existsSync(h.warnPath()));
 });
 
 test('the pure decision is untouched — it still calls an ephemeral seat heavy', () => {
