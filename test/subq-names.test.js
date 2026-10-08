@@ -76,16 +76,17 @@ test('nameOfSubagent: a FIFO in names/ is opened but its fd is never read; the v
   const { dir, fifo } = withFifo();
   const realOpen = fs.openSync;
   const realRead = fs.readFileSync;
-  const opened = new Map();
-  const readFds = [];
-  fs.openSync = (p, ...rest) => { const fd = realOpen.call(fs, p, ...rest); opened.set(String(p), fd); return fd; };
-  fs.readFileSync = (p, ...rest) => { if (typeof p === 'number') readFds.push(p); return realRead.call(fs, p, ...rest); };
+  const opened = [];
+  const fdPath = new Map();
+  const readPaths = [];
+  fs.openSync = (p, ...rest) => { const fd = realOpen.call(fs, p, ...rest); opened.push(String(p)); fdPath.set(fd, String(p)); return fd; };
+  fs.readFileSync = (p, ...rest) => { if (typeof p === 'number') readPaths.push(fdPath.get(p)); return realRead.call(fs, p, ...rest); };
   try {
     assert.strictEqual(nameOfSubagent(dir, ID), 'alice');
   } finally { fs.openSync = realOpen; fs.readFileSync = realRead; }
-  assert.ok(opened.has(fifo), 'ENTER: the FIFO was opened');
-  assert.ok(!readFds.includes(opened.get(fifo)));
-  assert.ok(readFds.includes(opened.get(path.join(dir, 'names', 'alice'))));
+  assert.ok(opened.includes(fifo), 'ENTER: the FIFO was opened');
+  assert.ok(!readPaths.includes(fifo));
+  assert.ok(readPaths.includes(path.join(dir, 'names', 'alice')));
 });
 
 test('resolveSubagent and retireSubagent skip a planted FIFO without blocking', () => {

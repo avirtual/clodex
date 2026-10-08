@@ -345,7 +345,7 @@ test('dm tool: a forged, replayed, missing or foreign-session stamp answers unkn
   }
   const { handle, seen } = dmHandler();
   const stamp = SUB_STAMP();
-  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: stamp }, ctl), DM_SENT);
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: stamp }, ctl), DM_SUB_SENT);
   assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: stamp }, ctl), UNKNOWN_DM);
   assert.strictEqual(seen.length, 1);
   assert.deepStrictEqual(warns, ['intent-socket h1: replayed identity stamp refused']);
