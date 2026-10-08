@@ -6183,7 +6183,7 @@ body.web-frontend #sidebar-header {
 }
 .intent-card-glyph { color: var(--text-secondary); min-width: 1em; text-align: center; }
 .intent-card-label { font-weight: 600; }
-.intent-card-target { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+.intent-card-target { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 .intent-card-inline { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
 .intent-chip {
   font-size: var(--fs-xs);
@@ -6195,6 +6195,7 @@ body.web-frontend #sidebar-header {
 .intent-chip-warn { color: var(--warn); border-color: var(--warn); }
 .intent-card-open { border-left: 2px solid var(--warn); }
 .intent-card-state { margin-left: auto; color: var(--warn); }
+.intent-card-head .tr-time { margin-left: auto; }
 .intent-card-body { white-space: pre-wrap; margin-left: calc(1em + var(--sp-2)); color: var(--text-secondary); }
 .intent-card-body-mono, .intent-card-raw { font-family: var(--font-mono); font-size: var(--fs-sm); }
 .intent-card-raw { white-space: pre-wrap; color: var(--text-secondary); }

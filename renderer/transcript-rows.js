@@ -228,6 +228,7 @@ function filedFold(doc, spill, ctx, host) {
 function inlineBody(seg) {
   if (seg.open) return null;
   if (seg.state === 'filed' && seg.spill) return true;
+  if (seg.verb === 'dm' || seg.verb === 'sub') return null;
   if (!seg.body || seg.verb === 'exec') return null;
   if (!seg.body.includes('\n')) return seg.body.trim().length <= INLINE_CHARS ? seg.body : null;
   if (seg.verb !== 'task') return null;
@@ -254,7 +255,7 @@ function restBody(doc, seg, ctx) {
   return [body, foot];
 }
 
-function cardHead(doc, seg, ctx, inline, filed) {
+function cardHead(doc, seg, ctx, inline, filed, rec) {
   const head = el(doc, 'div', 'intent-card-head');
   const h = seg.head;
   head.appendChild(el(doc, 'span', 'intent-card-glyph', h.glyph));
@@ -282,6 +283,8 @@ function cardHead(doc, seg, ctx, inline, filed) {
     warn.title = 'no [agent:end]: only the first line was applied; the rest of the reply is prose';
     head.appendChild(warn);
   }
+  const t = rec ? clock(rec.ts) : '';
+  if (t) head.appendChild(el(doc, 'span', 'tr-time', t));
   return head;
 }
 
@@ -302,7 +305,7 @@ function cardBody(doc, seg, ctx) {
   return [body, foot];
 }
 
-function intentCard(doc, seg, ctx) {
+function intentCard(doc, seg, ctx, rec) {
   if (seg.kind === 'inert') {
     const card = el(doc, 'div', 'intent-card intent-card-inert');
     const head = el(doc, 'div', 'intent-card-head');
@@ -315,7 +318,7 @@ function intentCard(doc, seg, ctx) {
   card.dataset.verb = seg.verb;
   const inline = inlineBody(seg);
   const fold = seg.state === 'filed' && seg.spill ? filedFold(doc, seg.spill, ctx, card) : null;
-  card.appendChild(cardHead(doc, seg, ctx, inline, inline && fold ? fold.head : null));
+  card.appendChild(cardHead(doc, seg, ctx, inline, inline && fold ? fold.head : null, rec));
   if (inline && seg.body && seg.body.includes('\n') && !(seg.state === 'filed' && seg.spill)) {
     for (const n of restBody(doc, seg, ctx)) card.appendChild(n);
   }
@@ -334,7 +337,7 @@ function intentCard(doc, seg, ctx) {
   return card;
 }
 
-function appendSegments(doc, row, segs, ctx) {
+function appendSegments(doc, row, segs, ctx, rec) {
   let stack = null;
   for (const seg of segs) {
     if (seg.kind === 'intent' || seg.kind === 'inert') {
@@ -342,7 +345,7 @@ function appendSegments(doc, row, segs, ctx) {
         stack = el(doc, 'div', 'intent-stack');
         row.appendChild(stack);
       }
-      stack.appendChild(intentCard(doc, seg, ctx));
+      stack.appendChild(intentCard(doc, seg, ctx, rec));
       continue;
     }
     stack = null;
@@ -821,7 +824,7 @@ function buildRow(doc, rec, ctx, attached, boxed) {
       rec = clean.rec;
       const row = el(doc, 'div', `tr-row tr-prose${rec.segments ? ' tr-segs' : ''}`);
       row.dataset.id = rec.id;
-      if (rec.segments) appendSegments(doc, row, rec.segments, ctx);
+      if (rec.segments) appendSegments(doc, row, rec.segments, ctx, rec);
       else if (!hasIntentMarks(rec.text)) appendMarkdown(doc, row, rec.text, ctx);
       else appendProse(doc, row, rec.text, ctx);
       return row;
@@ -1230,7 +1233,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
         const clean = plainMarked ? { rec: { segments: end.segs }, empty: false } : withoutEchoes({ ...end.rec, segments: end.segs });
         if (clean.empty) return echoRow(doc, end.rec, ' tr-turn-end-prose');
         const row = el(doc, 'div', 'tr-row tr-prose tr-segs tr-turn-end-prose');
-        appendSegments(doc, row, clean.rec.segments, deps);
+        appendSegments(doc, row, clean.rec.segments, deps, end.rec);
         return row;
       },
     };
