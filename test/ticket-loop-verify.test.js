@@ -5754,6 +5754,43 @@ test('t1016: a LOOP-INELIGIBLE close still replies — no review is coming, and 
     'and it says WHY nothing follows — a seat waiting for a verdict here waits forever, and nothing else tells it');
 });
 
+test('t1731: a branchless ticket closed done by a one-shot seat archives the seat and closes the ticket out', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); };
+  f.injected.length = 0;
+
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+
+  assert.deepStrictEqual(archived, ['team-hand']);
+  const said = f.injected.join('\n');
+  assert.match(said, /closed \(done\) — report delivered to lead — closed WITHOUT review: the ticket records no branch, so the loop had nothing to verify; team-hand was a one-shot seat and was ARCHIVED/);
+  assert.strictEqual(f.one().closedOut, true);
+  assert.ok(f.one().acceptedAt);
+
+  const replies = [];
+  await f.m._taskAccept(f.seat('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', body: '' }, (t) => replies.push(t));
+  assert.match(replies.join('\n'), /was already accepted .* nothing was changed/);
+  assert.deepStrictEqual(archived, ['team-hand'], 'the later accept does not archive again');
+});
+
+test('t1731: a branchless ticket closed done by a standing seat archives nothing and leaves the ticket for accept', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.persistence.upsert({ name: 'team-hand' });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); };
+  f.injected.length = 0;
+
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+
+  assert.deepStrictEqual(archived, []);
+  assert.deepStrictEqual(f.injected, ['ticket t1 closed (done) — report delivered to lead — closed WITHOUT review: the ticket records no branch, so the loop had nothing to verify']);
+  assert.ok(!f.one().closedOut);
+});
+
 test('t1016: a RE-ENTRY still gets its receipt, naming the check that had held it', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });

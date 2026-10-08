@@ -450,6 +450,8 @@ only the merged arm removes anything:
 | `stamped this ticket MERGE FAILED at` | the branch is an ancestor, but the loop gave up at a merge step, so that proves nothing | yes; the mark is cleared on every step. On `revert-blocked` the branch is already in the trunk, so a second accept is the one thing not to do |
 | `accepted — merged into`, `accepted — branch X has 0 commits beyond`, or `is an ancestor of` with no `MERGE FAILED` clause | merged: the matrix below | yes |
 
+A branchless ticket closed done by a one-shot seat is closed out at once and the seat archived; `task accept` on it is then a no-op.
+
 On the merged arm, what goes depends on the seat and the tree:
 
 | on a merged branch | seat | worktree | branch |

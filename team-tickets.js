@@ -4438,7 +4438,15 @@ function createTicketMethods(deps, shared) {
         // routes through `holdRecoveryText`; the step name must stay, a test pins it.
         reply(`ticket ${ticket.id} re-verifying (was held at "${heldAt}")` + skipped + nextSuffix);
       } else if (!loopEligible) {
-        reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped + nextSuffix);
+        const facts = this._acceptSeatFacts(ticket);
+        const closeOut = !next && !facts.branch && facts.ephemeralSeat && facts.seatName && facts.seatName !== lead && this.sessions.has(facts.seatName);
+        const archivedNote = closeOut ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '';
+        reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped + archivedNote + nextSuffix);
+        if (closeOut) {
+          return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).catch((e) => {
+            log.warn('intent', `task done ${ticket.id}: closing out ${facts.seatName} failed: ${e.message}`);
+          });
+        }
       }
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
@@ -5978,6 +5986,24 @@ function createTicketMethods(deps, shared) {
       return dropped ? `${msg} ${dropped}` : msg;
     },
 
+    async _closeOutBranchless(team, ticket, tickets, { by, note }) {
+      const { seatName, ephemeralSeat } = this._acceptSeatFacts(ticket);
+      if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
+      let archived = false;
+      if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+        await this.archive(seatName);
+        archived = true;
+      }
+      const text = this._finishAccept(team, ticket, tickets, {
+        by, note, seatName, closedOut: true, complete: false,
+        actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
+        msg: archived
+          ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
+          : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`,
+      });
+      return { archived, text };
+    },
+
     // Not folded into `done`, which the assignee emits: retiring there would kill the seat before the lead read a word or sent rework.
     async _taskAccept(session, team, intent, reply, ack = reply) {
       const note = String(intent.body == null ? '' : intent.body).trim();
@@ -5996,7 +6022,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
-      const { seatName, branch, ephemeralSeat } = this._acceptSeatFacts(ticket);
+      const { branch } = this._acceptSeatFacts(ticket);
 
       // No branch means the main checkout: acceptance is the stamp alone, and a standing seat is never retired there.
       // A one-shot spawn seat is archived, never destroyed, since its work may be uncommitted in the shared checkout.
@@ -6005,19 +6031,7 @@ function createTicketMethods(deps, shared) {
           reply(`ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt).toLocaleTimeString()} — nothing was changed${this._spillRejectedPayload(session, 'task accept', note)}`);
           return;
         }
-        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
-        let archived = false;
-        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
-          await this.archive(seatName);
-          archived = true;
-        }
-        ack(this._finishAccept(team, ticket, tickets, {
-          by: session.name, note, seatName, closedOut: true, complete: false,
-          actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
-          msg: archived
-            ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
-            : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`,
-        }));
+        ack((await this._closeOutBranchless(team, ticket, tickets, { by: session.name, note })).text);
         return;
       }
 
