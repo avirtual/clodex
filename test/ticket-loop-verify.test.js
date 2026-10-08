@@ -5794,7 +5794,7 @@ test('t1731: a branchless ticket closed done by a standing seat archives nothing
 test('t1732: a reject after a branchless done close-out says the one-shot seat was archived and delivers nothing', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, ticketOver: { worktree: null, role: 'hand' } });
-  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true, createdAt: 1 });
   f.m.archive = async (n) => { f.m.sessions.delete(n); };
   await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, () => {});
   f.gated.length = 0;
