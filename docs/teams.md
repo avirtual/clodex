@@ -47,13 +47,14 @@ does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree).
 
-`[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead on
-the lead role's template, which the kit picks (`clodex-team-lead` in the clodex
-kit, `lead` in the default kit) — `claude-opus-5-5[1m]`, every skill off,
-`clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and the privileged
-intents off. A team created before that stem was recorded on the role has no
-`lead.template` line and reaches `clodex-team-lead` by default. Want another shape:
-set `lead.template` in the app's team editor, or pass an explicit `template:` on the spawn, which always wins.
+`[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead
+on the lead role's template, which the kit picks (`clodex-team-lead` in the
+clodex kit, `lead` in the default kit) — `claude-opus-5-5[1m]`, every skill off,
+`clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and
+the privileged intents off. A team created before that stem was recorded on the
+role has no `lead.template` line and reaches `clodex-team-lead` by default. Want
+another shape: set `lead.template` in the app's team editor, or pass an explicit
+`template:` on the spawn, which always wins.
 
 A seat binds to a role by its NAME — `<team>-<role>`, or the team's `lead` — and
 the template is a shape, not a binding: spawning `helm-hand` on the `hand`
@@ -104,8 +105,9 @@ review split. The tickets board shows the same figures per row.
 The loop's own data is *not* here: `tickets.json` and the per-ticket `tasks/`
 directories are keyed to the PROJECT, not the team, and live under
 `~/.clodex/projects/<leaf>-<hash>/` (`clodex-paths.js` `projectDirFor`, joined
-with the spec's `tasks/…` pointer by `team-cost.js` `resolveTaskDir`). One project can be worked by several teams, and a board that
-moved with the team would split its own history.
+with the spec's `tasks/…` pointer by `team-cost.js` `resolveTaskDir`). One
+project can be worked by several teams, and a board that moved with the team
+would split its own history.
 
 One rule covers all four kinds: a name written without a colon — a role's
 `prompt`, its `template`, an `appendPromptFiles` stem, an `execCommands` name —
@@ -145,19 +147,18 @@ A kit is a team directory in miniature, under `~/.clodex/library/kits/<kit>/`:
 plus `templates/`, `prompts/system/`, optionally `prompts/append/` and `exec/`.
 Two ship. `default` builds the team on your own Claude Code — plugins and
 builtin agents left as you have them, but every skill off and the hand's 35
-tools (plan mode among them) off. `clodex` is the aggressive ticket-loop
-profile the stock templates used to impose on every team: 35 tools off, every
-skill off, no plan mode. Both kits seed a fourth role, `scout`, a one-shot
-Haiku 5.5 lookup seat (dispatch spawn, stream io, no CLAUDE.md, tools
-Bash/Read/Write/Grep/Glob, every skill off) that a lead files
-`[agent:task add scout start]` tickets to before writing a spec; its prompt
-makes it edit nothing and write one table, and a fifth, `page-scout`, the same
-seat with Read and Write only (no Bash, Grep or Glob, since its input is a
-saved web page, untrusted content) whose prompt makes it write one file of
-verbatim cells with line provenance, coverage and notices.
-`[agent:team create <name> root:<abs> kit:<name>]` picks one, `kit:?` (or an
-unknown name) lists what is installed, and an unknown name creates nothing at
-all. The create IPC takes the same `kit` field.
+tools (plan mode among them) off. `clodex` is the aggressive ticket-loop profile
+the stock templates used to impose on every team: 35 tools off, every skill off,
+no plan mode. Both kits seed a fourth role, `scout`, a one-shot Haiku 5.5 lookup
+seat (dispatch spawn, stream io, no CLAUDE.md, tools Bash/Read/Write/Grep/Glob,
+every skill off) that a lead files `[agent:task add scout start]` tickets to
+before writing a spec; its prompt makes it edit nothing and write one table. A
+fifth, `page-scout`, is the same seat with Read and Write only (no Bash, Grep or
+Glob, since its input is a saved web page, untrusted content), and its prompt
+makes it write one file of verbatim cells with line provenance, coverage and
+notices. `[agent:team create <name> root:<abs> kit:<name>]` picks one, `kit:?`
+(or an unknown name) lists what is installed, and an unknown name creates
+nothing at all. The create IPC takes the same `kit` field.
 
 The copy source is the kit first and the shared library second, so a kit role may
 name a library-only stem — the `default` kit's reviewer does exactly that, since
