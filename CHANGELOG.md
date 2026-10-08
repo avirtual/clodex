@@ -16,6 +16,7 @@ blocks a release.
 ### Teams
 
 - Rejecting a ticket whose one-shot seat was already archived now says so in the ack and points at resume or reassign; the close-out stamps the ticket before archiving the seat, and a failed archive is reported to the lead instead of only logged.
+- A branchless accept no longer archives a one-shot seat that is still working another ticket; the seat is archived when its last ticket closes.
 
 ### Messaging
 
