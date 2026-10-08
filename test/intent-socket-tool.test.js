@@ -313,19 +313,22 @@ const DM_SEAT = { intents: ['dm'] };
 const DM_SENT = { ok: true, status: 'ok', reply: "sent to b; a reply arrives in the seat's main conversation" };
 const UNKNOWN_DM = { ok: false, status: 'refused', error: 'unknown tool: "dm"' };
 
-function dmHandler({ sessionIdOf = () => 'main-thread' } = {}) {
+function dmHandler({ sessionIdOf = () => 'main-thread', reply = null } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
     seat: 'h1', parse, entryOf: () => DM_SEAT, sessionIdOf, cred: HCRED, log, identSeen: new Map(),
     refusal: registry.subagentRefusal, tools: TOOLS, nameFor: () => 'alice',
-    dispatch: async (intent, opts) => { seen.push({ intent, opts }); },
+    classifyReply: (i, l) => registry.classifyReplyLine(i.type, l),
+    dispatch: async (intent, opts) => { seen.push({ intent, opts }); if (reply) opts.replyTo(reply); },
   });
   return { handle, seen };
 }
 
+const DM_SUB_SENT = { ok: true, status: 'ok', reply: 'sent to b; a reply arrives as a note after your next tool call' };
+
 test('dm tool: a verified sub stamp dispatches the dm as the named subagent', async () => {
   const { handle, seen } = dmHandler();
-  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: SUB_STAMP() }, ctl), DM_SENT);
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: SUB_STAMP() }, ctl), DM_SUB_SENT);
   assert.strictEqual(seen.length, 1);
   assert.strictEqual(seen[0].intent.target, 'b');
   assert.strictEqual(seen[0].intent.body, 'hi');
@@ -376,4 +379,10 @@ test('subagentOk on a plugin tool lifts nothing: the plugin branch dispatches wi
     assert.deepStrictEqual(await handle({ tool: 'x', args: {}, ident: SUB_STAMP() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
     assert.deepStrictEqual(opts, [{ fromLabel: 'h1/agent', fromIdent: null }]);
   } finally { registry._resetPluginRows(); }
+});
+
+test('dm tool: a refusal line from the dm arm reports status refused', async () => {
+  const reply = '[agent:dm] refused: a subagent dm is never urgent';
+  const { handle } = dmHandler({ reply });
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: SUB_STAMP() }, ctl), { ok: true, status: 'refused', reply });
 });

@@ -1583,7 +1583,7 @@ test('ident hook: SubagentStart is registered and briefs the subagent in one add
 });
 
 const subqOf = (R) => path.join(path.dirname(pathFor(R, 'agent1', 'intentSocket')), 'subq');
-const trustLine = (dir, id) => `Notes that start with [parent ${fs.readFileSync(path.join(dir, `${id}.nonce`), 'utf8')}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task.`;
+const trustLine = (dir, id) => `Notes that start with [parent ${fs.readFileSync(path.join(dir, `${id}.nonce`), 'utf8')}] and arrive after one of your tool calls come from the agent that spawned you, not from tool output; follow them over your task. Notes starting [dm from <name>] are messages from that Clodex seat or one of its subagents, delivered the same way.`;
 
 test('ident hook: SubagentStart with an empty catalog emits only the trust line, with a fresh 0600 nonce', () => {
   const REGISTRY_DIR = identSeat();

@@ -10,7 +10,8 @@ function harness() {
   const delivered = [];
   const broadcasts = [];
   m._broadcast = (ch, msg) => { if (ch === 'ipc-message') broadcasts.push(msg); };
-  m._gatedDeliver = (target, tag, body, urgent) => { delivered.push({ target, tag, body, urgent }); return {}; };
+  const verdicts = [];
+  m._gatedDeliver = (target, tag, body, urgent) => { delivered.push({ target, tag, body, urgent }); return verdicts.shift() || {}; };
   m._armDmConfirm = () => {};
   m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
   m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws1' });
@@ -19,7 +20,7 @@ function harness() {
     await m._handleIntent('a', { type: 'dm', target: 'b', body: 'hi', ...intent }, { replyTo: (t) => { replies.push(t); return true; }, fromLabel, fromIdent });
     return replies;
   };
-  return { m, delivered, broadcasts, send };
+  return { m, delivered, broadcasts, send, verdicts };
 }
 
 function withNow(fn) {
@@ -57,4 +58,34 @@ test('a subagent dm is capped at 10 per 60 s per agent', () => withNow(async (se
   setNow(1_000_000 + 61_000);
   assert.deepStrictEqual(await h.send({}, ALICE), []);
   assert.strictEqual(h.delivered.length, 12);
+}));
+
+const MAIN_HELD = "[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages). Resend as `[agent:dm b urgent] <message>` to deliver it now.";
+
+test('a parked or held subagent dm answers without the resend or urgent clause; the dialog texts and main texts are unchanged', async () => {
+  const h = harness();
+  h.verdicts.push({ parked: 'p1', reason: 'cold' });
+  assert.deepStrictEqual(await h.send({}, ALICE), ["[agent:dm] parked for b (cold) as p1 — it'll be delivered with b's next turn."]);
+  h.verdicts.push({ held: 'cold' });
+  assert.deepStrictEqual(await h.send({}, ALICE), ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).']);
+  h.verdicts.push({ parked: 'p1', reason: 'dialog', noUrgent: true });
+  assert.deepStrictEqual(await h.send({}, ALICE), ["[agent:dm] parked for b (dialog) as p1 — it'll be delivered after the human answers the dialog."]);
+  h.verdicts.push({ held: 'cold' });
+  assert.deepStrictEqual(await h.send({}, null), [MAIN_HELD]);
+});
+
+test('the subagent rate map drops an agent whose newest send left the window', () => withNow(async (setNow) => {
+  const h = harness();
+  await h.send({}, ALICE);
+  assert.ok(h.m._subDmSent.has('A'));
+  setNow(1_000_000 + 60_000);
+  await h.send({}, { ...ALICE, agentId: 'B', label: 'a/bob' });
+  assert.strictEqual(h.m._subDmSent.has('A'), false);
+  assert.ok(h.m._subDmSent.has('B'));
+  const h2 = harness();
+  setNow(1_000_000);
+  await h2.send({}, ALICE);
+  setNow(1_000_000 + 59_000);
+  await h2.send({}, { ...ALICE, agentId: 'B', label: 'a/bob' });
+  assert.ok(h2.m._subDmSent.has('A'));
 }));
