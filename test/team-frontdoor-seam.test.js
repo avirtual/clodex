@@ -167,7 +167,7 @@ test('team:names reaches listTeams; team:rolePrompts filters the library', () =>
   const handlers = registerWith({
     listTeams: () => ['shop', 'lab'],
     promptLibrary: { list: () => ([
-      { name: 'clodex-team-custom', body: 'stock' },
+      { name: 'clodex-team-hand', body: 'stock' },
       { name: 'clodex-team-lead', body: 'stock' },       // non-session → excluded
       { name: 'clodex-team-reviewer', body: 'stock' },   // non-session → excluded
       { name: 'house', body: 'no front matter' },        // undeclared → excluded
@@ -181,8 +181,8 @@ test('team:names reaches listTeams; team:rolePrompts filters the library', () =>
   // is empty: this is the New Session join flow's library-only answer (t790).
   assert.deepStrictEqual(handlers['team:rolePrompts']({}), {
     ok: true,
-    prompts: ['clodex-team-custom'],
-    all: ['clodex-team-custom', 'clodex-team-lead', 'clodex-team-reviewer', 'house'],
+    prompts: ['clodex-team-hand'],
+    all: ['clodex-team-hand', 'clodex-team-lead', 'clodex-team-reviewer', 'house'],
     teamOwned: [],
   });
 });

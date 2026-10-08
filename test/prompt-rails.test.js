@@ -21,10 +21,10 @@ test('railOf parses a leading front-matter rail value, null when absent', () => 
 });
 
 test('isAppendRail: session-class stock clodex-team-* qualify; lead/reviewer never do', () => {
-  assert.strictEqual(isAppendRail('clodex-team-hand', 'no front matter'), false, 'hand prompt excluded (ticket seat)');
+  assert.strictEqual(isAppendRail('clodex-team-hand', 'no front matter'), true, 'stock session delta qualifies by name');
+  assert.strictEqual(isAppendRail('clodex-team-custom', ''), true);
   assert.strictEqual(isAppendRail('clodex-team-scout', ''), false, 'scout prompt excluded (ticket seat)');
   assert.strictEqual(isAppendRail('clodex-team-page-scout', ''), false, 'page-scout prompt excluded (ticket seat)');
-  assert.strictEqual(isAppendRail('clodex-team-custom', ''), true);
   // The non-session-class stock prompts are excluded even though they match the
   // stock-name rule — the join picker is session-class only.
   assert.strictEqual(isAppendRail('clodex-team-lead', ''), false, 'lead prompt excluded (there is one lead)');
@@ -41,20 +41,19 @@ test('isAppendRail: session-class stock clodex-team-* qualify; lead/reviewer nev
 
 test('appendRailPrompts filters { name, body } rows to the picker offering', () => {
   const prompts = [
-    { name: 'clodex-team-custom', body: 'stock delta' },     // session-class stock → in
-    { name: 'clodex-team-hand', body: 'stock delta' },
-    { name: 'clodex-team-scout', body: 'stock delta' },
-    { name: 'clodex-team-page-scout', body: 'stock delta' },
+    { name: 'clodex-team-hand', body: 'stock delta' },       // session-class stock → in
     { name: 'clodex-team-lead', body: 'stock delta' },       // non-session stock → OUT
     { name: 'clodex-team-reviewer', body: 'stock delta' },   // non-session stock → OUT
     { name: 'clodex-team-reviewer-shell', body: 'stock delta' }, // t673, same → OUT
+    { name: 'clodex-team-scout', body: 'stock delta' },
+    { name: 'clodex-team-page-scout', body: 'stock delta' },
     { name: 'reviewer-plus', body: '---\nrail: append\n---\nx' }, // declared → in
     { name: 'full-persona', body: '---\nrail: replace\n---\nx' }, // excluded
     { name: 'legacy', body: 'no front matter' },             // excluded
   ];
   assert.deepStrictEqual(
     appendRailPrompts(prompts),
-    ['clodex-team-custom', 'reviewer-plus'],
+    ['clodex-team-hand', 'reviewer-plus'],
   );
   assert.deepStrictEqual(appendRailPrompts([]), []);
   assert.deepStrictEqual(appendRailPrompts(null), []);
