@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Messaging
+
+- The Clodex MCP `dm` tool is for subagents only: a main agent's call is refused with a pointer to the `[agent:dm <seat>]` intent, which dispatches in the same request without an extra API round trip. Subagent dms are unchanged.
+
 ### Wire
 
 - The session report panel shows how many of a session's requests were side-calls (title, probe, classifier, auxiliary) beside the request total, read from wirescope's report version 5; an older report renders as before.

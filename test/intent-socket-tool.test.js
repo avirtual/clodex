@@ -310,7 +310,6 @@ test('a verified sub stamp on a plugin tool call: fromLabel stays the shared tag
 }));
 
 const DM_SEAT = { intents: ['dm'] };
-const DM_SENT = { ok: true, status: 'ok', reply: "sent to b; a reply arrives in the seat's main conversation" };
 const UNKNOWN_DM = { ok: false, status: 'refused', error: 'unknown tool: "dm"' };
 
 function dmHandler({ sessionIdOf = () => 'main-thread', reply = null } = {}) {
@@ -352,11 +351,10 @@ test('dm tool: a forged, replayed, missing or foreign-session stamp answers unkn
   warns.length = 0;
 });
 
-test('dm tool: a main stamp dispatches a plain seat dm', async () => {
+test('dm tool: a main stamp is refused with the prose-intent redirect', async () => {
   const { handle, seen } = dmHandler();
-  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), DM_SENT);
-  const { replyTo } = seen[0].opts;
-  assert.deepStrictEqual(seen[0].opts, { replyTo, fromLabel: null, fromIdent: null });
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: false, status: 'refused', error: 'dm: subagents only — a main agent writes the [agent:dm <seat>] intent in its reply instead' });
+  assert.strictEqual(seen.length, 0);
 });
 
 test('dm tool: a decorated intent line in the body is a foreign intent and nothing is dispatched', async () => {
