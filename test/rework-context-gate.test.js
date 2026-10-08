@@ -231,10 +231,10 @@ function mkFixture(world) {
 // `tok`/`ephemeral` are the two inputs the gate reads; `standing` drops the
 // persistence record's `ephemeral` flag, which is what a lead's own long-lived
 // seat looks like.
-function ready(f, world, { tok = OVER, standing = false, noCtx = false, noTree = false } = {}) {
+function ready(f, world, { tok = OVER, model = null, standing = false, noCtx = false, noTree = false } = {}) {
   f.seat('lead', world.repo);
   f.persistence.upsert({ name: 'lead', ephemeral: false });
-  f.seat('team-hand-1', world.treePath, noCtx ? null : { tok, pct: 50, size: 1000000 });
+  f.seat('team-hand-1', world.treePath, noCtx ? null : { tok, pct: 50, size: 1000000, ...(model ? { model } : {}) });
   f.persistence.upsert({
     name: 'team-hand-1',
     ...(standing ? { ephemeral: false } : { ephemeral: true }),
@@ -543,6 +543,33 @@ test('an operator threshold below the shipped one replaces a seat the default wo
     + 'a memoized threshold would ignore an edit until a restart');
   assert.match(f.injected.find((x) => x.includes('reopened (rework)')), /past the 80k compact threshold/,
     'and reports the threshold that actually applied, not the shipped one');
+});
+
+test('a Haiku 5.5 seat at 90k is replaced on rework: its row nudges at 75k, under the 150k default', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  ready(f, world, { tok: 90_000, model: 'claude-haiku-5-5[1m]' });
+
+  leadReject(f);
+  await settle();
+
+  assert.strictEqual(f.one().assignee, FRESH, 'the ticket moved to a fresh seat');
+  assert.deepStrictEqual(f.archived, ['team-hand-1'], 'and the heavy Haiku seat was archived');
+});
+
+test('a Fable 5.1 seat at 180k keeps its rework: its row nudges at 200k, over the 150k default', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  ready(f, world, { tok: 180_000, model: 'claude-fable-5-1[1m]' });
+
+  leadReject(f);
+  await settle();
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject landed');
+  assert.strictEqual(t.assignee, 'team-hand-1', 'the ticket stays on the seat that has it');
+  assert.deepStrictEqual(f.archived, [], 'nothing was archived');
+  assert.deepStrictEqual(f.created, [], 'and no fresh seat was spawned');
 });
 
 // ── (e) the loop's reject path ─────────────────────────────────────────────

@@ -16,6 +16,7 @@ blocks a release.
 ### Sessions
 
 - A Haiku 5.5 seat is warned at 75k context tokens and told to stop and hand in its work at 100k, where that model's price rises 5x; the warning reaches the loop's ephemeral seats, which the compact nudges deliberately skip.
+- The rework gate that swaps a tired ticket seat for a fresh one now reads the seat's model, so a Fable seat is swapped at its 200k line and a Haiku 5.5 seat at its 75k line; it used to apply the 150k default to every model.
 
 ### Teams
 

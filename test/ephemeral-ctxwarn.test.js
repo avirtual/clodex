@@ -215,6 +215,14 @@ test('an EPHEMERAL haiku 5.5 seat past 100k DOES get the stop warning', async (t
   assert.ok(body.includes('Stop now'), body);
 });
 
+test('the ctx poll records the raw model id on the session, which the rework gate keys its threshold on', async (t) => {
+  const h = harness(t, { ephemeral: true });
+  h.writeCtx(90_000, 'claude-haiku-5-5[1m]');
+  await h.spawn();
+  assert.strictEqual(h.session().ctxInfo.model, 'claude-haiku-5-5[1m]');
+  assert.strictEqual(h.session().ctxInfo.tok, 90_000);
+});
+
 test('an EPHEMERAL fable 5.1 seat at 260k still gets no ctxwarn file', async (t) => {
   const h = harness(t, { ephemeral: true });
   h.writeCtx(260_000, 'claude-fable-5-1');
