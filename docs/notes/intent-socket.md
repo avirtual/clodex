@@ -10,13 +10,19 @@ A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this ca
 
 A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. A plugin tool row ignores identity fields and always runs as a subagent call: the browser pane's `release`/`close`/`--confirm` refusals rely on main's MCP calls being subagent-shaped. A core tool row (`term_exec`) has no subagent policy, so the verified one-shot `main.` stamp decides; a failed stamp answers the catalog's `unknown tool` text rather than `run`'s subagent refusal, so a subagent cannot learn from the refusal that the tool exists. The grant check runs before identity, so an ungranted call consumes no nonce.
 
+With no captured acknowledgement, a verified subagent's dm answers that the reply arrives as a note after its next tool call (its note queue), not in the seat's main conversation.
+
 ## isMainThread
 
 Codex sets `CODEX_THREAD_ID` (a bare uuid) on the main thread's shell too, while a Codex seat's `sessionId` is the rollout basename `rollout-<ts>-<uuid>`; so the main agent is an `agentId` equal to the `sessionId` or to its `-<uuid>` tail.
 
-## seatOfAgentTag
+## splitAgentTarget
 
-A local `<seat>/<x>` name (a `/` past index 0, no `@`) folds to the seat as a sender or target in `_isDmReachable` and the dm arm, so a reply to a subagent's dm lands in the seat's main conversation until replies route into its note queue. `agent` stays a reserved suffix even though `SUBQ_NAME_RE` admits it as a name: `<seat>/agent` is the shared plugin tag, so it must never resolve to one subagent.
+`agent` is a reserved suffix even though `SUBQ_NAME_RE` admits it as a name: `<seat>/agent` is the shared plugin tag, so it must always be the seat, and a parent that names a subagent `agent` reaches the seat. The dm arm never calls `_gatedDeliver` for a live subagent: a park would deliver to the seat's main conversation, the wrong reader.
+
+## subagentTrustLine
+
+The `[dm from <name>]` sentence rides the trust line, not the `dm` tool brief: the brief is per-tool and absent on a seat without `dm`, while any subagent can receive a dm reply.
 
 ## callerIsSubagent
 
@@ -30,7 +36,7 @@ A verified sub's label rides `fromIdent`, never `fromLabel`: `_dispatchPluginInt
 
 ## subagentLabel
 
-The fallback is `<seat>/agent-<id8>`, never `<seat>/agent`: the shared tag names every subagent of the seat, so a recipient could not tell callers apart. `subq/names/` is writable by the subagent's own shell, so subq.js `nameOfSubagent` re-checks each entry against `SUBQ_NAME_RE` on read; a planted `@`, `[` or newline never reaches a label.
+The fallback is `<seat>/agent-<id8>`, never `<seat>/agent`: the shared tag names every subagent of the seat, so a recipient could not tell callers apart. `subq/names/` is writable by the subagent's own shell, so subq.js `nameOfSubagent` re-checks each entry against `SUBQ_NAME_RE` on read; a planted `@`, `[` or newline never reaches a label. `nameOfSubagent` also drops a reserved `agent`/`agent-…` name, so a label can never collide with the shared tag or an unnamed sibling's fallback.
 
 ## identToken
 
