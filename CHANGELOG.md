@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Conversation mode
+
+- A dm card in conversation mode has one layout — head with the target and the time, body wrapped below — whether the message is short or long and whether it was sent mid-turn or at the end of the turn; previously a short dm was clipped onto the head line and the target name could be cut to "Cod…".
+
 ### Wire
 
 - The session report panel shows how many of a session's requests were side-calls (title, probe, classifier, auxiliary) beside the request total, read from wirescope's report version 5; an older report renders as before.

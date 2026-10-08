@@ -1572,7 +1572,7 @@ test('dm card: a 20-char and a 300-char single-line body render the same shape',
   assert.deepStrictEqual(findCls(sub, 'intent-card-inline'), []);
 });
 
-test('dm card: the mid-turn assistant row and the turn-end-prose row give the dm card the same head classes and a tr-time', () => {
+test('dm card: a mid-turn dm and the turn\'s closing dm get the same head classes and a tr-time', () => {
   const t1 = new Date(2026, 9, 8, 9, 5).getTime();
   const t2 = new Date(2026, 9, 8, 10, 42).getTime();
   const m = mount({ mode: 'conversation' });
@@ -1584,8 +1584,7 @@ test('dm card: the mid-turn assistant row and the turn-end-prose row give the dm
     ended('e1', 1, 1000),
   ]);
   const mid = findCls(rowIn(m, 'a0'), 'intent-card')[0];
-  const [endRow] = holding(turnOf(m, 'i1'), 'end').filter((n) => n.className === END);
-  const fin = findCls(endRow, 'intent-card')[0];
+  const fin = findCls(rowIn(m, 'a1'), 'intent-card')[0];
   assert.deepStrictEqual(headCls(mid), headCls(fin));
   assert.deepStrictEqual(headCls(mid), ['intent-card-glyph', 'intent-card-label', 'intent-card-target', 'tr-time']);
   assert.strictEqual(mid.childNodes[0].childNodes[3].textContent, '09:05');

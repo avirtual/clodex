@@ -1328,6 +1328,8 @@ Own state + DOM, `init*(deps)`:
   by record id and replaced only when their summary changes. No innerHTML.
   Paints intent segments as cards in an `.intent-stack` and a runtime reply as
   a verb-glyph row, attached (`↳`) when it directly follows its card.
+  A dm or sub body is never inline on the head; every card head ends with the
+  record time (inert cards excepted).
 - **lib/voice-submit.js** — the DOM-free trigger-phrase matcher (`findSubmit`,
   `shouldFire`) and the recorder-indicator predicates (`recordingObserved`,
   `processingObserved`) the composer and pty voice paths share; pinned by
