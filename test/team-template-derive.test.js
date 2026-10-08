@@ -51,11 +51,11 @@ test('deriveModelTemplate strips the listing decoration, not just id', () => {
   assert.deepStrictEqual(out.env, { A: '1' }, 'a real template key is untouched');
 });
 
-test('t890: the three aliases the operator named resolve to their 1M ids, haiku does not', () => {
+test('t890: the four aliases resolve to their 1M ids', () => {
   assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5-5[1m]');
   assert.strictEqual(resolveModelId('claude', 'sonnet'), 'claude-sonnet-5-5[1m]');
   assert.strictEqual(resolveModelId('claude', 'fable'), 'claude-fable-5-1[1m]');
-  assert.strictEqual(resolveModelId('claude', 'haiku'), 'claude-haiku-4-5-20251001');
+  assert.strictEqual(resolveModelId('claude', 'haiku'), 'claude-haiku-5-5[1m]');
 });
 
 test('t890: a plain id and a trailing-bracketed id both pass through', () => {

@@ -727,7 +727,7 @@ role. `cwd:` is relative to the team root, as everywhere else. `model:` derives
 `--model` and points the role at it — and since create and role-add already gave
 the role the team's own copy, that base is normally the team's own file rather
 than the library one, so a model change keeps whatever else was edited into it.
-The aliases other than `haiku` resolve to the 1M-context variants, and a bracketed id still cannot
+The aliases resolve to the 1M-context variants, and a bracketed id still cannot
 be written in this kv (the arg list ends at the first `]`), so use the alias —
 `opus`, `sonnet`, `haiku`, `fable`.
 

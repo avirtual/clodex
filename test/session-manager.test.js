@@ -11246,7 +11246,7 @@ test('t1076: model: on a CODEX template takes a model id verbatim and refuses an
 test('t767: role-add worker model:haiku with no template derives from the shipped clodex-team-hand', () => {
   const f = mkTeamModel();
   f.m._handleTeam(f.seat, { type: 'team', sub: 'role-add', name: 'worker', model: 'haiku', body: 'does things' });
-  assert.deepStrictEqual(f.readTpl('worker').extraArgs, ['--model', 'claude-haiku-4-5-20251001']);
+  assert.deepStrictEqual(f.readTpl('worker').extraArgs, ['--model', 'claude-haiku-5-5[1m]']);
   assert.strictEqual(f.readTpl('worker').name, 'worker');
   assert.strictEqual(f.tm.loadManifest('team').roles.worker.template, 'worker');
 });
