@@ -20019,42 +20019,44 @@ test('task assign to a spawn role CLEARS a worktree the ticket inherited', async
 // by construction, and no cleanup verb reaches it. ARCHIVED, never destroyed —
 // there is no tree to reclaim and its work may be uncommitted in the shared
 // checkout.
-test('task accept: a spawn seat is ARCHIVED, and the reply says so', async () => {
+test('task done: a spawn seat on a branchless ticket is ARCHIVED at done, and a later accept changes nothing', async () => {
   const { root, repo } = mkGitRepo();
   const f = mkTicketWt(repo, { dispatch: 'spawn' });
   f.m.create = async (...args) => { f.seat(args[0], args[2]); return { name: args[0] }; };
   f.m._injectText = () => {};
   const archived = [];
   const destroyed = [];
+  const doneSaid = [];
   f.m.archive = async (n) => { archived.push(n); f.m.sessions.delete(n); };
   f.m.destroy = async (n) => { destroyed.push(n); return { ok: true }; };
   f.seat('lead');
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'job one' });
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
   await until(() => f.m.sessions.has('team-hand-1'));
-  f.m._handleTask(f.m.sessions.get('team-hand-1'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' });
-  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
-
-  assert.strictEqual(f.one('t1').state, 'done', 'ENTER: the ticket is done, so accept reaches its arms');
-  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: and the seat is still LIVE, or the archive is vacuous');
+  assert.ok(f.m.sessions.has('team-hand-1'), 'ENTER: the seat is LIVE before done, or the archive is vacuous');
   // ENTER: the arm tells a spawn seat from a standing one by THIS key. A fixture
   // whose persistence stub dropped it would send this test down the standing arm
   // and report a teardown that never ran — which is exactly how it first failed.
   assert.strictEqual(f.record('team-hand-1').ephemeral, true,
-    'ENTER: the seat record carries `ephemeral`, which is what accept reads');
+    'ENTER: the seat record carries `ephemeral`, which is what done reads');
+  f.m._taskDone(f.m.sessions.get('team-hand-1'), f.team,
+    { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped' }, (msg) => doneSaid.push(msg));
+  await until(() => f.one('t1').closedOut);
+
+  assert.strictEqual(f.one('t1').state, 'done');
+  assert.deepStrictEqual(archived, ['team-hand-1'],
+    'the one-shot seat is archived at done — nothing will ever dispatch to it again');
+  assert.match(doneSaid.join('\n'), /team-hand-1 was a one-shot seat and was ARCHIVED/, 'the reply names what happened to the seat');
 
   const said = [];
   await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
     { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => said.push(msg));
 
-  assert.deepStrictEqual(archived, ['team-hand-1'],
-    'the one-shot seat is archived — nothing will ever dispatch to it again');
+  assert.deepStrictEqual(archived, ['team-hand-1'], 'accept does not archive a second time');
   assert.deepStrictEqual(destroyed, [],
     'and NOT destroyed: no tree is reclaimed, and its work may be uncommitted in the shared checkout');
   assert.strictEqual(said.length, 1, 'ENTER: exactly one reply to assert on');
-  assert.match(said[0], /ARCHIVED/, 'the reply names what happened to the seat');
-  assert.ok(!/nothing was torn down/.test(said[0]),
-    'and must NOT claim nothing was torn down — a reply that lies about an archive is the class of bug this fixes');
+  assert.match(said[0], /was already accepted .* nothing was changed/);
   assert.ok(f.one('t1').closedOut, 'terminal: there is no branch to merge and no second accept to invite');
   fsReal.rmSync(root, { recursive: true, force: true });
 });
