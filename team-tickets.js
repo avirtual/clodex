@@ -4446,8 +4446,8 @@ function createTicketMethods(deps, shared) {
           const why = String((e && e.message) || e).split('\n')[0];
           log.warn('intent', `task done ${ticket.id}: closing out ${facts.seatName} failed: ${why}`);
           const line = `closing out ${facts.seatName} failed (${why}) — [agent:task accept ${ticket.id}] retries`;
-          reply(`${head}; ${line}${nextSuffix}`);
           if (!isLead) this._gatedDeliver(lead, 'ticket-loop', `[ticket ${ticket.id}] ${line}`, false, `[ticket ${ticket.id} close-out failed]`);
+          reply(`${head}; ${line}${nextSuffix}`);
         };
         return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).then((r) => {
           if (r.archiveError) return failed(r.archiveError);
@@ -6017,17 +6017,21 @@ function createTicketMethods(deps, shared) {
         });
         let archived = false;
         let archiveError = null;
-        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+        const busy = seatName ? this._openTicketsFor(team, seatName, ticket.id) : [];
+        const held = busy.length > 0 ? busy[0].id : null;
+        if (!held && ephemeralSeat && seatName && this.sessions.has(seatName)) {
           try { await this.archive(seatName); archived = true; } catch (e) { archiveError = e; }
         }
         this._stampCloseOutError(team, ticket, archiveError);
-        const msg = archived
+        const msg = held
+          ? `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was removed; ${seatName} was left in place because it holds ${held}`
+          : archived
           ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
           : archiveError
             ? `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was removed; archiving the one-shot seat ${seatName} failed (${String(archiveError.message || archiveError).split('\n')[0]}) — [agent:task accept ${ticket.id}] retries`
             : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`;
         log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
-        return { archived, archiveError, text: dropped ? `${msg} ${dropped}` : msg };
+        return { archived, archiveError, held, text: dropped ? `${msg} ${dropped}` : msg };
       } finally {
         this._closingOut.delete(key);
       }
