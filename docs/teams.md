@@ -349,7 +349,7 @@ has to spend a read on. A red verify run is measured a second
 time before it rejects — a green re-run proceeds to review and the record names
 the first run, while a second red rejects carrying both runs' failing names.
 A rework is never handed to a ticket seat whose context is already past the
-compact threshold (150k tokens by default, 200k for Fable 5.1): that seat is archived, a fresh one is
+compact threshold of its model row, resolved from the model id in the seat's ctx file (Fable 5.1 200k, Haiku 5.5 75k, 150k by default): that seat is archived, a fresh one is
 spawned onto the same branch and the same worktree, the must-fixes are delivered
 there, and the reject reply names both seats.
 
