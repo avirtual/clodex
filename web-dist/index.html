@@ -8988,7 +8988,6 @@ body.web-frontend #sidebar-header {
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
-  flex-shrink: 1;
   min-width: 0;
   max-width: 40%;
 }
@@ -44569,7 +44568,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           };
         });
       }
-      var OFFERABLE_STOCK_ROLE_KEYS = ["hand", "reviewer"];
+      var OFFERABLE_STOCK_ROLE_KEYS = ["hand", "reviewer", "scout", "page-scout"];
       function absentStockRoles(manifest) {
         const roles = manifest && manifest.roles || {};
         return OFFERABLE_STOCK_ROLE_KEYS.filter((k) => !roles[k]);
@@ -44580,6 +44579,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         if (key === "hand") {
           return "Not on this team. Nothing implements the specs the lead writes \u2014 dispatched work has no seat to land on. Add it back to get an implementer.";
+        }
+        if (key === "scout") {
+          return "Not on this team. The lead verifies coordinates by hand instead of filing a cheap lookup ticket. Add it to get a Haiku scout.";
+        }
+        if (key === "page-scout") {
+          return "Not on this team. A saved web page has no seat to project it. Add it to get a Read-and-Write-only page scout.";
         }
         return "Not on this team.";
       }
