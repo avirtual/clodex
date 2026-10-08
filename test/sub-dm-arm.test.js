@@ -2,11 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { mk } = require('./lib/session-fixtures');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ALICE = { agentId: 'A', agentType: 'gp', label: 'a/alice' };
 
-function harness() {
-  const m = mk();
+function harness(extra = {}) {
+  const m = mk(extra);
   const delivered = [];
   const broadcasts = [];
   m._broadcast = (ch, msg) => { if (ch === 'ipc-message') broadcasts.push(msg); };
@@ -91,7 +92,7 @@ test('the subagent rate map drops an agent whose newest send left the window', (
 }));
 
 test('a subagent dm to <gone>/<name> reports NOT delivered first, so it classifies as error', async () => {
-  const h = harness();
+  const h = harness({ registry: { getPeer: async () => null } });
   const replies = await h.send({ target: 'gone/alice' }, ALICE);
   assert.match(replies[0], /^\[agent:dm\] NOT delivered: no agent named "gone"/);
   assert.strictEqual(require('../intent-registry').classifyReplyLine('dm', replies[0]), 'error');
@@ -99,7 +100,7 @@ test('a subagent dm to <gone>/<name> reports NOT delivered first, so it classifi
 });
 
 test('on the fallback the outcome line comes first and the routed notice after it', async () => {
-  const h = harness();
+  const h = harness({ REGISTRY_DIR: mkTmpRoot('clodex-sm-'), path: require('node:path'), pathFor: require('../clodex-paths').pathFor });
   h.verdicts.push({ held: 'cold' });
   assert.deepStrictEqual(await h.send({ target: 'b/alice' }, ALICE), ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).', '[agent:dm] subagent alice is not running; routed to b']);
 });
