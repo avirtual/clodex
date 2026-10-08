@@ -580,7 +580,7 @@ function roleSummaries(manifest, sessions, { lead, activity, now } = {}) {
 // reserved key; `hand` is not reserved at all and can simply be removed like any
 // other role — the team then silently has no implementer, with no symptom until
 // a dispatch has nowhere to go.
-const OFFERABLE_STOCK_ROLE_KEYS = ['hand', 'reviewer'];
+const OFFERABLE_STOCK_ROLE_KEYS = ['hand', 'reviewer', 'scout', 'page-scout'];
 function absentStockRoles(manifest) {
   const roles = (manifest && manifest.roles) || {};
   return OFFERABLE_STOCK_ROLE_KEYS.filter((k) => !roles[k]);
@@ -600,6 +600,12 @@ function absentStockNote(key) {
   }
   if (key === 'hand') {
     return 'Not on this team. Nothing implements the specs the lead writes — dispatched work has no seat to land on. Add it back to get an implementer.';
+  }
+  if (key === 'scout') {
+    return 'Not on this team. The lead verifies coordinates by hand instead of filing a cheap lookup ticket. Add it to get a Haiku scout.';
+  }
+  if (key === 'page-scout') {
+    return 'Not on this team. A saved web page has no seat to project it. Add it to get a Read-and-Write-only page scout.';
   }
   return 'Not on this team.';
 }

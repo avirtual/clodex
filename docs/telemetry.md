@@ -219,14 +219,14 @@ popovers the owner will answer.
   routing version are dropped, so one model does not fragment across builds.
   The ctx tick writes/removes `run/<name>/ctxwarn`; the read-only drain hook
   re-delivers every submit while over (recurrence counters habituation).
-  The tick SKIPS the write for a seat whose persistence record is
-  `ephemeral` — the decision function stays pure and still calls the context
-  heavy; only the write site acts on it. The REMOVE arm still runs for a
-  suppressed seat, so a ctxwarn written before it was suppressed is cleared
-  rather than stranded to re-deliver every submit forever (pinned by
-  `test/ephemeral-ctxwarn.test.js`); and the record is read once per seat once it
-  answers — memoized on the session at the first over-threshold tick, since `get()`
-  re-parses the whole of sessions.json.
+  The tick SKIPS the write for a seat whose persistence record is `ephemeral` —
+  the decision function stays pure and still calls the context heavy; only the
+  write site acts on it. The REMOVE arm still runs for a suppressed seat, so a
+  ctxwarn written before it was suppressed is cleared rather than stranded to
+  re-deliver every submit forever (pinned by `test/ephemeral-ctxwarn.test.js`);
+  and the record is read once per seat once it answers — memoized on the session
+  at the first over-threshold tick, since `get()` re-parses the whole of
+  sessions.json.
   The Haiku 5.5 row (75k/100k) is a `stop` row: its wording tells the seat to
   finish and close its ticket rather than compact (that model is priced 5x past
   100k), and it reaches ephemeral seats, which the compact nudges do not.

@@ -120,3 +120,37 @@ test('t754: an ABSOLUTE cwd: is refused — an agent cannot point a seat at anot
     `expected the absolute-cwd refusal, got: ${b.last()}`);
   assert.strictEqual(b.bytes(), before, 'nothing written');
 });
+
+test('t1747: role-add scout with an empty body takes the stock definition', (t) => {
+  const { STOCK_ROLE_DEFS } = require('../team-manifest');
+  const b = mkBox(t);
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'scout', body: '' });
+  assert.deepStrictEqual(b.roles().scout, { ...STOCK_ROLE_DEFS.scout, cwd: null, account: null });
+  assert.ok(/\(stock definition\)$/.test(b.last()), `got: ${b.last()}`);
+});
+
+test('t1747: role-add scout with a brief is NOT substituted', (t) => {
+  const b = mkBox(t);
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'scout', body: 'my brief' });
+  assert.strictEqual(b.roles().scout.brief, 'my brief');
+  assert.strictEqual(b.roles().scout.prompt, null);
+  assert.ok(!/stock definition/.test(b.last()), `got: ${b.last()}`);
+});
+
+test('t1747: role-add scout dispatch:worktree with an empty body is NOT substituted', (t) => {
+  const b = mkBox(t);
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'scout', dispatch: 'worktree', body: '' });
+  assert.strictEqual(b.roles().scout.dispatch, 'worktree');
+  assert.strictEqual(b.roles().scout.prompt, null);
+  assert.strictEqual(b.roles().scout.template, null);
+  assert.ok(!/stock definition/.test(b.last()), `got: ${b.last()}`);
+});
+
+test('t1747: role-add builder with an empty body keeps the all-null def', (t) => {
+  const b = mkBox(t);
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'role-add', name: 'builder', body: '' });
+  assert.strictEqual(b.roles().builder.prompt, null);
+  assert.strictEqual(b.roles().builder.template, null);
+  assert.strictEqual(b.roles().builder.brief, null);
+  assert.ok(/role "builder" added/.test(b.last()) && !/stock definition/.test(b.last()), `got: ${b.last()}`);
+});

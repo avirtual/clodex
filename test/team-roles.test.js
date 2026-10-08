@@ -715,16 +715,16 @@ test('absentStockRoles: every absent STOCK role is offered, `lead` never', () =>
   // missing role is how this orphan state stayed invisible — for `reviewer` until
   // a ticket reached the review step, for `hand` until a dispatch had nowhere to
   // land.
-  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {} } }), ['reviewer']);
-  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, reviewer: {} } }), ['hand'],
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {} } }), ['reviewer', 'scout', 'page-scout']);
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, reviewer: {} } }), ['hand', 'scout', 'page-scout'],
     'a removed hand is offered too — it is not reserved, so nothing else guards its absence');
-  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {}, reviewer: {} } }), [],
-    'a team WITH both gets no offer cards — it already has real rows');
+  assert.deepStrictEqual(absentStockRoles({ roles: { lead: {}, hand: {}, reviewer: {}, scout: {}, 'page-scout': {} } }), [],
+    'a team WITH all four gets no offer cards — it already has real rows');
   // A lead-less manifest never reaches the popover (loadManifest throws first),
   // but the helper must not invent a `lead` offer for one: the lead decision is
   // its own block, and Enable would write a def where a POINTER is what is missing.
-  assert.deepStrictEqual(absentStockRoles({ roles: {} }), ['hand', 'reviewer']);
-  assert.deepStrictEqual(absentStockRoles(null), ['hand', 'reviewer'], 'no manifest → no throw');
+  assert.deepStrictEqual(absentStockRoles({ roles: {} }), ['hand', 'reviewer', 'scout', 'page-scout']);
+  assert.deepStrictEqual(absentStockRoles(null), ['hand', 'reviewer', 'scout', 'page-scout'], 'no manifest → no throw');
   assert.strictEqual(OFFERABLE_STOCK_ROLE_KEYS.includes('lead'), false);
 });
 
@@ -735,7 +735,7 @@ test('offer cards are NOT rows in teamRoleRows — the schema-pinned model stays
   const manifest = { roles: { lead: {}, hand: {} } };
   assert.deepStrictEqual(teamRoleRows(manifest).map((r) => r.key), ['lead', 'hand'],
     'the row model still describes exactly what is on disk');
-  assert.deepStrictEqual(absentStockRoles(manifest), ['reviewer'],
+  assert.deepStrictEqual(absentStockRoles(manifest), ['reviewer', 'scout', 'page-scout'],
     'and the absent one is reported separately');
 });
 
@@ -747,6 +747,8 @@ test('reservedRemovalWarning / absentStockNote say what is LOST, not merely what
   // The hand's consequence is different and must READ differently: nothing
   // implements the specs the lead writes.
   assert.match(absentStockNote('hand'), /Nothing implements/);
+  assert.match(absentStockNote('scout'), /verifies coordinates by hand.*Haiku scout/);
+  assert.match(absentStockNote('page-scout'), /no seat to project it.*Read-and-Write-only page scout/);
   // An unknown key still gets a safe, non-empty line rather than undefined text.
   assert.ok(reservedRemovalWarning('mystery').length > 0);
   assert.ok(absentStockNote('mystery').length > 0);
@@ -1792,9 +1794,9 @@ test('the stock page-scout role is a spawn-dispatched Haiku seat with Read and W
     dispatch: 'spawn',
   });
   const tpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-page-scout.json'), 'utf-8'));
-  assert.deepStrictEqual(tpl.tools, ['Read', 'Write']);
-  for (const t of ['Bash', 'Grep', 'Glob']) assert.ok(tpl.disabledTools.includes(t), t);
   assert.strictEqual(tpl.extraArgs[tpl.extraArgs.indexOf('--model') + 1], 'claude-haiku-5-5[1m]');
+  const scoutTpl = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'templates', 'clodex-team-scout.json'), 'utf-8'));
+  assert.deepStrictEqual(tpl, { ...scoutTpl, name: 'clodex-team-page-scout', systemPromptFile: 'clodex-team-page-scout', tools: ['Read', 'Write'], disabledTools: [...scoutTpl.disabledTools, 'Bash', 'Grep', 'Glob'] });
 });
 
 test('the three shipped page-scout prompts are byte-identical and open with the wirescope directive after two blank lines', () => {

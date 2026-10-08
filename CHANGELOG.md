@@ -19,6 +19,7 @@ blocks a release.
 - A branchless accept no longer archives a one-shot seat that is still working another ticket; the seat is archived when its last ticket closes.
 - A `scout` role ships with both kits and the stock role set: a one-shot Haiku 5.5 lookup seat that verifies file:line coordinates, call sites and test pins at a named commit and writes one table, for a lead to run before it writes a spec. An existing team adds it with `[agent:team role-add scout prompt:clodex-team-scout template:clodex-team-scout dispatch:spawn] <brief>`.
 - A page scout ships as a stock role: `page-scout`, a Haiku 5.5 seat with Read and Write only (no Bash, Grep or Glob) that projects one saved web page onto a ticket's question and writes one file of verbatim cells with line provenance, coverage and notices. Both kits seed it; an existing team adds it with `[agent:team role-add page-scout prompt:clodex-team-page-scout template:clodex-team-page-scout dispatch:spawn] <brief>`.
+- `[agent:team role-add scout]` (or any stock role name) with nothing after it now takes the stock definition, as the Roles popover already did; the popover offers scout and page-scout cards when a team lacks them.
 
 ### Messaging
 
