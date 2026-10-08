@@ -299,8 +299,11 @@ labels); every ⚠ element with its number (above 30, counts per category plus t
 first 10); and a `--main`/`--filter=`/`--page=` hint, where `--filter=` names a
 word shared by at least two headings. `--main` picks the column holding the page's
 articles (on X: the timeline, not the Trending / Who to follow sidebar). `--attach`
-forces the `@`, `--path-only` drops it. A screenshot attaches unless `--path-only`
-is given. A Codex seat gets its "read it with your Read tool" line either way.
+forces the `@`, `--path-only` drops it. With `--path-only` the file is written as
+`p-<id>.txt`, `<id>` being the first 16 hex of the content's sha256, kept seven
+days and outside the 50-file prune, so a page-scout ticket can name a snapshot
+that will still be there and still be the same bytes. A screenshot attaches
+unless `--path-only` is given.
 
 The read root is normally the page's main column. When a modal dialog is open —
 `[role=dialog]`/`[role=alertdialog]`/`dialog[open]`/`[aria-modal=true]`, proven by
@@ -395,7 +398,7 @@ The tool is `mcp-tool.js` `TOOL`: its arguments `{verb, service, bracket, body}`
   sites/<hash>.md       site notes, one file per origin (the origin on its first line)
   chromium/             the browser's own profile, separate from Clodex's
     Partitions/<service>/   cookies, storage and cache for one service
-$TMPDIR/clodex-browser-pane/<seat>/   read files, ephemeral
+$TMPDIR/clodex-browser-pane/<seat>/   read files (r-NNNN.txt, 50 newest, 24 h) and identified snapshots (p-<id>.txt, 7 days)
 ```
 
 Logins persist across restarts: session cookies are re-saved with a 30-day

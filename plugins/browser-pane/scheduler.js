@@ -351,7 +351,7 @@ function createScheduler({
     rememberFeed(memo, out.feedPosts);
     if (raw) seatState(handle.name).hasRead[service] = true;
     if (out.pdf) return replies.reply(out.line);
-    const file = replies.writeReplyFile(handle.name, out.content);
+    const file = replies.writeReplyFile(handle.name, out.content, { snapshot: cmd.attach === false });
     const budget = attachBudget(storage.get(), handle.name);
     const attach = cmd.attach === true || (cmd.attach !== false && out.tokens <= budget);
     return replies.readReply(service, out, file, handle.type, { attach, budget: cmd.attach === false ? null : budget });

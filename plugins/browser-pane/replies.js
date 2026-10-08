@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -17,6 +18,8 @@ const SEAT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const KEEP_FILES = 50;
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FILE_RE = /^[rs]-(\d+)\.(txt|jpg)$/;
+const SNAP_RE = /^p-([0-9a-f]{16})\.txt$/;
+const SNAP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function oneLine(text, max = 0) {
   let s = String(text).replace(ANSI, '').replace(CTRL, ' ').replace(RUNS, ' ').trim();
@@ -87,9 +90,11 @@ function readReply(service, info, file, sessionType, attach = { attach: true }) 
   const head = `${PREFIX} read ${service} · page ${info.page}/${info.pages} · ${info.elements} elements · ${tokLabel(info.tokens)}`
     + (info.stripped ? ' · chrome stripped' : '') + (info.hidden > 0 ? ` · ${info.hidden} elements hidden${info.under ? ` (${info.under} under the dialog)` : ''}` : '') + (info.loading ? ' · still loading' : '');
   if (attach.attach) return withPath(head, fileTail(file, sessionType));
-  const why = attach.budget == null ? '--path-only' : `over ${tokLabel(attach.budget)}`;
-  const tail = sessionType === 'claude'
-    ? ` → ${showPath(file)} (not attached: ${why}; read or grep it, or narrow with --filter=/--page=)` : fileTail(file, sessionType);
+  const snap = SNAP_RE.exec(path.basename(String(file)));
+  const tail = attach.budget == null
+    ? ` → ${showPath(file)}${snap ? ` · snapshot ${snap[1]}` : ''} (not attached: --path-only; hand the path and id to a page-scout ticket, or read it yourself)`
+    : sessionType === 'claude'
+      ? ` → ${showPath(file)} (not attached: over ${tokLabel(attach.budget)}; read or grep it, or narrow with --filter=/--page=)` : fileTail(file, sessionType);
   return [withPath(head, tail), ...digestLines(info)].join('\n');
 }
 
@@ -544,7 +549,12 @@ function replyDir(seat, root) {
 
 function prune(dir, now) {
   let files;
-  try { files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)); } catch { return; }
+  try { files = fs.readdirSync(dir); } catch { return; }
+  for (const f of files.filter((n) => SNAP_RE.test(n))) {
+    const p = path.join(dir, f);
+    try { if (now - fs.statSync(p).mtimeMs > SNAP_MAX_AGE_MS) fs.unlinkSync(p); } catch {}
+  }
+  files = files.filter((f) => FILE_RE.test(f));
   const rows = [];
   for (const f of files) {
     const p = path.join(dir, f);
@@ -557,10 +567,20 @@ function prune(dir, now) {
   for (const r of rows.slice(KEEP_FILES)) { try { fs.unlinkSync(r.p); } catch {} }
 }
 
-function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Date.now() } = {}) {
+function snapshotId(content) {
+  return crypto.createHash('sha256').update(content).digest('hex').slice(0, 16);
+}
+
+function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Date.now(), snapshot = false } = {}) {
   const dir = replyDir(seat, root);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   fs.chmodSync(dir, 0o700);
+  if (snapshot === true) {
+    const snap = path.join(dir, `p-${snapshotId(content)}.txt`);
+    fs.writeFileSync(snap, content, { mode: 0o600, flag: 'w' });
+    prune(dir, now);
+    return snap;
+  }
   let seq = 0;
   for (const f of fs.readdirSync(dir)) {
     const m = FILE_RE.exec(f);
@@ -597,7 +617,7 @@ function classifyReply(line) {
 module.exports = {
   closedReply,
   classifyReply,
-  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, replyDir, loginState, stamp,
+  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,

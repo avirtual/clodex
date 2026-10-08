@@ -811,7 +811,7 @@ test('scheduler: under the 1k budget a read attaches, over it the reply is a pla
   let [[, r]] = await s1.run([['hand-a', '[agent:browser read utility]']]);
   assert.ok(attached(r), r);
   [[, r]] = await s1.run([['hand-a', '[agent:browser read utility --path-only]']]);
-  assert.ok(plain(r) && r.includes('(not attached: --path-only;'), r);
+  assert.ok(/ → \S+\/p-[0-9a-f]{16}\.txt · snapshot [0-9a-f]{16} \(not attached: --path-only;/.test(r) && r.split('\n').length > 2 && !r.includes('@'), r);
   const s2 = harness({ read: big.read });
   [[, r]] = await s2.run([['hand-a', '[agent:browser read utility]']]);
   assert.ok(plain(r) && r.includes('(not attached: over ≈1.0k tok;'), r);
@@ -1067,4 +1067,25 @@ test('scheduler: the element strip runs on the stripping default read alone', ()
   const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'browser-pane', 'scheduler.js'), 'utf8');
   assert.ok(!src.includes('elBase || ('));
   assert.ok(src.includes("    if (stripping && cmd.mode === 'default') {\n"));
+});
+
+test('scheduler: read --path-only writes an identified p- snapshot and a plain read writes r-0001.txt', async () => {
+  const h = harness({
+    read: () => ({ ...PAGE, url: 'https://ghostfol.io/', contentType: 'text/html', text: 'Portfolio', elements: [], truncated: false, frames: [], login: {} }),
+  });
+  await h.run([['hand-a', '[agent:browser open gh] https://ghostfol.io/']]);
+  h.sched.onState({ service: 'gh', state: 'idle', url: 'https://ghostfol.io/' });
+  await h.run([['hand-a', '[agent:browser release gh]']]);
+  const seat = `hand-snap-${process.pid}`;
+  const dir = R.replyDir(seat);
+  fs.rmSync(dir, { recursive: true, force: true });
+  const out = await h.run([[seat, '[agent:browser read gh --path-only]']]);
+  const snaps = fs.readdirSync(dir).filter((f) => R.SNAP_RE.test(f));
+  const plain = await h.run([[seat, '[agent:browser read gh]']]);
+  const names = fs.readdirSync(dir).sort();
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.strictEqual(snaps.length, 1);
+  assert.ok(out[0][1].includes(`snapshot ${R.SNAP_RE.exec(snaps[0])[1]}`), out[0][1]);
+  assert.deepStrictEqual(names, [snaps[0], 'r-0001.txt'].sort());
+  assert.ok(!String(plain[0][1]).includes('snapshot'));
 });
