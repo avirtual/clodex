@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Wire
+
+- The session report panel shows how many of a session's requests were side-calls (title, probe, classifier, auxiliary) beside the request total, read from wirescope's report version 5; an older report renders as before.
+
 ## 5.118.0 — 2026-10-08
 
 ### Plugins

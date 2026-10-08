@@ -6,7 +6,7 @@
 // renderer.js keeps only the returned opener (the ctx popover's "report" link
 // calls it). ctxCatLabel is the one shared helper, injected from renderer.js.
 //
-// ── Session report (wirescope /_report, report_version 1) ─────────────
+// ── Session report (wirescope /_report, report_version 5) ─────────────
 // wirescope owns every number (pricing, cache math, thresholds, verdict
 // score) — disk-based so it reads the full session capture, even on ended
 // sessions. We only turn its structured findings into prose and assert the
@@ -46,9 +46,9 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
 
   function renderReport(d) {
     // Forward-compatible: render every field we understand, ignore the rest.
-    // v1 = no `waste` section (renderWaste degrades to ''); v2 adds it; v3 made
-    // carriage per-request; v4 scoped carriage waste to subagents (see
-    // renderFindings). Unknown-but-newer reports still render their known fields.
+    // v1 = no `waste` section; v2 adds it; v3 made carriage per-request; v4
+    // scoped carriage waste to subagents (renderFindings); v5 split agents[]
+    // side-calls out of `requests` into `sidecalls`. Newer reports still render.
     if (!d || typeof d.report_version !== 'number' || d.report_version < 1) {
       return `<div class="rep-note">Unsupported report${d ? ' (version ' + esc(String(d.report_version)) + ')' : ''}. Update Clodex.</div>`;
     }
@@ -101,7 +101,9 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     const sc = d.scope || {};
     const subs = (sc.agents || []).filter((a) => a.line === 'subagent');
     const span = (sc.first_ts && sc.last_ts) ? ` · ${esc(shortTs(sc.first_ts))} → ${esc(shortTs(sc.last_ts))}` : '';
-    const scope = `${num(sc.requests)} requests · ${num(sc.turns)} turns` +
+    const sideLines = (sc.agents || []).filter((a) => typeof a.sidecalls === 'number');
+    const sideCalls = sideLines.reduce((n, a) => n + a.sidecalls, 0);
+    const scope = `${num(sc.requests)} requests${sideLines.length ? ` (${sideCalls} side-calls)` : ''} · ${num(sc.turns)} turns` +
       (subs.length ? ` · ${subs.length} subagent line${subs.length === 1 ? '' : 's'}` : '') +
       (sc.models && sc.models.length ? ` · ${esc(sc.models.join(', '))}` : '') + span;
     return `<div class="rep-verdict">` +

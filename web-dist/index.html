@@ -40319,7 +40319,9 @@ void main() {
           const sc = d.scope || {};
           const subs = (sc.agents || []).filter((a) => a.line === "subagent");
           const span = sc.first_ts && sc.last_ts ? ` \xB7 ${esc(shortTs(sc.first_ts))} \u2192 ${esc(shortTs(sc.last_ts))}` : "";
-          const scope = `${num(sc.requests)} requests \xB7 ${num(sc.turns)} turns` + (subs.length ? ` \xB7 ${subs.length} subagent line${subs.length === 1 ? "" : "s"}` : "") + (sc.models && sc.models.length ? ` \xB7 ${esc(sc.models.join(", "))}` : "") + span;
+          const sideLines = (sc.agents || []).filter((a) => typeof a.sidecalls === "number");
+          const sideCalls = sideLines.reduce((n, a) => n + a.sidecalls, 0);
+          const scope = `${num(sc.requests)} requests${sideLines.length ? ` (${sideCalls} side-calls)` : ""} \xB7 ${num(sc.turns)} turns` + (subs.length ? ` \xB7 ${subs.length} subagent line${subs.length === 1 ? "" : "s"}` : "") + (sc.models && sc.models.length ? ` \xB7 ${esc(sc.models.join(", "))}` : "") + span;
           return `<div class="rep-verdict"><div class="rep-score rep-rating-${esc(rating)}"><span class="n">${score}</span><span class="l">${esc(rating)}</span></div><div class="rep-verdict-text"><div class="rep-headline">${esc(v.headline || "")}</div><div class="rep-reclaim">Reclaimable: <b>${fmtUsd(v.reclaimable_usd_total)}</b>` + (typeof v.reclaimable_pct === "number" ? ` (${v.reclaimable_pct}% of spend)` : "") + (v.confidence ? ` \xB7 ${esc(v.confidence)} confidence` : "") + `</div></div></div><div class="rep-scope">${scope}</div>`;
         }
         function renderCostDecomp(c) {
