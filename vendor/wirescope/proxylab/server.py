@@ -1464,13 +1464,23 @@ async def handler(request: Request) -> Response:
                 record["system_strip"] = strp
                 changed = True
             # WIRESCOPE [wirescope:omit ...]: strip author-opted-out context
-            # sections (# claudeMd / # userEmail) from messages[0]. Effective
+            # sections from messages[0]. Effective
             # targets merge body + spawn directives (per-agent + per-call opt-in).
             wso = transforms_mod._ws_omit(obj, agent_id=agent_id)
             if wso:
                 record["ws_omit"] = wso
                 if wso.get("omitted") or wso.get("replaced"):
                     changed = True
+            try:
+                wsi, wsl = transforms_mod._ws_directives_ignored(
+                    obj, wso, agent_id=agent_id)
+                if wsi:
+                    record["ws_directives_ignored"] = wsi
+                if wsl:
+                    print(f"[wirescope] directive ignored #{n} {agent}: " + "; ".join(
+                        f"{e['directive']} ({e['reason']})" for e in wsl), flush=True)
+            except Exception as e:
+                print(f"[wirescope] directive report failed #{n}: {e!r}", flush=True)
             # WIRESCOPE [wirescope:tools|strip-tools|keep-tools ...]: trim the
             # tool roster on the wire (allowlist/denylist), so a spawner can
             # customize a predefined subagent without editing its file. Must run

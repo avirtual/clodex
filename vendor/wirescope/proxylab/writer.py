@@ -252,7 +252,7 @@ def _genuine_subagent(obj, agent_id=None):
 # intent rule). To quote a directive safely: indent it or wrap it in backticks.
 # Body directives are parsed from the system prompt; spawn directives (below)
 # from the strict head of the spawn-prompt block. Unknown directives are
-# silently ignored -> additive forever.
+# ignored -> additive forever.
 # A WHOLE-LINE directive: the entire line is exactly one directive (trailing
 # whitespace tolerated via rstrip at the call sites; leading whitespace is NOT
 # — indentation is the quoting escape).
@@ -300,8 +300,7 @@ def _ws_directives(obj):
 
 def _ws_prompt_block(obj):
     """messages[0]'s spawn-prompt text block: the first `user` text block that is
-    NOT a <system-reminder> (those are harness-generated — blocks 0/1 in
-    practice; the prompt/Task text is block 2). Returns the mutable block dict or
+    NOT a <system-reminder> (those are harness-generated). Returns the mutable block dict or
     None (no list-content messages[0], or none found)."""
     msgs = obj.get("messages")
     if not isinstance(msgs, list) or not msgs:
@@ -320,42 +319,73 @@ def _ws_prompt_block(obj):
     return None
 
 
+_TEAMMATE_OPEN_RE = re.compile(
+    r"^<teammate-message(?:\s(?:(?!</teammate-message>).)*)?>$")
+
+WS_KNOWN_DIRECTIVES = frozenset({
+    "agent-name", "omit", "keep", "replace", "tools", "strip-tools",
+    "keep-tools", "keep-mcp", "strip-thinking"})
+
+
+def _ws_head_start(lines):
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and _TEAMMATE_OPEN_RE.match(lines[i].strip()):
+        return i + 1
+    return 0
+
+
+def _ws_head_run(lines):
+    i = _ws_head_start(lines)
+    taken = []
+    while i < len(lines):
+        s = lines[i].strip()
+        if s:
+            m = _WS_LINE_RE.match(s)
+            if not m:
+                break
+            taken.append((i, m))
+        i += 1
+    return taken
+
+
 def _parse_leading_pairs(text):
-    """Ordered [(directive, value)] at the STRICT HEAD of `text`: leading blank
-    lines are skipped, then a run of consecutive whole-line `[wirescope:...]`
-    directives is consumed; parsing stops at the first non-blank, non-directive
-    line. A directive not at the head is ignored."""
-    out = []
-    for raw in text.splitlines():
-        s = raw.strip()
-        if not s:
-            continue
-        m = _WS_LINE_RE.match(s)
-        if not m:
-            break
-        out.append((m.group(1).lower(), (m.group(2) or "").strip()))
-    return out
+    """Ordered [(directive, value)] at the STRICT HEAD of `text`. A directive not
+    at the head is ignored."""
+    return [(m.group(1).lower(), (m.group(2) or "").strip())
+            for _, m in _ws_head_run(text.splitlines())]
 
 
 def _ws_strip_leading_directives(text):
-    """Remove the strict-head `[wirescope:...]` directive lines (and any blank
-    lines among/before them) from `text`. Mirrors _parse_leading_directives, so
-    it strips exactly what was consumed. Returns (new_text, n_removed)."""
+    """Remove the strict-head `[wirescope:...]` directive lines from `text`.
+    Returns (new_text, n_removed)."""
     lines = text.splitlines(keepends=True)
-    i = removed = 0
-    while i < len(lines):
-        s = lines[i].strip()
-        if not s:
-            i += 1
-            continue
-        if _WS_LINE_RE.match(s):
-            removed += 1
-            i += 1
-            continue
-        break
-    if not removed:
+    taken = _ws_head_run(lines)
+    if not taken:
         return text, 0
-    return "".join(lines[i:]).lstrip("\n"), removed
+    end = taken[-1][0] + 1
+    while end < len(lines) and not lines[end].strip():
+        end += 1
+    return "".join(lines[:_ws_head_start(lines)]) + "".join(lines[end:]), len(taken)
+
+
+def _ws_spawn_ignored(obj):
+    if not WS_SPAWN_DIRECTIVES:
+        return []
+    b = _ws_prompt_block(obj)
+    if b is None:
+        return []
+    lines = b["text"].splitlines()
+    head = dict(_ws_head_run(lines))
+    out = []
+    for i, raw in enumerate(lines):
+        if i in head:
+            if head[i].group(1).lower() not in WS_KNOWN_DIRECTIVES:
+                out.append({"directive": raw.strip(), "reason": "unknown directive"})
+        elif _WS_LINE_RE.match(raw.rstrip()):
+            out.append({"directive": raw.rstrip(), "reason": "not at head"})
+    return out
 
 
 def _ws_spawn_pairs(obj):

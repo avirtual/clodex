@@ -1016,22 +1016,21 @@ def _ws_merged_pairs(obj, agent_id=None):
     one stream — section verbs via _ws_resolve_actions, tool verbs via
     _ws_resolve_tools — so precedence + stickiness live in exactly one place.
 
-    `agent_id` (the x-claude-code-agent-id request header) makes the spawn layer
-    sticky: on a directive-bearing turn we remember the spawn pairs under that id;
-    on a later directive-less turn of the same instance we re-feed the remembered
-    pairs so the directives persist past turn 1. Only ever remembered/replayed for
+    Only ever remembered/replayed for
     a real subagent instance (the main line has no agent_id, so it is never
     sticky; a non-subagent is never touched even if some header leaked through)."""
     pairs = []
     # Fingerprint-backed subagent check (NOT the raw billing flag): a parent turn
     # that leaked cc_is_subagent=true + a stale agent-id must NOT pick up the
     # subagent operator-default NOR replay another instance's sticky directives.
-    is_sub = writer_mod._genuine_subagent(obj)
+    is_sub = writer_mod._genuine_subagent(obj, agent_id=agent_id)
     if WS_OMIT_DEFAULT and is_sub:
         pairs.append(("omit", ",".join(WS_OMIT_DEFAULT)))   # lowest precedence
     pairs += writer_mod._ws_body_pairs(obj)
     spawn = writer_mod._ws_spawn_pairs(obj)
-    if agent_id and is_sub:
+    block = writer_mod._ws_prompt_block(obj)
+    wrapped = block is not None and writer_mod._ws_head_start(block["text"].splitlines()) > 0
+    if agent_id and is_sub and not wrapped:
         sid = writer_mod._session_ids(obj)[0]
         fp = writer_mod._billing_fingerprint(obj)      # this turn's lineage hash
         mem = _WS_SPAWN_MEMORY.setdefault(sid, {})
@@ -1056,10 +1055,10 @@ def _ws_effective_actions(obj, agent_id=None):
     return _ws_resolve_actions(_ws_merged_pairs(obj, agent_id))
 
 
-def _ws_effective_omit_targets(obj):
+def _ws_effective_omit_targets(obj, agent_id=None):
     """Just the targets resolved to a strip (`omit`) — convenience for callers /
     tests that only care about deletions, not replacements."""
-    return {t for t, (act, _) in _ws_effective_actions(obj).items()
+    return {t for t, (act, _) in _ws_effective_actions(obj, agent_id).items()
             if act == "omit"}
 
 
@@ -1435,6 +1434,17 @@ def _ws_reminder_is_empty(text):
             and re.search(r"(?m)^# ", text) is None)
 
 
+_WS_CLAUDEMD_BLOCK_RE = re.compile(
+    r"\s*<system-reminder>\s*Codebase and user instructions are shown below\.")
+
+
+def _ws_replace_claudemd_block(text, new_body):
+    head = text.index("<system-reminder>") + len("<system-reminder>")
+    end = text.rfind("</system-reminder>")
+    tail = text[end:] if end >= head else "</system-reminder>"
+    return text[:head] + "\n" + new_body.strip("\n") + "\n" + tail
+
+
 def _ws_omit(obj, agent_id=None):
     """Apply the effective wirescope context-section actions (omit / replace,
     body + spawn, with the `keep` override) to messages[0]. Returns a log dict
@@ -1462,10 +1472,19 @@ def _ws_omit(obj, agent_id=None):
         c = m.get("content")
         if not isinstance(c, list):
             continue
-        drop_idx = []
+        drop_idx, block_chars = [], 0
         for bi, b in enumerate(c):
             if not (isinstance(b, dict) and b.get("type") == "text"
                     and isinstance(b.get("text"), str)):
+                continue
+            if m is msgs[0] and _WS_CLAUDEMD_BLOCK_RE.match(b["text"]):
+                act, payload = actions.get("claudemd", (None, None))
+                if act == "replace":
+                    b["text"] = _ws_replace_claudemd_block(b["text"], payload)
+                    replaced.add("claudemd")
+                elif act == "omit":
+                    drop_idx.append(bi)
+                    block_chars += len(b["text"])
                 continue
             touched = False
             for tgt, (act, payload) in actions.items():
@@ -1503,6 +1522,9 @@ def _ws_omit(obj, agent_id=None):
                 kept[0]["cache_control"] = lost_cc
             m["content"] = kept
             dropped += len(drop)
+            if block_chars:
+                omitted.add("claudemd")
+                chars += block_chars
     done = omitted | replaced
     missed = [t for t in requested if t not in done]
     if not done and not missed:
@@ -1510,6 +1532,31 @@ def _ws_omit(obj, agent_id=None):
     return {"omitted": sorted(omitted), "replaced": sorted(replaced),
             "missed": missed, "chars_removed": chars, "requested": requested,
             "dropped_blocks": dropped}
+
+
+_WS_NO_MATCH_SEEN = collections.OrderedDict()
+_WS_NO_MATCH_CAP = 4096
+
+
+def _ws_directives_ignored(obj, wso, agent_id=None):
+    recorded = writer_mod._ws_spawn_ignored(obj)
+    loud = list(recorded)
+    missed = (wso or {}).get("missed") or []
+    if missed:
+        actions = _ws_effective_actions(obj, agent_id=agent_id)
+        sid = (writer_mod._session_ids(obj) or [None])[0]
+        for t in missed:
+            verb = actions.get(t, ("omit", None))[0]
+            entry = {"directive": f"{verb} {t}", "reason": "no match"}
+            recorded.append(entry)
+            key = (sid, agent_id, t)
+            if key in _WS_NO_MATCH_SEEN:
+                continue
+            _WS_NO_MATCH_SEEN[key] = True
+            if len(_WS_NO_MATCH_SEEN) > _WS_NO_MATCH_CAP:
+                _WS_NO_MATCH_SEEN.popitem(last=False)
+            loud.append(entry)
+    return recorded, loud
 
 
 def _ws_strip_lines(text):
