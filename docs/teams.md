@@ -3,9 +3,9 @@
 A **team** is a lead agent, one or more implementer seats, and a ticket loop
 that carries a spec from the lead to a working branch and back. The engine
 itself is project-neutral: tickets, git worktrees, branch-per-ticket, spawn,
-review, escalation and merge-forward know nothing about Clodex. The four
-shipped role prompts describe how a lead, a hand, a scout and a reviewer *behave*, and
-name no repository, no test command and no file of ours.
+review, escalation and merge-forward know nothing about Clodex. The five
+shipped role prompts describe how a lead, a hand, a scout, a page scout and a
+reviewer *behave*, and name no repository, no test command and no file of ours.
 
 So most of a working team arrives for free. What does not — the handful of
 things that are inherently *your project's* — is what this document is about.
@@ -151,9 +151,13 @@ skill off, no plan mode. Both kits seed a fourth role, `scout`, a one-shot
 Haiku 5.5 lookup seat (dispatch spawn, stream io, no CLAUDE.md, tools
 Bash/Read/Write/Grep/Glob, every skill off) that a lead files
 `[agent:task add scout start]` tickets to before writing a spec; its prompt
-makes it edit nothing and write one table. `[agent:team create <name> root:<abs> kit:<name>]`
-picks one, `kit:?` (or an unknown name) lists what is installed, and an unknown
-name creates nothing at all. The create IPC takes the same `kit` field.
+makes it edit nothing and write one table, and a fifth, `page-scout`, the same
+seat with Read and Write only (no Bash, Grep or Glob, since its input is a
+saved web page, untrusted content) whose prompt makes it write one file of
+verbatim cells with line provenance, coverage and notices.
+`[agent:team create <name> root:<abs> kit:<name>]` picks one, `kit:?` (or an
+unknown name) lists what is installed, and an unknown name creates nothing at
+all. The create IPC takes the same `kit` field.
 
 The copy source is the kit first and the shared library second, so a kit role may
 name a library-only stem — the `default` kit's reviewer does exactly that, since
