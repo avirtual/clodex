@@ -811,7 +811,7 @@ test('scheduler: under the 1k budget a read attaches, over it the reply is a pla
   let [[, r]] = await s1.run([['hand-a', '[agent:browser read utility]']]);
   assert.ok(attached(r), r);
   [[, r]] = await s1.run([['hand-a', '[agent:browser read utility --path-only]']]);
-  assert.ok(plain(r) && r.includes('(not attached: --path-only;'), r);
+  assert.ok(/ → \S+\/p-[0-9a-f]{16}\.txt · snapshot [0-9a-f]{16} \(not attached: --path-only;/.test(r) && r.split('\n').length > 2 && !r.includes('@'), r);
   const s2 = harness({ read: big.read });
   [[, r]] = await s2.run([['hand-a', '[agent:browser read utility]']]);
   assert.ok(plain(r) && r.includes('(not attached: over ≈1.0k tok;'), r);
