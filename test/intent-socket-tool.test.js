@@ -351,10 +351,26 @@ test('dm tool: a forged, replayed, missing or foreign-session stamp answers unkn
   warns.length = 0;
 });
 
-test('dm tool: a main stamp is refused with the prose-intent redirect', async () => {
+test('dm tool: a main stamp delivers the dm and the reply carries the do-not-use-again correction', async () => {
   const { handle, seen } = dmHandler();
-  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: false, status: 'refused', error: 'dm: subagents only — a main agent writes the [agent:dm <seat>] intent in its reply instead' });
-  assert.strictEqual(seen.length, 0);
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply: "sent to b; a reply arrives in the seat's main conversation. Do not use this tool again: as the main agent, write [agent:dm <seat>] body … [agent:end] in your reply — it dispatches in the same request." });
+  assert.strictEqual(seen.length, 1);
+  const { replyTo } = seen[0].opts;
+  assert.deepStrictEqual(seen[0].opts, { replyTo, fromLabel: null, fromIdent: null });
+});
+
+test('dm tool: a main stamp whose dm is parked gets the handler line unchanged', async () => {
+  const reply = "[agent:dm] parked for b (busy) as p1 — it'll be delivered with b's next turn.";
+  const { handle, seen } = dmHandler({ reply });
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: true, status: 'ok', reply });
+  assert.strictEqual(seen.length, 1);
+});
+
+test('dm tool: a main stamp whose dm is not delivered gets the handler line and no correction', async () => {
+  const reply = '[agent:dm] NOT delivered: b is not running';
+  const { handle, seen } = dmHandler({ reply });
+  assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: freshMain() }, ctl), { ok: true, status: 'error', reply });
+  assert.strictEqual(seen.length, 1);
 });
 
 test('dm tool: a decorated intent line in the body is a foreign intent and nothing is dispatched', async () => {

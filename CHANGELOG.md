@@ -17,6 +17,10 @@ blocks a release.
 
 - Rejecting a ticket whose one-shot seat was already archived now says so in the ack and points at resume or reassign; the close-out stamps the ticket before archiving the seat, and a failed archive is reported to the lead instead of only logged.
 
+### Messaging
+
+- A main agent calling the Clodex MCP `dm` tool now gets its message delivered, with the ack telling it to write the `[agent:dm <seat>]` intent next time instead of a refusal; behind wirescope the tool is removed from main-line requests entirely, so a main agent never sees it and subagents keep it.
+
 ## 5.120.0 — 2026-10-08
 
 ### Sessions

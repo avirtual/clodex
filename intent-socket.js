@@ -340,7 +340,6 @@ function createIntentRequestHandler({
   tools = null, nameFor = null,
 }) {
   const unknownTool = (name) => ({ ok: false, status: 'refused', error: `unknown tool: ${JSON.stringify(String(name).slice(0, 64))}` });
-  const mainOnlyRefusal = (name) => ({ ok: false, status: 'refused', error: `${String(name).slice(0, 64)}: subagents only — a main agent writes the [agent:dm <seat>] intent in its reply instead` });
   const oneLineMsg = (e) => String((e && e.message) || 'invalid arguments').replace(/[\r\n]+/g, ' ').slice(0, 300);
   const foreign = (toolName) => {
     if (log) log.warn('intent-socket', `${seat}: tool ${toolName} emitted a foreign intent`);
@@ -374,7 +373,11 @@ function createIntentRequestHandler({
     const tool = row.tools.find((t) => t.name === name);
     const lifted = tool.subagentOk === true && !!ident.agentId;
     if (ident.subagent && !lifted) return unknownTool(name);
-    if (tool.subagentOnly === true && !ident.subagent) return mainOnlyRefusal(name);
+    if (tool.subagentOnly === true && !ident.subagent) {
+      const res = await run(intents[0], ident, ctl, false);
+      if (!res.ok || res.status !== 'ok' || res.reply !== defaultReply(intents[0], false)) return res;
+      return { ...res, reply: `${defaultReply(intents[0], false)}. Do not use this tool again: as the main agent, write [agent:dm <seat>] body … [agent:end] in your reply — it dispatches in the same request.` };
+    }
     return run(intents[0], ident, ctl, lifted);
   }
 

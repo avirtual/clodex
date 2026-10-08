@@ -44,6 +44,10 @@ test('byte-pin: buildIpcPrompt(<all gateable>) === IPC_PROMPT (no fork-drift)', 
   assert.strictEqual(buildIpcPrompt(undefined), IPC_PROMPT);
 });
 
+test('IPC_PROMPT ends with the wirescope strip-tools directive for the dm tool', () => {
+  assert.match(IPC_PROMPT, /\n\[wirescope:strip-tools mcp__clodex__dm\]$/);
+});
+
 // ── Gating: grammar lines drop for disabled intents ──────────────────────────
 
 test('memory off → MEMORY section AND memory grammar lines both vanish', () => {
