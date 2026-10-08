@@ -2266,8 +2266,9 @@ function createSessionManager(deps) {
               if (c.tok >= CTX_THRESHOLD_MIN) {
                 try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
               }
-              let warn = ctxReminderFor(c.tok, ctxThresholdsFor(c.model, ctxOverrides));
-              // Ephemeral seats are never nudged (a compact costs the context their rework needs), suppressed here so ctxReminderFor stays pure.
+              const thresholds = ctxThresholdsFor(c.model, ctxOverrides);
+              let warn = ctxReminderFor(c.tok, thresholds);
+              // Ephemeral seats are never nudged to compact (a compact costs the context their rework needs); a `stop` row asks for no compact, so it is exempt from this skip, kept here so ctxReminderFor stays pure.
               // Read the record lazily and memoize only a returned one, so a failed read leaves the seat nudged rather than silenced.
               if (warn) {
                 if (session._ephemeralSeat === undefined) {
@@ -2275,7 +2276,7 @@ function createSessionManager(deps) {
                   try { rec = getPersistence().get(name); } catch {}
                   if (rec) session._ephemeralSeat = !!rec.ephemeral;
                 }
-                if (session._ephemeralSeat) warn = null;
+                if (session._ephemeralSeat && !thresholds.stop) warn = null;
               }
               try {
                 if (warn) fs.writeFileSync(warnPath, warn);
