@@ -4451,7 +4451,7 @@ function createTicketMethods(deps, shared) {
         };
         return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).then((r) => {
           if (r.archiveError) return failed(r.archiveError);
-          reply(head + (r.archived ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '') + nextSuffix);
+          reply(head + (r.archived ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '') + (r.held ? `; ${facts.seatName} was left in place because it holds ${r.held}` : '') + nextSuffix);
         }, failed).catch((e) => log.warn('intent', `task done ${ticket.id}: close-out reply failed: ${String((e && e.message) || e).split('\n')[0]}`));
       }
       if (loopEligible) this._runTicketLoop(team, ticket.id);
@@ -6017,7 +6017,7 @@ function createTicketMethods(deps, shared) {
         });
         let archived = false;
         let archiveError = null;
-        const busy = seatName ? this._openTicketsFor(team, seatName, ticket.id) : [];
+        const busy = seatName ? this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName) : [];
         const held = busy.length > 0 ? busy[0].id : null;
         if (!held && ephemeralSeat && seatName && this.sessions.has(seatName)) {
           try { await this.archive(seatName); archived = true; } catch (e) { archiveError = e; }

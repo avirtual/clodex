@@ -5906,6 +5906,24 @@ test('task accept archives a one-shot seat once its other ticket is closed', asy
   assert.deepStrictEqual(archived, ['team-hand']);
 });
 
+test("a role ticket that resolves to another live seat does not hold a one-shot seat's close-out", async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.m.sessions.delete('team-hand');
+  f.seat('team-hand-2');
+  f.seat('team-hand');
+  const t3 = { id: 't3', state: 'open', spec: 'other work', assignee: 'hand', role: 'hand',
+    openedAt: Date.now(), lastActivityAt: Date.now(), startedAt: Date.now(), worktree: null };
+  f.tstore.save(f.team.root, [f.one(), t3]);
+  assert.strictEqual(f.m._ticketAssigneeSeat(f.team, t3), 'team-hand-2');
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); };
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, () => {});
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', body: '' }, () => {});
+  assert.deepStrictEqual(archived, ['team-hand']);
+});
+
 test('a throwing reply on the done close-out path is logged, not unhandled', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, ticketOver: { worktree: null } });

@@ -445,7 +445,7 @@ only the merged arm removes anything:
 
 | reply says | arm | closes the ticket out? |
 |---|---|---|
-| `accepted — no ticket branch recorded` | worked in the shared checkout, so there is no tree or ref to remove; a one-shot seat is archived unless the seat holds another open ticket, in which case the accept stamps the ticket and the seat is archived when its last ticket closes; any other seat left as it is | yes |
+| `accepted — no ticket branch recorded` | worked in the shared checkout, so there is no tree or ref to remove; a one-shot seat is archived, unless it holds another open ticket (archived when that one closes); any other seat left as it is | yes |
 | `accepted, but the merge check could NOT run` | git could not answer; treated as not merged | no — accept again once it can |
 | `accepted, but branch X is NOT merged into` | the branch is not in the trunk | no — merge it, then accept again |
 | `stamped this ticket MERGE FAILED at` | the branch is an ancestor, but the loop gave up at a merge step, so that proves nothing | yes; the mark is cleared on every step. On `revert-blocked` the branch is already in the trunk, so a second accept is the one thing not to do |
