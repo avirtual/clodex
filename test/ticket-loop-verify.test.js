@@ -5891,6 +5891,21 @@ test('task accept leaves a one-shot seat in place while it holds another open ti
   assert.deepStrictEqual(archived, ['team-hand']);
 });
 
+test('task done on a solo team leaves a one-shot seat in place while it holds another ticket', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.tstore.save(f.team.root, [f.one(), { id: 't2', state: 'open', spec: 'the next spec', assignee: 'team-hand', role: 'hand',
+    openedAt: Date.now(), lastActivityAt: Date.now(), startedAt: Date.now(), worktree: null }]);
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); };
+  f.injected.length = 0;
+  await f.m._taskDone(f.seat('team-hand'), { ...f.team, solo: true }, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+  assert.deepStrictEqual(archived, []);
+  assert.match(f.injected.join('\n'), /team-hand was left in place because it holds t2/);
+  assert.strictEqual(f.one().closedOut, true);
+});
+
 test('task accept archives a one-shot seat once its other ticket is closed', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, ticketOver: { worktree: null } });
