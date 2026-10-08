@@ -4440,13 +4440,19 @@ function createTicketMethods(deps, shared) {
       } else if (!loopEligible) {
         const facts = this._acceptSeatFacts(ticket);
         const closeOut = !next && !facts.branch && facts.ephemeralSeat && facts.seatName && facts.seatName !== lead && this.sessions.has(facts.seatName);
-        const archivedNote = closeOut ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '';
-        reply((isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped + archivedNote + nextSuffix);
-        if (closeOut) {
-          return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).catch((e) => {
-            log.warn('intent', `task done ${ticket.id}: closing out ${facts.seatName} failed: ${e.message}`);
-          });
-        }
+        const head = (isLead ? `ticket ${ticket.id} closed (done)` : `ticket ${ticket.id} closed (done) — report delivered to ${lead}`) + skipped;
+        if (!closeOut) { reply(head + nextSuffix); return; }
+        const failed = (e) => {
+          const why = String((e && e.message) || e).split('\n')[0];
+          log.warn('intent', `task done ${ticket.id}: closing out ${facts.seatName} failed: ${why}`);
+          const line = `closing out ${facts.seatName} failed (${why}) — [agent:task accept ${ticket.id}] retries`;
+          reply(`${head}; ${line}${nextSuffix}`);
+          this._gatedDeliver(lead, 'ticket-loop', `[ticket ${ticket.id}] ${line}`, false, `[ticket ${ticket.id} close-out failed]`);
+        };
+        return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: '' }).then((r) => {
+          if (r.archiveError) return failed(r.archiveError);
+          reply(head + (r.archived ? `; ${facts.seatName} was a one-shot seat and was ARCHIVED` : '') + nextSuffix);
+        }, failed);
       }
       if (loopEligible) this._runTicketLoop(team, ticket.id);
     },
@@ -5749,6 +5755,8 @@ function createTicketMethods(deps, shared) {
         reply(`error: reject reopens a DONE ticket; ${intent.id} is ${ticket.state}${this._spillRejectedPayload(session, 'task reject', reason)}`);
         return;
       }
+      const wasClosedOut = !!ticket.closedOut;
+      const wasAccepted = !!ticket.acceptedAt;
       ticket.state = 'open';
       recordEvent(ticket, { kind: 'reject', by: session.name });
       ticket.closedAt = null;
@@ -5761,6 +5769,7 @@ function createTicketMethods(deps, shared) {
       delete ticket.acceptedAt;
       delete ticket.acceptedBy;
       delete ticket.acceptNote;
+      delete ticket.closeOutError;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       ticket.reworkRound = (Number(ticket.reworkRound) || 0) + 1;
@@ -5792,7 +5801,10 @@ function createTicketMethods(deps, shared) {
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
       if (cancelsMerge) log.info('ticket', `task reject ${ticket.id}: the round ${ticket.reviewRound} ACCEPT is stale — its queued auto-merge will not run, and the rework's next task done is reviewed again`);
-      ack(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}`);
+      const archivedSeat = !seat && wasClosedOut && wasAccepted
+        ? ` — NOTE: no live seat; its one-shot seat ${this._acceptSeatFacts(ticket).seatName || 'the seat'} was archived at close-out. Resume it from the sidebar, or [agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role>'}] to mint a fresh one.`
+        : '';
+      ack(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}${archivedSeat}`);
     },
 
     // Gated to `open` because respec delivers: re-dispatching a done or accepted ticket restarts work without reopening it.
@@ -5980,31 +5992,57 @@ function createTicketMethods(deps, shared) {
       // and the arms' teardowns target the assignee, never a reviewer seat.
       this._retireReviewSeatsFor(team, ticket.id, 'accepted');
       this._broadcast('ipc-message', { type: 'task', from: by, to: seatName || '(unassigned)', body: `ticket ${ticket.id} accepted` });
-      log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
+      if (msg != null) log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
       // Gated on closedOut: cancelling on the arms that invite another accept drops "check the branch landed" from the message saying it is not shown.
       const dropped = closedOut ? this._cancelTicketReminders(team.lead, ticket.id) : '';
+      if (msg == null) return dropped;
       return dropped ? `${msg} ${dropped}` : msg;
     },
 
     async _closeOutBranchless(team, ticket, tickets, { by, note }) {
-      const { seatName, ephemeralSeat } = this._acceptSeatFacts(ticket);
-      if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
-      let archived = false;
-      if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
-        await this.archive(seatName);
-        archived = true;
+      if (!this._closingOut) this._closingOut = new Set();
+      if (this._closingOut.has(ticket.id)) {
+        return { archived: false, already: true,
+          text: `ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt || Date.now()).toLocaleTimeString()} — nothing was changed` };
       }
-      const text = this._finishAccept(team, ticket, tickets, {
-        by, note, seatName, closedOut: true, complete: false,
-        actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
-        msg: archived
+      this._closingOut.add(ticket.id);
+      try {
+        const { seatName, ephemeralSeat } = this._acceptSeatFacts(ticket);
+        if (seatName) this._stampTicketRevival(team, seatName, { accepted: true }, ticket.id);
+        const dropped = this._finishAccept(team, ticket, tickets, {
+          by, note, seatName, closedOut: true, complete: false,
+          actedStamp: (ticket.mergeError && String(ticket.mergeError)) || null,
+          msg: null,
+        });
+        let archived = false;
+        let archiveError = null;
+        if (ephemeralSeat && seatName && this.sessions.has(seatName)) {
+          try { await this.archive(seatName); archived = true; } catch (e) { archiveError = e; }
+        }
+        this._stampCloseOutError(team, ticket, archiveError);
+        const msg = archived
           ? `ticket ${ticket.id} accepted — no ticket branch recorded (it worked in the shared checkout), so nothing was removed; ${seatName} was a one-shot seat and was ARCHIVED (resumable from the sidebar; anything it left uncommitted is still in the checkout)`
-          : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`,
-      });
-      return { archived, text };
+          : archiveError
+            ? `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was removed; archiving the one-shot seat ${seatName} failed (${String(archiveError.message || archiveError).split('\n')[0]}) — [agent:task accept ${ticket.id}] retries`
+            : `ticket ${ticket.id} accepted — no ticket branch recorded, so nothing was torn down${seatName ? ` (${seatName} left as it is)` : ''}`;
+        log.info('intent', `task accept ${ticket.id} by ${by}: ${msg}`);
+        return { archived, archiveError, text: dropped ? `${msg} ${dropped}` : msg };
+      } finally {
+        this._closingOut.delete(ticket.id);
+      }
     },
 
-    // Not folded into `done`, which the assignee emits: retiring there would kill the seat before the lead read a word or sent rework.
+    _stampCloseOutError(team, ticket, err) {
+      const why = err ? String(err.message || err).split('\n')[0] : null;
+      if (!why && !ticket.closeOutError) return;
+      if (why) ticket.closeOutError = why; else delete ticket.closeOutError;
+      const fresh = ticketsStore.load(team.root);
+      const row = fresh.find((t) => t.id === ticket.id);
+      if (!row) return;
+      if (why) row.closeOutError = why; else delete row.closeOutError;
+      ticketsStore.save(team.root, fresh);
+    },
+
     async _taskAccept(session, team, intent, reply, ack = reply) {
       const note = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
@@ -6027,7 +6065,7 @@ function createTicketMethods(deps, shared) {
       // No branch means the main checkout: acceptance is the stamp alone, and a standing seat is never retired there.
       // A one-shot spawn seat is archived, never destroyed, since its work may be uncommitted in the shared checkout.
       if (!branch) {
-        if (ticket.closedOut && ticket.acceptedAt) {
+        if (ticket.closedOut && ticket.acceptedAt && !ticket.closeOutError) {
           reply(`ticket ${ticket.id} was already accepted at ${new Date(ticket.acceptedAt).toLocaleTimeString()} — nothing was changed${this._spillRejectedPayload(session, 'task accept', note)}`);
           return;
         }

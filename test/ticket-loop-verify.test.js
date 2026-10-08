@@ -5791,6 +5791,82 @@ test('t1731: a branchless ticket closed done by a standing seat archives nothing
   assert.ok(!f.one().closedOut);
 });
 
+test('t1732: a reject after a branchless done close-out says the one-shot seat was archived and delivers nothing', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null, role: 'hand' } });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  f.m.archive = async (n) => { f.m.sessions.delete(n); };
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, () => {});
+  f.gated.length = 0;
+  const acks = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'reject', id: 't1', who: null, body: 'redo it' }, (t) => acks.push(t));
+  assert.deepStrictEqual(acks, ['ticket t1 reopened (rework) → hand — NOTE: no live seat; its one-shot seat team-hand was archived at close-out. Resume it from the sidebar, or [agent:task assign t1 hand] to mint a fresh one.']);
+  assert.deepStrictEqual(f.gated.filter((g) => g.target === 'team-hand'), []);
+});
+
+test('t1732: a reject on a done ticket whose seat is gone but was never closed out keeps the plain ack', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null, role: 'hand', state: 'done', assignee: null } });
+  const acks = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'reject', id: 't1', who: null, body: 'redo it' }, (t) => acks.push(t));
+  assert.deepStrictEqual(acks, ['ticket t1 reopened (rework) → hand']);
+});
+
+test('t1732: the branchless close-out stamps closedOut and acceptedAt before the archive resolves', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); await gate; };
+  f.injected.length = 0;
+  const done = f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(archived, ['team-hand']);
+  assert.strictEqual(f.one().closedOut, true);
+  assert.ok(f.one().acceptedAt);
+  assert.deepStrictEqual(f.injected, [], 'the reply waits for the archive outcome');
+  release();
+  await done;
+  assert.match(f.injected.join('\n'), /; team-hand was a one-shot seat and was ARCHIVED$/);
+});
+
+test('t1732: a failed archive is replied, sent to the lead, and a later accept retries it', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null } });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); throw new Error('disk full\nstack'); };
+  f.injected.length = 0; f.gated.length = 0;
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+  const said = f.injected.join('\n');
+  assert.match(said, /^ticket t1 closed \(done\) — report delivered to lead — closed WITHOUT review: the ticket records no branch, so the loop had nothing to verify; closing out team-hand failed \(disk full\) — \[agent:task accept t1\] retries$/);
+  assert.ok(f.gated.some((g) => g.target === 'lead' && /closing out team-hand failed \(disk full\) — \[agent:task accept t1\] retries/.test(g.body)));
+  assert.strictEqual(f.one().closedOut, true);
+  f.m.archive = async (n) => { archived.push(n); };
+  const replies = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'accept', id: 't1', body: '' }, (t) => replies.push(t));
+  assert.deepStrictEqual(archived, ['team-hand', 'team-hand']);
+  assert.match(replies.join('\n'), /team-hand was a one-shot seat and was ARCHIVED/);
+  assert.ok(!f.one().closeOutError);
+});
+
+test('t1732: two concurrent close-outs of one ticket archive once', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null, state: 'done' } });
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); await new Promise((r) => setImmediate(r)); };
+  const tickets = () => f.tstore.load(f.team.root);
+  const a = f.m._closeOutBranchless(f.team, f.one(), tickets(), { by: 'ticket-loop', note: '' });
+  const b = f.m._closeOutBranchless(f.team, f.one(), tickets(), { by: 'lead', note: '' });
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.deepStrictEqual(archived, ['team-hand']);
+  assert.strictEqual(ra.archived, true);
+  assert.match(rb.text, /was already accepted .* nothing was changed/);
+});
+
 test('t1016: a RE-ENTRY still gets its receipt, naming the check that had held it', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo });
