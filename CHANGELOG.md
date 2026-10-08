@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.120.0 — 2026-10-08
+
 ### Sessions
 
 - A Haiku 5.5 seat is warned at 75k context tokens and told to stop and hand in its work at 100k, where that model's price rises 5x; the warning reaches the loop's ephemeral seats, which the compact nudges deliberately skip.
