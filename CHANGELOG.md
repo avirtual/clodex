@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.121.0 — 2026-10-09
+
 ### Teams
 
 - Rejecting a ticket whose one-shot seat was already archived now says so in the ack and points at resume or reassign; the close-out stamps the ticket before archiving the seat, and a failed archive is reported to the lead instead of only logged.
