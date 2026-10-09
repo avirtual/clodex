@@ -975,7 +975,7 @@ function createSessionManager(deps) {
         try {
           {
             const s = this.sessions.get(t.agent);
-            if (s && s.intentSource === 'wire') {
+            if (s && s.intentSource === 'wire' && !isSubagentRole(t.role)) {
               this._activity.turnCompleted(t.agent, { reqId: t.reqId, sideCall: t.sideCall, stop: t.stop });
             }
           }
@@ -1053,7 +1053,7 @@ function createSessionManager(deps) {
       wire.on('turn.started', (t) => {
         try {
           const s = this.sessions.get(t.agent);
-          if (s && s.intentSource === 'wire') {
+          if (s && s.intentSource === 'wire' && !isSubagentRole(t.role)) {
             this._activity.turnStarted(t.agent, { reqId: t.reqId, sideCall: t.sideCall });
           }
         } catch { /* observer-grade */ }
