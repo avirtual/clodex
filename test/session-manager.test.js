@@ -14877,7 +14877,7 @@ for (const [label, seatState, reason] of [
 }
 
 async function wireFlushRig() {
-  const root = mkTmpRoot('clodex-t1766-');
+  const root = mkTmpRoot('clodex-sm-');
   const m = mk({
     REGISTRY_DIR: root, fs: fsReal, path: pathReal,
     getUserDataPath: () => root,
