@@ -24,6 +24,10 @@ blocks a release.
 
 - A seat whose own turn has ended no longer reads as thinking while one of its background subagents is still calling the API, so the envelope flushes parked messages to it instead of refusing with `Seat is mid-turn`.
 
+### Wire
+
+- Billing: Sonnet 5.5 cache reads are priced at $0.10/MTok (0.05x base, the published rate) — receipts were charging the Sonnet 5 rate of $0.20, 2x over.
+
 ## 5.121.0 — 2026-10-09
 
 ### Teams
