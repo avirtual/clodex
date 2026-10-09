@@ -37,7 +37,7 @@ const PRICES = {
   'claude-fable-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-mythos-5-1': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 0.25 },
   'claude-mythos-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
-  'claude-sonnet-5-5': { in: 2.0, out: 10.0, cache_write_5m: 2.50, cache_write_1h: 4.0, cache_read: 0.20 },
+  'claude-sonnet-5-5': { in: 2.0, out: 10.0, cache_write_5m: 2.50, cache_write_1h: 4.0, cache_read: 0.10 },
   'claude-sonnet-5': { in: 2.0,  out: 10.0, cache_write_5m: 2.50,  cache_write_1h: 4.0,  cache_read: 0.20 },
   'claude-opus-4-5': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },
   'claude-opus-4-6': { in: 5.0,  out: 25.0, cache_write_5m: 6.25,  cache_write_1h: 10.0, cache_read: 0.50 },

@@ -220,13 +220,13 @@ PRICES = {
     # via PRICES_DATED (priced at receipt time = time of traffic).
     # Distinct model id (newer tokenizer, ~30% more tokens; wire counts already
     # reflect it, so no per-token adjustment — only the $/token rate differs).
-    # sonnet-5.5 (2026-09-28, id `claude-sonnet-5-5`): SAME rates as sonnet-5
-    # ($2/$10, writes 2.50/4, standard 0.1x read $0.20), so the prefix match
-    # already priced it right. It gets its own row anyway because
+    # sonnet-5.5 (2026-09-28, id `claude-sonnet-5-5`): sonnet-5's $2/$10 and
+    # writes 2.50/4, but reads at 0.05x = $0.10 (the opus-5.5/sonnet-5.5 cache
+    # footnote), not sonnet-5's 0.1x $0.20. It needs its own row because
     # "claude-sonnet-5" IS a prefix of it (the fable-5/5.1, opus-5/5.5 shape):
     # a later repricing of either would otherwise silently carry over. Read off
     # platform.claude.com/docs/en/about-claude/pricing + models/overview (id).
-    "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
+    "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.10},
     "claude-sonnet-5": {"in": 2.0,  "out": 10.0, "cache_write_5m": 2.50,  "cache_write_1h": 4.0,  "cache_read": 0.20},
     # haiku-5.5 (2026-10-07, id `claude-haiku-5-5`): short-prompt rates; over
     # 100k prompt tokens see PRICES_PROMPT_TIER. Read off

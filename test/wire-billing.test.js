@@ -129,6 +129,9 @@ test('PRICES: sonnet-5-5 has its own row rather than riding the sonnet-5 prefix'
   const p = priceFor('claude-sonnet-5-5');
   assert.equal(p.in, 2.0);
   assert.equal(p.out, 10.0);
+  assert.equal(p.cache_read, 0.10);
+  assert.equal(p.cache_write_5m, 2.50);
+  assert.equal(priceFor('claude-sonnet-5').cache_read, 0.20);
 });
 
 // WITHDRAWN REPRICING — the scheduled sonnet-5 rise to $3/$15 was announced,
