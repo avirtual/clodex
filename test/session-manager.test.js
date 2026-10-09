@@ -4323,7 +4323,7 @@ test('_settleBoot: an ephemeral codex ticket seat settles to the brief roster; a
   const { m } = mkPark({
     ...teamDeps,
     getPersistence: () => ({
-      get: (n) => (n === 'team-dev-7' ? { cwd: '/proj/t', ephemeral: true } : (n === 'team-dev' ? { cwd: '/proj/b' } : null)),
+      get: (n) => ((n === 'team-dev-7' || n === 'team-dev-8') ? { cwd: '/proj/t', ephemeral: true } : (n === 'team-dev' ? { cwd: '/proj/b' } : null)),
     }),
   });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
@@ -4335,7 +4335,8 @@ test('_settleBoot: an ephemeral codex ticket seat settles to the brief roster; a
   m._deliverMessage = (t, _sn, b) => { delivered[t] = b; };
   m._settleBoot(eph);
   m._settleBoot(std);
-  assert.deepStrictEqual([m._isEphemeralSeat('team-dev-7'), m._isEphemeralSeat('team-dev')], [true, false]);
+  assert.deepStrictEqual([m._isEphemeralSeat('team-dev-7'), m._isEphemeralSeat('team-dev'), m._isEphemeralSeat('team-dev-8'), m._isEphemeralSeat('team-ghost')],
+    [true, false, true, false]);
   assert.match(delivered['team-dev-7'], /you: dev \(ticket seat\); your lead: lead/);
   assert.ok(!/- lead \(session\)/.test(delivered['team-dev-7']));
   assert.match(delivered['team-dev'], /- lead \(session\) — the lead · live: lead/);
@@ -11559,7 +11560,7 @@ test('t751 create: a granted seat writes team.json with the root and the default
   const raw = f.readTeam('shop');
   assert.strictEqual(raw.root, pathReal.resolve(f.projectRoot), 'the root the seat named, resolved');
   assert.strictEqual(raw.lead, 'shop-lead', 'the default lead is <name>-lead');
-  assert.deepStrictEqual(Object.keys(raw.roles).sort(), ['hand', 'lead', 'reviewer'],
+  assert.deepStrictEqual(Object.keys(raw.roles).sort(), ['hand', 'lead', 'page-scout', 'reviewer', 'scout'],
     'the stock roles are seeded, exactly as Create Team… seeds them');
   assert.strictEqual(f.refreshes.length, 1, 'the app menu is rebuilt once — the Teams menu is a template with no open-time hook');
   const reply = f.injected.find((t) => /team "shop" created/.test(t));

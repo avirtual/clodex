@@ -1827,14 +1827,12 @@ verb as an MCP tool:
   `brief` is one sentence a subagent reads at `SubagentStart`. `tools` without
   `subagent` is a registration error.
 
-What the host does: it writes `run/<seat>/mcp-tools.json` `{ v: 1, rev, tools,
-briefs }` from the seat's effective grants (plugin granted AND verb enabled), on
-every grant change. `clodex-mcp` lists it and forwards `{ cred, tool, args, ident? }`
-to the seat socket: live grant check, then your `toIntent`, `refuse`, dispatch as
-the seat. `ident` is verified for core tools only, so every plugin-tool call — the
-main agent's too — runs under `subagent.refuse`. A main-only action stays in the
-intent form (`[agent:<verb> …]`); a main agent reaching for the tool sees your
-`refuse` string, or for `''` the default `not available to a subagent` text.
+What the host does: on every grant change it writes `run/<seat>/mcp-tools.json` `{ v: 1, rev,
+tools, briefs }` from the seat's effective grants (plugin granted AND verb enabled).
+`clodex-mcp` lists it and forwards `{ cred, tool, args, ident? }` to the seat socket: live grant
+check, your `toIntent`, `refuse`, dispatch as the seat. `ident` is verified for core tools only,
+so every plugin-tool call — the main agent's too — runs under `subagent.refuse` (`''` reads `not
+available to a subagent`); a main-only action stays in the intent form (`[agent:<verb> …]`).
 
 The refusal texts a caller may see: `invalid: <your message>`,
 `unknown tool: "<name>"` (unregistered OR not granted — one text, so there is no

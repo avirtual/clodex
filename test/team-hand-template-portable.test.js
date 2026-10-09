@@ -220,10 +220,10 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
   assert.ok(hits.some(([f]) => f === 'ipc-handlers.js'),
     'the walk must reach ipc-handlers.js — the join site that this pin was widened to cover');
   assert.deepStrictEqual(Object.fromEntries(hits.sort()), {
-    // declaration + export + the three createTeam role defaults, and (t421)
+    // declaration + export + the five createTeam role defaults, and (t421)
     // addRole's operator re-mint of a REMOVED reserved role.
     //
-    // That sixth site was checked against the question this message asks, and it
+    // That last site was checked against the question this message asks, and it
     // is still seed-only: the branch is gated on `!team.roles[roleName]`, so it
     // is reachable ONLY when the key is absent. A live team's role never enters
     // it — an existing key falls through to the ordinary already-exists arm
@@ -231,7 +231,7 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // team-manifest.test.js, 'the operator opt-in does NOT let a reserved def be
     // rewritten when the key exists'. So re-pointing a stock def still cannot
     // rewrite or refuse a role any live team already has.
-    'team-manifest.js': 6,
+    'team-manifest.js': 8,
     'ipc-handlers.js': 5,
     // t803: import + ONE fallback; t1747: role-add's absent-key stock
     // substitution. _handleTeamCreate still builds the three role defaults it

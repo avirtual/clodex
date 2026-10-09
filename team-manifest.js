@@ -703,6 +703,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const defaultRoles = kitRoles || {
       lead: { ...STOCK_ROLE_DEFS.lead },
       hand: { ...STOCK_ROLE_DEFS.hand },
+      scout: { ...STOCK_ROLE_DEFS.scout },
+      'page-scout': { ...STOCK_ROLE_DEFS['page-scout'] },
       // No `tools` here: the reviewer's cap is REVIEWER_TOOL_CAP in
       // session-manager, the one path that can enforce it.
       reviewer: { ...STOCK_ROLE_DEFS.reviewer },

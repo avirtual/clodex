@@ -5809,7 +5809,11 @@ function createTicketMethods(deps, shared) {
       const archivedSeat = !seat && wasClosedOut && wasAccepted && !ticket.worktree
         ? ` — NOTE: no live seat; its one-shot seat ${this._acceptSeatFacts(ticket).seatName || 'the seat'} was archived at close-out. Resume it from the sidebar, or [agent:task assign ${ticket.id} ${ticket.role || ticket.assignee || '<role>'}] to mint a fresh one.`
         : '';
-      ack(`ticket ${ticket.id} reopened (rework) → ${ticket.role || ticket.assignee || 'unassigned'}${replaced}${archivedSeat}`);
+      ack(`ticket ${ticket.id} reopened (rework) → ${this._ticketRoleLabel(team, ticket)}${replaced}${archivedSeat}`);
+    },
+
+    _ticketRoleLabel(team, ticket) {
+      return ticket.role || matchSeatRole(team, ticket.assignee) || ticket.assignee || 'unassigned';
     },
 
     // Gated to `open` because respec delivers: re-dispatching a done or accepted ticket restarts work without reopening it.
