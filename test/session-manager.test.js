@@ -14876,6 +14876,56 @@ for (const [label, seatState, reason] of [
   });
 }
 
+async function wireFlushRig() {
+  const root = mkTmpRoot('clodex-sm-');
+  const m = mk({
+    REGISTRY_DIR: root, fs: fsReal, path: pathReal,
+    getUserDataPath: () => root,
+    PENDING_DIR: '/tmp/pending-test',
+    log: { warn() {}, info() {}, error() {}, debug() {} },
+    drainPending: () => ['[agent:from bob] hi'],
+    countPending: () => 1,
+  });
+  m._injectText = () => {};
+  m._broadcast = () => {};
+  m._publishAgentText = () => {};
+  const wire = await m._ensureWire();
+  m.sessions.set('a', { name: 'a', agentType: 'claude', intentSource: 'wire', sessionId: 'sid-1', activityState: 'idle' });
+  const close = async () => {
+    await wire.close();
+    if (m._holdKeeper) m._holdKeeper.stop();
+    m._activity.prune(new Set());
+  };
+  return { m, wire, close };
+}
+
+for (const [role, state, verdict] of [
+  ['general-purpose', 'idle', { ok: true, count: 1 }],
+  ['parent', 'thinking', { ok: false, reason: 'busy', count: 1 }],
+]) {
+  test(`t1766 flushPending: a wire turn.started with role ${role} leaves the seat ${state}`, async () => {
+    const { m, wire, close } = await wireFlushRig();
+    try {
+      wire.emit('turn.started', { agent: 'a', reqId: 'r1', role, sideCall: false });
+      assert.strictEqual(m.sessions.get('a').activityState, state);
+      const r = m.flushPending('a');
+      assert.deepStrictEqual({ ok: r.ok, reason: r.reason, count: r.count },
+        { ok: verdict.ok, reason: verdict.reason, count: verdict.count });
+    } finally { await close(); }
+  });
+}
+
+test('t1766: a subagent turn.completed with an unknown reqId leaves an in-flight main-line seat thinking', async () => {
+  const { m, wire, close } = await wireFlushRig();
+  try {
+    wire.emit('turn.started', { agent: 'a', reqId: 'main-1', role: 'parent', sideCall: false });
+    assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
+    wire.emit('turn.completed', { agent: 'a', reqId: 'sub-9', role: 'general-purpose', sessionId: 'sid-1', text: '', stop: { is_turn: true } });
+    await new Promise((r) => setImmediate(r));
+    assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
+  } finally { await close(); }
+});
+
 test('flushPending: happy path claims with a flush.<pid> tag and injects the parked pile as ONE batched message', () => {
   const m = mkFlush({ _texts: ['m1', 'm2'] });
   m.sessions.set('a', { name: 'a', agentType: 'claude', activityState: 'idle' });

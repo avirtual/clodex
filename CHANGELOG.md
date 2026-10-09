@@ -20,6 +20,10 @@ blocks a release.
 
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
 
+### Sessions
+
+- A seat whose own turn has ended no longer reads as thinking while one of its background subagents is still calling the API, so the envelope flushes parked messages to it instead of refusing with `Seat is mid-turn`.
+
 ## 5.121.0 — 2026-10-09
 
 ### Teams
