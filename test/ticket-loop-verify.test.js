@@ -5812,6 +5812,14 @@ test('t1732: a reject on a done ticket whose seat is gone but was never closed o
   assert.deepStrictEqual(acks, ['ticket t1 reopened (rework) → hand']);
 });
 
+test('a reject on a role-less ticket names the assignee seat\'s role, not its seat name', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null, role: null, state: 'done', assignee: 'team-hand-9' } });
+  const acks = [];
+  f.m._taskReject(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'reject', id: 't1', who: null, body: 'redo it' }, (t) => acks.push(t));
+  assert.deepStrictEqual(acks, ['ticket t1 reopened (rework) → hand']);
+});
+
 test('t1732: the branchless close-out stamps closedOut and acceptedAt before the archive resolves', async () => {
   const repo = mkRepo();
   const f = mkLoop({ repo, ticketOver: { worktree: null } });
@@ -5889,6 +5897,22 @@ test('task accept leaves a one-shot seat in place while it holds another open ti
   assert.match(replies.join('\n'), /team-hand was left in place because it holds t2/);
   await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't2', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
   assert.deepStrictEqual(archived, ['team-hand']);
+});
+
+test('task done on an unstarted branchless ticket leaves a one-shot seat in place while it holds another ticket', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, ticketOver: { worktree: null, role: null, assignee: 'team-hand', startedAt: null } });
+  f.tstore.save(f.team.root, [f.one(), { id: 't2', state: 'open', spec: 'the next spec', assignee: 'team-hand', role: 'hand',
+    openedAt: Date.now(), lastActivityAt: Date.now(), startedAt: Date.now(), worktree: null }]);
+  f.persistence.upsert({ name: 'team-hand', ephemeral: true });
+  const archived = [];
+  f.m.archive = async (n) => { archived.push(n); };
+  f.injected.length = 0;
+  await f.m._taskDone(f.seat('team-hand'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' }, (t) => f.injected.push(t));
+  assert.deepStrictEqual(archived, []);
+  assert.doesNotMatch(f.injected.join('\n'), /next: t2/);
+  assert.match(f.injected.join('\n'), /; team-hand was left in place because it holds t2$/);
+  assert.ok(f.m.sessions.has('team-hand'));
 });
 
 test('task done on a solo team leaves a one-shot seat in place while it holds another ticket', async () => {
