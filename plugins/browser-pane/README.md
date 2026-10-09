@@ -287,28 +287,29 @@ items print every time.
 It is site-neutral: it reads only `article`/`time`/`lang` structure, aria-labels
 and hrefs. A default read of five or more posts hints `--compact`.
 
-A read reply ends in `→ @<path>`, which a Claude seat attaches to its context, only
-when the page is at or under the seat's budget (default ≈1,000 tokens, set under
-"Attach reads up to ≈N tokens" in the pane's Settings; a per-seat override is set
-through the `attach.set` call with `{ seat, tokens }`, 100–20,000; `tokens: null`
-clears it). A larger page comes back as the plain path with `(not attached: over
-≈N tok; …)` and a digest of at most a dozen lines: title, url and sign-in state;
-size, page and new/retired/changed counts (`new: all (first read)` or `new: all
-(numbers restored)` on a first read); the first visible headings (or landmark
-labels); every ⚠ element with its number (above 30, counts per category plus the
-first 10); and a `--main`/`--filter=`/`--page=` hint, where `--filter=` names a
-word shared by at least two headings. `--main` picks the column holding the page's
-articles (on X: the timeline, not the Trending / Who to follow sidebar). `--attach`
-forces the `@`, `--path-only` drops it. With `--path-only` the file is written as
-`p-<id>.txt`, `<id>` being the first 16 hex of the content's sha256, written
-under the plugin's data dir (not `$TMPDIR`, which macOS purges after about three
-days of no access), kept seven days from its last save, and outside the 50-file
-prune, so a page-scout ticket can name a snapshot that will still be there and
-still be the same bytes. Stale snapshots are also pruned when the browser stops
-for idleness, and a temp file from an interrupted save is removed within the
-hour. A screenshot attaches unless `--path-only` is given. On
-an over-budget read a Codex seat still gets the "read it with your Read tool"
-line; with `--path-only` both seat types get the same path-and-id line.
+A read reply ends in `→ @<path>`, which a Claude seat attaches to its context,
+only when the page is at or under the seat's budget (default ≈1,000 tokens, set
+under "Attach reads up to ≈N tokens" in the pane's Settings; a per-seat override
+is set through the `attach.set` call with `{ seat, tokens }`, 100–20,000;
+`tokens: null` clears it). A larger page comes back as the plain path with `(not
+attached: over ≈N tok; …)` and a digest of at most a dozen lines: title, url and
+sign-in state; size, page and new/retired/changed counts (`new: all (first
+read)` or `new: all (numbers restored)` on a first read); the first visible
+headings (or landmark labels); every ⚠ element with its number (above 30, counts
+per category plus the first 10); and a `--main`/`--filter=`/`--page=` hint,
+where `--filter=` names a word shared by at least two headings. `--main` picks
+the column holding the page's articles (on X: the timeline, not the Trending /
+Who to follow sidebar). `--attach` forces the `@`, `--path-only` drops it. With
+`--path-only` the file is written as `p-<id>.txt`, `<id>` being the first 16 hex
+of the content's sha256, written under the plugin's data dir (not `$TMPDIR`,
+which macOS purges after about three days of no access), kept seven days from
+its last save, and outside the 50-file prune, so a page-scout ticket can name a
+snapshot that will still be there and still be the same bytes. Stale snapshots
+are also pruned when the browser stops for idleness, and a temp file from an
+interrupted save is removed within the hour. A screenshot attaches unless
+`--path-only` is given. On an over-budget read a Codex seat still gets the "read
+it with your Read tool" line; with `--path-only` both seat types get the same
+path-and-id line.
 
 The read root is normally the page's main column. When a modal dialog is open —
 `[role=dialog]`/`[role=alertdialog]`/`dialog[open]`/`[aria-modal=true]`, proven by

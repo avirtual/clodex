@@ -14920,6 +14920,7 @@ test('t1766: a subagent turn.completed with an unknown reqId leaves an in-flight
   try {
     wire.emit('turn.started', { agent: 'a', reqId: 'main-1', role: 'parent', sideCall: false });
     assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
+    // proxy never sends is_turn:true for a subagent role; this row is deliberately hostile so only the reqId mismatch can keep the seat thinking
     wire.emit('turn.completed', { agent: 'a', reqId: 'sub-9', role: 'general-purpose', sessionId: 'sid-1', text: '', stop: { is_turn: true } });
     await new Promise((r) => setImmediate(r));
     assert.strictEqual(m.sessions.get('a').activityState, 'thinking');
