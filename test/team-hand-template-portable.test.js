@@ -223,7 +223,7 @@ test('re-pointing the stock hand template is SEED-ONLY — every consumer, repo-
     // declaration + export + the five createTeam role defaults, and (t421)
     // addRole's operator re-mint of a REMOVED reserved role.
     //
-    // That sixth site was checked against the question this message asks, and it
+    // That last site was checked against the question this message asks, and it
     // is still seed-only: the branch is gated on `!team.roles[roleName]`, so it
     // is reachable ONLY when the key is absent. A live team's role never enters
     // it — an existing key falls through to the ordinary already-exists arm
