@@ -165,6 +165,7 @@ function activate(host) {
       live.clear();
       scheduler.onChildExit();
       if (info && info.idleMs) {
+        replies.pruneAllSnapshots(path.join(host.paths.dataDir, 'snapshots'), Date.now());
         const n = idleStopNotice(info.idleMs, closed);
         if (host.log) host.log.info(n.log);
         if (n.toast) notice = { seq: (notice ? notice.seq : 0) + 1, text: n.toast };
