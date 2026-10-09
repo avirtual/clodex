@@ -14,7 +14,7 @@ const PLUGIN_DIR = path.join(__dirname, '..', 'plugins', 'browser-pane');
 const FAKE = path.join(__dirname, 'fixtures', 'browser-pane', 'fake-child');
 const engineMod = require('../plugins/browser-pane/engine');
 
-function boot(t, { headless = false, type = 'claude', seed = null } = {}) {
+function boot(t, { headless = false, type = 'claude', seed = null, mod = engineMod } = {}) {
   unregisterSource('browser-pane');
   const dir = mkTmpRoot('clodex-bp-engine-');
   if (seed) seed(dir);
@@ -52,7 +52,7 @@ function boot(t, { headless = false, type = 'claude', seed = null } = {}) {
     electronChild: headless ? undefined
       : (script, extraArgs) => ({ command: process.execPath, args: [FAKE, ...extraArgs, '--mode=normal', `--log=${frameLog}`], env: process.env }),
   });
-  const host = engine.register('browser-pane', engineMod, { hostApi: HOST_API_VERSION }, { dir: PLUGIN_DIR });
+  const host = engine.register('browser-pane', mod, { hostApi: HOST_API_VERSION }, { dir: PLUGIN_DIR });
   const emitAs = (seat, line) => {
     const intent = parseWithRegistry(line);
     assert.ok(intent, `parses: ${line}`);
@@ -336,6 +336,33 @@ test('engine: show on a profile whose only live window is a tab shows the tab', 
   await emit('[agent:browser open x:riot] https://x.com/drive');
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['x'], 'desktop'), { ok: true, service: 'x:riot' });
   assert.deepStrictEqual(await engine.dispatch('browser-pane', 'show', ['wiki'], 'desktop'), { ok: false, error: 'wiki has no window open — Open it again' });
+});
+
+test('engine: an idle stop of the browser child prunes stale snapshots; a non-idle exit does not', (t) => {
+  const clientMod = require('../plugins/browser-pane/client');
+  const enginePath = require.resolve('../plugins/browser-pane/engine');
+  const origCreate = clientMod.createClient;
+  let clientOpts = null;
+  clientMod.createClient = (opts) => { clientOpts = opts; return origCreate(opts); };
+  const cached = require.cache[enginePath];
+  delete require.cache[enginePath];
+  let mod;
+  try { mod = require(enginePath); } finally {
+    clientMod.createClient = origCreate;
+    require.cache[enginePath] = cached;
+  }
+  const { host } = boot(t, { headless: true, mod });
+  assert.ok(clientOpts, 'activate built the client through createClient');
+  const seat = path.join(host.paths.dataDir, 'snapshots', 'gone-seat');
+  fs.mkdirSync(seat, { recursive: true });
+  const stale = path.join(seat, 'p-0123456789abcdef.txt');
+  fs.writeFileSync(stale, 'stale');
+  const old = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(stale, old, old);
+  clientOpts.onExit({});
+  assert.strictEqual(fs.existsSync(stale), true);
+  clientOpts.onExit({ idleMs: 900000 });
+  assert.strictEqual(fs.existsSync(stale), false);
 });
 
 test('engine idleStopNotice: the log line always, the toast only when windows closed', () => {

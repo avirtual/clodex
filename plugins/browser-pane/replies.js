@@ -20,6 +20,8 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const FILE_RE = /^[rs]-(\d+)\.(txt|jpg)$/;
 const SNAP_RE = /^p-([0-9a-f]{16})\.txt$/;
 const SNAP_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const SNAP_TMP_RE = /^\.p-\d+-[0-9a-f]{12}\.tmp$/;
+const SNAP_TMP_MAX_AGE_MS = 60 * 60 * 1000;
 
 function oneLine(text, max = 0) {
   let s = String(text).replace(ANSI, '').replace(CTRL, ' ').replace(RUNS, ' ').trim();
@@ -92,7 +94,7 @@ function readReply(service, info, file, sessionType, attach = { attach: true }) 
   if (attach.attach) return withPath(head, fileTail(file, sessionType));
   const snap = SNAP_RE.exec(path.basename(String(file)));
   const tail = attach.budget == null
-    ? ` → ${showPath(file)}${snap ? ` · snapshot ${snap[1]}` : ''} (not attached: --path-only; hand the path and id to a page-scout ticket, or read it yourself)`
+    ? ` → ${showPath(file)}${snap ? ` · snapshot ${snap[1]}` : ''} (not attached: --path-only; ${snap ? 'hand the path and id to a page-scout ticket, or read it yourself' : 'read it yourself'})`
     : sessionType === 'claude'
       ? ` → ${showPath(file)} (not attached: over ${tokLabel(attach.budget)}; read or grep it, or narrow with --filter=/--page=)` : fileTail(file, sessionType);
   return [withPath(head, tail), ...digestLines(info)].join('\n');
@@ -556,9 +558,11 @@ function snapshotDir(seat, root) {
 function pruneSnapshots(dir, now) {
   let files;
   try { files = fs.readdirSync(dir); } catch { return; }
-  for (const f of files.filter((n) => SNAP_RE.test(n))) {
+  for (const f of files) {
+    const max = SNAP_RE.test(f) ? SNAP_MAX_AGE_MS : SNAP_TMP_RE.test(f) ? SNAP_TMP_MAX_AGE_MS : 0;
+    if (!max) continue;
     const p = path.join(dir, f);
-    try { if (now - fs.statSync(p).mtimeMs > SNAP_MAX_AGE_MS) fs.unlinkSync(p); } catch {}
+    try { if (now - fs.statSync(p).mtimeMs > max) fs.unlinkSync(p); } catch {}
   }
 }
 
@@ -601,8 +605,13 @@ function writeReplyFile(seat, content, { root, kind = 'r', ext = 'txt', now = Da
     if (fs.existsSync(snap)) fs.utimesSync(snap, now / 1000, now / 1000);
     else {
       const tmp = path.join(sdir, `.p-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`);
-      fs.writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
-      fs.renameSync(tmp, snap);
+      try {
+        fs.writeFileSync(tmp, content, { mode: 0o600, flag: 'wx' });
+        fs.renameSync(tmp, snap);
+      } catch (e) {
+        try { fs.unlinkSync(tmp); } catch {}
+        throw e;
+      }
     }
     if (root) pruneAllSnapshots(path.dirname(sdir), now);
     else pruneSnapshots(sdir, now);
@@ -647,7 +656,7 @@ function classifyReply(line) {
 module.exports = {
   closedReply,
   classifyReply,
-  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
+  oneLine, reply, errorReply, openReply, readReply, servicesReply, writeReplyFile, snapshotId, SNAP_RE, SNAP_MAX_AGE_MS, SNAP_TMP_MAX_AGE_MS, replyDir, snapshotDir, pruneSnapshots, pruneAllSnapshots, loginState, stamp,
   downloadReply, screenshotReply, inspectReply,
   PREFIX, REPLY_MAX, SEAT_RE, TEXT, ago, signinReply, signinNotice, dropSuffix, droppedReply, actReply, scrollReply, navReply, waitReply, handbackReply, heldTimeout, isGoogle,
   handover, INSTRUCTION_MAX, operatorNav,

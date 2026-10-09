@@ -53,6 +53,8 @@ test('replies: a long reply is capped at 600 chars but the path is never cut', (
   const snapFile = '/t/' + 'q'.repeat(700) + '/p-0123456789abcdef.txt';
   assert.ok(R.readReply('utility', { page: 1, pages: 1, elements: 1, tokens: 10 }, snapFile, 'claude', { attach: false, budget: null }).split('\n')[0]
     .endsWith(`${snapFile} · snapshot 0123456789abcdef (not attached: --path-only; hand the path and id to a page-scout ticket, or read it yourself)`));
+  assert.ok(R.readReply('utility', { page: 1, pages: 1, elements: 1, tokens: 10 }, file, 'claude', { attach: false, budget: null }).split('\n')[0]
+    .endsWith(`${file} (not attached: --path-only; read it yourself)`));
   const open = R.openReply('utility', { status: 200, title: 't'.repeat(900), url: 'https://x.example/', login: {}, idle: { ok: true, ms: 1900 } });
   assert.strictEqual(open.length, 600);
 });
@@ -164,6 +166,30 @@ test('replies: a snapshot write is idempotent by content and survives the 50-fil
   for (let i = 0; i < 55; i++) R.writeReplyFile('seat', `n${i}`);
   assert.strictEqual(fs.readFileSync(a, 'utf8'), 'same');
   assert.strictEqual(fs.readdirSync(path.dirname(a)).filter((f) => f.startsWith('r-')).length, 50);
+}));
+
+test('replies: a snapshot save whose rename throws rethrows and leaves no temp file', () => withTmp((root) => {
+  const orig = fs.renameSync;
+  fs.renameSync = () => { fs.renameSync = orig; throw Object.assign(new Error('EACCES: injected'), { code: 'EACCES' }); };
+  try {
+    assert.throws(() => R.writeReplyFile('seat', 'page', { snapshot: true, root }), /EACCES: injected/);
+  } finally { fs.renameSync = orig; }
+  assert.deepStrictEqual(fs.readdirSync(R.snapshotDir('seat', root)).filter((f) => f.startsWith('.p-')), []);
+}));
+
+test('replies: a save with a root prunes an 8-day-old snapshot and a 2-hour-old temp file in another seat, a 10-minute-old temp file survives', () => withTmp((root) => {
+  const now = Date.now();
+  const other = R.snapshotDir('other', root);
+  fs.mkdirSync(other, { recursive: true });
+  const age = (f, ms) => { const p = path.join(other, f); fs.writeFileSync(p, 'x'); fs.utimesSync(p, (now - ms) / 1000, (now - ms) / 1000); return p; };
+  const oldSnap = age('p-0123456789abcdef.txt', 8 * 24 * 60 * 60 * 1000);
+  const oldTmp = age('.p-1-abcdef012345.tmp', 2 * 60 * 60 * 1000);
+  const youngTmp = age('.p-2-0123456789ab.tmp', 10 * 60 * 1000);
+  assert.strictEqual(R.SNAP_TMP_MAX_AGE_MS, 60 * 60 * 1000);
+  R.writeReplyFile('seat', 'page', { snapshot: true, root, now });
+  assert.strictEqual(fs.existsSync(oldSnap), false);
+  assert.strictEqual(fs.existsSync(oldTmp), false);
+  assert.strictEqual(fs.existsSync(youngTmp), true);
 }));
 
 test('replies: a snapshot older than 7 days is pruned, one 6 days old is kept, an r- file beside them is not touched', () => withTmp((root) => {
