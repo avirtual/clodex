@@ -27,6 +27,7 @@ blocks a release.
 ### Wire
 
 - Billing: Sonnet 5.5 cache reads are priced at $0.10/MTok (0.05x base, the published rate) — receipts were charging the Sonnet 5 rate of $0.20, 2x over.
+- Wirescope v0.6.83 vendored (Sonnet 5.5 cache-read repricing upstream; our copy was already corrected).
 
 ## 5.121.0 — 2026-10-09
 
