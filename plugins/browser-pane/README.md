@@ -304,7 +304,9 @@ forces the `@`, `--path-only` drops it. With `--path-only` the file is written a
 under the plugin's data dir (not `$TMPDIR`, which macOS purges after about three
 days of no access), kept seven days from its last save, and outside the 50-file
 prune, so a page-scout ticket can name a snapshot that will still be there and
-still be the same bytes. A screenshot attaches unless `--path-only` is given. On
+still be the same bytes. Stale snapshots are also pruned when the browser stops
+for idleness, and a temp file from an interrupted save is removed within the
+hour. A screenshot attaches unless `--path-only` is given. On
 an over-budget read a Codex seat still gets the "read it with your Read tool"
 line; with `--path-only` both seat types get the same path-and-id line.
 
@@ -409,6 +411,10 @@ $TMPDIR/clodex-browser-pane/<seat>/   read files (r-NNNN.txt, 50 newest, 24 h)
 Logins persist across restarts: session cookies are re-saved with a 30-day
 expiry. A server-side session timeout still wins, and the next read then shows
 a sign-in page.
+
+Snapshots older than seven days are pruned on a save, at plugin start and when
+the browser stops for idleness; a temp file from an interrupted save is removed
+within the hour.
 
 The browser runs as a separate process, started on the first command and
 stopped after 15 minutes without one. If it crashes three times within five

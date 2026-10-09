@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Browser
+
+- Snapshots are also pruned when the browser stops for idleness, and an interrupted `--path-only` save leaves no temp file behind.
+
 ## 5.121.0 — 2026-10-09
 
 ### Teams
