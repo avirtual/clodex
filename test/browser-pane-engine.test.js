@@ -343,6 +343,7 @@ test('engine: an idle stop of the browser child prunes stale snapshots; a non-id
   const enginePath = require.resolve('../plugins/browser-pane/engine');
   const origCreate = clientMod.createClient;
   let clientOpts = null;
+  // engine.js destructures createClient from './client' at load, so this wrap must precede the engine require
   clientMod.createClient = (opts) => { clientOpts = opts; return origCreate(opts); };
   const cached = require.cache[enginePath];
   delete require.cache[enginePath];
