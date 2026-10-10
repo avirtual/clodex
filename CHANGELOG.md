@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.122.0 — 2026-10-10
+
 ### Browser
 
 - Snapshots are also pruned when the browser stops for idleness, and an interrupted `--path-only` save leaves no temp file behind.
