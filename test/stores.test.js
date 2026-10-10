@@ -2279,7 +2279,7 @@ test('seed: the hand prompt bounds what a hand reads into its own context', () =
     'the budget rule has a section of its own in the system prompt, not a line buried in a bullet');
   assert.match(hand, /never `cat` a file over 200 lines/,
     'with the read ceiling stated as a hard number a hand cannot negotiate');
-  assert.match(hand, /end your turn/,
+  assert.match(hand, /end the turn/,
     'and the anti-polling rule names the alternative, since a hand polls when it has nothing else to do');
 });
 
@@ -2358,32 +2358,25 @@ test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride a
 // through all three incidents. This pins the wording only; whether a cold seat
 // READS it is not something a unit test can answer, and the mechanical half of
 // the fix (the verb on every dispatch) is pinned in session-manager.test.js.
-test('seed: the hand prompt denies both false beliefs about closing a ticket', () => {
-  const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /is an intent you emit/,
-    'the hand is told plainly that task done is an intent, not a command it must be granted');
-  assert.match(hand, /not an exec command, it needs no grant/,
+test('seed: the harness denies both false beliefs about closing a ticket', () => {
+  const harness = require('../ipc-prompt').buildIpcPrompt(null);
+  assert.match(harness, /It is an intent like any other/,
+    'the seat is told plainly that task done is an intent, not a command it must be granted');
+  assert.match(harness, /not an exec command, no grant needed/,
     'and the exec-registry confusion is named, since that is the belief a seat actually held');
-  assert.match(hand, /A dm carrying your report does not close the ticket/,
+  assert.match(harness, /A dm carrying your report does NOT close the ticket/,
     'and that reporting by dm leaves the ticket open');
-  assert.match(hand, /indistinguishable from the lead's side/,
+  assert.match(harness, /looks identical to the lead/,
     'and why nobody catches it: the report arrives complete either way');
 });
 
 const REPO_APPEND_DIR = path.join(__dirname, '..', 'resources', 'library', 'prompts', 'append');
-test('seed: the hand prompt compacts on REWORK past 150k, and never at done', () => {
+test('seed: the hand prompt never compacts mid-ticket or at done', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.strictEqual(fs.existsSync(path.join(REPO_APPEND_DIR, 'clodex-hand.md')), false,
     'the hand prompt is one file: no append copy to drift from it');
-  assert.match(hand, /~150k/, 'the rework threshold is a literal');
   assert.match(hand, /don't compact mid-ticket or at `done`/,
     'the done carve-out survives — a compact there discards what rework needs');
-  assert.match(hand, /JOURNAL\.md and the verdict file/,
-    'the pickup note says what it points at, or the compact loses the thread');
-  const j = hand.indexOf('journal the branch state');
-  assert.ok(j > 0, 'ENTER: the prompt actually contains the journal step being ordered');
-  assert.ok(hand.indexOf('[agent:context compact]', j) > j,
-    'the compact intent comes AFTER the journal step, not before it');
   assert.doesNotMatch(hand, /^Do not compact\. /m,
     'the flat ban that made a hand work a rework at 300k is gone');
   assert.match(hand, /red-proof every test you add that guards a production change: commit; revert/i,

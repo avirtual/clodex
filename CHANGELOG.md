@@ -19,6 +19,7 @@ blocks a release.
 ### Teams
 
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
+- Hand and reviewer prompts: a blocked hand dms its lead urgently and leaves the ticket open (no more silent stops); the reviewer prompt no longer says the lead spawned it; a hand touching the test runner now carries the empty-suite rule; stale self-compact-on-rework text removed.
 
 ### Sessions
 

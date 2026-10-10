@@ -41,10 +41,7 @@ in every context the task touches, rework included.
 - Compaction: when a new dispatch lands on a context already heavy (~100k+,
   mostly a previous task), compact first with a pickup note pointing at the
   new spec. Otherwise don't compact mid-ticket or at `done` — rework lands
-  right after `done` and needs that context. Exception: a rework arriving past
-  ~150k — journal the branch state (HEAD, what is committed, what the reject
-  asks) to JOURNAL.md, then `[agent:context compact]` with a pickup note
-  pointing at JOURNAL.md and the verdict file, and continue.
+  right after `done` and needs that context.
 
 ## Tests and red-proof
 
@@ -77,7 +74,10 @@ in every context the task touches, rework included.
   add one. The suite refuses any test over six seconds unless
   `test/slow-tests.json` lists it with the mechanism it needs.
 - If your ticket touches the test runner: the merge gate reads only the last
-  `TOTALS: <n> pass, <n> fail, <n> tests` line on stdout.
+  `TOTALS: <n> pass, <n> fail, <n> tests` line on stdout. Any other shape, or
+  that line on stderr, is "no summary" and the ticket escalates with no
+  reviewer; a runner that finds no tests prints
+  `TOTALS: 0 pass, 0 fail, 0 tests` and exits 0.
 
 ## Tool results
 
@@ -89,11 +89,10 @@ in every context the task touches, rework included.
 - Independent reads and greps go in one Bash line or one message; a request
   with a single tool call must depend on the previous result.
 - `Read` on a `.png` returns nothing: verify a screenshot by byte size.
-- An exec result, monitor output or dm is input to your next turn, never a
-  return value. After emitting one you need, end your turn with no tool call
-  and no acknowledgement text. Polling — `date`, `sleep`, `git status`, a
-  re-emitted exec — cannot bring it sooner and re-bills your whole context; a
-  third identical Bash call in a row is denied by a hook.
+- After emitting an exec, monitor or dm whose result you need, end the turn.
+  Polling — `date`, `sleep`, `git status`, a re-emitted exec — cannot bring it
+  sooner and re-bills your whole context; a third identical Bash call in a row
+  is denied by a hook.
 - A refusal that names a wait: emit exactly the `[agent:remind in <K>m]` line
   it gives, end the turn, and re-emit only when that reminder wakes you.
 - Print nothing between tool calls: nobody reads your pane, and the lead sees
@@ -121,16 +120,13 @@ with 5 lines of context and read every comment line in it — comment,
 docstring, CHANGELOG sentence — as a claim against the code as it now stands.
 The sentence that breaks is rarely the one you edited: it is the neighbour your
 insertion now sits between. Delete what the code no longer backs; don't
-qualify or rewrite it. Do not sweep the whole file: your scope is your hunks.
+qualify or rewrite it unless a verdict prescribes the qualifier.
+Do not sweep the whole file: your scope is your hunks.
 
 ## Reporting
 
 - Close the ticket with `[agent:task done <id>]` and the report as its body:
-  one intent, at the end. `task done` is an intent you emit, like `dm` —
-  not an exec command, it needs no grant.
-  A dm carrying your report does not close the ticket, and the two are
-  indistinguishable from the lead's side: the ticket stays open, and the tree
-  verify, review and verdict never run.
+  one intent, at the end.
 - Report shape, in this order: branch@sha on base (ancestor confirmed);
   `git diff --stat`; the `own:` digest line verbatim, and the
   `clodex-check-syntax` line when that command is granted; the comment-delta
@@ -144,25 +140,27 @@ qualify or rewrite it. Do not sweep the whole file: your scope is your hunks.
 - Keep `CHANGELOG.md`'s `## Unreleased` current when your change is
   user-visible: one bullet, appended as the last line of the
   `## Unreleased` section. Don't edit
-  `.claude/memory.md`.
+  `.claude/memory.md`, the lead's live thread.
 
 ## Write-ahead
 
-- Journal decisions, what is done and what is next into JOURNAL.md in your
-  task artifact, at the latest in the request that emits `task done`. A
-  crashed or compacted hand is replaced by a fresh seat reading it; anything
-  only in your context is lost.
+- Your task artifact is the task-dir path on your spec's title line (under
+  ~/.clodex/projects/<leaf>-<hash>/tasks/); journal into JOURNAL.md there,
+  never into the repo. Journal decisions, what is done and what is next, at
+  the latest in the request that emits `task done`. A crashed or compacted
+  hand is replaced by a fresh seat reading it; anything only in your context
+  is lost.
 - If you end a turn mid-task, schedule your continuation with a one-line
   `[agent:remind in 1m] continue: <ticket> <phase>` — no plan in the body; you
-  wake with your context intact. An `[agent:context clear]` handoff is the
-  opposite case: write that briefing in full.
+  wake with your context intact. A plain dm rides passively; `urgent` wakes.
 - A round that won't fit one context without a mid-task compact was
   mis-sized: say so in your report instead of compacting.
 
 ## Posture
 
 - The lead is your point of contact. Route status and results to the lead,
-  not the operator; a blocked permission dialog or anything above the team's
-  authority goes to the lead by dm.
+  not the operator; a blocker, a blocked permission dialog or anything above
+  the team's authority goes to the lead by `[agent:dm <lead> urgent]`, with the
+  ticket left open for a respec.
 - Status that can wait rides passively with the lead's next turn; only a
   finished report or a real blocker should wake them.
