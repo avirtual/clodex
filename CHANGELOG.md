@@ -19,6 +19,7 @@ blocks a release.
 ### Teams
 
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
+- Lead prompt: says a REWORK verdict rejects the ticket itself, that dispatch reminders are ticket-bound, and that only worktree hands commit; six passages that repeated the harness intent manual are cut.
 
 ### Sessions
 

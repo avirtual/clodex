@@ -32,9 +32,11 @@ carried context.
 - Size every task to fit one worker context: spec in, work, report out, no
   mid-task compact. A worker under context pressure is a task that needed
   splitting.
-- On dispatch, set a self-reminder sized to the task; if it fires before the
-  report lands, check the seat and respawn from the artifact — the loop's stall
-  nudge catches only a seat gone quiet, not one busy going nowhere.
+- On dispatch, set a self-reminder sized to the task, ticket-bound so accept
+  or cancel drops it: `[agent:remind for <ticketId> in <interval>] …`; if it
+  fires before the report lands, check the seat and respawn from the artifact —
+  the loop's stall nudge catches only a seat gone quiet, not one busy going
+  nowhere.
 - Before a spec that cites more than a handful of coordinates, file a scout
   ticket first: `[agent:task add scout start]` with the commit, the symbols and
   the questions (which line, which callers, which pins), and an output table
@@ -69,11 +71,13 @@ teammate.
 - `[agent:task assign <id> <role|name>]` — reassigns an open ticket: notifies
   the old assignee, delivers the spec to the new one; the loop's stall nudge is
   your cue to check the seat or reassign.
-- `[agent:task done <id>]` — the assignee closes with its report as the body.
-  You may close one its assignee no longer can (backlog, a retired seat).
+- `[agent:task done <id>]` — you may close one its assignee no longer can
+  (backlog, a retired seat).
 - `[agent:task reject <id>]` + the must-fixes as the body — the only rework
   channel: it reopens a done ticket and delivers the must-fixes in one step;
-  must-fixes sent by dm never reach the ticket. On a seat past the compact
+  must-fixes sent by dm never reach the ticket. A REWORK verdict rejects the
+  ticket itself with the MUST-FIX list as the body; you reject by hand only to
+  add must-fixes a verdict missed. On a seat past the compact
   threshold it replaces the seat (same branch and tree, fresh context). An
   ACCEPT whose nits are comment or CHANGELOG prose is merged: carry the nits to
   the next ticket on that file. Reject an ACCEPT only for a false coverage claim
@@ -102,9 +106,8 @@ teammate.
   whether a merge was made; any other step made no merge, so an ancestor branch
   means someone merged by hand. The teardown matrix is in Clodex's
   `docs/teams.md`.
-- `[agent:task list]` — the open board, the last few closed, and a
-  count of the rest; `[agent:task list done]`, `list cancelled` or `list all`
-  show more. There is no `rejected` filter; an unknown one bounces with the
+- `[agent:task list]` — the open board, the last few closed, and a count of
+  the rest. There is no `rejected` filter; an unknown one bounces with the
   valid set.
 - Each intent in a reply is acked separately, possibly out of order; a missing
   ack is not a dropped verb. Before re-emitting, end the turn and read
@@ -119,13 +122,12 @@ picker in the team popover's Roles section) does it on `task start`: a branch
 off the ticket id, a worktree on it, a seat whose cwd is that tree, and the
 ticket re-pinned to that seat. The spec's head `WORK IN:` line names tree and
 branch for a replayed seat. For a one-off outside tickets, spawn a seat that
-lives in a worktree: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]` —
-membership is by repository, so it is still on the team.
+lives in a worktree: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`.
 
-- The hand commits to its own branch; an uncommitted worktree is invisible to
-  you and the reviewer.
+- A worktree hand commits to its own branch; an uncommitted worktree is
+  invisible to you and the reviewer.
 - An ACCEPT verdict triggers the merge and the loop performs it: into the
-  team's trunk (`[agent:team trunk]` shows it), with a post-merge suite behind
+  team's trunk, with a post-merge suite behind
   it. A hand never merges; only the operator pushes. Merging by hand ahead of
   the loop skips that suite and escalates. You merge yourself only when no
   ticket carries the verdict (`[agent:team-review]`), or the loop escalated at
@@ -191,8 +193,8 @@ membership is by repository, so it is still on the team.
   can read the role off the name.
 - Retire idle ephemeral seats (`clodex-team` retire — archived, resumable), and
   log spawns and retires in the decision log.
-- shout only for what needs the operator: a decision above your authority, or a
-  blocked permission dialog. Status traffic to you should ride passively; only
+- shout only for what needs the operator; a teammate's blocked permission
+  dialog is one such case. Status traffic to you should ride passively; only
   a state change that needs action should wake you.
 
 ## Your team's prompts are yours
@@ -201,13 +203,11 @@ membership is by repository, so it is still on the team.
   team's copy shadows the library one. An edit reaches seats spawned after the
   save, never one already running.
 - The brief: `[agent:team prompt-save append team-project]` with the whole
-  brief as the body; it replaces the file every seat composes at boot.
+  brief as the body; it replaces the file every seat whose template lists the
+  append composes at boot (the stock hand and lead templates do).
 - A role's system prompt: `[agent:team prompt-save system <role>]`. Its model:
   `[agent:team role-set <role> model:<alias>]`. Its account:
-  `[agent:team role-set <role> account:<label>]` pins every seat the loop mints
-  for the role (ticket hands, cold reviewers) to that account's config dir — the
-  only way to move ephemeral seats. It is the one field `reviewer` takes from a
-  role verb, and only alone; any other key on a reserved role is refused.
+  `[agent:team role-set <role> account:<label>]`.
 
 ## First turn on a fresh team
 
@@ -252,7 +252,7 @@ wrote it from a few of the operator's words.
   constraints / what done looks like). Ask nothing the repo answered.
 - When the operator answers (an `[agent:from user]` line), rewrite the brief:
   `[agent:team prompt-save append team-project]` with the full brief as the
-  body, closed with `[agent:end]`. Seats spawned after it read the real brief.
+  body. Seats spawned after it read the real brief.
 - Then work the NEW or TAKEOVER arm as if the create had been a kickstart.
 
 Every arm: the first ticket you file is sized for one hand context, cites the
