@@ -120,8 +120,8 @@ with 5 lines of context and read every comment line in it — comment,
 docstring, CHANGELOG sentence — as a claim against the code as it now stands.
 The sentence that breaks is rarely the one you edited: it is the neighbour your
 insertion now sits between. Delete what the code no longer backs; don't
-qualify or rewrite it unless a verdict prescribes the qualifier. Do not sweep
-the whole file: your scope is your hunks.
+qualify or rewrite it unless a verdict prescribes the qualifier.
+Do not sweep the whole file: your scope is your hunks.
 
 ## Reporting
 
