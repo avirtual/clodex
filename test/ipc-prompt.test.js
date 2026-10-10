@@ -828,3 +828,12 @@ test('no-op tool call is a rule in both prompts, with no Bash(true) example', ()
     assert.ok(!p.includes('Bash(true)'));
   }
 });
+
+test('harness intents block: lead routing, close downstream, artifact-dir reload, no dup/when restatements', () => {
+  const p = buildIpcPrompt(null);
+  assert.ok(p.includes('routes these through its lead'));
+  assert.ok(p.includes('(verify, review, verdict) runs'));
+  assert.ok(p.includes('task artifact dir'));
+  assert.ok(!p.includes("when it's getting long"));
+  assert.ok(!p.includes('dup opens a second ticket'));
+});
