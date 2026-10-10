@@ -19,6 +19,7 @@ blocks a release.
 ### Teams
 
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
+- Intent manual: the shout row tells a hand or reviewer to route operator-only decisions through its lead; the task-list row no longer repeats what the lead prompt says about add/dup; reload briefings go under the task artifact dir.
 
 ### Sessions
 
