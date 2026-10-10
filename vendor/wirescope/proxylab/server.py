@@ -1454,7 +1454,7 @@ async def handler(request: Request) -> Response:
                 record["syspatch"] = True
                 changed = True
             # Design-2: relocate env+date to a tail block, mark CLAUDE.md (model-visible).
-            rel = transforms_mod._relocate_env_to_tail(obj)
+            rel = transforms_mod._relocate_env_to_tail(obj, agent_id=agent_id)
             if rel:
                 record["env_relocate"] = rel
                 changed = True

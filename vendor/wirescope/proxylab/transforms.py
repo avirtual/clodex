@@ -324,10 +324,8 @@ _PATHSTAMP_RE = re.compile(r"Contents of /[^\n]*?CLAUDE\.md")
 
 def _find_context_bundle(msgs):
     """(msg_index, block_index, block, has_claudemd) of the CLI's context bundle —
-    a user text block carrying the <system-reminder> preamble. Prefers the block
-    containing '# claudeMd' (the big static project segment); falls back to one
-    with '# currentDate'/'# userEmail' so env-relocation ALSO works in repos with
-    NO CLAUDE.md. (None, None, None, False) if no bundle block exists."""
+    a user text block carrying the <system-reminder> preamble.
+    (None, None, None, False) if no bundle block exists."""
     fallback = None
     for mi, m in enumerate(msgs):
         if m.get("role") != "user":
@@ -339,16 +337,16 @@ def _find_context_bundle(msgs):
             if not (isinstance(b, dict) and b.get("type") == "text"):
                 continue
             t = b.get("text") or ""
-            if "# claudeMd" in t:
+            if _claudemd_block_shape(t):
                 return mi, bi, b, True
             if fallback is None and ("# currentDate" in t or "# userEmail" in t):
                 fallback = (mi, bi, b, False)
     return fallback if fallback else (None, None, None, False)
 
 
-def _relocate_env_to_tail(obj):
+def _relocate_env_to_tail(obj, agent_id=None):
     """Design-2 transform (see comment above). Returns a log dict, or None if it didn't
-    apply (no CLAUDE.md bundle to protect / nothing volatile to move)."""
+    apply."""
     if not RELOCATE_ENV_TO_TAIL:
         return None
     sysb = obj.get("system")
@@ -358,6 +356,12 @@ def _relocate_env_to_tail(obj):
     mi, bi, cmd, has_claudemd = _find_context_bundle(msgs)
     if cmd is None:
         return None                          # no bundle block to anchor / pull date from
+    content = msgs[mi]["content"]
+    run = [cmd]
+    standalone = _claudemd_block_shape(cmd.get("text")) == "standalone"
+    if standalone and bi + 1 < len(content) and _is_useremail_block(content[bi + 1]):
+        run.append(content[bi + 1])
+    mark = run[-1]
     moved = []
 
     def _peel_system_section(hdr):
@@ -384,17 +388,13 @@ def _relocate_env_to_tail(obj):
         moved_scratch = _peel_system_section(_SCRATCHPAD_SECTION_HDR)
         if moved_scratch:
             moved.append("# Scratchpad Directory")
-    # 2) handle the volatile `# currentDate` block in the claudeMd bundle (keep
-    #    # userEmail). Match ONLY the genuine section (column-0 header + the
-    #    `Today's date is …` line) — never a backtick prose mention in CLAUDE.md.
-    #    STRIP_CURRENT_DATE (default) removes it from the cached prefix entirely;
-    #    else fall back to relocating it into the tail reminder.
-    ct = cmd["text"]
+    date_block = None if standalone and len(run) == 1 else run[-1]
+    ct = date_block["text"] if date_block else ""
     moved_date = ""
     stripped_date = False
     m_date = _CURRENT_DATE_RE.search(ct)
     if m_date:
-        cmd["text"] = ct[:m_date.start()].rstrip("\n") + "\n" + ct[m_date.end():].lstrip("\n")
+        date_block["text"] = ct[:m_date.start()].rstrip("\n") + "\n" + ct[m_date.end():].lstrip("\n")
         if STRIP_CURRENT_DATE:
             stripped_date = True                 # dropped from the prefix, not relocated
         else:
@@ -408,17 +408,10 @@ def _relocate_env_to_tail(obj):
             cmd["text"] = new
             moved.append("pathstamp")
     pieces = [p for p in (moved_env, moved_scratch, moved_date) if p]
-    if not pieces and not stripped_date:
-        return None
-    # 3) assemble the relocated tail (if anything to relocate) and insert it right
-    #    AFTER the bundle block (between the bundle and the prompt marker). A pure
-    #    date STRIP relocates nothing — it just left the prefix date-independent —
-    #    so there may be no tail to insert; still fall through to add the bundle's
-    #    own cache marker below (the strip reshaped the bundle worth protecting).
     tail = None
     if pieces:
         tail = "<system-reminder>\n" + "\n\n".join(pieces) + "\n</system-reminder>"
-        msgs[mi]["content"].insert(bi + 1, {"type": "text", "text": tail})
+        content.insert(bi + len(run), {"type": "text", "text": tail})
     # 4) give the bundle its OWN cache_control breakpoint ONLY when it's the large
     #    static CLAUDE.md segment worth protecting as a shareable unit. For a tiny
     #    userEmail-only bundle (no CLAUDE.md) a marker buys nothing and would just
@@ -440,8 +433,11 @@ def _relocate_env_to_tail(obj):
     claudemd_ttl = None
     bundle_marker = None
     if has_claudemd:
-        if cmd.get("cache_control"):
+        if any(b.get("cache_control") for b in run):
             bundle_marker = "already_marked"
+        elif (standalone and mi == 0 and WS_OMIT
+              and "claudemd" in _ws_effective_actions(obj, agent_id=agent_id)):
+            bundle_marker = "skipped_ws_claudemd"
         else:
             markers = _cache_markers(obj)
             if len(markers) < _CACHE_BREAKPOINT_BUDGET:
@@ -452,20 +448,24 @@ def _relocate_env_to_tail(obj):
                                      and b["cache_control"].get("ttl")), None)
                 if last_sys_ttl:
                     cc["ttl"] = last_sys_ttl
-                cmd["cache_control"] = cc
+                mark["cache_control"] = cc
                 bundle_marker = "added"
             else:
                 last_mi = len(msgs) - 1
                 donor = next(((r, i, b) for r, i, b in markers
-                              if r == "messages" and i != last_mi and b is not cmd),
+                              if r == "messages" and i != last_mi
+                              and all(b is not x for x in run)),
                              None)
                 if donor is not None:
-                    cmd["cache_control"] = donor[2].pop("cache_control")
+                    mark["cache_control"] = donor[2].pop("cache_control")
                     bundle_marker = "migrated"
                 else:
                     bundle_marker = "skipped_budget_full"
-        cc_now = cmd.get("cache_control")
-        claudemd_ttl = cc_now.get("ttl") if isinstance(cc_now, dict) else None
+        cc_now = next((b["cache_control"] for b in run
+                       if isinstance(b.get("cache_control"), dict)), None)
+        claudemd_ttl = cc_now.get("ttl") if cc_now else None
+    if not moved and bundle_marker not in ("added", "migrated"):
+        return None
     return {"moved": moved, "stripped_date": stripped_date, "has_claudemd": has_claudemd,
             "tail_chars": len(tail) if tail else 0, "bundle_marker": bundle_marker,
             "bundle_chars_after": len(cmd["text"]), "claudemd_ttl": claudemd_ttl}
@@ -985,16 +985,12 @@ def _ws_resolve_actions(pairs):
     return actions
 
 
-# STICKY PER-INSTANCE SPAWN MEMORY: spawn-position directives only sit at the
-# strict HEAD of messages[0] on a subagent's FIRST turn; on any continuation turn
-# that block is a follow-up / <local-command-caveat> / compaction summary, so
-# _ws_spawn_pairs sees nothing and the omitted sections (esp. # claudeMd) RETURN.
-# We remember the resolved spawn pairs by the stable per-instance key
-# (x-claude-code-agent-id, present iff subagent) and RE-APPLY them on later turns
-# of the same instance. A later directive-bearing turn UPDATES the memory (a
-# fresh `keep` can still cancel). Keyed session_id -> {agent_id: pairs} so the
-# pinger sweep drops it with the session's other instance state; transforms OWNS
-# + mutates this (no gate but omit reads it). See _ws_forget.
+# STICKY PER-INSTANCE SPAWN MEMORY: we remember the resolved spawn pairs by the
+# stable per-instance key (x-claude-code-agent-id, present iff subagent) and
+# RE-APPLY them on later turns of the same instance. A later directive-bearing
+# turn UPDATES the memory (a fresh `keep` can still cancel). Keyed by session_id
+# so the pinger sweep drops it with the session's other instance state;
+# transforms OWNS + mutates this. See _ws_forget.
 _WS_SPAWN_MEMORY = {}
 
 
@@ -1016,9 +1012,9 @@ def _ws_merged_pairs(obj, agent_id=None):
     one stream — section verbs via _ws_resolve_actions, tool verbs via
     _ws_resolve_tools — so precedence + stickiness live in exactly one place.
 
-    Only ever remembered/replayed for
-    a real subagent instance (the main line has no agent_id, so it is never
-    sticky; a non-subagent is never touched even if some header leaked through)."""
+    Only ever remembered/replayed for a real subagent instance (the main line
+    has no agent_id, so it is never sticky; a non-subagent is never touched
+    even if some header leaked through)."""
     pairs = []
     # Fingerprint-backed subagent check (NOT the raw billing flag): a parent turn
     # that leaked cc_is_subagent=true + a stale agent-id must NOT pick up the
@@ -1436,6 +1432,24 @@ def _ws_reminder_is_empty(text):
 
 _WS_CLAUDEMD_BLOCK_RE = re.compile(
     r"\s*<system-reminder>\s*Codebase and user instructions are shown below\.")
+_USEREMAIL_HDR_RE = re.compile(r"(?m)^# userEmail[ \t]*$")
+
+
+def _claudemd_block_shape(text):
+    if not isinstance(text, str):
+        return None
+    if _WS_CLAUDEMD_BLOCK_RE.match(text):
+        return "standalone"
+    if "# claudeMd" in text:
+        return "section"
+    return None
+
+
+def _is_useremail_block(b):
+    t = b.get("text") if isinstance(b, dict) and b.get("type") == "text" else None
+    return (isinstance(t, str) and t.lstrip().startswith("<system-reminder>")
+            and _USEREMAIL_HDR_RE.search(t) is not None
+            and _claudemd_block_shape(t) is None)
 
 
 def _ws_replace_claudemd_block(text, new_body):

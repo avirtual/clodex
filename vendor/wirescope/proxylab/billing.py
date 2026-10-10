@@ -214,12 +214,9 @@ PRICES = {
     # legacy opus 4.0 / 4.1 (also catches their dated full ids)
     "claude-opus-4":   {"in": 15.0, "out": 75.0, "cache_write_5m": 18.75, "cache_write_1h": 30.0, "cache_read": 1.50},
     "claude-sonnet-4": {"in": 3.0,  "out": 15.0, "cache_write_5m": 3.75,  "cache_write_1h": 6.0,  "cache_read": 0.30},
-    # sonnet-5 has TIME-DEPENDENT pricing: INTRODUCTORY ($2/$10) through
-    # 2026-08-31; STANDARD ($3/$15, == sonnet-4) from 2026-09-01. Entry below
-    # is the INTRO rate; the cutover is applied automatically by _price_for
-    # via PRICES_DATED (priced at receipt time = time of traffic).
-    # Distinct model id (newer tokenizer, ~30% more tokens; wire counts already
-    # reflect it, so no per-token adjustment — only the $/token rate differs).
+    # sonnet-5: distinct model id (newer tokenizer, ~30% more tokens; wire
+    # counts already reflect it, so no per-token adjustment — only the $/token
+    # rate differs).
     # sonnet-5.5 (2026-09-28, id `claude-sonnet-5-5`): $2/$10 and writes
     # 2.50/4 like sonnet-5, but the read is 0.05x base ($0.10/MTok), not
     # sonnet-5's 0.1x. SAME TRAP AS OPUS-5.5: "claude-sonnet-5" IS a prefix of
@@ -303,8 +300,9 @@ _UNPRICED_WARNED = set()
 # Scheduled repricings, applied automatically by _price_for: prefix -> list of
 # (effective_from "YYYY-MM-DD", price dict), later dates last. Live traffic is
 # priced at receipt time (= time of traffic), so no manual flip is needed —
-# but note captures store billing at write time: a receipt priced under the
-# old rate is NOT retro-repriced (that's correct — it reflects what was billed).
+# but note captures store billing at write time: for a receipt priced under the
+# old rate, stored est_usd/totals are not retro-repriced (that's correct — it
+# reflects what was billed).
 # FAST MODE (research preview, beta `fast-mode-2026-02-01`): opus-5 / opus-4-8
 # run at a PREMIUM — $10/$50 vs $5/$25 — across the full context window. The
 # universal cache multipliers still apply on top (5m 1.25x, 1h 2x, read 0.1x),

@@ -257,7 +257,7 @@ def _genuine_subagent(obj, agent_id=None):
 # whitespace tolerated via rstrip at the call sites; leading whitespace is NOT
 # — indentation is the quoting escape).
 _WS_LINE_RE = re.compile(
-    r"^\[wirescope:([a-z][a-z0-9-]*)(?:[ \t]+([^\]\n]*))?\]$", re.IGNORECASE)
+    r"^\[wirescope:([a-z][a-z0-9-]*)(?:[ \t]+([^\]\n]*))?\]$", re.IGNORECASE | re.ASCII)
 
 # Spawn-level directives (WIRESCOPE.md v1): read omit/keep/agent-name from the
 # strict head of messages[0]'s spawn-prompt block, so behavior can be a property

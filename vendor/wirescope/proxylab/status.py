@@ -959,6 +959,8 @@ def _composition(obj, total_tokens=None):
                         chars["agents"] += len(text)
                 elif kind == "skills":
                     chars["skills"] += len(text)
+                elif transforms_mod._claudemd_block_shape(text) == "standalone":
+                    chars["claudemd"] += len(text)
                 elif _is_injected_reminder(text):
                     cm = _reminder_section_chars(text, "# claudeMd")
                     ue = _reminder_section_chars(text, "# userEmail")

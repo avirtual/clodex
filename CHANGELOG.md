@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Wire
+
+- Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
+
 ## 5.122.0 — 2026-10-10
 
 ### Browser

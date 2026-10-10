@@ -33,6 +33,7 @@ from . import codex as codex_mod
 from . import core as core_mod
 from . import meta as meta_mod
 from . import status as status_mod
+from . import transforms as transforms_mod
 
 REPORT_VERSION = 5          # v2: added `waste` section; cache_misses finding
 #                             reclaimable is MARGINAL (net of the warm read), while
@@ -1295,7 +1296,7 @@ def _block_label(b):
         return f"tool_use:{b.get('name','?')}"
     if typ == "tool_result":
         return "tool_result"
-    if "# claudeMd" in t:
+    if transforms_mod._claudemd_block_shape(t):
         return "claudeMd bundle"
     if "Today's date is" in t or "# currentDate" in t:
         return "currentDate"
