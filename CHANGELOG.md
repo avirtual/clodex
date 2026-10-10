@@ -21,6 +21,7 @@ blocks a release.
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
 - Hand and reviewer prompts: a blocked hand dms its lead urgently and leaves the ticket open (no more silent stops); the reviewer prompt no longer says the lead spawned it; a hand touching the test runner now carries the empty-suite rule; stale self-compact-on-rework text removed.
 - Intent manual: the shout row tells a hand or reviewer to route operator-only decisions through its lead; the task-list row no longer repeats what the lead prompt says about add/dup; reload briefings go under the task artifact dir.
+- Lead prompt: says a REWORK verdict rejects the ticket itself, that dispatch reminders are ticket-bound, and that only worktree hands commit; six passages that repeated the harness intent manual are cut.
 
 ### Sessions
 
