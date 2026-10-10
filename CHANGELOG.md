@@ -16,6 +16,7 @@ blocks a release.
 ### Browser
 
 - Snapshots are also pruned when the browser stops for idleness, and an interrupted `--path-only` save leaves no temp file behind.
+
 ### Teams
 
 - A team created on a machine with no kit installed now seeds the scout and page-scout roles alongside lead, hand and reviewer; a rework ack on a role-less ticket names the seat's role, not its archived seat name.
