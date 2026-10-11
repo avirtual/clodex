@@ -1033,22 +1033,89 @@ test('t1146 (p3): a compact call completing between two requests is a cold bound
   });
 });
 
-test('t1146 (p4): a gap over 60 minutes on the injected clock is a cold boundary; 59 minutes is not', async () => {
-  const root = mkTmpRoot('clodex-spill-');
+function warmthStub(answer) {
+  const calls = [];
+  return {
+    calls,
+    stub: {
+      query: (arg) => { calls.push(['query', arg]); if (answer === 'throw') throw new Error('db closed'); return answer; },
+      record: (_obj, _usage, sid) => { calls.push(['record', sid]); return null; },
+    },
+  };
+}
+
+const WARM = { found: true, warm: true, session: SESSION_ID, hash: 'h' };
+const NOT_WARM = { found: true, warm: false, session: SESSION_ID, hash: 'h' };
+
+async function idleGap(root, warmth, gapMs) {
   let clock = 1_000_000;
-  await withProxy({ proxyOpts: { now: () => clock } }, async (proxy) => {
+  return withProxy({ proxyOpts: { now: () => clock, warmth } }, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
     const events = collect(proxy, ['spill-cut', 'turn.completed']);
     const { bodies: [A, B, C, D], bodyOf } = stickyFixture(root);
     await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
     assert.ok(await whenEvent(events, 'turn.completed', 1));
-    clock += 59 * 60 * 1000;
+    clock += gapMs;
     await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
     assert.ok(await whenEvent(events, 'turn.completed', 2));
-    clock += 61 * 60 * 1000;
+    return { cuts: events['spill-cut'].map(pickCut), upstream: JSON.parse(up.seen.requests[1].body.toString('utf8')) };
+  });
+}
+
+test('t1146 (p4): a 61-minute gap the cache survived keeps the set; the same gap with the cache cold resets it', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const warm = warmthStub(WARM);
+  const kept = await idleGap(root, warm.stub, 61 * 60 * 1000);
+  assert.deepStrictEqual(warm.calls, [['record', SESSION_ID], ['query', { session: SESSION_ID }], ['record', SESSION_ID]]);
+  assert.deepStrictEqual(kept.cuts, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+  assert.deepStrictEqual(kept.upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\nB ${BIG}\n[agent:end]\n` }]);
+  const cold = warmthStub(NOT_WARM);
+  const reset = await idleGap(root, cold.stub, 61 * 60 * 1000);
+  assert.deepStrictEqual(cold.calls, [['record', SESSION_ID], ['query', { session: SESSION_ID }], ['record', SESSION_ID]]);
+  assert.deepStrictEqual(reset.cuts, [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
+  assert.deepStrictEqual(reset.upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
+});
+
+for (const [label, make] of [
+  ['no warmth store (off)', () => ({ stub: null, calls: null })],
+  ['a store answering error', () => warmthStub({ found: false, warm: false, session: SESSION_ID, hash: null, error: 'store: SQLITE_BUSY' })],
+  ['a store whose query throws', () => warmthStub('throw')],
+]) {
+  test(`t1797: an unknown warmth verdict keeps the set across a 2h idle — ${label}`, async () => {
+    const root = mkTmpRoot('clodex-spill-');
+    const w = make();
+    const { cuts } = await idleGap(root, w.stub, 2 * 60 * 60 * 1000);
+    if (w.calls) assert.deepStrictEqual(w.calls.filter((c) => c[0] === 'query'), [['query', { session: SESSION_ID }]]);
+    assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+  });
+}
+
+test('t1797: a 2h idle the cache survived re-sends the expanded A and B messages byte-identical', async () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const bodies = ['A', 'B', 'C', 'D', 'E'].map((n) => ({ n, text: `${n} ${BIG}` }));
+  for (const b of bodies) {
+    b.id = writeSpill(root, 'tester', b.text);
+    b.stub = `[agent:task done t1] ${filed(root, { id: b.id, bytes: Buffer.byteLength(b.text), verb: 'task.done' })}\n[agent:end]\n`;
+  }
+  const { bodyOf } = stickyFixture(root);
+  const [A, B, C, D, E] = bodies;
+  const w = warmthStub(WARM);
+  let clock = 1_000_000;
+  await withProxy({ proxyOpts: { now: () => clock, warmth: w.stub } }, async (proxy, up) => {
+    proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
+    const events = collect(proxy, ['spill-cut', 'turn.completed']);
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B]));
+    assert.ok(await whenEvent(events, 'turn.completed', 1));
     await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D]));
+    assert.ok(await whenEvent(events, 'turn.completed', 2));
+    clock += 2 * 60 * 60 * 1000;
+    await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C, D, E]));
     assert.ok(await whenEvent(events, 'turn.completed', 3));
-    assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }, { sticky: 0, expanded: 2 }]);
+    const sent = up.seen.requests.map((r) => JSON.parse(r.body.toString('utf8')).messages);
+    assert.deepStrictEqual(sent[2][1].content, [{ type: 'text', text: `[agent:task done t1]\nA ${BIG}\n[agent:end]\n` }]);
+    assert.deepStrictEqual(sent[2][3].content, [{ type: 'text', text: `[agent:task done t1]\nB ${BIG}\n[agent:end]\n` }]);
+    assert.strictEqual(JSON.stringify(sent[2].slice(0, 4)), JSON.stringify(sent[1].slice(0, 4)));
+    assert.deepStrictEqual(events['spill-cut'].map(pickCut).at(-1).sticky, 4);
   });
 });
 
@@ -1080,8 +1147,8 @@ async function twoRequestsThenRestart(root, store, clock) {
   return { first, bodyOf, all: [A, B, C, D] };
 }
 
-async function afterRestart(root, store, clock, body) {
-  return withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store } }, async (proxy, up) => {
+async function afterRestart(root, store, clock, body, warmth = null) {
+  return withProxy({ proxyOpts: { now: () => clock.t, spillShownStore: store, warmth } }, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['dm'] } });
     const events = collect(proxy, ['spill-cut', 'turn.completed']);
     await request(proxy.port, '/agent/tester/v1/messages', body);
@@ -1107,16 +1174,23 @@ test('t1167 (a): a restart inside the TTL with the same session keeps the sticky
   ]);
 });
 
-test('t1167 (b): a restart after the TTL lapsed on the loaded lastAt resets — sticky 0, expanded 2', async () => {
-  const root = mkTmpRoot('clodex-spill-');
-  const store = fakeShownStore();
-  const clock = { t: 1_000_000 };
-  const { first, bodyOf, all } = await twoRequestsThenRestart(root, store, clock);
-  assert.deepStrictEqual(first, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
-  clock.t = store.saved.tester.lastAt + 60 * 60 * 1000 + 1;
-  const { cuts } = await afterRestart(root, store, clock, bodyOf(all));
-  assert.deepStrictEqual(cuts, [{ sticky: 0, expanded: 2 }]);
-});
+for (const [label, answer, want] of [
+  ['cold warmth resets — sticky 0, expanded 2', NOT_WARM, { sticky: 0, expanded: 2 }],
+  ['warm warmth keeps the set — sticky 3', WARM, { sticky: 3, expanded: 3 }],
+]) {
+  test(`t1167 (b): a restart after a 2h idle with ${label}`, async () => {
+    const root = mkTmpRoot('clodex-spill-');
+    const store = fakeShownStore();
+    const clock = { t: 1_000_000 };
+    const { first, bodyOf, all } = await twoRequestsThenRestart(root, store, clock);
+    assert.deepStrictEqual(first, [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
+    clock.t = store.saved.tester.lastAt + 2 * 60 * 60 * 1000;
+    const w = warmthStub(answer);
+    const { cuts } = await afterRestart(root, store, clock, bodyOf(all), w.stub);
+    assert.deepStrictEqual(w.calls, [['query', { session: SESSION_ID }], ['record', SESSION_ID]]);
+    assert.deepStrictEqual(cuts, [want]);
+  });
+}
 
 test('t1167 (c): a compact completed before the restart is still a cold boundary — sticky 0', async () => {
   const root = mkTmpRoot('clodex-spill-');
@@ -1214,12 +1288,13 @@ test('t1167 (f): an unchanged set is not rewritten until lastAt has moved past a
   });
 });
 
-test('t1167 (g): a record for an agent not registered since load is pruned once its lastAt is past the TTL', async () => {
+test('t1167 (g): a record for an agent not registered since load is pruned once its lastAt is past seven days', async () => {
   const root = mkTmpRoot('clodex-spill-');
   const store = fakeShownStore();
   const clock = { t: 10_000_000 };
   store.saved = {
-    ghost: { shown: ['x'], sessionId: SESSION_ID, lastAt: clock.t - 60 * 60 * 1000 - 1 },
+    ghost: { shown: ['x'], sessionId: SESSION_ID, lastAt: clock.t - 7 * 24 * 60 * 60 * 1000 - 1 },
+    idle: { shown: ['z'], sessionId: SESSION_ID, lastAt: clock.t - 2 * 60 * 60 * 1000 },
     fresh: { shown: ['y'], sessionId: SESSION_ID, lastAt: clock.t - 1000 },
   };
   const { bodies: [A, B, C], bodyOf } = stickyFixture(root);
@@ -1228,7 +1303,7 @@ test('t1167 (g): a record for an agent not registered since load is pruned once 
     const events = collect(proxy, ['turn.completed']);
     await request(proxy.port, '/agent/tester/v1/messages', bodyOf([A, B, C]));
     assert.ok(await whenEvent(events, 'turn.completed', 1));
-    assert.deepStrictEqual(Object.keys(store.saved).sort(), ['fresh', 'tester']);
+    assert.deepStrictEqual(Object.keys(store.saved).sort(), ['fresh', 'idle', 'tester']);
   });
 });
 
