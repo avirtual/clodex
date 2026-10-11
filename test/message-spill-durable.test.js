@@ -32,7 +32,7 @@ function sansTs(e) { const { ts, ...rest } = e; return rest; }
 
 test('a spilled dm lands in messages/<seat>/ AND spill/<seat>/messages/ under the same basename; the sweep removes only the messages/ copy', () => {
   const { engine, registryDir, session, sweep } = mkEngine();
-  const body = 'durable-dm-body '.repeat(60);
+  const body = 'durable-dm-body '.repeat(200);
   const text = engine.manager._buildDeliveryText(session, 'lead', body, 'dm');
   const m = text.match(/attached: @(\S+) /);
   assert.ok(m, `ENTER: the body spilled: ${text.slice(0, 80)}`);
@@ -50,7 +50,7 @@ test('a spilled dm lands in messages/<seat>/ AND spill/<seat>/messages/ under th
 
 test('the filed-ring entry for a spilled dm is the transcript-literal messages/ path, stays listed after the sweep, and opens through the durable copy', () => {
   const { engine, registryDir, session, sweep } = mkEngine();
-  const text = engine.manager._buildDeliveryText(session, 'lead', 'ring-entry-body '.repeat(60), 'dm');
+  const text = engine.manager._buildDeliveryText(session, 'lead', 'ring-entry-body '.repeat(200), 'dm');
   const literal = text.match(/attached: @(\S+) /)[1];
   const durable = path.join(registryDir, 'spill', SEAT, 'messages', path.basename(literal));
   assert.strictEqual(literal, path.join(registryDir, 'messages', SEAT, path.basename(literal)));
@@ -66,7 +66,7 @@ test('the filed-ring entry for a spilled dm is the transcript-literal messages/ 
 
 test('a click on the swept messages/ path resolves to the durable copy through the engine resolver', () => {
   const { engine, registryDir, session, sweep } = mkEngine();
-  const text = engine.manager._buildDeliveryText(session, 'lead', 'click-body '.repeat(80), 'dm');
+  const text = engine.manager._buildDeliveryText(session, 'lead', 'click-body '.repeat(300), 'dm');
   const handOff = text.match(/attached: @(\S+) /)[1];
   sweep();
   const res = engine.resolveFilePath(SEAT, `@${handOff}`, null);
@@ -112,7 +112,7 @@ test('a durable copy left by an earlier launch with the same pid is never overwr
   fs.mkdirSync(durDir, { recursive: true });
   const stale = path.join(durDir, `msg-${process.pid}-1.txt`);
   fs.writeFileSync(stale, 'OLD');
-  const text = engine.manager._buildDeliveryText(session, 'lead', 'fresh-body '.repeat(80), 'dm');
+  const text = engine.manager._buildDeliveryText(session, 'lead', 'fresh-body '.repeat(300), 'dm');
   const name = path.basename(text.match(/attached: @(\S+) /)[1]);
   assert.strictEqual(fs.readFileSync(stale, 'utf8'), 'OLD');
   assert.strictEqual(name, `msg-${process.pid}-2.txt`);
