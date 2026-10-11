@@ -440,6 +440,8 @@ would have — retire the seat, remove the worktree, delete the branch — and t
 are unchanged and all mechanical (the branch is an ancestor, the tree is clean,
 the seat is one the loop minted), so on the happy path pressing the verb bought
 a billed turn and some latency for a decision nothing was waiting on.
+The notice is one line when the loop closed the ticket out and no CHANGELOG,
+suite or merge anomaly is flagged; any flag restores the full body.
 
 **You act when the loop could not finish.** There the same line opens `Step
 owed:` and names why — a tree with uncommitted work, a standing assignee whose
