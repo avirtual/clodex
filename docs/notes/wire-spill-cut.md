@@ -20,9 +20,9 @@ that has only ever seen stand-ins learns the stand-in as the way a body is
 written, and the rule is about the model's window, not host process lifetime).
 A stub whose file is missing, unreadable or too large is not counted. The count
 is per `cutSpillStubs` call and keeps no process state. A host relaunch grants nothing.
-Newest, not oldest: wirescope on the lead seat after t1118 counted 3 of 12 long
-intents typed as the stand-in, all after six stubs had accumulated with the two
-expanded ones the oldest in view.
+The proxy's sticky set (`sticky`) is what keeps the first two bodies after a compact
+expanded until the next cold boundary; newest-two seeds an empty set and adds each
+request's newest two to it.
 
 A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
 is registered with `examples: 1`: only its newest resolvable stub is expanded. With zero examples, hand t1122 typed the

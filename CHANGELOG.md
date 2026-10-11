@@ -26,6 +26,7 @@ blocks a release.
 
 - A spilled intent body in retained history is now the bare intent head followed by `[agent:end]`; the "[Runtime note: …]" stand-in sentences are no longer rendered (the two newest bodies still ride in full as examples). A sentence in history is a shape the model can copy; an empty body is not.
 - The harness intents block and the spill preference text describe a thinned intent body as the bare head plus `[agent:end]`, matching what the cut now renders.
+- Spilled-intent examples: the first two long bodies after a compact now stay expanded for as long as the cache that holds them is warm, instead of being swapped for the newest two after an hour's idle; that swap edited settled turns deep in a warm cache and was the largest avoidable cache-rewrite cost on the lead seat (18 events over ten days).
 
 ## 5.123.0 — 2026-10-11
 
