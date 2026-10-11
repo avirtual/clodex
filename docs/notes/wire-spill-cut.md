@@ -12,20 +12,21 @@ predecessor is `role:"system"`, counted in `skipped`.
 
 ## expansionOf
 
-Every over-limit intent body is filed (`SpillFilter._resolve`). The two NEWEST
-intent stubs of each request whose spill file resolves (`resolveSpill`) are
+Every over-limit intent body is filed (`SpillFilter._resolve`). The first two
+resolvable intent stubs (`resolveSpill`) after the sticky set was last cleared are
 rendered by the cut as the original intent — bare head, the filed body verbatim,
 `[agent:end]` — as examples (Bogdan's rulings 2026-09-23 and 2026-09-24: a seat
 that has only ever seen stand-ins learns the stand-in as the way a body is
-written, and the rule is about the model's window, not host process lifetime).
-A stub whose file is missing, unreadable or too large is not counted. The count
-is per `cutSpillStubs` call and keeps no process state. A host relaunch grants nothing.
-The proxy's sticky set (`sticky`) is what keeps the first two bodies after a compact
-expanded until the next cold boundary; newest-two seeds an empty set and adds each
-request's newest two to it.
+written). A stub whose file is missing, unreadable or too large takes no slot.
+A stub expands iff its key is in `sticky` or `sticky.size` plus the keys seeded in
+this call is below `examples`; "first" is document order (`collectStubs`). The proxy
+adds every expanded key to `sticky`, so the examples stay in full until the next
+cold boundary and every later body is the bare head from its first resend
+(Bogdan 2026-10-11: a body keeps one shape from its first resend to the next
+compact, since a shape change on a settled turn rewrites the cache behind it).
 
 A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
-is registered with `examples: 1`: only its newest resolvable stub is expanded. With zero examples, hand t1122 typed the
+is registered with `examples: 1`: only its first resolvable stub is expanded. With zero examples, hand t1122 typed the
 stand-in as the body of its rework-round `task done`, its only prior example of that verb.
 
 Every remaining stub renders as the bare head line followed by `[agent:end]`,
