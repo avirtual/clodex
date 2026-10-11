@@ -103,15 +103,30 @@ function initBanners({ openInstallSession, getBoxLabel = () => null } = {}) {
 
   const authBanner = document.getElementById('auth-banner');
   const authText = document.getElementById('auth-text');
+  const authCmd = document.getElementById('auth-cmd');
+  let authCommand = '';
 
-  function refreshAuthBanner(proxyEntries) {
+  if (authCmd) {
+    authCmd.addEventListener('click', () => {
+      if (!authCommand) return;
+      navigator.clipboard.writeText(authCommand).then(() => {
+        const prev = authCmd.dataset.tip;
+        authCmd.dataset.tip = 'Copied';
+        setTimeout(() => { authCmd.dataset.tip = prev; }, 1500);
+      }).catch(() => {});
+    });
+  }
+
+  function refreshAuthBanner(proxyEntries, accounts) {
     if (!authBanner) return;
-    const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel() });
+    const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel(), accounts: accounts || [] });
     if (v.hidden) {
       authBanner.classList.add('hidden');
       return;
     }
     if (authText) authText.textContent = v.text;
+    authCommand = v.command || '';
+    if (authCmd) authCmd.textContent = authCommand;
     authBanner.dataset.tip = v.tip;
     authBanner.classList.remove('hidden');
   }

@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Accounts
+
+- The "Claude login expired" notice names the account whose login lapsed and shows the exact command (`CLAUDE_CONFIG_DIR=… claude login` for a non-default account); click the command to copy it. Before, two registered accounts got the same unqualified notice and a bare `claude login` re-logged the healthy default one.
+
 ### Wire
 
 - Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
