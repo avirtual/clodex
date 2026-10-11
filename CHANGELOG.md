@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Wire
+
+- The harness row for `[agent:scratch begin]` now leads with when to open an episode (any question that takes more than two or three lookup calls) before how the clone works; the lead prompt's big-reads rule names scratch first. The row described the mechanism and never the trigger, so seats opened episodes only when the operator asked.
+
 ## 5.124.0 — 2026-10-11
 
 ### Messaging

@@ -202,7 +202,7 @@ test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () 
 });
 
 test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES — a row missing from both copies keeps the byte-pins green and ships a verb whose `end` CUTS the transcript', () => {
-  for (const ROW of [/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Body to `\[agent:end\]`: forks a clone of you/m,
+  for (const ROW of [/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Open one BEFORE any stretch of reading/m,
     /^ {2}\[agent:scratch end\] <summary> {4}Close the episode:/m,
     /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m,
     /^ {2}\[agent:scratch mark <label>\] {5}Set a NAMED rewind point/m,
@@ -211,8 +211,10 @@ test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES �
     assert.ok(ROW.test(buildIpcPrompt(['scratch'])), `and so does a seat granted scratch: ${ROW}`);
   }
   for (const src of [IPC_PROMPT, buildIpcPrompt(['scratch'])]) {
-    assert.ok(/before a stretch of reading whose only value is the conclusion/.test(src),
-      'the row says WHEN — an episode opened over reads that must be cited loses the citations');
+    assert.ok(/BEFORE any stretch of reading whose only value is the conclusion/.test(src),
+      'the row leads with WHEN — an episode opened over reads that must be cited loses the citations');
+    assert.ok(/more than two or three grep\/sed\/ls calls is a scratch episode/.test(src),
+      'the trigger is a count a seat can apply mid-turn, not a judgement');
     assert.ok(/Bare, and the LAST line of your reply: emit it and stop/.test(src),
       'begin is refused off a turn boundary, so the position rule has to be in the row that fires it');
     assert.ok(/Body to `\[agent:end\]`, LAST in your reply/.test(src),
@@ -222,7 +224,7 @@ test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES �
     assert.ok(/a ~5s respawn; the cached prefix is kept/.test(src),
       'what it COSTS — a seat that fears a cold respawn never opens an episode');
     assert.ok(/A bodyless end is refused/.test(src), 'the refusal a seat meets first');
-    assert.ok(/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\./m.test(src),
+    assert.ok(/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Open one BEFORE any stretch of reading/m.test(src),
       'and the one that makes the whole verb inert opens the FIRST row: a Codex seat reads '
       + 'that before it tries, not as the tail of the third row it may never reach');
   }
