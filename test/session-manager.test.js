@@ -6688,9 +6688,7 @@ const REPLAY_HEAD = (id) => `[ticket ${id} REPLAY] this ticket was already open 
   + `you found and ask how to proceed.\n`;
 const replayBody = (id, spec) => `${REPLAY_HEAD(id)}${CLOSE_LINE(id)}${spec}`;
 
-// t353 r2. The close line put the head at 417 bytes (plain) / ~733 (worktree)
-// against MSG_SPILL_THRESHOLD's 500, so a plain dispatch spills once its spec
-// exceeds 83 chars and a worktree dispatch spills unconditionally. A spilled body
+// t353 r2. A spilled body
 // is announced ONLY as "Message (N bytes) attached", so the pointer tag is the
 // entire basis on which a seat decides to spend a Read turn — a tag naming neither
 // the ticket nor the verb would put the close verb behind the very turn this

@@ -512,7 +512,7 @@ test('respec never stamps startedAt nor re-pins the role — it is not a dispatc
 });
 
 // ── MUST-FIX 2: the delivered spec must announce itself as a REPLACEMENT ────
-// Over ~500 bytes the body spills and the seat sees only "Message (N bytes)
+// When the body spills the seat sees only "Message (N bytes)
 // attached" — identical in shape to a fresh dispatch. A hand reading it as one
 // follows its brief (compact, start clean) and discards the in-flight work of
 // the ticket being corrected. So the marker must be in BOTH the body text and

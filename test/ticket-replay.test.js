@@ -804,8 +804,7 @@ test('a seat announcing just AFTER the cap is still served safely — the cap mu
   } finally { app2.stop(); }
 });
 
-// Every production replay spills: the head is ~490 chars, so head+spec clears
-// MSG_SPILL_THRESHOLD for all but a trivial spec. A spilled body is announced only as
+// A spilled body is announced only as
 // "Message (N bytes) attached", so a marker carried inside the body is invisible until
 // the file is opened — and this marker exists precisely to be acted on BEFORE the spec
 // is read. The rest of this file stubs the spill away, so nothing else can see it.
