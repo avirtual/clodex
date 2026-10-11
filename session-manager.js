@@ -549,7 +549,6 @@ function createSessionManager(deps) {
     LONG_TEXT_THRESHOLD,
     MSG_DIR,
     MSG_SPILL_THRESHOLD,
-    MSG_SPILL_LINES,
     MSG_MAX_AGE,
     OUTBOX_DIR,
     PENDING_DIR,
@@ -8302,7 +8301,7 @@ function createSessionManager(deps) {
       return !!(s && s.agentType && !s._dead);
     }
 
-    _buildDeliveryText(target, senderName, body, mtype, tag = '', extraLines = 0) {
+    _buildDeliveryText(target, senderName, body, mtype, tag = '') {
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
@@ -8316,8 +8315,7 @@ function createSessionManager(deps) {
 
       if (!SYSTEM_SENDERS.has(senderName)) body = defuseSenderLines(body);
       const bytes = Buffer.byteLength(body);
-      const lines = 1 + (String(body).match(/\r\n|[\n\v\f\r\x85\u2028\u2029]/g) || []).length + extraLines;
-      if (bytes > MSG_SPILL_THRESHOLD || (target.agentType === 'claude' && target.io !== 'stream' && lines >= MSG_SPILL_LINES)) {
+      if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
         this._noteFiled(target.name, filedEntry(filePath, 'message', `From: ${senderName}`));
         const marked = `${prefix}${tag ? ` ${tag}` : ''}`;
@@ -8339,17 +8337,16 @@ function createSessionManager(deps) {
       const fire = typeof onWrite === 'function' ? onWrite : null;
       const imagePaths = target.io !== 'stream' && pics.length ? this._writeImageFiles(target.name, pics) : [];
       const imageTail = imagePaths.map((p) => `\nImage: ${p}`).join('');
-      const imageLines = imagePaths.length;
       let finalText = null;
       const plainText = () => {
-        if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag, imageLines) + imageTail;
+        if (finalText === null) finalText = this._buildDeliveryText(target, senderName, body, mtype, tag) + imageTail;
         return finalText;
       };
       const textFor = (disposition) => {
         let b = null;
         if (rebody) { try { b = rebody(disposition); } catch { b = null; } }
         return typeof b === 'string' && b
-          ? this._buildDeliveryText(target, senderName, b, mtype, tag, imageLines) + imageTail
+          ? this._buildDeliveryText(target, senderName, b, mtype, tag) + imageTail
           : plainText();
       };
       if (target.io === 'stream') {

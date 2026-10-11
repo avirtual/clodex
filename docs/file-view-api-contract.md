@@ -25,7 +25,7 @@ the app side in ClodexKit. Both sides build against this file.
     (`session-manager.js` `_handoffText`, shown as
     `Continue from your handoff: @<abs path>`).
   - `~/.clodex/messages/<seat>/msg-<pid>-<n>.txt` — inbound message bodies over
-    500 bytes (`engine.js` `spillToFile`, `MSG_SPILL_THRESHOLD`), shown as
+    3 KB (`engine.js` `spillToFile`, `MSG_SPILL_THRESHOLD`), shown as
     `[agent:from X] Message (N bytes) attached: @<abs path>`; also rejected and
     denied intent bodies (`spillToFile('<verb> (rejected)', …)`). Each also
     gets a durable copy under `~/.clodex/spill/<seat>/messages/`

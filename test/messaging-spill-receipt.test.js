@@ -217,17 +217,17 @@ test("a spilled body's header states its size in bytes", () => {
   eng.manager.sessions.set('bob', {
     name: 'bob', agentType: 'claude', type: 'claude', pty: { pid: -1, write() {}, kill() {} },
   });
-  eng.manager._deliverMessage('bob', 'alice', 'é'.repeat(600), 'dm');
+  eng.manager._deliverMessage('bob', 'alice', 'é'.repeat(3200), 'dm');
 
   const dir = path.join(registryDir, 'messages', 'bob');
   const files = fs.readdirSync(dir).filter((f) => /^msg-.*\.txt$/.test(f));
   assert.strictEqual(files.length, 1);
   const lines = fs.readFileSync(path.join(dir, files[0]), 'utf8').split('\n');
-  assert.strictEqual(lines[2], 'Size: 1200 bytes');
+  assert.strictEqual(lines[2], 'Size: 6400 bytes');
 });
 
-for (const [ch, want] of [['é', 1200], ['a', 600]]) {
-  test(`a spilled pointer's byte count matches the header's for 600 × ${JSON.stringify(ch)}`, () => {
+for (const [ch, want] of [['é', 6400], ['a', 3200]]) {
+  test(`a spilled pointer's byte count matches the header's for 3200 × ${JSON.stringify(ch)}`, () => {
     const { createEngine } = require('../engine');
     const tmp = mkTmpRoot('clx-spill-bytes-');
     const registryDir = path.join(tmp, 'clodex-home');
@@ -236,8 +236,8 @@ for (const [ch, want] of [['é', 1200], ['a', 600]]) {
       seams: { noSeed: true, registryDir },
       log: { info() {}, warn() {}, error() {} },
     });
-    const body = ch.repeat(600);
-    assert.strictEqual(body.length, 600, 'ENTER: 600 UTF-16 units either way');
+    const body = ch.repeat(3200);
+    assert.strictEqual(body.length, 3200, 'ENTER: 3200 UTF-16 units either way');
     const text = eng.manager._buildDeliveryText({ name: 'bob', agentType: 'claude' }, 'alice', body, 'dm');
     const ptr = /Message \((\d+) bytes\)/.exec(text);
     assert.ok(ptr, `a pointer, not the body inline: ${text.slice(0, 80)}`);

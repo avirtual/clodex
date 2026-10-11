@@ -283,8 +283,7 @@ const PENDING_DIR = path.join(REGISTRY_DIR, 'pending');
 const OUTBOX_DIR = path.join(REGISTRY_DIR, 'peer-outbox');
 const SELF_LABEL = resolveSelfLabel(process.env, os.hostname(), log);
 const MAX_MSG = 65536;
-const MSG_SPILL_THRESHOLD = 500;
-const MSG_SPILL_LINES = 4;
+const MSG_SPILL_THRESHOLD = 3072;
 const MSG_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const DEPLOY_FIX_INJECT_DELAY_MS = 4000;
 
@@ -1088,7 +1087,6 @@ const SessionManager = createSessionManager({
     LONG_TEXT_THRESHOLD,
     MSG_DIR,
     MSG_SPILL_THRESHOLD,
-    MSG_SPILL_LINES,
     MSG_MAX_AGE,
     OUTBOX_DIR,
     PENDING_DIR,

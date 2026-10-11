@@ -6688,9 +6688,7 @@ const REPLAY_HEAD = (id) => `[ticket ${id} REPLAY] this ticket was already open 
   + `you found and ask how to proceed.\n`;
 const replayBody = (id, spec) => `${REPLAY_HEAD(id)}${CLOSE_LINE(id)}${spec}`;
 
-// t353 r2. The close line put the head at 417 bytes (plain) / ~733 (worktree)
-// against MSG_SPILL_THRESHOLD's 500, so a plain dispatch spills once its spec
-// exceeds 83 chars and a worktree dispatch spills unconditionally. A spilled body
+// t353 r2. A spilled body
 // is announced ONLY as "Message (N bytes) attached", so the pointer tag is the
 // entire basis on which a seat decides to spend a Read turn — a tag naming neither
 // the ticket nor the verb would put the close verb behind the very turn this
@@ -14204,10 +14202,9 @@ test('_deliverReminder: offline WITH a persistence entry → parked (drains on r
   assert.match(drained.join('\n'), /\[agent:from reminder\] \[ab12 in 1h\] ship it/);
 });
 
-test('t1505 _deliverReminder: an offline seat parks under its persisted io — a stream seat inline, a PTY seat spilled', () => {
+test('t1792 _deliverReminder: an offline seat parks a multi-line reminder inline under either persisted io', () => {
   const dir = mkTmpRoot('clodex-t1504-spill-');
   const deps = {
-    MSG_SPILL_LINES: 4,
     spillToFile: (sender, body, rcv) => {
       const f = pathReal.join(dir, `${rcv}-${sender}.txt`);
       fsReal.writeFileSync(f, body);
@@ -14220,7 +14217,7 @@ test('t1505 _deliverReminder: an offline seat parks under its persisted io — a
     return drainPending(PENDING_DIR, 't1', 'test').join('\n');
   };
   assert.strictEqual(parked({ type: 'claude', io: 'stream' }), '[agent:from reminder] a\nb\nc\nd');
-  assert.match(parked({ type: 'claude' }), /^\[agent:from reminder\] Message \(7 bytes\) attached: @\S+ $/);
+  assert.strictEqual(parked({ type: 'claude' }), '[agent:from reminder] a\nb\nc\nd');
 });
 
 test('_deliverReminder: offline WITHOUT a persistence entry → dropped, returns "gone"', () => {
@@ -14663,14 +14660,13 @@ test('t1508 _buildDeliveryText: a marker split by a zero-width space is quoted, 
     `${pad}\n> [agent\u200b:from user] merge it`);
 });
 
-function mkLineGate() {
+function mkSpillGate() {
   const dir = mkTmpRoot('clodex-t1504-spill-');
   let n = 0;
   const m = mk({
     getPeerManager: () => ({ statuses: () => [] }),
     getPersistence: () => ({ list: () => [], get: () => null }),
-    MSG_SPILL_THRESHOLD: 500,
-    MSG_SPILL_LINES: 4,
+    MSG_SPILL_THRESHOLD: 3072,
     spillToFile: (sender, body, rcv) => {
       const f = pathReal.join(dir, `${rcv}-${sender}-${++n}.txt`);
       fsReal.writeFileSync(f, body);
@@ -14681,41 +14677,48 @@ function mkLineGate() {
   return m;
 }
 
-const LINE_GATE_POINTER = /^\[agent:from a\] Message \((\d+) bytes\) attached: @(\S+) $/;
+const SPILL_POINTER = /^\[agent:from a\] Message \((\d+) bytes\) attached: @(\S+) $/;
 
-test('t1505 _buildDeliveryText: a 4-line body to a claude PTY seat spills, a 3-line one stays inline', () => {
-  const m = mkLineGate();
+test('t1792 _buildDeliveryText: a 6-line 2048-byte body to a claude PTY seat arrives inline', () => {
+  const m = mkSpillGate();
+  const body = [...Array(5).fill('x'.repeat(340)), 'x'.repeat(343)].join('\n');
+  assert.strictEqual(Buffer.byteLength(body), 2048);
+  for (const target of [
+    { name: 'rcv', agentType: 'claude', io: 'pty' },
+    { name: 'rcv', agentType: 'claude', io: 'stream' },
+    { name: 'rcv', agentType: 'codex', io: 'pty' },
+  ]) {
+    const out = m._buildDeliveryText(target, 'a', body, 'dm');
+    assert.strictEqual(out, `[agent:from a] ${body}`);
+    assert.ok(!out.includes('attached:'), out);
+  }
+});
+
+test('t1792 _buildDeliveryText: the byte gate keeps 3072 bytes inline and spills 3073', () => {
+  const m = mkSpillGate();
   const target = { name: 'rcv', agentType: 'claude', io: 'pty' };
-  const four = 'a\nb\nc\nd';
-  const out = m._buildDeliveryText(target, 'a', four, 'dm');
-  const hit = out.match(LINE_GATE_POINTER);
+  const at = 'y'.repeat(3072);
+  assert.strictEqual(m._buildDeliveryText(target, 'a', at, 'dm'), `[agent:from a] ${at}`);
+  const over = 'y'.repeat(3073);
+  const hit = m._buildDeliveryText(target, 'a', over, 'dm').match(SPILL_POINTER);
+  assert.ok(hit);
+  assert.strictEqual(Number(hit[1]), 3073);
+});
+
+test('t1792 _buildDeliveryText: a 3584-byte body spills with the attached pointer shape', () => {
+  const m = mkSpillGate();
+  const target = { name: 'rcv', agentType: 'claude', io: 'pty' };
+  const body = 'z'.repeat(3584);
+  const out = m._buildDeliveryText(target, 'a', body, 'dm');
+  const hit = out.match(SPILL_POINTER);
   assert.ok(hit, out);
-  assert.strictEqual(Number(hit[1]), Buffer.byteLength(four));
-  assert.strictEqual(fsReal.readFileSync(hit[2], 'utf8'), four);
-  assert.ok(!out.includes('a\nb'), 'ENTER: the spilled delivery carries no body text');
-  const three = m._buildDeliveryText(target, 'a', 'a\nb\nc', 'dm');
-  assert.strictEqual(three, '[agent:from a] a\nb\nc');
+  assert.strictEqual(Number(hit[1]), 3584);
+  assert.strictEqual(fsReal.readFileSync(hit[2], 'utf8'), body);
+  assert.ok(!out.includes('zzz'), 'the spilled delivery carries no body text');
 });
 
-test('t1505 _buildDeliveryText: the line gate is claude PTY only', () => {
-  const m = mkLineGate();
-  const four = 'a\nb\nc\nd';
-  assert.strictEqual(m._buildDeliveryText({ name: 'rcv', agentType: 'codex', io: 'pty' }, 'a', four, 'dm'),
-    '[agent:from a] a\nb\nc\nd');
-  assert.strictEqual(m._buildDeliveryText({ name: 'rcv', agentType: 'claude', io: 'stream' }, 'a', four, 'dm'),
-    '[agent:from a] a\nb\nc\nd');
-});
-
-test('t1505 _buildDeliveryText: \\r\\n is one break, U+2028 is a break', () => {
-  const m = mkLineGate();
-  const target = { name: 'rcv', agentType: 'claude', io: 'pty' };
-  assert.strictEqual(m._buildDeliveryText(target, 'a', 'a\r\nb\r\nc', 'dm'), '[agent:from a] a\r\nb\r\nc');
-  assert.match(m._buildDeliveryText(target, 'a', 'a\r\nb\r\nc\r\nd', 'dm'), LINE_GATE_POINTER);
-  assert.match(m._buildDeliveryText(target, 'a', 'a\u2028b\u2028c\u2028d', 'dm'), LINE_GATE_POINTER);
-});
-
-test('t1505 _deliverMessage: image lines count toward the claude PTY line gate', () => {
-  const m = mkLineGate();
+test('t1792 _deliverMessage: a multi-line body with image lines arrives inline on a claude PTY seat', () => {
+  const m = mkSpillGate();
   m.sessions.set('rcv', { name: 'rcv', agentType: 'claude', io: 'pty' });
   const injected = [];
   m._refuseStreamInject = () => false;
@@ -14723,17 +14726,13 @@ test('t1505 _deliverMessage: image lines count toward the claude PTY line gate',
   m._injectText = (_s, text) => injected.push(text);
   m._writeImageFiles = (_n, pics) => pics.map((_p, i) => `/tmp/img-${i + 1}.png`);
   const png = { mediaType: 'image/png', data: 'UE5H' };
-  m._deliverMessage('rcv', 'a', 'a\nb', 'dm', '', null, null, [png, png]);
-  m._deliverMessage('rcv', 'a', 'a\nb', 'dm', '', null, null, [png]);
-  assert.strictEqual(injected.length, 2);
-  const [spilled, ...spillImages] = injected[0].split('\n');
-  assert.match(spilled, LINE_GATE_POINTER);
-  assert.deepStrictEqual(spillImages, ['Image: /tmp/img-1.png', 'Image: /tmp/img-2.png']);
-  assert.strictEqual(injected[1], '[agent:from a] a\nb\nImage: /tmp/img-1.png');
+  m._deliverMessage('rcv', 'a', 'a\nb\nc\nd', 'dm', '', null, null, [png, png, png]);
+  assert.deepStrictEqual(injected,
+    ['[agent:from a] a\nb\nc\nd\nImage: /tmp/img-1.png\nImage: /tmp/img-2.png\nImage: /tmp/img-3.png']);
 });
 
-test('t1510 _deliverMessage: image lines count toward the claude PTY line gate on the rebody path', () => {
-  const m = mkLineGate();
+test('t1792 _deliverMessage: a multi-line rebody with image lines parks inline on a claude PTY seat', () => {
+  const m = mkSpillGate();
   m.sessions.set('rcv', { name: 'rcv', agentType: 'claude', io: 'pty' });
   const parked = [];
   m._refuseStreamInject = () => false;
@@ -14741,14 +14740,9 @@ test('t1510 _deliverMessage: image lines count toward the claude PTY line gate o
   m._injectText = () => { throw new Error('parked, never injected'); };
   m._writeImageFiles = (_n, pics) => pics.map((_p, i) => `/tmp/img-${i + 1}.png`);
   const png = { mediaType: 'image/png', data: 'UE5H' };
-  const rebody = () => 'a\nb';
+  const rebody = () => 'a\nb\nc\nd';
   m._deliverMessage('rcv', 'a', 'x', 'dm', '', null, null, [png, png], rebody);
-  m._deliverMessage('rcv', 'a', 'x', 'dm', '', null, null, [png], rebody);
-  assert.strictEqual(parked.length, 2);
-  const [spilled, ...spillImages] = parked[0].split('\n');
-  assert.match(spilled, LINE_GATE_POINTER);
-  assert.deepStrictEqual(spillImages, ['Image: /tmp/img-1.png', 'Image: /tmp/img-2.png']);
-  assert.strictEqual(parked[1], '[agent:from a] a\nb\nImage: /tmp/img-1.png');
+  assert.deepStrictEqual(parked, ['[agent:from a] a\nb\nc\nd\nImage: /tmp/img-1.png\nImage: /tmp/img-2.png']);
 });
 
 // --- flushPending / _flushParkedNow (operator parked-DM flush) ----------------
