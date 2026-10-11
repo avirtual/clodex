@@ -30,6 +30,7 @@ blocks a release.
 - Spilled-intent examples are the first two long bodies after a compact, kept in full until the next one; every later body rides as its head line plus `[agent:end]` from its first resend. Before, every long body since the compact stayed in full, which is where the ~36k characters of carried spec text at each compaction peak came from.
 - Harness grammar: the RULES line no longer claims list decoration is stripped before intent matching — bullet glyphs are, markdown list markers (`- `, `* `, `1. `) are not and an intent behind one never fires; the spill line names the first two bodies after each compact as the ones kept in full, matching the cut.
 - Settings → intent spilling hint says the first two bodies after each compact ride in full and later ones render as the intent head plus `[agent:end]`, matching the cut; it used to say the two newest.
+- Grants hint and the MCP docs say what an intent, grant or plugin edit on a running Claude seat costs: the CLI resends its tool roster and the whole prompt cache is rewritten on the next request, so batch such edits or make them before spawning.
 
 ## 5.123.0 — 2026-10-11
 
