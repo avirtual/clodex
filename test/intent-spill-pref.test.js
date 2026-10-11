@@ -116,7 +116,7 @@ test('saving the spill boxes does not disturb the pref they were modelled on', (
 
 test('the web bundle carries the same halves as the renderer source', () => {
   const bundle = fs.readFileSync(path.join(ROOT, 'web-dist', 'index.html'), 'utf8');
-  assert.match(bundle, /every earlier one appears in the transcript as the intent head and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation, and the terminal shows the filed path \(clickable\)/,
+  assert.match(bundle, /the first two after each compact ride in full as examples until the next compact; every later one appears in the transcript as the intent head and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation, and the terminal shows the filed path \(clickable\)/,
     'a rebuild is owed whenever the hint text moves, or the web operator reads the old promise');
   for (const b of BOXES) {
     assert.ok(bundle.includes(`id="${b.id}"`), `web-dist/index.html lacks the ${b.id} row`);
