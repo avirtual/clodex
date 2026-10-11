@@ -132,7 +132,9 @@ Do not sweep the whole file: your scope is your hunks.
   `clodex-check-syntax` line when that command is granted; the comment-delta
   line; one line per red-proof (test, what was reverted, red/green); hunks
   only where the spec asks for them; deviations and assumptions as a list, or
-  "none". Under ~1500 bytes unless a deviation needs more; no narrative.
+  "none". Hard cap 1500 bytes, deviations included: the branch diff is the
+  artifact, so never describe what it shows, and on a rework round list only
+  the must-fix ids you closed, not what you did for each.
 - Report at the end; a mid-task ping costs the lead a turn. The exception is a
   decision above your pay grade: say so plainly and stop.
 - Own the failures — failing tests, a skipped step, unfinished work — with the
