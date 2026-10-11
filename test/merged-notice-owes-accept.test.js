@@ -252,8 +252,9 @@ test('the close-out line drops the ticket id the header already carries', () => 
 
 test('a closed-out notice does not also claim nothing was torn down', () => {
   const f = mkLoop();
-  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: CLOSED });
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, unioned: 'CHANGELOG.md', closeOut: CLOSED });
   const body = f.gated[0].body;
+  assert.ok(body.includes('\n'), `ENTER: the full body. Got:\n${body}`);
   // The sentence was true when the loop stopped at the merge. After a close-out
   // it is false about a tree, a ref and a seat that are all gone — and it sits
   // four lines under a line saying exactly that, so the notice would contradict
@@ -292,6 +293,7 @@ const LOUD = [
   ['slow', { slow: ['test/x.test.js 7000ms'] }, 'slow gate tripped'],
   ['unioned', { unioned: 'CHANGELOG.md' }, 'kept BOTH'],
   ['stamp', { ticket: { suiteRemeasured: { first: '1 failing', firstFailing: 'x' } } }, 're-measured'],
+  ['accepted by someone else', { closeOut: { ok: true, closedOut: true, already: true, text: 'ticket t1 accepted — lead accepted it while the post-merge suite ran' } }, 'Closed out: lead accepted it'],
   ['changelog owed', { changelog: { known: true, touched: false, present: true } }, 'is OWED'],
   ['changelog unknown', { changelog: { known: false, error: 'boom' } }, 'UNKNOWN'],
   ['no changelog probe', { changelog: null }, 'UNKNOWN'],

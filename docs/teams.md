@@ -435,13 +435,12 @@ first try.
 **A green merge closes the ticket out by itself.** Once the post-merge suite
 comes back green the loop runs the same teardown `[agent:task accept <id>]`
 would have — retire the seat, remove the worktree, delete the branch — and the
-`[ticket MERGED]` notice REPORTS that final state on its second line, opening
-`Closed out:`. Nothing is owed and there is no verb to emit. The accept's guards
+`[ticket MERGED]` notice REPORTS that final state: one line saying `closed out`
+when no CHANGELOG, suite or merge anomaly is flagged, otherwise a second line
+opening `Closed out:`. Nothing is owed and there is no verb to emit. The accept's guards
 are unchanged and all mechanical (the branch is an ancestor, the tree is clean,
 the seat is one the loop minted), so on the happy path pressing the verb bought
 a billed turn and some latency for a decision nothing was waiting on.
-The notice is one line when the loop closed the ticket out and no CHANGELOG,
-suite or merge anomaly is flagged; any flag restores the full body.
 
 **You act when the loop could not finish.** There the same line opens `Step
 owed:` and names why — a tree with uncommitted work, a standing assignee whose
