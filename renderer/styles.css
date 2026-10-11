@@ -3877,10 +3877,30 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   color: var(--text);
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
+#auth-text {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 #auth-banner.hidden {
+  display: none;
+}
+
+#auth-cmd {
+  flex-basis: 100%;
+  font-family: var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+  user-select: text;
+  cursor: pointer;
+  color: var(--warn);
+}
+
+#auth-cmd:empty {
   display: none;
 }
 
@@ -6719,6 +6739,7 @@ button.seat-status-chip {
 #sidebar[data-folded="1"] #diag-text,
 #sidebar[data-folded="1"] #diag-actions,
 #sidebar[data-folded="1"] #auth-text,
+#sidebar[data-folded="1"] #auth-cmd,
 #sidebar[data-folded="1"] .footer-label,
 #sidebar[data-folded="1"] .footer-badge {
   display: none;

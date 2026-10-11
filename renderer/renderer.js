@@ -283,12 +283,14 @@ const inputAccount = document.getElementById('input-account');
 const accountRow = document.getElementById('account-row');
 
 let dialogAccounts = null;
+let lastAccounts = [];
 
 async function fetchAccounts() {
   try {
     const res = await window.api.accountsList();
-    return (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : [];
-  } catch { return []; }
+    lastAccounts = (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : [];
+  } catch { lastAccounts = []; }
+  return lastAccounts;
 }
 
 function paintAccountSelect(sel, envText, accounts) {
@@ -4924,7 +4926,7 @@ function refreshQuotaChip() {
   // claiming freshness it does not have. Re-run every second from the interval
   // below so a dead source visibly dims instead of lying quietly.
   drawerHost.setQuota(quotaChips(entries));
-  refreshAuthBanner(proxyState.values());
+  refreshAuthBanner(proxyState.values(), lastAccounts);
 }
 
 function acceptWireQuota(payload, at = Date.now()) {
@@ -5833,6 +5835,7 @@ Promise.resolve(window.api.sandboxSelf && window.api.sandboxSelf())
     if (self && self.libraryWritable === false) libraryWritable = false;
   })
   .catch(() => {});
+fetchAccounts().then(() => refreshAuthBanner(proxyState.values(), lastAccounts));
 
 window.api.onRequestSwitchSession((name) => switchSession(name));
 window.api.onRequestOpenNewDialog(() => openDialog());
