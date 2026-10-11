@@ -17,6 +17,10 @@ blocks a release.
 
 - Inbound messages up to 3 KB are delivered inline as text instead of as an attached file; the 4-line attach rule is gone. A Claude seat reads an attached file through the Read tool with a line number per line, which measured 41% larger on the wire and was re-attached after every compact.
 
+### Teams
+
+- The `[ticket MERGED]` notice is one line when the loop closed the ticket out and nothing is flagged; a step owed, a non-tip merge, a slow gate, a CHANGELOG union or an owed/unknown CHANGELOG entry still get the full body.
+
 ## 5.123.0 — 2026-10-11
 
 ### Accounts
