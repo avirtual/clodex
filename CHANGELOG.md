@@ -15,7 +15,7 @@ blocks a release.
 
 ### Seats
 
-- The Bash kill-by-pattern / whole-tree-add guard and the identical-poll guard now fail closed: a guard that cannot start, crashes, or exceeds 15 s blocks the tool call instead of letting it through (Claude Code 2.1.295 `onFailure: "block"`).
+- The Bash kill-by-pattern / whole-tree-add guard and the identical-poll guard now fail closed: a guard that cannot start (script or interpreter missing), whose interpreter dies, or that exceeds 15 s blocks the tool call instead of letting it through (Claude Code 2.1.295 `onFailure: "block"`).
 
 ### Wire
 

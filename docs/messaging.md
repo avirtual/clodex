@@ -584,7 +584,7 @@ names (clodex-paths grammar); the parked-DM DATA stays in the shared
 | PostToolUseFailure (`matcher: Bash`) | `run/<name>/bash-console.sh` | the same spool write — a FAILING Bash call fires only this event, with no `tool_response` and the exit code inside a top-level `error` |
 | PreToolUse (`matcher: ''`, stream seats only) | `run/<name>/tool-boundary.sh` | appends `{"hook_event_name":"PreToolUse","ts":…}` to `attn.jsonl` and prints nothing; `_routeAttnEntry` turns it into a tool-boundary drain of the stream seat's outbox |
 
-The two PreToolUse deny guards, `bash-guard.sh` and `poll-guard.sh`, are registered with `onFailure: "block"` and a 15 s `timeout`, so a guard that cannot start, crashes or hangs blocks the tool call instead of letting it through; every other hook fails open by design.
+The two PreToolUse deny guards, `bash-guard.sh` and `poll-guard.sh`, are registered with `onFailure: "block"` and a 15 s `timeout`, so a guard that cannot start (script or interpreter missing), whose interpreter dies, or that hangs blocks the tool call instead of letting it through; every other hook fails open by design.
 
 ## 7a. Stream seats (`io: 'stream'`)
 

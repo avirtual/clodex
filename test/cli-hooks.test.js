@@ -96,9 +96,34 @@ test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else c
   const polls = anyEntry.hooks.filter((h) => h.command === pollGuard);
   assert.strictEqual(polls.length, 1);
   assert.deepStrictEqual(polls[0], { type: 'command', command: pollGuard, onFailure: 'block', timeout: 15 });
-  for (const ev of ['PostToolUse', 'SubagentStop', 'UserPromptSubmit']) {
-    for (const entry of settings.hooks[ev] || []) {
-      for (const h of entry.hooks) assert.ok(!('onFailure' in h), `${ev} ${h.command}`);
+  const blocking = [];
+  for (const [ev, entries] of Object.entries(settings.hooks)) {
+    for (const entry of entries) {
+      for (const h of entry.hooks) if ('onFailure' in h) blocking.push(`${ev}|${entry.matcher}|${h.command}`);
+    }
+  }
+  assert.deepStrictEqual(blocking.sort(), [`PreToolUse||${pollGuard}`, `PreToolUse|Bash|${guard}`].sort());
+});
+
+test('deny guards: a missing interpreter exits non-zero (not 2); a malformed payload under a real interpreter allows silently', () => {
+  const bashPayload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git add -A' } });
+  const env = { ...process.env, CLODEX_TICKET: 't1' };
+  for (const [interp, input, ok] of [['/nonexistent/interp', bashPayload, false], [process.execPath, '{not json', true]]) {
+    const REGISTRY_DIR = tmp();
+    createCliHooks({
+      REGISTRY_DIR, memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: interp,
+    }).setupClaudeHook('agent1');
+    for (const key of ['bashGuardScript', 'pollGuardScript']) {
+      const r = cp.spawnSync(pathFor(REGISTRY_DIR, 'agent1', key), { input, env, encoding: 'utf8', ...HOOK_SPAWN });
+      if (ok) {
+        assert.strictEqual(r.status, 0, key);
+        assert.strictEqual(r.stdout, '', key);
+      } else {
+        assert.notStrictEqual(r.status, 0, key);
+        assert.notStrictEqual(r.status, 2, key);
+      }
     }
   }
 });

@@ -361,7 +361,7 @@ try {
     permissionDecisionReason: "ticket " + ticket + ": stage only the paths you edited (git add <path>…) — a whole-tree add sweeps a subagent's in-flight revert into your commit." } }));
 } catch (e) {}
 JSEOF
-${INTERP} -e "$JS" - "$CLODEX_TICKET" 2>/dev/null
+${INTERP} -e "$JS" - "$CLODEX_TICKET" 2>/dev/null || exit 1
 exit 0
 `, { mode: 0o700 });
 
@@ -411,7 +411,7 @@ try {
     permissionDecisionReason: (ticket ? "ticket " + ticket : "seat " + seat) + ": third identical Bash call in a row (" + norm.slice(0, 60) + "). Polling cannot make a result arrive sooner and each poll re-bills your whole context. END YOUR TURN — the exec, monitor, subagent or reminder result wakes you. If you genuinely must re-run it, do other work first." } }));
 } catch (e) {}
 JSEOF
-${INTERP} -e "$JS" - "$CLODEX_TICKET" "${pollStatePath}" "${name}" 2>/dev/null
+${INTERP} -e "$JS" - "$CLODEX_TICKET" "${pollStatePath}" "${name}" 2>/dev/null || exit 1
 exit 0
 `, { mode: 0o700 });
 
