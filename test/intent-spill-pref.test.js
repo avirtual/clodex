@@ -48,8 +48,8 @@ test('the three checkboxes exist in the prefs markup with the wording the ticket
   }
   assert.ok(!html.includes('id="prefs-intent-spill"'), 'the single switch is gone');
   assert.match(html, /Claude seats only; all three are on by default, and each applies to every running seat from its next turn\./);
-  assert.match(html, /A spilled body is filed, and each request carries the two newest in full as examples; every earlier one appears in the transcript as the intent head and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation/,
-    'every body is filed, the two newest ride in full per request and earlier ones render as the bare intent head, and the hint must say exactly that');
+  assert.match(html, /A spilled body is filed, and the first two after each compact ride in full as examples until the next compact; every later one appears in the transcript as the intent head and <code>\[agent:end\]<\/code>, the model sees only the ordinary confirmation/,
+    'every body is filed, the first two after each compact ride in full and later ones render as the bare intent head, and the hint must say exactly that');
   assert.ok(!/receipt|Runtime note|filler/.test(html.slice(html.indexOf('prefs-spill-tickets') - 1500, html.indexOf('prefs-spill-prose') + 400)),
     'the receipt and the filler no longer exist, so the hint must not describe either');
   assert.match(html, /three kinds, each with its own switch: ticket bodies \(specs, reports, rejects\), messages \(dms between seats, shouts to the operator\), and the prose an agent writes after its last intent/,
