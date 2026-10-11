@@ -789,7 +789,7 @@ exit 0
           matcher: 'Bash',
           hooks: [
             { type: 'command', command: liveScriptPath },
-            { type: 'command', command: guardScriptPath },
+            { type: 'command', command: guardScriptPath, onFailure: 'block', timeout: 15 },
             { type: 'command', command: identScriptPath },
           ]
         }, {
@@ -798,7 +798,7 @@ exit 0
         }, {
           matcher: '',
           hooks: [
-            { type: 'command', command: pollGuardScriptPath },
+            { type: 'command', command: pollGuardScriptPath, onFailure: 'block', timeout: 15 },
             ...(stream ? [{ type: 'command', command: toolBoundaryScriptPath }] : []),
           ]
         }],

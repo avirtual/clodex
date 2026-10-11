@@ -83,6 +83,26 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   assert.match(pendingBody, /hookEventName: ev/, 'output event name must be the derived variable, not a literal');
 });
 
+test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else carries onFailure', () => {
+  const REGISTRY_DIR = tmp();
+  const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
+  const guard = pathFor(REGISTRY_DIR, 'agent1', 'bashGuardScript');
+  const pollGuard = pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript');
+  const bashEntry = settings.hooks.PreToolUse.find((x) => x.matcher === 'Bash');
+  const guards = bashEntry.hooks.filter((h) => h.command === guard);
+  assert.strictEqual(guards.length, 1);
+  assert.deepStrictEqual(guards[0], { type: 'command', command: guard, onFailure: 'block', timeout: 15 });
+  const anyEntry = settings.hooks.PreToolUse.find((x) => x.matcher === '');
+  const polls = anyEntry.hooks.filter((h) => h.command === pollGuard);
+  assert.strictEqual(polls.length, 1);
+  assert.deepStrictEqual(polls[0], { type: 'command', command: pollGuard, onFailure: 'block', timeout: 15 });
+  for (const ev of ['PostToolUse', 'SubagentStop', 'UserPromptSubmit']) {
+    for (const entry of settings.hooks[ev] || []) {
+      for (const h of entry.hooks) assert.ok(!('onFailure' in h), `${ev} ${h.command}`);
+    }
+  }
+});
+
 test('setupClaudeHook: proxyBase routes ANTHROPIC_BASE_URL through the per-agent path', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);

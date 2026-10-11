@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Seats
+
+- The Bash kill-by-pattern / whole-tree-add guard and the identical-poll guard now fail closed: a guard that cannot start, crashes, or exceeds 15 s blocks the tool call instead of letting it through (Claude Code 2.1.295 `onFailure: "block"`).
+
 ### Wire
 
 - Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
