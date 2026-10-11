@@ -24,8 +24,8 @@ blocks a release.
 
 ### Wire
 
-- The harness intents block and the spill preference text describe a thinned intent body as the bare head plus `[agent:end]`, matching what the cut now renders.
 - A spilled intent body in retained history is now the bare intent head followed by `[agent:end]`; the "[Runtime note: …]" stand-in sentences are no longer rendered (the two newest bodies still ride in full as examples). A sentence in history is a shape the model can copy; an empty body is not.
+- The harness intents block and the spill preference text describe a thinned intent body as the bare head plus `[agent:end]`, matching what the cut now renders.
 
 ## 5.123.0 — 2026-10-11
 
