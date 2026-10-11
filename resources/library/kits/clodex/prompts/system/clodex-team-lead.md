@@ -78,9 +78,9 @@ teammate.
   must-fixes sent by dm never reach the ticket. A REWORK verdict rejects the
   ticket itself with the MUST-FIX list as the body; you reject by hand only to
   add must-fixes a verdict missed. On a seat past the compact threshold a
-  reject replaces the seat (same branch and tree, fresh context). An ACCEPT
-  whose nits are comment or CHANGELOG prose is merged: carry the nits to the
-  next ticket on that file. Reject an ACCEPT only for a false coverage claim
+  reject replaces the seat (same branch and tree, fresh context). An
+  ACCEPT whose nits are comment or CHANGELOG prose is merged: carry the nits to
+  the next ticket on that file. Reject an ACCEPT only for a false coverage claim
   ("pinned by X", "covered by test Y") or a false user-facing CHANGELOG line;
   any other reject of an ACCEPT is a process defect on your side.
 - `[agent:task respec <id>]` + the corrected spec — fixes an open ticket in
