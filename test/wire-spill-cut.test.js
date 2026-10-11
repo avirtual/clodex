@@ -12,7 +12,7 @@ const { SpillFilter } = require('../wire/spill');
 const { WireProxy } = require('../wire/proxy');
 const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
-const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, spillSize, writeSpill, pointerText } = require('../intent-spill');
+const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize, writeSpill, pointerText } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
@@ -49,7 +49,7 @@ function stubOf() {
   return stubCache;
 }
 
-const RENDERED = `[agent:dm hand] first line of the body\n${SPILLED_BODY_FIRST}\n[agent:end]\n`;
+const RENDERED = `[agent:dm hand] first line of the body\n[agent:end]\n`;
 
 function withStub(obj, text, extra = null) {
   const i = assistantIndex(obj);
@@ -69,7 +69,7 @@ test('T1 fixture: the CLI re-sends the response text as one byte-exact block', (
   assert.deepStrictEqual(r, { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER: the captured pair carries no stub');
 });
 
-test('T1 stub after prose: the two stub lines become the three-line rendering in place, every other byte of the block stays', () => {
+test('T1 stub after prose: the two stub lines become the head and [agent:end] in place, every other byte of the block stays', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
@@ -80,7 +80,7 @@ test('T1 stub after prose: the two stub lines become the three-line rendering in
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] });
   const msg = obj.messages[i];
   assert.deepStrictEqual(msg.content.map((b) => b.type), before, 'block layout unchanged');
-  assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n${RENDERED}`, 'prose bytes, then the head, the runtime note and the terminator where the stub stood');
+  assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n${RENDERED}`, 'prose bytes, then the head and the terminator where the stub stood');
   assert.ok(!JSON.stringify(obj).includes('filed at'));
 });
 
@@ -111,7 +111,7 @@ test('T1 a titled stub past the title cap, a sized path outside spill/, and a ba
   }
 });
 
-test('T1 stub-only message after a user turn: the message stays and its text is the three-line rendering', () => {
+test('T1 stub-only message after a user turn: the message stays and its text is the head and [agent:end]', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   obj.messages.splice(1, 1);
@@ -123,7 +123,7 @@ test('T1 stub-only message after a user turn: the message stays and its text is 
   assert.equal(r.cut, true, 'ENTER');
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] });
   assert.equal(obj.messages.length, n);
-  assert.deepStrictEqual(obj.messages[i].content, [{ type: 'text', text: RENDERED }], 'not the bare head: head, runtime note, terminator');
+  assert.deepStrictEqual(obj.messages[i].content, [{ type: 'text', text: RENDERED }], 'the head and its terminator');
 });
 
 test('T1 pointer-only message after a user turn: no head to render, so the whole message goes', () => {
@@ -305,7 +305,7 @@ test('T8 drop rules: a thinking+pointer message goes whole; user/system/tool_res
   assert.ok(kept.messages[0].content[0].text.startsWith('[agent:dm hand]'), 'the user block still carries the pointer');
 });
 
-test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message keeps the three-line rendering — no placeholder needed', () => {
+test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message keeps the head and [agent:end] — no placeholder needed', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
@@ -318,7 +318,7 @@ test('Q4 system-adjacent: a stub-only assistant message after a role:"system" me
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER');
   assert.equal(obj.messages.length, n, 'kept, not dropped');
   assert.deepStrictEqual(obj.messages[i].content, [thinking, { type: 'text', text: RENDERED }],
-    'thinking blocks, then ONE text block: the head without the filed-at tail, the runtime note, the terminator');
+    'thinking blocks, then ONE text block: the head without the filed-at tail, the terminator');
   assert.deepStrictEqual(obj.messages.slice(i - 1, i + 2).map((m) => m.role), ['system', 'assistant', 'user'], 'system → assistant → user survives');
   assert.ok(!JSON.stringify(obj).includes(' filed at /'), 'no pointer reaches the model');
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'the placeholder is not itself a stub');
@@ -403,9 +403,9 @@ function assistantTexts(obj) {
 }
 
 const expandedOf = (s) => `On ${s.n}.\n[agent:task add hand]\n${s.body}\n[agent:end]\n`;
-const noteOf = (s, note) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n${note}\n[agent:end]\n`;
+const noteOf = (s) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n[agent:end]\n`;
 
-test('t1118 (a): the two newest resolvable intent stubs of a request render as the original intent, the first gets SPILLED_BODY_FIRST, the second SPILLED_BODY', () => {
+test('t1118 (a): the two newest resolvable intent stubs of a request render as the original intent, every earlier one as the bare head and [agent:end]', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -428,7 +428,7 @@ test('t1118 (b): the pair is derived per request — append a fifth stub and the
   assert.equal(assistantTexts(first)[2], expandedOf(C), 'ENTER: C was expanded in the four-stub payload');
   const obj = stubPayload([A, B, C, D, E]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY), expandedOf(D), expandedOf(E)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), noteOf(C), expandedOf(D), expandedOf(E)]);
 });
 
 test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands B and C', () => {
@@ -437,7 +437,7 @@ test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B,
   fs.unlinkSync(M.file);
   const obj = stubPayload([M, A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M, SPILLED_BODY_FIRST), noteOf(A, SPILLED_BODY), expandedOf(B), expandedOf(C)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M), noteOf(A), expandedOf(B), expandedOf(C)]);
 });
 
 test('t1128: an unresolvable stub among resolvable ones is a stand-in but never an example and takes no example slot — [A, missing, B], examples 2', () => {
@@ -448,7 +448,7 @@ test('t1128: an unresolvable stub among resolvable ones is a stand-in but never 
   cutSpillStubs(obj, { root, agent: 'tester', examples: 2 });
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 3, 'ENTER: three stubs reached');
-  assert.deepStrictEqual(texts, [expandedOf(A), noteOf(M, SPILLED_BODY_FIRST), expandedOf(B)]);
+  assert.deepStrictEqual(texts, [expandedOf(A), noteOf(M), expandedOf(B)]);
 });
 
 test('t1146 (s1): a sticky key keeps a stub expanded past the newest two — [A,B,C,D,E] with sticky {C}: C, D and E expand, A and B collapse', () => {
@@ -458,9 +458,9 @@ test('t1146 (s1): a sticky key keeps a stub expanded past the newest two — [A,
   const r = cutSpillStubs(obj, { root, agent: 'tester', sticky: new Set([C.file]) });
   assert.deepStrictEqual(obj.messages, [
     { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-    { role: 'assistant', content: [{ type: 'text', text: noteOf(A, SPILLED_BODY_FIRST) }] },
+    { role: 'assistant', content: [{ type: 'text', text: noteOf(A) }] },
     { role: 'user', content: [{ type: 'text', text: 'after A' }] },
-    { role: 'assistant', content: [{ type: 'text', text: noteOf(B, SPILLED_BODY) }] },
+    { role: 'assistant', content: [{ type: 'text', text: noteOf(B) }] },
     { role: 'user', content: [{ type: 'text', text: 'after B' }] },
     { role: 'assistant', content: [{ type: 'text', text: expandedOf(C) }] },
     { role: 'user', content: [{ type: 'text', text: 'after C' }] },
@@ -478,7 +478,7 @@ test('t1146 (s2): a sticky key never resurrects a missing file — B is the stan
   fs.unlinkSync(B.file);
   const obj = stubPayload([A, B, C, D]);
   const r = cutSpillStubs(obj, { root, agent: 'tester', sticky: new Set([B.file]) });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), expandedOf(C), expandedOf(D)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), expandedOf(C), expandedOf(D)]);
   assert.deepStrictEqual(r.expanded, [C.file, D.file]);
 });
 
@@ -498,7 +498,7 @@ test('t1146 (s4): an empty sticky set is today\'s rule — the t1118 (b) fixture
   const [A, B, C, D, E] = filedStubs(root, ['A', 'B', 'C', 'D', 'E']);
   const obj = stubPayload([A, B, C, D, E]);
   const r = cutSpillStubs(obj, { root, agent: 'tester', examples: 2, sticky: new Set() });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY), expandedOf(D), expandedOf(E)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), noteOf(C), expandedOf(D), expandedOf(E)]);
   assert.deepStrictEqual(r.expanded, [D.file, E.file]);
 });
 
@@ -531,11 +531,11 @@ test('t1118 (e): with no registration ({ root: null, agent: null }) nothing is e
   for (const opts of [{ root: null, agent: null }, undefined]) {
     const obj = stubPayload([A, B, C]);
     cutSpillStubs(obj, opts);
-    assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_FIRST), noteOf(B, SPILLED_BODY), noteOf(C, SPILLED_BODY)]);
+    assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), noteOf(C)]);
   }
 });
 
-test('t1119 (a): examples: 0 expands nothing — the first stub renders SPILLED_BODY_EPHEMERAL, the rest SPILLED_BODY', () => {
+test('t1119 (a): examples: 0 expands nothing — every stub renders as the bare head and [agent:end]', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -561,28 +561,28 @@ test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on
   t.mock.method(fs, 'lstatSync', (p, ...rest) => { if (String(p).startsWith(root)) seen.push(p); return real(p, ...rest); });
   const obj = stubPayload([A, B]);
   cutSpillStubs(obj, { root, agent: 'tester', examples: 0 });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_EPHEMERAL), noteOf(B, SPILLED_BODY)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B)]);
   assert.deepStrictEqual(seen, []);
 });
 
-test('t1131: examples: 1 expands exactly the newest; the first stand-in is SPILLED_BODY_EPHEMERAL, the next SPILLED_BODY', () => {
+test('t1131: examples: 1 expands exactly the newest; every earlier stub is the bare head and [agent:end]', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   const obj = stubPayload([A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A, SPILLED_BODY_EPHEMERAL), noteOf(B, SPILLED_BODY), expandedOf(C)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), expandedOf(C)]);
 });
 
-test('t1108 rendering: a stub between prose renders as the head, the runtime note and [agent:end] at its own position — whole string', () => {
+test('t1108 rendering: a stub between prose renders as the head and [agent:end] at its own position — whole string', () => {
   const id = '0123456789abcdef';
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
   withStub(obj, `prose\n[agent:task add hand] Title @spill:${id}\n[agent:end]\nmore prose`, obj.messages[i].content.slice(1));
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER');
   assert.equal(obj.messages[i].content[0].text,
-    `prose\n[agent:task add hand] Title\n[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\nmore prose`);
+    `prose\n[agent:task add hand] Title\n[agent:end]\nmore prose`);
   assert.equal(SPILLED_BODY, '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]', 'the literal the tests, the renderer and the mimic guard share');
-  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form the first stub-bearing message of a request renders');
+  assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form old transcripts still carry');
 
   const emptied = fixtureRequest();
   emptied.messages.splice(1, 1);
@@ -591,18 +591,17 @@ test('t1108 rendering: a stub between prose renders as the head, the runtime not
   const r = cutSpillStubs(emptied);
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'a block the cut would have emptied is rendered, not dropped');
   assert.equal(assistantIndex(emptied), j, 'the message is still there');
-  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n${SPILLED_BODY_FIRST}\n[agent:end]\n`);
+  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n[agent:end]\n`);
 
   for (const head of ['[agent:dm bob] Title', '[agent:shout] Title', '[agent:task done t7] Title', '[agent:task reject t7] Title', '[agent:task respec t7] Title']) {
     const o = fixtureRequest();
     const k = assistantIndex(o);
     withStub(o, `${head} @spill:${id}\nkept`, o.messages[k].content.slice(1));
     assert.equal(cutSpillStubs(o).cut, true, head);
-    assert.equal(o.messages[k].content[0].text, `${head}\n${SPILLED_BODY_FIRST}\n[agent:end]\nkept`, `${head}: a stub without its terminator still renders all three lines`);
+    assert.equal(o.messages[k].content[0].text, `${head}\n[agent:end]\nkept`, `${head}: a stub without its terminator still renders the head and [agent:end]`);
   }
 
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY, '[agent:dm bob] Title'), { kind: 0 }, 'the runtime note under an intent head is not a stub line: typed by the agent, it reaches the wire and the mimic guard bounces it');
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST, '[agent:dm bob] Title'), { kind: 0 });
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 1 }, 'the cut renders no note, so a runtime note on the wire is typed and is cut');
   assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST), { kind: 1 }, 'a lone runtime note outside an intent body is an echo and is cut');
   assert.deepStrictEqual(classifyLine('[agent:end]'), { kind: 0 });
   const again = JSON.parse(JSON.stringify(obj));
@@ -729,7 +728,7 @@ test('T4 ordering, behaviourally: the upstream bytes, the hold entry and the war
     const sent = up.seen[0].body.toString('utf8');
     assert.ok(!sent.includes('filed at'), 'upstream never sees the stub');
     const edited = JSON.parse(sent);
-    assert.equal(edited.messages[1].content[0].text, `On it.\n\n${RENDERED}`, 'upstream sees the intent as emitted, around the runtime note');
+    assert.equal(edited.messages[1].content[0].text, `On it.\n\n${RENDERED}`, 'upstream sees the intent head as emitted, with its terminator');
     assert.equal(up.seen[0].headers['content-length'], String(Buffer.byteLength(sent)), 'content-length recomputed for the edited bytes');
 
     const entry = hold.entry(SESSION_ID);
@@ -800,7 +799,7 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
     assert.equal(pings.length, 1, 'ENTER');
     assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
     const sent = assistantTexts(JSON.parse(pings[0]));
-    assert.deepStrictEqual(sent, [noteOf(A, SPILLED_BODY_FIRST), expandedOf(B), expandedOf(C)], 'the replay carries the note for the first and the newest bodies in full');
+    assert.deepStrictEqual(sent, [noteOf(A), expandedOf(B), expandedOf(C)], 'the replay carries the bare head for the first and the newest bodies in full');
   });
 });
 
@@ -849,7 +848,7 @@ test('T9 pref-independence: spillEnabled false still cuts; spillCut false stops 
   }
 });
 
-test('Q4 on the wire: a system-adjacent stub-only message reaches upstream as the three-line rendering, no spill-cut-skip', async () => {
+test('Q4 on the wire: a system-adjacent stub-only message reaches upstream as the head and [agent:end], no spill-cut-skip', async () => {
   const { stub } = stubOf();
   await withProxy({}, async (proxy, up) => {
     const events = collect(proxy, ['spill-cut', 'spill-cut-skip', 'turn.completed']);
@@ -959,7 +958,7 @@ test('T13 grammar line: byte-pinned, both wirescope anchors present', () => {
   assert.ok(!line.includes('@spill:'), 'the pointer shape is never taught');
 });
 
-test('t1111: the FIRST stub-bearing assistant message renders the long note, every later one the short one; re-rendering is byte-identical', () => {
+test('t1111: the FIRST stub-bearing assistant message renders the bare head like every later one; re-rendering is byte-identical', () => {
   const { stub } = stubOf();
   const build = () => ({
     messages: [
@@ -976,9 +975,9 @@ test('t1111: the FIRST stub-bearing assistant message renders the long note, eve
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
   assert.equal(r.lines, 6);
-  assert.equal(obj.messages[1].content[0].text, `first\n[agent:dm hand] first line of the body\n${SPILLED_BODY_FIRST}\n[agent:end]\n`);
-  assert.equal(obj.messages[3].content[0].text, `second\n[agent:dm hand] first line of the body\n${SPILLED_BODY}\n[agent:end]\n`);
-  assert.equal(obj.messages[5].content[0].text, `third\n[agent:dm hand] first line of the body\n${SPILLED_BODY}\n[agent:end]\n`);
+  assert.equal(obj.messages[1].content[0].text, `first\n[agent:dm hand] first line of the body\n[agent:end]\n`);
+  assert.equal(obj.messages[3].content[0].text, `second\n[agent:dm hand] first line of the body\n[agent:end]\n`);
+  assert.equal(obj.messages[5].content[0].text, `third\n[agent:dm hand] first line of the body\n[agent:end]\n`);
   const twice = build();
   cutSpillStubs(twice);
   assert.equal(JSON.stringify(twice), JSON.stringify(obj), 'the same transcript renders to the same bytes on every request');
@@ -995,4 +994,26 @@ test('t1556: a stand-in right after [agent:end] is outside any intent body — c
     assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] hi\nbody\n[agent:end]');
   }
   assert.deepStrictEqual(classifyLine(PLACEHOLDER, '[agent:dm bob] Title'), { kind: 1 }, 'the cut never writes a placeholder under a head');
+});
+
+test('t1795: a cut transcript round-trips — a head line right above [agent:end] stays exactly those two lines', () => {
+  const text = '[agent:task add hand] Title\n[agent:end]';
+  assert.deepStrictEqual(classifyLine('[agent:task add hand] Title'), { kind: 0 }, 'a head with no pointer is not a stub');
+  const { obj, i } = echoRequest([`On it.\n${text}`]);
+  obj.messages[i].content.push({ type: 'text', text: '[agent:dm hand] x @spill:0123456789abcdef\n[agent:end]' });
+  const r = cutSpillStubs(obj);
+  assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER: only the stub block is cut');
+  assert.deepStrictEqual(obj.messages[i].content.map((b) => b.text), [`On it.\n${text}`, '[agent:dm hand] x\n[agent:end]']);
+  const again = JSON.parse(JSON.stringify(obj));
+  assert.deepStrictEqual(cutSpillStubs(again), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] });
+  assert.deepStrictEqual(again, obj, 'no second [agent:end]');
+});
+
+test('t1795: a runtime note typed under an intent head is parroted and cut, no longer taken for the cut\'s own', () => {
+  for (const note of [SPILLED_BODY, SPILLED_BODY_FIRST]) {
+    const { obj, i } = echoRequest([`[agent:dm bob] Title\n${note}\n[agent:end]`]);
+    const r = cutSpillStubs(obj);
+    assert.equal(r.parroted, 1, note);
+    assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] Title\n[agent:end]');
+  }
 });
