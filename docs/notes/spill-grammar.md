@@ -2,13 +2,11 @@
 
 ## FILED_SRC
 
-Two agent-facing lines must stay OUTSIDE this grammar and outside every mimic
-class, so neither is ever cut from the wire as if it were a stub:
+One agent-facing line must stay OUTSIDE this grammar and outside every mimic
+class, so it is never cut from the wire as if it were a stub:
 
 - the live prose receipt (`spillAckLine`, session-manager.js), which opens with
-  "the N B of prose you wrote after your last intent were removed";
-- the runtime-note stand-ins `SPILLED_BODY` and `SPILLED_BODY_FIRST`
-  (intent-spill.js) that older transcripts carry where a spilled body stood.
+  "the N B of prose you wrote after your last intent were removed".
 
 A cut body renders as the agent's own intent head line with its title, then
 `[agent:end]`, with no body. Nothing tells the agent a cut
