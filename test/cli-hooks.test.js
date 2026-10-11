@@ -978,7 +978,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     matcher: 'Bash',
     hooks: [
       { type: 'command', command: scriptPath },
-      { type: 'command', command: guardPath },
+      { type: 'command', command: guardPath, onFailure: 'block', timeout: 15 },
       { type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') },
     ],
   }], 'a matcher-less entry here would run this before EVERY tool call, not just Bash');
@@ -989,7 +989,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   const anyTool = settings.hooks.PreToolUse.filter((e) => e.matcher === '');
   assert.deepStrictEqual(anyTool, [{
     matcher: '',
-    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript') }],
+    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript'), onFailure: 'block', timeout: 15 }],
   }], 'the matcher-less entry carries the poll guard alone');
   assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec|mcp__clodex__dm'), [{
     matcher: 'mcp__clodex__term_exec|mcp__clodex__dm',
@@ -1194,7 +1194,7 @@ test('stream seat: hook.json runs the tool-boundary script on every tool and kee
   assert.deepStrictEqual(stream.hooks.PreToolUse.filter((e) => e.matcher === ''), [{
     matcher: '',
     hooks: [
-      { type: 'command', command: p('st2', 'pollGuardScript') },
+      { type: 'command', command: p('st2', 'pollGuardScript'), onFailure: 'block', timeout: 15 },
       { type: 'command', command: p('st2', 'toolBoundaryScript') },
     ],
   }]);
