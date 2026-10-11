@@ -11,3 +11,11 @@ which is why it gets a banner rather than a bar segment.
 The readout is account-wide, not per session, so any one payload carrying
 `stalled` is enough; a proxy older than v0.6.59 sends no block at all and
 `authRefresh` arrives `null`, which reads as not owed.
+
+Which store lapsed comes from `authRefresh.stalledStores`: the literal
+`'default'` names `~/.claude`, anything else is the absolute config dir. A dir
+resolves to the registered account whose `configDir` equals it after trimming a
+trailing `/` (no other normalisation); the remedy is then
+`CLAUDE_CONFIG_DIR=<configDir> claude login`, since a bare `claude login`
+re-logs the default store. Only `stalled` triggers the notice, so an empty
+`stalledStores` still shows the generic text.

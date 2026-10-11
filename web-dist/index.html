@@ -5662,9 +5662,26 @@ input.env-locked {
   color: var(--text);
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 6px;
 }
+#auth-text {
+  flex: 1 1 0;
+  min-width: 0;
+}
 #auth-banner.hidden {
+  display: none;
+}
+#auth-cmd {
+  flex-basis: 100%;
+  font-family: var(--font-mono);
+  white-space: pre;
+  overflow-x: auto;
+  user-select: text;
+  cursor: pointer;
+  color: var(--warn);
+}
+#auth-cmd:empty {
   display: none;
 }
 #new-session-tool-notice.hidden {
@@ -9632,6 +9649,7 @@ button.seat-status-chip {
 #sidebar[data-folded="1"] #diag-text,
 #sidebar[data-folded="1"] #diag-actions,
 #sidebar[data-folded="1"] #auth-text,
+#sidebar[data-folded="1"] #auth-cmd,
 #sidebar[data-folded="1"] .footer-label,
 #sidebar[data-folded="1"] .footer-badge {
   display: none;
@@ -9862,6 +9880,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     <div id="auth-banner" class="hidden">
       <span class="diag-dot">▲</span>
       <span id="auth-text">Claude login expired</span>
+      <code id="auth-cmd" data-tip="Click to copy"></code>
     </div>
     <div id="sidebar-footer">
       <button id="files-toggle" data-tip="Show or hide the Files pane" type="button" aria-pressed="false" hidden>
@@ -35690,16 +35709,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_login_owed = __commonJS({
     "renderer/lib/login-owed.js"(exports, module) {
       "use strict";
+      var { abbrevHome } = require_account_select();
       var LOGIN_OWED_TEXT = 'Claude login expired \u2014 run "claude login" in a terminal; keep-warm holds are paused until then';
       var LOGIN_OWED_TIP = "The bundled proxy can no longer refresh the Claude OAuth token; keep-warm holds stay paused until you log in again";
-      function loginOwedView(entries, { boxLabel = null } = {}) {
+      var DEFAULT_STORE = "default";
+      function trimSlash(s) {
+        return s.length > 1 ? s.replace(/\/+$/, "") : s;
+      }
+      function resolveStore(store, accounts) {
+        if (store === DEFAULT_STORE) return { name: DEFAULT_STORE, command: "claude login" };
+        const want = trimSlash(store);
+        const row = accounts.find((a) => a && typeof a.configDir === "string" && trimSlash(a.configDir) === want);
+        if (!row) return { name: abbrevHome(store), command: `CLAUDE_CONFIG_DIR=${store} claude login` };
+        const label = String(row.label == null ? "" : row.label);
+        return {
+          name: row.email ? `${label} (${row.email})` : label,
+          label,
+          command: `CLAUDE_CONFIG_DIR=${row.configDir} claude login`
+        };
+      }
+      function loginOwedView(entries, { boxLabel = null, accounts = [] } = {}) {
         let owed = false;
+        const stores = [];
         if (entries && typeof entries[Symbol.iterator] === "function") {
           for (const st of entries) {
             const a = st && st.payload && st.payload.authRefresh;
-            if (a && a.stalled) {
-              owed = true;
-              break;
+            if (!a || !a.stalled) continue;
+            owed = true;
+            for (const s of Array.isArray(a.stalledStores) ? a.stalledStores : []) {
+              if (typeof s === "string" && s !== "" && !stores.includes(s)) stores.push(s);
             }
           }
         }
@@ -35708,10 +35746,31 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return {
             hidden: false,
             text: `Claude login expired in box ${boxLabel} \u2014 run "claude login" inside it; keep-warm holds there are paused until then`,
-            tip: `The proxy inside ${boxLabel} can no longer refresh its Claude OAuth token; holds in that box stay paused until someone logs in there`
+            tip: `The proxy inside ${boxLabel} can no longer refresh its Claude OAuth token; holds in that box stay paused until someone logs in there`,
+            command: "claude login"
           };
         }
-        return { hidden: false, text: LOGIN_OWED_TEXT, tip: LOGIN_OWED_TIP };
+        if (stores.length === 0 || stores.length === 1 && stores[0] === DEFAULT_STORE) {
+          return { hidden: false, text: LOGIN_OWED_TEXT, tip: LOGIN_OWED_TIP, command: "claude login" };
+        }
+        const rows = Array.isArray(accounts) ? accounts : [];
+        const resolved = stores.map((s) => resolveStore(s, rows));
+        if (resolved.length === 1) {
+          const r = resolved[0];
+          return {
+            hidden: false,
+            text: `Claude login expired for ${r.name} \u2014 run the command below in a terminal; keep-warm holds on that account are paused until then`,
+            tip: `The bundled proxy can no longer refresh the Claude OAuth token for ${r.label || r.name}; keep-warm holds on that account stay paused until you log in again`,
+            command: r.command
+          };
+        }
+        const names = resolved.map((r) => r.label || r.name).join(", ");
+        return {
+          hidden: false,
+          text: `Claude login expired for ${resolved.length} accounts (${names}) \u2014 run the command below once per account; keep-warm holds there are paused until then`,
+          tip: `The bundled proxy can no longer refresh the Claude OAuth token for ${names}; keep-warm holds on those accounts stay paused until each one logs in again`,
+          command: resolved.map((r) => r.command).join("\n")
+        };
       }
       module.exports = { loginOwedView };
     }
@@ -35799,14 +35858,31 @@ helper=${d.helperPath}`;
         });
         const authBanner = document.getElementById("auth-banner");
         const authText = document.getElementById("auth-text");
-        function refreshAuthBanner(proxyEntries) {
+        const authCmd = document.getElementById("auth-cmd");
+        let authCommand = "";
+        if (authCmd) {
+          authCmd.addEventListener("click", () => {
+            if (!authCommand) return;
+            navigator.clipboard.writeText(authCommand).then(() => {
+              const prev = authCmd.dataset.tip;
+              authCmd.dataset.tip = "Copied";
+              setTimeout(() => {
+                authCmd.dataset.tip = prev;
+              }, 1500);
+            }).catch(() => {
+            });
+          });
+        }
+        function refreshAuthBanner(proxyEntries, accounts) {
           if (!authBanner) return;
-          const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel() });
+          const v = loginOwedView(proxyEntries, { boxLabel: getBoxLabel(), accounts: accounts || [] });
           if (v.hidden) {
             authBanner.classList.add("hidden");
             return;
           }
           if (authText) authText.textContent = v.text;
+          authCommand = v.command || "";
+          if (authCmd) authCmd.textContent = authCommand;
           authBanner.dataset.tip = v.tip;
           authBanner.classList.remove("hidden");
         }
@@ -49588,13 +49664,15 @@ ${detail}` });
       var inputAccount = document.getElementById("input-account");
       var accountRow = document.getElementById("account-row");
       var dialogAccounts = null;
+      var lastAccounts = [];
       async function fetchAccounts() {
         try {
           const res = await window.api.accountsList();
-          return res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
+          lastAccounts = res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
         } catch {
-          return [];
+          lastAccounts = [];
         }
+        return lastAccounts;
       }
       function paintAccountSelect(sel, envText, accounts) {
         if (!sel) return;
@@ -53997,7 +54075,7 @@ ${detail}` });
           }
         }
         drawerHost.setQuota(quotaChips(entries));
-        refreshAuthBanner(proxyState.values());
+        refreshAuthBanner(proxyState.values(), lastAccounts);
       }
       function acceptWireQuota(payload, at = Date.now()) {
         const rows = payload && Array.isArray(payload.accounts) ? payload.accounts : [];
@@ -54826,6 +54904,7 @@ Click for live activity`;
         if (self2 && self2.libraryWritable === false) libraryWritable = false;
       }).catch(() => {
       });
+      fetchAccounts().then(() => refreshAuthBanner(proxyState.values(), lastAccounts));
       window.api.onRequestSwitchSession((name) => switchSession(name));
       window.api.onRequestOpenNewDialog(() => openDialog());
       var discoveryOverlay = document.getElementById("discovery-overlay");
