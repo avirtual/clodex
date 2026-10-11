@@ -405,7 +405,7 @@ function assistantTexts(obj) {
 const expandedOf = (s) => `On ${s.n}.\n[agent:task add hand]\n${s.body}\n[agent:end]\n`;
 const noteOf = (s) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n[agent:end]\n`;
 
-test('t1118 (a): the two newest resolvable intent stubs of a request render as the original intent, every earlier one as the bare head and [agent:end]', () => {
+test('t1798 (a): the first two resolvable intent stubs on an empty set render as the original intent, every later one as the bare head and [agent:end]', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -413,31 +413,32 @@ test('t1118 (a): the two newest resolvable intent stubs of a request render as t
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[agent:end]\n');
-  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[agent:end]\n');
-  assert.equal(texts[2], `On C.\n[agent:task add hand]\nTitle C\n${'c'.repeat(900)}\n[agent:end]\n`);
-  assert.equal(texts[3], `On D.\n[agent:task add hand]\nTitle D\n${'d'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[0], `On A.\n[agent:task add hand]\nTitle A\n${'a'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[1], `On B.\n[agent:task add hand]\nTitle B\n${'b'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[agent:end]\n');
+  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[agent:end]\n');
+  assert.deepStrictEqual(r.expanded, [A.file, B.file]);
   assert.equal(r.placeholders, 0);
 });
 
-test('t1118 (b): the pair is derived per request — append a fifth stub and the third collapses while the fourth and fifth expand', () => {
+test('t1798 (b): appending a fifth stub moves nothing — A and B stay expanded, C, D and E stay the bare head', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D, E] = filedStubs(root, ['A', 'B', 'C', 'D', 'E']);
   const first = stubPayload([A, B, C, D]);
   cutSpillStubs(first, { root, agent: 'tester' });
-  assert.equal(assistantTexts(first)[2], expandedOf(C), 'ENTER: C was expanded in the four-stub payload');
+  assert.deepStrictEqual(assistantTexts(first), [expandedOf(A), expandedOf(B), noteOf(C), noteOf(D)], 'ENTER');
   const obj = stubPayload([A, B, C, D, E]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), noteOf(C), expandedOf(D), expandedOf(E)]);
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), expandedOf(B), noteOf(C), noteOf(D), noteOf(E)]);
 });
 
-test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands B and C', () => {
+test('t1118 (c): a stub whose file is missing is not counted — [missing, A, B, C] expands A and B', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [M, A, B, C] = filedStubs(root, ['M', 'A', 'B', 'C']);
   fs.unlinkSync(M.file);
   const obj = stubPayload([M, A, B, C]);
   cutSpillStubs(obj, { root, agent: 'tester' });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M), noteOf(A), expandedOf(B), expandedOf(C)]);
+  assert.deepStrictEqual(assistantTexts(obj), [noteOf(M), expandedOf(A), expandedOf(B), noteOf(C)]);
 });
 
 test('t1128: an unresolvable stub among resolvable ones is a stand-in but never an example and takes no example slot — [A, missing, B], examples 2', () => {
@@ -451,25 +452,23 @@ test('t1128: an unresolvable stub among resolvable ones is a stand-in but never 
   assert.deepStrictEqual(texts, [expandedOf(A), noteOf(M), expandedOf(B)]);
 });
 
-test('t1146 (s1): a sticky key keeps a stub expanded past the newest two — [A,B,C,D,E] with sticky {C}: C, D and E expand, A and B collapse', () => {
+test('t1798 (s1): a sticky key fills one of the two slots — [A,B,C,D] with sticky {C}, examples 2: C (sticky) and A (seeded) expand, B and D collapse', () => {
   const root = mkTmpRoot('clodex-spill-');
-  const [A, B, C, D, E] = filedStubs(root, ['A', 'B', 'C', 'D', 'E']);
-  const obj = stubPayload([A, B, C, D, E]);
-  const r = cutSpillStubs(obj, { root, agent: 'tester', sticky: new Set([C.file]) });
+  const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
+  const obj = stubPayload([A, B, C, D]);
+  const r = cutSpillStubs(obj, { root, agent: 'tester', examples: 2, sticky: new Set([C.file]) });
   assert.deepStrictEqual(obj.messages, [
     { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-    { role: 'assistant', content: [{ type: 'text', text: noteOf(A) }] },
+    { role: 'assistant', content: [{ type: 'text', text: expandedOf(A) }] },
     { role: 'user', content: [{ type: 'text', text: 'after A' }] },
     { role: 'assistant', content: [{ type: 'text', text: noteOf(B) }] },
     { role: 'user', content: [{ type: 'text', text: 'after B' }] },
     { role: 'assistant', content: [{ type: 'text', text: expandedOf(C) }] },
     { role: 'user', content: [{ type: 'text', text: 'after C' }] },
-    { role: 'assistant', content: [{ type: 'text', text: expandedOf(D) }] },
+    { role: 'assistant', content: [{ type: 'text', text: noteOf(D) }] },
     { role: 'user', content: [{ type: 'text', text: 'after D' }] },
-    { role: 'assistant', content: [{ type: 'text', text: expandedOf(E) }] },
-    { role: 'user', content: [{ type: 'text', text: 'after E' }] },
   ]);
-  assert.deepStrictEqual(r.expanded, [C.file, D.file, E.file]);
+  assert.deepStrictEqual(r.expanded, [A.file, C.file]);
 });
 
 test('t1146 (s2): a sticky key never resurrects a missing file — B is the stand-in and absent from expanded', () => {
@@ -478,8 +477,8 @@ test('t1146 (s2): a sticky key never resurrects a missing file — B is the stan
   fs.unlinkSync(B.file);
   const obj = stubPayload([A, B, C, D]);
   const r = cutSpillStubs(obj, { root, agent: 'tester', sticky: new Set([B.file]) });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), expandedOf(C), expandedOf(D)]);
-  assert.deepStrictEqual(r.expanded, [C.file, D.file]);
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), noteOf(B), noteOf(C), noteOf(D)]);
+  assert.deepStrictEqual(r.expanded, [A.file]);
 });
 
 test('t1146 (s3): idempotence under a non-empty sticky set — cut(cut(x)) deep-equals cut(x)', () => {
@@ -493,13 +492,13 @@ test('t1146 (s3): idempotence under a non-empty sticky set — cut(cut(x)) deep-
   assert.deepStrictEqual(twice, once);
 });
 
-test('t1146 (s4): an empty sticky set is today\'s rule — the t1118 (b) fixture renders the same', () => {
+test('t1798 (s4): an empty sticky set seeds the first two — [A..E] expands A and B', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D, E] = filedStubs(root, ['A', 'B', 'C', 'D', 'E']);
   const obj = stubPayload([A, B, C, D, E]);
   const r = cutSpillStubs(obj, { root, agent: 'tester', examples: 2, sticky: new Set() });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), noteOf(C), expandedOf(D), expandedOf(E)]);
-  assert.deepStrictEqual(r.expanded, [D.file, E.file]);
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), expandedOf(B), noteOf(C), noteOf(D), noteOf(E)]);
+  assert.deepStrictEqual(r.expanded, [A.file, B.file]);
 });
 
 test('t1118 (d): cache_control on an expanded block survives', () => {
@@ -565,12 +564,13 @@ test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on
   assert.deepStrictEqual(seen, []);
 });
 
-test('t1131: examples: 1 expands exactly the newest; every earlier stub is the bare head and [agent:end]', () => {
+test('t1798: examples: 1 expands exactly the first; every later stub is the bare head and [agent:end]', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   const obj = stubPayload([A, B, C]);
-  cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
-  assert.deepStrictEqual(assistantTexts(obj), [noteOf(A), noteOf(B), expandedOf(C)]);
+  const r = cutSpillStubs(obj, { root, agent: 'tester', examples: 1 });
+  assert.deepStrictEqual(assistantTexts(obj), [expandedOf(A), noteOf(B), noteOf(C)]);
+  assert.deepStrictEqual(r.expanded, [A.file]);
 });
 
 test('t1108 rendering: a stub between prose renders as the head and [agent:end] at its own position — whole string', () => {
@@ -799,7 +799,7 @@ test('T5 keepwarm replay: HoldKeeper.ping re-sends the post-cut body — no @spi
     assert.equal(pings.length, 1, 'ENTER');
     assert.ok(!pings[0].includes('filed at'), 'the replay carries no pointer');
     const sent = assistantTexts(JSON.parse(pings[0]));
-    assert.deepStrictEqual(sent, [noteOf(A), expandedOf(B), expandedOf(C)], 'the replay carries the bare head for the first and the newest bodies in full');
+    assert.deepStrictEqual(sent, [expandedOf(A), expandedOf(B), noteOf(C)], 'the replay carries the first two bodies in full and the bare head for the third');
   });
 });
 
