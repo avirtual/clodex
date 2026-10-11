@@ -22,6 +22,10 @@ blocks a release.
 - The `[ticket MERGED]` notice is one line when the loop closed the ticket out and nothing is flagged; a step owed, a non-tip merge, a slow gate, a CHANGELOG union or an owed/unknown CHANGELOG entry still get the full body.
 - Hand prompt: the ticket report cap is a hard 1500 bytes, and a rework report names the must-fixes it closed instead of narrating them.
 
+### Wire
+
+- A spilled intent body in retained history is now the bare intent head followed by `[agent:end]`; the "[Runtime note: …]" stand-in sentences are no longer rendered (the two newest bodies still ride in full as examples). A sentence in history is a shape the model can copy; an empty body is not.
+
 ## 5.123.0 — 2026-10-11
 
 ### Accounts
@@ -39,7 +43,6 @@ blocks a release.
 ### Wire
 
 - Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
-- A spilled intent body in retained history is now the bare intent head followed by `[agent:end]`; the "[Runtime note: …]" stand-in sentences are no longer rendered (the two newest bodies still ride in full as examples). A sentence in history is a shape the model can copy; an empty body is not.
 
 ## 5.122.0 — 2026-10-10
 
