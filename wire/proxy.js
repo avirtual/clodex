@@ -25,7 +25,7 @@ const { SPILL_CATEGORY_OF } = require('../intent-spill');
 const { cutSpillStubs } = require('./spill-cut');
 const { answerVoiceSink } = require('./voice-sink');
 
-const SPILL_SHOWN_TTL_MS = 60 * 60 * 1000;
+const SPILL_SHOWN_PRUNE_MS = 7 * 24 * 60 * 60 * 1000;
 const SPILL_SHOWN_PERSIST_SLACK_MS = 60 * 1000;
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
@@ -245,11 +245,18 @@ class WireProxy extends EventEmitter {
     }
     const now = this.now();
     const sessionId = sessionIdFrom(obj);
-    if (st.compacted || sessionId !== st.sessionId || now - st.lastAt > SPILL_SHOWN_TTL_MS) st.shown = new Set();
+    if (st.compacted || sessionId !== st.sessionId || this._spillShownCold(sessionId)) st.shown = new Set();
     st.compacted = false;
     st.sessionId = sessionId;
     st.lastAt = now;
     return st.shown;
+  }
+
+  _spillShownCold(sessionId) {
+    if (!this.warmth || !sessionId) return false;
+    let q;
+    try { q = this.warmth.query({ session: sessionId }); } catch { return false; }
+    return !!q && typeof q === 'object' && !q.error && q.warm === false;
   }
 
   _saveSpillShown() {
@@ -262,7 +269,7 @@ class WireProxy extends EventEmitter {
 
   _flushSpillShown() {
     this._spillShownSavePending = false;
-    const cutoff = this.now() - SPILL_SHOWN_TTL_MS;
+    const cutoff = this.now() - SPILL_SHOWN_PRUNE_MS;
     for (const [name, rec] of Object.entries(this._spillShownRecords)) {
       if (!this._agentSpillShown.has(name) && !(rec.lastAt >= cutoff)) delete this._spillShownRecords[name];
     }
