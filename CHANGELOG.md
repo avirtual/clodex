@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.124.0 — 2026-10-11
+
 ### Messaging
 
 - Inbound messages up to 3 KB are delivered inline as text instead of as an attached file; the 4-line attach rule is gone. A Claude seat reads an attached file through the Read tool with a line number per line, which measured 41% larger on the wire and was re-attached after every compact.
