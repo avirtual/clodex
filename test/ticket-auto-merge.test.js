@@ -507,13 +507,13 @@ test('the lead is told the merge landed, and that a repo with NO changelog owes 
 // are what `_closeOutMergedTicket` reads to reach the `tree clean` row, and a
 // stub of either would put the assertions back to measuring the fixture.
 test('t825: a green merge retires the seat, removes the tree, deletes the ref, and REPORTS it', async () => {
-  const repo = mkRepo();
+  const { repo, ticketOver } = mkRepoWithChangelog();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const wtPath = pathReal.join(repo.dir, 'wt');
   // A real linked checkout on the ticket branch — what `destroy()` removes and
   // what makes `git branch -d` refusable until it is gone.
   execFileSync('git', ['-C', repo.dir, 'worktree', 'add', '-q', wtPath, 'tl-1'], { encoding: 'utf8' });
-  const f = mkMerge({ repo });
+  const f = mkMerge({ repo, ticketOver });
   // `ephemeral: true` is THE fact that opens the teardown gate; without the
   // record, absence of evidence keeps the seat and this subject measures the
   // step-owed arm instead.
@@ -568,11 +568,11 @@ test('t825: a green merge retires the seat, removes the tree, deletes the ref, a
 // reopened ticket reading as accepted, and the NEXT round's loop guards skipped
 // the close-out off the stale field and reported one that never ran.
 test('t825: a reject clears the accept stamp, so the round after a kept-tree accept still closes out', async () => {
-  const repo = mkRepo();
+  const { repo, ticketOver } = mkRepoWithChangelog();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const wtPath = pathReal.join(repo.dir, 'wt');
   execFileSync('git', ['-C', repo.dir, 'worktree', 'add', '-q', wtPath, 'tl-1'], { encoding: 'utf8' });
-  const f = mkMerge({ repo });
+  const f = mkMerge({ repo, ticketOver });
   f.persistence.upsert({
     name: 'team-hand', cwd: wtPath, ephemeral: true,
     worktree: { path: wtPath, branch: 'tl-1', baseSha: repo.baseSha },
@@ -647,9 +647,9 @@ test('t825: a reject clears the accept stamp, so the round after a kept-tree acc
 // and a ref that do not exist, `_finishAccept` overwrites `acceptedBy` with
 // `ticket-loop`, and the nudge gate then wakes the lead over a finished ticket.
 test('t825: a lead accept during the post-merge suite is REPORTED, not overwritten', async () => {
-  const repo = mkRepo();
+  const { repo, ticketOver } = mkRepoWithChangelog();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkMerge({ repo });
+  const f = mkMerge({ repo, ticketOver });
   // The interleave, at the real seam: the suite runs between the merge and the
   // close-out, so stamping the accept from inside the suite stub is the honest
   // place for it — a patch applied before `_autoMergeTicket` would be the
