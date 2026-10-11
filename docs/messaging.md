@@ -241,7 +241,7 @@ get nothing at all: nobody answers them, so a fault marker would be noise —
 and that check precedes reachability, which goes true by accident the moment a
 seat is named `team`. Coupled to `_deliverMessage`'s drop-if-absent — widen
 `_isDmReachable` if local dm parking ever covers absent targets. Bodies over
-`MSG_SPILL_THRESHOLD` (500B), and a Claude PTY delivery of 4 or more delivered lines (image lines included; docs/notes/session-manager-stream.md `## _buildDeliveryText`), spill to `~/.clodex/messages/` — Claude gets
+`MSG_SPILL_THRESHOLD` (3 KB) spill to `~/.clodex/messages/` — Claude gets
 `@<path> ` (trailing space closes autocomplete; the file auto-attaches),
 Codex gets a read-with-Read pointer. That hand-off copy is swept after
 `MSG_MAX_AGE` (30 min); `spillToFile` also writes a durable copy, same
@@ -591,7 +591,7 @@ The two PreToolUse deny guards, `bash-guard.sh` and `poll-guard.sh`, are registe
 A stream seat has no PTY to inject into, so everything that would be injected goes
 into ONE in-memory outbox per seat (`s.outbox`, items `{text, images, origin}`):
 what the operator types (`seatSend`, origin `operator`) and everything Clodex
-delivers — dms (spilled over 500 bytes exactly as for a PTY seat; the 4-line gate is terminal-only), ticket
+delivers — dms (spilled over 3 KB exactly as for a PTY seat), ticket
 deliveries, reminders, exec results, continuations (`_deliverMessage` /
 `_injectText`, origin `system`). An idle seat takes the item at once as its own
 stdin message.
