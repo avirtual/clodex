@@ -243,7 +243,7 @@ test('the guard is registered under all three events, and per-tool nowhere it wo
   // calls is what resets the count, so the hook must see every tool, not Bash.
   const anyPre = s.hooks.PreToolUse.find((e) => e.matcher === '');
   assert.ok(anyPre, 'ENTER: a matcher-less PreToolUse entry must exist');
-  assert.deepStrictEqual(anyPre.hooks, [{ type: 'command', command: script }],
+  assert.deepStrictEqual(anyPre.hooks, [{ type: 'command', command: script, onFailure: 'block', timeout: 15 }],
     'the matcher-less PreToolUse entry carries the poll guard only');
 
   // The Bash-only entry keeps its two: widening the live observer to every tool
