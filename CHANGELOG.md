@@ -22,6 +22,10 @@ blocks a release.
 - The `[ticket MERGED]` notice is one line when the loop closed the ticket out and nothing is flagged; a step owed, a non-tip merge, a slow gate, a CHANGELOG union or an owed/unknown CHANGELOG entry still get the full body.
 - Hand prompt: the ticket report cap is a hard 1500 bytes, and a rework report names the must-fixes it closed instead of narrating them.
 
+### Wire
+
+- The harness intents block and the spill preference text describe a thinned intent body as the bare head plus `[agent:end]`, matching what the cut now renders.
+
 ## 5.123.0 — 2026-10-11
 
 ### Accounts
