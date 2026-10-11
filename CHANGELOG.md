@@ -16,6 +16,7 @@ blocks a release.
 ### Accounts
 
 - The "Claude login expired" notice names the account whose login lapsed and shows the exact command (`CLAUDE_CONFIG_DIR=… claude login` for a non-default account); click the command to copy it. Before, two registered accounts got the same unqualified notice and a bare `claude login` re-logged the healthy default one.
+
 ### Seats
 
 - The Bash kill-by-pattern / whole-tree-add guard and the identical-poll guard now fail closed: a guard that cannot start (script or interpreter missing), whose interpreter dies, or that exceeds 15 s blocks the tool call instead of letting it through (Claude Code 2.1.295 `onFailure: "block"`).
