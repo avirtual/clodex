@@ -9,7 +9,7 @@ const zlib = require('zlib');
 
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
-const { mimicKindOf, spillSize, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, writeSpill } = require('../intent-spill');
+const { mimicKindOf, spillSize, writeSpill } = require('../intent-spill');
 
 function filed(root, spill) {
   return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
@@ -826,7 +826,7 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs rend
   });
 });
 
-test('t1119: a seat registered with examples: 0 gets the ephemeral stand-in for its first stub, the rest the short note, nothing expanded', async () => {
+test('t1119: a seat registered with examples: 0 gets the bare head and [agent:end] for every stub, nothing expanded', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: 0 } });
@@ -848,8 +848,8 @@ test('t1119: a seat registered with examples: 0 gets the ephemeral stand-in for 
     assert.ok(await whenEvent(events, 'stream-end', 1));
     assert.equal(events['spill-cut'].length, 1, 'ENTER: the editor ran on the request');
     const upstream = JSON.parse(up.seen.requests[0].body.toString('utf8'));
-    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY_EPHEMERAL}\n[agent:end]\n` }]);
-    assert.deepEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);    for (const bad of [-1, 1.5, '0', null, undefined]) {
+    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
+    assert.deepEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);    for (const bad of [-1, 1.5, '0', null, undefined]) {
       proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: bad } });
       assert.equal(proxy.spillOf('tester').examples, 2, `examples ${String(bad)} falls back to 2`);
     }
@@ -967,7 +967,7 @@ test('t1146 (p1): a body expanded on one request stays expanded on the next — 
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 2, expanded: 3 }]);
     const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
     assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content), [
-      [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY_FIRST}\n[agent:end]\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }],
       [{ type: 'text', text: `[agent:task done t1]\nB ${BIG}\n[agent:end]\n` }],
       [{ type: 'text', text: `[agent:task done t1]\nC ${BIG}\n[agent:end]\n` }],
       [{ type: 'text', text: `[agent:task done t1]\nD ${BIG}\n[agent:end]\n` }],
@@ -1010,7 +1010,7 @@ test('t1146 (p2): a new session id is a cold boundary — sticky 0, expanded 2',
     assert.ok(await whenEvent(events, 'turn.completed', 2));
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
     const upstream = JSON.parse(up.seen.requests[1].body.toString('utf8'));
-    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);
+    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
   });
 });
 
@@ -1029,7 +1029,7 @@ test('t1146 (p3): a compact call completing between two requests is a cold bound
     assert.ok(await whenEvent(events, 'turn.completed', 3));
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
     const upstream = JSON.parse(up.seen.requests[2].body.toString('utf8'));
-    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_BODY}\n[agent:end]\n` }]);
+    assert.deepStrictEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
   });
 });
 
@@ -1100,7 +1100,7 @@ test('t1167 (a): a restart inside the TTL with the same session keeps the sticky
   const { cuts, upstream } = await afterRestart(root, store, clock, bodyOf(all));
   assert.deepStrictEqual(cuts, [{ sticky: 3, expanded: 3 }]);
   assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content[0].text), [
-    `[agent:task done t1]\n${SPILLED_BODY_FIRST}\n[agent:end]\n`,
+    `[agent:task done t1]\n[agent:end]\n`,
     `[agent:task done t1]\nB ${BIG}\n[agent:end]\n`,
     `[agent:task done t1]\nC ${BIG}\n[agent:end]\n`,
     `[agent:task done t1]\nD ${BIG}\n[agent:end]\n`,

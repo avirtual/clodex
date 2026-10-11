@@ -823,7 +823,7 @@ test('T12: the intent-shaped pointer is bounced ONCE per turn — the mimic dete
   }
 });
 
-test('t1102/t1108: the prose receipt stays outside the emission grammar — not a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file; the spilled-body note is outside the cut grammar too, and IS a mimic kind', () => {
+test('t1102/t1108: the prose receipt stays outside the emission grammar — not a pointer, a receipt or a mimic kind, the wire cut leaves it alone — and the path it ends with resolves the real spill file; the spilled-body note is cut from a request, and IS a mimic kind', () => {
   const { spillAckLine } = require('../session-manager');
   const { FILED_POINTER_RE, RECEIPT_RE, SPILLED_BODY, SPILLED_BODY_FIRST, mimicKindOf, pointerOf, trailingPointerOf, spilledBodyOf, resolveReceipt, writeSpill } = require('../intent-spill');
   const { classifyLine } = require('../wire/spill-cut');
@@ -832,7 +832,7 @@ test('t1102/t1108: the prose receipt stays outside the emission grammar — not 
   assert.strictEqual(RECEIPT_RE.test(SPILLED_BODY), false);
   assert.strictEqual(pointerOf(SPILLED_BODY), null);
   assert.strictEqual(trailingPointerOf(SPILLED_BODY), null);
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY, '[agent:dm bob] Title'), { kind: 0 }, 'typed by the agent as an intent body, the note reaches the wire uncut so the mimic bounce is what it gets');
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 1 }, 'the cut renders no note, so one in a request is typed and is cut');
   assert.strictEqual(mimicKindOf(SPILLED_BODY), 'spilled');
   assert.strictEqual(mimicKindOf(`  ${SPILLED_BODY}  `), 'spilled');
   assert.strictEqual(mimicKindOf(`${SPILLED_BODY} — sent`), null, 'only the lone line is the copied shape');
@@ -842,7 +842,7 @@ test('t1102/t1108: the prose receipt stays outside the emission grammar — not 
   assert.strictEqual(spilledBodyOf(null), null);
   assert.strictEqual(FILED_POINTER_RE.test(SPILLED_BODY_FIRST), false);
   assert.strictEqual(pointerOf(SPILLED_BODY_FIRST), null);
-  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST, '[agent:dm bob] Title'), { kind: 0 });
+  assert.deepStrictEqual(classifyLine(SPILLED_BODY_FIRST), { kind: 1 });
   assert.strictEqual(mimicKindOf(SPILLED_BODY_FIRST), 'spilled', 'the long form is the same mimic kind');
   assert.strictEqual(mimicKindOf(`${SPILLED_BODY_FIRST} — sent`), null);
   assert.strictEqual(spilledBodyOf(SPILLED_BODY_FIRST), SPILLED_BODY_FIRST);

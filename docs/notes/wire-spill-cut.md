@@ -10,7 +10,7 @@ Live probe 2026-09-21 (`max_tokens:1`, the CLI's beta header incl.
 assistant message whose cut would drop it is therefore kept uncut when the surviving
 predecessor is `role:"system"`, counted in `skipped`.
 
-## SPILLED_BODY_FIRST
+## expansionOf
 
 Every over-limit intent body is filed (`SpillFilter._resolve`). The two NEWEST
 intent stubs of each request whose spill file resolves (`resolveSpill`) are
@@ -25,16 +25,12 @@ intents typed as the stand-in, all after six stubs had accumulated with the two
 expanded ones the oldest in view.
 
 A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewer)
-is registered with `examples: 1`: only its newest resolvable stub is expanded, and
-its first stand-in is `SPILLED_BODY_EPHEMERAL`. With zero examples, hand t1122 typed the
+is registered with `examples: 1`: only its newest resolvable stub is expanded. With zero examples, hand t1122 typed the
 stand-in as the body of its rework-round `task done`, its only prior example of that verb.
 
-Of the remaining stubs, the first rendered gets the long form
-`[Runtime note: Clodex carries your two newest long intent bodies in full as
-examples and replaces earlier ones with this note; this body was delivered and
-filed in full. Every new intent still needs its complete body; never write this
-note.]`, every later one `SPILLED_BODY`. Both literals are the `spilled` mimic kind and both
-are refused as a typed body (`spilledBodyOf`), on the same bounce path.
+Every remaining stub renders as the bare head line followed by `[agent:end]`,
+with no body: a note in history is a shape the model can copy, an empty body is not
+(2026-10-10 lead: seven turns of prose claiming an intent never emitted).
 
 ## STAND_INS are cuttable
 On jarvis-lead (sid 1d05af56), 55 minutes after the old `PLACEHOLDER_LEGACY` sentence first stood in
@@ -42,5 +38,4 @@ behind a system row, the model emitted it verbatim as its whole reply (wirescope
 tokens), and the copy rode uncut in every later request. The cut never sees its own output (the CLI
 re-sends its transcript; wirescope's request.json is post-cut, the jsonl carries only the model's copy),
 so any `STAND_INS` line in incoming assistant text is model-authored: it is cut and counted as
-`parroted`. The one exception is a `SPILLED_BODY*` note on the line right under an intent head other
-than `[agent:end]`: that is the cut's own head/note/end rendering, left alone so re-cutting is idempotent.
+`parroted`.
