@@ -1852,7 +1852,13 @@ function createTicketMethods(deps, shared) {
             ? `Closed out: ${wideLine(closeOutDetail(ticketId, closeOut.text))}`
             : `Step owed: \`[agent:task accept ${ticketId}]\` — alone in a reply, no tool call beside it. `
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
-        const body = [
+        const quiet = closedOutOk && !closeOut.reopened
+          && !(mergedTip && branchTip && mergedTip !== branchTip)
+          && !(slow && slow.length) && !unioned && !stamp
+          && measured && (changelog.touched === true || changelog.present === false);
+        const body = quiet
+          ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (seat retired, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(summary)}.`
+          : [
           `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha}`,
           ...(mergedTip && branchTip && mergedTip !== branchTip
             ? [`Merged ${branch} at ${mergedTip}, NOT its tip: the branch is now at ${branchTip}, and the commits after ${mergedTip.slice(0, 8)} are not on ${into}.`]

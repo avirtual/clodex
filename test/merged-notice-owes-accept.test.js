@@ -226,7 +226,7 @@ const CLOSED = {
 
 test('a green merge that closed out REPORTS the final state, and owes nothing', () => {
   const f = mkLoop();
-  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: CLOSED });
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, unioned: 'CHANGELOG.md', closeOut: CLOSED });
 
   assert.strictEqual(f.gated.length, 1, 'ENTER: the notice was sent');
   const lines = f.gated[0].body.split('\n');
@@ -239,7 +239,7 @@ test('a green merge that closed out REPORTS the final state, and owes nothing', 
 
 test('the close-out line drops the ticket id the header already carries', () => {
   const f = mkLoop();
-  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: CLOSED });
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, unioned: 'CHANGELOG.md', closeOut: CLOSED });
   const body = f.gated[0].body;
   // `ticket t1 accepted — ` restated under a header that opens `[ticket t1
   // MERGED]` reads as a second event, which is the one thing this message exists
@@ -265,6 +265,48 @@ test('a closed-out notice does not also claim nothing was torn down', () => {
   assert.ok(!body.includes('[agent:task accept'),
     'the verb is not rendered at all here: it would be a no-op, and a lead that emits it bills a turn for nothing');
 });
+
+test('a closed-out merge with nothing flagged is ONE line', () => {
+  const f = mkLoop();
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: CLOSED });
+  const body = f.gated[0].body;
+  assert.ok(!body.includes('\n'), `one line. Got:\n${body}`);
+  assert.ok(body.startsWith('[ticket t1 MERGED] '), body);
+  assert.ok(body.includes('closed out'), body);
+  assert.ok(body.includes('suite 4999 pass, 0 fail'), body);
+  assert.ok(!body.includes('Look before adding one'), body);
+});
+
+test('a repo with no CHANGELOG.md is quiet too', () => {
+  const f = mkLoop();
+  f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, changelog: { known: true, touched: false, present: false }, closeOut: CLOSED });
+  const body = f.gated[0].body;
+  assert.ok(!body.includes('\n'), `one line. Got:\n${body}`);
+  assert.ok(body.startsWith('[ticket t1 MERGED] '), body);
+});
+
+const LOUD = [
+  ['step owed', { closeOut: { ok: false, closedOut: false, text: 'removal failed' } }, 'Step owed:'],
+  ['reopened', { closeOut: { ok: false, closedOut: false, reopened: true, state: 'open', text: 'reopened' } }, 'Reopened by rework'],
+  ['non-tip merge', { mergedTip: 'aaaa1111aaaa', branchTip: 'bbbb2222bbbb' }, 'NOT its tip'],
+  ['slow', { slow: ['test/x.test.js 7000ms'] }, 'slow gate tripped'],
+  ['unioned', { unioned: 'CHANGELOG.md' }, 'kept BOTH'],
+  ['stamp', { ticket: { suiteRemeasured: { first: '1 failing', firstFailing: 'x' } } }, 're-measured'],
+  ['changelog owed', { changelog: { known: true, touched: false, present: true } }, 'is OWED'],
+  ['changelog unknown', { changelog: { known: false, error: 'boom' } }, 'UNKNOWN'],
+  ['no changelog probe', { changelog: null }, 'UNKNOWN'],
+];
+
+for (const [name, { ticket, ...over }, fragment] of LOUD) {
+  test(`a single trigger restores the full body: ${name}`, () => {
+    const f = mkLoop({ ticket });
+    f.m._notifyMergeLanded(f.team, 't1', { ...LANDED, closeOut: CLOSED, ...over });
+    const body = f.gated[0].body;
+    assert.ok(body.startsWith('[ticket t1 MERGED] '), body);
+    assert.ok(body.includes('\n'), `full body. Got:\n${body}`);
+    assert.ok(body.includes(fragment), `carries ${fragment}. Got:\n${body}`);
+  });
+}
 
 test('a close-out that could NOT finish still owes the accept, and says why', () => {
   const f = mkLoop();
