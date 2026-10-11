@@ -937,7 +937,7 @@ accept teardown removes.
   regex (`FILED_SRC`, `FILED_POINTER_RE`), a pure leaf with no `fs` so the
   renderer's intent marks and the tee's stub parser match ONE source;
   `intent-spill.js` re-exports it.
-- **spill-stand-ins.js** — the runtime-note literals Clodex writes in place of
+- **spill-stand-ins.js** — the runtime-note literals Clodex writes or once wrote in place of
   cut text (`SPILLED_BODY*`, the spill-cut `PLACEHOLDER` and its legacy form) and
   `STAND_INS`, a pure leaf with no `fs` so the wire cut and the transcript rows
   match ONE source; `intent-spill.js` re-exports the `SPILLED_BODY*` and `STAND_INS`.
@@ -959,11 +959,8 @@ accept teardown removes.
   intent with its filed body, as examples (standing seats only; loop-minted seats get none; derived from the payload, no process
   state). The model never sees the pointer: `wire/spill-cut.js`
   rewrites every outgoing request so the turn reads as the intent the model
-  emitted — the head line with its title, `[Runtime note: Clodex filed this body
-  in full; it is not carried in the transcript.]` where the body stood (the
-  first stub rendered carries the longer
-  `SPILLED_BODY_FIRST`), then
-  `[agent:end]` — and removes the receipt and filler stand-ins earlier versions
+  emitted — the head line with its title, then
+  `[agent:end]`, with no body — and removes the receipt and filler stand-ins earlier versions
   wrote. Nothing tells the model a cut happened: no receipt is enqueued for a
   spilled intent body, and the ordinary confirmation that follows (`ticket
   created`, the dm delivery) is the proof the action ran (Bogdan's ruling

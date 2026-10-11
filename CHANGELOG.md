@@ -39,6 +39,7 @@ blocks a release.
 ### Wire
 
 - Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
+- A spilled intent body in retained history is now the bare intent head followed by `[agent:end]`; the "[Runtime note: …]" stand-in sentences are no longer rendered (the two newest bodies still ride in full as examples). A sentence in history is a shape the model can copy; an empty body is not.
 
 ## 5.122.0 — 2026-10-10
 

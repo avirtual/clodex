@@ -413,8 +413,8 @@ test('t1118 (a): the two newest resolvable intent stubs of a request render as t
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
-  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[agent:end]\n');
+  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[agent:end]\n');
   assert.equal(texts[2], `On C.\n[agent:task add hand]\nTitle C\n${'c'.repeat(900)}\n[agent:end]\n`);
   assert.equal(texts[3], `On D.\n[agent:task add hand]\nTitle D\n${'d'.repeat(900)}\n[agent:end]\n`);
   assert.equal(r.placeholders, 0);
@@ -543,10 +543,10 @@ test('t1119 (a): examples: 0 expands nothing — every stub renders as the bare 
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]\n[agent:end]\n');
-  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
-  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
-  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]\n[agent:end]\n');
+  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[agent:end]\n');
+  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[agent:end]\n');
+  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[agent:end]\n');
+  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[agent:end]\n');
   assert.equal(r.placeholders, 0);
 });
 
