@@ -83,6 +83,51 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   assert.match(pendingBody, /hookEventName: ev/, 'output event name must be the derived variable, not a literal');
 });
 
+test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else carries onFailure', () => {
+  const REGISTRY_DIR = tmp();
+  const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
+  const guard = pathFor(REGISTRY_DIR, 'agent1', 'bashGuardScript');
+  const pollGuard = pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript');
+  const bashEntry = settings.hooks.PreToolUse.find((x) => x.matcher === 'Bash');
+  const guards = bashEntry.hooks.filter((h) => h.command === guard);
+  assert.strictEqual(guards.length, 1);
+  assert.deepStrictEqual(guards[0], { type: 'command', command: guard, onFailure: 'block', timeout: 15 });
+  const anyEntry = settings.hooks.PreToolUse.find((x) => x.matcher === '');
+  const polls = anyEntry.hooks.filter((h) => h.command === pollGuard);
+  assert.strictEqual(polls.length, 1);
+  assert.deepStrictEqual(polls[0], { type: 'command', command: pollGuard, onFailure: 'block', timeout: 15 });
+  const blocking = [];
+  for (const [ev, entries] of Object.entries(settings.hooks)) {
+    for (const entry of entries) {
+      for (const h of entry.hooks) if ('onFailure' in h) blocking.push(`${ev}|${entry.matcher}|${h.command}`);
+    }
+  }
+  assert.deepStrictEqual(blocking.sort(), [`PreToolUse||${pollGuard}`, `PreToolUse|Bash|${guard}`].sort());
+});
+
+test('deny guards: a missing interpreter exits non-zero (not 2); a malformed payload under a real interpreter allows silently', () => {
+  const bashPayload = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git add -A' } });
+  const env = { ...process.env, CLODEX_TICKET: 't1' };
+  for (const [interp, input, ok] of [['/nonexistent/interp', bashPayload, false], [process.execPath, '{not json', true]]) {
+    const REGISTRY_DIR = tmp();
+    createCliHooks({
+      REGISTRY_DIR, memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: interp,
+    }).setupClaudeHook('agent1');
+    for (const key of ['bashGuardScript', 'pollGuardScript']) {
+      const r = cp.spawnSync(pathFor(REGISTRY_DIR, 'agent1', key), { input, env, encoding: 'utf8', ...HOOK_SPAWN });
+      if (ok) {
+        assert.strictEqual(r.status, 0, key);
+        assert.strictEqual(r.stdout, '', key);
+      } else {
+        assert.notStrictEqual(r.status, 0, key);
+        assert.notStrictEqual(r.status, 2, key);
+      }
+    }
+  }
+});
+
 test('setupClaudeHook: proxyBase routes ANTHROPIC_BASE_URL through the per-agent path', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
@@ -958,7 +1003,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     matcher: 'Bash',
     hooks: [
       { type: 'command', command: scriptPath },
-      { type: 'command', command: guardPath },
+      { type: 'command', command: guardPath, onFailure: 'block', timeout: 15 },
       { type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') },
     ],
   }], 'a matcher-less entry here would run this before EVERY tool call, not just Bash');
@@ -969,7 +1014,7 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
   const anyTool = settings.hooks.PreToolUse.filter((e) => e.matcher === '');
   assert.deepStrictEqual(anyTool, [{
     matcher: '',
-    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript') }],
+    hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript'), onFailure: 'block', timeout: 15 }],
   }], 'the matcher-less entry carries the poll guard alone');
   assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec|mcp__clodex__dm'), [{
     matcher: 'mcp__clodex__term_exec|mcp__clodex__dm',
@@ -1174,7 +1219,7 @@ test('stream seat: hook.json runs the tool-boundary script on every tool and kee
   assert.deepStrictEqual(stream.hooks.PreToolUse.filter((e) => e.matcher === ''), [{
     matcher: '',
     hooks: [
-      { type: 'command', command: p('st2', 'pollGuardScript') },
+      { type: 'command', command: p('st2', 'pollGuardScript'), onFailure: 'block', timeout: 15 },
       { type: 'command', command: p('st2', 'toolBoundaryScript') },
     ],
   }]);
