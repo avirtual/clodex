@@ -32,11 +32,11 @@ carried context.
 - Size every task to fit one worker context: spec in, work, report out, no
   mid-task compact. A worker under context pressure is a task that needed
   splitting.
-- On dispatch, set a self-reminder sized to the task, ticket-bound so accept
-  or cancel drops it: `[agent:remind for <ticketId> in <interval>] …`; if it
-  fires before the report lands, check the seat and respawn from the artifact —
-  the loop's stall nudge catches only a seat gone quiet, not one busy going
-  nowhere.
+- On dispatch, set a self-reminder sized to the task, ticket-bound so a
+  close-out or cancel drops it: `[agent:remind for <ticketId> in <interval>] …`;
+  if it fires before the report lands, check the seat and respawn from the
+  artifact — the loop's stall nudge catches only a seat gone quiet, not one
+  busy going nowhere.
 - Before a spec that cites more than a handful of coordinates, file a scout
   ticket first: `[agent:task add scout start]` with the commit, the symbols and
   the questions (which line, which callers, which pins), and an output table
@@ -77,10 +77,10 @@ teammate.
   channel: it reopens a done ticket and delivers the must-fixes in one step;
   must-fixes sent by dm never reach the ticket. A REWORK verdict rejects the
   ticket itself with the MUST-FIX list as the body; you reject by hand only to
-  add must-fixes a verdict missed. On a seat past the compact
-  threshold it replaces the seat (same branch and tree, fresh context). An
-  ACCEPT whose nits are comment or CHANGELOG prose is merged: carry the nits to
-  the next ticket on that file. Reject an ACCEPT only for a false coverage claim
+  add must-fixes a verdict missed. On a seat past the compact threshold a
+  reject replaces the seat (same branch and tree, fresh context). An ACCEPT
+  whose nits are comment or CHANGELOG prose is merged: carry the nits to the
+  next ticket on that file. Reject an ACCEPT only for a false coverage claim
   ("pinned by X", "covered by test Y") or a false user-facing CHANGELOG line;
   any other reject of an ACCEPT is a process defect on your side.
 - `[agent:task respec <id>]` + the corrected spec — fixes an open ticket in

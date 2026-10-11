@@ -2352,12 +2352,11 @@ test('seed: Stage A — hands sweep their own hunks, leads let prose nits ride a
 });
 
 // t353: three hands in a row reported by dm and left the ticket open, one of
-// them saying it believed closing required an exec grant it lacked. Both wrong
-// beliefs are denied in the prompt now, and both denials are pinned by MEANING
-// rather than by a `task done` substring — the substring was already there
-// through all three incidents. This pins the wording only; whether a cold seat
-// READS it is not something a unit test can answer, and the mechanical half of
-// the fix (the verb on every dispatch) is pinned in session-manager.test.js.
+// them believing closing required an exec grant. Both wrong beliefs (a dm is
+// the report; `task done` needs a grant) are denied in the generated intents
+// block from ipc-prompt.js, pinned here by MEANING rather than a `task done`
+// substring, which was there through all three incidents. The mechanical half
+// (the verb on every dispatch) is pinned in session-manager.test.js.
 test('seed: the harness denies both false beliefs about closing a ticket', () => {
   const harness = require('../ipc-prompt').buildIpcPrompt(null);
   assert.match(harness, /It is an intent like any other/,

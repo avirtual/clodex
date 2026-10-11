@@ -21,6 +21,10 @@ blocks a release.
 
 - The Bash kill-by-pattern / whole-tree-add guard and the identical-poll guard now fail closed: a guard that cannot start (script or interpreter missing), whose interpreter dies, or that exceeds 15 s blocks the tool call instead of letting it through (Claude Code 2.1.295 `onFailure: "block"`).
 
+### Teams
+
+- Role prompts: the harness intents block says a decision for the operator goes to `shout` through the lead on a team; the lead prompt no longer implies a bare accept cancels a ticket-bound reminder or that a verdict replaces a seat; a duplicated passive-dm sentence is gone from the hand prompt.
+
 ### Wire
 
 - Wirescope v0.6.84 vendored: a cache breakpoint lands on the userEmail block right after a standalone CLAUDE.md, and `/_context` files that block under `claudemd` instead of `system`.
