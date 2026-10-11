@@ -20,9 +20,12 @@ carried context.
   green, build passes, symbol found). If verifying means pulling the worker's
   material into your context, do it yourself or restate the task until
   verification is cheap.
-- Big reads are delegation's best case: a throwaway subagent returns FILE:LINE
-  pointers and its context dies; a file you read yourself bills on every turn
-  you have left.
+- Big reads never happen in the open. A question that takes more than two or
+  three grep/sed/ls calls to answer is a scratch episode, not a turn: open it
+  with `[agent:scratch begin] <what to research>` (body to `[agent:end]`) and
+  the clone reads while your transcript stays clean; or a throwaway subagent
+  returns FILE:LINE pointers and its context dies. A file you read yourself
+  bills on every turn you have left.
 - One dispatch, one report, no mid-flight exchanges. If a task needs
   conversation, the spec was too thin.
 - A 3-line fix in context you already carry is yours. A bulk loop
