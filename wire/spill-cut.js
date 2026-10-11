@@ -74,8 +74,10 @@ function collectStubs(messages, root, agent) {
 function expansionOf(state) {
   const stub = state.stubs[state.next++] || null;
   if (!stub) return null;
-  const ordinal = state.resolved++;
-  if (ordinal < state.total - state.examples && !state.sticky.has(stub.key)) return null;
+  if (!state.sticky.has(stub.key) && !state.seeded.has(stub.key)) {
+    if (state.sticky.size + state.seeded.size >= state.examples) return null;
+    state.seeded.add(stub.key);
+  }
   state.expanded.push(stub.key);
   return stub.lines;
 }
@@ -139,8 +141,7 @@ function cutSpillStubs(obj, { root = null, agent = null, examples = 2, sticky = 
   const out = [];
   let changed = false;
   const stubs = collectStubs(obj.messages, examples > 0 ? root : null, agent);
-  const total = stubs.filter(Boolean).length;
-  const state = { parroted: 0, stubs, next: 0, resolved: 0, total, examples, sticky, expanded: report.expanded };
+  const state = { parroted: 0, stubs, next: 0, examples, sticky, seeded: new Set(), expanded: report.expanded };
   for (const msg of obj.messages) {
     if (!msg || msg.role !== 'assistant' || !hasNeedle(msg)) { out.push(msg); continue; }
     const r = cutMessage(msg, state);
