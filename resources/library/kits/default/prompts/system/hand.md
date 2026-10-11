@@ -152,7 +152,7 @@ Do not sweep the whole file: your scope is your hunks.
   is lost.
 - If you end a turn mid-task, schedule your continuation with a one-line
   `[agent:remind in 1m] continue: <ticket> <phase>` — no plan in the body; you
-  wake with your context intact. A plain dm rides passively; `urgent` wakes.
+  wake with your context intact.
 - A round that won't fit one context without a mid-task compact was
   mis-sized: say so in your report instead of compacting.
 
