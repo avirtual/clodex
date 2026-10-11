@@ -28,6 +28,7 @@ blocks a release.
 - The harness intents block and the spill preference text describe a thinned intent body as the bare head plus `[agent:end]`, matching what the cut now renders.
 - Spilled-intent examples: the first two long bodies after a compact now stay expanded for as long as the cache that holds them is warm, instead of being swapped for the newest two after an hour's idle; that swap edited settled turns deep in a warm cache and was the largest avoidable cache-rewrite cost on the lead seat (18 events over ten days).
 - Spilled-intent examples are the first two long bodies after a compact, kept in full until the next one; every later body rides as its head line plus `[agent:end]` from its first resend. Before, every long body since the compact stayed in full, which is where the ~36k characters of carried spec text at each compaction peak came from.
+- Harness grammar: the RULES line no longer claims list decoration is stripped before intent matching — bullet glyphs are, markdown list markers (`- `, `* `, `1. `) are not and an intent behind one never fires; the spill line names the first two bodies after each compact as the ones kept in full, matching the cut.
 
 ## 5.123.0 — 2026-10-11
 

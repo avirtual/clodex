@@ -955,7 +955,7 @@ accept teardown removes.
   after it, and a bare `<size> of prose filed at <abs path>` line for a spilled
   prose tail — the path links in the terminal, and recovery resolves the id
   from its basename. Every over-limit intent body is filed; on each request the cut
-  renders the two newest intent stubs whose file resolves as the original
+  renders the first two intent stubs after each compact whose file resolves as the original
   intent with its filed body, as examples (standing seats only; loop-minted seats get none; derived from the payload, no process
   state). The model never sees the pointer: `wire/spill-cut.js`
   rewrites every outgoing request so the turn reads as the intent the model

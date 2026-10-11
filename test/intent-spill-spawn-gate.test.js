@@ -127,7 +127,7 @@ test('the grammar line is in the prompt with the setting OFF, so a flip changes 
     await spawn(on.m, 'seat');
     assert.ok(off.prompts[0].includes(GRAMMAR),
       'the prompt is captured at spawn and replayed on clear/compact, so it must not track the setting');
-    assert.ok(off.prompts[0].includes('Your two newest stay in your transcript in full; earlier ones keep only the intent head and `[agent:end]`, so none needs re-sending'));
+    assert.ok(off.prompts[0].includes('The first two after each compact stay in your transcript in full; later ones keep only the intent head and `[agent:end]`, so none needs re-sending'));
     assert.ok(off.prompts[0].includes('Always write the full body yourself; never write a delivery confirmation.'),
       'the paragraph names no token and no form: the pointer shape it used to teach is what the seats copied');
     assert.ok(off.prompts[0].includes('Only a complete intent acts: prose describing an action performs nothing, and Clodex\'s edits to your history are never a request form.'),
