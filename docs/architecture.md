@@ -868,6 +868,9 @@ accept teardown removes.
 - **term-marks.js** — OSC 133 semantic prompt marks: the parser, and the prose
   that describes a finished command back to the agent. A terminal is a screen,
   not a stream of results, which is why the marks exist at all.
+- **term-read.js** — `[agent:term read]`'s tail/grep over a seat's terminal
+  scrollback: ANSI and `\r` stripped, clamps, the 16 KB cap, the regex budget.
+  Pure, so tests reach it without a pty.
 - **term-host.js** — decides whether the program holding a terminal is hosting
   a shell an agent's command could be typed into (`ssh`, `su`, `sudo -i`,
   `docker exec -it`, a nested shell), from the C-mark command text alone. Narrow

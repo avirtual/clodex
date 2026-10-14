@@ -1230,6 +1230,7 @@ const SessionManager = createSessionManager({
     vetFileIntent,
     termAvailableFor,
     termExec,
+    termRead,
     whichBin,
     writeClaudeDigestFile,
     readVoiceCapability: readVoiceCapabilityCached,
@@ -1833,6 +1834,7 @@ const { buildTermShim, unsupportedShellReason, REMOTE_INSTALL_LINE, remoteUnsupp
 const { shellHostOf, programOf } = require('./term-host');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
+const { readScrollback, parseReadRequest } = require('./term-read');
 const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   execTimeoutMs: TERM_EXEC_TIMEOUT_MS,
   spawn: pty.spawn.bind(pty),
@@ -2007,6 +2009,15 @@ function termRefusalName(running) {
 }
 
 const termWaiters = new Map();
+
+function termRead(workspaceId, seat, body) {
+  const req = parseReadRequest(body);
+  if (!req.ok) return req;
+  if (!drawerPtys) return { ok: false, error: 'no terminal on this host' };
+  const raw = drawerPtys.read(workspaceId, seat);
+  if (!raw) return { ok: false, error: 'no terminal: open your terminal tab first' };
+  return readScrollback(raw, body);
+}
 
 function termExec(workspaceId, seat, command, onResult) {
   if (!drawerPtys) return { ok: false, error: 'terminal tabs are not available on this host' };

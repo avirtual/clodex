@@ -215,6 +215,18 @@ The same command is the `term_exec` MCP tool (`{command}`), listed in the seat's
 text. It is main agent only, proven per call by the PreToolUse stamp: a
 subagent's or an unstamped call answers `unknown tool: "term_exec"`.
 
+`[agent:term read] [tail N | grep <regex>]` reads the seat's own terminal tab's
+scrollback (the captured buffer, ANSI and `\r` stripped) and answers in the same
+turn, not as a `[terminal]` DM. Bare is `tail 50`; `tail N` clamps N to 1..400;
+`grep <regex>` returns the last 50 matching lines, each prefixed `L<n>:` counting
+from the end of the buffer (`L1:` = most recent). The pattern is capped at 200
+characters and runs under a 1 s budget; a bad one is refused with the RegExp
+error. The answer is capped at 16 KB, cut from the head, and says so. A tab never
+opened is refused `no terminal: open your terminal tab first`, and a host with
+no terminal tabs `no terminal on this host`. The `term_read` MCP tool
+(`{tail?, grep?}`, not both) maps to the same verb, main agent only like
+`term_exec`.
+
 ## Known v1 limitations / growth path
 
 - **Invoker identity is self-supplied.** The agent passes its own `agent` name;
