@@ -20,6 +20,9 @@ blocks a release.
 ### Messaging
 
 - [agent:term read] [tail N | grep <regex>] (and the term_read MCP tool) returns the agent's own terminal tab's scrollback as plain text — the last N lines (default 50, max 400) or the last 50 lines matching a pattern, capped at 16 KB — so an agent can look at what the operator ran without a copy-paste.
+### Teams
+
+- The scratch-begin row and the lead prompt now say the clone shares the parent's context, so the body is the question and the return shape rather than a brief.
 
 ## 5.124.0 — 2026-10-11
 

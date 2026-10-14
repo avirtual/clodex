@@ -76,6 +76,13 @@ test('kits/default/prompts/system/lead.md is byte-identical to the library lead 
     + 'would boot on a different brief from a clodex-kit team\'s lead, with nothing reporting it');
 });
 
+test('t1806: the lead prompt\'s Big-reads bullet says the scratch body is the question and the return shape, not a brief', () => {
+  const lead = fs.readFileSync(path.join(LIB, 'prompts', 'system', 'clodex-team-lead.md'), 'utf-8').replace(/\s+/g, ' ');
+  assert.ok(lead.includes('Big reads never happen in the open'), 'the bullet itself');
+  assert.ok(lead.includes('The clone shares your context, so the body is the question and the return shape, not a brief.'),
+    'a lead that thinks the clone is cold writes it a 300-word brief');
+});
+
 test('the clodex kit\'s roles are STOCK_ROLE_DEFS verbatim', () => {
   assert.deepStrictEqual(readKitJson('clodex').roles, STOCK_ROLE_DEFS);
 });
