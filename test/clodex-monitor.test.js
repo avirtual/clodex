@@ -305,3 +305,73 @@ test('exec-def envelope: the dispatcher-level fields the schema walker never see
   }, 'the launcher exits immediately and the watcher is detached, so this timeout gates the LAUNCH only; '
     + 'replyStderr is how die()/say() reach the agent at all');
 });
+
+function restoredManager(home, seats = ['a']) {
+  const { createSessionManager } = require('../session-manager');
+  const { isFilenameToken } = require('../exec-schema');
+  const SessionManager = createSessionManager({
+    knownSkillNames: () => [],
+    REGISTRY_DIR: home,
+    isFilenameToken,
+    parseAndValidate,
+    resolveTeam: () => ({ name: 't', root: '/proj/alpha' }),
+    os,
+    fs,
+    path,
+    log: { warn() {}, info() {}, error() {}, debug() {} },
+    getPersistence: () => ({ list: () => [], get: () => undefined }),
+  });
+  const m = new SessionManager();
+  const dms = [];
+  m._deliverMessage = (to, from, body, mtype) => dms.push({ to, from, body, mtype });
+  m._broadcast = () => {};
+  for (const name of seats) m.sessions.set(name, { name, agentType: 'claude', cwd: '/proj/alpha' });
+  return { m, dms };
+}
+
+function writeWatch(home, agent, id, state) {
+  const dir = path.join(home, 'monitors', agent);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${id}.json`), JSON.stringify({ id, ...state }));
+  fs.writeFileSync(path.join(dir, `${id}.log`), '');
+}
+
+const DEAD_PID = 2147483000;
+const RESTART_AT = Date.UTC(2026, 9, 15, 2, 0, 0);
+
+test('restore: watches the restart killed reach their seat as one notice, once, and list no longer shows them', async () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', description: 'suite x', startedAt: '2026-10-15T01:00:00.000Z' });
+  writeWatch(home, 'a', 'k2', { pid: DEAD_PID, command: 'tail -f log', description: '', startedAt: '2026-10-15T01:30:00.000Z' });
+  writeWatch(home, 'a', 'live', { pid: process.pid, command: 'sleep 1', startedAt: '2026-10-15T01:45:00.000Z' });
+  const { m, dms } = restoredManager(home);
+
+  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 1);
+  assert.deepStrictEqual(dms, [{
+    to: 'a', from: 'reboot', mtype: 'dm',
+    body: '[host] restart at 2026-10-15T02:00:00.000Z: these runs of yours were killed and did not finish: '
+      + 'k1 suite x (started 2026-10-15T01:00:00.000Z); k2 tail -f log (started 2026-10-15T01:30:00.000Z). Nothing was re-run.',
+  }]);
+
+  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 0, 'the second turn gets no repeat');
+  assert.strictEqual(dms.length, 1);
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')).sort(), ['live.json', 'live.log']);
+
+  const listed = await launchMon(home, { action: 'list', agent: 'a' });
+  assert.strictEqual(listed.err, 'monitors: live');
+});
+
+test('restore: a seat with no killed watches gets no notice', () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'b', 'live', { pid: process.pid, command: 'sleep 1', startedAt: '2026-10-15T01:45:00.000Z' });
+  const { m, dms } = restoredManager(home, ['a', 'b']);
+  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 0);
+  assert.deepStrictEqual(dms, []);
+});
+
+test('restore: a killed watch listed before delivery is not reported live', async () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
+  const listed = await launchMon(home, { action: 'list', agent: 'a' });
+  assert.strictEqual(listed.err, 'no monitors running');
+});

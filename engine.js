@@ -1503,6 +1503,7 @@ async function restoreSessionsForWorkspace(workspaceId) {
   });
   try { manager.maybeDeliverRebootNotice(); } catch (e) { log.error('intent', `reboot notice delivery failed: ${e.message}`); }
   try { manager.deliverLostExecRuns(); } catch (e) { log.error('intent', `lost exec run delivery failed: ${e.message}`); }
+  try { manager.deliverLostMonitors(); } catch (e) { log.error('intent', `lost monitor delivery failed: ${e.message}`); }
   return restored;
 }
 

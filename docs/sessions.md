@@ -650,6 +650,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, with `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` so a turn cut off mid-flight continues, and a tool that was mid-run when the CLI died has no result and may run again; ✕ = forget) |
 | Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
+| Restore after a host restart | kept | respawned (`--resume`); its clodex-monitor watches whose watcher died are reported once to the seat as a `reboot` DM and dropped from the registry (`deliverLostMonitors`), nothing re-run | tab rebuilt |
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed (`_moving`) + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
