@@ -683,6 +683,7 @@ function createSessionManager(deps) {
     vetFileIntent,
     termAvailableFor,
     termExec: termExecDep,
+    termRead: termReadDep,
     whichBin,
     writeClaudeDigestFile,
     deliverSkills,
@@ -732,6 +733,8 @@ function createSessionManager(deps) {
 
   const termExec = termExecDep
     || (() => ({ ok: false, error: 'terminal tabs are not available on this host' }));
+  const termRead = termReadDep
+    || (() => ({ ok: false, error: 'no terminal on this host' }));
 
   const speaker = deps.speaker || {
     speak: () => false, stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
@@ -6402,14 +6405,25 @@ function createSessionManager(deps) {
     // agent's terminal or the seatless workspace shell.
     _handleTermIntent(session, sub, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
-      if (sub !== 'exec') {
-        reply(`unknown form \`term ${sub}\` — the only one is [agent:term exec] followed by the command`);
+      if (sub !== 'exec' && sub !== 'read') {
+        reply(`unknown form \`term ${sub}\` — use [agent:term exec] followed by the command, or [agent:term read] [tail N | grep <regex>]`);
         return;
       }
       // Structural guard: bash and peer seats have no terminal tab of their own. The dep is called unguarded
       // so an unwired termAvailableFor throws rather than skipping the check.
       if (!termAvailableFor(session.type)) {
-        reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to run a command in`);
+        reply(`a ${session.type} session has no terminal tab of its own, so there is nothing to ${sub === 'read' ? 'read' : 'run a command in'}`);
+        return;
+      }
+      if (sub === 'read') {
+        const res = termRead(session.workspaceId, session.name, rawBody);
+        if (!res.ok) {
+          log.warn('intent', `term read by ${session.name}: refused (${res.error})`);
+          reply(res.error);
+          return;
+        }
+        log.info('intent', `term read by ${session.name}: ${String(rawBody || '').trim() || 'tail'}`);
+        this._injectText(session, `[term read] ${res.text}`, { parkable: true });
         return;
       }
       const scope = intentReplyScope.getStore();

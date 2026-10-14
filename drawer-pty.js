@@ -394,6 +394,11 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
+    read(windowId, seat) {
+      const rec = ptys.get(keyFor(windowId, seat));
+      return rec && typeof rec.scrollback === 'string' ? rec.scrollback : '';
+    },
+
     exec(windowId, seat, command, token) {
       if (!seat) return { ok: false, code: 'no-seat' };
       const vet = vetCommand ? vetCommand(command) : { ok: true, command };
