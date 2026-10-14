@@ -19,7 +19,8 @@
         { "name": "recipe-two-instances", "path": "docs/recipes/two-instances.md" },
         { "name": "recipe-aws-ec2", "path": "docs/recipes/aws-ec2.md" },
         { "name": "recipe-aws-fargate", "path": "docs/recipes/aws-fargate.md" },
-        { "name": "recipe-kubernetes", "path": "docs/recipes/kubernetes.md" }
+        { "name": "recipe-kubernetes", "path": "docs/recipes/kubernetes.md" },
+        { "name": "recipe-remote-delegation", "path": "docs/recipes/remote-delegation.md" }
       ]
     },
     {
