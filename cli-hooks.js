@@ -742,7 +742,7 @@ exit 0
     }
 
     const settings = {
-      trustedDirectories: [msgDir],
+      trustedDirectories: [msgDir, path.join(REGISTRY_DIR, 'sessions')],
       statusLine: { type: 'command', command: statusPath },
       voice: { enabled: false },
       voiceEnabled: false,

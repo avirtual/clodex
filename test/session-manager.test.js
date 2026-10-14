@@ -22652,6 +22652,7 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
     ...STREAM_HEAD, '--session-id', '<uuid>', '--permission-prompt-tool', 'stdio',
     '--settings', require('node:path').join(h.root, 'settings.json'),
     '--add-dir', require('node:path').join(h.root, 'messages'),
+    '--add-dir', require('node:path').join(h.root, 'sessions'),
     '--mcp-config', require('node:path').join(h.root, 'run', 'st1', 'mcp.json'),
     '--append-system-prompt-file', promptPath,
   ]);

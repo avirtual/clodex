@@ -83,6 +83,13 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   assert.match(pendingBody, /hookEventName: ev/, 'output event name must be the derived variable, not a literal');
 });
 
+test('setupClaudeHook: trustedDirectories names the messages dir and the sessions dir its per-seat links resolve into', () => {
+  const REGISTRY_DIR = tmp();
+  const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
+  assert.deepStrictEqual(settings.trustedDirectories,
+    [path.join(REGISTRY_DIR, 'messages'), path.join(REGISTRY_DIR, 'sessions')]);
+});
+
 test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else carries onFailure', () => {
   const REGISTRY_DIR = tmp();
   const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
