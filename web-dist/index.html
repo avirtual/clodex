@@ -31304,6 +31304,28 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return `[agent:term exec] ${a.command.trim()}`;
         }
       });
+      var TERM_READ_TOOL = Object.freeze({
+        name: "term_read",
+        description: "Read this seat's own terminal tab's scrollback as plain text: give tail (last N lines, default 50, max 400) or grep (a regex; the last 50 matching lines, each prefixed L<n> counting from the end, L1 = most recent), not both. Main agent only: a subagent's call is refused. The result is capped at 16 KB and says when it was truncated; with no terminal tab open it is refused.",
+        inputSchema: { type: "object", properties: { tail: { type: "number" }, grep: { type: "string" } }, additionalProperties: false },
+        logKeys: [],
+        toIntent(args) {
+          const a = args == null ? {} : args;
+          const extra = Object.keys(a).find((k) => k !== "tail" && k !== "grep");
+          if (extra) throw new Error(`unknown argument: ${extra} (use tail or grep)`);
+          if (a.tail != null && a.grep != null) throw new Error("give tail or grep, not both");
+          if (a.grep != null) {
+            if (typeof a.grep !== "string" || !a.grep.trim()) throw new Error("grep must be a non-empty string");
+            if (/[\r\n]/.test(a.grep)) throw new Error("grep must be one line");
+            return `[agent:term read] grep ${a.grep.trim()}`;
+          }
+          if (a.tail != null) {
+            if (!Number.isInteger(a.tail)) throw new Error("tail must be a whole number");
+            return `[agent:term read] tail ${a.tail}`;
+          }
+          return "[agent:term read]";
+        }
+      });
       var DM_TOOL = Object.freeze({
         name: "dm",
         description: "Send a direct message to another Clodex seat on this host as yourself. The recipient sees you as <seat>/<name> and can reply to that name. Local seats only, never urgent, at most 10 per minute; a refusal comes back as text and will not succeed on retry. For subagents. A main agent should write the [agent:dm <seat>] intent in its reply instead; a main call is still delivered, once, with a reminder.",
@@ -31340,7 +31362,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // prose written under a correct command turned it into a refusal instead of
         // running it. A body that must survive vetting cannot span lines, which is
         // what makes this row different from dm/memory/task.
-        { type: "term", parse: parseTerm, bodyMode: NONE, classifyReply: (line) => /^\[agent:term\] /.test(line) ? "refused" : "ok", tools: [TERM_EXEC_TOOL] },
+        { type: "term", parse: parseTerm, bodyMode: NONE, classifyReply: (line) => /^\[agent:term\] /.test(line) ? "refused" : "ok", tools: [TERM_EXEC_TOOL, TERM_READ_TOOL] },
         { type: "exec", parse: parseExec, bodyMode: () => "json" },
         { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/i.test(i.spec) ? "none" : "greedy" },
         { type: "shout", parse: parseShout, bodyMode: GREEDY },
@@ -31687,6 +31709,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         toolRowFor,
         toolIntentFor,
         TERM_EXEC_TOOL,
+        TERM_READ_TOOL,
         DM_TOOL,
         subagentCatalogFor,
         pruneForPlugins,

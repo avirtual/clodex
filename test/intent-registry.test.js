@@ -1418,21 +1418,23 @@ test('dm: the dm core row owns the tool, its schema is closed, it logs only the 
 test('subagentCatalogFor lists term_exec only for a seat whose intents name term, before plugin tools and without a brief', () => {
   const { TERM_EXEC_TOOL } = registry;
   const listed = { name: 'term_exec', description: TERM_EXEC_TOOL.description, inputSchema: TERM_EXEC_TOOL.inputSchema, logKeys: [] };
-  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['term'] }), { tools: [listed], briefs: [] });
+  const { TERM_READ_TOOL } = registry;
+  const listedRead = { name: 'term_read', description: TERM_READ_TOOL.description, inputSchema: TERM_READ_TOOL.inputSchema, logKeys: [] };
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['term'] }), { tools: [listed, listedRead], briefs: [] });
   const { DM_TOOL } = registry;
   const listedDm = { name: 'dm', description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: ['to'] };
-  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listed], briefs: [DM_TOOL.brief] });
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listed, listedRead], briefs: [DM_TOOL.brief] });
   for (const entry of [{ intents: ['*'] }, undefined]) {
     assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
   }
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: [] }), { tools: [], briefs: [] });
-  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['dm', 'term'] }).tools.map((t) => t.name), ['dm', 'term_exec']);
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['dm', 'term'] }).tools.map((t) => t.name), ['dm', 'term_exec', 'term_read']);
   const { TOOL } = require('../plugins/browser-pane/mcp-tool');
   const subagent = require('../plugins/browser-pane/subagent');
   try {
     registry.registerIntent({ verb: 'browser', parse: () => null, tools: [TOOL], subagent }, 'browser-pane', { shipped: true });
     const cat = registry.subagentCatalogFor({ intents: ['term', 'browser'], plugins: ['browser-pane'] });
-    assert.deepStrictEqual(cat.tools.map((t) => t.name), ['term_exec', 'browser']);
+    assert.deepStrictEqual(cat.tools.map((t) => t.name), ['term_exec', 'term_read', 'browser']);
     assert.deepStrictEqual(cat.briefs, [subagent.brief]);
   } finally { registry._resetPluginRows(); }
 });
