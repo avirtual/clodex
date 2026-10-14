@@ -1187,9 +1187,6 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
     // itself, so printing one invites the hand-spawn the row exists to prevent.
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template.replace(/[\r\n]+/g, ' ')}` : '';
     const brief = def && def.brief ? ` — ${String(def.brief).replace(/[\r\n]+/g, ' ')}` : '';
-    // Liveness is STATED in this slot, never inferred from a missing tail: a
-    // definition row and a live row are otherwise identical in shape, and a
-    // reader scanning for teammates dm's a seat that does not exist.
     const live = byRole.get(role);
     const isLive = !!(live && live.length);
     const full = isLive || role === 'lead';
