@@ -702,11 +702,22 @@ function createSandbox(deps = {}) {
   // -f points at this box's generated compose file. Both precede the subcommand.
   function composeArgs(extra) { return ['compose', '-p', composeProjectName(id), '-f', composePath(), ...extra]; }
 
-  function runCompose(extra) {
+  function runCompose(extra) { return runDocker(composeArgs(extra)); }
+
+  async function containerStartedAt() {
+    const ps = await runCompose(['ps', '--all', '-q']);
+    const cid = ps.ok ? ps.stdout.split('\n').map((l) => l.trim()).find(Boolean) : null;
+    if (!cid) return null;
+    const r = await runDocker(['inspect', '-f', '{{.State.StartedAt}}', cid]);
+    const at = r.ok ? r.stdout.trim() : '';
+    return at || null;
+  }
+
+  function runDocker(args) {
     return new Promise((resolve) => {
       let child;
       try {
-        child = spawn('docker', composeArgs(extra), { stdio: ['ignore', 'pipe', 'pipe'] });
+        child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (e) {
         resolve({ ok: false, code: null, stdout: '', stderr: String((e && e.message) || e) });
         return;
@@ -807,10 +818,10 @@ function createSandbox(deps = {}) {
 
   async function rebuild() {
     return bringUp(async (gen) => {
-      if (gen.image.kind === 'build') return runCompose(['up', '-d', '--build']);
+      if (gen.image.kind === 'build') return runCompose(['up', '-d', '--build', '--force-recreate']);
       const pulled = await runCompose(['pull']);
       if (!pulled.ok) return pulled;   // pull failed → skip up, surface its stderr
-      return runCompose(['up', '-d']);
+      return runCompose(['up', '-d', '--force-recreate']);
     }, 'rebuild');
   }
 
@@ -899,7 +910,7 @@ function createSandbox(deps = {}) {
   return {
     id, label: boxLabel,
     detect, getConfig, setConfig, writeComposeFile, translateHostPath,
-    up, rebuild, down, status, logsTail, registerPeer, unregisterPeer,
+    up, rebuild, down, status, logsTail, registerPeer, unregisterPeer, containerStartedAt,
     waitHealthy: boxWaitHealthy,
     hasAuthToken, authToken, setAuthToken, clearAuthToken,
     remoteToken, webToken,

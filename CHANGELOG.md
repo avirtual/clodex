@@ -23,6 +23,7 @@ blocks a release.
 - The scratch-begin row and the lead prompt now say the clone shares the parent's context, so the body is the question and the return shape rather than a brief.
 - The roster a seat gets at boot lists a role without a live seat on one line, without its brief, so a team with many defined roles no longer bills ~3 KB per seat per turn; the briefs stay in the team's `team.json`.
 - docs/recipes/remote-delegation.md: how a lead delegates a bounded task to a seat on a peer Clodex with a delegation id and an exact SHA, and what the repeat and restart drills showed.
+- [agent:team sandbox rebuild] always recreates the box's container, and both up and rebuild say whether the container was recreated; sandbox.json's startedAt is the container's real start time, so a rebuild at an unchanged sha no longer claims a fresh start it did not make.
 
 ### Wire
 
