@@ -156,8 +156,8 @@ test('t830: formatRoster renders " · account: <label>" on a role that has one',
   const out = formatRoster(team, []).split('\n');
   const hand = out.find((l) => l.startsWith('- hand '));
   assert.strictEqual(hand,
-    '- hand (session, tmpl clodex-team-hand) · account: work — the hand · no live seat — role definition only, not addressable',
-    'the account rides between the template and the brief');
+    '- hand (session, tmpl clodex-team-hand) · account: work',
+    'a seatless role keeps its account and drops its brief');
   const plain = out.find((l) => l.startsWith('- plain '));
   assert.ok(!/account/.test(plain),
     `a role with no account renders no account clause, got: ${plain}`);

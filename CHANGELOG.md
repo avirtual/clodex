@@ -17,6 +17,10 @@ blocks a release.
 
 - The harness row for `[agent:scratch begin]` now leads with when to open an episode (any question that takes more than two or three lookup calls) before how the clone works; the lead prompt's big-reads rule names scratch first. The row described the mechanism and never the trigger, so seats opened episodes only when the operator asked.
 
+### Teams
+
+- The roster a seat gets at boot lists a role without a live seat on one line, without its brief, so a team with many defined roles no longer bills ~3 KB per seat per turn; the briefs stay in the team's `team.json`.
+
 ## 5.124.0 — 2026-10-11
 
 ### Messaging
