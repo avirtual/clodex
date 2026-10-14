@@ -232,6 +232,10 @@ const CENSUS = [
     why: 'suite-lock holder liveness; a lying probe waits for a lock instead of stealing it',
   },
   {
+    file: 'session-manager.js', pid: 'pid', sig: '0', count: 1, probe: true,
+    why: 'pidAlive over a monitor state file at restore; it returns false for a non-positive pid before probing, so a broadcast pid reads as killed',
+  },
+  {
     file: 'stream-seat.js', pid: 'pid', sig: '0', count: 1, probe: true,
     why: 'isAlive for the boot reap, behind its own `> 0` refusal; a lying probe reads a dead orphan as alive, and the start-time match then leaves it alone',
   },

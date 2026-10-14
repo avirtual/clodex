@@ -13,7 +13,7 @@ const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
 const EXEC_RUN_LEDGER_FILE = 'exec-runs-inflight.json';
 const HOST_STARTED_AT = Date.now();
-const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const pidAlive = (pid) => { if (!(pid > 0)) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const EXEC_STATUS_QUERY_CMD = 'status';
 const EXEC_STATUS_REPLY_MAX = 400;
 const EXEC_STATUS_REPLY_RUNS = 3;
@@ -2562,7 +2562,7 @@ function createSessionManager(deps) {
           const id = f.slice(0, -'.json'.length);
           let st = null;
           try { st = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')); } catch { st = null; }
-          if (st && st.pid > 0 && pidAlive(st.pid)) continue;
+          if (st && pidAlive(st.pid)) continue;
           const what = (st && (st.description || st.command)) || '';
           const started = st && typeof st.startedAt === 'string' ? st.startedAt : 'unknown';
           lost.push(`${id}${what ? ` ${String(what).replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''} (started ${started})`);
