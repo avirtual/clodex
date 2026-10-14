@@ -13,19 +13,19 @@ blocks a release.
 
 ## Unreleased
 
-### Wire
-
-- The harness row for `[agent:scratch begin]` now leads with when to open an episode (any question that takes more than two or three lookup calls) before how the clone works; the lead prompt's big-reads rule names scratch first. The row described the mechanism and never the trigger, so seats opened episodes only when the operator asked.
-
 ### Messaging
 
 - [agent:term read] [tail N | grep <regex>] (and the term_read MCP tool) returns the agent's own terminal tab's scrollback as plain text — the last N lines (default 50, max 400) or the last 50 lines matching a pattern, capped at 16 KB — so an agent can look at what the operator ran without a copy-paste.
+- A seat resumed after a host restart is told, on its first turn, which of its clodex-monitor watches and long exec runs the restart killed, so "is it still running?" is answered truthfully instead of from stale memory; nothing is re-run.
+
 ### Teams
 
 - The scratch-begin row and the lead prompt now say the clone shares the parent's context, so the body is the question and the return shape rather than a brief.
-### Teams
-
 - The roster a seat gets at boot lists a role without a live seat on one line, without its brief, so a team with many defined roles no longer bills ~3 KB per seat per turn; the briefs stay in the team's `team.json`.
+
+### Wire
+
+- The harness row for `[agent:scratch begin]` now leads with when to open an episode (any question that takes more than two or three lookup calls) before how the clone works; the lead prompt's big-reads rule names scratch first. The row described the mechanism and never the trigger, so seats opened episodes only when the operator asked.
 
 ## 5.124.0 — 2026-10-11
 

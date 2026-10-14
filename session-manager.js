@@ -12,6 +12,8 @@ const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
 const EXEC_RUN_LEDGER_FILE = 'exec-runs-inflight.json';
+const HOST_STARTED_AT = Date.now();
+const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const EXEC_STATUS_QUERY_CMD = 'status';
 const EXEC_STATUS_REPLY_MAX = 400;
 const EXEC_STATUS_REPLY_RUNS = 3;
@@ -255,7 +257,7 @@ const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
-const { SEAT_KINDS, seatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
+const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug, scratchDirFor } = require('./clodex-paths');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX } = require('./subq');
 const {
   ACK_PREFIX: SCRATCH_ACK_PREFIX, boundaryAt: scratchBoundaryAt, beginCutAt: scratchBeginCutAt,
@@ -2544,6 +2546,36 @@ function createSessionManager(deps) {
       }
       this._lostExecRuns = keep;
       this._writeExecLedger();
+      return delivered;
+    }
+
+    deliverLostMonitors(opts = {}) {
+      const at = new Date(Number.isFinite(opts.at) ? opts.at : HOST_STARTED_AT).toISOString();
+      let delivered = 0;
+      for (const s of this.sessions.values()) {
+        if (!s || s._dead || !s.agentType) continue;
+        const dir = legacySeatPathFor(REGISTRY_DIR, s.name, 'monitors');
+        let files = [];
+        try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch { continue; }
+        const lost = [];
+        for (const f of files.sort()) {
+          const id = f.slice(0, -'.json'.length);
+          let st = null;
+          try { st = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8')); } catch { st = null; }
+          if (st && st.pid > 0 && pidAlive(st.pid)) continue;
+          const what = (st && (st.description || st.command)) || '';
+          const started = st && typeof st.startedAt === 'string' ? st.startedAt : 'unknown';
+          lost.push(`${id}${what ? ` ${String(what).replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''} (started ${started})`);
+          for (const ext of ['.json', '.log']) {
+            try { fs.unlinkSync(path.join(dir, id + ext)); } catch {}
+          }
+        }
+        if (!lost.length) continue;
+        this._deliverMessage(s.name, 'reboot',
+          `[host] restart at ${at}: these runs of yours were killed and did not finish: ${lost.join('; ')}. Nothing was re-run.`, 'dm');
+        log.warn('intent', `${s.name}: ${lost.length} monitor watch(es) lost to a host restart`);
+        delivered += 1;
+      }
       return delivered;
     }
 
