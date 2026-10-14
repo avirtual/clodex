@@ -1154,6 +1154,8 @@ function retiredFieldLines(team, role) {
 
 // The label is never computed here — team-manifest is a pure leaf and warmth is a
 // wire-layer property, so it arrives as data.
+const ROSTER_DEFINITIONS_LINE = 'Roles without a live seat are definitions; briefs live in team.json.';
+
 function formatRoster(team, liveSeats = [], { seat = null, grants = null, efforts = null, brief = false } = {}) {
   if (brief) {
     const role = seat ? matchSeatRole(team, seat) : null;
@@ -1175,6 +1177,7 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
     byRole.get(role).push(`${name}${suffix}`);
   }
   const lines = [`[team ${team.name}] roster (lead: ${team.lead})`];
+  let definitionsOnly = false;
   for (const [role, def] of Object.entries(team.roles)) {
     // Name [agent:team-review] ONLY to the seat allowed to use it:
     // _handleTeamReview bounces a non-lead.
@@ -1184,18 +1187,19 @@ function formatRoster(team, liveSeats = [], { seat = null, grants = null, effort
     // itself, so printing one invites the hand-spawn the row exists to prevent.
     const tmpl = (role !== 'reviewer' && def && typeof def.template === 'string' && def.template) ? `, tmpl ${def.template.replace(/[\r\n]+/g, ' ')}` : '';
     const brief = def && def.brief ? ` — ${String(def.brief).replace(/[\r\n]+/g, ' ')}` : '';
-    // Liveness is STATED in this slot, never inferred from a missing tail: a
-    // definition row and a live row are otherwise identical in shape, and a
-    // reader scanning for teammates dm's a seat that does not exist.
     const live = byRole.get(role);
-    const liveStr = live && live.length
+    const isLive = !!(live && live.length);
+    const full = isLive || role === 'lead';
+    if (!full) definitionsOnly = true;
+    const liveStr = isLive
       ? ` · live: ${live.join(', ')}`
-      : ' · no live seat — role definition only, not addressable';
+      : (full ? ' · no live seat — role definition only, not addressable' : '');
     const account = (def && typeof def.account === 'string' && def.account) ? ` · account: ${def.account.replace(/[\r\n]+/g, ' ')}` : '';
     const effortStr = (efforts && typeof efforts[role] === 'string' && efforts[role]) ? ` · effort ${efforts[role].replace(/[\r\n]+/g, ' ')}` : '';
-    lines.push(`- ${role} (${cls}${tmpl})${effortStr}${account}${brief}${liveStr}`);
+    lines.push(`- ${role} (${cls}${tmpl})${effortStr}${account}${full ? brief : ''}${liveStr}`);
     for (const l of retiredFieldLines(team, role)) lines.push(l);
   }
+  if (definitionsOnly) lines.push(ROSTER_DEFINITIONS_LINE);
   if (roleless.length) lines.push(`also live, no role: ${roleless.join(', ')}`);
   if (seat && seat === team.lead) {
     const action = leadActionLine(team);
@@ -1215,7 +1219,7 @@ function formatCompositionDelta(teamName, verb, { seat = null, role = null } = {
 
 module.exports = {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, defaultLeadSeat, SEAT_NAME_MAX, STOCK_ROLE_DEFS, TEAM_FILE,
+  formatCompositionDelta, defaultLeadSeat, ROSTER_DEFINITIONS_LINE, SEAT_NAME_MAX, STOCK_ROLE_DEFS, TEAM_FILE,
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,

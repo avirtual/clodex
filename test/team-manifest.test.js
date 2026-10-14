@@ -17,7 +17,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
   formatCompositionDelta, defaultLeadSeat, SEAT_NAME_MAX, STOCK_ROLE_DEFS, CUT_ROLE_FIELDS,
-  HONORED_CUT_FIELDS, MANIFEST_VERSION,
+  HONORED_CUT_FIELDS, MANIFEST_VERSION, ROSTER_DEFINITIONS_LINE,
 } = require('../team-manifest');
 
 // A fresh fake ~/.clodex per helper call, so tests don't cross-contaminate.
@@ -1855,7 +1855,7 @@ test('formatRoster lists roles, briefs, class, and live seats per role', () => {
   // printing "(subagent)" next to it sent a lead to its harness subagent tool,
   // which produces an uncapped reviewer with no [agent:review-done] channel and no
   // seat the operator can see. No live seat → listed, no "live:" tail.
-  assert.match(roster, /- reviewer \(lead-only\) — the reviewer · no live seat/m);
+  assert.match(roster, /^- reviewer \(lead-only\)$/m);
   assert.ok(!/reviewer \(subagent\)/.test(roster), 'the reviewer must never read as a harness subagent');
   assert.match(roster, /Ground truth on demand: \[agent:exec clodex-team\]/);
 });
@@ -1905,15 +1905,27 @@ test('formatRoster: a role with no live seat says so; it never reads as a teamma
   assert.match(roster, /- lead \(session\) — the lead · no live seat — role definition only, not addressable$/m,
     'a role WITHOUT a seat states that, in the same slot the live names would occupy');
 
-  // Every role row carries exactly one liveness verdict — the property that
-  // makes the two cases distinguishable without knowing the mechanism.
   const roleRows = roster.split('\n').filter((l) => /^- /.test(l));
   assert.strictEqual(roleRows.length, 3, 'three roles, three rows');
-  for (const row of roleRows) {
-    const live = / · live: /.test(row);
-    const dead = / · no live seat /.test(row);
-    assert.ok(live !== dead, `exactly one liveness verdict per row, never both or neither: ${row}`);
-  }
+  assert.ok(roleRows.includes('- reviewer (via [agent:team-review])'), roster);
+  assert.strictEqual(roster.split('\n').filter((l) => l === ROSTER_DEFINITIONS_LINE).length, 1, roster);
+});
+
+test('t1805: a seatless role renders one line with no brief; a live role keeps its brief; the lead line is unchanged', () => {
+  const team = TEAM();
+  team.roles.scout = { brief: 'scout brief', template: 'scout', account: 'work' };
+  const roster = formatRoster(team, ['clodex', 'shop-hand'], { seat: 'clodex', efforts: { scout: 'low' } });
+  const lines = roster.split('\n');
+  assert.ok(lines.includes('- scout (session, tmpl scout) · effort low · account: work'), roster);
+  assert.ok(!roster.includes('scout brief') && !roster.includes('the reviewer'), roster);
+  assert.ok(!/role definition only/.test(roster), roster);
+  assert.ok(lines.includes('- hand (session, tmpl clodex-team-hand) — the hand · live: shop-hand'), roster);
+  assert.ok(lines.includes('- lead (session) — the lead · live: clodex (you)'), roster);
+  assert.strictEqual(lines.filter((l) => l === ROSTER_DEFINITIONS_LINE).length, 1, roster);
+  assert.ok(lines.indexOf(ROSTER_DEFINITIONS_LINE) > lines.indexOf('- scout (session, tmpl scout) · effort low · account: work'), roster);
+  assert.ok(/^Dispatch: /m.test(roster) && /^Ground truth on demand: /m.test(roster), roster);
+  const allLive = formatRoster(TEAM(), ['clodex', 'shop-hand', 'shop-reviewer-1'], { seat: 'clodex' });
+  assert.ok(!allLive.includes(ROSTER_DEFINITIONS_LINE), allLive);
 });
 
 test('formatRoster: the exec line carries the reading seat name in a schema-valid payload', () => {

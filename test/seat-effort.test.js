@@ -66,8 +66,8 @@ test('t1222: the roster names a role\'s effort beside its template, and the revi
     roles: { lead: {}, hand: { template: 'hand', brief: 'b' }, reviewer: {} },
   };
   const out = formatRoster(team, [], { efforts: { hand: 'high', reviewer: 'xhigh' } }).split('\n');
-  assert.ok(out.includes('- hand (session, tmpl hand) · effort high — b · no live seat — role definition only, not addressable'), out.join('\n'));
-  assert.ok(out.some((l) => l.startsWith('- reviewer (lead-only) · effort xhigh ·')), out.join('\n'));
+  assert.ok(out.includes('- hand (session, tmpl hand) · effort high'), out.join('\n'));
+  assert.ok(out.includes('- reviewer (lead-only) · effort xhigh'), out.join('\n'));
   assert.ok(!formatRoster(team, []).includes('effort'), 'no efforts, no clause');
 });
 

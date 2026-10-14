@@ -23,6 +23,9 @@ blocks a release.
 ### Teams
 
 - The scratch-begin row and the lead prompt now say the clone shares the parent's context, so the body is the question and the return shape rather than a brief.
+### Teams
+
+- The roster a seat gets at boot lists a role without a live seat on one line, without its brief, so a team with many defined roles no longer bills ~3 KB per seat per turn; the briefs stay in the team's `team.json`.
 
 ## 5.124.0 — 2026-10-11
 
