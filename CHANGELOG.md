@@ -17,6 +17,10 @@ blocks a release.
 
 - The harness row for `[agent:scratch begin]` now leads with when to open an episode (any question that takes more than two or three lookup calls) before how the clone works; the lead prompt's big-reads rule names scratch first. The row described the mechanism and never the trigger, so seats opened episodes only when the operator asked.
 
+### Teams
+
+- The scratch-begin row and the lead prompt now say the clone shares the parent's context, so the body is the question and the return shape rather than a brief.
+
 ## 5.124.0 — 2026-10-11
 
 ### Messaging

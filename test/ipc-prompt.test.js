@@ -230,6 +230,16 @@ test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES �
   }
 });
 
+test('t1806: the scratch-begin row says the body is the question and the return shape, never a brief — the clone already holds the context', () => {
+  for (const src of [IPC_PROMPT, buildIpcPrompt(['scratch'])]) {
+    const row = src.split('\n').find((l) => l.startsWith('  [agent:scratch begin]'));
+    assert.ok(row, 'ENTER: the begin row exists');
+    assert.ok(row.includes('the question and the return shape'), 'the body is a receipt: question plus return shape');
+    assert.ok(row.includes('not a brief'), 'and says outright it is not a brief');
+    assert.ok(!/brief/i.test(row.replace('not a brief', '')), 'no wording asks the writer to brief the clone');
+  }
+});
+
 test('t1039: scratch is gateable — a seat without it sees none of the three rows, which the byte-pins cannot show (both pass lists that ENABLE scratch)', () => {
   const off = buildIpcPrompt(ALL_GATEABLE.filter((t) => t !== 'scratch'));
   assert.ok(!off.includes('[agent:scratch'), 'no scratch row for a seat denied the verb');
