@@ -21,6 +21,9 @@ const CARD_ROWS = [
   ['[agent:scratch rewind] why', '⇤', 'rewind', null, []],
   ['[agent:scratch mark here]', '✱', 'mark', 'here', []],
   ['[agent:scratch cancel]', '⊗', 'cancel', null, []],
+  ['[agent:probe] what calls x', '⟦', 'probe', null, []],
+  ['[agent:probe end] summary', '⟧', 'result', null, []],
+  ['[agent:probe cancel]', '⊗', 'cancel', null, []],
   ['[agent:memory remember] x', '◈', 'remember', null, []],
   ['[agent:memory recall] x', '◈', 'recall', null, []],
   ['[agent:memory list]', '◈', 'list', null, []],
@@ -71,7 +74,7 @@ test('team-create reads its name and kvs', () => {
 
 const REPLY_ROWS = [
   ['dm', '→', 'message'], ['resend', '⇉', 'resend'], ['who', '◎', 'who'], ['name', '@', 'name'],
-  ['context', '⊟', 'context'], ['scratch', '⟦', 'scratch'], ['memory', '◈', 'memory'], ['file', '▢', 'show'],
+  ['context', '⊟', 'context'], ['scratch', '⟦', 'scratch'], ['probe', '⟦', 'probe'], ['memory', '◈', 'memory'], ['file', '▢', 'show'],
   ['term', '▤', 'terminal'], ['exec', '▸', 'run'], ['remind', '◷', 'remind'], ['shout', '⚑', 'shout'],
   ['team-review', '◐', 'review'], ['review-done', '⊨', 'verdict'], ['reboot', '↻', 'reboot'], ['task', '⇄', 'task'],
   ['team-create', '⊞', 'team'], ['team', '⊞', 'team'], ['spawn', '✦', 'spawn'], ['intent', '⊘', 'bounced'], ['peers', '⇢', 'peers'],

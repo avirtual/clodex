@@ -201,49 +201,31 @@ test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () 
   }
 });
 
-test('t1039: the scratch rows are present in the literal AND in GRAMMAR_LINES — a row missing from both copies keeps the byte-pins green and ships a verb whose `end` CUTS the transcript', () => {
-  for (const ROW of [/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Open one BEFORE any stretch of reading/m,
-    /^ {2}\[agent:scratch end\] <summary> {4}Close the episode:/m,
-    /^ {2}\[agent:scratch cancel\] {11}Bare; drops the mark and cuts nothing/m,
-    /^ {2}\[agent:scratch mark <label>\] {5}Set a NAMED rewind point/m,
-    /^ {2}\[agent:scratch rewind \[<label>\]\] <note> {3}Cut back to that mark/m]) {
+test('t1838: the probe rows are present in the literal AND in GRAMMAR_LINES, and no scratch verb is taught', () => {
+  for (const ROW of [/^ {2}\[agent:probe\] <question \+ return shape>\n {2}\[agent:end\] {22}Claude seats only\. Forks a clone of you/m,
+    /^ {2}\[agent:probe end\] <summary>\n {2}\[agent:end\] {22}Clone only, the LAST line/m,
+    /^ {2}\[agent:probe cancel\] {13}Bare; drops the running clone/m]) {
     assert.ok(ROW.test(IPC_PROMPT), `the literal carries ${ROW}`);
     assert.ok(ROW.test(buildIpcPrompt(['scratch'])), `and so does a seat granted scratch: ${ROW}`);
   }
   for (const src of [IPC_PROMPT, buildIpcPrompt(['scratch'])]) {
-    assert.ok(/BEFORE any stretch of reading whose only value is the conclusion/.test(src),
-      'the row leads with WHEN — an episode opened over reads that must be cited loses the citations');
-    assert.ok(/more than two or three grep\/sed\/ls calls is a scratch episode/.test(src),
-      'the trigger is a count a seat can apply mid-turn, not a judgement');
-    assert.ok(/Bare, and the LAST line of your reply: emit it and stop/.test(src),
-      'begin is refused off a turn boundary, so the position rule has to be in the row that fires it');
-    assert.ok(/Body to `\[agent:end\]`, LAST in your reply/.test(src),
-      'and end has BOTH constraints: the greedy body and the same position rule');
-    assert.ok(/the cut drops the conversation, not the work on disk/.test(src),
-      'the one fact no seat infers: side effects survive a cut that erases the memory of causing them');
-    assert.ok(/a ~5s respawn; the cached prefix is kept/.test(src),
-      'what it COSTS — a seat that fears a cold respawn never opens an episode');
-    assert.ok(/A bodyless end is refused/.test(src), 'the refusal a seat meets first');
-    assert.ok(/^ {2}\[agent:scratch begin\] <what to research> {3}Claude seats only\. Open one BEFORE any stretch of reading/m.test(src),
-      'and the one that makes the whole verb inert opens the FIRST row: a Codex seat reads '
-      + 'that before it tries, not as the tail of the third row it may never reach');
-  }
-});
-
-test('t1806: the scratch-begin row says the body is the question and the return shape, never a brief — the clone already holds the context', () => {
-  for (const src of [IPC_PROMPT, buildIpcPrompt(['scratch'])]) {
-    const row = src.split('\n').find((l) => l.startsWith('  [agent:scratch begin]'));
-    assert.ok(row, 'ENTER: the begin row exists');
-    assert.ok(row.includes('the question and the return shape'), 'the body is a receipt: question plus return shape');
-    assert.ok(row.includes('not a brief'), 'and says outright it is not a brief');
+    assert.ok(!src.includes('scratch begin'), 'the alias is not taught');
+    assert.ok(!src.includes('[agent:scratch'), 'no scratch verb row at all');
+    assert.ok(/BEFORE any stretch of reading whose only value is the conclusion/.test(src), 'the row says WHEN');
+    assert.ok(/more than two or three grep\/sed\/ls calls is a probe/.test(src), 'the trigger is a count');
+    assert.ok(/your transcript is never cut/.test(src), 'and that nothing is cut');
+    assert.ok(/arrives as a message from `scratch`/.test(src), 'and the sender the summary comes from');
+    const row = src.split('\n').find((l, i, a) => i > 0 && a[i - 1].startsWith('  [agent:probe] '));
+    assert.ok(row && row.includes('the question and the return shape') && row.includes('not a brief'),
+      'the body is the question and the return shape, not a brief');
     assert.ok(!/brief/i.test(row.replace('not a brief', '')), 'no wording asks the writer to brief the clone');
   }
 });
 
-test('t1039: scratch is gateable — a seat without it sees none of the three rows, which the byte-pins cannot show (both pass lists that ENABLE scratch)', () => {
+test('t1039: scratch is gateable — a seat without it sees none of the three probe rows, which the byte-pins cannot show (both pass lists that ENABLE scratch)', () => {
   const off = buildIpcPrompt(ALL_GATEABLE.filter((t) => t !== 'scratch'));
-  assert.ok(!off.includes('[agent:scratch'), 'no scratch row for a seat denied the verb');
-  assert.ok(!buildIpcPrompt([]).includes('[agent:scratch'), 'nor for a fully-gated seat');
+  assert.ok(!off.includes('[agent:probe'), 'no probe row for a seat denied the verb');
+  assert.ok(!buildIpcPrompt([]).includes('[agent:probe'), 'nor for a fully-gated seat');
   assert.ok(off.includes('[agent:context compact]'), 'ENTER: its neighbours still render');
 });
 
