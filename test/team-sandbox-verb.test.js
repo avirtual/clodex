@@ -206,19 +206,27 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   assert.strictEqual(rec.startedAt, '2026-10-15T02:00:00.000000002Z', 'startedAt is the container\'s inspected StartedAt');
 });
 
-test('the reply says `container recreated` when the container StartedAt changed', async () => {
+test('the reply says `container restarted` when the container StartedAt changed', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'rebuild' });
-  assert.match(b.last(), / · container recreated/);
-  assert.doesNotMatch(b.last(), /NOT recreated/);
+  assert.match(b.last(), / · container restarted/);
+  assert.doesNotMatch(b.last(), /NOT restarted/);
 });
 
-test('the reply says `container NOT recreated (unchanged)` when StartedAt is equal, and records it', async () => {
+test('the reply says `container NOT restarted (unchanged)` when StartedAt is equal, and records it', async () => {
   const at = '2026-10-15T01:00:00.000000001Z';
   const b = mkBox({ startedAts: [at, at] });
   await fire(b, b.lead, { action: 'up' });
-  assert.match(b.last(), / · container NOT recreated \(unchanged\)/);
+  assert.match(b.last(), / · container NOT restarted \(unchanged\)/);
   assert.strictEqual(JSON.parse(fs.readFileSync(b.file, 'utf-8')).startedAt, at);
+});
+
+test('a null container StartedAt records startedAt null and the reply makes no restart claim', async () => {
+  const b = mkBox({ startedAts: [null, null] });
+  await fire(b, b.lead, { action: 'up' });
+  assert.strictEqual(JSON.parse(fs.readFileSync(b.file, 'utf-8')).startedAt, null);
+  assert.doesNotMatch(b.last(), /container (NOT )?(restarted|recreated)/);
+  assert.match(b.last(), /sandbox team-clodex up @/);
 });
 
 test('sandbox.json is written 0600 — the peer-wire token is not group- or world-readable', async () => {

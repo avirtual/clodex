@@ -590,8 +590,9 @@ The lead binds one with `[agent:team sandbox [up|rebuild|down|status]
 `team-<name>`, points it at that ref with the team root as its work directory,
 and brings it up. `rebuild` rebuilds the image first; `down` stops it; `status`
 only reports. `rebuild` always recreates the container (a restart even at an
-unchanged sha); `up` on a running box changes nothing and says so. Lead-only, like every `[agent:team …]` verb, and refused with
-`sandboxes are not enabled on this host` where the host has no sandbox support.
+unchanged sha); `up` on a running box changes nothing and says so. Lead-only,
+like every `[agent:team …]` verb, and refused with `sandboxes are not enabled
+on this host` where the host has no sandbox support.
 
 Only `up` and `rebuild` change the box's configuration, and they patch `ref`
 only when you actually typed `ref:`. Omit it and the box keeps the ref it is
