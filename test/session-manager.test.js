@@ -22249,7 +22249,7 @@ test('scratch cancel (bare): drops the most recent open mark like a bare rewind 
   assert.strictEqual(g.s._scratch, ep, 'the older unlabeled episode stays open');
   g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.strictEqual(g.injected[g.injected.length - 1],
-    `[agent:scratch] episode cancelled · mark ${ep.nonce} is dropped. Nothing was cut; everything you read since begin stays in your transcript as ordinary history.`);
+    `[agent:scratch] episode cancelled · mark ${ep.nonce} is dropped. Nothing was cut; everything you read since begin stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(g.s._scratch, null);
 });
 
