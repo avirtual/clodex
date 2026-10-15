@@ -2998,13 +2998,16 @@ function createTicketMethods(deps, shared) {
 
     // One builder for the first delivery and the redelivery, so a replay is the first copy plus a head and
     // cannot drift from it.
-    _redirectDeliveryText(ticketId, label, reason, replay = false) {
+    _redirectDeliveryText(ticketId, label, reason, replay = false, remoteLead = null) {
       const head = replay
         ? `[ticket ${ticketId} ${label} REDELIVERY] this was already sent to you once and no turn followed, so `
           + `you may already be holding an unsubmitted copy of it — if you have already acted on these points, `
           + `keep going rather than starting them again.\n`
         : '';
-      return `${head}[ticket ${ticketId} ${label}] ${ticketCloseLine(ticketId)}${reason}`;
+      const close = remoteLead
+        ? `REMOTE: report by dm to ${remoteLead}@${SELF_LABEL}; task done from your host does not reach this board yet.\n`
+        : ticketCloseLine(ticketId);
+      return `${head}[ticket ${ticketId} ${label}] ${close}${reason}`;
     },
 
     _armSpecConfirmTimer(session) {
@@ -5069,12 +5072,12 @@ function createTicketMethods(deps, shared) {
         delete ticket.escalationUndelivered;
         delete ticket.mergeError;
         const rework = this._reworkSeatFor(team, ticket, seat,
-          this._redirectDeliveryText(ticket.id, 'rejected', reason));
+          this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
         ticketsStore.save(team.root, tickets);
         this._retireReviewSeatsFor(team, ticketId, 'rejected by the loop');
         const r = rework.replaced
           ? { queued: true }
-          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
             `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
             (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
               { label: 'rejected', reason, from: 'ticket-loop' }, why));
@@ -5138,13 +5141,13 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const rework = this._reworkSeatFor(team, ticket, seat,
-        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason));
+        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
       const redirect = { label: 'more must-fixes', reason, from: session.name };
       let armed = null;
       let parkCarry = null;
       const r = rework.replaced
         ? { queued: true }
-        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
+        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => {
             const carried = disposition === 'parked' && parkCarry ? { ...redirect, ...parkCarry } : redirect;
@@ -5836,12 +5839,12 @@ function createTicketMethods(deps, shared) {
       delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
       const rework = (seat && seat !== team.lead)
-        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason))
+        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null))
         : { seat, replaced: false };
       ticketsStore.save(team.root, tickets);
       this._retireReviewSeatsFor(team, ticket.id, 'rejected');
       if (seat && seat !== team.lead && !rework.replaced) {
-        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
           `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
             { label: 'rejected', reason, from: session.name }, why));

@@ -153,6 +153,13 @@ test('(d) task reject on a remote ticket sends the rejection over the wire', () 
   assert.strictEqual(r.sent.length, 1);
   assert.match(r.sent[0].body, /fix the frobnicator/);
   assert.match(r.sent[0].body, /rejected/);
+  assert.doesNotMatch(r.sent[0].body, /CLOSE WITH/);
+  assert.match(r.sent[0].body, /REMOTE: report by dm to lead@laptop/);
+  r.task({ sub: 'reject', id: 't1', body: 'and the sprocket' });
+  assert.strictEqual(r.sent.length, 2, 'ENTER: the follow-up arm sent a second rejection');
+  assert.match(r.sent[1].body, /more must-fixes/);
+  assert.match(r.sent[1].body, /and the sprocket/);
+  assert.doesNotMatch(r.sent[1].body, /CLOSE WITH/);
 });
 
 test('(e) replay paths never re-send to a remote assignee', () => {
