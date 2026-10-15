@@ -6699,7 +6699,7 @@ function createSessionManager(deps) {
     // Every rejecting return of a ticket command must route its reply suffix through here, or the composed
     // body is lost. A failed spill reports the failure and never a path.
     _spillRejectedPayload(session, verb, body) {
-      if (!body) return '';
+      if (!body || (session && session.remote)) return '';
       try {
         const bytes = Buffer.byteLength(body);
         const path_ = spillToFile(`${verb} (rejected)`, body, session.name);
@@ -8246,7 +8246,7 @@ function createSessionManager(deps) {
         { ref: intent.ref, onBounce: bounce, session });
     }
 
-    _sendToFederatedTarget(senderName, target, body, urgent, { ref: givenRef, onBounce, session = null } = {}) {
+    _sendToFederatedTarget(senderName, target, body, urgent, { ref: givenRef, onBounce, session = null, task = null } = {}) {
       const at = target.indexOf('@');
       const name = target.slice(0, at);
       const origin = target.slice(at + 1);
@@ -8268,6 +8268,7 @@ function createSessionManager(deps) {
           held.push({
             to: name, from: senderName, body, urgent, ts: Date.now(),
             target, origin, sessionName: session && session.name, ref,
+            ...(task ? { task } : {}),
           });
           this._armPeerHeldSweep();
           notice(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min). (ref ${ref})`);
@@ -8278,14 +8279,14 @@ function createSessionManager(deps) {
         const conn = getPeerManager().get(match.id);
         if (!conn) return fail(`peer '${origin}' is not reachable right now.`);
         this._sendFederatedDm(conn, origin,
-          { to: name, from: senderName, body, urgent, target, ref },
+          { to: name, from: senderName, body, urgent, target, ref, ...(task ? { task } : {}) },
           () => session);
         this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} [${ref}]: ${body}` });
         return { queued: true, ref };
       }
       if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) {
         const r = enqueueOutbox(OUTBOX_DIR, origin,
-          { from: senderName, to: name, body, urgent, ts: Date.now(), ref },
+          { from: senderName, to: name, body, urgent, ts: Date.now(), ref, task },
           this._nextParkSeq());
         if (!r.ok) return fail(`could not queue for ${target}: ${r.error} (ref ${ref})`);
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(origin); } catch {} }
@@ -8293,6 +8294,7 @@ function createSessionManager(deps) {
         return { queued: true, ref };
       }
       const via = this._relayViaForOrigin(origin);
+      if (via && task) return fail('task done cannot cross a relay — the board\'s host must be a direct peer.');
       if (via) {
         const qualifiedFrom = `${senderName}@${SELF_LABEL}`;
         const env = buildRelayEnvelope({
@@ -8312,8 +8314,12 @@ function createSessionManager(deps) {
     _sendFederatedDm(conn, origin, item, getSession) {
       const notify = (text) => { const s = getSession(); if (s) this._injectText(s, text, { parkable: true }); };
       const tag = item.ref ? ` (ref ${item.ref})` : '';
-      conn.dm({ to: item.to, from: item.from, body: item.body, urgent: item.urgent, ref: item.ref }, (resp) => {
-        if (resp && resp.duplicate === true) {
+      conn.dm({ to: item.to, from: item.from, body: item.body, urgent: item.urgent, ref: item.ref, ...(item.task ? { task: item.task } : {}) }, (resp) => {
+        if (resp && resp.task && resp.duplicate === true) {
+          notify(`[agent:task] the board already answered ref ${item.ref}: ${resp.task.reply}`);
+        } else if (resp && resp.task) {
+          notify(`[agent:task] ${resp.task.reply}`);
+        } else if (resp && resp.duplicate === true) {
           notify(`[agent:dm] ${origin} already had ref ${item.ref} from you — not redelivered (its first result stands).`);
         } else if (resp && resp.ok && resp.delivered) {
         } else if (resp && resp.ok && resp.parked) {
@@ -8375,6 +8381,12 @@ function createSessionManager(deps) {
         const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
         if (refKey && this._dmRefRepeat(refKey)) {
           log.info('peer', `dm ref ${m.ref} from ${senderTag} repeated — not redelivered`);
+          continue;
+        }
+        if (m.task && typeof m.task === 'object') {
+          const t = this._remoteTaskDone({ senderTag, origin, ticketId: m.task.id, report: m.body || '' });
+          if (refKey && t.ok) this._dmRefRemember(refKey, { delivered: true });
+          this._broadcast('ipc-message', { type: 'task', from: senderTag, to: t.lead || 'board', body: `WIRE←${origin} task done ${m.task.id}: ${t.reply}` });
           continue;
         }
         const local = this.sessions.get(m.to);

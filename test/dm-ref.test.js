@@ -160,3 +160,120 @@ test('t1829 enqueueOutbox without a ref writes no ref key; with one it carries i
   const b = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, ref: 'r1' }, '2');
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', b.file), 'utf8')), { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, ref: 'r1' });
 });
+
+function boardRig() {
+  const home = mkTmpRoot('clodex-c1b-');
+  const tstore = require('../tickets-store').createTicketsStore({ clodexHome: home });
+  const team = {
+    name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
+    file: path.join(home, 'teams', 'team', 'team.json'),
+    roles: { lead: { instantiate: 'session', brief: 'the lead' }, hand: { instantiate: 'session', brief: 'the hand' } },
+  };
+  const m = mk({ REGISTRY_DIR: home, listTeams: () => ['team'], loadManifest: () => team, getPeerManager: () => ({ statuses: () => [{ id: 'p', label: 'p' }] }), log: { info() {}, warn() {}, error() {}, debug() {} } });
+  const leadGot = [];
+  m._gatedDeliver = (to, from, body) => { leadGot.push({ to, from, body }); return { queued: true }; };
+  m._broadcast = () => {};
+  tstore.save(team.root, [{ id: 't7', state: 'open', assignee: 'x@p', spec: 'do it', createdAt: 1, events: [] }]);
+  const one = () => tstore.load(team.root).find((t) => t.id === 't7');
+  return { m, team, tstore, leadGot, one };
+}
+
+async function withBoard(r, fn) {
+  const server = new RemoteServer({
+    port: 0, host: '127.0.0.1', pagePath: PAGE,
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    deliverDm: captureDeliverDm(r.m),
+  });
+  await server.start();
+  try { await fn(server); } finally { server.stop(); }
+}
+
+test('C1b (c) a task envelope from the recorded assignee closes the ticket on the board', async () => {
+  const r = boardRig();
+  await withBoard(r, async (server) => {
+    const res = await post(server, { to: 'board', from: 'x', origin: 'p', body: 'all built', task: { kind: 'done', id: 't7' } });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.json.ok, true);
+    assert.strictEqual(res.json.task.id, 't7');
+    assert.match(res.json.task.reply, /ticket t7 closed \(done\) — report delivered to lead/);
+    const t = r.one();
+    assert.strictEqual(t.state, 'done');
+    assert.strictEqual(t.reportedBy, 'x@p');
+    assert.deepStrictEqual(r.leadGot.map((d) => [d.to, d.from, d.body]), [['lead', 'x@p', '[ticket t7 done] all built']]);
+  });
+});
+
+test('C1b (d) a task envelope from anyone but the recorded assignee is refused', async () => {
+  const r = boardRig();
+  await withBoard(r, async (server) => {
+    const wrongName = await post(server, { to: 'board', from: 'y', origin: 'p', body: 'r', task: { kind: 'done', id: 't7' } });
+    assert.strictEqual(wrongName.json.ok, false);
+    assert.match(wrongName.json.task.reply, /^no ticket t7 assigned to y@p on this host$/);
+    const wrongOrigin = await post(server, { to: 'board', from: 'x', origin: 'q', body: 'r', task: { kind: 'done', id: 't7' } });
+    assert.strictEqual(wrongOrigin.json.ok, false);
+    assert.match(wrongOrigin.json.error, /^no ticket t7 assigned to x@q on this host$/);
+    assert.strictEqual(r.one().state, 'open');
+    assert.deepStrictEqual(r.leadGot, []);
+  });
+});
+
+test('C1b (e) a repeated task ref answers duplicate and closes once', async () => {
+  const r = boardRig();
+  await withBoard(r, async (server) => {
+    const msg = { to: 'board', from: 'x', origin: 'p', body: 'r', ref: 'k1', task: { kind: 'done', id: 't7' } };
+    const first = await post(server, msg);
+    assert.strictEqual(first.json.ok, true);
+    const events = (r.one().events || []).length;
+    const again = await post(server, msg);
+    assert.strictEqual(again.json.duplicate, true);
+    assert.strictEqual(again.json.task.id, 't7');
+    assert.strictEqual((r.one().events || []).length, events);
+    assert.strictEqual(r.leadGot.length, 1);
+  });
+});
+
+test('C1b (g) a malformed task envelope is a 400', async () => {
+  const r = boardRig();
+  await withBoard(r, async (server) => {
+    const base = { to: 'board', from: 'x', origin: 'p', body: 'r' };
+    for (const task of [{ kind: 'reject', id: 't7' }, { kind: 'done', id: 'x' }, 'done', [1]]) {
+      assert.deepStrictEqual(await post(server, { ...base, task }), { status: 400, json: { ok: false, error: 'bad task envelope' } });
+    }
+    assert.strictEqual(r.one().state, 'open');
+  });
+});
+
+test('C1b (g) a board whose deliverDm predates task fails it as a dm to a seat named board', async () => {
+  const m = mk();
+  m._broadcast = () => {};
+  m._gatedDeliver = (to) => ({ error: `no such agent "${to}"` });
+  const server = new RemoteServer({
+    port: 0, host: '127.0.0.1', pagePath: PAGE,
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    deliverDm: ({ to, from, origin, body, urgent }) => captureDeliverDm(m)({ to, from, origin, body, urgent }),
+  });
+  await server.start();
+  try {
+    const res = await post(server, { to: 'board', from: 'x', origin: 'p', body: 'r', task: { kind: 'done', id: 't7' } });
+    assert.deepStrictEqual(res.json, { ok: false, error: 'no such agent "board"' });
+  } finally { server.stop(); }
+});
+
+test('C1b a claimed record with a task closes through _remoteTaskDone', () => {
+  const r = boardRig();
+  const m = r.m;
+  const calls = [];
+  const orig = m._remoteTaskDone;
+  m._remoteTaskDone = (a) => { calls.push(a); return orig.call(m, a); };
+  m._deliverClaimedDms('p', [{ from: 'x', to: 'board', body: 'via outbox', urgent: false, task: { kind: 'done', id: 't7' } }]);
+  assert.deepStrictEqual(calls.map((c) => [c.senderTag, c.ticketId]), [['x@p', 't7']]);
+  assert.strictEqual(r.one().state, 'done');
+});
+
+test('C1b enqueueOutbox carries task only when present', () => {
+  const root = mkTmpRoot('clodex-c1b-out-');
+  const a = enqueueOutbox(root, 'laptop', { from: 'a', to: 'board', body: 'x', urgent: false, ts: 5, task: { kind: 'done', id: 't7' } }, '1');
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', a.file), 'utf8')).task, { kind: 'done', id: 't7' });
+  const b = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, task: null }, '2');
+  assert.strictEqual('task' in JSON.parse(fs.readFileSync(path.join(root, 'laptop', b.file), 'utf8')), false);
+});

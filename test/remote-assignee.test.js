@@ -134,7 +134,7 @@ test('(c) task add x@p start sends the spec over the wire with the REMOTE line a
   assert.strictEqual(r.sent.length, 1);
   const body = r.sent[0].body;
   assert.match(body, /\[ticket t1/);
-  assert.match(body, /REMOTE: you are on p; this ticket's board is on laptop; report by dm to lead@laptop/);
+  assert.match(body, /REMOTE: you are on p; this ticket's board is on laptop\. Close it with \[agent:task done t1@laptop\] <report>/);
   assert.doesNotMatch(body, /WORK IN:/);
   assert.doesNotMatch(body, /CLOSE WITH/);
   assert.strictEqual(r.sent[0].to, 'x');
@@ -154,7 +154,7 @@ test('(d) task reject on a remote ticket sends the rejection over the wire', () 
   assert.match(r.sent[0].body, /fix the frobnicator/);
   assert.match(r.sent[0].body, /rejected/);
   assert.doesNotMatch(r.sent[0].body, /CLOSE WITH/);
-  assert.match(r.sent[0].body, /REMOTE: report by dm to lead@laptop/);
+  assert.match(r.sent[0].body, /REMOTE: close with \[agent:task done t1@laptop\] <report>; it crosses the wire to the board/);
   r.task({ sub: 'reject', id: 't1', body: 'and the sprocket' });
   assert.strictEqual(r.sent.length, 2, 'ENTER: the follow-up arm sent a second rejection');
   assert.match(r.sent[1].body, /more must-fixes/);
@@ -172,5 +172,52 @@ test('(e) replay paths never re-send to a remote assignee', () => {
   const d = r.m._deliverTicketSpec(r.team, t1, t1.spec, 'clodex-team', true, true);
   assert.deepStrictEqual(d, { undelivered: true, remote: true });
   assert.strictEqual(r.m._advanceSeat(r.team, 'x@p', t1), null);
+  assert.deepStrictEqual(r.sent, []);
+});
+
+test('C1b (b) a seat on no team sends done t7@p as a task envelope to board@p', () => {
+  const r = rig();
+  const seat = { name: 'x', type: 'claude', agentType: 'claude', cwd: '/elsewhere', pty: { pid: 2 }, activityState: 'idle' };
+  r.m.sessions.set('x', seat);
+  r.m._handleTask(seat, { type: 'task', sub: 'done', id: 't7', board: 'p', who: null, body: 'r' });
+  assert.strictEqual(r.sent.length, 1);
+  assert.strictEqual(r.sent[0].to, 'board');
+  assert.strictEqual(r.sent[0].from, 'x');
+  assert.strictEqual(r.sent[0].body, 'r');
+  assert.deepStrictEqual(r.sent[0].task, { kind: 'done', id: 't7' });
+  assert.match(r.injected.join('\n'), /done t7@p sent to that board — its answer follows\./);
+});
+
+test('C1b (b) the board answer comes back as [agent:task] text, ok or not', () => {
+  const r = rig();
+  const seat = { name: 'x', type: 'claude', agentType: 'claude', cwd: '/elsewhere', pty: { pid: 2 }, activityState: 'idle' };
+  r.m.sessions.set('x', seat);
+  r.conn.dm = (msg, cb) => { r.sent.push(msg); cb({ ok: false, error: 'no ticket t7 assigned to x@laptop on this host', task: { id: 't7', reply: 'no ticket t7 assigned to x@laptop on this host' } }); };
+  r.m._handleTask(seat, { type: 'task', sub: 'done', id: 't7', board: 'p', who: null, body: 'r' });
+  const all = r.injected.join('\n');
+  assert.match(all, /\[agent:task\] no ticket t7 assigned to x@laptop on this host/);
+  assert.doesNotMatch(all, /NOT delivered/);
+});
+
+test('C1b (b) done t7@p to an offline peer is held with its task envelope', () => {
+  const r = rig({ online: false });
+  const seat = { name: 'x', type: 'claude', agentType: 'claude', cwd: '/elsewhere', pty: { pid: 2 }, activityState: 'idle' };
+  r.m.sessions.set('x', seat);
+  r.m._handleTask(seat, { type: 'task', sub: 'done', id: 't7', board: 'p', who: null, body: 'r' });
+  const held = r.m._peerHeld.get('p1');
+  assert.strictEqual(held.length, 1);
+  assert.deepStrictEqual(held[0].task, { kind: 'done', id: 't7' });
+  assert.strictEqual(r.sent.length, 0);
+  r.m._dropStalePeerHeld(Date.now() + 3600e3);
+});
+
+test('C1b (f) a task envelope never takes the relay branch', () => {
+  const r = rig();
+  r.m._relayViaForOrigin = (origin) => (origin === 'far' ? 'hub' : null);
+  const notices = [];
+  const out = r.m._sendToFederatedTarget('x', 'board@far', 'r', false, { onBounce: (m) => notices.push(m), task: { kind: 'done', id: 't7' } });
+  assert.match(out.error, /task done cannot cross a relay — the board's host must be a direct peer\./);
+  assert.deepStrictEqual(notices, [out.error]);
+  assert.strictEqual(out.queued, undefined);
   assert.deepStrictEqual(r.sent, []);
 });
