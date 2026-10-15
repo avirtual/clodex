@@ -743,7 +743,6 @@ async function wireRig(h) {
   h.m._maybeDeliverDigest = () => {};
   h.m._maybeRearmHold = () => {};
   h.m._maybeFireCompactLatch = () => {};
-  h.m._fireScratchClose = () => {};
   const wire = await h.m._ensureWire();
   h.m.sessions.set('lead', { name: 'lead', agentType: 'claude', workspaceId: 'ws1', intentSource: 'wire', sessionId: 'sid-1' });
   const settle = async () => { for (let i = 0; i < 4; i += 1) await new Promise((r) => setImmediate(r)); };

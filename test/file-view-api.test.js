@@ -198,7 +198,6 @@ test('writer: the wire spill listener notes an intent entry at spillPathFor(REGI
   h.m._maybeDeliverDigest = () => {};
   h.m._maybeRearmHold = () => {};
   h.m._maybeFireCompactLatch = () => {};
-  h.m._fireScratchClose = () => {};
   h.m._shadowLog = () => {};
   const broadcasts = [];
   h.m._broadcast = (ch, msg) => broadcasts.push(msg);
