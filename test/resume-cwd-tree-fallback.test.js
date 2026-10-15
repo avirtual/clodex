@@ -201,14 +201,6 @@ const RESUME_SITES = [
     bind: 'const cwd = this.resumeCwdOf(entry);',
     label: '_coldRespawn — the respawn a seat asks for itself ([agent:context reload], a clear with a pending prompt delta, and the resume a compact takes for one)',
   },
-  {
-    file: 'session-manager.js',
-    anchor: 'async _scratchRespawn(name, entry) {',
-    call: 'this.create',
-    cwdArg: 'cwd',
-    bind: 'const cwd = this.resumeCwdOf(entry);',
-    label: '[agent:scratch end] — the respawn that brings a seat back on its truncated transcript',
-  },
 ];
 
 test('every resume path resolves its cwd through resumeCwdOf', () => {

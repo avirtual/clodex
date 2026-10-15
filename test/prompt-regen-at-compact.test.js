@@ -24,7 +24,6 @@ test('compact lands with a pending delta on a claude seat: kill+create with --re
     assert.strictEqual(h.persisted.get(name).sessionId, sid);
     h.persisted.get(name).ephemeral = true;
     h.persisted.get(name).reviewFor = 't9';
-    s._scratchVoid = { tomb: 1 };
     enqueueNotice(root, name, 'queued before the compact');
     moveTruth(h);
     assert.strictEqual(h.m._promptDeltaPending(name), true, 'ENTER: the moved team block is a pending delta');
@@ -53,7 +52,6 @@ test('compact lands with a pending delta on a claude seat: kill+create with --re
     assert.deepStrictEqual(parseNotices(root, name).map((n) => n.text), ['queued before the compact'], 'a resume keeps the queue');
     const fresh2 = h.m.sessions.get(name);
     assert.notStrictEqual(fresh2, s);
-    assert.deepStrictEqual(fresh2._scratchVoid, { tomb: 1 });
     assert.strictEqual(h.persisted.get(name).ephemeral, true);
     assert.strictEqual(h.persisted.get(name).reviewFor, 't9');
     assert.ok(h.shadow.some((r) => r.type === 'prompt-regen-at-compact' && r.agent === name && r.bytes > 0),

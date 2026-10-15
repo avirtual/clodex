@@ -118,36 +118,17 @@ test('t1838 parseIntent: probe — a bare head is begin with its body, end carri
   assert.ok(registry.validIntentNames([]).includes('probe'));
 });
 
-test('parseIntent: scratch — five sub-verbs, only `end` and `rewind` carrying a body', () => {
-  assert.deepStrictEqual(parseIntent('[agent:scratch begin]'),
-    { type: 'scratch', sub: 'begin', label: null, replay: false, body: '' });
-  assert.deepStrictEqual(parseIntent('[agent:scratch cancel]'),
-    { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+test('parseIntent: scratch — the begin/end/cancel aliases, and the retired subs parse with the whole head as sub', () => {
+  assert.deepStrictEqual(parseIntent('[agent:scratch begin]'), { type: 'scratch', sub: 'begin', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:scratch cancel]'), { type: 'scratch', sub: 'cancel', body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch end] what I now know'),
-    { type: 'scratch', sub: 'end', label: null, replay: false, body: 'what I now know' });
+    { type: 'scratch', sub: 'end', body: 'what I now know' });
   assert.deepStrictEqual(parseIntent('[agent:scratch mark before-survey]'),
-    { type: 'scratch', sub: 'mark', label: 'before-survey', replay: false, body: '' });
+    { type: 'scratch', sub: 'mark before-survey', body: '' });
   assert.deepStrictEqual(parseIntent('[agent:scratch rewind before-survey] the note'),
-    { type: 'scratch', sub: 'rewind', label: 'before-survey', replay: false, body: 'the note' });
-  assert.deepStrictEqual(parseIntent('[agent:scratch rewind]'),
-    { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
-});
-
-test('parseIntent: `replay` is an end/rewind-only modifier — begin/cancel/mark do not take it', () => {
+    { type: 'scratch', sub: 'rewind before-survey', body: 'the note' });
   assert.deepStrictEqual(parseIntent('[agent:scratch end replay] the summary'),
-    { type: 'scratch', sub: 'end', label: null, replay: true, body: 'the summary' });
-  assert.deepStrictEqual(parseIntent('[agent:scratch rewind a replay] the note'),
-    { type: 'scratch', sub: 'rewind', label: 'a', replay: true, body: 'the note' });
-  assert.strictEqual(parseIntent('[agent:scratch mark replay]'), null,
-    '`replay` is the modifier, never a label — mark without a label is not an intent');
-  for (const line of ['[agent:scratch begin replay]', '[agent:scratch cancel replay]']) {
-    assert.strictEqual(parseIntent(line), null,
-      `${line} must not parse. replay only means anything at the cut — accepting it on begin would `
-      + 'dispatch a mark whose replay flag no later end ever reads, and the model would believe it '
-      + 'had opted into re-delivery it never gets');
-  }
-  assert.strictEqual(parseIntent('[agent:scratch end replayy] x'), null,
-    'the modifier is a closed word, not a prefix');
+    { type: 'scratch', sub: 'end replay', body: 'the summary' });
 });
 
 test('parseIntent: an UPPERCASE scratch sub-verb does not parse, unlike [agent:context CLEAR]', () => {
@@ -166,14 +147,13 @@ test('parseIntent: scratch is a CLOSED alternation — an unknown sub-verb is no
     assert.strictEqual(parseIntent(line), null,
       `${line} must not parse. Unlike context/memory, which capture \`(\\S+)\`, a mistyped scratch verb has to `
       + `reach the near-miss bounce rather than dispatch as sub:'resume' and be silently ignored by a switch `
-      + `with no arm for it — \`end\` is the verb that CUTS the transcript, so a typo that half-parses is not `
-      + `a safe failure`);
+      + `with no arm for it`);
   }
 });
 
 test('parseIntent: a scratch end body spans multiple lines (s flag), and the escape still quotes it', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch end] line one\nline two'),
-    { type: 'scratch', sub: 'end', label: null, replay: false, body: 'line one\nline two' });
+    { type: 'scratch', sub: 'end', body: 'line one\nline two' });
   assert.deepStrictEqual(parseIntent('\\[agent:scratch begin]'),
     { type: 'escape', text: '[agent:scratch begin]' });
 });
@@ -646,11 +626,11 @@ test('shadowIntentKey: every discriminator behind `sub` reaches the key', () => 
   }
 });
 
-test('shadowIntentKey: two scratch intents in one reply key by their label — different labels differ, the same label collapses', () => {
+test('shadowIntentKey: two retired scratch intents in one reply key by their head — different heads differ, the same head collapses', () => {
   const key = (l) => shadowIntentKey('me', parseIntent(l));
-  assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|cancel/probe2|');
-  assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|cancel/probe|');
-  assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|cancel/probe|');
+  assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|cancel probe2|');
+  assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|cancel probe|');
+  assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|cancel probe|');
 });
 
 test('shadowIntentKey: two browser intents in one reply key by their raw text — distinct commands differ, an exact repeat collapses', () => {

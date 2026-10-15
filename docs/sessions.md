@@ -412,175 +412,32 @@ at `SNAPSHOT_MAX_BYTES` with the board truncated last-rows-first; the author's
 bytes above the `---` and the injected pointer line are unchanged. The short,
 Codex and write-failure paths type the body as before — no snapshot.
 
-## 3a. Scratch episodes
+## 3a. Probes (scratch clones)
 
-The surface is named `probe`: `[agent:probe] <question + return shape>` forks
-a research clone (the clone path below), the clone closes with
-`[agent:probe end] <summary>`, and the parent drops it with
-`[agent:probe cancel]`. The `scratch` verbs are aliases; the in-place cut
-described here is retired and replies say so.
+`[agent:probe] <question + return shape>` … `[agent:end]` forks a research
+clone of a Claude seat on a warm copy of its context (`_scratchCloneBegin`,
+scratch-clone.js). The clone, named `<parent>-scratch-<hex>`, reads; the
+parent idles; the parent's transcript is never cut. The clone's only verb is
+`[agent:probe end] <summary>` … `[agent:end]`: the summary reaches the parent
+as a dm from sender `scratch` and the clone is retired (`_scratchCloneRetire`
+drops its record and seat). Any other intent from the clone is refused, it
+receives no messages, and a dm addressed to it bounces.
 
-A Claude seat that is about to read a lot, and will carry only the conclusion,
-opens an episode with `[agent:scratch begin]`. What Clodex removes afterwards is
-the seat's own transcript — a **rewind of the conversation, never of the work**:
-files written, commits, dms and tickets dispatched inside the episode all stand
-(which is why the `end` summary is required to name them; see `validateScratchCut`'s
-dispatch check).
+The parent drops a live clone with `[agent:probe cancel]`. One clone per
+parent; a second `begin` while one runs is refused. A clone that exits, or
+outlives `SCRATCH_CLONE_CEILING_MS` (45 min), is retired and the parent is
+told it ended without a summary.
 
-**The mark.** `begin` records `session._scratch` in memory — a nonce, the
-transcript's realpath and sessionId, `sizeAtBegin`, the 512 bytes immediately
-before it, and the uuid of the last record before it. `sizeAtBegin` is the first
-byte of the assistant record that carried `begin` (`beginCutAt`, all of the
-reply's records when the CLI split it), so the begin reply, its `turn_duration`
-and the ack are the first records dropped and the kept file ends on the user
-record that reply answered. In memory on purpose: a
-Clodex restart voids the mark, because a mark that outlives the process has no
-ledger of what arrived during its episode. `begin` is **refused, not marked**, if
-the reply that carried it went on to call tools — the ack has to land on a turn
-boundary, and `boundaryAt` (`scratch-mark.js`) is the authority on whether the
-tail of the file is one. Claude Code writes a boundary as an `end_turn` assistant
-record followed by `system`/`turn_duration`; see `docs/notes/scratch-mark.md` for
-the vendor shapes.
+The `scratch` verbs are aliases routed to the probe arms by
+`_handleScratchIntent`: `scratch begin <body>`, `scratch end <summary>` from a
+clone, and a bare `scratch cancel`. Every other form — bare `scratch begin`,
+`mark`, `rewind`, `end replay`, `cancel <label>` — is the retired in-place
+transcript cut and bounces with one line pointing at `[agent:probe]`.
 
-**The ack** is an ordinary `_injectText` whose first line is `ACK_PREFIX` plus the
-nonce. That line is not decoration: `validateScratchCut` proves the episode
-opened by finding it past `sizeAtBegin`, inside the dropped range, and refuses
-`ack-missing` without it.
-
-**The cut.** `end` runs `validateScratchCut(mark, fileBuffer)` — pure, returns
-`{ ok, cutOffset, reason, stats, arrivals }`, and **every check refuses rather
-than writes**. It waits for a turn boundary first: an `end` the model wrote before
-continuing is held until the reply finishes, since everything after it is episode
-bytes anyway. The whole file is copied to a `.bak` under the scratch root (outside
-`run/<name>/`, which the respawn deletes, and outside `~/.claude/projects/`, whose
-`*.jsonl` glob feeds the CLI's own picker), `[0, cutOffset)` is written to a temp
-file, fsynced and renamed over the original. The `.bak` is kept — each later cut
-prunes siblings older than `SCRATCH_BAK_TTL_MS` (7 days, `_scratchPruneBaks`) — and
-any failure before the respawn lands copies it back over the transcript
-(`_scratchRestore`).
-
-**The respawn** takes **Move's shape, not `kill()` and not reload**: `_moving`,
-pty kill, wait for exit, then `create()` on the same `sessionId`. `kill()` would
-drop the persistence record and tell peers the seat retired; Move's exit is
-expected and the renderer keeps the tab. The seat's name, registry entry and
-`agent.sock` are unchanged, so peers' dms route to the new process untouched. The
-summary is injected afterwards as a user turn, framed by `scratchBriefing` as a
-briefing delivered **by Clodex** rather than as the seat's own memory — what it
-does not state, the seat has not verified. Unlike the reload handoff it carries
-no `State at resume` snapshot: the seat's context up to the mark is intact.
-
-**When it refuses.** The transcript, not live tracking, is the authority on what
-the seat's context holds:
-
-| condition | disposition |
-|---|---|
-| `/clear`, `context clear` or `reload` after `begin` | `cleared` — realpath or sessionId moved; the mark is gone and nothing can be cut |
-| `/compact` after `begin` | `compacted` — the summary was written from compacted memory, and un-compacting a context that just hit the threshold re-fires the compact |
-| a message arrived inside the episode | `arrivals` — refused by default: the operator did not consent to losing a message they typed. Re-emit as `[agent:scratch end replay]` to cut AND have them re-delivered after the summary, or cancel |
-| a `tool_use` in the kept set has no `tool_result` | `orphaned-tool-use` — the CLI would silently re-parent it and fabricate a reply (`docs/notes/scratch-mark.md`) |
-| the last kept record is not a turn boundary, or is not the marked leaf | `leaf-mismatch` / the `boundaryAt` reason |
-| the ack never landed (the seat was blocked when `begin` fired) | `ack-missing` — nothing was cut |
-| two acks for the mark are found after it | `ack-duplicate` — the mark is no longer unique |
-| the file shrank, or the 512 bytes before `sizeAtBegin` no longer match | `rewritten` — the prefix moved under us; unknown CLI behaviour, so refuse rather than cut to a guessed offset |
-| a dispatch made inside the episode is unnamed in the summary | `dispatch-unmentioned` — after the cut the seat will not remember doing it |
-| bodyless `end` | refused: an empty summary is a rewind that loses the work. Not treated as a cancel — that conflates "I changed my mind" with "I forgot the body" |
-| a Codex seat | refused outright: a rollout is a different record shape and no rewind has been proven for it |
-
-Every bounce names the mark and ends on either "Nothing was cut" or "your summary
-is in your own turn above" — the two facts the seat needs to recover.
-
-A second `end` while one is parked for the turn boundary answers `end already
-pending for mark X` rather than returning silently, and the FIRST body is the
-one that will be cut with. An `end` while a Move or Rename holds the seat's name
-bounces too: the cut's kill→create span is registered in `_movingNames`, so the
-two cannot interleave and restore a pre-cut file over a resumed transcript.
-
-**Replay.** `[agent:scratch end replay] <summary>` is the escape from the
-`arrivals` refusal. The cut proceeds; the summary is injected first, and only if
-it lands does each arrival follow, in the order it arrived, verbatim from the
-transcript under a header naming the mark and the arrival time and telling the
-seat not to re-answer unless its own summary says to. A summary that never
-reaches the seat replays nothing — a bare arrival with no episode behind it is
-the double-action hazard the explicit modifier exists to prevent, and the `.bak`
-is what recovers the messages in that case; its row says `summary-not-injected`
-with `replayed` null. An arrival is injected inline whatever its length: the
-handoff spill that shapes the summary never touches a replayed message.
-
-**Measurement.** Every episode appends one row — cut, refused, cancelled or failed alike —
-to `~/.clodex/teams/<team>/scratch-cost.jsonl`, or to
-`~/.clodex/scratch/<name>/episodes.jsonl` for a seat on no team. The row carries
-the mark nonce (what ties it to a wirescope observation of the post-resume
-request), the bytes and records dropped, the turn count, the token totals read
-from the transcript's own `message.usage` at `begin` and at the cut, the summary
-size, how many arrivals were replayed, and the kill→boot span. Anything that
-could not be measured is `null`, never `0`: an episode whose bytes were never
-counted must not read as one that dropped nothing. The refused rows are the
-point — they say how often a seat opens an episode it cannot close. One
-`ipc-message` row per episode mirrors it into the activity tab.
-
-**Named marks.** `[agent:scratch mark <label>]` sets a rewind point that is not
-an episode: it lives in `session._scratchMarks` (label → mark, the same object
-shape as `_scratch` plus `label`, `notes` and `operator`), several may be open at
-once, and `begin`/`end`/`cancel` keep reading only `_scratch`. Each mark gets its
-own nonce and its own `ACK_PREFIX` ack, so `validateScratchCut` proves it opened
-the same way it proves an episode did — nothing inside the validator changed.
-`[agent:scratch rewind [<label>]] <note>` cuts back to that mark (bare: the mark
-with the highest `sizeAtBegin`, the anonymous episode included); `[agent:scratch
-cancel <label>]` drops one. Setting a label that is already set MOVES it; two
-labels on one exact offset are refused, `begin` on that offset is not.
-
-*Survival.* At a cut to mark L at offset X, another named mark M survives iff
-`M.sizeAtBegin < X` AND its own `ACK_PREFIX + M.nonce` user record sits below X
-in the quiet file (`_scratchCarryMarks`); everything younger is dropped and
-logged — a parked or late ack that landed above the cut would leave a mark that
-can never validate. The anonymous `_scratch` is carried by the same rule.
-Compact, clear, reload and reboot void EVERY mark eagerly through
-`_voidScratchMark`, and the tombstone bounces under whichever verb hits it next.
-
-*Re-arm.* After a rewind to L, L is set again AT the cut with a fresh nonce
-(`_scratchReArm`), so a seat can return to the same point repeatedly. Its ack is
-a separate `_injectText` AFTER `_injectAfterBoot` has landed the briefing — the
-briefing spills over `SPILL_MIN_BYTES` into a `Continue from your handoff: @`
-pointer, and an ack folded into it would not start with `ACK_PREFIX`. The re-arm
-ack is `scratchReArmLine`, verbatim:
-
-> [agent:scratch] episode open · mark <nonce> · label <L> re-armed here — rewind to it again with `[agent:scratch rewind <L>] <note>`.
-
-A second rewind to the re-armed mark passes the `arrivals` check only because
-Clodex's own cut records — the briefing (`SCRATCH_BRIEFING_PREFIXES`) or the
-handoff pointer it spills into — are excluded by `_scratchValidate`, per call,
-before the refusal; a real dm above the mark still refuses. If the CLI ever
-writes a record of its own before the briefing on resume, that path needs
-`replay`.
-
-*Notes.* Every rewind to L banks its note on L (`notes: [{at, body}]`), so the
-next briefing from the same label prints the earlier notes, each under its own
-clock, before this one. An EMPTY note is allowed on `rewind` — it records a
-negative result — while `end` still refuses one. The noteless briefing replaces
-the "only the note(s) below survive" clause with `SCRATCH_NOTELESS_SENTENCE`,
-verbatim:
-
-> You left no note: you recorded that stretch as a negative result — nothing in it was worth keeping. Do not repeat it; take a different approach or report the dead end.
-
-and any earlier notes then print under `Notes left at this mark earlier:`. The
-same sentence closes the anonymous `Scratch episode result` header when a bare
-`rewind` resolves to the anonymous episode with an empty note.
-
-*Operator route.* `manager.scratchMark(name, label)` sets a mark from outside
-the seat (the entry point for the sidebar's `Scratch mark…` item, wired by
-T-F′): the mark sits at the END of the
-transcript (`atEnd`, offset `t.size`, leaf = the boundary record), `beganAt` is
-the click, and the agent sees the same labelled ack with `, set by your operator
-at HH:MM` added, since a silent mark can never validate. It refuses — as an
-`ipc-message` row `scratch mark <label> refused: <why>`, nothing injected —
-while the seat is mid-turn or `thinking`, when the tail is `behind`,
-`no-transcript` or `unreadable`, and when another label already marks
-`t.size`: that collision is checked before anything reaches the agent.
-
-*Measurement.* The cost row gains `label` (null for an anonymous episode), and
-the activity-tab mirror prints ` · <label>` after the nonce. `summaryBytes: 0`
-on a `cut` row means a noteless rewind — unambiguous, because `end` refuses an
-empty body, and a measured zero rather than an unmeasured one.
+In the sidebar a clone's row carries the clone chip and is muted; its context
+menu is the single item Cancel clone, which calls `session:scratch-cancel`.
+A probe costs one clone spawn on the forked, cache-warm transcript; it writes
+no ledger row of its own.
 
 ## 4. Exit, kill, restore
 

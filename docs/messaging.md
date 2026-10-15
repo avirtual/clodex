@@ -97,77 +97,18 @@ is minted lazily, so the edge can arrive well after the keystroke.
   body) reaches the parent as one message from `scratch` and retires the clone;
   bare `[agent:probe cancel]` drops a live clone. Any other head word bounces
   naming the three.
-- `scratch` is an alias of `probe` (`begin <body>`, the clone's `end`, bare `cancel`); its in-place verbs below still run, every reply suffixed "the in-place cut is retired; use [agent:probe]".
-- `scratch <begin|end|cancel|mark|rewind>` (Claude seats only) — a closed
-  alternation, so a typo'd sub-verb is not an intent at all: `end` and `rewind`
-  CUT the transcript, and a half-parsed one is not a safe failure. `begin` is
-  bare; `mark <label>` is bare and REQUIRES a label; `cancel [<label>]` and
-  `rewind [<label>]` take an optional one; `end` and `rewind` take a greedy body
-  and an optional `replay` modifier (`[agent:scratch end replay]`,
-  `[agent:scratch rewind <label> replay]`). A label is `[A-Za-z0-9._-]`, 1–32
-  chars (`SCRATCH_LABEL_RE`, intent-catalog.js), and never `replay`: on
-  `rewind` the word is a modifier, so `[agent:scratch rewind replay]` is a bare
-  rewind WITH replay, not a rewind to a mark called replay.
-  The cut itself, named marks and the survival rule are sessions.md §3a; what
-  belongs here is that all five are ordinary gateable intents whose bounces ride
-  `_injectText`, parkable, each naming the mark AND the verb that was used
-  (`end refused:` for `end`, `rewind refused:` for `rewind`, `mark refused:`
-  for `mark`) — the same condition bounces under whichever verb hit it:
-  - `begin` off a turn boundary: *it must be the last line of a reply (your reply
-    went on to call tools). Emit it alone and stop; the episode opens when Clodex
-    acks it. Not marked.*
-  - a second `begin`: the mark is **replaced**, not stacked, and the ack says so —
-    what was read under the earlier mark becomes ordinary history and is not cut.
-    The re-open ack still opens with the same `ACK_PREFIX` line the validator
-    searches for; a differently-worded first line would make every re-opened
-    episode refuse `ack-missing`.
-  - bodyless `end`: *the summary body is empty — an empty summary is a rewind that
-    loses the work. Re-emit `[agent:scratch end]` with the briefing (what you now
-    know, what you did), closed by `[agent:end]`. Nothing was cut; the mark is
-    still open.*
-  - `end` with no mark: *no episode is open — nothing was cut.*
-  - `end` after a clear/reload: *the conversation was cleared/reloaded after the
-    mark — the mark is gone and nothing can be cut. Your summary is in your own
-    turn above; carry on from it.*
-  - `end` with arrivals: *N messages arrived during the episode and would be cut
-    with it* — each named with its sender and time. The escape is the modifier,
-    not a flag on the refusal: re-emitting as `[agent:scratch end replay]` cuts
-    AND re-delivers each arrival in order after the summary, each under
-    `Replayed from scratch episode <mark> (arrived HH:MM; you saw it inside the
-    episode and your summary says what you did about it — do not re-answer unless
-    it says otherwise):` followed by the content verbatim from the transcript.
-    `[agent:scratch cancel]` drops the most recent mark and cuts nothing. The replay follows the summary and
-    only if the summary landed; an arrival with no episode behind it is the
-    double-action hazard the explicit modifier exists to prevent.
-  - a second `end` while one is parked for the turn boundary: *end already
-    pending for mark X — waiting for your reply to finish* — and the FIRST body
-    is the one that will be cut with, not the second.
-  - `rewind <label>` with no such mark: *rewind refused: no mark named "<label>"
-    is set — marks set: a, b (most recent first). Nothing was cut.* — the list is
-    the open labels, youngest first, so a case slip self-corrects.
-  - `rewind` (bare or labelled) with no mark at all: *rewind refused: no mark is
-    set — set one with [agent:scratch mark <label>] as the last line of a reply.
-    Nothing was cut.* `cancel <label>` bounces the same two lines under `cancel
-    refused:`.
-  - `mark <label>` at a point another label already marks: *mark refused:
-    "<other>" already marks this exact point — one label per point. Not marked.*
-    (`begin` at that point is allowed — the anonymous episode is a different
-    store.) `mark` with a label already in use MOVES it, and the ack says so on
-    its second line: *Label <label> re-set: the earlier point is dropped; what
-    you read since it is ordinary history and will NOT be cut.*
-  - `rewind` with an EMPTY body is NOT a bounce: it cuts and the briefing
-    records a negative result (sessions.md §3a, "Named marks"); only `end`
-    refuses an empty body.
-  - `end` during a Move or Rename of the seat: refused while the name is held,
-    the mark left open.
-  - a Codex seat: *Claude seats only — a Codex transcript has a different shape
-    and no rewind has been proven for it.*
-  - **Clone path.** `begin` WITH a body (`[agent:scratch begin] <brief>`, closed
-    by `[agent:end]`; greedy only when the head line carries text) does not cut:
+- `scratch` is an alias of `probe`: `scratch begin <body>`, the clone's
+  `scratch end <summary>` and a bare `scratch cancel` route to the probe arms
+  (`_handleScratchIntent`). The in-place transcript cut is deleted; its forms
+  (bare `begin`, `mark`, `rewind`, `end replay`, `cancel <label>`) still parse,
+  only to bounce with one line:
+  `scratch <sub> is retired — use [agent:probe] <question + return shape> … [agent:end]`.
+  - **Clone path.** `begin` WITH a body (`[agent:probe] <brief>` or
+    `[agent:scratch begin] <brief>`, closed by `[agent:end]`):
     `_scratchCloneBegin` (`scratch-clone.js`) forks a clone seat named
     `<parent>-scratch-<4 hex>` with `--resume <parent sid> --fork-session
-    --session-id <new uuid>` and the create() arguments the parent's own respawn
-    builds from its record (`_scratchRespawn`), with agents and skills as the parent's effective (`sessions:`-scoped) sets. create() bakes the prompt as the parent's (role line, lead grammar, spill-example count from the parent's name and record), and the wire resolves the clone's spill stubs under `spill/<parent>/` seeded with the parent's live shown set re-keyed to the clone sid, so `system` and the expanded history match the parent's bytes and the clone reads its cache. The parent's strip level (the
+    --session-id <new uuid>` and the create() arguments built from the parent's
+    record, with agents and skills as the parent's effective (`sessions:`-scoped) sets. create() bakes the prompt as the parent's (role line, lead grammar, spill-example count from the parent's name and record), and the wire resolves the clone's spill stubs under `spill/<parent>/` seeded with the parent's live shown set re-keyed to the clone sid, so `system` and the expanded history match the parent's bytes and the clone reads its cache. The parent's strip level (the
     poller's last assertion for the parent sid, else the proxy's configured level, else the record's `stripLevel` clamped to `max_level`; an explicit 0 is mirrored) is
     POSTed for the new sid BEFORE create(): without it the clone's first request
     goes out unstripped and pays a full cache write. The brief is the clone's
@@ -193,7 +134,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;
-  review-done, scratch end/rewind and context clear/compact/reload are refused outright (an open head with nothing after it still applies).
+  review-done, scratch end, probe end and context clear/compact/reload are refused outright (an open head with nothing after it still applies).
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss
@@ -367,9 +308,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
-  explicit resend. A unit whose text is already claimed when the seat dies or
-  is marked `_recycling` (`_quiesceInjects`, before a scratch cut kills the
-  pty) is re-parked through the queue's `onUndelivered` with the seat's `born`,
+  explicit resend. A unit whose text is already claimed when the seat dies
+  is re-parked through the queue's `onUndelivered` with the seat's `born`,
   so these drains deliver it to the respawned process. On that seat the
   boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`) and the
   briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)

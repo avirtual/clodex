@@ -7,7 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const {
   KINDS, LEGACY_SUFFIXES, runDirFor, pathFor, legacyPathsFor, legacySuffixes,
-  projectDirFor, spillDirFor, scratchDirFor,
+  projectDirFor, spillDirFor,
   SEAT_KINDS, seatDirFor, seatPathFor, legacySeatPathFor,
 } = require('../clodex-paths');
 
@@ -109,14 +109,6 @@ test('spillDirFor: a SHARED root dir, deliberately not under run/', () => {
   assert.strictEqual(d, path.join(ROOT, 'spill', 'lead'));
   assert.ok(!d.startsWith(runDirFor(ROOT, 'lead')), d);
   assert.strictEqual(path.dirname(path.dirname(d)), ROOT);
-});
-
-test('scratchDirFor: the pre-cut transcript backup lives outside run/, which the respawn deletes', () => {
-  const d = scratchDirFor(ROOT, 'lead');
-  assert.strictEqual(d, path.join(ROOT, 'scratch', 'lead'));
-  assert.ok(!d.startsWith(runDirFor(ROOT, 'lead')), d);
-  assert.ok(!('scratch' in KINDS));
-  assert.throws(() => pathFor(ROOT, 'a', 'scratch'), /unknown kind 'scratch'/);
 });
 
 test('spillDirFor is not a KIND, and a spill/ name cannot be reached through pathFor', () => {

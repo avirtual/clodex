@@ -62,14 +62,10 @@ function parseContext(cleaned) {
 }
 
 function parseScratch(cleaned) {
-  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)(?:\s+(?!replay\])([A-Za-z0-9._-]{1,32}))?(\s+replay)?\]\s*(.*)$/s);
+  const m = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)((?:\s+[^\]\s]+)*)\s*\]\s*(.*)$/s);
   if (!m) return null;
-  const sub = m[1].toLowerCase();
-  const label = m[2] || null;
-  if (sub === 'mark' && !label) return null;
-  if ((sub === 'begin' || sub === 'end') && label) return null;
-  if (m[3] && sub !== 'end' && sub !== 'rewind') return null;
-  return { type: 'scratch', sub, label, replay: !!m[3], body: m[4] };
+  const sub = `${m[1]}${m[2]}`.trim().toLowerCase().replace(/\s+/g, ' ');
+  return { type: 'scratch', sub, body: m[3] };
 }
 
 function parseProbe(cleaned) {
@@ -345,7 +341,7 @@ const CORE_ROWS = [
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
-  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || i.sub === 'rewind' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
+  { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
   { type: 'probe', parse: parseProbe, bodyMode: (i) => (i.sub === 'begin' || i.sub === 'end' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },

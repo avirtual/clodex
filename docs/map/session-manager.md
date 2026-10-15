@@ -5,7 +5,6 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed by code point, then each head's cmd clipped, to stay inside a 400-char cap | none (pure) | execElapsedLabel | unpinned |
-| `isScratchCutText` | true when a text starts with a scratch briefing prefix or the handoff-continue line, i.e. a manager-injected scratch cut | none | scratchRealArrivals | unpinned |
 | `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv; readOnly accepts the long, short and `--flag=value` spellings of the cap | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.hasReadOnlyCap, cli-adapters.resolveModelId | session-manager.test.js |
 | `escapeSafeTail` | last `max` code units of a buffer, advanced past an escape sequence or a low surrogate the cut would split | none (pure) | none | session-manager.test.js |
 | `bootNudgeProbeOf` | the first non-blank line of injected bytes, paste markers and Ctrl-U stripped, as up to 32 ink-visible chars to look for in the echo | none (pure) | inkVisibleText | unpinned |
@@ -25,7 +24,6 @@
 
 ### Hazards
 
-- `isScratchCutText` reads SCRATCH_CUT_TEXT_PREFIXES, which is defined further down the file, so calling it at module load would throw a TDZ ReferenceError.
 - `preseedClaudeOnboarding` writes through a tmp file and a rename, which replaces a symlinked `~/.claude.json` with a regular file instead of writing through the link.
 
 ## Process reaping, exit disposition and peer keys — sigkillPid … seatRelFiles
@@ -328,17 +326,17 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_cleanup` | tears down every per-seat timer, watcher, wire registration, hook file and map entry once the process exits, so nothing fires into a same-named successor | `this.sessions`, ~20 `s._*Timer` fields, `s._compactPending`, `s._postClearContinuation`, `this._intentDeduper`, `this._activity`, `this._reportCache` | `_onCompactEnd`, `_armCtx`, `_scratchDropPendingBegin`, registry.unregister | session-manager.test.js dm-delivery-latch.test.js ipc-prompt-cache-rework.test.js wire-spill-shown-store.test.js |
+| `_cleanup` | tears down every per-seat timer, watcher, wire registration, hook file and map entry once the process exits, so nothing fires into a same-named successor | `this.sessions`, ~20 `s._*Timer` fields, `s._compactPending`, `s._postClearContinuation`, `this._intentDeduper`, `this._activity`, `this._reportCache` | `_onCompactEnd`, `_armCtx`, registry.unregister | session-manager.test.js dm-delivery-latch.test.js ipc-prompt-cache-rework.test.js wire-spill-shown-store.test.js |
 | `_scanPtyOutput` | line-at-a-time intent scan over raw PTY output (the non-transcript path), handing each parsed intent except escape and end to the router | `session.lineBuffer` (tail capped at 64KB) | parseIntent, `_handleIntent` | session-manager.test.js |
 | `_emitActivity` | the single activity-edge sink: stamps state, clears turn latches on a non-idle edge, flushes held injects and drains mail on idle, notifies renderer, remote and OS | `s.activityState`, `s.activityTs`, `s._turnStartedAt`, `s.lastMainStop`, `s._specUnconfirmed`, `s._bootNudgeTimer`, `s._reviewStartTimer` | `_clearDmConfirm`, `_setAttention`, `_maybeFlushInjectQueue`, `_drainPendingAtIdle` | session-manager.test.js dm-delivery-latch.test.js jsonl-activity-turnend.test.js ticket-replay.test.js |
 | `_onAttention` | classifies a hook notification (idle dropped), sets attention, broadcasts it and OS-notifies when the owning window is unfocused | `session.needsAttention` | `_setAttention`, `_broadcast`, notifyOS | compact-indicator.test.js |
 | `_onCompactStart` | on every PreCompact re-arms the compacting valve; on the first sets the compacting state and announces compact started | `session.compacting`, `session._compactingValveTimer` | `_onCompactEnd`, `_sendToSession` | compact-indicator.test.js |
 | `_onCompactEnd` | idempotently clears compacting; outside exit appends a capped notice, bumps the rev and announces compact finished on done | `session.compacting`, `session._compactNotices`, `session._compactNoticeRev` | `_sendToSession`, `_broadcast` | compact-indicator.test.js |
-| `_fireCompactContinuation` | compact-landed handler: ends compacting, voids scratch marks, resets memory and hint ledgers, then cold-respawns or re-stages and injects the continuation | `session._compactContinuation`, `session._compactGuard`, `session._compactValveTimer` | `_compactRegen`, `refreshPrompt`, `_handoffText`, `_releaseCompactGuard` | session-manager.test.js handoff-spill.test.js prompt-regen-at-compact.test.js compact-indicator.test.js |
+| `_fireCompactContinuation` | compact-landed handler: ends compacting, resets memory and hint ledgers, then cold-respawns or re-stages and injects the continuation | `session._compactContinuation`, `session._compactGuard`, `session._compactValveTimer` | `_compactRegen`, `refreshPrompt`, `_handoffText`, `_releaseCompactGuard` | session-manager.test.js handoff-spill.test.js prompt-regen-at-compact.test.js compact-indicator.test.js |
 | `_injectHoldReason` | the predicate every inject checks: compact-window, dialog (permission attention), busy (thinking), or null | `session._compactGuard`, `session.needsAttention`, `session.activityState` | none | session-manager.test.js renderer-source-pins.test.js |
 | `_armCompactGuard` | holds all non-bypass injects across a Clodex-driven compact, with a fresh inject-hold valve | `session._compactGuard`, `session._injectHoldTimer` | `_armInjectValve` | session-manager.test.js |
 | `_armCompactValve` | COMPACT_INFLIGHT_TIMEOUT release valve that clears stuck compact state without retry, announces it, and flushes | `session._compactValveTimer`, `session._compactPending`, `session._compactGuard`, `session._compactContinuation` | `_clearCompactValve`, `_maybeFlushInjectQueue` | session-manager.test.js |
-| `_firePostClearContinuation` | on the sessionId-change edge consumes the post-clear continuation, cancels its valve and injects the handoff text after a delay | `session._postClearContinuation`, `session._postClearValveTimer` | `_clearPostClearValve`, `_handoffText`, `_injectText` | session-manager.test.js clear-continuation.test.js handoff-spill.test.js hint-arm.test.js |
+| `_firePostClearContinuation` | on the sessionId-change edge consumes the post-clear continuation, cancels its valve and injects the handoff text after a delay | `session._postClearContinuation`, `session._postClearValveTimer` | `_clearPostClearValve`, `_handoffText`, `_injectText` | clear-continuation.test.js handoff-spill.test.js hint-arm.test.js |
 
 ### Invariants
 
@@ -392,7 +390,7 @@
 |---|---|---|---|---|
 | `_expandReceipts` | rewrites unfenced spill stubs and receipt lines into full intent blocks from the seat's spill files, recording spillAt and collecting unresolved receipts | spill files under REGISTRY_DIR (read only) | `_pointerStubOf`, resolveSpill, resolveReceipt, fencedLines | unpinned |
 | `_extractIntents` | fence-aware turn-text intent list: optional receipt expansion, then scanIntentLines, near-misses collapsed into one unknown intent with a more count | none | `_expandReceipts`, scanIntentLines | session-manager.test.js intent-scanner.test.js spill-resolve-intent.test.js plugin-text-feed.test.js |
-| `_scanJsonlText` | JSONL-watcher junction for one flushed chunk: speak, publish, extract and dispatch intents, close scratch at turn end, nudge a prose-only reviewer verdict | `s._flushTurnEnd`, `s._verdictNudged`, `this._shadow` | `_maybeSpeak`, `_publishAgentText`, `_extractIntents`, `_handleIntent` | session-manager.test.js plugin-text-feed.test.js reviewer-prose-verdict-nudge.test.js |
+| `_scanJsonlText` | JSONL-watcher junction for one flushed chunk: speak, publish, extract and dispatch intents, nudge a prose-only reviewer verdict | `s._flushTurnEnd`, `s._verdictNudged`, `this._shadow` | `_maybeSpeak`, `_publishAgentText`, `_extractIntents`, `_handleIntent` | session-manager.test.js plugin-text-feed.test.js reviewer-prose-verdict-nudge.test.js |
 | `_publishAgentText` | the single consume-only door for main-line turn text to the phone progress nudge and the plugin fireAgentText feed, never throws | none | getRemoteServer().notifyProgress, getPluginHooks().fireAgentText | plugin-text-feed.test.js file-view-api.test.js spill-resolve-intent.test.js session-manager.test.js |
 | `_maybeSpeak` | reads a seat's final reply aloud only at turn end, only with speakReplies on, only for the seat holding control, never over a live microphone | uiSettings speakReplies, `this._micTarget`, `this._focusedSession`, `this._lastVoiceRecordingTs` | speakable, speaker.speak | spoken-replies.test.js external-tap-trigger.test.js file-view-api.test.js spill-resolve-intent.test.js |
 
@@ -415,7 +413,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleIntent` | central router for a parsed intent: bounces unknowns, drops typed spill pointers, resolves spills, gates per seat, then dispatches dm, resend, who, name, context, scratch, memory, spawn, file, term, exec, remind, shout, team-review, review-done, task, team, team-create, reboot or a plugin verb; refuses urgent, @peer and over-rate dms from a verified subagent; routes a dm to a live subagent into its note queue, folds a dead one to the seat; records a spawn or team-create on the open scratch marks before its first await, every other watched verb after dispatch | `intent.body`, `intent.spill`, parked files under PENDING_DIR (resend claims and re-parks) | `_gatedDeliver`, `_armDmConfirm`, `_spillTyped`, `_dispatchPluginIntent` | session-manager.test.js dm-delivery-latch.test.js spill-resolve-intent.test.js plugin-surface-contract.test.js |
+| `_handleIntent` | central router for a parsed intent: bounces unknowns, drops typed spill pointers, resolves spills, gates per seat, then dispatches dm, resend, who, name, context, scratch, memory, spawn, file, term, exec, remind, shout, team-review, review-done, task, team, team-create, reboot or a plugin verb; refuses urgent, @peer and over-rate dms from a verified subagent; routes a dm to a live subagent into its note queue, folds a dead one to the seat | `intent.body`, `intent.spill`, parked files under PENDING_DIR (resend claims and re-parks) | `_gatedDeliver`, `_armDmConfirm`, `_spillTyped`, `_dispatchPluginIntent` | session-manager.test.js dm-delivery-latch.test.js spill-resolve-intent.test.js plugin-surface-contract.test.js |
 | `_handleIntentBody` | the router body `_handleIntent` runs, inside the reply scope when a socket caller passed `replyTo` | as `_handleIntent` | as `_handleIntent` | unpinned |
 | `_queueSubagentNote` | writes one 0600 note file under `subq/<id>/` by dot-tmp rename, shared by the `sub` arm and the dm-to-subagent route | `subq/<id>/` | defangTeammateTag | sub-dispatch.test.js |
 | `_startIntentSocket` | binds the seat's `intent.sock` with its credential and the request handler that dispatches through `_handleIntent` | `session.intentSocket`, `session.intentCred` (non-enumerable) | createIntentSocketServer, createIntentRequestHandler | intent-socket.test.js |
@@ -424,7 +422,7 @@
 | `_spillTyped` | drops an intent whose body the agent typed as a spill pointer or runtime note, bouncing the correction at most once per reqId | `session.spillMimicReq`, shadow log | `_shadowLog`, `_broadcast`, `_injectText` | unpinned |
 | `_spillUnresolved` | drops a spill-verb intent whose pointer names no spill file Clodex wrote, raising an operator note and asking the seat to re-emit | none | `_raiseNote`, `_injectText` | unpinned |
 | `_raiseNote` | operator attention: an OS notification with a 200-char preview plus a notify ipc-message to the user | none | notifyOS, `_broadcast` | spill-resolve-intent.test.js |
-| `_handleRebootIntent` | reboot verb: refuses when the host cannot relaunch or inside REBOOT_MIN_INTERVAL, else persists the notice and hands the host a relaunch with an abandon callback | uiSettings lastRebootAt and pendingRebootNotice, scratch marks | `_bornFor`, `_rebootAbandoned`, `_voidScratchMark`, relaunchApp | headless-reboot.test.js reboot-abandon-stale-seat.test.js |
+| `_handleRebootIntent` | reboot verb: refuses when the host cannot relaunch or inside REBOOT_MIN_INTERVAL, else persists the notice and hands the host a relaunch with an abandon callback | uiSettings lastRebootAt and pendingRebootNotice | `_bornFor`, `_rebootAbandoned`, relaunchApp | headless-reboot.test.js reboot-abandon-stale-seat.test.js |
 | `_rebootAbandoned` | undoes a cancelled or timed-out deferred reboot: clears this request's notice only, tells the operator, and tells the requester only if the same generation is live | uiSettings pendingRebootNotice | `_broadcast`, `_injectText` | reboot-abandon-stale-seat.test.js session-manager.test.js |
 | `maybeDeliverRebootNotice` | on restore delivers the persisted restarted notice: park plus flush and retry for live claude, direct for live codex, offline park otherwise; drops stale or exhausted notices | uiSettings pendingRebootNotice, parked files under PENDING_DIR, `target._rebootNoticeRetryTimer` | `_buildDeliveryText`, `_armParkCap`, `_armRebootNoticeFlush`, `_armRebootNoticeRetry` | session-manager.test.js |
 | `_armRebootNoticeFlush` | the notice's own REBOOT_NOTICE_FLUSH_MS deadline that forces the park out unless the seat took a turn, re-arming while a draft is fresh | `target._rebootNoticeFlushTimer`, `target._rebootNoticeFlushFire`, `target._rebootNoticeDraftStaleMs` | `_turnSinceRebootPark`, `_flushParkedNow` | unpinned |
@@ -463,8 +461,8 @@
 | `_handleMemoryIntent` | runs `[agent:memory list, remember, recall, pin, unpin, forget]` against the seat's own store and refreshes the boot digest | memory store, `session.digestNonEmpty`, digest file, persistence markDigested, memLoad recall log, run acks file | `_memoryAck`, `removeMemoryUnit`, commonMemoryRecall, `_deliverMessage` | memory-load.test.js session-manager.test.js body-preview.test.js spill-resolve-intent.test.js |
 | `_deniedIntentPayload` | builds the disabled-intent reply suffix, spilling the denied body up to DENIED_SPILL_CAP times per seat and verb | `session._deniedSpills`, spilled message files, filed ring | deniedBodyDisposition, spillToFile, `_noteFiled` | unpinned |
 | `_promptDeltaPending` | says whether a live Claude seat's freshly composed IPC prompt differs from the baked one, so clear must cold-respawn | reads prompt cache and snapshot, writes out.bytes | `_teamBlockFor`, `_realIpcFor`, ipcDelta | prompt-regen-at-clear.test.js prompt-regen-at-compact.test.js |
-| `_coldRespawn` | deferred kill plus create respawn with the persisted spawn config, injecting a handoff as turn one of the fresh process | `session._reloadInFlight`, `this._freshBakeOnce`, `fresh._scratchVoid`, sessions.json strip level, label and failure upsert | `kill`, `create`, `_preserveAcrossRestart`, `_injectReloadHandoff` | resume-cwd-tree-fallback.test.js |
-| `_handleContextIntent` | runs `[agent:context reload, compact, clear]`: reload and prompt-changed clear cold-respawn, compact latches or fires, clear injects | `session._compactPending`, `session._postClearContinuation` | `_coldRespawn`, `_executeCompact`, `_promptDeltaPending`, `_voidScratchMark` | clear-continuation.test.js reload-env.test.js prompt-regen-at-clear.test.js session-manager.test.js |
+| `_coldRespawn` | deferred kill plus create respawn with the persisted spawn config, injecting a handoff as turn one of the fresh process | `session._reloadInFlight`, `this._freshBakeOnce`, sessions.json strip level, label and failure upsert | `kill`, `create`, `_preserveAcrossRestart`, `_injectReloadHandoff` | resume-cwd-tree-fallback.test.js |
+| `_handleContextIntent` | runs `[agent:context reload, compact, clear]`: reload and prompt-changed clear cold-respawn, compact latches or fires, clear injects | `session._compactPending`, `session._postClearContinuation` | `_coldRespawn`, `_executeCompact`, `_promptDeltaPending` | clear-continuation.test.js reload-env.test.js prompt-regen-at-clear.test.js session-manager.test.js |
 
 ### Invariants
 
@@ -478,48 +476,17 @@
 
 ### Hazards
 
-- `_coldRespawn` and `_scratchRespawn` each hand-copy the positional create() arguments, so a new create() parameter must be threaded into both or respawned seats silently lose it.
+- `_coldRespawn` and scratch-clone.js each hand-copy the positional create() arguments, so a new create() parameter must be threaded into both or respawned seats and clones silently lose it.
 - `_handleMemoryIntent` keeps setPinned and the digest refresh in one try for pin and unpin, so a digest-write throw reports "could not pin" for a pin that was already stored.
 - `_maybeDeliverDigest` marks the conversation digested before `_deliverMessage` inside a swallow-all catch, so a throwing delivery leaves a digest marked that never arrived.
 - `_handleMemoryIntent` parses directive keys with one regex alternation that stops at the first unknown key, so a new key left out of it strands every directive behind it.
 
-## Scratch cut — _handleScratchIntent … _recordScratchDispatch
+## Scratch aliases and probe — _handleScratchIntent … _handleProbeIntent
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleScratchIntent` | Claude-only dispatcher for `[agent:scratch begin, mark, cancel, end, rewind]`, returning the end promise so a cut can be awaited | none | `_scratchBegin`, `_scratchCancel`, `_scratchEnd` | session-manager.test.js |
-| `scratchMark` | operator API that sets a labeled mark at the transcript end, returning ok with nonce and offset or an error broadcast to the IPC log | `session._scratchMarks` via `_scratchMark` | `_scratchBeginTail`, `_scratchBeginSettled`, `_scratchMark` | ipc-scratch-mark.test.js api-contract.test.js session-manager.test.js |
-| `_scratchBegin` | entry for begin and mark: queues behind a pending begin, defers an unsettled tail, else marks or refuses now | reads `session._scratchPendingBegin` | `_scratchBeginTail`, `_scratchDeferBegin`, `_scratchMark`, `_scratchBeginRefuse` | unpinned |
-| `_scratchDeferBegin` | parks a begin or mark until the transcript reaches the turn end, waking on fs.watch and forcing a decision after SCRATCH_CLOSE_TIMEOUT | `session._scratchPendingBegin` with its watcher and timer | `_scratchWakePendingBegin`, `_scratchDropPendingBegin`, `_scratchSettleRequests` | unpinned |
-| `_scratchMark` | creates an episode or labeled mark at a proven turn boundary, capturing offset, tail bytes, leaf uuid and usage, and acks it; refuses when the slot's prior mark has an end or rewind pending | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | scratchBeginCutAt, scratchNonce, `_scratchUsageAt`, `_scratchMarksOf` | session-manager.test.js |
-| `_scratchCancel` | drops a pending begin, a labeled mark or the episode without cutting, and records a cancelled episode row | `session._scratchPendingBegin`, `session._scratchMarks`, `session._scratch`, `session._scratchVoid` | `_scratchDropPendingBegin`, `_scratchRewindTarget`, `_recordScratchEpisode` | unpinned |
-| `_scratchEnd` | validates the end or rewind target and summary, then fires the close now or arms a SCRATCH_CLOSE_TIMEOUT re-emit fallback | mark.closing, mark._closeTimer, `session._scratchVoid` | `_scratchRewindTarget`, `_scratchClosingMark`, `_fireScratchClose` | unpinned |
-| `_fireScratchClose` | consumes the closing mark's pending close and runs the cut; the trigger when the reply's turn end lands | mark.closing, mark._closeTimer | `_scratchClosingMark`, `_runScratchCut` | session-manager.test.js file-view-api.test.js spill-resolve-intent.test.js |
-| `_scratchRespawn` | re-creates the seat on the same sessionId with its full persisted config and sends the reattach context-action | sessions.json strip level and label | `create`, `resumeCwdOf`, `_sendToSession` | resume-cwd-tree-fallback.test.js session-manager.test.js |
-| `_runScratchCut` | runs the cut steps and always records the episode row in finally, substituting a failed disposition on a throw | none | `_scratchCutSteps`, `_recordScratchEpisode` | unpinned |
-| `_recordScratchEpisode` | appends one scratchCostRecord row per episode outcome to the team or seat cost file and broadcasts a summary line | team scratch-cost.jsonl or the seat's scratch episodes.jsonl | scratchCostRecord, `_scratchCostPath`, `_scratchEpisodeLine` | session-manager.test.js |
-| `_scratchCutSteps` | front half of a cut: refuses on no record, unreadable transcript, failed validation or a move in flight, then guards the name | `this._movingNames` | `_scratchValidate`, `_scratchRefusalLine`, `_scratchCutAfterGuard` | unpinned |
-| `_scratchCutAfterGuard` | quiesces and recycles the process, revalidates, backs up and atomically truncates the transcript, respawns, briefs and re-arms | `session._holdRearmed`, `session._recycling`, scratch .bak files, the transcript, snapshot cache | `_scratchRecycle`, `_scratchRespawnSafely`, `_injectAfterBoot`, `_scratchReArm` | session-manager.test.js |
-| `_scratchCarryMarks` | moves other open marks to the fresh seat only when older than the cut and acked below it | `fresh._scratchMarks`, `fresh._scratch` | `_scratchAckedIn`, `_scratchOpenMarks` | unpinned |
-| `_scratchRestore` | copies the backup over the transcript when it exists and reports whether it did | the transcript file | none | unpinned |
-| `_scratchRespawnSafely` | restores from backup, respawns and moves open marks to the fresh seat, upserting a stripped record on failure | `fresh._scratchMarks`, `fresh._scratch`, sessions.json | `_scratchRestore`, `_scratchRespawn`, `_stripClaimedTree` | unpinned |
-| `_voidScratchMark` | voids every open mark and leaves a tombstone that bounces the next scratch verb, optionally telling the seat | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | `_scratchOpenMarks`, `_injectText` | session-manager.test.js |
-| `_recordScratchDispatch` | appends a dispatched-work token to every open mark so the cut can demand the summary names it | mark.dispatched | `_scratchDispatchToken`, `_scratchOpenMarks` | unpinned |
-
-### Invariants
-
-- `_scratchMark` places a mark only on a turn boundary proven by the transcript tail, and `_scratchBegin` refuses or defers anything else.
-- `_runScratchCut` records the episode row in finally, so refused, failed and cut episodes all produce one measurement row.
-- `_scratchCutSteps` holds the seat name in `_movingNames` with a finally-delete, so a cut never races a move or rename under one name.
-- `_scratchEnd` allows only one pending close at a time through `_scratchClosingMark`, and the first end or rewind is the one that fires.
-- `_scratchCarryMarks` keeps another mark only when it is older than the cut and its ack sits below it, since a mark acked above the cut can never validate.
-- `_scratchCutAfterGuard` revalidates on the quiet file after the process exits and writes the truncation to a temp file that is fsynced and renamed over the transcript.
-
-### Hazards
-
-- `_scratchCancel` resolves a bare cancel through `_scratchRewindTarget`, so it drops the newest labeled mark instead of the episode that the begin ack says it cancels.
-- `_scratchRespawn` and `_coldRespawn` hand-copy create()'s positional arguments and already diverge on workspaceId defaulting, so each must be edited when create() changes.
-- `_scratchCutAfterGuard` leaves the .bak in place for `_scratchPruneBaks` to expire by age, while docs/sessions.md says it is removed once the respawned CLI writes its first assistant record.
+| `_handleScratchIntent` | routes the `scratch begin <body>`, `scratch end` and bare `scratch cancel` aliases to the probe arms and bounces every retired in-place sub (bare begin, mark, rewind, replay, a labelled cancel) with one line | none | `_handleProbeIntent`, `_injectText` | session-manager.test.js |
+| `_handleProbeIntent` | Claude-only dispatcher for `[agent:probe]`: a clone closes with end, a parent forks with begin or cancels its live clone | none | `_scratchCloneEnd`, `_scratchCloneBegin`, `_scratchCloneCancel` | session-manager.test.js |
 
 ## Compact, reload and resume handoffs — _executeCompact … _noteFiled
 
@@ -527,10 +494,10 @@
 |---|---|---|---|---|
 | `_executeCompact` | Sends a compact now (wire system enqueue or hold-bypassing typed command) with its continuation, guard and valve armed | `s._compactContinuation`, `s.sentinel` | _streamEnqueue, _injectText, _armCompactGuard, _armCompactValve | session-manager.test.js |
 | `_maybeFireCompactLatch` | Fires a latched compact once canFireCompact sees both inject queues drained, clearing the latch first | `s._compactPending`, `s._injectQueue`, `s._injectPtyQueue` | compact-latch.canFireCompact, _executeCompact, _shadowLog | session-manager.test.js spill-resolve-intent.test.js file-view-api.test.js |
-| `_injectReloadHandoff` | Reload-flavoured wrapper that injects a handoff into the respawned CLI after boot | none | _injectAfterBoot | handoff-spill.test.js handoff-snapshot.test.js reload-env.test.js session-manager.test.js |
-| `_injectAfterBoot` | Waits for the fresh CLI's transcript symlink plus a settle delay, then injects turn-one text; false if the seat died or never booted | `s._dead`, run/<name>/transcript link | _handoffText, _injectText, _broadcast | session-manager.test.js |
+| `_injectReloadHandoff` | Reload-flavoured wrapper that injects a handoff into the respawned CLI after boot | none | _injectAfterBoot | handoff-spill.test.js handoff-snapshot.test.js reload-env.test.js |
+| `_injectAfterBoot` | Waits for the fresh CLI's transcript symlink plus a settle delay, then injects turn-one text; false if the seat died or never booted | `s._dead`, run/<name>/transcript link | _handoffText, _injectText, _broadcast | unpinned |
 | `_resumeSnapshot` | Builds the capped "State at resume" block (host, trunk HEAD, team role, live seats, open board) | none | gitWorktree.headLogSync, _teamLiveSeats, _taskListText, capResumeSnapshot | unpinned |
-| `_handoffText` | Returns a claude seat's oversized handoff as an @spill pointer (body plus resume snapshot), else the body unchanged | spill dir, `s.filedRing` | _resumeSnapshot, writeSpill, _noteFiled | handoff-snapshot.test.js file-view-api.test.js session-manager.test.js |
+| `_handoffText` | Returns a claude seat's oversized handoff as an @spill pointer (body plus resume snapshot), else the body unchanged | spill dir, `s.filedRing` | _resumeSnapshot, writeSpill, _noteFiled | handoff-snapshot.test.js file-view-api.test.js |
 | `_noteFiled` | Records a filed entry in the live seat's ring and pings the remote server | `s.filedRing` | remote-server.notifyFiled | unpinned |
 
 ### Invariants
