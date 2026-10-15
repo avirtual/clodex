@@ -437,6 +437,7 @@ JSEOF
     // session exit; only the drain SCRIPT lives under run/<name>/.
     const pendingDir = path.join(REGISTRY_DIR, 'pending', name);
     const pendingScriptPath = pathFor(REGISTRY_DIR, name, 'pendingScript');
+    const seatMsgDir = ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs }) ? seatPathFor(REGISTRY_DIR, name, 'messages') : null;
     // This script is registered under BOTH UserPromptSubmit and PostToolUse, so it
     // must NOT hardcode the output hookEventName: Claude Code's docs pair the
     // returned hookEventName with the event that actually fired, and a mismatch is
@@ -482,8 +483,6 @@ function inline_spill(t) {
   const p = m[1];
   try {
     const rp = fs.realpathSync(p);
-    // containment: only ever inline files under ~/.clodex/messages/ — never
-    // an arbitrary path that happens to follow an @.
     if (!msgroot || (rp !== msgroot && !rp.startsWith(msgroot + path.sep))) return t;
     if (fs.statSync(rp).size <= 10240) {
       const body = fs.readFileSync(rp, { encoding: 'utf8' }).replace(/\\n+$/, '');
@@ -606,7 +605,7 @@ if (texts.length) {
 }
 fs.rmSync(claim, { recursive: true, force: true });
 JSEOF
-${INTERP} -e "$JS" - "${pendingDir}" "${msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}" "${pathFor(REGISTRY_DIR, name, 'delivered')}"
+${INTERP} -e "$JS" - "${pendingDir}" "${seatMsgDir ? fs.realpathSync(seatMsgDir) : msgDir}" "${typeof createdAt === 'number' ? createdAt : ''}" "${pathFor(REGISTRY_DIR, name, 'delivered')}"
 `, { mode: 0o700 });
 
     // This hook only READS the file — it never consumes it, so the reminder
@@ -742,7 +741,7 @@ exit 0
     }
 
     const settings = {
-      trustedDirectories: ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs }) ? [msgDir, seatPathFor(REGISTRY_DIR, name, 'messages')] : [msgDir],
+      trustedDirectories: seatMsgDir ? [msgDir, seatMsgDir] : [msgDir],
       statusLine: { type: 'command', command: statusPath },
       voice: { enabled: false },
       voiceEnabled: false,
