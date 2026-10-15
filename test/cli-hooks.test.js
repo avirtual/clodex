@@ -83,6 +83,22 @@ test('setupClaudeHook: writes the transcript-symlink script + name-only output +
   assert.match(pendingBody, /hookEventName: ev/, 'output event name must be the derived variable, not a literal');
 });
 
+test('setupClaudeHook: under the seat layout, trustedDirectories adds only the seat\'s own resolved messages dir', () => {
+  const REGISTRY_DIR = tmp();
+  fs.mkdirSync(path.join(REGISTRY_DIR, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(REGISTRY_DIR, 'sessions', '.migrated'), '');
+  const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
+  const own = path.join(REGISTRY_DIR, 'sessions', 'agent1', 'messages');
+  assert.deepStrictEqual(settings.trustedDirectories, [path.join(REGISTRY_DIR, 'messages'), own]);
+  assert.strictEqual(fs.realpathSync(path.join(REGISTRY_DIR, 'messages', 'agent1')), fs.realpathSync(own));
+});
+
+test('setupClaudeHook: without the seat layout, trustedDirectories is the messages dir alone', () => {
+  const REGISTRY_DIR = tmp();
+  const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
+  assert.deepStrictEqual(settings.trustedDirectories, [path.join(REGISTRY_DIR, 'messages')]);
+});
+
 test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else carries onFailure', () => {
   const REGISTRY_DIR = tmp();
   const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));

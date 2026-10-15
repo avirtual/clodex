@@ -742,7 +742,7 @@ exit 0
     }
 
     const settings = {
-      trustedDirectories: [msgDir],
+      trustedDirectories: ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs }) ? [msgDir, seatPathFor(REGISTRY_DIR, name, 'messages')] : [msgDir],
       statusLine: { type: 'command', command: statusPath },
       voice: { enabled: false },
       voiceEnabled: false,
