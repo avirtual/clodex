@@ -385,6 +385,8 @@ function createTicketMethods(deps, shared) {
     nameConflict,
     // Derived core-side; re-deriving it here would put the same default in two files.
     SPEC_CONFIRM_MS,
+    findPeerByOrigin,
+    SELF_LABEL,
   } = shared;
 
   // Aliased to the spec latch's window, not re-derived: two numbers for one question drift, and the confirm term cannot be
@@ -2742,13 +2744,31 @@ function createTicketMethods(deps, shared) {
     },
 
     _assigneeMissText(team, who) {
-      return (team && team.solo)
+      return ((team && team.solo)
         ? `"${who}" is not a live session in ${team.name} — with no team, an assignee is a live session name`
-        : `"${who}" is neither a team role nor a live seat on ${team.name}`;
+        : `"${who}" is neither a team role nor a live seat on ${team.name}`)
+        + (String(who).includes('@') ? ' (name@peer needs that peer online with dm federation)' : '');
+    },
+
+    _isRemoteSeat(name) {
+      return typeof name === 'string' && name.includes('@');
+    },
+
+    _resolveRemoteAssignee(who) {
+      const at = who.indexOf('@');
+      const name = who.slice(0, at);
+      const origin = who.slice(at + 1);
+      if (!AGENT_NAME_RE || !AGENT_NAME_RE.test(name) || !AGENT_NAME_RE.test(origin)) return null;
+      if (typeof findPeerByOrigin !== 'function' || typeof getPeerManager !== 'function') return null;
+      const pm = getPeerManager();
+      const peer = pm ? findPeerByOrigin(pm.statuses() || [], origin) : null;
+      if (!peer || !peer.online || !Array.isArray(peer.caps) || !peer.caps.includes('dm')) return null;
+      return who;
     },
 
     _resolveAssignee(team, who) {
       if (!who) return null;
+      if (this._isRemoteSeat(who)) return this._resolveRemoteAssignee(who);
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who;
       if (this._teamLiveSeatNames(team.root).includes(who)) return who;
       return null;
@@ -2764,6 +2784,7 @@ function createTicketMethods(deps, shared) {
     _ticketAssigneeSeat(team, ticket, liveNames = null) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
+      if (this._isRemoteSeat(a)) return a;
       const live = liveNames || this._teamLiveSeatNames(team.root);
       const isRoleKey = (k) => !!(k && team.roles && Object.prototype.hasOwnProperty.call(team.roles, k));
       const firstSeatFor = (roleKey) => {
@@ -2813,6 +2834,8 @@ function createTicketMethods(deps, shared) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true };
+      const remote = this._isRemoteSeat(seat);
+      if (remote && replay) return { undelivered: true, remote: true };
       // Worded true of both replay cases (respawn, and never reached a seat): "your process restarted"
       // would be false in the second.
       // Working tree first, since a dead incarnation may never have written an artifact; three branches,
@@ -2848,8 +2871,7 @@ function createTicketMethods(deps, shared) {
           + `written. And if the body gates on a specific condition you cannot confirm was met, report that rather than `
           + `assuming it was discharged.\n`
         : '';
-      // Rides every delivery including a replay: a respawned seat has no memory of its tree.
-      const wtLine = (ticket && ticket.worktree && ticket.worktree.path)
+      const wtLine = (!remote && ticket && ticket.worktree && ticket.worktree.path)
         ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
           + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
           + `${team && team.root ? `The shared checkout is ${team.root}; do not edit files there.` : ''}\n`
@@ -2866,7 +2888,7 @@ function createTicketMethods(deps, shared) {
       // a nested team.json); a symlink that exists only inside the worktree stays unseen.
       const roleCwdHonored = !!roleCwdRel && !!(team && team.root)
         && this._resolveRoleCwd(team, roleDef).fallback === null;
-      const areaLine = (roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
+      const areaLine = (!remote && roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
         ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
         : '';
@@ -2877,13 +2899,15 @@ function createTicketMethods(deps, shared) {
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
         : '';
+      const remoteLine = remote
+        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
+        : '';
       // Rendered beside the spec, never into it: `ticket.spec` is the lead's text and only `respec` replaces it.
-      const taskDirLine = this._ticketTaskDirRender(team, ticket).line;
-      // Rides every dispatch, replays included: a respawned seat has no memory of the verb.
-      const closeLine = ticketCloseLine(ticket.id);
+      const taskDirLine = remote ? '' : this._ticketTaskDirRender(team, ticket).line;
+      const closeLine = remote ? '' : ticketCloseLine(ticket.id);
       // Every dispatch spills (close line ~410 chars, worktree ~730, threshold 500), so the pointer line must
       // carry the id and the close verb; a spilled body shows only "Message (N bytes) attached".
-      const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
+      const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${remoteLine}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -2903,6 +2927,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _armSpecConfirm(seatName, ticketId, disposition, redirect = null, divertedBy = null) {
+      if (this._isRemoteSeat(seatName)) return;
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
       const kind = redirect ? 'redirect' : 'spec';
@@ -2973,13 +2998,16 @@ function createTicketMethods(deps, shared) {
 
     // One builder for the first delivery and the redelivery, so a replay is the first copy plus a head and
     // cannot drift from it.
-    _redirectDeliveryText(ticketId, label, reason, replay = false) {
+    _redirectDeliveryText(ticketId, label, reason, replay = false, remoteLead = null) {
       const head = replay
         ? `[ticket ${ticketId} ${label} REDELIVERY] this was already sent to you once and no turn followed, so `
           + `you may already be holding an unsubmitted copy of it — if you have already acted on these points, `
           + `keep going rather than starting them again.\n`
         : '';
-      return `${head}[ticket ${ticketId} ${label}] ${ticketCloseLine(ticketId)}${reason}`;
+      const close = remoteLead
+        ? `REMOTE: report by dm to ${remoteLead}@${SELF_LABEL}; task done from your host does not reach this board yet.\n`
+        : ticketCloseLine(ticketId);
+      return `${head}[ticket ${ticketId} ${label}] ${close}${reason}`;
     },
 
     _armSpecConfirmTimer(session) {
@@ -3380,6 +3408,7 @@ function createTicketMethods(deps, shared) {
 
     _advanceSeat(team, seatName, closed, delivery = null) {
       if (team && team.solo) return null;
+      if (this._isRemoteSeat(seatName)) return null;
       if (!ticketStarted(closed)) return null;
       const queue = this._openTicketsFor(team, seatName, closed && closed.id);
       const next = queue.find((t) => this._ticketAssigneeSeat(team, t) === seatName);
@@ -5043,12 +5072,12 @@ function createTicketMethods(deps, shared) {
         delete ticket.escalationUndelivered;
         delete ticket.mergeError;
         const rework = this._reworkSeatFor(team, ticket, seat,
-          this._redirectDeliveryText(ticket.id, 'rejected', reason));
+          this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
         ticketsStore.save(team.root, tickets);
         this._retireReviewSeatsFor(team, ticketId, 'rejected by the loop');
         const r = rework.replaced
           ? { queued: true }
-          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
             `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
             (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
               { label: 'rejected', reason, from: 'ticket-loop' }, why));
@@ -5112,13 +5141,13 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const rework = this._reworkSeatFor(team, ticket, seat,
-        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason));
+        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
       const redirect = { label: 'more must-fixes', reason, from: session.name };
       let armed = null;
       let parkCarry = null;
       const r = rework.replaced
         ? { queued: true }
-        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason), true,
+        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => {
             const carried = disposition === 'parked' && parkCarry ? { ...redirect, ...parkCarry } : redirect;
@@ -5810,12 +5839,12 @@ function createTicketMethods(deps, shared) {
       delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
       const rework = (seat && seat !== team.lead)
-        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason))
+        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null))
         : { seat, replaced: false };
       ticketsStore.save(team.root, tickets);
       this._retireReviewSeatsFor(team, ticket.id, 'rejected');
       if (seat && seat !== team.lead && !rework.replaced) {
-        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason), true,
+        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
           `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
             { label: 'rejected', reason, from: session.name }, why));
@@ -6517,7 +6546,7 @@ function createTicketMethods(deps, shared) {
     async _stallEvidence(team, ticket) {
       const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (seat) {
+      if (seat && !this._isRemoteSeat(seat)) {
         try {
           const link = pathFor(REGISTRY_DIR, seat, 'transcript');
           // The wide re-read runs only when the tail named no tool: a later moment

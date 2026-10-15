@@ -24,6 +24,7 @@ blocks a release.
 ### Teams
 
 - A seat's messages/run link that points at the wrong directory is repointed at spawn, so the seat's allowed directories and inbound-message inlining follow its real files.
+- A ticket can be assigned to a seat on a connected peer (`task add name@peer`, `task assign <id> name@peer`); the spec, respecs, rejections and cancellations reach it over the dm wire, and the lead closes it from its own board. The peer must be online with dm federation at assign time.
 
 ## 5.125.0 — 2026-10-15
 

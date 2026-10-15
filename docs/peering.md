@@ -488,3 +488,5 @@ anything else leaves it running.
   `from`'s local part is sacred, but the hub restamps its origin suffix to its
   own label for the source spoke on the terminal leg; that leg also strips relay
   fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
+- A ticket assigned over the wire is still owned by the board that filed it;
+  no board state crosses.
