@@ -14907,20 +14907,6 @@ test('t360 _flushParkedNow: ANY forced flush ends the notice deferral chain, not
   }, 70));
 });
 
-test('_flushParkedNow on a recycling seat still disarms the reboot-notice timer', () => {
-  const m = mkFlush({ _texts: ['parked one'] });
-  const s = { name: 'a', agentType: 'claude', _recycling: true };
-  m.sessions.set('a', s);
-  const timer = setTimeout(() => {}, 60000);
-  timer.unref();
-  s._rebootNoticeFlushTimer = timer;
-  try {
-    assert.deepStrictEqual(m._flushParkedNow(s, `cap.${process.pid}`, 'park-cap'), { ok: true, count: 0 });
-    assert.strictEqual(s._rebootNoticeFlushTimer, null);
-    assert.strictEqual(m._drained.length, 0, 'ENTER: the recycling return was taken, nothing drained');
-  } finally { clearTimeout(timer); }
-});
-
 test('flushPending: unknown / non-claude / dead target → refused, nothing drained', () => {
   const m = mkFlush();
   assert.deepStrictEqual(m.flushPending('ghost'), { ok: false, reason: 'no-such-agent' });

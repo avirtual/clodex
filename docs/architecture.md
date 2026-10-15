@@ -394,7 +394,7 @@ bundle), whose packaged form is the Docker image under
   set: which verbs a session may be allowed or denied, in IPC-prompt order.
   Three consumers across two processes read it (the fire-time gate in
   `_handleIntent`, the renderer checklist, and `buildIpcPrompt`).
-- **scratch-clone.js** — the clone half of `[agent:scratch begin] <brief>`,
+- **scratch-clone.js** — the `[agent:probe]` clone (alias `[agent:scratch begin] <brief>`),
   grafted onto SessionManager like team-tickets.js: forks a muted clone seat
   from the parent's record, routes its `scratch end` summary to the parent, and
   retires it quietly (docs/messaging.md, "Clone path").

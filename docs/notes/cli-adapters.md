@@ -30,7 +30,7 @@ half.
 
 The ~55 `agentType === 'claude'` guards left in `session-manager.js` and
 `team-tickets.js` stay literal on purpose. They gate Claude ARTIFACTS —
-`hookDigest`, the pending dir, `promptRecipe`/`session.md`, scratch marks,
+`hookDigest`, the pending dir, `promptRecipe`/`session.md`,
 move-to-peer, `refreshPrompt`, the argv arms themselves — not platform
 policy. A boolean on the adapter would be true for exactly one platform and
 would read as a promise that a second platform gains the artifact by

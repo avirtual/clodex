@@ -308,9 +308,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
-  explicit resend. A unit whose text is already claimed when the seat dies or
-  is marked `_recycling` (`_quiesceInjects`, before a scratch cut kills the
-  pty) is re-parked through the queue's `onUndelivered` with the seat's `born`,
+  explicit resend. A unit whose text is already claimed when the seat dies
+  is re-parked through the queue's `onUndelivered` with the seat's `born`,
   so these drains deliver it to the respawned process. On that seat the
   boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`) and the
   briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)

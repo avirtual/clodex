@@ -147,8 +147,7 @@ test('parseIntent: scratch is a CLOSED alternation — an unknown sub-verb is no
     assert.strictEqual(parseIntent(line), null,
       `${line} must not parse. Unlike context/memory, which capture \`(\\S+)\`, a mistyped scratch verb has to `
       + `reach the near-miss bounce rather than dispatch as sub:'resume' and be silently ignored by a switch `
-      + `with no arm for it — \`end\` is the verb that CUTS the transcript, so a typo that half-parses is not `
-      + `a safe failure`);
+      + `with no arm for it`);
   }
 });
 

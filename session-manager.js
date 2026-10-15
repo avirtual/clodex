@@ -5052,14 +5052,14 @@ function createSessionManager(deps) {
     }
 
     _drainPendingAtIdle(session) {
-      if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
+      if (!session || session.agentType !== 'claude' || session._dead) return;
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
         parkable: true,
         parkKey: session.io === 'stream' ? PENDING_DRAIN_KEY : null,
         produce: () => {
-          if (session._dead || session._recycling) return null;
+          if (session._dead) return null;
           if (this._anyDraftOpen(session)) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
@@ -5073,11 +5073,11 @@ function createSessionManager(deps) {
     }
 
     _drainPendingAtBootReady(session) {
-      if (!session || session.agentType !== 'claude' || session._dead || session._recycling) return;
+      if (!session || session.agentType !== 'claude' || session._dead) return;
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       const produce = () => {
-        if (session._dead || session._recycling) return null;
+        if (session._dead) return null;
         if (this._anyDraftOpen(session)) return null;
         let texts = [];
         try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
@@ -7814,7 +7814,7 @@ function createSessionManager(deps) {
     _maybeParkDelivery(target, finalText, key = null) {
       if (!target || target.agentType !== 'claude' || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
-      const busy = target.activityState === 'thinking' || !!target._recycling;
+      const busy = target.activityState === 'thinking';
       if (!typing && !busy) return false;
       try {
         const text = typeof finalText === 'function' ? finalText() : finalText;
@@ -7843,7 +7843,7 @@ function createSessionManager(deps) {
       // Clear the notice's flush timer ahead of the count check: an empty mailbox means another drainer
       // took the notice, and a timer left armed would force a later unrelated park out early.
       if (target._rebootNoticeFlushTimer) { clearTimeout(target._rebootNoticeFlushTimer); target._rebootNoticeFlushTimer = null; }
-      if (target._dead || target._recycling) return { ok: true, count: 0 };
+      if (target._dead) return { ok: true, count: 0 };
       // The count is a non-destructive pre-count; the files are claimed late, inside the producer,
       // because drainPending deletes them.
       const count = countPending(PENDING_DIR, target.name);
@@ -7859,7 +7859,7 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       this._injectText(target, '', {
         produce: () => {
-          if (target._dead || target._recycling) return null;
+          if (target._dead) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, target.name, tag, this._bornFor(target.name)); } catch { return null; }
           return texts.length ? texts.join('\n\n') : null;
@@ -7974,12 +7974,12 @@ function createSessionManager(deps) {
           // Dictation is its own input, not a lastUserInputTs stamp, which has other readers. A deferral that
           // cannot release wedges the seat, so absent evidence reads as not speaking.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
-          isDead: () => !!(session._dead || session._recycling),
+          isDead: () => !!session._dead,
           onUndelivered: (t) => {
             try {
               const born = typeof session.createdAt === 'number' ? session.createdAt : null;
               parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);
-              log.warn('inject', `re-parked an undelivered inject for ${session.name} (${session._recycling ? 'recycling' : session._dead ? 'dead' : 'paste mode off'}, ${t.length} chars)`);
+              log.warn('inject', `re-parked an undelivered inject for ${session.name} (${session._dead ? 'dead' : 'paste mode off'}, ${t.length} chars)`);
             } catch (e) {
               log.error('inject', `re-park failed for ${session.name}: ${e.message} — ${t.length} chars dropped`);
             }
