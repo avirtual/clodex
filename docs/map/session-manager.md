@@ -5,7 +5,6 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `execRunStatusReply` | one-line `status:` reply to an exec status query: one run by seq or the last 3 newest-first, tails trimmed by code point, then each head's cmd clipped, to stay inside a 400-char cap | none (pure) | execElapsedLabel | unpinned |
-| `isScratchCutText` | true when a text starts with a scratch briefing prefix or the handoff-continue line, i.e. a manager-injected scratch cut | none | scratchRealArrivals | unpinned |
 | `streamCodecCtx` | `{bypass, readOnly, model}` codec context for a stream seat, derived from its adapter and extra argv; readOnly accepts the long, short and `--flag=value` spellings of the cap | none (pure) | cli-adapters.adapterFor, cli-adapters.hasBypass, cli-adapters.hasReadOnlyCap, cli-adapters.resolveModelId | session-manager.test.js |
 | `escapeSafeTail` | last `max` code units of a buffer, advanced past an escape sequence or a low surrogate the cut would split | none (pure) | none | session-manager.test.js |
 | `bootNudgeProbeOf` | the first non-blank line of injected bytes, paste markers and Ctrl-U stripped, as up to 32 ink-visible chars to look for in the echo | none (pure) | inkVisibleText | unpinned |
@@ -25,7 +24,6 @@
 
 ### Hazards
 
-- `isScratchCutText` reads SCRATCH_CUT_TEXT_PREFIXES, which is defined further down the file, so calling it at module load would throw a TDZ ReferenceError.
 - `preseedClaudeOnboarding` writes through a tmp file and a rename, which replaces a symlinked `~/.claude.json` with a regular file instead of writing through the link.
 
 ## Process reaping, exit disposition and peer keys — sigkillPid … seatRelFiles
@@ -483,43 +481,12 @@
 - `_maybeDeliverDigest` marks the conversation digested before `_deliverMessage` inside a swallow-all catch, so a throwing delivery leaves a digest marked that never arrived.
 - `_handleMemoryIntent` parses directive keys with one regex alternation that stops at the first unknown key, so a new key left out of it strands every directive behind it.
 
-## Scratch cut — _handleScratchIntent … _recordScratchDispatch
+## Scratch aliases and probe — _handleScratchIntent … _handleProbeIntent
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_handleScratchIntent` | Claude-only dispatcher for `[agent:scratch begin, mark, cancel, end, rewind]`, returning the end promise so a cut can be awaited | none | `_scratchBegin`, `_scratchCancel`, `_scratchEnd` | session-manager.test.js |
-| `scratchMark` | operator API that sets a labeled mark at the transcript end, returning ok with nonce and offset or an error broadcast to the IPC log | `session._scratchMarks` via `_scratchMark` | `_scratchBeginTail`, `_scratchBeginSettled`, `_scratchMark` | ipc-scratch-mark.test.js api-contract.test.js session-manager.test.js |
-| `_scratchBegin` | entry for begin and mark: queues behind a pending begin, defers an unsettled tail, else marks or refuses now | reads `session._scratchPendingBegin` | `_scratchBeginTail`, `_scratchDeferBegin`, `_scratchMark`, `_scratchBeginRefuse` | unpinned |
-| `_scratchDeferBegin` | parks a begin or mark until the transcript reaches the turn end, waking on fs.watch and forcing a decision after SCRATCH_CLOSE_TIMEOUT | `session._scratchPendingBegin` with its watcher and timer | `_scratchWakePendingBegin`, `_scratchDropPendingBegin`, `_scratchSettleRequests` | unpinned |
-| `_scratchMark` | creates an episode or labeled mark at a proven turn boundary, capturing offset, tail bytes, leaf uuid and usage, and acks it; refuses when the slot's prior mark has an end or rewind pending | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | scratchBeginCutAt, scratchNonce, `_scratchUsageAt`, `_scratchMarksOf` | session-manager.test.js |
-| `_scratchCancel` | drops a pending begin, a labeled mark or the episode without cutting, and records a cancelled episode row | `session._scratchPendingBegin`, `session._scratchMarks`, `session._scratch`, `session._scratchVoid` | `_scratchDropPendingBegin`, `_scratchRewindTarget`, `_recordScratchEpisode` | unpinned |
-| `_scratchEnd` | validates the end or rewind target and summary, then fires the close now or arms a SCRATCH_CLOSE_TIMEOUT re-emit fallback | mark.closing, mark._closeTimer, `session._scratchVoid` | `_scratchRewindTarget`, `_scratchClosingMark`, `_fireScratchClose` | unpinned |
-| `_fireScratchClose` | consumes the closing mark's pending close and runs the cut; the trigger when the reply's turn end lands | mark.closing, mark._closeTimer | `_scratchClosingMark`, `_runScratchCut` | session-manager.test.js file-view-api.test.js spill-resolve-intent.test.js |
-| `_scratchRespawn` | re-creates the seat on the same sessionId with its full persisted config and sends the reattach context-action | sessions.json strip level and label | `create`, `resumeCwdOf`, `_sendToSession` | resume-cwd-tree-fallback.test.js session-manager.test.js |
-| `_runScratchCut` | runs the cut steps and always records the episode row in finally, substituting a failed disposition on a throw | none | `_scratchCutSteps`, `_recordScratchEpisode` | unpinned |
-| `_recordScratchEpisode` | appends one scratchCostRecord row per episode outcome to the team or seat cost file and broadcasts a summary line | team scratch-cost.jsonl or the seat's scratch episodes.jsonl | scratchCostRecord, `_scratchCostPath`, `_scratchEpisodeLine` | session-manager.test.js |
-| `_scratchCutSteps` | front half of a cut: refuses on no record, unreadable transcript, failed validation or a move in flight, then guards the name | `this._movingNames` | `_scratchValidate`, `_scratchRefusalLine`, `_scratchCutAfterGuard` | unpinned |
-| `_scratchCutAfterGuard` | quiesces and recycles the process, revalidates, backs up and atomically truncates the transcript, respawns, briefs and re-arms | `session._holdRearmed`, `session._recycling`, scratch .bak files, the transcript, snapshot cache | `_scratchRecycle`, `_scratchRespawnSafely`, `_injectAfterBoot`, `_scratchReArm` | session-manager.test.js |
-| `_scratchCarryMarks` | moves other open marks to the fresh seat only when older than the cut and acked below it | `fresh._scratchMarks`, `fresh._scratch` | `_scratchAckedIn`, `_scratchOpenMarks` | unpinned |
-| `_scratchRestore` | copies the backup over the transcript when it exists and reports whether it did | the transcript file | none | unpinned |
-| `_scratchRespawnSafely` | restores from backup, respawns and moves open marks to the fresh seat, upserting a stripped record on failure | `fresh._scratchMarks`, `fresh._scratch`, sessions.json | `_scratchRestore`, `_scratchRespawn`, `_stripClaimedTree` | unpinned |
-| `_voidScratchMark` | voids every open mark and leaves a tombstone that bounces the next scratch verb, optionally telling the seat | `session._scratch`, `session._scratchMarks`, `session._scratchVoid` | `_scratchOpenMarks`, `_injectText` | session-manager.test.js |
-| `_recordScratchDispatch` | appends a dispatched-work token to every open mark so the cut can demand the summary names it | mark.dispatched | `_scratchDispatchToken`, `_scratchOpenMarks` | unpinned |
-
-### Invariants
-
-- `_scratchMark` places a mark only on a turn boundary proven by the transcript tail, and `_scratchBegin` refuses or defers anything else.
-- `_runScratchCut` records the episode row in finally, so refused, failed and cut episodes all produce one measurement row.
-- `_scratchCutSteps` holds the seat name in `_movingNames` with a finally-delete, so a cut never races a move or rename under one name.
-- `_scratchEnd` allows only one pending close at a time through `_scratchClosingMark`, and the first end or rewind is the one that fires.
-- `_scratchCarryMarks` keeps another mark only when it is older than the cut and its ack sits below it, since a mark acked above the cut can never validate.
-- `_scratchCutAfterGuard` revalidates on the quiet file after the process exits and writes the truncation to a temp file that is fsynced and renamed over the transcript.
-
-### Hazards
-
-- `_scratchCancel` resolves a bare cancel through `_scratchRewindTarget`, so it drops the newest labeled mark instead of the episode that the begin ack says it cancels.
-- `_scratchRespawn` and `_coldRespawn` hand-copy create()'s positional arguments and already diverge on workspaceId defaulting, so each must be edited when create() changes.
-- `_scratchCutAfterGuard` leaves the .bak in place for `_scratchPruneBaks` to expire by age, while docs/sessions.md says it is removed once the respawned CLI writes its first assistant record.
+| `_handleScratchIntent` | routes the `scratch begin <body>`, `scratch end` and bare `scratch cancel` aliases to the probe arms and bounces every retired in-place sub (bare begin, mark, rewind, replay, a labelled cancel) with one line | none | `_handleProbeIntent`, `_injectText` | session-manager.test.js |
+| `_handleProbeIntent` | Claude-only dispatcher for `[agent:probe]`: a clone closes with end, a parent forks with begin or cancels its live clone | none | `_scratchCloneEnd`, `_scratchCloneBegin`, `_scratchCloneCancel` | session-manager.test.js |
 
 ## Compact, reload and resume handoffs — _executeCompact … _noteFiled
 
