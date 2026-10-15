@@ -341,3 +341,102 @@ test('C2a boxPathFor names no box path for a tree outside the root', () => {
   assert.strictEqual(r.m.boxPathFor(r.team, pathReal.join(r.team.root, '.clodex-wt', 'b')), '/home/clodex/work/.clodex-wt/b');
   assert.strictEqual(r.m.boxPathFor(r.team, pathReal.join(pathReal.dirname(r.team.root), 'sib')), null);
 });
+
+const gitIn = (dir, ...a) => execFileSync('git', ['-C', dir, '-c', 'user.name=T', '-c', 'user.email=t@example.com', ...a], { encoding: 'utf8' });
+const branchExists = (root, b) => gitIn(root, 'for-each-ref', '--format=%(refname:short)', 'refs/heads').split('\n').includes(b);
+
+async function remoteWorked(r) {
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  const t = r.one('t1');
+  fsReal.writeFileSync(pathReal.join(t.worktree.path, 'w.txt'), 'box work\n');
+  gitIn(t.worktree.path, 'add', 'w.txt');
+  gitIn(t.worktree.path, 'commit', '-qm', 'box work');
+  r.m._runTicketLoop = () => {};
+  const done = r.m._remoteTaskDone({ senderTag: 'x@p', origin: 'p', ticketId: 't1', report: 'built' });
+  assert.strictEqual(done.ok, true, done.reply);
+  return t;
+}
+
+const closeOut = (r) => {
+  const tickets = r.tstore.load(r.team.root);
+  return r.m._closeOutMergedTicket(r.team, tickets.find((x) => x.id === 't1'), tickets, { by: 'ticket-loop' });
+};
+
+test('C2b (a) a remote-worked ticket runs verify and accept removes its in-root tree and branch, retiring no seat', async () => {
+  const r = rig();
+  const t = await remoteWorked(r);
+  const after = r.one('t1');
+  assert.strictEqual(after.state, 'done');
+  assert.strictEqual(after.loopStep, 'verify');
+  gitIn(r.team.root, 'merge', '-q', '--no-ff', '-m', 'merge', t.worktree.branch);
+  let retired = 0;
+  r.m.archive = async () => { retired++; };
+  r.m.destroy = async () => { retired++; return { ok: true }; };
+  const res = await closeOut(r);
+  assert.strictEqual(fsReal.existsSync(t.worktree.path), false, res.text);
+  assert.strictEqual(branchExists(r.team.root, t.worktree.branch), false, res.text);
+  assert.ok(res.text.includes(`its tree ${t.worktree.path} was removed`), res.text);
+  assert.ok(res.text.includes(`branch ${t.worktree.branch} deleted`), res.text);
+  assert.match(res.text, /remote seat x@p is standing and was not retired/);
+  assert.strictEqual(retired, 0);
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.remote, true);
+});
+
+test('C2b (b) a dirty remote tree at accept keeps the tree and the branch with the remote wording', async () => {
+  const r = rig();
+  const t = await remoteWorked(r);
+  gitIn(r.team.root, 'merge', '-q', '--no-ff', '-m', 'merge', t.worktree.branch);
+  fsReal.writeFileSync(pathReal.join(t.worktree.path, 'w.txt'), 'uncommitted\n');
+  const res = await closeOut(r);
+  assert.strictEqual(fsReal.existsSync(t.worktree.path), true);
+  assert.strictEqual(branchExists(r.team.root, t.worktree.branch), true);
+  assert.ok(res.text.includes(`the remote seat x@p is not retired by accept; its tree ${t.worktree.path} was KEPT`), res.text);
+  assert.match(res.text, /branch \S+ was KEPT/);
+  assert.strictEqual(res.ok, false);
+});
+
+test('C2b (c) a loop rejection to a remote seat carries the box WORK IN line and the prune warning', async () => {
+  const r = rig();
+  const t = await remoteWorked(r);
+  r.sent.length = 0;
+  r.m._rejectTicketFromLoop(r.team, 't1', 'the suite FAILS on your branch');
+  assert.strictEqual(r.sent.length, 1);
+  const body = r.sent[0].body;
+  assert.ok(body.includes(`WORK IN: /home/clodex/work/.clodex-wt/${t.worktree.branch} `), body);
+  assert.ok(body.includes('Never run `git worktree prune`, `git worktree add` or `git gc --prune` in this tree'), body);
+  assert.match(body, /the suite FAILS on your branch/);
+});
+
+test('C2b (d) a second ticket to the same remote seat gets its own tree and leaves the first alone', async () => {
+  const r = rig();
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  const first = r.one('t1').worktree;
+  fsReal.writeFileSync(pathReal.join(first.path, 'mark.txt'), 'first\n');
+  r.task({ sub: 'add', who: 'x@p', start: true, body: 'build the second gadget\nartifact tasks/second/SPEC.md' });
+  await r.settle();
+  const second = r.one('t2').worktree;
+  assert.ok(second && second.path, 'ENTER: the second ticket minted a tree');
+  assert.notStrictEqual(second.path, first.path);
+  assert.notStrictEqual(second.branch, first.branch);
+  assert.strictEqual(pathReal.dirname(second.path), pathReal.join(r.team.root, '.clodex-wt'));
+  assert.deepStrictEqual(r.one('t1').worktree, first);
+  assert.strictEqual(fsReal.readFileSync(pathReal.join(first.path, 'mark.txt'), 'utf8'), 'first\n');
+  assert.strictEqual(gitIn(first.path, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), first.branch);
+});
+
+test('C2b (e) stall evidence on a remote ticket reads branch progress from the host tree', async () => {
+  const r = rig();
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  const t = r.one('t1');
+  fsReal.writeFileSync(pathReal.join(t.worktree.path, 'w.txt'), 'box work\n');
+  gitIn(t.worktree.path, 'add', 'w.txt');
+  gitIn(t.worktree.path, 'commit', '-qm', 'box work');
+  const ev = await r.m._stallEvidence(r.team, t);
+  assert.ok(ev.commits >= 1, JSON.stringify(ev));
+  assert.strictEqual(ev.dirty, false);
+  assert.strictEqual(ev.tool, null);
+});
