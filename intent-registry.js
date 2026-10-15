@@ -34,7 +34,7 @@ function parseDm(cleaned) {
     if (ref !== null || !DM_REF_RE.test(tok.slice(4))) return null;
     ref = tok.slice(4);
   }
-  return { type: 'dm', target: m[1], urgent, ref, body: m[3] };
+  return ref === null ? { type: 'dm', target: m[1], urgent, body: m[3] } : { type: 'dm', target: m[1], urgent, ref, body: m[3] };
 }
 
 function parseSub(cleaned) {

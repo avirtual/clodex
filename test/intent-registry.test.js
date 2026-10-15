@@ -34,7 +34,8 @@ function parseIntentLegacy(rawLine) {
     const refs = toks.filter((t) => t !== 'urgent').map((t) => t.slice(4));
     const urgents = toks.length - refs.length;
     if (urgents > 1 || refs.length > 1 || (refs.length && !/^[A-Za-z0-9._-]{1,48}$/.test(refs[0]))) return null;
-    return { type: 'dm', target: dmMatch[1], urgent: urgents === 1, ref: refs[0] || null, body: dmMatch[3] };
+    if (!refs.length) return { type: 'dm', target: dmMatch[1], urgent: urgents === 1, body: dmMatch[3] };
+    return { type: 'dm', target: dmMatch[1], urgent: urgents === 1, ref: refs[0], body: dmMatch[3] };
   }
 
   const subMatch = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
@@ -641,7 +642,7 @@ test('t1829 dm head carries an optional ref token; a bad ref token fails the who
   assert.deepStrictEqual(parseIntent('[agent:dm x@p urgent ref:abc] hi'),
     { type: 'dm', target: 'x@p', urgent: true, ref: 'abc', body: 'hi' });
   assert.deepStrictEqual(parseIntent('[agent:dm x@p] hi'),
-    { type: 'dm', target: 'x@p', urgent: false, ref: null, body: 'hi' });
+    { type: 'dm', target: 'x@p', urgent: false, body: 'hi' });
   assert.strictEqual(parseIntent('[agent:dm x@p ref:a/b] hi'), null);
   assert.strictEqual(parseIntent(`[agent:dm x@p ref:${'a'.repeat(49)}] hi`), null);
   assert.strictEqual(parseIntent('[agent:dm x@p ref:a ref:b] hi'), null);
@@ -1378,7 +1379,7 @@ test('t222 — the second argument is optional, and no other verb reads it', () 
     { type: 'term', sub: 'exec', body: 'ls' });
   // Same line, a raw form that differs everywhere: every non-term verb ignores it.
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:dm bob] hi', '[agent:dm zed] DIFFERENT'),
-    { type: 'dm', target: 'bob', urgent: false, ref: null, body: 'hi' });
+    { type: 'dm', target: 'bob', urgent: false, body: 'hi' });
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:exec c] {}', '[agent:exec other] {"x":1}'),
     { type: 'exec', cmd: 'c', body: '{}' });
 });

@@ -82,6 +82,7 @@ clodex-default-mode-
 clodex-depless-root-
 clodex-depless-tree-
 clodex-disc-
+clodex-dm-ref-
 clodex-dmgchild-
 clodex-dmgprobe-
 clodex-electron-child-

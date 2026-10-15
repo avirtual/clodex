@@ -31104,9 +31104,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var PLUGIN_REPLY_WAIT_MS = 30 * 1e3;
       var PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1e3;
       var REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
+      var DM_REF_RE = /^[A-Za-z0-9._-]{1,48}$/;
       function parseDm(cleaned) {
-        const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
-        return m ? { type: "dm", target: m[1], urgent: !!m[2], body: m[3] } : null;
+        const m = cleaned.match(/^\[agent:dm\s+(\S+?)((?:\s+(?:urgent|ref:[^\s\]]*))*)\]\s*(.*)/s);
+        if (!m) return null;
+        let urgent = false;
+        let ref = null;
+        for (const tok of m[2].split(/\s+/).filter(Boolean)) {
+          if (tok === "urgent") {
+            if (urgent) return null;
+            urgent = true;
+            continue;
+          }
+          if (ref !== null || !DM_REF_RE.test(tok.slice(4))) return null;
+          ref = tok.slice(4);
+        }
+        return ref === null ? { type: "dm", target: m[1], urgent, body: m[3] } : { type: "dm", target: m[1], urgent, ref, body: m[3] };
       }
       function parseSub(cleaned) {
         const m = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
@@ -31711,6 +31724,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         TERM_EXEC_TOOL,
         TERM_READ_TOOL,
         DM_TOOL,
+        DM_REF_RE,
         subagentCatalogFor,
         pruneForPlugins,
         withoutPrivilegedIntentsFor,
