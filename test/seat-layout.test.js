@@ -707,3 +707,72 @@ test('removeSeat removes a legacy path that is still a REAL dir', () => {
     assert.strictEqual(exists(legacySeatPathFor(root, 'ana', kind)), false, `${kind}: removed — ${why}`);
   }
 });
+
+test('ensureSeatLink repoints a messages link aimed at the wrong directory', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const link = legacySeatPathFor(root, 'bo', 'messages');
+  const stray = path.join(root, 'sessions', 'other', 'messages');
+  fs.mkdirSync(stray, { recursive: true });
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(stray, link);
+  const logged = [];
+  const log = { info: (_tag, msg) => logged.push(msg) };
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'messages', fs, log }), true);
+
+  assert.strictEqual(path.resolve(path.dirname(link), fs.readlinkSync(link)),
+    path.resolve(seatPathFor(root, 'bo', 'messages')), 'the link now aims at sessions/bo/messages');
+  assert.ok(fs.existsSync(stray), 'the stray target is left alone');
+  assert.deepStrictEqual(logged, [`seat-layout: repointed messages link for bo (was ${stray})`]);
+});
+
+test('ensureSeatLink leaves a correct messages link untouched', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'messages', fs }), true);
+  const link = legacySeatPathFor(root, 'bo', 'messages');
+  const before = { ino: fs.lstatSync(link).ino, target: fs.readlinkSync(link) };
+  const logged = [];
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'messages', fs,
+    log: { info: (_t, m) => logged.push(m) } }), true);
+
+  assert.strictEqual(fs.lstatSync(link).ino, before.ino);
+  assert.strictEqual(fs.readlinkSync(link), before.target);
+  assert.deepStrictEqual(logged, []);
+});
+
+test('ensureSeatLink refuses and keeps a real messages directory', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const dir = legacySeatPathFor(root, 'bo', 'messages');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'keep'), 'k');
+
+  assert.strictEqual(ensureSeatLink({ root, name: 'bo', kind: 'messages', fs }), false);
+
+  assert.ok(!fs.lstatSync(dir).isSymbolicLink());
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'keep'), 'utf8'), 'k');
+});
+
+test('setupClaudeHook hands its logger to ensureSeatLink, so a repoint reaches the app log', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const link = legacySeatPathFor(root, 'bo', 'messages');
+  const stray = path.join(root, 'sessions', 'other', 'messages');
+  fs.mkdirSync(stray, { recursive: true });
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(stray, link);
+  const logged = [];
+  const log = { info: (_t, m) => logged.push(m), warn() {}, error() {}, debug() {} };
+  const hooks = createCliHooks({
+    REGISTRY_DIR: root, memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath, log,
+  });
+
+  hooks.setupClaudeHook('bo');
+
+  assert.ok(logged.includes(`seat-layout: repointed messages link for bo (was ${stray})`), JSON.stringify(logged));
+});
