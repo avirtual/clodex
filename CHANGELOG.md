@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Messaging
+
+- `[agent:ctl <ctx>] <line>` runs a clodexctl verb against a named context in the main process; two seeded exec entries (`clodex-ctl-read`, `clodex-ctl-seats`) let the operator grant it per seat with a verb allowlist, and deploy, undeploy, upgrade, input, exec, port-forward and attach are refused in every path.
+
 ## 5.126.0 — 2026-10-16 — tickets and hands on a connected peer, operator-written memory directives, the probe intent
 
 ### Messaging

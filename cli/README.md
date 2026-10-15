@@ -266,6 +266,15 @@ already has `--url` for the rare ad-hoc case.)
 The token travels **only** as an `Authorization: Bearer` header from
 in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 
+### From an agent seat
+
+A Clodex seat does not run clodexctl itself and never sees `contexts.json`. The
+operator grants it the `clodex-ctl-read` or `clodex-ctl-seats` exec entry and
+lists the contexts it may name; Clodex then runs the verb in its own process
+and hands the seat the output. Deploy, undeploy, upgrade, input, exec,
+port-forward and attach stay operator-only. See docs/exec-tools.md, "clodexctl
+through exec".
+
 ## Resources
 
 `get` lists, `describe` composes one object. Both take the plural or the

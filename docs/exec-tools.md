@@ -193,6 +193,41 @@ allow — a seat with `exec` but not the command id is refused, and vice versa.
 A subagent reaches the same grants through the seat's `clodex-send` shell verb, limited to
 the seat's `execCommands` (docs/messaging.md §7b).
 
+## clodexctl through exec
+
+Two seeded entries run clodexctl verbs against a peer node's context. Neither
+spawns anything: `"inProcess": "ctl"` makes `_handleExecIntent` validate the
+payload against the entry's schema and then call `_handleCtlIntent` with
+`{ctx, line: verb + ' ' + args}`, so the run happens in ctl-service inside the
+main process. `~/.clodex/cli/contexts.json` and its tokens never leave the main
+process; the seat gets the rendered output back, scrubbed by ctl-service and
+clamped to the entry's `replyMaxBytes` (12000).
+
+| Entry | `verb` enum |
+|---|---|
+| `clodex-ctl-read` | get, describe, query, logs, nodes |
+| `clodex-ctl-seats` | the read verbs plus create, patch, restart, dm |
+
+Payload: `{"ctx": "<context>", "verb": "<verb>", "args": "<rest of the line, ≤400 chars>"}`.
+
+**The operator fills the `ctx` enum.** Both entries ship with `"enum": []`, and
+an empty enum refuses every payload. To make a context reachable, edit
+`~/.clodex/library/exec/clodex-ctl-read.json` (or the team copy) and list the
+names, e.g. `"enum": ["ios"]`. An entry names what it may touch. Your edit
+survives app updates (the seeder never overwrites an edited file).
+
+**The grant is the gate.** Add the entry id to the seat's `execCommands`. The
+exec path does not need `ctl` in the seat's `intents`; the `[agent:ctl]` row is
+a separate privileged intent for templates that opt in, with no verb tier of its
+own.
+
+**Always refused, in every path:** input, exec, deploy, undeploy, upgrade,
+port-forward, attach, web, delete node, use and logs --follow (`ctl: <verb> is
+operator-only`). A line that sets `--ctx`, `--url`, `--token`, `--ssh` or
+`--remote-port` is refused too, because those flags would re-target the
+context. Verbs ctl-service itself defers (delete session, restart node) stay
+refused there.
+
 ## Terminal commands inside an open session
 
 `[agent:term exec]` is the other capability an operator grants a seat, and since
