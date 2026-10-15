@@ -1812,7 +1812,7 @@ verb as an MCP tool:
   matches `/^[a-z][a-z0-9_-]{0,63}$/` and lives in ONE GLOBAL namespace like
   verbs: a name another plugin holds throws `ETOOLTAKEN` with `err.tool` and
   `err.heldBy`, mirroring `EVERBTAKEN`. Core tool names (the host's own
-  `term_exec`, `dm`) are reserved: claiming one throws `ETOOLTAKEN` with
+  `term_exec`, `term_read`, `dm`) are reserved: claiming one throws `ETOOLTAKEN` with
   `err.heldBy === 'core'` and the message
   `tool "<name>" is already registered by plugin "core"`. `inputSchema` is a plain
   `{ type: 'object', … }` JSON object. `toIntent(args)` returns ONE intent line

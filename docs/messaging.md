@@ -403,7 +403,7 @@ announced in hello — in that order, case-insensitively, through the one
   is held in memory (`_peerHeld`, 20 per peer, 10 min) and sent by
   `_flushPeerHeld` when peer-wiring sees that peer's online `peer-state`.
   The sender is told once that it is held, and told again only if it is
-  dropped (full queue, 10-minute TTL); a host restart loses the held queue.
+  dropped (full queue, 10-minute TTL) — or if the flushed send comes back parked or undelivered, which carry their usual notices; a host restart loses the held queue.
 - **Box → consumer**: no dial-back, so replies go to a per-origin **outbox**
   (peer-outbox.js: tmp+rename publish, atomic whole-dir claim, `validOrigin`
   path-traversal guard). Delivery is pull: the box advertises pending
@@ -689,7 +689,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   function) is main only on its first run: every later run finds the file consumed and drops to
   subagent with the "stamp missing" line. A stamped call first sweeps `ident/` files older than
   `IDENT_SEEN_MS` (10 min), which could never verify as fresh.
-  The same script is the PreToolUse hook for matcher `mcp__clodex__term_exec|mcp__clodex__dm` (its fast path also
+  The same script is the PreToolUse hook for matcher `mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm` (its fast path also
   opens on those tool names): the stamp goes straight into `updatedInput.ident`, spread after the
   model's own input so a caller-supplied `ident` is overwritten, with no `ident/` file; `clodex-mcp`
   lifts it out of `args` into the payload's top-level `ident`.
