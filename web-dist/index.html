@@ -13899,7 +13899,7 @@ Its login, last page and downloads are deleted and it leaves this list.`;
             const cancel = el("button", "mv-compose-cancel", "Cancel");
             cancel.addEventListener("click", () => renderComposeBar(agent));
             save.addEventListener("click", () => {
-              submitDirective(agent, { text: text.value, tags: tags.value, operatorPinned: !!pinBox.checked }, save).catch((e) => rhost.log.error("add failed", e));
+              submitDirective(agent, { text: String(text.value ?? ""), tags: String(tags.value ?? ""), operatorPinned: !!pinBox.checked }, save).catch((e) => rhost.log.error("add failed", e));
             });
             for (const n of [text, tags, pinLabel, save, cancel]) form.appendChild(n);
             composeBar.appendChild(form);

@@ -252,7 +252,7 @@ module.exports.activate = (rhost) => {
       const cancel = el('button', 'mv-compose-cancel', 'Cancel');
       cancel.addEventListener('click', () => renderComposeBar(agent));
       save.addEventListener('click', () => {
-        submitDirective(agent, { text: text.value, tags: tags.value, operatorPinned: !!pinBox.checked }, save)
+        submitDirective(agent, { text: String(text.value ?? ''), tags: String(tags.value ?? ''), operatorPinned: !!pinBox.checked }, save)
           .catch((e) => rhost.log.error('add failed', e));
       });
       for (const n of [text, tags, pinLabel, save, cancel]) form.appendChild(n);
