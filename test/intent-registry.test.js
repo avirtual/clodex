@@ -95,6 +95,9 @@ function parseIntentLegacy(rawLine) {
   const rebootMatch = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
   if (rebootMatch) return { type: 'reboot', body: rebootMatch[1] };
 
+  const ctlMatch = cleaned.match(/^\[agent:ctl\s+([A-Za-z0-9._-]{1,32})\]\s*([^\n]*)/);
+  if (ctlMatch) return { type: 'ctl', ctx: ctlMatch[1], line: ctlMatch[2].trim() };
+
   const taskMatch = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
   if (taskMatch) {
     const sub = taskMatch[1];
