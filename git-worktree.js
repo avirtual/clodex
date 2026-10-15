@@ -75,6 +75,28 @@ function defaultWorktreePath(repoTop, branch) {
   return path.join(path.dirname(repoTop), `${repoName}-${safeBranch}`);
 }
 
+function relativizeWorktreePointers(repoTop, treePath) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  try {
+    const top = real(String(repoTop));
+    const tree = real(String(treePath));
+    const dotGit = path.join(tree, '.git');
+    const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+    if (!m) return { ok: false, error: `${dotGit} holds no gitdir pointer` };
+    const adminDir = real(path.resolve(tree, m[1]));
+    const worktreesDir = path.join(top, '.git', 'worktrees');
+    if (path.dirname(adminDir) !== worktreesDir) {
+      return { ok: false, error: `${dotGit} does not point under ${worktreesDir}` };
+    }
+    const name = path.basename(adminDir);
+    fs.writeFileSync(dotGit, `gitdir: ${path.relative(tree, adminDir)}\n`);
+    fs.writeFileSync(path.join(adminDir, 'gitdir'), `${path.relative(adminDir, dotGit)}\n`);
+    return { ok: true, name };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+}
+
 // Create a worktree for `branch` off the repo containing `cwd`. If `branch`
 // already exists it's checked out; otherwise a new branch is created (-b) from
 // Returns { ok, path, branch, base, repo } or { ok:false, error }.
@@ -769,5 +791,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
   diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha, headShaSync, headLogSync, revParse,
+  checkoutDetached, headSha, headShaSync, headLogSync, revParse, relativizeWorktreePointers,
 };
