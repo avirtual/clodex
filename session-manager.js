@@ -498,14 +498,14 @@ function ctlRefusal(tokens) {
   const verb = tokens[0];
   if (verb === undefined) return 'ctl: no command — write [agent:ctl <ctx>] <verb> [args]';
   if (verb.startsWith('-')) return 'ctl: put the verb first, flags after it';
-  for (const t of tokens) {
-    const m = /^--([^=]+)/.exec(t);
-    if (m && CTL_PINNED_FLAGS.has(m[1])) return `ctl: --${m[1]} is fixed by the context and cannot be set`;
-  }
   if (CTL_OPERATOR_ONLY.has(verb)) return `ctl: ${verb} is operator-only`;
   if (verb === 'delete' && (tokens[1] === 'node' || tokens[1] === 'nodes')) return 'ctl: delete node is operator-only';
   if (verb === 'logs' && tokens.some((t) => t === '--follow' || t.startsWith('--follow=') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t))) {
     return 'ctl: logs --follow is operator-only';
+  }
+  for (const t of tokens) {
+    const m = /^--([^=]+)/.exec(t);
+    if (m && CTL_PINNED_FLAGS.has(m[1])) return `ctl: --${m[1]} is fixed by the context and cannot be set`;
   }
   return null;
 }
