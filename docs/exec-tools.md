@@ -120,9 +120,10 @@ one file). Registry: `~/.clodex/library/exec/clodex-monitor.json`.
   `stop` SIGTERMs the worker (which kills the target's whole process group).
 - A watch dies with the host when a restart kills its watcher. On restore,
   `deliverLostMonitors` (session-manager.js) sends the seat one `reboot` DM
-  naming each killed watch (`[host] restart at <ISO>: these runs of yours were
+  naming each killed watch (`[host] since your last turn: these runs of yours were
   killed and did not finish: <id> <description|command> (started <ISO>); …
-  Nothing was re-run.`) and removes their state, so `list` never reports them.
+  Nothing was re-run.`) and removes their state once the DM is written or parked,
+  so `list` never reports them; a failed delivery keeps the state for the next restore.
   Long exec runs a restart kills get their own `lost to a host restart` line.
 
 **Agent usage:**
