@@ -649,7 +649,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   One intent per request, parsed by `_extractIntents` (same body rules as PTY text).
   `{cred, tool, args, ident?}` is a tool call by catalog name (`run/<seat>/mcp-tools.json`):
   a plugin tool row is handled as its subagent policy says, main's own calls included; a core
-  tool rows (`term_exec`, `term_read`) are main only on a verified one-shot `main.` stamp and otherwise answers
+  tool row (`term_exec`, `term_read`) is main only on a verified one-shot `main.` stamp and otherwise answers
   `unknown tool`. The seat's
   live grant for the owning verb is checked, then the plugin's `toIntent` maps `args`
   to one intent of that verb, then the same refusal/dispatch path as an intent. New
