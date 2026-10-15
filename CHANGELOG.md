@@ -16,6 +16,7 @@ blocks a release.
 ### Messaging
 
 - The notice that names a seat's clodex-monitor watches killed by a host restart is sent before their records are removed, and the records survive a failed delivery, so a seat still booting no longer misses it.
+- A successful [agent:term read] is shown in the operator's message log like an exec is.
 ### Teams
 
 - The sandbox up/rebuild reply says "container restarted" rather than "recreated": docker's StartedAt moves on a plain start of a stopped container too, so the old word claimed more than was checked.
