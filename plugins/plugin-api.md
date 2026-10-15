@@ -1854,7 +1854,7 @@ server process (one per seat; main and subagents share it); your `invalid`
 rejections are not counted.
 
 A seat's `tools/list` is core tools first — only those whose verb the seat holds
-(`dm` by default; `term_exec` needs the `term` grant itself; `'*'` never confers it) — then plugin
+(`dm` by default; `term_exec` and `term_read` need the `term` grant itself; `'*'` never confers it) — then plugin
 tools in registration order. Plugin `brief`s and a core tool's own brief (`dm`'s) are injected at
 `SubagentStart`.
 
