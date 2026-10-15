@@ -13,7 +13,7 @@ const { AGENT_NAME_RE } = require('../catalogs');
 const { execFileSync } = require('node:child_process');
 
 function makeRepo() {
-  const dir = mkTmpRoot('clodex-ra-');
+  const dir = mkTmpRoot('clodex-ts-');
   const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
   run('init', '-q');
   run('config', 'user.email', 't@example.com');
@@ -280,7 +280,7 @@ test('C2a _linkWorktreeNodeModules links an in-root tree relatively and a siblin
   const innerLink = pathReal.join(inner, 'node_modules');
   assert.strictEqual(fsReal.readlinkSync(innerLink), pathReal.join('..', '..', 'node_modules'));
   assert.strictEqual(fsReal.realpathSync(innerLink), fsReal.realpathSync(pathReal.join(root, 'node_modules')));
-  const sibling = mkTmpRoot('clodex-ra-sib-');
+  const sibling = mkTmpRoot('clodex-ts-');
   assert.strictEqual(r.m._linkWorktreeNodeModules(root, sibling), null);
   assert.strictEqual(fsReal.readlinkSync(pathReal.join(sibling, 'node_modules')), pathReal.join(root, 'node_modules'));
 });

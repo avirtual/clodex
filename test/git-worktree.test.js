@@ -869,7 +869,7 @@ test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to
   assert.strictEqual(r.ok, true, r.error);
   const rel = wt.relativizeWorktreePointers(repo, r.path);
   assert.deepStrictEqual(rel, { ok: true, name: 'b1' });
-  const copy = path.join(mkTmpRoot('clodex-wtcopy-'), 'moved');
+  const copy = path.join(mkTmpRoot('clodex-wt-'), 'moved');
   fs.cpSync(repo, copy, { recursive: true, verbatimSymlinks: true });
   const out = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   assert.strictEqual(out(path.join(copy, '.clodex-wt', 'b1'), 'rev-parse', '--abbrev-ref', 'HEAD'), 'b1');
