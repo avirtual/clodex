@@ -416,6 +416,16 @@ test('term grammar line: the documented form parses as a term intent', () => {
   assert.strictEqual(parsed.sub, 'exec');
 });
 
+test('term read grammar line: a term-granted seat is taught the read row with its tail and grep forms, and it parses', () => {
+  const p = buildIpcPrompt(['term', ...ALL_GATEABLE]);
+  const line = p.split('\n').find((l) => l.trim().startsWith('[agent:term read]'));
+  assert.ok(line, 'ENTER: a granted seat renders a term read row');
+  assert.ok(line.includes('[agent:term read] [tail N | grep <regex>]'), line);
+  assert.match(line, /tail/);
+  assert.match(line, /grep/);
+  assert.deepStrictEqual(parseIntent('[agent:term read] tail 3'), { type: 'term', sub: 'read', body: 'tail 3' });
+});
+
 test('term grammar line: the old bracket-argumented spelling is gone from the prompt', () => {
   const p = buildIpcPrompt(['term', ...ALL_GATEABLE]);
   assert.ok(!p.includes('[agent:term exec <command>]'),
