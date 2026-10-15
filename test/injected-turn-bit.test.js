@@ -198,3 +198,30 @@ test('a terminal auto-reply or a write to a missing seat does not count as opera
   assert.strictEqual(h.m.lastOperatorInputAt(), 0);
   cleanup(h);
 });
+
+test('a single key answering a permission dialog closes the draft it would otherwise open', () => {
+  const h = boot();
+  h.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
+  h.m.write('hand', '4');
+  assert.ok(h.s.lastUserInputTs > 0, 'ENTER: the keystroke was stamped as human input');
+  assert.strictEqual(isDraftOpen(h.s), false);
+  assert.strictEqual(h.writes.at(-1), '4');
+  cleanup(h);
+});
+
+test('the same key with no dialog open, or a word typed under one, is still a draft', () => {
+  const h = boot();
+  h.m.write('hand', '4');
+  assert.strictEqual(isDraftOpen(h.s), true);
+  const g = boot();
+  g.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
+  g.m.write('hand', 'hello');
+  assert.strictEqual(isDraftOpen(g.s), true);
+  const k = boot();
+  k.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
+  k.m.write('hand', '\x1b[B');
+  assert.strictEqual(isDraftOpen(k.s), true, 'an arrow key moves the dialog cursor, it does not answer');
+  cleanup(k);
+  cleanup(h);
+  cleanup(g);
+});

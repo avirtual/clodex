@@ -3092,9 +3092,14 @@ function createSessionManager(deps) {
         const wasInPaste = s._inPaste;
         const sig = draftChunkSignal(data, s._inPaste);
         s._inPaste = sig.inPaste;
+        const dialogKey = !wasInPaste && !sig.inPaste
+          && s.needsAttention && s.needsAttention.kind === 'permission'
+          && /^(?:[0-9yYnN]|\x1b)$/.test(String(data));
         if (sig.closes) {
           s.lastUserSubmitTs = s.lastUserInputTs;
           s.lastSubmitInjected = false;
+        } else if (dialogKey) {
+          s.lastUserSubmitTs = s.lastUserInputTs;
         }
         s.lastMainStop = null;
         if (s.needsAttention) this._setAttention(s, null);
