@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — tickets and hands on a connected peer, operator-written memory directives, the probe intent
+## Unreleased
+
+## 5.126.0 — 2026-10-16 — tickets and hands on a connected peer, operator-written memory directives, the probe intent
 
 ### Messaging
 
