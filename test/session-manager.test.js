@@ -390,6 +390,85 @@ test('addMemoryUnit: a store refusal (cap, empty text) becomes an envelope carry
     { ok: false, error: 'operator pin limit reached (3) — unpin one first' });
 });
 
+function mkDirective({ agentType = 'claude', dead = false, needsAttention = false } = {}) {
+  const { createMemoryLoad } = require('../memory-load');
+  const units = new Map();
+  let n = 0;
+  const memLoad = createMemoryLoad();
+  const m = mk({
+    memoryStore: {
+      list: () => [...units.values()],
+      remember: (a, { text, operatorPinned }) => {
+        const u = { id: `mem-${++n}-aaaaaa`, body: text, operatorPinned: !!operatorPinned };
+        units.set(u.id, u);
+        return u;
+      },
+      update: (a, id, { text }) => { units.get(id).body = text; return { ok: true, id }; },
+      setOperatorPinned: (a, id, on) => { units.get(id).operatorPinned = on; },
+    },
+    memoryLoad: memLoad,
+    digestTiers: (list) => ({ text: 'D', full: list.filter(u => u.operatorPinned).map(u => u.id), title: [] }),
+    writeClaudeDigestFile: () => true,
+  });
+  const pushed = [];
+  m._deliverMessage = (to, from, body, mtype) => pushed.push([to, from, body, mtype]);
+  const session = { name: 'a', agentType, sessionId: 'sid-1', _dead: dead, needsAttention };
+  m.sessions.set('a', session);
+  return { m, memLoad, pushed, session, units };
+}
+
+test('_pushLateDirective: an operator directive added or edited for a live claude seat is delivered and marked full', () => {
+  const { m, memLoad, pushed } = mkDirective();
+  const { id } = m.addMemoryUnit('a', { text: 'always say hi' });
+  assert.strictEqual(pushed.length, 1);
+  assert.deepStrictEqual(pushed[0].slice(0, 2), ['a', 'memory']);
+  assert.strictEqual(pushed[0][3], 'memory');
+  assert.ok(pushed[0][2].includes(id) && pushed[0][2].includes('always say hi'));
+  assert.ok(!/UPDATED/.test(pushed[0][2]));
+  assert.strictEqual(memLoad.stateOf('a', id), 'full');
+  m.editMemoryUnit('a', id, 'always say hi');
+  assert.strictEqual(pushed.length, 2, 'an edit pushes even when the unit already reads full');
+  assert.ok(pushed[1][2].startsWith(`operator directive ${id} UPDATED`));
+});
+
+test('_pushLateDirective: no push to a codex, dead or attention seat, for a non-pinned add, or on unpin', () => {
+  for (const opts of [{ agentType: 'codex' }, { dead: true }, { needsAttention: true }]) {
+    const { m, memLoad, pushed } = mkDirective(opts);
+    const { id } = m.addMemoryUnit('a', { text: 'x' });
+    m.editMemoryUnit('a', id, 'y');
+    assert.deepStrictEqual(pushed, [], JSON.stringify(opts));
+    assert.strictEqual(memLoad.stateOf('a', id), 'absent');
+  }
+  const { m, pushed } = mkDirective();
+  const { id } = m.addMemoryUnit('a', { text: 'x', operatorPinned: false });
+  assert.deepStrictEqual(pushed, [], 'a non-pinned add pushes nothing');
+  m.setOperatorPin('a', id, false);
+  assert.deepStrictEqual(pushed, [], 'an unpin pushes nothing');
+  m.setOperatorPin('a', id, true);
+  assert.strictEqual(pushed.length, 1, 'a pin of a unit not yet full pushes it');
+  m.setOperatorPin('a', id, true);
+  assert.strictEqual(pushed.length, 1, 'a re-pin of a unit already full does not');
+});
+
+test('_fireCompactContinuation re-seeds the loaded set from the re-served digest', () => {
+  const { m, memLoad, units } = mkDirective();
+  units.set('mem-9-zzzzzz', { id: 'mem-9-zzzzzz', body: 'p', operatorPinned: true });
+  m._onCompactEnd = () => {};
+  m._stampSeatCost = () => {};
+  m._voidScratchMark = () => {};
+  m._compactRegen = () => true;
+  m._fireCompactContinuation(m.sessions.get('a'));
+  assert.strictEqual(memLoad.stateOf('a', 'mem-9-zzzzzz'), 'full');
+});
+
+test('[agent:memory remember pinned=true] by the agent pushes no directive', () => {
+  const { m, pushed } = mkDirective();
+  m._memoryAck = () => {};
+  m._injectText = () => {};
+  m._handleMemoryIntent(m.sessions.get('a'), 'remember', 'pinned=true my own fact');
+  assert.deepStrictEqual(pushed, []);
+});
+
 test('[agent:memory forget] routes through removeMemoryUnit rather than a second copy', () => {
   const { m } = mkRemover({ units: [] });
   const acked = [];

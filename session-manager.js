@@ -2065,9 +2065,7 @@ function createSessionManager(deps) {
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
       // recording it would claim FULL for units the model never saw, hence a resume records nothing.
-      if (agentType === 'claude' && !resumeId) {
-        try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
-      }
+      if (agentType === 'claude' && !resumeId) this._seedMemoryLoad(name);
 
       if (!session.clone) getPersistence().upsert({
         name, type, cwd,
@@ -2119,6 +2117,7 @@ function createSessionManager(deps) {
 
       const onSessionId = (sessionId) => {
         const priorSid = session.sessionId;
+        const reseed = !!(priorSid && sessionId && priorSid !== sessionId && !session.forked && session.agentType === 'claude');
         if (priorSid && sessionId && priorSid !== sessionId) {
           try { this._stampSeatCost(session, 'clear'); } catch {}
         }
@@ -2146,6 +2145,7 @@ function createSessionManager(deps) {
         // noteSession resets only on a change, so the first id (attach, resume) adopts; otherwise the digest recorded in
         // create() a moment earlier would be wiped by the very event that carried it.
         try { memLoad.noteSession(name, sessionId); } catch { /* observer-grade */ }
+        if (reseed) this._seedMemoryLoad(name);
         this._noteConversationForDigest(session, sessionId);
       };
       if (agentType && session.intentSource === 'wire') {
@@ -4884,6 +4884,7 @@ function createSessionManager(deps) {
       // Reset the live set to empty rather than model what the summarizer kept: possibly-evicted
       // must read as not loaded.
       try { memLoad.noteCompact(session.name); } catch { /* observer-grade */ }
+      if (session.agentType === 'claude') this._seedMemoryLoad(session.name);
       // Separate ledger from memLoad: already in context and already offered reset side by side.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
       const sched = getRemindScheduler && getRemindScheduler();
@@ -6572,6 +6573,27 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never break the turn handler */ }
     }
 
+    _seedMemoryLoad(name) {
+      try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
+    }
+
+    _pushLateDirective(agent, id, { updated = false } = {}) {
+      try {
+        const session = this.sessions.get(agent);
+        if (!session || session._dead || session.agentType !== 'claude') return;
+        if (session.needsAttention) return;
+        if (!updated && memLoad.stateOf(agent, id) === 'full') return;
+        const unit = memoryStore.list(agent).find(u => u.id === id);
+        if (!unit || !unit.operatorPinned) return;
+        this._deliverMessage(agent, 'memory',
+          `operator directive ${id}${updated ? ' UPDATED' : ''} (pinned by the operator; served in full at every session start)\n${unit.body}`,
+          'memory');
+        memLoad.noteRecall(agent, id, session.sessionId);
+      } catch (e) {
+        log.warn('memory', `operator directive push to ${agent}: ${e.message}`);
+      }
+    }
+
     _memoryAck(session, line, opts = { parkable: true }) {
       if (session.agentType === 'claude') {
         try {
@@ -6615,6 +6637,7 @@ function createSessionManager(deps) {
       if (session && !session._dead && session.agentType === 'claude') {
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
       }
+      if (on) this._pushLateDirective(agent, id, { updated: false });
       return { ok: true };
     }
 
@@ -6626,6 +6649,7 @@ function createSessionManager(deps) {
         return { ok: false, error: e.message };
       }
       this._refreshOperatorDigest(agent);
+      if (operatorPinned) this._pushLateDirective(agent, unit.id, { updated: false });
       return { ok: true, id: unit.id };
     }
 
@@ -6638,6 +6662,7 @@ function createSessionManager(deps) {
       }
       if (!res.ok) return res;
       this._refreshOperatorDigest(agent);
+      this._pushLateDirective(agent, id, { updated: true });
       return { ok: true };
     }
 
