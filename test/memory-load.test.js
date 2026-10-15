@@ -303,7 +303,7 @@ test('load: a RESUMED spawn records nothing — the hook cats no digest for sour
   } finally { h.stop('a'); }
 });
 
-test('load: compaction empties the live set, fired from the watcher callback create() built', async () => {
+test('load: compaction resets the live set to the re-served digest, fired from the watcher callback create() built', async () => {
   const h = mkManager({ units: [
     { text: 'a pinned claim', operatorPinned: true },
     { text: `an unpinned claim\n${'x'.repeat(RECENT_BODY_CAP + 1)}` },
@@ -317,16 +317,15 @@ test('load: compaction empties the live set, fired from the watcher callback cre
     assert.ok(w && w.onCompactSummary, 'ENTER: create() must have handed the watcher a compact callback');
     w.onCompactSummary();
 
-    assert.strictEqual(h.m.memoryLoadState('a', pin), 'absent',
-      'compaction resets to EMPTY — no attempt to model what the summarizer kept, because "possibly evicted" '
-      + 'must resolve to not-loaded for a dedup consumer');
-    assert.strictEqual(h.m.memoryLoadState('a', plain), 'absent', 'the title tier is dropped too');
-    assert.deepStrictEqual(h.m.memoryLiveSet('a').full, []);
-    assert.deepStrictEqual(h.m.memoryLiveSet('a').title, []);
+    assert.strictEqual(h.m.memoryLoadState('a', pin), 'full',
+      'the SessionStart hook re-serves the digest on source=compact, so its full tier is loaded again');
+    assert.strictEqual(h.m.memoryLoadState('a', plain), 'title', 'and its title tier reads title again');
+    assert.deepStrictEqual(h.m.memoryLiveSet('a').full, [pin]);
+    assert.deepStrictEqual(h.m.memoryLiveSet('a').title, [plain]);
   } finally { h.stop('a'); }
 });
 
-test('load: a NEW session id resets, the SAME id does not', async () => {
+test('load: a NEW session id resets to the re-served digest, the SAME id does not', async () => {
   const h = mkManager({ units: [{ text: 'a pinned claim', operatorPinned: true }] });
   const [pin] = h.ids;
   try {
@@ -345,8 +344,8 @@ test('load: a NEW session id resets, the SAME id does not', async () => {
     assert.strictEqual(h.m.memoryLoadState('a', pin), 'full', 'a repeat of the same id is not a transition');
 
     w.onSessionId('conv-2');
-    assert.strictEqual(h.m.memoryLoadState('a', pin), 'absent',
-      '/clear mints a new conversation id and the context is gone with it');
+    assert.strictEqual(h.m.memoryLoadState('a', pin), 'full',
+      '/clear mints a new conversation id and the hook re-serves the digest on source=clear');
     assert.strictEqual(h.m.memoryLiveSet('a').sessionId, 'conv-2');
   } finally { h.stop('a'); }
 });
