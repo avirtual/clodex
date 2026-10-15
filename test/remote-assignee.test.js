@@ -76,6 +76,7 @@ function rig({ online = true, caps = ['dm'], label = 'p' } = {}) {
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
     listTeams: () => ['team'],
     gitWorktree: require('../git-worktree'),
+    shouldHoldDm: require('../proxy-util').shouldHoldDm,
     loadManifest: () => team,
   };
   const SessionManager = createSessionManager(deps);
