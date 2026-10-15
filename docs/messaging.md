@@ -136,9 +136,9 @@ is minted lazily, so the edge can arrive well after the keystroke.
   `getCtlService().run('--ctx <ctx> <line>')` in the main process and replies the
   block as `[ctl <ctx> exit <code>] <output>`, clamped to `CTL_REPLY_MAX_BYTES`.
   `ctlRefusal` answers `ctl: <verb> is operator-only` for input, exec, deploy,
-  undeploy, upgrade, port-forward, attach, web, delete node, use and logs --follow,
-  and refuses `--ctx`/`--url`/`--token`/`--ssh`/`--remote-port`, before the service
-  is called. The exec entries with `"inProcess": "ctl"` reach the same handler
+  undeploy, upgrade, port-forward, attach, web, create/delete/use node, --import and
+  logs --follow, and refuses `--ctx`/`--url`/`--token`/`--ssh`/`--remote-port`/`--tunnel`,
+  before the service is called. The exec entries with `"inProcess": "ctl"` reach the same handler
   (docs/exec-tools.md, "clodexctl through exec").
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;

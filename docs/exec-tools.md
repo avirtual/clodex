@@ -201,7 +201,9 @@ payload against the entry's schema and then call `_handleCtlIntent` with
 `{ctx, line: verb + ' ' + args}`, so the run happens in ctl-service inside the
 main process. `~/.clodex/cli/contexts.json` and its tokens never leave the main
 process; the seat gets the rendered output back, scrubbed by ctl-service and
-clamped to the entry's `replyMaxBytes` (12000).
+clamped to the entry's `replyMaxBytes` (12000). The run uses the same
+ctl-service as the operator's drawer ctl tab: it takes over the tab's one warm
+connection, and a slow run queues the tab's next command behind it.
 
 | Entry | `verb` enum |
 |---|---|
@@ -222,10 +224,11 @@ a separate privileged intent for templates that opt in, with no verb tier of its
 own.
 
 **Always refused, in every path:** input, exec, deploy, undeploy, upgrade,
-port-forward, attach, web, delete node, use and logs --follow (`ctl: <verb> is
-operator-only`). A line that sets `--ctx`, `--url`, `--token`, `--ssh` or
-`--remote-port` is refused too, because those flags would re-target the
-context. Verbs ctl-service itself defers (delete session, restart node) stay
+port-forward, attach, web, create/delete/use node, `--import` and logs --follow
+(`ctl: <verb> is operator-only`). The node checks read the positionals the CLI's
+own parser yields, so a flag in front of the resource word does not hide it. A
+line that sets `--ctx`, `--url`, `--token`, `--ssh`, `--remote-port` or
+`--tunnel` is refused too, because those flags would re-target the context. Verbs ctl-service itself defers (delete session, restart node) stay
 refused there.
 
 ## Terminal commands inside an open session

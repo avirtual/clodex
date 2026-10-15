@@ -51,6 +51,11 @@ const OPERATOR_ONLY = [
   ['attach', 'attach hand'],
   ['web', 'web hand'],
   ['delete node', 'delete node ios'],
+  ['delete node', 'delete --force node ios'],
+  ['delete node', 'delete -o json --force node ios'],
+  ['delete node', 'delete node/ios --force'],
+  ['create node', 'create node ios --tunnel sh -c x {port}:1'],
+  ['create node', 'create -o json node ios --url http://x'],
   ['use', 'use node ios'],
   ['logs --follow', 'logs hand --follow'],
   ['logs --follow', 'logs hand -f'],
@@ -130,6 +135,39 @@ test('an inProcess ctl exec entry spawns nothing and reaches the ctl service onc
   assert.deepStrictEqual(spawned, []);
   assert.deepStrictEqual(calls, ['--ctx ios get sessions']);
   assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-read: [ctl ios exit 0] NAME  STATE\nhand  idle']);
+});
+
+test('the seats tier cannot create a node through the exec path', async () => {
+  const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
+  const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
+  fs.mkdirSync(execDir, { recursive: true });
+  const def = { ...SEATS_DEF, schema: { ...SEATS_DEF.schema, properties: { ...SEATS_DEF.schema.properties, ctx: { type: 'string', enum: ['ios'] } } } };
+  fs.writeFileSync(path.join(execDir, 'clodex-ctl-seats.json'), JSON.stringify(def));
+  const { calls, svc } = fakeCtl();
+  const m = mk({
+    REGISTRY_DIR,
+    getCtlService: () => svc,
+    parseAndValidate,
+    resolveTeam: () => null,
+    getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['clodex-ctl-seats'] }) }),
+  });
+  const replies = [];
+  m._injectText = (_s, text) => replies.push(text);
+  m._broadcast = () => {};
+  await m._handleExecIntent({ ...SEAT }, 'clodex-ctl-seats', JSON.stringify({ ctx: 'ios', verb: 'create', args: "node ios --tunnel sh -c 'touch /tmp/x' {port}:7900" }));
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-seats: ctl: create node is operator-only']);
+});
+
+test('ctl refuses --import and a session line carrying --tunnel', async () => {
+  for (const [line, want] of [['create node ios --import --force', 'ctl: create node is operator-only'], ['get sessions --tunnel sh -c x', 'ctl: --tunnel is fixed by the context and cannot be set']]) {
+    const { calls, svc } = fakeCtl();
+    const m = mk({ getCtlService: () => svc });
+    const replies = [];
+    await m._handleCtlIntent({ ...SEAT }, { ctx: 'ios', line }, (t) => replies.push(t));
+    assert.deepStrictEqual(calls, [], line);
+    assert.deepStrictEqual(replies, [want]);
+  }
 });
 
 test('an exec entry with an unknown inProcess value is refused before any spawn', async () => {

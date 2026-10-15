@@ -487,21 +487,29 @@ const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, create
 const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
 const { TERM_REPLY_WAIT_MS } = require('./drawer-avail');
-const { tokenize: ctlTokenize } = require('./ctl-service');
+const { tokenize: ctlTokenize, parseLine: ctlParseLine } = require('./ctl-service');
 
 const CTL_REPLY_MAX_BYTES = 12000;
 const CTL_REPLY_WAIT_MS = 30000;
 const CTL_OPERATOR_ONLY = new Set(['input', 'exec', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'attach', 'web', 'use']);
-const CTL_PINNED_FLAGS = new Set(['ctx', 'url', 'token', 'ssh', 'remote-port', 'remotePort']);
+const CTL_PINNED_FLAGS = new Set(['ctx', 'url', 'token', 'ssh', 'remote-port', 'remotePort', 'tunnel']);
+const CTL_NODE_WRITES = new Set(['create', 'delete', 'use']);
 
-function ctlRefusal(tokens) {
+function ctlRefusal(tokens, parsed) {
   const verb = tokens[0];
   if (verb === undefined) return 'ctl: no command — write [agent:ctl <ctx>] <verb> [args]';
   if (verb.startsWith('-')) return 'ctl: put the verb first, flags after it';
   if (CTL_OPERATOR_ONLY.has(verb)) return `ctl: ${verb} is operator-only`;
-  if (verb === 'delete' && (tokens[1] === 'node' || tokens[1] === 'nodes')) return 'ctl: delete node is operator-only';
-  if (verb === 'logs' && tokens.some((t) => t === '--follow' || t.startsWith('--follow=') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t))) {
+  const { flags, isNodeLine } = parsed;
+  const pos = flags._;
+  if (pos[0] !== verb) return 'ctl: put the verb first, flags after it';
+  if (CTL_NODE_WRITES.has(verb) && isNodeLine(verb, pos.slice(1))) return `ctl: ${verb} node is operator-only`;
+  if (verb === 'logs' && (flags.follow || tokens.some((t) => t === '--follow' || t.startsWith('--follow=') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t)))) {
     return 'ctl: logs --follow is operator-only';
+  }
+  if (flags.import) return 'ctl: --import is operator-only';
+  for (const name of CTL_PINNED_FLAGS) {
+    if (flags[name] !== undefined) return `ctl: --${name} is fixed by the context and cannot be set`;
   }
   for (const t of tokens) {
     const m = /^--([^=]+)/.exec(t);
@@ -6482,8 +6490,6 @@ function createSessionManager(deps) {
       });
     }
 
-    // Seat and window both come from the sender, never from the agent, so it cannot reach another
-    // agent's terminal or the seatless workspace shell.
     _handleCtlIntent(session, intent, reply, maxBytes = CTL_REPLY_MAX_BYTES) {
       const ctx = String(intent.ctx || '');
       const line = String(intent.line || '').trim();
@@ -6497,12 +6503,16 @@ function createSessionManager(deps) {
         return Promise.resolve(null);
       }
       let tokens;
-      try { tokens = ctlTokenize(line); } catch (e) {
+      let parsed;
+      try {
+        tokens = ctlTokenize(line);
+        parsed = tokens.length ? ctlParseLine(line) : null;
+      } catch (e) {
         reply(`ctl: ${e.message}`);
         return Promise.resolve(null);
       }
       const verb = tokens[0] || '';
-      const denied = ctlRefusal(tokens);
+      const denied = ctlRefusal(tokens, parsed);
       if (denied) {
         log.warn('ctl', `${session.name} ctx=${ctx} verb=${verb}: refused`);
         reply(denied);
@@ -6520,6 +6530,8 @@ function createSessionManager(deps) {
       });
     }
 
+    // Seat and window both come from the sender, never from the agent, so it cannot reach another
+    // agent's terminal or the seatless workspace shell.
     _handleTermIntent(session, sub, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
       if (sub !== 'exec' && sub !== 'read') {
