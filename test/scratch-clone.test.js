@@ -144,7 +144,7 @@ test('t1539 bodied begin: one create() with fork=true on the parent sid, the par
   const first = f.injected.filter((i) => i.to === name);
   assert.strictEqual(first.length, 1, 'the clone gets exactly one turn: its brief');
   assert.strictEqual(first[0].text, scratchCloneBrief('a', 'read the poller and say where strip levels live'));
-  assert.ok(first[0].text.startsWith('You are a scratch clone of a. Do exactly this, then end with [agent:scratch end] <summary>'));
+  assert.ok(first[0].text.startsWith('You are a probe clone of a. Do exactly this, then end with [agent:probe end] <summary>'));
   assert.strictEqual(f.s._scratchClone, name);
   assert.deepStrictEqual(f.replies(), [], 'the success ack never wakes the parent');
   assert.deepStrictEqual(f.passive.filter((p) => p.to === 'a').map((p) => p.text),

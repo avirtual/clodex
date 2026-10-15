@@ -63,6 +63,9 @@ function parseIntentLegacy(rawLine) {
     return { type: 'scratch', sub, label, replay: !!scratchMatch[3], body: scratchMatch[4] };
   }
 
+  const probeMatch = cleaned.match(/^\[agent:probe(?:\s+([^\]]*?))?\s*\]\s*(.*)$/s);
+  if (probeMatch) return { type: 'probe', sub: (probeMatch[1] || '').trim().toLowerCase() || 'begin', body: probeMatch[2] };
+
   const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
 
@@ -373,6 +376,9 @@ const ADVERSARIAL = [
   '[agent:scratch cancel a]', '[agent:scratch rewind a] a note\nline two',
   '[agent:scratch cancel replay]', '[agent:scratch mark a-b.c_1]', '[agent:scratch mark a b]',
   '[agent:scratch mark aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]', '[agent:scratch rewind] noteless',
+  '[agent:probe] q', '[agent:probe]', '[agent:probe] line one\nline two', '[agent:probe end] s',
+  '[agent:probe end]', '[agent:probe cancel]', '[agent:probe cancel] trailing', '[agent:probe mark x]',
+  '[agent:probe  END ]',
   '[agent:memory list]', '[agent:memory remember] text', '[agent:memory RECALL] q',
   '[agent:memory]',
   '[agent:file view /a/b.txt]', '[agent:file open /a b/c.txt]',
@@ -841,7 +847,7 @@ test('t1037: the scratch row is gateable, ordinary, and parses a closed alternat
   assert.strictEqual(row.gateable, true);
   assert.strictEqual(row.privileged, false);
   assert.strictEqual(row.source, 'core');
-  assert.match(row.label, /Scratch episodes/, 'the checklist label comes from intent-catalog, not a copy here');
+  assert.match(row.label, /Probes/, 'the checklist label comes from intent-catalog, not a copy here');
   assert.strictEqual(parseIntent('[agent:scratch resume]'), null,
     'an unknown sub-verb is not an intent — `end` CUTS the transcript, so a half-parsed typo is not a safe failure');
   assert.ok(registry.CORE_VALID_INTENT_NAMES.includes('scratch'),
@@ -913,7 +919,8 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || i.type === 'team-create'
     || i.type === 'sub'
-    || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'));
+    || (i.type === 'scratch' && (i.sub === 'end' || i.sub === 'rewind'))
+    || (i.type === 'probe' && (i.sub === 'begin' || i.sub === 'end'));
   const deliberatelyNarrowed = (i) => (i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
     && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)

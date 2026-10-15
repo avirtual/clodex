@@ -27218,6 +27218,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var g = (glyph, label) => Object.freeze({ glyph, label });
       var CONTEXT = { compact: g("\u229F", "compact"), clear: g("\u232B", "clear"), reload: g("\u21BA", "reload") };
       var SCRATCH = { begin: g("\u27E6", "scratch"), end: g("\u27E7", "result"), rewind: g("\u21E4", "rewind"), mark: g("\u2731", "mark"), cancel: g("\u2297", "cancel") };
+      var PROBE = { begin: g("\u27E6", "probe"), end: g("\u27E7", "result"), cancel: g("\u2297", "cancel") };
       var TASK = {
         assign: g("\u21E5", "assign"),
         start: g("\u21C4", "start"),
@@ -27236,6 +27237,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         name: () => g("@", "name"),
         context: (i) => CONTEXT[i.sub] || g("\u229F", String(i.sub || "context")),
         scratch: (i) => SCRATCH[i.sub] || g("\u27E6", String(i.sub || "scratch")),
+        probe: (i) => PROBE[i.sub] || g("\u27E6", "probe"),
         memory: (i) => g("\u25C8", String(i.sub || "memory")),
         file: () => g("\u25A2", "show"),
         term: () => g("\u25A4", "terminal"),
@@ -27262,6 +27264,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         name: g("@", "name"),
         context: g("\u229F", "context"),
         scratch: g("\u27E6", "scratch"),
+        probe: g("\u27E6", "probe"),
         memory: g("\u25C8", "memory"),
         file: g("\u25A2", "show"),
         term: g("\u25A4", "terminal"),
@@ -31138,7 +31141,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "sub", label: "Message your own running subagents (sub)" },
         { type: "who", label: "List peers (who)" },
         { type: "context", label: "Self context control (compact/clear/reload)" },
-        { type: "scratch", label: "Scratch episodes \u2014 rewind the transcript to a research result (scratch)" },
+        { type: "scratch", label: "Probes \u2014 fork a research clone that returns a summary (probe)" },
         { type: "memory", label: "Memory management (remember/recall)" },
         { type: "spawn", label: "Spawn peer sessions (spawn)" },
         { type: "file", label: "Surface files on screen (file)" },
@@ -31396,6 +31399,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (m[3] && sub !== "end" && sub !== "rewind") return null;
         return { type: "scratch", sub, label, replay: !!m[3], body: m[4] };
       }
+      function parseProbe(cleaned) {
+        const m = cleaned.match(/^\[agent:probe(?:\s+([^\]]*?))?\s*\]\s*(.*)$/s);
+        if (!m) return null;
+        const head = (m[1] || "").trim().toLowerCase();
+        return { type: "probe", sub: head || "begin", body: m[2] };
+      }
       function parseMemory(cleaned) {
         const m = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
         return m ? { type: "memory", sub: m[1].toLowerCase(), body: m[2] } : null;
@@ -31621,6 +31630,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "name", parse: parseName, bodyMode: NONE },
         { type: "context", parse: parseContext, bodyMode: (i) => i.sub === "compact" || i.sub === "reload" || i.sub === "clear" ? "greedy" : "none" },
         { type: "scratch", parse: parseScratch, bodyMode: (i) => i.sub === "end" || i.sub === "rewind" || i.sub === "begin" && i.body ? "greedy" : "none" },
+        { type: "probe", parse: parseProbe, bodyMode: (i) => i.sub === "begin" || i.sub === "end" ? "greedy" : "none" },
         { type: "memory", parse: parseMemory, bodyMode: (i) => i.sub === "remember" ? "greedy" : "none" },
         { type: "file", parse: parseFile, bodyMode: NONE },
         // Line-scoped, unlike every other body-carrying row here: the command is
@@ -31936,6 +31946,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         "who",
         "name",
         "context",
+        "probe",
         "scratch",
         "memory",
         "spawn",
