@@ -18,8 +18,6 @@ const CARD_ROWS = [
   ['[agent:context reload] brief', '↺', 'reload', null, []],
   ['[agent:scratch begin]', '⟦', 'scratch', null, []],
   ['[agent:scratch end] summary', '⟧', 'result', null, []],
-  ['[agent:scratch rewind] why', '⇤', 'rewind', null, []],
-  ['[agent:scratch mark here]', '✱', 'mark', 'here', []],
   ['[agent:scratch cancel]', '⊗', 'cancel', null, []],
   ['[agent:probe] what calls x', '⟦', 'probe', null, []],
   ['[agent:probe end] summary', '⟧', 'result', null, []],

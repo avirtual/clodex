@@ -19,6 +19,7 @@ blocks a release.
 - A successful [agent:term read] is shown in the operator's message log like an exec is.
 - A dm to name@peer can carry `ref:<token>` on its head line; the ref is minted when absent, named in every parked/held/not-delivered notice, and a repeat of the same ref reaching the peer within 10 minutes is not redelivered, so resending after a timeout is safe.
 - `[agent:probe] <question + return shape>` is the research-clone intent (the clone closes with `[agent:probe end] <summary>`, the parent drops it with `[agent:probe cancel]`); the `scratch` verbs still work as aliases, and the in-place cut, marks and rewinds are retired.
+- The in-place transcript cut (`scratch mark`, `rewind`, `end replay`, the `.bak` recycle and its cost ledger) is deleted; `[agent:probe]` and the `scratch begin|end|cancel` aliases are the whole surface, and the session context menu loses "scratch mark".
 ### Teams
 
 - The sandbox up/rebuild reply says "container restarted" rather than "recreated": docker's StartedAt moves on a plain start of a stopped container too, so the old word claimed more than was checked.

@@ -394,12 +394,6 @@ bundle), whose packaged form is the Docker image under
   set: which verbs a session may be allowed or denied, in IPC-prompt order.
   Three consumers across two processes read it (the fire-time gate in
   `_handleIntent`, the renderer checklist, and `buildIpcPrompt`).
-- **scratch-mark.js** — the pure validator behind `[agent:scratch begin|end|
-  cancel|mark|rewind]`: parses a transcript tail into records, finds the turn boundary, and
-  decides whether the marked span may be cut. Every abort (cleared, compacted,
-  an orphaned `tool_use`, a split text+tool_use pair, arrivals, an unmentioned
-  dispatch) returns a reason instead of writing, so the cut in session-manager
-  never has to re-derive one. No fs, no session state.
 - **scratch-clone.js** — the clone half of `[agent:scratch begin] <brief>`,
   grafted onto SessionManager like team-tickets.js: forks a muted clone seat
   from the parent's record, routes its `scratch end` summary to the parent, and
