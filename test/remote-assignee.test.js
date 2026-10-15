@@ -75,6 +75,7 @@ function rig({ online = true, caps = ['dm'], label = 'p' } = {}) {
     resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
     listTeams: () => ['team'],
+    gitWorktree: require('../git-worktree'),
     loadManifest: () => team,
   };
   const SessionManager = createSessionManager(deps);
