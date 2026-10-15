@@ -9001,7 +9001,7 @@ function createSessionManager(deps) {
   // defineProperty, not Object.assign: class methods are non-enumerable and an enumerable graft changes what for-in sees.
   // Ticket state (_ticketWatch, _stallProbing) stays initialised in the constructor; moving it needs a new init call.
   const graftedMethods = {
-    ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS, findPeerByOrigin, SELF_LABEL }),
+    ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS, findPeerByOrigin, peerOriginSuffix, SELF_LABEL }),
     ...createScratchCloneMethods(deps, { SCRATCH_CLONE_CEILING_MS }),
   };
   for (const [k, v] of Object.entries(graftedMethods)) {

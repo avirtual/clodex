@@ -386,6 +386,7 @@ function createTicketMethods(deps, shared) {
     // Derived core-side; re-deriving it here would put the same default in two files.
     SPEC_CONFIRM_MS,
     findPeerByOrigin,
+    peerOriginSuffix,
     SELF_LABEL,
   } = shared;
 
@@ -2786,6 +2787,12 @@ function createTicketMethods(deps, shared) {
       return typeof name === 'string' && name.includes('@');
     },
 
+    boxPathFor(team, hostPath) {
+      const rel = path.relative(team.root, hostPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+      return path.posix.join(SANDBOX_WORK_DIR, rel.split(path.sep).join('/'));
+    },
+
     _resolveRemoteAssignee(who) {
       const at = who.indexOf('@');
       const name = who.slice(0, at);
@@ -2795,7 +2802,7 @@ function createTicketMethods(deps, shared) {
       const pm = getPeerManager();
       const peer = pm ? findPeerByOrigin(pm.statuses() || [], origin) : null;
       if (!peer || !peer.online || !Array.isArray(peer.caps) || !peer.caps.includes('dm')) return null;
-      return who;
+      return `${name}@${(typeof peerOriginSuffix === 'function' && peerOriginSuffix(peer, AGENT_NAME_RE)) || origin}`;
     },
 
     _resolveAssignee(team, who) {
@@ -2903,11 +2910,18 @@ function createTicketMethods(deps, shared) {
           + `written. And if the body gates on a specific condition you cannot confirm was met, report that rather than `
           + `assuming it was discharged.\n`
         : '';
-      const wtLine = (!remote && ticket && ticket.worktree && ticket.worktree.path)
+      const hasTree = !!(ticket && ticket.worktree && ticket.worktree.path);
+      const boxTree = (remote && hasTree && team && team.root) ? this.boxPathFor(team, ticket.worktree.path) : null;
+      const wtLine = (!remote && hasTree)
         ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
           + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
           + `${team && team.root ? `The shared checkout is ${team.root}; do not edit files there.` : ''}\n`
-        : '';
+        : boxTree
+          ? `WORK IN: ${boxTree} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd on ${seat.slice(seat.indexOf('@') + 1)}; `
+            + `the same tree is ${ticket.worktree.path} on the board's host. `
+            + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
+            + `The shared checkout is ${SANDBOX_WORK_DIR}; do not edit files there.\n`
+          : '';
       // Separate from `WORK IN:`, which must stay the tree root (git commands run there); `role || assignee`
       // because `role` is unset until pinned, and hasOwnProperty because a seat name can equal a prototype key.
       const roleName = (ticket && (ticket.role || ticket.assignee)) || '';
@@ -2920,8 +2934,9 @@ function createTicketMethods(deps, shared) {
       // a nested team.json); a symlink that exists only inside the worktree stays unseen.
       const roleCwdHonored = !!roleCwdRel && !!(team && team.root)
         && this._resolveRoleCwd(team, roleDef).fallback === null;
-      const areaLine = (!remote && roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
-        ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
+      const areaRoot = remote ? boxTree : (hasTree ? ticket.worktree.path : null);
+      const areaLine = (roleCwdHonored && areaRoot)
+        ? `YOUR AREA in that tree: ${remote ? path.posix.join(areaRoot, roleCwdRel) : path.join(areaRoot, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
         : '';
       // The tree check is a second condition: a role edited to `spawn` mid-flight, or a mint failure, can leave a
@@ -3559,13 +3574,17 @@ function createTicketMethods(deps, shared) {
       if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `seat name "${name}" is not name-legal` };
       // `name` rides the refusal so callers need not re-derive it; a second copy of the rule would drift.
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
+      return { ok: true, name, branch: this._ticketBranchName(ticket) };
+    },
+
+    _ticketBranchName(ticket) {
       // Slug from the untruncated first line, not the 80-char-capped title: behind a ~67-char task-dir path
       // the title leaves ~13 characters and sibling tickets get identical branch names.
       const slug = branchSlug(ticket.spec == null ? ticket.title : titleLine(ticket.spec));
       // A recorded branch wins: a re-derived name forks a second branch off HEAD and strands the previous seat's commits,
       // including when a locked tree makes createWorktree refuse, which is the wanted outcome.
       const recorded = ticket.worktree && ticket.worktree.branch;
-      return { ok: true, name, branch: recorded || (slug ? `${ticket.id}-${slug}` : String(ticket.id)) };
+      return recorded || (slug ? `${ticket.id}-${slug}` : String(ticket.id));
     },
 
     // The two dispositions are opposites: a worktree seat's uncommitted work goes with the delete, a spawn seat's work in the shared
@@ -4186,13 +4205,17 @@ function createTicketMethods(deps, shared) {
       if (intent.start) {
         const startMsgs = [];
         let startWarned = false;
+        let late = false;
         this._taskStart(session, team, { id: ticket.id, reviewer: null },
-          (m) => { startWarned = true; startMsgs.push(String(m)); },
-          (m) => startMsgs.push(String(m)));
+          (m) => { if (late) { reply(m); return; } startWarned = true; startMsgs.push(String(m)); },
+          (m) => { if (late) { ack(m); return; } startMsgs.push(String(m)); });
+        late = true;
         const after = (ticketsStore.load(team.root) || []).find((t) => t.id === ticket.id);
         const raw = startMsgs.join(' ').trim();
         if (after && ticketStarted(after)) {
-          const tail = raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim();
+          const tail = raw
+            ? raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim()
+            : `→ ${after.assignee}: minting its worktree, the dispatch result follows`;
           (startWarned ? reply : ack)(`ticket ${ticket.id} created and started ${tail}${rvNote}`);
           return;
         }
@@ -4289,16 +4312,67 @@ function createTicketMethods(deps, shared) {
           : `ticket ${ticket.id}${unparked} → spawning ${minted.name} in a worktree on branch ${minted.branch}`) + rvNote);
         return;
       }
-      // A mint failure is not fatal: the ticket stays role-assigned and takes the ordinary delivery path.
-      if (!this._repinTicketToSeat(team, ticket)) delete ticket.role;
-      ticketsStore.save(team.root, tickets);
-      const d = this._deliverTicketSpec(team, ticket, ticket.spec, session.name, true);
-      this._recordUndeliveredDispatch(team, tickets, ticket, d);
-      const suffix = this._ticketDeliverySuffix(d, roleKey, team, ticket);
-      this._reconcileTickets(team);
-      this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee, body: `ticket ${ticket.id} started` });
-      log.info('intent', `task start by ${session.name}: ${ticket.id} → ${ticket.assignee}${wasParked ? ' (unparked)' : ''}`);
-      (suffix ? reply : ack)(`ticket ${ticket.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
+      const dispatch = (all, rec) => {
+        // A mint failure is not fatal: the ticket stays role-assigned and takes the ordinary delivery path.
+        if (!this._repinTicketToSeat(team, rec)) delete rec.role;
+        ticketsStore.save(team.root, all);
+        const d = this._deliverTicketSpec(team, rec, rec.spec, session.name, true);
+        this._recordUndeliveredDispatch(team, all, rec, d);
+        const suffix = this._ticketDeliverySuffix(d, roleKey, team, rec);
+        this._reconcileTickets(team);
+        this._broadcast('ipc-message', { type: 'task', from: session.name, to: rec.assignee, body: `ticket ${rec.id} started` });
+        log.info('intent', `task start by ${session.name}: ${rec.id} → ${rec.assignee}${wasParked ? ' (unparked)' : ''}`);
+        (suffix ? reply : ack)(`ticket ${rec.id} → ${roleKey}${unparked}${suffix}${rvNote}`);
+      };
+      if (this._isRemoteSeat(assignee) && !(ticket.worktree && ticket.worktree.path)) {
+        ticketsStore.save(team.root, tickets);
+        setImmediate(() => {
+          this._mintRemoteTicketTree(team, ticket.id, this._ticketBranchName(ticket), reply, assignee)
+            .then((all) => { if (all) dispatch(all, all.find((x) => x.id === ticket.id)); })
+            .catch((e) => log.error('intent', `ticket ${ticket.id} remote tree failed: ${e.message}`));
+        });
+        return;
+      }
+      dispatch(tickets, ticket);
+    },
+
+    async _mintRemoteTicketTree(team, ticketId, branch, reply, assignee) {
+      const targetPath = path.join(team.root, '.clodex-wt', branch);
+      try {
+        const exclude = path.join(team.root, '.git', 'info', 'exclude');
+        if (fs.statSync(path.join(team.root, '.git')).isDirectory()) {
+          const cur = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
+          if (!cur.split(/\r?\n/).includes('.clodex-wt/')) {
+            fs.mkdirSync(path.dirname(exclude), { recursive: true });
+            fs.appendFileSync(exclude, `${cur && !cur.endsWith('\n') ? '\n' : ''}.clodex-wt/\n`);
+          }
+        }
+      } catch (e) { log.warn('worktree', `could not add .clodex-wt/ to ${team.root}/.git/info/exclude: ${e.message}`); }
+      const r = await gitWorktree.createWorktree(team.root, branch, { base: 'HEAD', targetPath });
+      const rel = (r && r.ok) ? gitWorktree.relativizeWorktreePointers(team.root, r.path) : null;
+      const all = ticketsStore.load(team.root);
+      const rec = all.find((x) => x.id === ticketId);
+      const moved = !rec ? 'ticket gone'
+        : rec.state !== 'open' ? `ticket is ${rec.state}`
+          : rec.assignee !== assignee ? `ticket was reassigned to ${rec.assignee}` : null;
+      if (!r || !r.ok || !rel || !rel.ok || moved) {
+        if (r && r.ok) {
+          const rm = await gitWorktree.removeWorktree(r.path, { repo: team.root, ...(r.base ? { deleteBranch: r.branch } : {}) })
+            .catch(() => ({ ok: false }));
+          log.info('worktree', `${rm && rm.ok ? 'removed' : 'ORPHANED'} ${r.path} after failed remote ticket tree`);
+        }
+        if (rec && !moved) { rec.startedAt = null; ticketsStore.save(team.root, all); }
+        const why = (r && !r.ok && r.error) || (rel && rel.error) || moved || 'unknown';
+        reply(`ticket ${ticketId}: worktree "${branch}" could not be created (${why}) — nothing sent${moved ? '' : `, ticket left assigned to "${rec.assignee}" and unstarted`}`);
+        return null;
+      }
+      rec.worktree = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };
+      ticketsStore.save(team.root, all);
+      if (fs.existsSync(path.join(team.root, 'package.json'))) {
+        const e = this._linkWorktreeNodeModules(team.root, r.path);
+        if (e) log.warn('worktree', `ticket ${ticketId}: ${e}`);
+      }
+      return all;
     },
 
     _taskAssign(session, team, intent, reply, ack = reply) {
@@ -4804,7 +4878,8 @@ function createTicketMethods(deps, shared) {
           if (!declares) return null;
           return `neither ${link} nor ${src} exists — the suite cannot resolve its dependencies`;
         }
-        try { fs.symlinkSync(src, link); } catch (e) {
+        const inRoot = !path.relative(rootDir, treeDir).startsWith('..');
+        try { fs.symlinkSync(inRoot ? path.relative(treeDir, src) : src, link); } catch (e) {
           if (!entry(link)) {   // a concurrent run winning the race is fine
             return `could not link node_modules into the worktree: ${e.message}`;
           }
