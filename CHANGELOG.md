@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Teams
+
+- A seat's messages/run link that points at the wrong directory is repointed at spawn, so the seat's allowed directories and inbound-message inlining follow its real files.
+
 ## 5.125.0 — 2026-10-15
 
 ### Messaging

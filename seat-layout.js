@@ -201,7 +201,7 @@ function migrateSeatLayout({ root, names = [], fs = require('fs'), log = null } 
   return { migrated, skipped: false };
 }
 
-function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
+function ensureSeatLink({ root, name, kind, fs = require('fs'), log = null } = {}) {
   if (!seatLayoutActive(root, fs) || DEFERRED_KINDS.has(kind)) return false;
   const neu = seatPathFor(root, name, kind);
   const old = legacySeatPathFor(root, name, kind);
@@ -210,7 +210,14 @@ function ensureSeatLink({ root, name, kind, fs = require('fs') } = {}) {
     if (exists(fs, old) && !isSymlink(fs, old)) return false;
     fs.mkdirSync(seatDirFor(root, name), { recursive: true, mode: 0o700 });
     fs.mkdirSync(neu, { recursive: true, mode: 0o700 });
-    if (exists(fs, old)) return true;
+    if (exists(fs, old)) {
+      const was = fs.readlinkSync(old);
+      if (path.resolve(path.dirname(old), was) === path.resolve(neu)) return true;
+      fs.unlinkSync(old);
+      fs.symlinkSync(neu, old);
+      if (log) log.info('seat-layout', `seat-layout: repointed ${kind} link for ${name} (was ${was})`);
+      return true;
+    }
     fs.mkdirSync(path.dirname(old), { recursive: true, mode: 0o700 });
     fs.symlinkSync(neu, old);
     return true;
