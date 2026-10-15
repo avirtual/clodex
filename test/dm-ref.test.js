@@ -172,7 +172,7 @@ function boardRig() {
   const wire = [];
   const conn = { dm: (msg, cb) => { wire.push(msg); cb({ ok: true, delivered: true }); } };
   const pm = { statuses: () => [{ id: 'p', label: 'p', online: true, caps: ['dm'] }], get: (id) => (id === 'p' ? conn : null) };
-  const m = mk({ REGISTRY_DIR: home, listTeams: () => ['team'], loadManifest: () => team, getPeerManager: () => pm, log: { info() {}, warn() {}, error() {}, debug() {} } });
+  const m = mk({ REGISTRY_DIR: home, listTeams: () => ['team'], loadManifest: () => team, getPeerManager: () => pm, AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE, SELF_LABEL: 'laptop', log: { info() {}, warn() {}, error() {}, debug() {} } });
   const leadGot = [];
   m._gatedDeliver = (to, from, body) => { leadGot.push({ to, from, body }); return { queued: true }; };
   m._broadcast = () => {};
