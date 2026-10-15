@@ -33,6 +33,7 @@ blocks a release.
 ### Plugins
 
 - Memories: the operator can write a directive for an agent from the viewer — saved operator-pinned (cap 3) with `source: operator`, delivered in full at the agent's next conversation — and edit a unit's text in place.
+- Memories: a directive written or edited for a live seat is delivered on that seat's next turn and marked loaded, instead of waiting for its next compact; compaction re-seeds the loaded set from the re-served digest.
 
 ## 5.125.0 — 2026-10-15
 
