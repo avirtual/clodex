@@ -1871,10 +1871,6 @@ test('formatRoster brief: a ticket seat gets exactly its role and its lead', () 
   assert.match(formatRoster(TEAM(), live, { seat: 'shop-hand-3' }), /- reviewer \(lead-only\)/);
 });
 
-// A definition row and a live row used to differ only by the ABSENCE of a
-// `· live:` tail, so a reader scanning for teammates read the role key as an
-// addressable name and dm'd a seat that did not exist. Liveness must be stated
-// in that slot, not inferred from what is missing.
 test('formatRoster never emits a line beginning `[agent:` from an agent-authored brief or account', () => {
   const home = mkHome();
   const tm = createTeamManifest({ fs, clodexHome: home });
