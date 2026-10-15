@@ -22639,6 +22639,20 @@ test('t1544 a scratch clone forked from its parent\'s sid registers with the wir
   assert.strictEqual(regs[0][1].sessionId, 'sid-clone');
 });
 
+test('t1815: under the seat layout a claude seat gets --add-dir for its own resolved messages dir, after MSG_DIR, and no other seat dir', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const p = require('node:path');
+  fsReal.mkdirSync(p.join(h.root, 'sessions'), { recursive: true });
+  fsReal.writeFileSync(p.join(h.root, 'sessions', '.migrated'), '');
+  await h.create('st1');
+  const { args } = h.spawns[0];
+  const own = p.join(h.root, 'sessions', 'st1', 'messages');
+  const dirs = args.flatMap((a, i) => (a === '--add-dir' ? [args[i + 1]] : []));
+  assert.deepStrictEqual(dirs, [p.join(h.root, 'messages'), own]);
+  assert.strictEqual(fsReal.realpathSync(p.join(h.root, 'messages', 'st1')), fsReal.realpathSync(own));
+});
+
 test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
@@ -22652,7 +22666,6 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
     ...STREAM_HEAD, '--session-id', '<uuid>', '--permission-prompt-tool', 'stdio',
     '--settings', require('node:path').join(h.root, 'settings.json'),
     '--add-dir', require('node:path').join(h.root, 'messages'),
-    '--add-dir', require('node:path').join(h.root, 'sessions'),
     '--mcp-config', require('node:path').join(h.root, 'run', 'st1', 'mcp.json'),
     '--append-system-prompt-file', promptPath,
   ]);

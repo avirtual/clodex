@@ -31,7 +31,8 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   prompt is pointed at directly via `--system-prompt-file`, never merged.
   Wire registration happens BEFORE the pty spawn (`_ensureWire`); failure
   falls back silently to the jsonl path. `setupClaudeHook` →
-  `--settings run/<name>/hook.json`; `--add-dir` for the messages dir;
+  `--settings run/<name>/hook.json`; `--add-dir` for the messages dir and, under the seat layout, for the
+  seat's own resolved `sessions/<name>/messages`;
   TWO `--plugin-dir`s, each a session-only scaffold under its own root — the
   agent library (`agent-plugins/`, manifest `clodex-agents`) and the injected
   skills (`skill-plugins/`, manifest `clodex-skills`). The manifest names must

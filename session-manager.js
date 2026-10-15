@@ -1635,8 +1635,8 @@ function createSessionManager(deps) {
           if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          const sessionsDir = nodePath.join(REGISTRY_DIR, 'sessions');
-          if (!args.includes(sessionsDir)) args.push('--add-dir', sessionsDir);
+          const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
           const disableDesign = !!getUiSettings().get().disableClaudeDesignMcp;
@@ -1779,8 +1779,6 @@ function createSessionManager(deps) {
           }
           ensureDir(MSG_DIR);
           if (!streamIo && !args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          const sessionsDir = nodePath.join(REGISTRY_DIR, 'sessions');
-          if (!streamIo && !args.includes(sessionsDir)) args.push('--add-dir', sessionsDir);
           if (streamIo && streamCtx.model && !args.some((a) => /^model=/.test(a))) args.push('-c', `model="${streamCtx.model}"`);
           const codexSkills = deliverSkills('codex', name, [...librarySkills, ...bundleSkills(seatBundles())]);
           const codexBody = codexSkills && codexSkills.instructions

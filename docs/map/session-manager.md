@@ -123,7 +123,7 @@
 
 ### Invariants
 
-- `_createReserved` builds claude argv by adding the generated `--settings` hook (unless the user passed one), `--add-dir` for the message dir, `--resume` with `--fork-session` on a fork, `--system-prompt-file` and `--append-system-prompt-file`, while codex stream argv goes through `stripCodexStreamArgs` and bash runs the shell with the extra args verbatim.
+- `_createReserved` builds claude argv by adding the generated `--settings` hook (unless the user passed one), `--add-dir` for the message dir and, under the seat layout, for the seat's own resolved `sessions/<name>/messages`, `--resume` with `--fork-session` on a fork, `--system-prompt-file` and `--append-system-prompt-file`, while codex stream argv goes through `stripCodexStreamArgs` and bash runs the shell with the extra args verbatim.
 - `_createReserved` registers the agent socket first and binds second, and a force-clean of a blocking record happens only when the pre-bind probe proves it dead or `isStaleRegistration` says so and the record bytes are unchanged.
 - `_createReserved` stamps each live session with `nextIncarnation` (minted, never persisted) and attaches a TranscriptSentinel for wire-sourced seats and a JsonlWatcher for every other agent seat.
 - `_createReserved`'s pty data handler caps scrollback, forwards output through `_sendToSession` (which buffers up to 2MB in pendingOutput for a detached window), and arms the boot drain on the first bracketed-paste edge after BOOT_DRAIN_SETTLE_MS.
