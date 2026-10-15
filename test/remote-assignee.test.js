@@ -26,7 +26,7 @@ function makeRepo() {
 
 const SPEC = 'build the remote widget\nartifact tasks/remote-widget/SPEC.md';
 
-function rig({ online = true, caps = ['dm'], label = 'p' } = {}) {
+function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = require('../git-worktree') } = {}) {
   const root = makeRepo();
   const home = mkTmpRoot('clodex-ts-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
@@ -75,7 +75,7 @@ function rig({ online = true, caps = ['dm'], label = 'p' } = {}) {
     resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
     listTeams: () => ['team'],
-    gitWorktree: require('../git-worktree'),
+    gitWorktree,
     shouldHoldDm: require('../proxy-util').shouldHoldDm,
     loadManifest: () => team,
   };
@@ -294,4 +294,50 @@ test('C2a a remote assignee is stored under the peer\'s canonical suffix and its
   const done = r.m._remoteTaskDone({ senderTag: 'x@team-clodex', origin: 'team-clodex', ticketId: 't1', report: 'r' });
   assert.strictEqual(done.ok, true, done.reply);
   assert.strictEqual(r.one('t1').state, 'done');
+});
+
+test('C2a task add x@p start: the lead hears the late dispatch result', async () => {
+  const r = rig();
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  assert.match(r.injected.join('\n'), /ticket t1 created and started → x@p: minting its worktree, the dispatch result follows/);
+  await r.settle();
+  assert.match(r.injected.join('\n'), /ticket t1 → x@p/);
+  assert.strictEqual(r.sent.length, 1);
+});
+
+test('C2a a failed remote mint is replied, unstarts the ticket and sends nothing', async () => {
+  const real = require('../git-worktree');
+  const r = rig({ gitWorktree: { ...real, createWorktree: async () => ({ ok: false, error: 'boom' }) } });
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  assert.match(r.injected.join('\n'), /ticket t1: worktree "t1-[^"]+" could not be created \(boom\) — nothing sent, ticket left assigned to "x@p" and unstarted/);
+  assert.strictEqual(r.one('t1').startedAt, null);
+  assert.strictEqual(r.one('t1').worktree, undefined);
+  assert.deepStrictEqual(r.sent, []);
+});
+
+test('C2a a ticket cancelled during the mint gets no spec, and the tree and its new branch are removed', async () => {
+  const real = require('../git-worktree');
+  let r = null;
+  const gw = { ...real, createWorktree: async (...a) => {
+    const all = r.tstore.load(r.team.root);
+    all[0].state = 'cancelled';
+    r.tstore.save(r.team.root, all);
+    return real.createWorktree(...a);
+  } };
+  r = rig({ gitWorktree: gw });
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  assert.match(r.injected.join('\n'), /could not be created \(ticket is cancelled\) — nothing sent/);
+  assert.deepStrictEqual(r.sent, []);
+  assert.deepStrictEqual(fsReal.readdirSync(pathReal.join(r.team.root, '.clodex-wt')), []);
+  const branches = execFileSync('git', ['-C', r.team.root, 'branch', '--list', 't1-*'], { encoding: 'utf8' });
+  assert.strictEqual(branches.trim(), '');
+  assert.match(fsReal.readFileSync(pathReal.join(r.team.root, '.git', 'info', 'exclude'), 'utf8'), /^\.clodex-wt\/$/m);
+});
+
+test('C2a boxPathFor names no box path for a tree outside the root', () => {
+  const r = rig();
+  assert.strictEqual(r.m.boxPathFor(r.team, pathReal.join(r.team.root, '.clodex-wt', 'b')), '/home/clodex/work/.clodex-wt/b');
+  assert.strictEqual(r.m.boxPathFor(r.team, pathReal.join(pathReal.dirname(r.team.root), 'sib')), null);
 });
