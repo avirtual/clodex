@@ -395,6 +395,7 @@ const ADVERSARIAL = [
   '[agent:team-review]', '[agent:team-review] scope text',
   '[agent:review-done]', '[agent:review-done] verdict',
   '[agent:reboot]', '[agent:reboot] reason text', '[agent:reboot extra]',
+  '[agent:ctl ios] get sessions -o json', '[agent:ctl] get', '[agent:ctl a/b] get', '[agent:ctl ios]',
   '[agent:task add]', '[agent:task add reviewer] spec', '[agent:task add] spec',
   '[agent:task assign t1 bob]', '[agent:task assign t1]', '[agent:task assign]',
   '[agent:task done t1] report', '[agent:task reject t1] why',

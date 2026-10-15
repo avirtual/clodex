@@ -31151,9 +31151,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // agent-initiated grant is stripped at the mint/wire boundary.
         { type: "term", label: "Run commands in the seat's terminal (term) \u2014 privileged, off by default" },
         { type: "reboot", label: "Relaunch the app (reboot) \u2014 privileged, off by default" },
-        { type: "team-create", label: "Create teams (team create) \u2014 privileged, off by default" }
+        { type: "team-create", label: "Create teams (team create) \u2014 privileged, off by default" },
+        { type: "ctl", label: "Run clodexctl verbs against a named context (ctl) \u2014 privileged, off by default" }
       ];
-      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term", "team-create"]);
+      var PRIVILEGED_INTENTS = /* @__PURE__ */ new Set(["reboot", "term", "team-create", "ctl"]);
       var LIVING_MARK = "*";
       var LIVING_MIGRATION_SET = /* @__PURE__ */ new Set(["dm", "who", "context", "scratch", "memory", "spawn", "file", "resend", "exec", "remind", "shout"]);
       var LEGACY_INTENT_KEYS = /* @__PURE__ */ new Map([["notify-user", "shout"]]);
@@ -31421,6 +31422,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return { type: "term", sub, body };
       }
+      function parseCtl(cleaned) {
+        const m = cleaned.match(/^\[agent:ctl\s+([A-Za-z0-9._-]{1,32})\]\s*([^\n]*)/);
+        return m ? { type: "ctl", ctx: m[1], line: m[2].trim() } : null;
+      }
       function parseRemind(cleaned) {
         const m = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
         return m ? { type: "remind", spec: m[1].trim(), body: m[2] } : null;
@@ -31634,6 +31639,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // what makes this row different from dm/memory/task.
         { type: "term", parse: parseTerm, bodyMode: NONE, classifyReply: (line) => /^\[agent:term\] /.test(line) ? "refused" : "ok", tools: [TERM_EXEC_TOOL, TERM_READ_TOOL] },
         { type: "exec", parse: parseExec, bodyMode: () => "json" },
+        { type: "ctl", parse: parseCtl, bodyMode: NONE },
         { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/i.test(i.spec) ? "none" : "greedy" },
         { type: "shout", parse: parseShout, bodyMode: GREEDY },
         { type: "team-review", parse: parseTeamReview, bodyMode: GREEDY },
