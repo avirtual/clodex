@@ -146,6 +146,18 @@ test('term read through the manager answers in-turn from the seat\'s own record,
   assert.strictEqual(ask(headless, 'read', ''), '[agent:term] no terminal on this host');
 });
 
+test('a successful term read broadcasts a term ipc-message carrying the reply\'s first line; a refused one does not', () => {
+  const stub = { scrollback: '', read: () => stub.scrollback, exec() { throw new Error('read must not exec'); }, dispose() {} };
+  const engine = boot({}, stub);
+  const sent = [];
+  engine.manager._broadcast = (ch, msg) => sent.push([ch, msg]);
+  ask(engine, 'read', 'tail 3');
+  assert.deepStrictEqual(sent, [], 'ENTER: a refused read is not broadcast');
+  stub.scrollback = 'one\r\ntwo\r\n';
+  ask(engine, 'read', 'tail 2');
+  assert.deepStrictEqual(sent, [['ipc-message', { type: 'term', from: 'alice', to: 'alice', body: '[term read] tail 2: last 2 of 2 lines' }]]);
+});
+
 test('term_read tool: owned by the term row, closed schema, tail and grep map to the verb and are exclusive', () => {
   const { TERM_READ_TOOL } = registry;
   assert.strictEqual(registry.toolRowFor('term_read'), registry.rowFor('term'));
