@@ -95,6 +95,9 @@ function createPeerWiring(deps) {
             return;
           }
           try { manager._broadcast(channel, ...args); } catch {}
+          if (channel === 'peer-state' && args[1] && args[1].online) {
+            try { manager._flushPeerHeld(args[0]); } catch (e) { log.error('peer', `held dm flush failed: ${e.message}`); }
+          }
           // Keep the Window > Peers menu's indicators + session lists fresh.
           if (channel === 'peer-state' || channel === 'peer-removed') scheduleAppMenuRefresh();
           // Ops log: peer online/offline TRANSITIONS only (peer-state fires in

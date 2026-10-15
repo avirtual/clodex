@@ -4,6 +4,9 @@
 const SHOUT_MAX_BYTES = 16 * 1024;
 const SUB_DM_RATE_MAX = 10;
 const SUB_DM_RATE_MS = 60 * 1000;
+const PEER_HELD_TTL_MS = 10 * 60 * 1000;
+const PEER_HELD_SWEEP_MS = 60 * 1000;
+const PEER_HELD_CAP = 20;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
@@ -783,6 +786,8 @@ function createSessionManager(deps) {
       this._knownDmOrigins = new Set();
       this._subDmSent = new Map();
       this._relayRosters = new Map();
+      this._peerHeld = new Map();
+      this._peerHeldSweep = null;
       this._lastPendingCounts = new Map();
       this._ticketWatch = new Map();
       // The probe is async (git); without this two overlapping sweeps both pass the gate and alarm twice.
@@ -8192,21 +8197,27 @@ function createSessionManager(deps) {
       const peers = getPeerManager() ? getPeerManager().statuses() : [];
       const match = findPeerByOrigin(peers, origin);
       if (match) {
-        if (!match.online) { bounce(`peer '${origin}' is offline — try again when it's awake.`); return; }
-        if (!(match.caps || []).includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
+        const caps = Array.isArray(match.caps) ? match.caps : [];
+        if (!match.online) {
+          if (caps.length && !caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
+          let held = this._peerHeld.get(match.id);
+          if (!held) { held = []; this._peerHeld.set(match.id, held); }
+          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued.`); return; }
+          held.push({
+            to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, ts: Date.now(),
+            target: intent.target, origin, sessionName: session && session.name,
+          });
+          this._armPeerHeldSweep();
+          bounce(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min).`);
+          this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (held): ${intent.body}` });
+          return;
+        }
+        if (!caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
         const conn = getPeerManager().get(match.id);
         if (!conn) { bounce(`peer '${origin}' is not reachable right now.`); return; }
-        conn.dm({ to: name, from: senderName, body: intent.body, urgent: intent.urgent === true }, (resp) => {
-          if (resp && resp.ok && resp.delivered) {
-          } else if (resp && resp.ok && resp.parked) {
-            if (session) this._injectText(session,
-              `[agent:dm] parked on ${origin} for ${name} — it'll be delivered with ${name}'s next turn. If it can't wait, resend as \`[agent:dm ${intent.target} urgent] <message>\`.`,
-              { parkable: true });
-          } else {
-            const why = (resp && resp.error) || 'delivery failed';
-            bounce(`NOT delivered to ${intent.target}: ${why}`);
-          }
-        });
+        this._sendFederatedDm(conn, origin,
+          { to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, target: intent.target },
+          () => session);
         this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin}: ${intent.body}` });
         return;
       }
@@ -8236,6 +8247,55 @@ function createSessionManager(deps) {
         return;
       }
       bounce(`no route to '${intent.target}' — peer '${origin}' is not configured, has never contacted this box, and no hub advertises it.`);
+    }
+
+    _sendFederatedDm(conn, origin, item, getSession) {
+      const notify = (text) => { const s = getSession(); if (s) this._injectText(s, text, { parkable: true }); };
+      conn.dm({ to: item.to, from: item.from, body: item.body, urgent: item.urgent }, (resp) => {
+        if (resp && resp.ok && resp.delivered) {
+        } else if (resp && resp.ok && resp.parked) {
+          notify(`[agent:dm] parked on ${origin} for ${item.to} — it'll be delivered with ${item.to}'s next turn. If it can't wait, resend as \`[agent:dm ${item.target} urgent] <message>\`.`);
+        } else {
+          const why = (resp && resp.error) || 'delivery failed';
+          notify(`[agent:dm] NOT delivered to ${item.target}: ${why}`);
+        }
+      });
+    }
+
+    _heldSession(item) {
+      const s = item.sessionName ? this.sessions.get(item.sessionName) : null;
+      return s && !s._dead ? s : null;
+    }
+
+    _dropStalePeerHeld(now = Date.now()) {
+      for (const [peerId, held] of this._peerHeld) {
+        const keep = [];
+        for (const item of held) {
+          if (now - item.ts < PEER_HELD_TTL_MS) { keep.push(item); continue; }
+          const s = this._heldSession(item);
+          if (s) this._injectText(s, `[agent:dm] NOT delivered to ${item.target}: peer '${item.origin}' stayed offline 10 min.`, { parkable: true });
+        }
+        if (keep.length) this._peerHeld.set(peerId, keep); else this._peerHeld.delete(peerId);
+      }
+      if (!this._peerHeld.size && this._peerHeldSweep) { clearInterval(this._peerHeldSweep); this._peerHeldSweep = null; }
+    }
+
+    _armPeerHeldSweep() {
+      if (this._peerHeldSweep) return;
+      this._peerHeldSweep = setInterval(() => this._dropStalePeerHeld(), PEER_HELD_SWEEP_MS);
+      if (this._peerHeldSweep.unref) this._peerHeldSweep.unref();
+    }
+
+    _flushPeerHeld(peerId) {
+      if (!this._peerHeld.has(peerId)) return;
+      this._dropStalePeerHeld();
+      const held = this._peerHeld.get(peerId);
+      if (!held) return;
+      const conn = getPeerManager() ? getPeerManager().get(peerId) : null;
+      if (!conn) return;
+      this._peerHeld.delete(peerId);
+      if (!this._peerHeld.size && this._peerHeldSweep) { clearInterval(this._peerHeldSweep); this._peerHeldSweep = null; }
+      for (const item of held) this._sendFederatedDm(conn, item.origin, item, () => this._heldSession(item));
     }
 
     _deliverClaimedDms(peerId, messages) {
