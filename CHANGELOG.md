@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — tickets and hands on a connected peer, operator-written memory directives, the probe intent
 
 ### Messaging
 
@@ -23,8 +23,6 @@ blocks a release.
 ### Teams
 
 - The sandbox up/rebuild reply says "container restarted" rather than "recreated": docker's StartedAt moves on a plain start of a stopped container too, so the old word claimed more than was checked.
-### Teams
-
 - A seat's messages/run link that points at the wrong directory is repointed at spawn, so the seat's allowed directories and inbound-message inlining follow its real files.
 - A ticket can be assigned to a seat on a connected peer (`task add name@peer`, `task assign <id> name@peer`); the spec, respecs, rejections and cancellations reach it over the dm wire, and the lead closes it from its own board. The peer must be online with dm federation at assign time.
 - A seat on a connected peer closes its ticket with `[agent:task done tN@<board-host>] <report>`; the report crosses the dm wire, the board closes the ticket only if its recorded assignee is that exact seat, and the board's answer comes back to the seat as [agent:task] text.
