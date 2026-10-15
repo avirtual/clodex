@@ -869,7 +869,6 @@ test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to
   assert.strictEqual(r.ok, true, r.error);
   const rel = wt.relativizeWorktreePointers(repo, r.path);
   assert.deepStrictEqual(rel, { ok: true, name: 'b1' });
-  assert.match(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), /^gitdir: \.\.\/\.\.\/\.git\/worktrees\/b1\n$/);
   const copy = path.join(mkTmpRoot('clodex-wtcopy-'), 'moved');
   fs.cpSync(repo, copy, { recursive: true, verbatimSymlinks: true });
   const out = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -877,6 +876,7 @@ test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to
   const listed = out(copy, 'worktree', 'list', '--porcelain');
   assert.ok(listed.split('\n').some((l) => l === `worktree ${fs.realpathSync(path.join(copy, '.clodex-wt', 'b1'))}`), listed);
   assert.strictEqual(out(r.path, 'rev-parse', '--abbrev-ref', 'HEAD'), 'b1');
+  assert.match(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), /^gitdir: \.\.\/\.\.\/\.git\/worktrees\/b1\n$/);
   for (const top of [repo, copy]) {
     assert.doesNotMatch(fs.readFileSync(path.join(top, '.git', 'config'), 'utf8'), /relativeworktrees/i);
   }
