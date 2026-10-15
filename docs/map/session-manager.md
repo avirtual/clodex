@@ -336,7 +336,7 @@
 | `_injectHoldReason` | the predicate every inject checks: compact-window, dialog (permission attention), busy (thinking), or null | `session._compactGuard`, `session.needsAttention`, `session.activityState` | none | session-manager.test.js renderer-source-pins.test.js |
 | `_armCompactGuard` | holds all non-bypass injects across a Clodex-driven compact, with a fresh inject-hold valve | `session._compactGuard`, `session._injectHoldTimer` | `_armInjectValve` | session-manager.test.js |
 | `_armCompactValve` | COMPACT_INFLIGHT_TIMEOUT release valve that clears stuck compact state without retry, announces it, and flushes | `session._compactValveTimer`, `session._compactPending`, `session._compactGuard`, `session._compactContinuation` | `_clearCompactValve`, `_maybeFlushInjectQueue` | session-manager.test.js |
-| `_firePostClearContinuation` | on the sessionId-change edge consumes the post-clear continuation, cancels its valve and injects the handoff text after a delay | `session._postClearContinuation`, `session._postClearValveTimer` | `_clearPostClearValve`, `_handoffText`, `_injectText` | session-manager.test.js clear-continuation.test.js handoff-spill.test.js hint-arm.test.js |
+| `_firePostClearContinuation` | on the sessionId-change edge consumes the post-clear continuation, cancels its valve and injects the handoff text after a delay | `session._postClearContinuation`, `session._postClearValveTimer` | `_clearPostClearValve`, `_handoffText`, `_injectText` | clear-continuation.test.js handoff-spill.test.js hint-arm.test.js |
 
 ### Invariants
 
@@ -494,10 +494,10 @@
 |---|---|---|---|---|
 | `_executeCompact` | Sends a compact now (wire system enqueue or hold-bypassing typed command) with its continuation, guard and valve armed | `s._compactContinuation`, `s.sentinel` | _streamEnqueue, _injectText, _armCompactGuard, _armCompactValve | session-manager.test.js |
 | `_maybeFireCompactLatch` | Fires a latched compact once canFireCompact sees both inject queues drained, clearing the latch first | `s._compactPending`, `s._injectQueue`, `s._injectPtyQueue` | compact-latch.canFireCompact, _executeCompact, _shadowLog | session-manager.test.js spill-resolve-intent.test.js file-view-api.test.js |
-| `_injectReloadHandoff` | Reload-flavoured wrapper that injects a handoff into the respawned CLI after boot | none | _injectAfterBoot | handoff-spill.test.js handoff-snapshot.test.js reload-env.test.js session-manager.test.js |
-| `_injectAfterBoot` | Waits for the fresh CLI's transcript symlink plus a settle delay, then injects turn-one text; false if the seat died or never booted | `s._dead`, run/<name>/transcript link | _handoffText, _injectText, _broadcast | session-manager.test.js |
+| `_injectReloadHandoff` | Reload-flavoured wrapper that injects a handoff into the respawned CLI after boot | none | _injectAfterBoot | handoff-spill.test.js handoff-snapshot.test.js reload-env.test.js |
+| `_injectAfterBoot` | Waits for the fresh CLI's transcript symlink plus a settle delay, then injects turn-one text; false if the seat died or never booted | `s._dead`, run/<name>/transcript link | _handoffText, _injectText, _broadcast | unpinned |
 | `_resumeSnapshot` | Builds the capped "State at resume" block (host, trunk HEAD, team role, live seats, open board) | none | gitWorktree.headLogSync, _teamLiveSeats, _taskListText, capResumeSnapshot | unpinned |
-| `_handoffText` | Returns a claude seat's oversized handoff as an @spill pointer (body plus resume snapshot), else the body unchanged | spill dir, `s.filedRing` | _resumeSnapshot, writeSpill, _noteFiled | handoff-snapshot.test.js file-view-api.test.js session-manager.test.js |
+| `_handoffText` | Returns a claude seat's oversized handoff as an @spill pointer (body plus resume snapshot), else the body unchanged | spill dir, `s.filedRing` | _resumeSnapshot, writeSpill, _noteFiled | handoff-snapshot.test.js file-view-api.test.js |
 | `_noteFiled` | Records a filed entry in the live seat's ring and pings the remote server | `s.filedRing` | remote-server.notifyFiled | unpinned |
 
 ### Invariants

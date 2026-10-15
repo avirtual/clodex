@@ -270,11 +270,9 @@ test('the scratch clone push is background and names its parent', () => {
   assert.match(pushes[0], /clone:\s*parent\.name/);
 });
 
-test('the in-place respawns do NOT claim to be background', () => {
-  // The operator's own seat coming back under the name they are watching —
-  // [agent:context reload] and the [agent:scratch end] cut, never a new session.
+test('the in-place reload respawn does NOT claim to be background', () => {
   const pushes = reattachPushes(read('session-manager.js'));
-  assert.strictEqual(pushes.length, 2, 'ENTER: session-manager still emits the reload and scratch reattach pushes');
+  assert.strictEqual(pushes.length, 1, 'ENTER: session-manager still emits the reload reattach push');
   for (const p of pushes) assert.doesNotMatch(p, /background:\s*true/, p.slice(0, 120));
 });
 

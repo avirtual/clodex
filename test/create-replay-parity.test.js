@@ -164,7 +164,6 @@ const SITES = [
   { file: 'session-manager.js', label: 'move', differs: {} },
   { file: 'session-manager.js', label: 'moveToPeer failure arm', differs: {} },
   { file: 'session-manager.js', label: '[agent:context reload]', differs: {} },
-  { file: 'session-manager.js', label: '[agent:scratch end] respawn', differs: {} },
   { file: 'session-restore.js', label: 'restoreSessionsForWorkspace', differs: {} },
 ];
 

@@ -21,6 +21,26 @@ const effectiveFrom = (lib) => (name, list) => {
   return unionEnabled(list, lib, name).map((n) => byName.get(n)).filter(Boolean);
 };
 
+function respawnFromRecord(m, name, entry) {
+  return m.create(
+    name, entry.type, m.resumeCwdOf(entry), entry.extraArgs || [], entry.sessionId || null,
+    entry.workspaceId || 'default',
+    entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [],
+    entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [],
+    entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [],
+    Array.isArray(entry.execCommands) ? entry.execCommands : [],
+    Array.isArray(entry.intents) ? entry.intents : null,
+    (entry.env && typeof entry.env === 'object') ? entry.env : null,
+    false,
+    entry.noWire === true,
+    Array.isArray(entry.plugins) ? entry.plugins : null,
+    Array.isArray(entry.shellDeny) ? entry.shellDeny : null,
+    typeof entry.fixFor === 'string' ? entry.fixFor : null,
+    entry.io || 'pty',
+    typeof entry.effort === 'string' ? entry.effort : null,
+  );
+}
+
 function mkClone({ record: over = {}, asserted = null, stripFail = false, poller = null, agentLib = AGENT_LIB, skillLib = [] } = {}) {
   const root = mkTmpRoot('scratch-clone-');
   const seq = [];
@@ -119,7 +139,7 @@ function mkClone({ record: over = {}, asserted = null, stripFail = false, poller
 
 test('t1539 bodied begin: one create() with fork=true on the parent sid, the parent record\'s args plus --session-id, brief as the first turn, clone flag set, nothing persisted', async () => {
   const f = mkClone();
-  await f.m._scratchRespawn('a', f.record);
+  await respawnFromRecord(f.m, 'a', f.record);
   const parentArgs = f.creates.shift().args;
   f.seq.length = 0;
   await f.begin();
@@ -358,11 +378,14 @@ test('t1838 probe cancel drops a live clone with no summary; with none it says s
   assert.strictEqual(f.creates.length, 1);
 });
 
-test('t1838 the in-place scratch verbs still answer, every reply naming probe', async () => {
+test('t1839 a bare scratch cancel with no clone answers as probe, and a retired sub bounces naming probe', async () => {
   const f = mkClone();
-  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', body: '' });
   await new Promise((r) => setImmediate(r));
-  assert.match(f.replies().at(-1), / — the in-place cut is retired; use \[agent:probe\]$/);
+  assert.strictEqual(f.replies().at(-1), '[agent:probe] cancel: no clone is running.');
+  f.m._handleScratchIntent(f.s, parseIntent('[agent:scratch mark x]'));
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.replies().at(-1), '[agent:scratch] scratch mark x is retired — use [agent:probe] <question + return shape> … [agent:end]');
   assert.strictEqual(f.creates.length, 0);
 });
 
@@ -370,7 +393,7 @@ test('t1541 the clone carries the parent\'s effective agents and skills, so item
   const agentLib = [{ name: 'clodex-locate', meta: {} }, { name: 'parent-agent', meta: { sessions: 'a' } }];
   const skillLib = [{ name: 'lib-skill', meta: {} }, { name: 'parent-skill', meta: { sessions: 'a, other' } }];
   const f = mkClone({ agentLib, skillLib, record: { injectSkills: ['lib-skill'] } });
-  await f.m._scratchRespawn('a', f.record);
+  await respawnFromRecord(f.m, 'a', f.record);
   const parentArgs = f.creates.shift().args;
   await f.begin();
   const args = f.creates[0].args;
