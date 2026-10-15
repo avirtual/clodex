@@ -409,6 +409,8 @@ function mkDirective({ agentType = 'claude', dead = false, needsAttention = fals
     memoryLoad: memLoad,
     digestTiers: (list) => ({ text: 'D', full: list.filter(u => u.operatorPinned).map(u => u.id), title: [] }),
     writeClaudeDigestFile: () => true,
+    getPersistence: () => ({ markDigested: () => {} }),
+    log: { info: () => {}, warn: () => {} },
   });
   const pushed = [];
   m._deliverMessage = (to, from, body, mtype) => pushed.push([to, from, body, mtype]);
