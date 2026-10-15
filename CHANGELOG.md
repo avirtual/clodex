@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Messaging
+
+- The notice that names a seat's clodex-monitor watches killed by a host restart is sent before their records are removed, and the records survive a failed delivery, so a seat still booting no longer misses it.
+
 ## 5.125.0 — 2026-10-15
 
 ### Messaging

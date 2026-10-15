@@ -323,7 +323,12 @@ function restoredManager(home, seats = ['a']) {
   });
   const m = new SessionManager();
   const dms = [];
-  m._deliverMessage = (to, from, body, mtype) => dms.push({ to, from, body, mtype });
+  m._deliverMessage = (to, from, body, mtype, tag, onWrite) => {
+    if (m.failDelivery) throw new Error('inject gate closed');
+    dms.push({ to, from, body, mtype });
+    m.lastOnWrite = onWrite;
+    if (typeof onWrite === 'function' && !m.holdDelivery) onWrite('injected');
+  };
   m._broadcast = () => {};
   for (const name of seats) m.sessions.set(name, { name, agentType: 'claude', cwd: '/proj/alpha' });
   return { m, dms };
@@ -337,7 +342,6 @@ function writeWatch(home, agent, id, state) {
 }
 
 const DEAD_PID = 2147483000;
-const RESTART_AT = Date.UTC(2026, 9, 15, 2, 0, 0);
 
 test('restore: watches the restart killed reach their seat as one notice, once, and list no longer shows them', async () => {
   const home = mkTmpRoot('clodex-mon-');
@@ -346,14 +350,14 @@ test('restore: watches the restart killed reach their seat as one notice, once, 
   writeWatch(home, 'a', 'live', { pid: process.pid, command: 'sleep 1', startedAt: '2026-10-15T01:45:00.000Z' });
   const { m, dms } = restoredManager(home);
 
-  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 1);
+  assert.strictEqual(m.deliverLostMonitors(), 1);
   assert.deepStrictEqual(dms, [{
     to: 'a', from: 'reboot', mtype: 'dm',
-    body: '[host] restart at 2026-10-15T02:00:00.000Z: these runs of yours were killed and did not finish: '
+    body: '[host] since your last turn: these runs of yours were killed and did not finish: '
       + 'k1 suite x (started 2026-10-15T01:00:00.000Z); k2 tail -f log (started 2026-10-15T01:30:00.000Z). Nothing was re-run.',
   }]);
 
-  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 0, 'the second turn gets no repeat');
+  assert.strictEqual(m.deliverLostMonitors(), 0, 'the second turn gets no repeat');
   assert.strictEqual(dms.length, 1);
   assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')).sort(), ['live.json', 'live.log']);
 
@@ -361,11 +365,47 @@ test('restore: watches the restart killed reach their seat as one notice, once, 
   assert.strictEqual(listed.err, 'monitors: live');
 });
 
+test('restore: a failed lost-watch notice keeps the watch records and is retried on the next restore', () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
+  const { m, dms } = restoredManager(home);
+  m.failDelivery = true;
+  assert.strictEqual(m.deliverLostMonitors(), 0);
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')).sort(), ['k1.json', 'k1.log']);
+  m.failDelivery = false;
+  assert.strictEqual(m.deliverLostMonitors(), 1);
+  assert.strictEqual(dms.length, 1);
+  assert.match(dms[0].body, /k1 node --test x/);
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')), []);
+});
+
+test('restore: a lost-watch notice still queued is not sent again, and its records go when it is written', () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
+  const { m, dms } = restoredManager(home);
+  m.holdDelivery = true;
+  assert.strictEqual(m.deliverLostMonitors(), 1);
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')).sort(), ['k1.json', 'k1.log']);
+  assert.strictEqual(m.deliverLostMonitors(), 0);
+  assert.strictEqual(dms.length, 1);
+  m.lastOnWrite('parked');
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')), []);
+});
+
+test('restore: the lost-watch notice does not claim a restart time', () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
+  const { m, dms } = restoredManager(home);
+  m.deliverLostMonitors();
+  assert.doesNotMatch(dms[0].body, /restart at/);
+  assert.match(dms[0].body, /^\[host\] since your last turn: /);
+});
+
 test('restore: a seat with no killed watches gets no notice', () => {
   const home = mkTmpRoot('clodex-mon-');
   writeWatch(home, 'b', 'live', { pid: process.pid, command: 'sleep 1', startedAt: '2026-10-15T01:45:00.000Z' });
   const { m, dms } = restoredManager(home, ['a', 'b']);
-  assert.strictEqual(m.deliverLostMonitors({ at: RESTART_AT }), 0);
+  assert.strictEqual(m.deliverLostMonitors(), 0);
   assert.deepStrictEqual(dms, []);
 });
 
