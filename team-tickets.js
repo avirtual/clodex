@@ -367,7 +367,6 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
     PENDING_DIR,
     parkedTexts,
-    SELF_LABEL,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
   const accountStore = () => {
@@ -387,6 +386,7 @@ function createTicketMethods(deps, shared) {
     // Derived core-side; re-deriving it here would put the same default in two files.
     SPEC_CONFIRM_MS,
     findPeerByOrigin,
+    SELF_LABEL,
   } = shared;
 
   // Aliased to the spec latch's window, not re-derived: two numbers for one question drift, and the confirm term cannot be

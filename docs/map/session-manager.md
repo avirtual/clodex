@@ -551,12 +551,13 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_gatedDeliver` | Cost/dialog-gated dm entry point returning held, parked or queued, with onWrite fired only when the text is durable | `target.activityState`, `target.activityTs`, pending/<name>/ | dm-gate.shouldHoldDm, _parkHeldDelivery, _parkBehindQueue, _deliverMessage | dm-delivery-latch.test.js review-cost-durable.test.js accept-standing-seat.test.js session-manager.test.js |
+| `_gatedDeliver` | Cost/dialog-gated dm entry point (a name@peer target goes to _sendToFederatedTarget) returning held, parked or queued, with onWrite fired only when the text is durable | `target.activityState`, `target.activityTs`, pending/<name>/ | dm-gate.shouldHoldDm, _parkHeldDelivery, _parkBehindQueue, _deliverMessage | dm-delivery-latch.test.js review-cost-durable.test.js accept-standing-seat.test.js session-manager.test.js |
 | `_armDmConfirm` | Arms the swallowed-dm latch for an injected dm into an idle seat, pegged to the oldest outstanding unit | `s._dmUnconfirmed`, `s._dmConfirmTimer` | _seatTranscriptSize, _overflowDmEntry, _armDmConfirmTimer | dm-delivery-latch.test.js session-manager.test.js |
 | `_checkDmConfirm` | Deadline check that reports ripe unconfirmed dms by broadcast and per-sender notice, unless transcript growth refutes the silence | `s._dmUnconfirmed`, `s._dmOverflow`, `s._dmUnconfirmedLast` | didGrow, _armDmConfirmTimer, _broadcast, _injectText | dm-delivery-latch.test.js |
 | `_dmLatchEvidence` | Gives the stall sweep a count and oldest time over reported, live and cap-dropped unconfirmed dms, or null | `s._dmUnconfirmedLast`, `s._dmUnconfirmed`, `s._dmOverflow` | none | dm-delivery-latch.test.js session-manager.test.js |
 | `_relayViaForOrigin` | Finds a hub whose unexpired relay roster advertises an origin, pruning stale rosters | `this._relayRosters` | none | relay-roster-intake.test.js |
-| `_routeFederatedDm` | Routes a name@peer dm directly to an online peer, else via outbox for a known origin, else via a relay hub, else bounces | `this._knownDmOrigins`, outbox dir | _relayViaForOrigin, enqueueOutbox, buildRelayEnvelope, _injectText | relay-roster-intake.test.js session-manager.test.js |
+| `_routeFederatedDm` | Thin dm-intent caller of _sendToFederatedTarget that injects its notices into the sending session | none | _sendToFederatedTarget, _injectText | peer-held-dm.test.js dm-ref.test.js |
+| `_sendToFederatedTarget` | Sends a name@peer body directly to an online peer, holds it for an offline one, else outboxes for a known origin, else relays via a hub; returns queued+ref or error | `this._peerHeld`, `this._knownDmOrigins`, outbox dir | _mintDmRef, _sendFederatedDm, enqueueOutbox, buildRelayEnvelope, _relayViaForOrigin | peer-held-dm.test.js dm-ref.test.js remote-assignee.test.js |
 | `_deliverClaimedDms` | Delivers dms claimed from a peer outbox to local seats with a from@origin tag, handing relay envelopes to the hub path | none | _relayClaimedDm, _gatedDeliver, _broadcast | peer-inbox-claim.test.js relay-roster-local.test.js session-manager.test.js |
 | `_relayClaimedDm` | Hub side of a relay: checks version, hop budget and relayAllowed on both peers, then forwards a terminal dm whose sender is qualified with the name-shaped origin `_deliverClaimedDms` passes | peer settings | hopRule, _bounceRelaySender, buildTerminalDm | session-manager.test.js |
 | `_isDmReachable` | Predicate for whether a reply to a sender could land now; drives the (no reply path) marker | `this._knownDmOrigins`, `this.sessions` | findPeerByOrigin, outboxKnowsOrigin, _relayViaForOrigin | operator-sender.test.js merged-notice-owes-accept.test.js session-manager.test.js |
@@ -581,7 +582,7 @@
 - `_checkDmConfirm` sends per-sender notices through an unguarded `_injectText` loop after the ripe units are already consumed, so one throw silences every later sender.
 - `_gatedDeliver` parks the raw body on the parkBehindQueue branch without consulting rebody, unlike its hold branch.
 - `_deliverMessage` honours rebody on the inject path only when onWrite is also passed, and never on a stream seat.
-- `_isDmReachable` splits at the last @ while `_routeFederatedDm` splits at the first, so a two-@ relay sender reads reachable but its reply bounces.
+- `_isDmReachable` splits at the last @ while `_sendToFederatedTarget` splits at the first, so a two-@ relay sender reads reachable but its reply bounces.
 - `_deliverReminder` checks agentType but not _dead, so a dead seat still in the map drops the reminder while reporting delivered.
 
 ## Parking and the inject queue — _nextParkSeq … _armParkedDrainFallback

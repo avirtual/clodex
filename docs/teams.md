@@ -665,7 +665,7 @@ A ticket seat (hand, scout, reviewer) gets the two-line brief form instead: its 
 When a seat spawns or retires, the lead gets a one-line composition delta
 (`[team <name>] seat <seat> spawned (role: <role>)`). Only seats the manifest can place (the lead, `<team>-<role>…`) raise it; a roleless seat in the root shows in the roster as `also live, no role` and is otherwise silent.
 
-A ticket can also go to a seat on a connected peer: `task add name@peer`, or `task assign <id> name@peer`, while that peer is online with dm federation. No worktree or seat is minted; the spec (with a `REMOTE:` line naming the board's host and the lead to report to), respecs, rejections, cancellations and reassign notices ride the dm wire with its ref, held queue and outbox. The ticket stays on the lead's board and the lead closes it. A `task done` emitted on the remote host does not reach the board yet, so the remote seat reports by dm.
+A ticket can also go to a seat on a connected peer: `task add name@peer`, or `task assign <id> name@peer`, while that peer is online with dm federation (a dm to an offline peer is held 10 min and then dropped, and a ticket must not be filed onto a hold). No worktree or seat is minted; the spec (with a `REMOTE:` line naming the board's host and the lead to report to), respecs, rejections, cancellations and reassign notices ride the dm wire with its ref, held queue and outbox. The ticket stays on the lead's board and the lead closes it. A `task done` emitted on the remote host does not reach the board yet, so the remote seat reports by dm.
 
 ## Checklist for a new project
 

@@ -14,7 +14,7 @@ const { AGENT_NAME_RE } = require('../catalogs');
 const SPEC = 'build the remote widget\nartifact tasks/remote-widget/SPEC.md';
 
 function rig({ online = true, caps = ['dm'] } = {}) {
-  const home = mkTmpRoot('clodex-remote-');
+  const home = mkTmpRoot('clodex-ts-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
