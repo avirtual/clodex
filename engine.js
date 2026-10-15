@@ -962,7 +962,7 @@ const {
 // composeRoster reaches `manager` lazily and inside a try: this runs before the
 // const is declared, so a bare reference at boot is a TDZ throw.
 } = createCliHooks({
-  REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath,
+  REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath, log,
   composeRoster: (name) => { try { return manager.composeRosterFor(name); } catch { return null; } },
 });
 

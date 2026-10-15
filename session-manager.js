@@ -1641,7 +1641,7 @@ function createSessionManager(deps) {
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
-          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
           const disableDesign = !!getUiSettings().get().disableClaudeDesignMcp;

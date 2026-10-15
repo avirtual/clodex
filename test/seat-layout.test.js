@@ -755,3 +755,24 @@ test('ensureSeatLink refuses and keeps a real messages directory', () => {
   assert.ok(!fs.lstatSync(dir).isSymbolicLink());
   assert.strictEqual(fs.readFileSync(path.join(dir, 'keep'), 'utf8'), 'k');
 });
+
+test('setupClaudeHook hands its logger to ensureSeatLink, so a repoint reaches the app log', () => {
+  const root = tmp();
+  migrateSeatLayout({ root, names: [], fs });
+  const link = legacySeatPathFor(root, 'bo', 'messages');
+  const stray = path.join(root, 'sessions', 'other', 'messages');
+  fs.mkdirSync(stray, { recursive: true });
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(stray, link);
+  const logged = [];
+  const log = { info: (_t, m) => logged.push(m), warn() {}, error() {}, debug() {} };
+  const hooks = createCliHooks({
+    REGISTRY_DIR: root, memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath, log,
+  });
+
+  hooks.setupClaudeHook('bo');
+
+  assert.ok(logged.includes(`seat-layout: repointed messages link for bo (was ${stray})`), JSON.stringify(logged));
+});
