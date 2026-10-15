@@ -379,7 +379,7 @@ test('restore: a failed lost-watch notice keeps the watch records and is retried
   assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')), []);
 });
 
-test('restore: a lost-watch notice still queued is not sent again, and its records go when it is written', () => {
+test('restore: a lost-watch notice still queued is not sent again, and its records go when it is written or parked', () => {
   const home = mkTmpRoot('clodex-mon-');
   writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
   const { m, dms } = restoredManager(home);
@@ -390,6 +390,18 @@ test('restore: a lost-watch notice still queued is not sent again, and its recor
   assert.strictEqual(dms.length, 1);
   m.lastOnWrite('parked');
   assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')), []);
+});
+
+test('restore: a stream seat with no stream open gets no lost-watch notice and keeps its records', () => {
+  const home = mkTmpRoot('clodex-mon-');
+  writeWatch(home, 'a', 'k1', { pid: DEAD_PID, command: 'node --test x', startedAt: '2026-10-15T01:00:00.000Z' });
+  const { m, dms } = restoredManager(home);
+  m.sessions.get('a').io = 'stream';
+  assert.strictEqual(m.deliverLostMonitors(), 0);
+  assert.deepStrictEqual(dms, []);
+  assert.deepStrictEqual(fs.readdirSync(path.join(home, 'monitors', 'a')).sort(), ['k1.json', 'k1.log']);
+  m.sessions.get('a').stream = {};
+  assert.strictEqual(m.deliverLostMonitors(), 1, 'ENTER: the same seat is told once its stream is open');
 });
 
 test('restore: the lost-watch notice does not claim a restart time', () => {
