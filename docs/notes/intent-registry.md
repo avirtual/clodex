@@ -34,3 +34,7 @@ plugin the seat unticked is still dropped.
 ## subagentCatalogFor
 
 Lists core tool rows (`dm` for a seat holding `dm`, `term_exec` for one whose intents name `term`) ahead of plugin tools; a core tool's brief rides only when the tool declares one (`dm` does, main-only `term_exec` does not), since a SubagentStart brief for a main-only tool would spend tokens on every spawn. The name is kept because every caller and three tests pin it.
+
+## parseDm
+
+The dm head takes `urgent` and an optional `ref:<token>` (`DM_REF_RE`) in either order; a malformed, empty or repeated head token fails the whole parse (null), as an unknown head token always has.

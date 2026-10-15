@@ -116,7 +116,7 @@ over the wire: read editable args + the box's dialog catalogs, apply an edited
 patch with kill+respawn on `restart:true`) and `GET /api/sessions/:name/skills` +
 `PATCH /api/sessions/:name/skills` (Edit Skills over the wire: read the box's skill
 catalog, persist the disabled/inject sets — a separate `POST /api/sessions/:name/restart`
-applies) — all four under the `args` cap, shipped together — and `POST /api/dm` +
+applies) — all four under the `args` cap, shipped together — and `POST /api/dm` (optional `ref`, echoed in the response, deduped 10 min per origin+from; a malformed one is a 400) +
 `/api/dm/claim` (federation, `dm` cap) and `POST /api/peer/roster` (hub-relay
 federation, `relay` cap — the hub pushes this spoke the roster of agents on its
 OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
