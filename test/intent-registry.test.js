@@ -28,8 +28,14 @@ function parseIntentLegacy(rawLine) {
   const escMatch = cleaned.match(/^\\(\[agent:.*)/);
   if (escMatch) return { type: 'escape', text: escMatch[1] };
 
-  const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
-  if (dmMatch) return { type: 'dm', target: dmMatch[1], urgent: !!dmMatch[2], body: dmMatch[3] };
+  const dmMatch = cleaned.match(/^\[agent:dm\s+(\S+?)((?:\s+(?:urgent|ref:[^\s\]]*))*)\]\s*(.*)/s);
+  if (dmMatch) {
+    const toks = dmMatch[2].split(/\s+/).filter(Boolean);
+    const refs = toks.filter((t) => t !== 'urgent').map((t) => t.slice(4));
+    const urgents = toks.length - refs.length;
+    if (urgents > 1 || refs.length > 1 || (refs.length && !/^[A-Za-z0-9._-]{1,48}$/.test(refs[0]))) return null;
+    return { type: 'dm', target: dmMatch[1], urgent: urgents === 1, ref: refs[0] || null, body: dmMatch[3] };
+  }
 
   const subMatch = cleaned.match(/^\[agent:sub\s+(\S+)\]\s*(.*)/s);
   if (subMatch) return { type: 'sub', target: subMatch[1], body: subMatch[2] };
@@ -340,6 +346,8 @@ const ADVERSARIAL = [
   '[agent:dm bob]', '[agent:dm bob] hello', '[agent:dm bob urgent] hello',
   '[agent:dm bob  urgent]', '[agent:dm bob@peer urgent] x', '[agent:dm]',
   '[agent:dm a b c] body', '[agent:dm bob] line1\nline2',
+  '[agent:dm x@p ref:abc urgent] hi', '[agent:dm x@p urgent ref:abc] hi', '[agent:dm x@p ref:a/b] hi',
+  '[agent:dm x@p ref:] hi', '[agent:dm x@p ref:a ref:b] hi', '[agent:dm bob ref:t1] local',
   '[agent:sub subq-live] hi', '[agent:sub a606bb8c5bfa9764e] line one\nline two',
   '[agent:sub ../x] y', '[agent:sub]', '[agent:sub  x]',
   '[agent:resend abc123]', '[agent:resend ABC123]', '[agent:resend abc-123]',
@@ -625,6 +633,20 @@ test('registry walk === legacy regex chain, field for field, over the whole corp
       assert.deepStrictEqual(Object.keys(got), Object.keys(want), `key order differs for ${JSON.stringify(line)}`);
     }
   }
+});
+
+test('t1829 dm head carries an optional ref token; a bad ref token fails the whole head', () => {
+  assert.deepStrictEqual(parseIntent('[agent:dm x@p ref:abc urgent] hi'),
+    { type: 'dm', target: 'x@p', urgent: true, ref: 'abc', body: 'hi' });
+  assert.deepStrictEqual(parseIntent('[agent:dm x@p urgent ref:abc] hi'),
+    { type: 'dm', target: 'x@p', urgent: true, ref: 'abc', body: 'hi' });
+  assert.deepStrictEqual(parseIntent('[agent:dm x@p] hi'),
+    { type: 'dm', target: 'x@p', urgent: false, ref: null, body: 'hi' });
+  assert.strictEqual(parseIntent('[agent:dm x@p ref:a/b] hi'), null);
+  assert.strictEqual(parseIntent(`[agent:dm x@p ref:${'a'.repeat(49)}] hi`), null);
+  assert.strictEqual(parseIntent('[agent:dm x@p ref:a ref:b] hi'), null);
+  assert.strictEqual(parseIntent('[agent:dm bob ref:t1] local').target, 'bob');
+  assert.ok(registry.DM_REF_RE.test('t1830.x_y-z'));
 });
 
 test('every core verb in the catalog is reachable through the walk', () => {

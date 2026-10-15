@@ -66,6 +66,7 @@ function enqueueOutbox(root, origin, msg, seq) {
     ...(msg && typeof msg.finalTarget === 'string' && msg.finalTarget ? { finalTarget: msg.finalTarget } : {}),
     ...(msg && Number.isInteger(msg.hops) ? { hops: msg.hops } : {}),
     ...(msg && Number.isInteger(msg.rv) ? { rv: msg.rv } : {}),
+    ...(msg && typeof msg.ref === 'string' && msg.ref ? { ref: msg.ref } : {}),
   });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, payload);

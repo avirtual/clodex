@@ -657,7 +657,7 @@ function createRemoteWiring(deps) {
           log.info('session', `setSkills ${name} via peer${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
         },
-        deliverDm: ({ to, from, origin, body, urgent }) => {
+        deliverDm: ({ to, from, origin, body, urgent, ref }) => {
           manager._rememberDmOrigin(origin);
           // A bare `from` is a direct DM — qualify it with the origin that dialed us.
           // An already-qualified `from` (contains '@') is the terminal leg of a
@@ -665,17 +665,28 @@ function createRemoteWiring(deps) {
           // through unchanged (sacred). Use it as the senderTag directly so the
           // recipient's reply routes back to the TRUE origin, not the relay hub.
           const senderTag = from.includes('@') ? from : `${from}@${origin}`;
+          const refKey = ref ? `${origin}\n${from}\n${ref}` : null;
+          const seen = refKey ? manager._dmRefRepeat(refKey) : null;
+          if (seen) {
+            log.info('peer', `dm ref ${ref} from ${senderTag} repeated — not redelivered`);
+            return { ...seen.resp, duplicate: true };
+          }
           const r = manager._gatedDeliver(to, senderTag, body, urgent === true);
           manager._broadcast('ipc-message', { type: 'dm', from: senderTag, to, body: `WIRE←${origin}: ${body}` });
           // The WIRE field stays `delivered` — it is the peer protocol and an older
           // Clodex on the far side reads exactly that key. Only the local return was
           // renamed to `queued` (it is a queue acceptance, not a write), so this is
           // the one place the two vocabularies meet. Do not "tidy" them into one.
-          if (r.queued) return { ok: true, delivered: true };
-          if (r.parked) return { ok: true, parked: r.parked };
-          const why = r.held || r.error || 'not delivered';
-          log.info('peer', `dm from ${senderTag} to ${to} not delivered: ${why}`);
-          return { ok: false, error: why };
+          let resp;
+          if (r.queued) resp = { ok: true, delivered: true };
+          else if (r.parked) resp = { ok: true, parked: r.parked };
+          else {
+            const why = r.held || r.error || 'not delivered';
+            log.info('peer', `dm from ${senderTag} to ${to} not delivered: ${why}`);
+            resp = { ok: false, error: why };
+          }
+          if (refKey) manager._dmRefRemember(refKey, resp);
+          return resp;
         },
         claimDms: (origin) => {
           const messages = claimOutbox(OUTBOX_DIR, origin);
