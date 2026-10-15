@@ -2871,7 +2871,6 @@ function createTicketMethods(deps, shared) {
           + `written. And if the body gates on a specific condition you cannot confirm was met, report that rather than `
           + `assuming it was discharged.\n`
         : '';
-      // Rides every delivery including a replay: a respawned seat has no memory of its tree.
       const wtLine = (!remote && ticket && ticket.worktree && ticket.worktree.path)
         ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
           + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
@@ -2905,7 +2904,6 @@ function createTicketMethods(deps, shared) {
         : '';
       // Rendered beside the spec, never into it: `ticket.spec` is the lead's text and only `respec` replaces it.
       const taskDirLine = remote ? '' : this._ticketTaskDirRender(team, ticket).line;
-      // Rides every dispatch, replays included: a respawned seat has no memory of the verb.
       const closeLine = remote ? '' : ticketCloseLine(ticket.id);
       // Every dispatch spills (close line ~410 chars, worktree ~730, threshold 500), so the pointer line must
       // carry the id and the close verb; a spilled body shows only "Message (N bytes) attached".
