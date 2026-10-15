@@ -1033,7 +1033,7 @@ test('rebuild: dev build kind uses `up -d --build`, then registers the peer', as
   assert.deepStrictEqual(r.ports, { web: 7810, wirescope: 7811, wire: 7820 });
   // Exactly one compose invocation: up -d --build (no pull in the build path).
   const composeCalls = composeSubcommands(calls);
-  assert.deepStrictEqual(composeCalls, [['up', '-d', '--build']]);
+  assert.deepStrictEqual(composeCalls, [['up', '-d', '--build', '--force-recreate']]);
   assert.strictEqual(settings._state().peers.length, 1);
   assert.strictEqual(settings._state().peers[0].id, 'sandbox');
   assert.deepStrictEqual(r.image, { kind: 'build', ref: null, sha: null });
@@ -1053,7 +1053,7 @@ test('rebuild: packaged pinned image kind pulls then `up -d`', async () => {
   const r = await sb.rebuild();
   assert.strictEqual(r.ok, true);
   const composeCalls = composeSubcommands(calls);
-  assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d']]);
+  assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d', '--force-recreate']]);
   assert.strictEqual(settings._state().peers.length, 1);
   assert.deepStrictEqual(r.image, { kind: 'image', image: 'ghcr.io/avirtual/clodex:9.9.9' });
 });
@@ -1076,6 +1076,43 @@ test('rebuild: a failed pull surfaces stderr, skips up, and does NOT register th
   const composeCalls = composeSubcommands(calls);
   assert.deepStrictEqual(composeCalls, [['pull']]);
   assert.strictEqual(settings._state().peers.length, 0);
+});
+
+test('up: brings the box up with plain `up -d` — never --force-recreate', async () => {
+  const calls = [];
+  const sb = createSandbox({ registryDir: TMP_REGISTRY,
+    spawn: recordingSpawn(calls),
+    getUiSettings: () => fakeSettings(),
+    getUserDataPath: () => TMP_USERDATA,
+    isPortInUse: () => Promise.resolve(false),
+    isPackaged: () => false,
+    repoRoot: '/repo',
+  });
+  const r = await sb.up();
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
+});
+
+test('containerStartedAt: inspects the compose container and returns its State.StartedAt', async () => {
+  const calls = [];
+  const spawn = (_cmd, args) => {
+    calls.push(args);
+    if (args[0] === 'inspect') return fakeSpawn({ code: 0, stdout: '2026-10-15T02:00:00.123456789Z\n' })();
+    return fakeSpawn({ code: 0, stdout: 'abc123\n' })();
+  };
+  const sb = createSandbox({ registryDir: TMP_REGISTRY, spawn, getUiSettings: () => fakeSettings(), getUserDataPath: () => TMP_USERDATA });
+  assert.strictEqual(await sb.containerStartedAt(), '2026-10-15T02:00:00.123456789Z');
+  assert.deepStrictEqual(composeSubcommands(calls), [['ps', '--all', '-q']]);
+  assert.deepStrictEqual(calls[calls.length - 1], ['inspect', '-f', '{{.State.StartedAt}}', 'abc123']);
+});
+
+test('containerStartedAt: no container → null, no inspect', async () => {
+  const calls = [];
+  const sb = createSandbox({ registryDir: TMP_REGISTRY,
+    spawn: (_cmd, args) => { calls.push(args); return fakeSpawn({ code: 0, stdout: '' })(); },
+    getUiSettings: () => fakeSettings(), getUserDataPath: () => TMP_USERDATA });
+  assert.strictEqual(await sb.containerStartedAt(), null);
+  assert.ok(!calls.some((a) => a[0] === 'inspect'));
 });
 
 test('rebuild: a build failure surfaces stderr and does NOT register the peer', async () => {

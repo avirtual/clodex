@@ -24,7 +24,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 const WEB_TOKEN = 'feedface0000feedface1111feedface2222feedface3333feedface4444feed';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedAts = ['2026-10-15T01:00:00.000000001Z', '2026-10-15T02:00:00.000000002Z'], upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
   const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
@@ -39,6 +39,7 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, upResult
       Object.assign(config, partial);
       return { ...config };
     },
+    async containerStartedAt() { calls.startedAt = (calls.startedAt || 0) + 1; return startedAts[Math.min(calls.startedAt, startedAts.length) - 1]; },
     async up() { calls.up++; return upResult || { ok: true, ports }; },
     async rebuild() { calls.rebuild++; return upResult || { ok: true, ports }; },
     async down() { calls.down++; return downResult || { ok: true }; },
@@ -202,7 +203,22 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   assert.strictEqual(rec.webUrl, 'http://127.0.0.1:7810');
   assert.strictEqual(rec.wireUrl, 'http://127.0.0.1:7820');
   assert.strictEqual(rec.token, TOKEN);
-  assert.ok(!Number.isNaN(Date.parse(rec.startedAt)), 'startedAt is an ISO instant');
+  assert.strictEqual(rec.startedAt, '2026-10-15T02:00:00.000000002Z', 'startedAt is the container\'s inspected StartedAt');
+});
+
+test('the reply says `container recreated` when the container StartedAt changed', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'rebuild' });
+  assert.match(b.last(), / · container recreated/);
+  assert.doesNotMatch(b.last(), /NOT recreated/);
+});
+
+test('the reply says `container NOT recreated (unchanged)` when StartedAt is equal, and records it', async () => {
+  const at = '2026-10-15T01:00:00.000000001Z';
+  const b = mkBox({ startedAts: [at, at] });
+  await fire(b, b.lead, { action: 'up' });
+  assert.match(b.last(), / · container NOT recreated \(unchanged\)/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(b.file, 'utf-8')).startedAt, at);
 });
 
 test('sandbox.json is written 0600 — the peer-wire token is not group- or world-readable', async () => {

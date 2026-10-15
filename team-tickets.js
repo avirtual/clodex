@@ -87,6 +87,16 @@ function sandboxVersionClause(peerStatus) {
     : ` · clodex ${peerStatus.version} (last seen; the box's wire is offline now)`;
 }
 
+async function readContainerStartedAt(box) {
+  if (typeof box.containerStartedAt !== 'function') return null;
+  try { return (await box.containerStartedAt()) || null; } catch { return null; }
+}
+
+function recreatedClause(before, after) {
+  if (!after) return '';
+  return before === after ? ' · container NOT recreated (unchanged)' : ' · container recreated';
+}
+
 function sandboxPortClause(st) {
   const ports = (st && st.ports) || {};
   if (!ports.web && !ports.wire) return '';
@@ -2510,10 +2520,12 @@ function createTicketMethods(deps, shared) {
 
       const seed = seedClaudeToken(mgr, box);
 
+      const startedBefore = await readContainerStartedAt(box);
       const r = action === 'rebuild' ? await box.rebuild() : await box.up();
       if (r && r.ok === false) { reply(`error: ${r.error}`); return { ok: false }; }
       if (r && r.peerRegistered === false) reply(`peer NOT registered: ${r.peerError}`);
       const st = await box.status();
+      const startedAfter = await readContainerStartedAt(box);
       const ports = (st && st.ports) || (r && r.ports) || {};
       const token = box.remoteToken();
       let shipped;
@@ -2532,7 +2544,7 @@ function createTicketMethods(deps, shared) {
         token,
         webToken: box.webToken(),
         teamDir: shipped.dir,
-        startedAt: new Date().toISOString(),
+        startedAt: startedAfter,
       };
       ensureDirMode700(path.dirname(file));
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
@@ -2555,6 +2567,7 @@ function createTicketMethods(deps, shared) {
       reply(`sandbox ${boxId} ${action} @ ${sha8(record.sha)}${sandboxRefClause(record)}`
         + `${sandboxPortClause({ ports })}`
         + ` · healthy in ${Math.round((health.ms || 0) / 1000)}s`
+        + `${recreatedClause(startedBefore, startedAfter)}`
         + ` · seeded ${ready.join(', ')}`
         + ` · token in ${file}`
         + `${claudeSeedClause(seed, boxId)}`
