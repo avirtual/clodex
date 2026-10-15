@@ -25,8 +25,8 @@ carried context.
   with `[agent:scratch begin] <what to research>` (body to `[agent:end]`) and
   the clone reads while your transcript stays clean. The clone shares your
   context, so the body is the question and the return shape, not a brief. Or a
-  throwaway subagent returns FILE:LINE pointers and its context dies. A file you read yourself
-  bills on every turn you have left.
+  throwaway subagent returns FILE:LINE pointers and its context dies. A file you
+  read yourself bills on every turn you have left.
 - One dispatch, one report, no mid-flight exchanges. If a task needs
   conversation, the spec was too thin.
 - A 3-line fix in context you already carry is yours. A bulk loop

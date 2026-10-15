@@ -351,7 +351,7 @@ test('generated scripts: heredoc terminators at column 0, interpreter body unind
 // @-inline at hook drain: the parked '@<path>' spill pointer is a PTY-stdin
 // affordance (Claude expands @ only when TYPED). When the same text drains as
 // additionalContext the @ is inert, so the pending-drain python inlines small
-// files under ~/.clodex/messages/ and downgrades large ones to a read-pointer.
+// files under the seat's own resolved messages dir and downgrades large ones to a read-pointer.
 // These run the GENERATED bash/python end to end against a real pending dir —
 // the only faithful test of the drain-time transform. The idle-edge PTY path is
 // untouched (not exercised here); codex hooks never get this transform.

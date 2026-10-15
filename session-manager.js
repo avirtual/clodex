@@ -6482,7 +6482,9 @@ function createSessionManager(deps) {
           return;
         }
         log.info('intent', `term read by ${session.name}: ${String(rawBody || '').trim() || 'tail'}`);
-        this._injectText(session, `[term read] ${res.text}`, { parkable: true });
+        const replyText = `[term read] ${res.text}`;
+        this._injectText(session, replyText, { parkable: true });
+        this._broadcast('ipc-message', { type: 'term', from: session.name, to: session.name, body: replyText.split('\n')[0] });
         return;
       }
       const scope = intentReplyScope.getStore();

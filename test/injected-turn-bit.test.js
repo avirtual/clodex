@@ -209,19 +209,25 @@ test('a single key answering a permission dialog closes the draft it would other
   cleanup(h);
 });
 
-test('the same key with no dialog open, or a word typed under one, is still a draft', () => {
+test('the same key with no dialog open is still a draft', () => {
   const h = boot();
   h.m.write('hand', '4');
   assert.strictEqual(isDraftOpen(h.s), true);
+  cleanup(h);
+});
+
+test('a word typed under a permission dialog is still a draft', () => {
   const g = boot();
   g.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
   g.m.write('hand', 'hello');
   assert.strictEqual(isDraftOpen(g.s), true);
+  cleanup(g);
+});
+
+test('an arrow key under a permission dialog is still a draft', () => {
   const k = boot();
   k.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
   k.m.write('hand', '\x1b[B');
   assert.strictEqual(isDraftOpen(k.s), true, 'an arrow key moves the dialog cursor, it does not answer');
   cleanup(k);
-  cleanup(h);
-  cleanup(g);
 });

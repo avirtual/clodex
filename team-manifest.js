@@ -1152,10 +1152,10 @@ function retiredFieldLines(team, role) {
   return lines;
 }
 
-// The label is never computed here — team-manifest is a pure leaf and warmth is a
-// wire-layer property, so it arrives as data.
 const ROSTER_DEFINITIONS_LINE = 'Roles without a live seat are definitions; briefs live in team.json.';
 
+// The label is never computed here — team-manifest is a pure leaf and warmth is a
+// wire-layer property, so it arrives as data.
 function formatRoster(team, liveSeats = [], { seat = null, grants = null, efforts = null, brief = false } = {}) {
   if (brief) {
     const role = seat ? matchSeatRole(team, seat) : null;

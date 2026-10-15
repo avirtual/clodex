@@ -229,7 +229,7 @@ turn, not as a `[terminal]` DM. Bare is `tail 50`; `tail N` clamps N to 1..400;
 from the end of the buffer (`L1:` = most recent). The pattern is capped at 200
 characters and runs under a 1 s budget; a bad one is refused with the RegExp
 error. The answer is capped at 16 KB, cut from the head, and says so. A tab never
-opened is refused `no terminal: open your terminal tab first`, and a host with
+opened, or whose shell has exited, is refused `no terminal: open your terminal tab first`, and a host with
 no terminal tabs `no terminal on this host`. The `term_read` MCP tool
 (`{tail?, grep?}`, not both) maps to the same verb, main agent only like
 `term_exec`.
