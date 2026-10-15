@@ -99,6 +99,53 @@ test('setupClaudeHook: without the seat layout, trustedDirectories is the messag
   assert.deepStrictEqual(settings.trustedDirectories, [path.join(REGISTRY_DIR, 'messages')]);
 });
 
+function seatLayoutRoot() {
+  const REGISTRY_DIR = tmp();
+  fs.mkdirSync(path.join(REGISTRY_DIR, 'sessions'), { recursive: true });
+  fs.writeFileSync(path.join(REGISTRY_DIR, 'sessions', '.migrated'), '');
+  return REGISTRY_DIR;
+}
+function pendingArgv3(REGISTRY_DIR, name) {
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'pendingScript'), 'utf-8');
+  const m = src.match(/-e "\$JS" - "[^"]*" "([^"]*)"/);
+  assert.ok(m, 'the pending script must invoke the drain with argv');
+  return m[1];
+}
+
+test('setupClaudeHook: under the seat layout, the pending drain gets the seat\'s own resolved messages dir', () => {
+  const REGISTRY_DIR = seatLayoutRoot();
+  mk(REGISTRY_DIR).setupClaudeHook('agent1');
+  const own = fs.realpathSync(path.join(REGISTRY_DIR, 'sessions', 'agent1', 'messages'));
+  assert.strictEqual(pendingArgv3(REGISTRY_DIR, 'agent1'), own);
+});
+
+test('setupClaudeHook: without the seat layout, the pending drain gets the shared messages dir', () => {
+  const REGISTRY_DIR = tmp();
+  mk(REGISTRY_DIR).setupClaudeHook('agent1');
+  assert.strictEqual(pendingArgv3(REGISTRY_DIR, 'agent1'), path.join(REGISTRY_DIR, 'messages'));
+});
+
+test('pending drain @-inline: under the seat layout, a file in the seat\'s own messages dir is inlined', () => {
+  const REGISTRY_DIR = seatLayoutRoot();
+  mk(REGISTRY_DIR).setupClaudeHook('agent1');
+  const body = 'B'.repeat(500);
+  fs.writeFileSync(path.join(REGISTRY_DIR, 'sessions', 'agent1', 'messages', 'msg-1.txt'), body);
+  const ptr = path.join(REGISTRY_DIR, 'messages', 'agent1', 'msg-1.txt');
+  const ctx = drainPending(REGISTRY_DIR, 'agent1', [`[agent:from x] Message (500 bytes) attached: @${ptr}`]);
+  assert.match(ctx, /--- attached file: /);
+  assert.ok(ctx.includes(body));
+});
+
+test('pending drain @-inline: under the seat layout, another seat\'s file is left byte-unchanged', () => {
+  const REGISTRY_DIR = seatLayoutRoot();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('agent1');
+  h.setupClaudeHook('agent2');
+  fs.writeFileSync(path.join(REGISTRY_DIR, 'sessions', 'agent2', 'messages', 'msg-1.txt'), 'secret');
+  const text = `[agent:from x] Message (6 bytes) attached: @${path.join(REGISTRY_DIR, 'messages', 'agent2', 'msg-1.txt')}`;
+  assert.strictEqual(drainPending(REGISTRY_DIR, 'agent1', [text]), text);
+});
+
 test('setupClaudeHook: the PreToolUse deny guards fail closed and nothing else carries onFailure', () => {
   const REGISTRY_DIR = tmp();
   const settings = JSON.parse(fs.readFileSync(mk(REGISTRY_DIR).setupClaudeHook('agent1'), 'utf-8'));
