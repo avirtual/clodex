@@ -2788,7 +2788,9 @@ function createTicketMethods(deps, shared) {
     },
 
     boxPathFor(team, hostPath) {
-      return path.posix.join(SANDBOX_WORK_DIR, path.relative(team.root, hostPath).split(path.sep).join('/'));
+      const rel = path.relative(team.root, hostPath);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) return null;
+      return path.posix.join(SANDBOX_WORK_DIR, rel.split(path.sep).join('/'));
     },
 
     _resolveRemoteAssignee(who) {
@@ -3572,12 +3574,12 @@ function createTicketMethods(deps, shared) {
       if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `seat name "${name}" is not name-legal` };
       // `name` rides the refusal so callers need not re-derive it; a second copy of the rule would drift.
       if (this.sessions.has(name) || getPersistence().get(name)) return { ok: false, taken: true, name, error: `seat name "${name}" is taken` };
-      // Slug from the untruncated first line, not the 80-char-capped title: behind a ~67-char task-dir path
-      // the title leaves ~13 characters and sibling tickets get identical branch names.
       return { ok: true, name, branch: this._ticketBranchName(ticket) };
     },
 
     _ticketBranchName(ticket) {
+      // Slug from the untruncated first line, not the 80-char-capped title: behind a ~67-char task-dir path
+      // the title leaves ~13 characters and sibling tickets get identical branch names.
       const slug = branchSlug(ticket.spec == null ? ticket.title : titleLine(ticket.spec));
       // A recorded branch wins: a re-derived name forks a second branch off HEAD and strands the previous seat's commits,
       // including when a locked tree makes createWorktree refuse, which is the wanted outcome.
@@ -4203,13 +4205,17 @@ function createTicketMethods(deps, shared) {
       if (intent.start) {
         const startMsgs = [];
         let startWarned = false;
+        let late = false;
         this._taskStart(session, team, { id: ticket.id, reviewer: null },
-          (m) => { startWarned = true; startMsgs.push(String(m)); },
-          (m) => startMsgs.push(String(m)));
+          (m) => { if (late) { reply(m); return; } startWarned = true; startMsgs.push(String(m)); },
+          (m) => { if (late) { ack(m); return; } startMsgs.push(String(m)); });
+        late = true;
         const after = (ticketsStore.load(team.root) || []).find((t) => t.id === ticket.id);
         const raw = startMsgs.join(' ').trim();
         if (after && ticketStarted(after)) {
-          const tail = raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim();
+          const tail = raw
+            ? raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim()
+            : `→ ${after.assignee}: minting its worktree, the dispatch result follows`;
           (startWarned ? reply : ack)(`ticket ${ticket.id} created and started ${tail}${rvNote}`);
           return;
         }
@@ -4321,7 +4327,7 @@ function createTicketMethods(deps, shared) {
       if (this._isRemoteSeat(assignee) && !(ticket.worktree && ticket.worktree.path)) {
         ticketsStore.save(team.root, tickets);
         setImmediate(() => {
-          this._mintRemoteTicketTree(team, ticket.id, this._ticketBranchName(ticket), reply)
+          this._mintRemoteTicketTree(team, ticket.id, this._ticketBranchName(ticket), reply, assignee)
             .then((all) => { if (all) dispatch(all, all.find((x) => x.id === ticket.id)); })
             .catch((e) => log.error('intent', `ticket ${ticket.id} remote tree failed: ${e.message}`));
         });
@@ -4330,20 +4336,34 @@ function createTicketMethods(deps, shared) {
       dispatch(tickets, ticket);
     },
 
-    async _mintRemoteTicketTree(team, ticketId, branch, reply) {
+    async _mintRemoteTicketTree(team, ticketId, branch, reply, assignee) {
       const targetPath = path.join(team.root, '.clodex-wt', branch);
+      try {
+        const exclude = path.join(team.root, '.git', 'info', 'exclude');
+        if (fs.statSync(path.join(team.root, '.git')).isDirectory()) {
+          const cur = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
+          if (!cur.split(/\r?\n/).includes('.clodex-wt/')) {
+            fs.mkdirSync(path.dirname(exclude), { recursive: true });
+            fs.appendFileSync(exclude, `${cur && !cur.endsWith('\n') ? '\n' : ''}.clodex-wt/\n`);
+          }
+        }
+      } catch (e) { log.warn('worktree', `could not add .clodex-wt/ to ${team.root}/.git/info/exclude: ${e.message}`); }
       const r = await gitWorktree.createWorktree(team.root, branch, { base: 'HEAD', targetPath });
       const rel = (r && r.ok) ? gitWorktree.relativizeWorktreePointers(team.root, r.path) : null;
       const all = ticketsStore.load(team.root);
       const rec = all.find((x) => x.id === ticketId);
-      if (!r || !r.ok || !rel || !rel.ok || !rec) {
+      const moved = !rec ? 'ticket gone'
+        : rec.state !== 'open' ? `ticket is ${rec.state}`
+          : rec.assignee !== assignee ? `ticket was reassigned to ${rec.assignee}` : null;
+      if (!r || !r.ok || !rel || !rel.ok || moved) {
         if (r && r.ok) {
-          const rm = await gitWorktree.removeWorktree(r.path, { repo: team.root }).catch(() => ({ ok: false }));
+          const rm = await gitWorktree.removeWorktree(r.path, { repo: team.root, ...(r.base ? { deleteBranch: r.branch } : {}) })
+            .catch(() => ({ ok: false }));
           log.info('worktree', `${rm && rm.ok ? 'removed' : 'ORPHANED'} ${r.path} after failed remote ticket tree`);
         }
-        if (rec) { rec.startedAt = null; ticketsStore.save(team.root, all); }
-        const why = (r && !r.ok && r.error) || (rel && rel.error) || (rec ? 'unknown' : 'ticket gone');
-        reply(`ticket ${ticketId}: worktree "${branch}" could not be created (${why}) — nothing sent, ticket left assigned to "${rec ? rec.assignee : '?'}"`);
+        if (rec && !moved) { rec.startedAt = null; ticketsStore.save(team.root, all); }
+        const why = (r && !r.ok && r.error) || (rel && rel.error) || moved || 'unknown';
+        reply(`ticket ${ticketId}: worktree "${branch}" could not be created (${why}) — nothing sent${moved ? '' : `, ticket left assigned to "${rec.assignee}" and unstarted`}`);
         return null;
       }
       rec.worktree = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };

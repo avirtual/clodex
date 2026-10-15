@@ -37,3 +37,4 @@ write path, where a hung git must not hold the handoff.
 The two pointer files are rewritten by hand because `git worktree add --relative-paths` (git >=2.48) sets
 `extensions.relativeworktrees`, and the sandbox box's git 2.39 refuses the whole repo with that extension set;
 plain relative pointers with no extension work on both sides (measured). `.clodex-wt/` must stay in `.gitignore`.
+Unmeasured: whether git 2.39's `git worktree prune` in the box resolves the relative admin `gitdir` against its cwd and prunes the entry; until measured, a box seat should not run `git worktree prune`/`add`.
