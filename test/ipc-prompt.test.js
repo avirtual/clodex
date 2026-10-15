@@ -843,8 +843,6 @@ test('harness intents block: lead routing, close downstream, artifact-dir reload
 });
 
 test('t1838: the three lead prompts teach [agent:probe] and never scratch begin', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
   const lib = path.join(__dirname, '..', 'resources', 'library');
   for (const rel of ['kits/default/prompts/system/lead.md', 'kits/clodex/prompts/system/clodex-team-lead.md', 'prompts/system/clodex-team-lead.md']) {
     const text = fs.readFileSync(path.join(lib, rel), 'utf-8');
