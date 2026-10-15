@@ -361,6 +361,7 @@ test('addMemoryUnit/editMemoryUnit: written as source operator, digest refreshed
     memoryStore: {
       remember: (a, opts) => { calls.push(['remember', a, opts]); return { id: 'mem-1-aaaaaa' }; },
       update: (a, id, opts) => (id === 'mem-1-aaaaaa' ? (calls.push(['update', a, id, opts]), { ok: true, id }) : { ok: false, error: `no unit ${id}` }),
+      list: () => [],
     },
     writeClaudeDigestFile: () => { digests++; return true; },
   });
