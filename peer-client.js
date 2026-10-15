@@ -898,8 +898,8 @@ class PeerConnection {
 
 // `origin` is OUR label (how the box keys its reply outbox for us); passed
 // once from selfLabel, never recomputed.
-  dm({ to, from, body, urgent }, cb) {
-    this._request('POST', '/api/dm', { to, from, origin: this._selfLabel, body, urgent: !!urgent }, (err, resp) => {
+  dm({ to, from, body, urgent, ref }, cb) {
+    this._request('POST', '/api/dm', { to, from, origin: this._selfLabel, body, urgent: !!urgent, ...(ref ? { ref } : {}) }, (err, resp) => {
       cb(err ? { ok: false, error: err.message } : resp || { ok: false, error: 'no response' });
     });
   }

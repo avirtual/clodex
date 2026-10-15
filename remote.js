@@ -13,6 +13,7 @@ const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
 const { kernelStartTime } = require('./stream-seat');
+const { DM_REF_RE } = require('./intent-registry');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -1273,9 +1274,14 @@ class RemoteServer {
         if (!NAME_RE.test(origin)) return this._json(res, 400, { ok: false, error: 'bad origin' });
         if (!text) return this._json(res, 400, { ok: false, error: 'empty message' });
         if (text.length > MAX_BODY) return this._json(res, 413, { ok: false, error: 'message too large' });
+        const ref = msg.ref == null ? null : msg.ref;
+        if (ref !== null && (typeof ref !== 'string' || !DM_REF_RE.test(ref))) return this._json(res, 400, { ok: false, error: 'bad ref' });
         Promise.resolve()
-          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true }))
-          .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'delivery failed' }))
+          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true, ...(ref ? { ref } : {}) }))
+          .then((out) => {
+            const resp = out || { ok: false, error: 'delivery failed' };
+            this._json(res, resp.ok ? 200 : 404, ref ? { ...resp, ref } : resp);
+          })
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }

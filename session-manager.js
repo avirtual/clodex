@@ -7,6 +7,8 @@ const SUB_DM_RATE_MS = 60 * 1000;
 const PEER_HELD_TTL_MS = 10 * 60 * 1000;
 const PEER_HELD_SWEEP_MS = 60 * 1000;
 const PEER_HELD_CAP = 20;
+const DM_REF_TTL_MS = 10 * 60 * 1000;
+const DM_REF_CAP = 500;
 
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
@@ -786,6 +788,7 @@ function createSessionManager(deps) {
       this._subDmSent = new Map();
       this._relayRosters = new Map();
       this._peerHeld = new Map();
+      this._dmRefSeen = new Map();
       this._peerHeldSweep = null;
       this._lastPendingCounts = new Map();
       this._ticketWatch = new Map();
@@ -8207,11 +8210,35 @@ function createSessionManager(deps) {
       return null;
     }
 
+    _mintDmRef(senderName) {
+      this._dmRefMint = (this._dmRefMint || 0) + 1;
+      return `${String(senderName).slice(0, 24)}.${Date.now().toString(36)}.${this._dmRefMint.toString(36)}`;
+    }
+
+    _dmRefRepeat(key, now = Date.now()) {
+      const hit = this._dmRefSeen.get(key);
+      if (!hit) return null;
+      if (now - hit.at < DM_REF_TTL_MS) return hit;
+      this._dmRefSeen.delete(key);
+      return null;
+    }
+
+    _dmRefRemember(key, resp, now = Date.now()) {
+      for (const [k, v] of this._dmRefSeen) {
+        if (now - v.at < DM_REF_TTL_MS) break;
+        this._dmRefSeen.delete(k);
+      }
+      this._dmRefSeen.delete(key);
+      this._dmRefSeen.set(key, { resp, at: now });
+      while (this._dmRefSeen.size > DM_REF_CAP) this._dmRefSeen.delete(this._dmRefSeen.keys().next().value);
+    }
+
     _routeFederatedDm(session, senderName, intent) {
       const at = intent.target.indexOf('@');
       const name = intent.target.slice(0, at);
       const origin = intent.target.slice(at + 1);
       const bounce = (msg) => { if (session) this._injectText(session, `[agent:dm] ${msg}`, { parkable: true }); };
+      const ref = intent.ref || this._mintDmRef(senderName);
       if (!AGENT_NAME_RE.test(name) || !AGENT_NAME_RE.test(origin)) {
         bounce(`can't route "${intent.target}" — a federated target is name@peer, both plain names.`);
         return;
@@ -8224,32 +8251,32 @@ function createSessionManager(deps) {
           if (caps.length && !caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
           let held = this._peerHeld.get(match.id);
           if (!held) { held = []; this._peerHeld.set(match.id, held); }
-          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued.`); return; }
+          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued. (ref ${ref})`); return; }
           held.push({
             to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, ts: Date.now(),
-            target: intent.target, origin, sessionName: session && session.name,
+            target: intent.target, origin, sessionName: session && session.name, ref,
           });
           this._armPeerHeldSweep();
-          bounce(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min).`);
-          this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (held): ${intent.body}` });
+          bounce(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min). (ref ${ref})`);
+          this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (held) [${ref}]: ${intent.body}` });
           return;
         }
         if (!caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
         const conn = getPeerManager().get(match.id);
         if (!conn) { bounce(`peer '${origin}' is not reachable right now.`); return; }
         this._sendFederatedDm(conn, origin,
-          { to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, target: intent.target },
+          { to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, target: intent.target, ref },
           () => session);
-        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin}: ${intent.body}` });
+        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} [${ref}]: ${intent.body}` });
         return;
       }
       if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) {
         const r = enqueueOutbox(OUTBOX_DIR, origin,
-          { from: senderName, to: name, body: intent.body, urgent: intent.urgent === true, ts: Date.now() },
+          { from: senderName, to: name, body: intent.body, urgent: intent.urgent === true, ts: Date.now(), ref },
           this._nextParkSeq());
-        if (!r.ok) { bounce(`could not queue for ${intent.target}: ${r.error}`); return; }
+        if (!r.ok) { bounce(`could not queue for ${intent.target}: ${r.error} (ref ${ref})`); return; }
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(origin); } catch {} }
-        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (outbox): ${intent.body}` });
+        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (outbox) [${ref}]: ${intent.body}` });
         return;
       }
       const via = this._relayViaForOrigin(origin);
@@ -8273,13 +8300,16 @@ function createSessionManager(deps) {
 
     _sendFederatedDm(conn, origin, item, getSession) {
       const notify = (text) => { const s = getSession(); if (s) this._injectText(s, text, { parkable: true }); };
-      conn.dm({ to: item.to, from: item.from, body: item.body, urgent: item.urgent }, (resp) => {
-        if (resp && resp.ok && resp.delivered) {
+      const tag = item.ref ? ` (ref ${item.ref})` : '';
+      conn.dm({ to: item.to, from: item.from, body: item.body, urgent: item.urgent, ref: item.ref }, (resp) => {
+        if (resp && resp.duplicate === true) {
+          notify(`[agent:dm] ${origin} already had ref ${item.ref} from you — not redelivered (its first result stands).`);
+        } else if (resp && resp.ok && resp.delivered) {
         } else if (resp && resp.ok && resp.parked) {
-          notify(`[agent:dm] parked on ${origin} for ${item.to} — it'll be delivered with ${item.to}'s next turn. If it can't wait, resend as \`[agent:dm ${item.target} urgent] <message>\`.`);
+          notify(`[agent:dm] parked on ${origin} for ${item.to} — it'll be delivered with ${item.to}'s next turn. If it can't wait, resend as \`[agent:dm ${item.target} urgent] <message>\`.${tag}`);
         } else {
           const why = (resp && resp.error) || 'delivery failed';
-          notify(`[agent:dm] NOT delivered to ${item.target}: ${why}`);
+          notify(`[agent:dm] NOT delivered to ${item.target}: ${why}${tag}`);
         }
       });
     }
@@ -8295,7 +8325,7 @@ function createSessionManager(deps) {
         for (const item of held) {
           if (now - item.ts < PEER_HELD_TTL_MS) { keep.push(item); continue; }
           const s = this._heldSession(item);
-          if (s) this._injectText(s, `[agent:dm] NOT delivered to ${item.target}: peer '${item.origin}' stayed offline 10 min.`, { parkable: true });
+          if (s) this._injectText(s, `[agent:dm] NOT delivered to ${item.target}: peer '${item.origin}' stayed offline 10 min.${item.ref ? ` (ref ${item.ref})` : ''}`, { parkable: true });
         }
         if (keep.length) this._peerHeld.set(peerId, keep); else this._peerHeld.delete(peerId);
       }
@@ -8331,13 +8361,19 @@ function createSessionManager(deps) {
         if (!m || typeof m.to !== 'string') continue;
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
         const senderTag = `${m.from || 'peer'}@${origin}`;
+        const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
+        if (refKey && this._dmRefRepeat(refKey)) {
+          log.info('peer', `dm ref ${m.ref} from ${senderTag} repeated — not redelivered`);
+          continue;
+        }
         const local = this.sessions.get(m.to);
         if (!local || !local.agentType) {
           this._broadcast('ipc-message', { type: 'dm', from: senderTag, to: m.to, body: `WIRE←${peerLabel} DROPPED (no local agent "${m.to}"): ${m.body || ''}` });
           log.info('peer', `claimed dm from ${senderTag} dropped — no local agent "${m.to}"`);
           continue;
         }
-        this._gatedDeliver(m.to, senderTag, m.body || '', m.urgent === true);
+        const r = this._gatedDeliver(m.to, senderTag, m.body || '', m.urgent === true);
+        if (refKey && (r.queued || r.parked)) this._dmRefRemember(refKey, r);
         this._broadcast('ipc-message', { type: 'dm', from: senderTag, to: m.to, body: `WIRE←${peerLabel}: ${m.body || ''}` });
       }
     }

@@ -18,9 +18,23 @@ const REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
 
 // `parse` receives the CLEANED, TRIMMED line; the scanner shell owns cleanLine/trim and the escape check.
 
+const DM_REF_RE = /^[A-Za-z0-9._-]{1,48}$/;
+
 function parseDm(cleaned) {
-  const m = cleaned.match(/^\[agent:dm\s+(\S+?)(\s+urgent)?\]\s*(.*)/s);
-  return m ? { type: 'dm', target: m[1], urgent: !!m[2], body: m[3] } : null;
+  const m = cleaned.match(/^\[agent:dm\s+(\S+?)((?:\s+(?:urgent|ref:[^\s\]]*))*)\]\s*(.*)/s);
+  if (!m) return null;
+  let urgent = false;
+  let ref = null;
+  for (const tok of m[2].split(/\s+/).filter(Boolean)) {
+    if (tok === 'urgent') {
+      if (urgent) return null;
+      urgent = true;
+      continue;
+    }
+    if (ref !== null || !DM_REF_RE.test(tok.slice(4))) return null;
+    ref = tok.slice(4);
+  }
+  return ref === null ? { type: 'dm', target: m[1], urgent, body: m[3] } : { type: 'dm', target: m[1], urgent, ref, body: m[3] };
 }
 
 function parseSub(cleaned) {
@@ -728,6 +742,7 @@ module.exports = {
   TERM_EXEC_TOOL,
   TERM_READ_TOOL,
   DM_TOOL,
+  DM_REF_RE,
   subagentCatalogFor,
   pruneForPlugins,
   withoutPrivilegedIntentsFor,
