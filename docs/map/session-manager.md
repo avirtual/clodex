@@ -568,7 +568,7 @@
 
 ### Invariants
 
-- `_gatedDeliver` fires onWrite for a park but never for a bare held verdict, because a hold reached nobody.
+- `_gatedDeliver` fires onWrite for a park but never for a bare held verdict, because a hold reached nobody; a name@peer target is the exception, firing `('queued','federated')` once the wire send, peer hold or outbox write is made.
 - `_gatedDeliver` returns queued rather than delivered, since only its negative verdicts are decided synchronously.
 - `_armDmConfirm` is armed only from the dm arm of the intent handler, never inside `_gatedDeliver`, and only for an injected disposition into an idle seat.
 - `_armDmConfirm` pegs the timer to the oldest unit and never restarts it on a later push, so a stream of dms cannot starve the report.

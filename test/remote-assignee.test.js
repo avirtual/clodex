@@ -73,7 +73,7 @@ function rig({ online = true, caps = ['dm'] } = {}) {
   m.sessions.set('lead', { name: 'lead', type: 'claude', agentType: 'claude', cwd: '/proj', pty: { pid: 1 }, activityState: 'idle' });
   const lead = m.sessions.get('lead');
   const task = (intent) => m._handleTask(lead, { type: 'task', id: null, who: null, body: '', ...intent });
-  return { m, team, tstore, peer, sent, injected, lead, task, one: (id) => tstore.load(team.root).find((t) => t.id === id) };
+  return { m, team, tstore, peer, conn, sent, injected, lead, task, one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
 test('(a) name@peer resolves only while that peer is online with dm federation; add names the precondition', () => {
@@ -116,6 +116,14 @@ test('_sendToFederatedTarget returns the bounce as an error for an origin with n
   assert.deepStrictEqual(r.sent, []);
 });
 
+test('a wire refusal of a ticket dispatch comes back to the lead as NOT delivered', () => {
+  const r = rig();
+  r.conn.dm = (msg, cb) => { r.sent.push(msg); cb({ ok: false, error: 'no such agent "typo"' }); };
+  r.task({ sub: 'add', who: 'typo@p', start: true, body: SPEC });
+  assert.strictEqual(r.sent.length, 1, 'ENTER: the spec went over the wire');
+  assert.match(r.injected.join('\n'), /NOT delivered to typo@p: no such agent "typo"/);
+});
+
 test('(c) task add x@p start sends the spec over the wire with the REMOTE line and no WORK IN', () => {
   const r = rig();
   r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
@@ -128,6 +136,8 @@ test('(c) task add x@p start sends the spec over the wire with the REMOTE line a
   assert.match(body, /\[ticket t1/);
   assert.match(body, /REMOTE: you are on p; this ticket's board is on laptop; report by dm to lead@laptop/);
   assert.doesNotMatch(body, /WORK IN:/);
+  assert.doesNotMatch(body, /CLOSE WITH/);
+  assert.doesNotMatch(body, /TASK DIR:/);
   assert.strictEqual(r.sent[0].to, 'x');
 });
 
@@ -152,7 +162,6 @@ test('(e) replay paths never re-send to a remote assignee', () => {
   r.task({ sub: 'add', who: 'x@p', start: true, body: `${SPEC}\nsecond`, dup: true });
   assert.strictEqual(r.sent.length, 2, 'ENTER: both tickets went out once');
   r.sent.length = 0;
-  r.m._replayOpenTickets(r.lead);
   const t1 = r.one('t1');
   const d = r.m._deliverTicketSpec(r.team, t1, t1.spec, 'clodex-team', true, true);
   assert.deepStrictEqual(d, { undelivered: true, remote: true });

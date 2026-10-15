@@ -2872,7 +2872,7 @@ function createTicketMethods(deps, shared) {
           + `assuming it was discharged.\n`
         : '';
       // Rides every delivery including a replay: a respawned seat has no memory of its tree.
-      const wtLine = (ticket && ticket.worktree && ticket.worktree.path)
+      const wtLine = (!remote && ticket && ticket.worktree && ticket.worktree.path)
         ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
           + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
           + `${team && team.root ? `The shared checkout is ${team.root}; do not edit files there.` : ''}\n`
@@ -2889,7 +2889,7 @@ function createTicketMethods(deps, shared) {
       // a nested team.json); a symlink that exists only inside the worktree stays unseen.
       const roleCwdHonored = !!roleCwdRel && !!(team && team.root)
         && this._resolveRoleCwd(team, roleDef).fallback === null;
-      const areaLine = (roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
+      const areaLine = (!remote && roleCwdHonored && ticket && ticket.worktree && ticket.worktree.path)
         ? `YOUR AREA in that tree: ${path.join(ticket.worktree.path, roleCwdRel)} — your role works in "${roleCwdRel}". `
           + `The tree ROOT above stays the path for git commands and for the suite; this is where your files live.\n`
         : '';
@@ -2904,9 +2904,9 @@ function createTicketMethods(deps, shared) {
         ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
         : '';
       // Rendered beside the spec, never into it: `ticket.spec` is the lead's text and only `respec` replaces it.
-      const taskDirLine = this._ticketTaskDirRender(team, ticket).line;
+      const taskDirLine = remote ? '' : this._ticketTaskDirRender(team, ticket).line;
       // Rides every dispatch, replays included: a respawned seat has no memory of the verb.
-      const closeLine = ticketCloseLine(ticket.id);
+      const closeLine = remote ? '' : ticketCloseLine(ticket.id);
       // Every dispatch spills (close line ~410 chars, worktree ~730, threshold 500), so the pointer line must
       // carry the id and the close verb; a spilled body shows only "Message (N bytes) attached".
       const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${remoteLine}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,

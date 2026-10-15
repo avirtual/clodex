@@ -7989,7 +7989,8 @@ function createSessionManager(deps) {
     _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null, opts = {}) {
       const at = typeof targetName === 'string' ? targetName.indexOf('@') : -1;
       if (at > 0 && AGENT_NAME_RE.test(targetName.slice(0, at)) && AGENT_NAME_RE.test(targetName.slice(at + 1))) {
-        const r = this._sendToFederatedTarget(senderTag, targetName, body, urgent === true, {});
+        const r = this._sendToFederatedTarget(senderTag, targetName, body, urgent === true,
+          { session: this.sessions.get(senderTag) || null });
         if (!r.error && typeof onWrite === 'function') { try { onWrite('queued', 'federated'); } catch {} }
         return r;
       }
