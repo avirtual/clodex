@@ -352,7 +352,7 @@ test('removeMemoryUnit: a store throw becomes an envelope, and skips the digest 
 });
 
 test('addMemoryUnit/editMemoryUnit: written as source operator, digest refreshed for a live claude seat only', () => {
-  const root = mkTmpRoot('clodex-opw-');
+  const root = mkTmpRoot('clodex-rm-');
   const calls = [];
   let digests = 0;
   const m = mk({
