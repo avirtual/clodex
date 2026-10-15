@@ -1375,8 +1375,8 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
-  assert.deepStrictEqual(bodiless.sort(), ['file', 'reboot', 'resend', 'spawn', 'term', 'who'],
-    'the bodiless six — if this list changed, the disposition table needs a deliberate verdict for the new verb');
+  assert.deepStrictEqual(bodiless.sort(), ['ctl', 'file', 'reboot', 'resend', 'spawn', 'term', 'who'],
+    'the bodiless seven — if this list changed, the disposition table needs a deliberate verdict for the new verb');
   // t773 took team-create off that list: its body is the kickstart brief. The
   // deliberate verdict is the default `note` arm — the brief is lost with the
   // denied intent, but the sender still holds the prose it just composed, so

@@ -131,6 +131,15 @@ is minted lazily, so the edge can arrive well after the keystroke.
     is killed and the parent hears *[scratch] clone <name> ended without a
     summary (45m ceiling)*. A clone that exits on its own sends *exited without a
     summary*; a parent that exits or is killed takes its clone with it.
+- `ctl` (privileged, off unless the seat's `intents` list it) —
+  `[agent:ctl <ctx>] <line>`, bodyless: `_handleCtlIntent` runs the line through
+  `getCtlService().run('--ctx <ctx> <line>')` in the main process and replies the
+  block as `[ctl <ctx> exit <code>] <output>`, clamped to `CTL_REPLY_MAX_BYTES`.
+  `ctlRefusal` answers `ctl: <verb> is operator-only` for input, exec, deploy,
+  undeploy, upgrade, port-forward, attach, web, create/delete/use node, --import and
+  logs --follow, and refuses `--ctx`/`--url`/`--token`/`--ssh`/`--remote-port`/`--tunnel`,
+  before the service is called. The exec entries with `"inProcess": "ctl"` reach the same handler
+  (docs/exec-tools.md, "clodexctl through exec").
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;

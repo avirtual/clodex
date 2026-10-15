@@ -549,4 +549,9 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   };
 }
 
-module.exports = { createCtlService, tokenize, refuse, isNodeLine, ALLOWED, DEFERRED_HINT, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };
+function parseLine(line) {
+  const { args: A, main, R } = loadCli();
+  return { flags: A.parse(tokenize(line), main.PARSE_OPTS), isNodeLine: (verb, rest) => isNodeLine(verb, rest, R) };
+}
+
+module.exports = { createCtlService, tokenize, parseLine, refuse, isNodeLine, ALLOWED, DEFERRED_HINT, NODE_LOCAL_VERBS, MAX_BLOCK_CHARS };

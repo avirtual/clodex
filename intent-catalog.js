@@ -40,6 +40,7 @@ const GATEABLE_INTENTS = [
   { type: 'term', label: "Run commands in the seat's terminal (term) — privileged, off by default" },
   { type: 'reboot', label: 'Relaunch the app (reboot) — privileged, off by default' },
   { type: 'team-create', label: 'Create teams (team create) — privileged, off by default' },
+  { type: 'ctl', label: 'Run clodexctl verbs against a named context (ctl) — privileged, off by default' },
 ];
 
 // PRIVILEGED intents (Task 27): gateable verbs that INVERT the "absent = enabled"
@@ -52,7 +53,7 @@ const GATEABLE_INTENTS = [
 // second reason more than the first: a seat that was deliberately given no shell
 // tool would acquire one through it, and without the strip a seat could spawn a
 // peer holding a capability nobody granted it.
-const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create']);
+const PRIVILEGED_INTENTS = new Set(['reboot', 'term', 'team-create', 'ctl']);
 
 const LIVING_MARK = '*';
 

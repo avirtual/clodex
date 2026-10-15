@@ -46,3 +46,7 @@ The dm head takes `urgent` and an optional `ref:<token>` (`DM_REF_RE`) in either
 ## parseProbe
 
 Any head word parses, so a mistyped sub reaches `_handleProbeIntent` and bounces naming the three verbs instead of falling to the near-miss list; `[agent:probe]` with an empty head is `begin`, greedy even when the head line is bare, so the question may start on the next line.
+
+## parseCtl
+
+`[agent:ctl <ctx>] <line>` is bodyless: the clodexctl line is the rest of the head line. The row is privileged in intent-catalog, so no seat has it until the operator lists `ctl`; the exec path (`inProcess: "ctl"`) reaches the same handler without it.

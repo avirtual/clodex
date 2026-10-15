@@ -1,0 +1,16 @@
+{
+  "inProcess": "ctl",
+  "description": "Read a peer node through clodexctl: get, describe, query, logs, nodes against a context the operator listed in the ctx enum.",
+  "maxBytes": 1024,
+  "replyMaxBytes": 12000,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ctx", "verb"],
+    "properties": {
+      "ctx": { "type": "string", "enum": [] },
+      "verb": { "type": "string", "enum": ["get", "describe", "query", "logs", "nodes"] },
+      "args": { "type": "string", "maxLength": 400 }
+    }
+  }
+}

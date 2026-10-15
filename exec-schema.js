@@ -196,10 +196,16 @@ function validateExecDef(entry, name) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return { ok: false, error: 'def: expected a JSON object' };
   }
-  if (!Array.isArray(entry.argv) || entry.argv.length === 0) {
+  if ('inProcess' in entry && entry.inProcess !== 'ctl') {
+    return { ok: false, error: 'inProcess: must be "ctl"' };
+  }
+  if (!('inProcess' in entry) && (!Array.isArray(entry.argv) || entry.argv.length === 0)) {
     return { ok: false, error: 'argv: required non-empty array' };
   }
-  for (const a of entry.argv) {
+  if ('argv' in entry && !Array.isArray(entry.argv)) {
+    return { ok: false, error: 'argv: must be an array' };
+  }
+  for (const a of entry.argv || []) {
     if (typeof a !== 'string' || a.length === 0) {
       return { ok: false, error: 'argv: every element must be a non-empty string' };
     }
