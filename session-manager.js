@@ -6618,6 +6618,39 @@ function createSessionManager(deps) {
       return { ok: true };
     }
 
+    addMemoryUnit(agent, { text, scope = 'operator', tags = '', operatorPinned = true } = {}) {
+      let unit;
+      try {
+        unit = memoryStore.remember(agent, { text, scope, tags, source: 'operator', operatorPinned: !!operatorPinned });
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      this._refreshOperatorDigest(agent);
+      return { ok: true, id: unit.id };
+    }
+
+    editMemoryUnit(agent, id, text) {
+      let res;
+      try {
+        res = memoryStore.update(agent, id, { text });
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+      if (!res.ok) return res;
+      this._refreshOperatorDigest(agent);
+      return { ok: true };
+    }
+
+    _refreshOperatorDigest(agent) {
+      const session = this.sessions.get(agent);
+      if (!session || session._dead || session.agentType !== 'claude') return;
+      try {
+        session.digestNonEmpty = writeClaudeDigestFile(agent);
+      } catch (e) {
+        log.warn('memory', `operator write for ${agent}: digest refresh failed: ${e.message}`);
+      }
+    }
+
     _handleMemoryIntent(session, sub, body) {
       const agent = session.name;
       const refreshDigest = () => {

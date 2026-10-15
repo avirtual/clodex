@@ -351,6 +351,45 @@ test('removeMemoryUnit: a store throw becomes an envelope, and skips the digest 
     'a failed delete must not rewrite the digest');
 });
 
+test('addMemoryUnit/editMemoryUnit: written as source operator, digest refreshed for a live claude seat only', () => {
+  const root = mkTmpRoot('clodex-rm-');
+  const calls = [];
+  let digests = 0;
+  const m = mk({
+    REGISTRY_DIR: root, fs: fsReal, path: pathReal,
+    pathFor: pathForReal, runDirFor: runDirForReal,
+    memoryStore: {
+      remember: (a, opts) => { calls.push(['remember', a, opts]); return { id: 'mem-1-aaaaaa' }; },
+      update: (a, id, opts) => (id === 'mem-1-aaaaaa' ? (calls.push(['update', a, id, opts]), { ok: true, id }) : { ok: false, error: `no unit ${id}` }),
+    },
+    writeClaudeDigestFile: () => { digests++; return true; },
+  });
+  const session = { name: 'a', agentType: 'claude', digestNonEmpty: false };
+  m.sessions.set('a', session);
+  assert.deepStrictEqual(m.addMemoryUnit('a', { text: 'say hi' }), { ok: true, id: 'mem-1-aaaaaa' });
+  assert.deepStrictEqual(calls[0], ['remember', 'a',
+    { text: 'say hi', scope: 'operator', tags: '', source: 'operator', operatorPinned: true }]);
+  assert.strictEqual(digests, 1);
+  assert.strictEqual(session.digestNonEmpty, true);
+  assert.deepStrictEqual(m.editMemoryUnit('a', 'mem-1-aaaaaa', 'say bye'), { ok: true });
+  assert.deepStrictEqual(calls[1], ['update', 'a', 'mem-1-aaaaaa', { text: 'say bye' }]);
+  assert.strictEqual(digests, 2);
+  assert.deepStrictEqual(m.editMemoryUnit('a', 'mem-9-zzzzzz', 'x'), { ok: false, error: 'no unit mem-9-zzzzzz' });
+  assert.strictEqual(digests, 2, 'a refused edit does not rewrite the digest');
+  m.addMemoryUnit('ghost', { text: 'later' });
+  assert.strictEqual(digests, 2, 'a dead agent gets no digest write');
+});
+
+test('addMemoryUnit: a store refusal (cap, empty text) becomes an envelope carrying its text', () => {
+  const m = mk({
+    memoryStore: { remember: () => { throw new Error('operator pin limit reached (3) — unpin one first'); } },
+    writeClaudeDigestFile: () => { throw new Error('must not run'); },
+  });
+  m.sessions.set('a', { name: 'a', agentType: 'claude' });
+  assert.deepStrictEqual(m.addMemoryUnit('a', { text: 'x' }),
+    { ok: false, error: 'operator pin limit reached (3) — unpin one first' });
+});
+
 test('[agent:memory forget] routes through removeMemoryUnit rather than a second copy', () => {
   const { m } = mkRemover({ units: [] });
   const acked = [];

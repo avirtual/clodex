@@ -171,6 +171,42 @@ test('memoryStore: agent pin and operator pin are INDEPENDENT flags', () => {
   assert.strictEqual(store.list('alpha')[0].pinned, false);
 });
 
+test('memoryStore: remember with operatorPinned writes the flag, source operator, and honours the cap', () => {
+  const { store, dir } = tmpStore();
+  const ids = [];
+  for (let i = 0; i < OPERATOR_PIN_CAP; i++) {
+    const u = store.remember('alpha', { text: `directive ${i}`, scope: 'operator', source: 'operator', operatorPinned: true });
+    assert.strictEqual(u.operatorPinned, true);
+    ids.push(u.id);
+  }
+  const raw = fs.readFileSync(path.join(dir, 'alpha', `${ids[0]}.md`), 'utf-8');
+  assert.match(raw, /^operator_pinned: true$/m);
+  assert.match(raw, /^source: operator$/m);
+  assert.throws(() => store.remember('alpha', { text: 'one too many', source: 'operator', operatorPinned: true }),
+    /operator pin limit reached \(3\) — unpin one first/);
+  assert.strictEqual(store.list('alpha').length, OPERATOR_PIN_CAP, 'a refused write leaves no file behind');
+  const d = composeDigest(store.list('alpha'), {});
+  const opSection = d.slice(d.indexOf('Pinned by the operator (full text):'));
+  assert.ok(d.includes('Pinned by the operator (full text):'));
+  assert.match(opSection, /directive 0/);
+});
+
+test('memoryStore: update replaces the body and keeps id, learned_at and every flag', () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { scope: 'ops', tags: 'a,b', text: 'old body', source: 'operator', pinned: true, operatorPinned: true });
+  const before = store.list('alpha')[0];
+  assert.deepStrictEqual(store.update('alpha', u.id, { text: '  new body  ' }), { ok: true, id: u.id });
+  const after = store.list('alpha')[0];
+  assert.deepStrictEqual(after, { ...before, body: 'new body' });
+  const raw = fs.readFileSync(path.join(dir, 'alpha', `${u.id}.md`), 'utf-8');
+  assert.match(raw, /^operator_pinned: true$/m);
+  assert.doesNotMatch(raw, /old body/);
+  assert.deepStrictEqual(store.update('alpha', 'mem-9-nothere', { text: 'x' }), { ok: false, error: 'no unit mem-9-nothere' });
+  assert.strictEqual(store.update('alpha', '../x', { text: 'x' }).ok, false);
+  assert.strictEqual(store.update('alpha', u.id, { text: '   ' }).ok, false);
+  assert.strictEqual(store.list('alpha')[0].body, 'new body', 'a refused edit leaves the body alone');
+});
+
 // --- the unit open ---------------------------------------------------------
 // An agent writes its own memory folder, and list()/_setFlag run in the MAIN
 // process (the boot digest, liveKeys, the hint retriever). A file there can be

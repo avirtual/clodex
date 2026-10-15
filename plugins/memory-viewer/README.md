@@ -11,6 +11,19 @@ Every agent directory found in the store is listed, not just agents with a
 running session: memories outlive their sessions, and the dead ones are exactly
 the material you cannot reach any other way.
 
+## Writing
+
+"+ directive" above an agent's units opens a form: the text, optional tags, and
+an operator-pinned box that starts ticked. Saving goes through
+`host.library.add('memory', …)` and writes the unit with scope `operator` and
+`source: operator`. An operator-pinned directive takes one of the agent's three
+operator pin slots, is refused past that cap, and is served in full at the
+agent's next conversation.
+
+Each unit has a ✎ control that edits its body in place through
+`host.library.edit('memory', …)`; id, timestamp, source, tags and pins are kept.
+Core refuses an edit to a file whose name is not a generated unit id.
+
 ## Deleting
 
 Each unit has a delete control. The confirmation shows the unit's **body**, not
@@ -36,8 +49,7 @@ deleted.
 The delete goes through `host.library.remove('memory', …)` rather than
 unlinking the file this plugin can plainly see. Removing a unit obliges a
 boot-digest rewrite for any live claude session of that agent — core's job, on
-core's timing. Everything else here is still read-only: it does not pin, unpin
-or edit, and the `[agent:memory …]` intent remains the only way to write one.
+core's timing.
 
 ## The agent folder, and the two shapes it may have
 

@@ -64,7 +64,7 @@ function writeUnit(root, agent, base, { pinned = false, body = 'a body', metaId 
 
 // `libraryKinds` is the seam under test, so each boot declares what core does
 // with the ref it receives.
-function boot({ removeImpl } = {}) {
+function boot({ removeImpl, addImpl } = {}) {
   const { home, root } = bootStore();
   const prevHome = process.env.HOME;
   const prevVar = process.env.CLODEX_HOME;
@@ -75,6 +75,7 @@ function boot({ removeImpl } = {}) {
 
   const dir = mkTmpRoot('clodex-mv-data-');
   const removals = [];
+  const writes = [];
   const host = createPluginHostEngine({
     manager: {
       sessions: new Map(),
@@ -97,6 +98,15 @@ function boot({ removeImpl } = {}) {
         return { ok: true };
       },
     },
+    libraryAddKinds: {
+      memory: (ref, payload) => {
+        writes.push(['add', ref, payload]);
+        return addImpl ? addImpl(ref, payload) : { ok: true, id: 'mem-2-bbbbbb' };
+      },
+    },
+    libraryEditKinds: {
+      memory: (ref, payload) => { writes.push(['edit', ref, payload]); return { ok: true }; },
+    },
   });
   host.register('memory-viewer', engine, { hostApi: HOST_API_VERSION });
   const cleanup = () => {
@@ -106,7 +116,7 @@ function boot({ removeImpl } = {}) {
     fs.rmSync(home, { recursive: true, force: true });
     fs.rmSync(dir, { recursive: true, force: true });
   };
-  return { host, root, removals, cleanup };
+  return { host, root, removals, writes, cleanup };
 }
 
 test('memory-viewer: forget forwards to the library seam and the unit goes away', async () => {
@@ -159,6 +169,37 @@ test('memory-viewer: forget vets the AGENT through agentDir before the seam sees
       assert.equal(res.ok, false);
     }
     assert.deepEqual(removals, [], 'no traversal ref ever reached core');
+  } finally { cleanup(); }
+});
+
+test('memory-viewer: add and edit forward to the library seams, operator-pinned by default', async () => {
+  const { host, writes, cleanup } = boot();
+  try {
+    const added = await host.dispatch('memory-viewer', 'add', [{ agent: 'clodex', text: 'say hi' }], 'desktop');
+    assert.deepEqual(added, { ok: true, id: 'mem-2-bbbbbb' });
+    const edited = await host.dispatch('memory-viewer', 'edit', [{ agent: 'clodex', id: 'mem-2-bbbbbb', text: 'say bye' }], 'desktop');
+    assert.deepEqual(edited, { ok: true });
+    assert.deepEqual(writes, [
+      ['add', { agent: 'clodex' }, { text: 'say hi', scope: 'operator', tags: '', operatorPinned: true }],
+      ['edit', { agent: 'clodex', id: 'mem-2-bbbbbb' }, { text: 'say bye' }],
+    ]);
+  } finally { cleanup(); }
+});
+
+test('memory-viewer: add and edit vet the AGENT before the seam sees it, and surface core refusals', async () => {
+  const { host, writes, cleanup } = boot({ addImpl: () => ({ ok: false, error: 'operator pin limit reached (3) — unpin one first' }) });
+  try {
+    for (const row of ['add', 'edit']) {
+      for (const agent of ['..', '../../etc', 'has/slash', '', null, 42]) {
+        const res = await host.dispatch('memory-viewer', row, [{ agent, id: 'mem-1-aaaaaa', text: 'x' }], 'desktop');
+        assert.equal(res.ok, false, `${row} ${String(agent)} must be refused`);
+        assert.match(res.error, /valid agent name/);
+      }
+      assert.equal((await host.dispatch('memory-viewer', row, [null], 'desktop')).ok, false);
+    }
+    assert.deepEqual(writes, [], 'no traversal ref ever reached core');
+    const res = await host.dispatch('memory-viewer', 'add', [{ agent: 'clodex', text: 'x' }], 'desktop');
+    assert.deepEqual(res, { ok: false, error: 'operator pin limit reached (3) — unpin one first' });
   } finally { cleanup(); }
 });
 
@@ -441,13 +482,12 @@ test('memory-viewer: the store still reads when the ROOT itself is behind a syml
   }
 });
 
-test('memory-viewer: the engine registers exactly four rows, its two mutations among them', async () => {
+test('memory-viewer: the engine registers exactly six rows, its four mutations among them', async () => {
   const { host, cleanup } = boot();
   try {
-    // Asserted exactly: each row is a channel the renderer can call, and the two
-    // mutations (forget, setPin) are the plugin's whole write surface.
     assert.deepEqual(host._dispatchKeys().sort(), [
-      'memory-viewer:agents', 'memory-viewer:forget', 'memory-viewer:setPin', 'memory-viewer:units',
+      'memory-viewer:add', 'memory-viewer:agents', 'memory-viewer:edit', 'memory-viewer:forget',
+      'memory-viewer:setPin', 'memory-viewer:units',
     ]);
   } finally { cleanup(); }
 });

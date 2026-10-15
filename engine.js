@@ -2203,6 +2203,8 @@ const toolCache = createToolCache({ whichBin });
         gitWorktree,
         libraryKinds: { memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id) },
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
+        libraryAddKinds: { memory: (ref, payload) => manager.addMemoryUnit(ref.agent, payload) },
+        libraryEditKinds: { memory: (ref, payload) => manager.editMemoryUnit(ref.agent, ref.id, payload.text) },
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
         getPluginUpdates: () => (pluginUpdateWatch ? pluginUpdateWatch.list() : []),

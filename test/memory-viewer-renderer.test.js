@@ -296,3 +296,64 @@ test('deleting the last unit shows the empty state', async () => {
     assert.equal(pane.children[0].textContent, 'No memories for clodex.');
   });
 });
+
+function stubWrites(rhost, invokes, reply = { ok: true }) {
+  const orig = rhost.invoke;
+  rhost.invoke = (method, ...args) => {
+    if (method === 'add' || method === 'edit') {
+      invokes.push({ method, args });
+      return Promise.resolve(reply);
+    }
+    return orig(method, ...args);
+  };
+}
+
+async function settle() {
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+}
+
+test('the + directive form submits the text operator-pinned, scope operator', async () => {
+  await withDom([unit()], true, async ({ root, rhost, invokes }) => {
+    stubWrites(rhost, invokes);
+    const add = findByClass(root, 'mv-add');
+    assert.equal(add.length, 1, 'one + directive button for the selected agent');
+    add[0].click();
+    findByClass(root, 'mv-compose-text')[0].value = 'always run the suite';
+    assert.equal(findByClass(root, 'mv-compose-pin-box')[0].checked, true, 'operator-pinned is on by default');
+    findByClass(root, 'mv-compose-save')[0].click();
+    await settle();
+    const adds = invokes.filter((i) => i.method === 'add');
+    assert.equal(adds.length, 1);
+    assert.deepEqual(adds[0].args[0],
+      { agent: 'clodex', text: 'always run the suite', scope: 'operator', tags: '', operatorPinned: true });
+    assert.equal(findByClass(root, 'mv-compose-form').length, 0, 'a saved form closes');
+  });
+});
+
+test('a refused directive raises a toast and keeps the form open', async () => {
+  await withDom([unit()], true, async ({ root, rhost, invokes, toasts }) => {
+    stubWrites(rhost, invokes, { ok: false, error: 'operator pin limit reached (3) — unpin one first' });
+    findByClass(root, 'mv-add')[0].click();
+    findByClass(root, 'mv-compose-text')[0].value = 'x';
+    findByClass(root, 'mv-compose-save')[0].click();
+    await settle();
+    assert.deepEqual(toasts.map((t) => t.msg), ['operator pin limit reached (3) — unpin one first']);
+    assert.equal(findByClass(root, 'mv-compose-form').length, 1);
+  });
+});
+
+test('the ✎ button edits the body in place by FILENAME', async () => {
+  await withDom([unit({ key: 'mem-1-aaaaaa', id: 'mem-2-bbbbbb', idMismatch: true })], true, async ({ root, rhost, invokes }) => {
+    stubWrites(rhost, invokes);
+    findByClass(root, 'mv-edit-btn')[0].click();
+    const ta = findByClass(root, 'mv-edit-text')[0];
+    assert.equal(ta.value, 'the body of the memory', 'the editor opens on the current body');
+    ta.value = 'a better body';
+    findByClass(root, 'mv-edit-save')[0].click();
+    await settle();
+    const edits = invokes.filter((i) => i.method === 'edit');
+    assert.deepEqual(edits.map((e) => e.args[0]), [{ agent: 'clodex', id: 'mem-1-aaaaaa', text: 'a better body' }]);
+    assert.equal(findByClass(root, 'mv-edit').length, 0, 'the editor closes on save');
+    assert.equal(findByClass(root, 'mv-unit-body')[0].textContent, 'a better body');
+  });
+});

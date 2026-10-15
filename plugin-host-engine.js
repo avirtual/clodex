@@ -27,6 +27,8 @@ function createPluginHostEngine(deps) {
     gitWorktree,      // the sanctioned shared leaf exposed as host.lib
     libraryKinds,     // kind -> handler for host.library.remove; unlisted kinds are REFUSED
     libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
+    libraryAddKinds,
+    libraryEditKinds,
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     getPluginUpdates,
@@ -101,6 +103,40 @@ function createPluginHostEngine(deps) {
       .filter(([, fn]) => typeof fn === 'function')
       .map(([k, fn]) => [k, (ref, on) => fn(ref, on)]),
   ));
+
+  const libraryWriteTable = (kinds) => Object.freeze(Object.fromEntries(
+    Object.entries(kinds || {})
+      .filter(([, fn]) => typeof fn === 'function')
+      .map(([k, fn]) => [k, (ref, payload) => fn(ref, payload)]),
+  ));
+  const libraryAddHandlers = libraryWriteTable(libraryAddKinds);
+  const libraryEditHandlers = libraryWriteTable(libraryEditKinds);
+
+  const libraryWrite = (verb, handlers, kind, ref, payload) => {
+    if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(handlers, kind)) {
+      return { ok: false, error: `unknown library kind: ${String(kind)}` };
+    }
+    if (!ref || typeof ref !== 'object') {
+      return { ok: false, error: `library.${verb}: ref must be an object` };
+    }
+    if (!payload || typeof payload !== 'object') {
+      return { ok: false, error: `library.${verb}: payload must be an object` };
+    }
+    try {
+      const res = handlers[kind](ref, payload);
+      if (!res || typeof res !== 'object') {
+        return { ok: false, error: `library.${verb}: handler returned no result` };
+      }
+      if (typeof res.then === 'function') {
+        try { res.then(() => {}, () => {}); } catch {}
+        return { ok: false, error: `library.${verb}: handler for ${kind} must be synchronous` };
+      }
+      if (!res.ok) return { ok: false, error: String(res.error ?? `library.${verb} failed`) };
+      return typeof res.id === 'string' ? { ok: true, id: res.id } : { ok: true };
+    } catch (e) {
+      return { ok: false, error: e && e.message ? e.message : String(e) };
+    }
+  };
 
 // The injected transport has no removeHandler, so a per-plugin channel could
 // never be unregistered and dispose() would be a lie. Mutating this Map is the
@@ -445,6 +481,8 @@ function createPluginHostEngine(deps) {
 // This engine must stay ignorant of what any kind IS — it forwards refs, never
 // reads them; per-kind ref validation belongs to the handler.
       library: Object.freeze({
+        add: (kind, ref, payload) => libraryWrite('add', libraryAddHandlers, kind, ref, payload),
+        edit: (kind, ref, payload) => libraryWrite('edit', libraryEditHandlers, kind, ref, payload),
         remove: (kind, ref) => {
           if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(libraryHandlers, kind)) {
             // Distinct from a failed delete on purpose: asking for a kind that

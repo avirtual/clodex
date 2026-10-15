@@ -151,10 +151,11 @@ function createMemoryStore(rootDir) {
       }
       return out.sort((a, b) => String(a.learned_at).localeCompare(String(b.learned_at)));
     },
-    remember(agent, { scope = '', tags = '', text, source = '', pinned = false }) {
+    remember(agent, { scope = '', tags = '', text, source = '', pinned = false, operatorPinned = false }) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
       const body = String(text ?? '').trim();
       if (!body) throw new Error('empty memory text');
+      if (operatorPinned) this._checkOperatorPinCap(agent, null);
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
       const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const meta = { id, scope: String(scope || '').trim(), learned_at: new Date().toISOString(), source: source || agent };
@@ -162,8 +163,23 @@ function createMemoryStore(rootDir) {
       // disk, matching how `pinned` is written only when set.
       if (String(tags || '').trim()) meta.tags = String(tags).trim();
       if (pinned) meta.pinned = 'true';
+      if (operatorPinned) meta.operator_pinned = 'true';
       fs.writeFileSync(this._file(agent, id), serializeMemoryUnit(meta, body), { mode: 0o600 });
-      return { id, ...meta, pinned: !!pinned, body };
+      const { operator_pinned: _op, ...shown } = meta;
+      return { id, ...shown, pinned: !!pinned, operatorPinned: !!operatorPinned, body };
+    },
+    update(agent, id, { text } = {}) {
+      if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
+      if (!MEMORY_ID_RE.test(String(id || ''))) return { ok: false, error: `invalid unit id: ${id}` };
+      const next = String(text ?? '').trim();
+      if (!next) return { ok: false, error: 'empty memory text' };
+      const file = this._file(agent, id);
+      const raw = readUnitFile(file);
+      if (raw === null) return { ok: false, error: `no unit ${id}` };
+      const { meta } = parseMemoryUnit(raw);
+      if (!meta.id) meta.id = id;
+      fs.writeFileSync(file, serializeMemoryUnit(meta, next), { mode: 0o600 });
+      return { ok: true, id };
     },
     recall(agent, arg) {
       return this.recallMany(agent, arg, 1)[0] || null;
@@ -191,13 +207,14 @@ function createMemoryStore(rootDir) {
     // set both pins deliberately, so which one to drop is theirs to choose, and
     // an eviction here would look like the pin simply not working.
     setOperatorPinned(agent, id, on) {
-      if (on) {
-        const already = this.list(agent).filter(u => u.operatorPinned && u.id !== id);
-        if (already.length >= OPERATOR_PIN_CAP) {
-          throw new Error(`operator pin limit reached (${OPERATOR_PIN_CAP}) — unpin one first`);
-        }
-      }
+      if (on) this._checkOperatorPinCap(agent, id);
       return this._setFlag(agent, id, 'operator_pinned', on);
+    },
+    _checkOperatorPinCap(agent, id) {
+      const already = this.list(agent).filter(u => u.operatorPinned && u.id !== id);
+      if (already.length >= OPERATOR_PIN_CAP) {
+        throw new Error(`operator pin limit reached (${OPERATOR_PIN_CAP}) — unpin one first`);
+      }
     },
     _setFlag(agent, id, key, on) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);

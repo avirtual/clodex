@@ -30,6 +30,10 @@ blocks a release.
 - A ticket worked by a seat on the sandbox box runs the same verify, cold review, suite and merge as a local one, and accept removes its in-root tree and branch; rejections to that seat carry the box path, and its spec warns that `git worktree prune` in the box would delete the tree.
 - A ticket closed from the sandbox box with `task done tN@<host>` now reaches the board when the board is the dialing side: the outbox claim round trip kept the report but dropped the task envelope, so the done was discarded as a dm to a seat named "board"; the suite's source scan skips `.clodex-wt/` so an open box ticket's tree does not fail it.
 
+### Plugins
+
+- Memories: the operator can write a directive for an agent from the viewer — saved operator-pinned (cap 3) with `source: operator`, delivered in full at the agent's next conversation — and edit a unit's text in place.
+
 ## 5.125.0 — 2026-10-15
 
 ### Messaging
