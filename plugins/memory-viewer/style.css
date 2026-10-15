@@ -237,3 +237,41 @@
   padding: 12px;
 }
 
+
+.mv-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.mv-compose {
+  padding: 8px 16px 0;
+}
+
+.mv-compose-form,
+.mv-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mv-compose-text,
+.mv-edit-text {
+  min-height: 80px;
+  resize: vertical;
+  font: inherit;
+}
+
+.mv-edit-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.35;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.mv-edit-btn:hover {
+  opacity: 1;
+}

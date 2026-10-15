@@ -13761,7 +13761,7 @@ Its login, last page and downloads are deleted and it leaves this list.`;
       function deleteErrorText(res) {
         const raw = res && res.error || "unknown error";
         if (/^invalid unit id\b/.test(raw)) {
-          return "This file was not created by [agent:memory remember], so Clodex will not delete it from here. Remove it by hand if you meant to.";
+          return "This file was not created by [agent:memory remember] or this viewer, so Clodex will not delete it from here. Remove it by hand if you meant to.";
         }
         return `Could not delete: ${raw}`;
       }
@@ -13808,9 +13808,13 @@ Its login, last page and downloads are deleted and it leaves this list.`;
           topbar.appendChild(closeBtn);
           const body = el("div", "mv-body");
           const agentsPane = el("div", "mv-agents");
+          const mainPane = el("div", "mv-main");
+          const composeBar = el("div", "mv-compose");
           const unitsPane = el("div", "mv-units");
           body.appendChild(agentsPane);
-          body.appendChild(unitsPane);
+          mainPane.appendChild(composeBar);
+          mainPane.appendChild(unitsPane);
+          body.appendChild(mainPane);
           modal.appendChild(topbar);
           modal.appendChild(body);
           rootEl.appendChild(modal);
@@ -13877,6 +13881,104 @@ Its login, last page and downloads are deleted and it leaves this list.`;
               if (alive() && btn.isConnected) btn.disabled = false;
             }
           }
+          function openComposer(agent) {
+            composeBar.innerHTML = "";
+            const form = el("div", "mv-compose-form");
+            form.appendChild(el("div", "mv-compose-title", `New directive for ${agent}`));
+            const text = el("textarea", "mv-compose-text");
+            text.placeholder = "What should this agent always know?";
+            const tags = el("input", "mv-compose-tags");
+            tags.placeholder = "tags (optional, comma-separated)";
+            const pinLabel = el("label", "mv-compose-pin");
+            const pinBox = el("input", "mv-compose-pin-box");
+            pinBox.type = "checkbox";
+            pinBox.checked = true;
+            pinLabel.appendChild(pinBox);
+            pinLabel.appendChild(el("span", "", " operator-pinned (served in full at session start)"));
+            const save = el("button", "mv-compose-save", "Save");
+            const cancel = el("button", "mv-compose-cancel", "Cancel");
+            cancel.addEventListener("click", () => renderComposeBar(agent));
+            save.addEventListener("click", () => {
+              submitDirective(agent, { text: text.value, tags: tags.value, operatorPinned: !!pinBox.checked }, save).catch((e) => rhost.log.error("add failed", e));
+            });
+            for (const n of [text, tags, pinLabel, save, cancel]) form.appendChild(n);
+            composeBar.appendChild(form);
+          }
+          function renderComposeBar(agent) {
+            composeBar.innerHTML = "";
+            if (!agent) return;
+            const add = el("button", "mv-add", "+ directive");
+            add.title = `Write a directive for ${agent}`;
+            add.addEventListener("click", () => openComposer(agent));
+            composeBar.appendChild(add);
+          }
+          async function submitDirective(agent, { text, tags, operatorPinned }, btn) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            try {
+              let res;
+              try {
+                res = await rhost.invoke("add", { agent, text, scope: "operator", tags, operatorPinned });
+              } catch (e) {
+                rhost.log.error("add failed", e);
+                res = null;
+              }
+              if (!alive()) return;
+              if (!res || res.ok !== true) {
+                rhost.ui.showToast(res && res.error || "Could not save the directive", { kind: "error" });
+                return;
+              }
+              renderComposeBar(agent);
+              await reload();
+            } finally {
+              if (alive() && btn.isConnected) btn.disabled = false;
+            }
+          }
+          function openEditor(agent, u, card, bodyEl) {
+            if (bodyEl.parentNode !== card) return;
+            const editor = el("div", "mv-edit");
+            const text = el("textarea", "mv-edit-text");
+            text.value = u.body || "";
+            const save = el("button", "mv-edit-save", "Save");
+            const cancel = el("button", "mv-edit-cancel", "Cancel");
+            const close = () => {
+              if (editor.parentNode !== card) return;
+              card.removeChild(editor);
+              card.appendChild(bodyEl);
+            };
+            cancel.addEventListener("click", close);
+            save.addEventListener("click", () => {
+              saveEdit(agent, u, text.value, save, () => {
+                bodyEl.textContent = u.body;
+                close();
+              }).catch((e) => rhost.log.error("edit failed", e));
+            });
+            for (const n of [text, save, cancel]) editor.appendChild(n);
+            card.removeChild(bodyEl);
+            card.appendChild(editor);
+          }
+          async function saveEdit(agent, u, text, btn, done) {
+            if (btn.disabled) return;
+            btn.disabled = true;
+            try {
+              let res;
+              try {
+                res = await rhost.invoke("edit", { agent, id: u.key, text });
+              } catch (e) {
+                rhost.log.error("edit failed", e);
+                res = null;
+              }
+              if (!alive()) return;
+              if (!res || res.ok !== true) {
+                rhost.ui.showToast(res && res.error || "Could not save the edit", { kind: "error" });
+                return;
+              }
+              u.body = String(text).trim();
+              done();
+            } finally {
+              if (alive() && btn.isConnected) btn.disabled = false;
+            }
+          }
           function renderUnits(agent, units) {
             unitsPane.innerHTML = "";
             if (!units.length) {
@@ -13904,6 +14006,12 @@ Its login, last page and downloads are deleted and it leaves this list.`;
                 togglePin(agent, u, pin).catch((e) => rhost.log.error("pin failed", e));
               });
               head.appendChild(pin);
+              const bodyEl = el("div", "mv-unit-body", u.body);
+              const edit = el("button", "mv-edit-btn", "\u270E");
+              edit.title = `Edit ${u.key}`;
+              edit.setAttribute("aria-label", `Edit memory ${u.key}`);
+              edit.addEventListener("click", () => openEditor(agent, u, card, bodyEl));
+              head.appendChild(edit);
               const del = el("button", "mv-delete", "\u2715");
               del.title = `Delete ${u.key}`;
               del.setAttribute("aria-label", `Delete memory ${u.key}`);
@@ -13912,13 +14020,14 @@ Its login, last page and downloads are deleted and it leaves this list.`;
               });
               head.appendChild(del);
               card.appendChild(head);
-              card.appendChild(el("div", "mv-unit-body", u.body));
+              card.appendChild(bodyEl);
               unitsPane.appendChild(card);
             }
           }
           async function selectAgent(agent) {
             const my = ++selectSeq;
             selected = agent;
+            renderComposeBar(agent);
             for (const row of agentsPane.querySelectorAll(".mv-agent-row")) {
               row.classList.toggle("mv-selected", row.dataset.mvAgent === agent);
             }
@@ -13949,11 +14058,13 @@ Its login, last page and downloads are deleted and it leaves this list.`;
             if (!agents) {
               agentsPane.appendChild(el("div", "mv-empty", "Could not read the memory store."));
               unitsPane.innerHTML = "";
+              composeBar.innerHTML = "";
               return;
             }
             if (!agents.length) {
               agentsPane.appendChild(el("div", "mv-empty", "No saved memories."));
               unitsPane.innerHTML = "";
+              composeBar.innerHTML = "";
               return;
             }
             for (const a of agents) {

@@ -1102,9 +1102,15 @@ the day you copy it.
 
 ### `host.library`
 
-Mutation of a Clodex library file. Two members in `"1"`:
+Mutation of a Clodex library file. Four members in `"1"`:
 
 ```js
+const a = host.library.add('memory', { agent: 'clodex' }, { text: '…', scope: 'operator', tags: '', operatorPinned: true });
+// { ok: true, id: 'mem-…' } | { ok: false, error: '…' }
+
+const e = host.library.edit('memory', { agent: 'clodex', id: 'mem-…' }, { text: '…' });
+// { ok: true } | { ok: false, error: '…' }
+
 const res = host.library.remove('memory', { agent: 'clodex', id: 'mem-…' });
 // { ok: true } | { ok: false, error: '…' }
 
@@ -1121,6 +1127,12 @@ field and is not settable from here; it only orders the recent tier.
 
 Two verbs rather than one flagged verb because the obligations differ: a remove
 is terminal, while a pin is refusable and reversible.
+
+`add` writes a new unit with `source: operator`; with `operatorPinned` it takes
+an operator pin slot and is refused past the same cap. `edit` replaces a unit's
+body and keeps its id, timestamp, source, tags and both pin flags. Both rewrite
+the live claude digest like `remove` and `setPin`. `payload` must be an object;
+it is forwarded to the handler like `ref`.
 
 Generic in shape, per-kind in implementation. Core owns a `kind -> handler`
 table and **a kind with no registered handler is refused** — there is no

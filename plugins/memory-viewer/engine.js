@@ -250,6 +250,27 @@ module.exports.activate = (h) => {
     return host.library.setPin('memory', { agent, id }, !!on);
   });
 
+  host.ipc.handle('add', (payload) => {
+    const { agent, text, scope, tags, operatorPinned } = payload || {};
+    if (agentDir(agent) === null) {
+      return { ok: false, error: 'a valid agent name is required' };
+    }
+    return host.library.add('memory', { agent }, {
+      text: String(text ?? ''),
+      scope: String(scope || 'operator'),
+      tags: String(tags || ''),
+      operatorPinned: operatorPinned !== false,
+    });
+  });
+
+  host.ipc.handle('edit', (payload) => {
+    const { agent, id, text } = payload || {};
+    if (agentDir(agent) === null) {
+      return { ok: false, error: 'a valid agent name is required' };
+    }
+    return host.library.edit('memory', { agent, id }, { text: String(text ?? '') });
+  });
+
   host.log.info('activated');
 };
 

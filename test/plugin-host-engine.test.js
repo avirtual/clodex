@@ -42,6 +42,7 @@ function makeManager(sessions = []) {
 // `notifications: null` is how a test asks for the store-absent branch, so the
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
+  libraryAddKinds, libraryEditKinds,
   notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined,
   refreshPluginUpdates = undefined, onPluginUpdated = undefined, electronChild = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
@@ -49,6 +50,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
   const logged = [];
   const removals = [];
   const pins = [];
+  const writes = [];
   const notes = [];
   const osNotes = [];
   const store = notifications === undefined
@@ -63,6 +65,8 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     gitWorktree: { list: () => 'WORKTREE_LEAF' },
     libraryKinds: libraryKinds || { memory: (ref) => { removals.push(ref); return { ok: true }; } },
     libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
+    libraryAddKinds: libraryAddKinds || { memory: (ref, payload) => { writes.push(['add', ref, payload]); return { ok: true, id: 'mem-1-new', extra: 'x' }; } },
+    libraryEditKinds: libraryEditKinds || { memory: (ref, payload) => { writes.push(['edit', ref, payload]); return { ok: true }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
     getPluginUpdates,
@@ -73,7 +77,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     broadcast: (channel, payload) => manager._broadcast(channel, payload),
     electronChild,
   });
-  return { engine, manager, dir, logged, removals, pins, notes, osNotes, uiSettings: () => ui };
+  return { engine, manager, dir, logged, removals, pins, writes, notes, osNotes, uiSettings: () => ui };
 }
 
 const sessionA = { name: 'a', type: 'claude', cwd: '/repo/a', workspaceId: 'ws-open' };
@@ -373,6 +377,30 @@ test('library.setPin forwards ref and flag, and refuses an unregistered kind', (
   assert.equal(pins.length, 2, 'no handler ran for any refused kind');
 });
 
+test('library.add/edit forward ref and payload, rebuild the envelope, and refuse bad input', () => {
+  const { engine, writes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  const payload = { text: 'say hi', operatorPinned: true };
+  assert.deepEqual(host.library.add('memory', { agent: 'a' }, payload), { ok: true, id: 'mem-1-new' });
+  assert.deepEqual(host.library.edit('memory', { agent: 'a', id: 'mem-1-aaaaaa' }, { text: 'bye' }), { ok: true });
+  assert.deepEqual(writes, [['add', { agent: 'a' }, payload], ['edit', { agent: 'a', id: 'mem-1-aaaaaa' }, { text: 'bye' }]]);
+  for (const verb of ['add', 'edit']) {
+    assert.match(host.library[verb]('prompts', { agent: 'a' }, {}).error, /unknown library kind/);
+    assert.match(host.library[verb]('memory', null, {}).error, /ref must be an object/);
+    assert.match(host.library[verb]('memory', { agent: 'a' }, null).error, /payload must be an object/);
+  }
+  assert.equal(writes.length, 2, 'no handler ran for refused input');
+  const capped = makeHost({
+    libraryAddKinds: { memory: () => ({ ok: false, error: 'operator pin limit reached (3) — unpin one first' }) },
+    libraryEditKinds: { memory: () => { throw new Error('no unit mem-9-zzzzzz'); } },
+  });
+  const h2 = capped.engine.register('demo', { activate() {} });
+  assert.deepEqual(h2.library.add('memory', { agent: 'a' }, { text: 'x' }),
+    { ok: false, error: 'operator pin limit reached (3) — unpin one first' });
+  assert.deepEqual(h2.library.edit('memory', { agent: 'a', id: 'mem-9-zzzzzz' }, { text: 'x' }),
+    { ok: false, error: 'no unit mem-9-zzzzzz' });
+});
+
 test('library.setPin surfaces the cap refusal as TEXT, not a bare false', () => {
   // The refusal names the limit and the remedy ("unpin one first"). A boolean
   // would leave the operator with a button that silently does nothing.
@@ -429,7 +457,7 @@ test('the library kind table cannot be repointed from plugin land', () => {
   // The whole published surface, asserted exactly. A new verb here is a new
   // mutation a plugin can perform, so it must be a deliberate edit to this line
   // rather than something that lands unnoticed.
-  assert.deepEqual(Object.keys(host.library), ['remove', 'setPin']);
+  assert.deepEqual(Object.keys(host.library), ['add', 'edit', 'remove', 'setPin']);
 
   // The injected table is a live object the façade's freeze does not reach, so
   // the wrappers close over the handler captured at construction. Mutating the
