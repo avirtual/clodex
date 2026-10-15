@@ -60,8 +60,6 @@ const LIVING_MIGRATION_SET = new Set(['dm', 'who', 'context', 'scratch', 'memory
 
 const LEGACY_INTENT_KEYS = new Map([['notify-user', 'shout']]);
 
-const SCRATCH_LABEL_RE = /^(?!replay$)[A-Za-z0-9._-]{1,32}$/;
-
 function canonicalIntentKey(type) {
   return LEGACY_INTENT_KEYS.get(type) || type;
 }
@@ -148,4 +146,4 @@ function deniedIntentCount(intentsList) {
   ).length;
 }
 
-module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, SCRATCH_LABEL_RE, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist };
+module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist };

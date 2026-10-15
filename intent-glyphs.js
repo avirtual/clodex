@@ -6,7 +6,7 @@ const INERT = Object.freeze({ glyph: '⊘', label: "won't fire" });
 const g = (glyph, label) => Object.freeze({ glyph, label });
 
 const CONTEXT = { compact: g('⊟', 'compact'), clear: g('⌫', 'clear'), reload: g('↺', 'reload') };
-const SCRATCH = { begin: g('⟦', 'scratch'), end: g('⟧', 'result'), rewind: g('⇤', 'rewind'), mark: g('✱', 'mark'), cancel: g('⊗', 'cancel') };
+const SCRATCH = { begin: g('⟦', 'scratch'), end: g('⟧', 'result'), cancel: g('⊗', 'cancel') };
 const PROBE = { begin: g('⟦', 'probe'), end: g('⟧', 'result'), cancel: g('⊗', 'cancel') };
 const TASK = {
   assign: g('⇥', 'assign'),
@@ -131,7 +131,6 @@ function targetAndChips(intent) {
     case 'team-create': return [TEAM_TARGET_KEYS.map((k) => str(intent[k])).find(Boolean) || null, kvChips(intent)];
     case 'spawn': return [str(intent.name), []];
     case 'resend': return [str(intent.id), []];
-    case 'scratch': return [str(intent.label), []];
     case 'shout': return ['you', []];
     default:
       if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];

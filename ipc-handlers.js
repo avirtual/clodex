@@ -497,16 +497,6 @@ function registerIpcHandlers(deps) {
   handle('session:move-to-peer', async (_e, name, peerId, farCwd) => manager.moveToPeer(name, peerId, { farCwd }));
   handle('session:move-to-workspace', (_e, name, workspaceId) => manager.moveToWorkspace(name, workspaceId));
   handle('session:rename', async (_e, name, newName) => manager.rename(name, newName));
-  handle('session:scratch-mark', (e, { name, label } = {}) => {
-    const here = workspaceOfSender(e);
-    if (!persistence.listForWorkspace(here).some((s) => s.name === name)) {
-      return { ok: false, error: `session ${name} is not in this workspace` };
-    }
-    let res;
-    try { res = manager.scratchMark(name, label); } catch (err) { return { ok: false, error: err.message }; }
-    if (res && res.ok === false) return { ok: false, error: res.error || 'scratch mark refused' };
-    return { ok: true };
-  });
   handle('session:scratch-cancel', (e, { parent, clone } = {}) => {
     const here = workspaceOfSender(e);
     if (!persistence.listForWorkspace(here).some((s) => s.name === parent)) {
@@ -1965,10 +1955,6 @@ function registerIpcHandlers(deps) {
       }] : []),
       ...(entry.type === 'claude' ? [movePeerItem()] : []),
       moveWorkspaceItem(),
-      ...(entry.type === 'claude' ? [{
-        label: 'Scratch mark…',
-        click: () => e.sender.send('session:context-action', { action: 'scratchMark', name }),
-      }] : []),
       { type: 'separator' },
       {
         label: 'Reveal Working Directory in Finder',

@@ -1134,23 +1134,6 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
         if (!res || !res.ok) showToast((res && res.error) || 'Cancel clone failed', { kind: 'error', duration: 10000, name });
       });
       break;
-    case 'scratchMark':
-      promptText(`Scratch mark on "${name}" — label`, '').then((raw) => {
-        if (raw == null || !raw.trim()) return;
-        const label = raw.trim();
-        if (!/^(?!replay$)[A-Za-z0-9._-]{1,32}$/.test(label)) {
-          showToast('Label must be 1–32 chars: letters, digits, . _ - (not "replay")', { kind: 'error', duration: 8000, name });
-          return;
-        }
-        return window.api.scratchMark(name, label).then((res) => {
-          if (!res || !res.ok) {
-            showToast((res && res.error) || 'Scratch mark failed', { kind: 'error', duration: 10000, name });
-            return;
-          }
-          showToast(`Mark "${label}" set on ${name}`, { name });
-        });
-      });
-      break;
     case 'reattach':
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
