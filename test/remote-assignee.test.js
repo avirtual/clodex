@@ -106,6 +106,15 @@ test('(b) _gatedDeliver to name@peer rides conn.dm once with a minted ref and re
   assert.deepStrictEqual(writes, [['queued', 'federated']]);
 });
 
+test('_sendToFederatedTarget returns the bounce as an error for an origin with no route', () => {
+  const r = rig();
+  const notices = [];
+  const out = r.m._sendToFederatedTarget('lead', 'x@nowhere', 'hi', false, { onBounce: (msg) => notices.push(msg) });
+  assert.match(out.error, /no route to 'x@nowhere'/);
+  assert.deepStrictEqual(notices, [out.error]);
+  assert.deepStrictEqual(r.sent, []);
+});
+
 test('(c) task add x@p start sends the spec over the wire with the REMOTE line and no WORK IN', () => {
   const r = rig();
   r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
