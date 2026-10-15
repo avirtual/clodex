@@ -91,6 +91,13 @@ is minted lazily, so the edge can arrive well after the keystroke.
   `name`, `context <sub>`, `memory <sub>`, `file <view|open> <path>`,
   `spawn name:X cwd:Y` (optional `template:Z` — matched by name, supplies
   type/config; see sessions.md §5).
+- `probe` (Claude seats only; gated by the `scratch` intent key) —
+  `[agent:probe] <question + return shape>` (greedy body) forks a research clone
+  via `_scratchCloneBegin`; the clone's `[agent:probe end] <summary>` (greedy
+  body) reaches the parent as one message from `scratch` and retires the clone;
+  bare `[agent:probe cancel]` drops a live clone. Any other head word bounces
+  naming the three.
+- `scratch` is an alias of `probe` (`begin <body>`, the clone's `end`, bare `cancel`); its in-place verbs below still run, every reply suffixed "the in-place cut is retired; use [agent:probe]".
 - `scratch <begin|end|cancel|mark|rewind>` (Claude seats only) — a closed
   alternation, so a typo'd sub-verb is not an intent at all: `end` and `rewind`
   CUT the transcript, and a half-parsed one is not a safe failure. `begin` is

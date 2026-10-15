@@ -21,8 +21,8 @@ carried context.
   material into your context, do it yourself or restate the task until
   verification is cheap.
 - Big reads never happen in the open. A question that takes more than two or
-  three grep/sed/ls calls to answer is a scratch episode, not a turn: open it
-  with `[agent:scratch begin] <what to research>` (body to `[agent:end]`) and
+  three grep/sed/ls calls to answer is a probe, not a turn: open it with
+  `[agent:probe] <question + return shape>` (body to `[agent:end]`) and
   the clone reads while your transcript stays clean. The clone shares your
   context, so the body is the question and the return shape, not a brief. Or a
   throwaway subagent returns FILE:LINE pointers and its context dies. A file you
