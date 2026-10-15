@@ -116,7 +116,7 @@ over the wire: read editable args + the box's dialog catalogs, apply an edited
 patch with kill+respawn on `restart:true`) and `GET /api/sessions/:name/skills` +
 `PATCH /api/sessions/:name/skills` (Edit Skills over the wire: read the box's skill
 catalog, persist the disabled/inject sets — a separate `POST /api/sessions/:name/restart`
-applies) — all four under the `args` cap, shipped together — and `POST /api/dm` (optional `ref`, echoed in the response, deduped 10 min per origin+from; a malformed one is a 400) +
+applies) — all four under the `args` cap, shipped together — and `POST /api/dm` (optional `ref`, echoed in the response, deduped 10 min per origin+from; a malformed one is a 400; optional `task` envelope `{kind:'done', id:'tN'}` closes that ticket on the board and is answered in the response's `task.reply`, anything else is a 400) +
 `/api/dm/claim` (federation, `dm` cap) and `POST /api/peer/roster` (hub-relay
 federation, `relay` cap — the hub pushes this spoke the roster of agents on its
 OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
@@ -490,3 +490,5 @@ anything else leaves it running.
   fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
 - A ticket assigned over the wire is still owned by the board that filed it;
   no board state crosses.
+- A task envelope closes a ticket only when the board's recorded assignee
+  equals the dialing sender; the body is never trusted for identity.
