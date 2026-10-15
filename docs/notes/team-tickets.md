@@ -118,3 +118,7 @@ line is never slowOnly: that is a real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
+
+## _resolveAssignee
+
+A `name@peer` assignee resolves only while that peer is online with the `dm` cap: a dm to an offline peer is held 10 min and then dropped, and a ticket must not be filed onto a hold.
