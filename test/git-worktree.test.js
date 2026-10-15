@@ -862,3 +862,34 @@ test('checkoutDetached: the fallback fetch runs with a timeout and no terminal p
   }
   assert.deepStrictEqual(calls.map((c) => c.args[0]), ['rev-parse', 'rev-parse', 'fetch', 'rev-parse']);
 });
+
+test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to another path, with no extension set', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'b1', { base: 'HEAD', targetPath: path.join(repo, '.clodex-wt', 'b1') });
+  assert.strictEqual(r.ok, true, r.error);
+  const rel = wt.relativizeWorktreePointers(repo, r.path);
+  assert.deepStrictEqual(rel, { ok: true, name: 'b1' });
+  assert.match(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), /^gitdir: \.\.\/\.\.\/\.git\/worktrees\/b1\n$/);
+  const copy = path.join(mkTmpRoot('clodex-wtcopy-'), 'moved');
+  fs.cpSync(repo, copy, { recursive: true, verbatimSymlinks: true });
+  const out = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  assert.strictEqual(out(path.join(copy, '.clodex-wt', 'b1'), 'rev-parse', '--abbrev-ref', 'HEAD'), 'b1');
+  const listed = out(copy, 'worktree', 'list', '--porcelain');
+  assert.ok(listed.split('\n').some((l) => l === `worktree ${fs.realpathSync(path.join(copy, '.clodex-wt', 'b1'))}`), listed);
+  assert.strictEqual(out(r.path, 'rev-parse', '--abbrev-ref', 'HEAD'), 'b1');
+  for (const top of [repo, copy]) {
+    assert.doesNotMatch(fs.readFileSync(path.join(top, '.git', 'config'), 'utf8'), /relativeworktrees/i);
+  }
+});
+
+test('relativizeWorktreePointers: refuses a .git file that points outside repoTop/.git/worktrees', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const other = makeRepo();
+  const r = await wt.createWorktree(other, 'b2', { base: 'HEAD', targetPath: path.join(other, '.clodex-wt', 'b2') });
+  assert.strictEqual(r.ok, true, r.error);
+  const before = fs.readFileSync(path.join(r.path, '.git'), 'utf8');
+  const rel = wt.relativizeWorktreePointers(repo, r.path);
+  assert.strictEqual(rel.ok, false);
+  assert.match(rel.error, /does not point under/);
+  assert.strictEqual(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), before);
+});
