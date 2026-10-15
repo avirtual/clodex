@@ -1870,7 +1870,7 @@ function createTicketMethods(deps, shared) {
           && !(slow && slow.length) && !unioned && !stamp
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
-          ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (seat retired, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
+          ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
           : [
           `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha}`,
           ...(mergedTip && branchTip && mergedTip !== branchTip
@@ -2793,6 +2793,18 @@ function createTicketMethods(deps, shared) {
       return path.posix.join(SANDBOX_WORK_DIR, rel.split(path.sep).join('/'));
     },
 
+    _boxWorkInLine(team, ticket, seat) {
+      const boxTree = (this._isRemoteSeat(seat) && ticket && ticket.worktree && ticket.worktree.path && team && team.root)
+        ? this.boxPathFor(team, ticket.worktree.path) : null;
+      if (!boxTree) return '';
+      return `WORK IN: ${boxTree} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd on ${seat.slice(seat.indexOf('@') + 1)}; `
+        + `the same tree is ${ticket.worktree.path} on the board's host. `
+        + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
+        + `The shared checkout is ${SANDBOX_WORK_DIR}; do not edit files there. `
+        + 'Never run `git worktree prune`, `git worktree add` or `git gc --prune` in this tree or the shared checkout from your host — '
+        + "its git is older than the board's and would delete this tree's admin entry on both sides; plain add/commit/log/diff/status are fine.\n";
+    },
+
     _resolveRemoteAssignee(who) {
       const at = who.indexOf('@');
       const name = who.slice(0, at);
@@ -2916,12 +2928,7 @@ function createTicketMethods(deps, shared) {
         ? `WORK IN: ${ticket.worktree.path} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd. `
           + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
           + `${team && team.root ? `The shared checkout is ${team.root}; do not edit files there.` : ''}\n`
-        : boxTree
-          ? `WORK IN: ${boxTree} (git worktree, branch ${ticket.worktree.branch}) — this is your cwd on ${seat.slice(seat.indexOf('@') + 1)}; `
-            + `the same tree is ${ticket.worktree.path} on the board's host. `
-            + `Commit to ${ticket.worktree.branch} as you go, never push, do not merge. `
-            + `The shared checkout is ${SANDBOX_WORK_DIR}; do not edit files there.\n`
-          : '';
+        : boxTree ? this._boxWorkInLine(team, ticket, seat) : '';
       // Separate from `WORK IN:`, which must stay the tree root (git commands run there); `role || assignee`
       // because `role` is unset until pinned, and hasOwnProperty because a seat name can equal a prototype key.
       const roleName = (ticket && (ticket.role || ticket.assignee)) || '';
@@ -3045,7 +3052,7 @@ function createTicketMethods(deps, shared) {
 
     // One builder for the first delivery and the redelivery, so a replay is the first copy plus a head and
     // cannot drift from it.
-    _redirectDeliveryText(ticketId, label, reason, replay = false, remoteLead = null) {
+    _redirectDeliveryText(ticketId, label, reason, replay = false, remoteLead = null, box = null) {
       const head = replay
         ? `[ticket ${ticketId} ${label} REDELIVERY] this was already sent to you once and no turn followed, so `
           + `you may already be holding an unsubmitted copy of it — if you have already acted on these points, `
@@ -3054,7 +3061,8 @@ function createTicketMethods(deps, shared) {
       const close = remoteLead
         ? `REMOTE: close with [agent:task done ${ticketId}@${SELF_LABEL}] <report>; it crosses the wire to the board.\n`
         : ticketCloseLine(ticketId);
-      return `${head}[ticket ${ticketId} ${label}] ${close}${reason}`;
+      const workIn = remoteLead && box ? this._boxWorkInLine(box.team, box.ticket, box.seat) : '';
+      return `${head}[ticket ${ticketId} ${label}] ${workIn}${close}${reason}`;
     },
 
     _armSpecConfirmTimer(session) {
@@ -5179,12 +5187,12 @@ function createTicketMethods(deps, shared) {
         delete ticket.escalationUndelivered;
         delete ticket.mergeError;
         const rework = this._reworkSeatFor(team, ticket, seat,
-          this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
+          this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }));
         ticketsStore.save(team.root, tickets);
         this._retireReviewSeatsFor(team, ticketId, 'rejected by the loop');
         const r = rework.replaced
           ? { queued: true }
-          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
+          : this._gatedDeliver(seat, 'ticket-loop', this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }), true,
             `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
             (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
               { label: 'rejected', reason, from: 'ticket-loop' }, why));
@@ -5248,13 +5256,13 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const rework = this._reworkSeatFor(team, ticket, seat,
-        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null));
+        this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }));
       const redirect = { label: 'more must-fixes', reason, from: session.name };
       let armed = null;
       let parkCarry = null;
       const r = rework.replaced
         ? { queued: true }
-        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
+        : this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'more must-fixes', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }), true,
           `[ticket ${ticket.id} more must-fixes] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => {
             const carried = disposition === 'parked' && parkCarry ? { ...redirect, ...parkCarry } : redirect;
@@ -5946,12 +5954,12 @@ function createTicketMethods(deps, shared) {
       delete ticket.mergeWaiting;
       const seat = this._ticketAssigneeSeat(team, ticket);
       const rework = (seat && seat !== team.lead)
-        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null))
+        ? this._reworkSeatFor(team, ticket, seat, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }))
         : { seat, replaced: false };
       ticketsStore.save(team.root, tickets);
       this._retireReviewSeatsFor(team, ticket.id, 'rejected');
       if (seat && seat !== team.lead && !rework.replaced) {
-        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null), true,
+        this._gatedDeliver(seat, session.name, this._redirectDeliveryText(ticket.id, 'rejected', reason, false, this._isRemoteSeat(seat) ? team.lead : null, { team, ticket, seat }), true,
           `[ticket ${ticket.id} rejected] close with ${ticketCloseVerb(ticket.id)}`,
           (disposition, why) => this._armSpecConfirm(seat, ticket.id, disposition,
             { label: 'rejected', reason, from: session.name }, why));
@@ -6104,6 +6112,10 @@ function createTicketMethods(deps, shared) {
     // ephemeralSeat reads the record, never the agent-writable role def.
     _acceptSeatFacts(ticket) {
       const seatName = ticket.assignee || null;
+      if (this._isRemoteSeat(seatName)) {
+        const wt = ticket.worktree || null;
+        return { seatName, rec: null, branch: (wt && wt.branch) || null, ephemeralSeat: false, remoteTree: (wt && wt.path) || null };
+      }
       let rec = null;
       try { rec = seatName ? getPersistence().get(seatName) : null; } catch { rec = null; }
       const branch = (rec && rec.worktree && rec.worktree.branch) || (ticket.worktree && ticket.worktree.branch) || null;
@@ -6257,13 +6269,14 @@ function createTicketMethods(deps, shared) {
         return { ok: true, closedOut: true, already: true,
           text: `ticket ${ticket.id} accepted — ${ticket.acceptedBy || 'the lead'} accepted it first; the loop changed nothing` };
       }
-      const { seatName, rec, branch, ephemeralSeat } = this._acceptSeatFacts(ticket);
+      const { seatName, rec, branch, ephemeralSeat, remoteTree } = this._acceptSeatFacts(ticket);
       // What this accept acted on, for the compare-and-clear in `_finishAccept`; a plain let because `mergeStamp` below
       // is in its temporal dead zone on the two arms that finish before it.
       let actedStamp = (ticket.mergeError && String(ticket.mergeError)) || null;
       const finish = (msg, closedOut = false, complete = false, merged = false) => ({
         ok: !!complete,
         merged: !!merged,
+        remote: !!remoteTree,
         closedOut: !!closedOut,
         text: this._finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }),
       });
@@ -6290,6 +6303,7 @@ function createTicketMethods(deps, shared) {
       let archivedSeat = false;
       const seatClause = (archivedWord) => {
         if (!seatName) return 'its ';
+        if (remoteTree) return `the remote seat ${seatName} is not retired by accept, and its `;
         if (archivedSeat) return `${seatName} was ${archivedWord}, and its `;
         // Not "already archived": a gone ephemeral seat may have exited on its own, and this sentence must not assert a teardown nobody can point at.
         if (ephemeralSeat) return `${seatName} is not running, so nothing was archived, and its `;
@@ -6435,12 +6449,32 @@ function createTicketMethods(deps, shared) {
           const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
           removed = r || null;
         }
+      } else if (seatName && remoteTree) {
+        const d = await gitWorktree.isDirty(remoteTree).catch((e) => ({ ok: false, error: e.message }));
+        if (!d.ok) downgrade = { kind: 'unreadable', path: remoteTree, why: d.error || 'git could not read the tree' };
+        else if (d.dirty) downgrade = { kind: 'dirty', path: remoteTree };
+        else {
+          const r = await gitWorktree.removeWorktree(remoteTree).catch((e) => ({ ok: false, error: e.message }));
+          removed = r && r.ok ? { ok: true, worktreeRemoved: true } : { ok: false, worktreeRemoved: false, error: (r && r.error) || 'unknown error', path: remoteTree };
+        }
       }
-      const del = downgrade && downgrade.kind === 'dirty'
+      const del = downgrade && (downgrade.kind === 'dirty' || remoteTree)
         ? { ok: true, skipped: true }
         : await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
-      if (seatName) {
+      if (seatName && remoteTree) {
+        const kept = `the remote seat ${seatName} is not retired by accept; its tree ${remoteTree} was KEPT`;
+        if (downgrade && downgrade.kind === 'dirty') {
+          parts.push(`${kept} — it has uncommitted work that a removal would have deleted. Commit or clear that tree, then `
+            + `[agent:task accept ${ticket.id}] again to finish the cleanup`);
+        } else if (downgrade) {
+          parts.push(`${kept} — it could not be inspected (${downgrade.why}), and an unreadable tree is not evidence of a clean one`);
+        } else {
+          parts.push(removed && removed.worktreeRemoved
+            ? `the remote seat ${seatName} is standing and was not retired; its tree ${remoteTree} was removed`
+            : `the remote seat ${seatName} is standing and was not retired; its tree ${remoteTree} could NOT be removed (${removed && removed.error}) — remove it by hand`);
+        }
+      } else if (seatName) {
         const kept = downgrade && downgrade.archived
           ? `${seatName} was ARCHIVED, not retired, and its worktree was KEPT`
           : `${seatName} was NOT retired and its worktree was KEPT`;
@@ -6479,7 +6513,7 @@ function createTicketMethods(deps, shared) {
           : c.count === 0
             ? `accepted — branch ${branch} is an ancestor of ${m.base}, but ${why()}, where an empty branch and one already merged both count 0 — so whether it carried any work is UNKNOWN`
             : `accepted — merged into ${m.base}`;
-      const complete = !!seatName && ephemeralSeat && !downgrade
+      const complete = !!seatName && (ephemeralSeat || !!remoteTree) && !downgrade
         && !!removed && removed.ok !== false && removed.worktreeRemoved !== false
         && del.ok === true && !del.skipped;
       try {

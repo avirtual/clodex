@@ -27,6 +27,7 @@ blocks a release.
 - A ticket can be assigned to a seat on a connected peer (`task add name@peer`, `task assign <id> name@peer`); the spec, respecs, rejections and cancellations reach it over the dm wire, and the lead closes it from its own board. The peer must be online with dm federation at assign time.
 - A seat on a connected peer closes its ticket with `[agent:task done tN@<board-host>] <report>`; the report crosses the dm wire, the board closes the ticket only if its recorded assignee is that exact seat, and the board's answer comes back to the seat as [agent:task] text.
 - A ticket assigned to a seat on the team's sandbox box and started (`task start`, `task add … start`) gets its worktree inside the repo root (`.clodex-wt/<branch>`) with relative git pointers, so the box sees the same tree through its bind mount; the spec names the box path and the board keeps the host path. The stored remote assignee is canonical, so its `task done` matches on both wire paths.
+- A ticket worked by a seat on the sandbox box runs the same verify, cold review, suite and merge as a local one, and accept removes its in-root tree and branch; rejections to that seat carry the box path, and its spec warns that `git worktree prune` in the box would delete the tree.
 
 ## 5.125.0 — 2026-10-15
 

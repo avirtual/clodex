@@ -37,4 +37,5 @@ write path, where a hung git must not hold the handoff.
 The two pointer files are rewritten by hand because `git worktree add --relative-paths` (git >=2.48) sets
 `extensions.relativeworktrees`, and the sandbox box's git 2.39 refuses the whole repo with that extension set;
 plain relative pointers with no extension work on both sides (measured). `.clodex-wt/` must stay in `.gitignore`.
-Unmeasured: whether git 2.39's `git worktree prune` in the box resolves the relative admin `gitdir` against its cwd and prunes the entry; until measured, a box seat should not run `git worktree prune`/`add`.
+Measured on the box's git 2.39.5: `git worktree list` shows the in-root tree `prunable`, and `git worktree prune` there removes `.git/worktrees/<n>`, killing the tree on both sides.
+Recovery on the host (git 2.52, tmp repo): `git worktree repair <tree>` fails ("does not reference a repository"); moving the dir aside and running `git worktree add --force <tree> <branch>` recreates the entry on the branch's committed tip, then `relativizeWorktreePointers` again and copy uncommitted files back from the moved-aside dir.
