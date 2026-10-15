@@ -8251,7 +8251,7 @@ function createSessionManager(deps) {
           if (caps.length && !caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
           let held = this._peerHeld.get(match.id);
           if (!held) { held = []; this._peerHeld.set(match.id, held); }
-          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued.`); return; }
+          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued. (ref ${ref})`); return; }
           held.push({
             to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, ts: Date.now(),
             target: intent.target, origin, sessionName: session && session.name, ref,
@@ -8361,7 +8361,7 @@ function createSessionManager(deps) {
         if (!m || typeof m.to !== 'string') continue;
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
         const senderTag = `${m.from || 'peer'}@${origin}`;
-        const refKey = typeof m.ref === 'string' && m.ref ? `${peerId}\n${m.from}\n${m.ref}` : null;
+        const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
         if (refKey && this._dmRefRepeat(refKey)) {
           log.info('peer', `dm ref ${m.ref} from ${senderTag} repeated — not redelivered`);
           continue;
@@ -8373,7 +8373,7 @@ function createSessionManager(deps) {
           continue;
         }
         const r = this._gatedDeliver(m.to, senderTag, m.body || '', m.urgent === true);
-        if (refKey) this._dmRefRemember(refKey, r);
+        if (refKey && (r.queued || r.parked)) this._dmRefRemember(refKey, r);
         this._broadcast('ipc-message', { type: 'dm', from: senderTag, to: m.to, body: `WIRE←${peerLabel}: ${m.body || ''}` });
       }
     }

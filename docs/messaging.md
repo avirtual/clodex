@@ -393,7 +393,7 @@ An `@origin` matches a peer's configured label, its id, or the host label it
 announced in hello — in that order, case-insensitively, through the one
 `findPeerByOrigin` resolver every site calls.
 
-A federated dm may carry `ref:<token>` on its head (`[agent:dm name@peer ref:t1830 urgent]`, `DM_REF_RE`; a malformed ref token fails the whole head, and on a local target it is ignored). When absent, `_routeFederatedDm` mints one, and every held/parked/not-delivered notice and outbox bounce ends with `(ref …)`. The receiving peer does not redeliver a repeated ref from the same origin and sender within 10 minutes (it answers `duplicate: true` with the first result), so resending after a timeout is safe.
+A federated dm may carry `ref:<token>` on its head (`[agent:dm name@peer ref:t1830 urgent]`, `DM_REF_RE`; a malformed ref token fails the whole head, and on a local target it is ignored). When absent, `_routeFederatedDm` mints one, and the held/parked/not-delivered notices of a send attempt, the held-queue-full bounce and the outbox bounce end with `(ref …)`. The receiving peer does not redeliver a repeated ref from the same origin and sender within 10 minutes of a delivered or parked first attempt (it answers `duplicate: true` with that result); a failed attempt is not remembered, so its ref can be resent at once, so resending after a timeout is safe.
 
 - **Consumer → box**: `_routeFederatedDm` matches `@origin` against a
   configured online peer advertising the `dm` cap and POSTs `/api/dm`; the

@@ -665,7 +665,7 @@ function createRemoteWiring(deps) {
           // through unchanged (sacred). Use it as the senderTag directly so the
           // recipient's reply routes back to the TRUE origin, not the relay hub.
           const senderTag = from.includes('@') ? from : `${from}@${origin}`;
-          const refKey = ref ? `${origin}\n${from}\n${ref}` : null;
+          const refKey = ref ? `w\n${origin}\n${from}\n${ref}` : null;
           const seen = refKey ? manager._dmRefRepeat(refKey) : null;
           if (seen) {
             log.info('peer', `dm ref ${ref} from ${senderTag} repeated — not redelivered`);
@@ -685,7 +685,7 @@ function createRemoteWiring(deps) {
             log.info('peer', `dm from ${senderTag} to ${to} not delivered: ${why}`);
             resp = { ok: false, error: why };
           }
-          if (refKey) manager._dmRefRemember(refKey, resp);
+          if (refKey && resp.ok) manager._dmRefRemember(refKey, resp);
           return resp;
         },
         claimDms: (origin) => {

@@ -111,8 +111,34 @@ test('t1829 a repeated ref older than 10 min is delivered again', () => {
   const deliverDm = captureDeliverDm(m);
   const msg = { to: 'alpha', from: 'bob', origin: 'laptop', body: 'hi', ref: 'r1' };
   deliverDm(msg);
-  m._dmRefSeen.get('laptop\nbob\nr1').at -= 10 * 60 * 1000;
+  m._dmRefSeen.get('w\nlaptop\nbob\nr1').at -= 10 * 60 * 1000;
   deliverDm(msg);
+  assert.strictEqual(n, 2);
+});
+
+test('t1829 a failed first delivery is not remembered: the same ref resent is delivered again', () => {
+  const m = mk();
+  const results = [{ held: 'x' }, { queued: true }, { queued: true }];
+  let n = 0;
+  m._gatedDeliver = () => results[n++];
+  m._broadcast = () => {};
+  const deliverDm = captureDeliverDm(m);
+  const msg = { to: 'alpha', from: 'bob', origin: 'laptop', body: 'hi', ref: 'r1' };
+  assert.deepStrictEqual(deliverDm(msg), { ok: false, error: 'x' });
+  assert.deepStrictEqual(deliverDm(msg), { ok: true, delivered: true });
+  assert.deepStrictEqual(deliverDm(msg), { ok: true, delivered: true, duplicate: true });
+  assert.strictEqual(n, 2);
+});
+
+test('t1829 a claimed record whose delivery failed is not remembered', () => {
+  const m = mk({ getPeerManager: () => ({ statuses: () => [{ id: 'p1', label: 'hub' }] }), log: { info() {}, warn() {}, error() {} } });
+  m.sessions.set('alpha', { name: 'alpha', agentType: 'claude' });
+  const results = [{ held: 'x' }, { queued: true }, { queued: true }];
+  let n = 0;
+  m._gatedDeliver = () => results[n++];
+  m._broadcast = () => {};
+  const rec = { from: 'bob', to: 'alpha', body: 'hi', urgent: false, ref: 'r8' };
+  m._deliverClaimedDms('p1', [rec, { ...rec }, { ...rec }]);
   assert.strictEqual(n, 2);
 });
 
