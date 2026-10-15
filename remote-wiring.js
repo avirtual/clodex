@@ -657,7 +657,7 @@ function createRemoteWiring(deps) {
           log.info('session', `setSkills ${name} via peer${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
         },
-        deliverDm: ({ to, from, origin, body, urgent, ref }) => {
+        deliverDm: ({ to, from, origin, body, urgent, ref, task }) => {
           manager._rememberDmOrigin(origin);
           // A bare `from` is a direct DM — qualify it with the origin that dialed us.
           // An already-qualified `from` (contains '@') is the terminal leg of a
@@ -670,6 +670,13 @@ function createRemoteWiring(deps) {
           if (seen) {
             log.info('peer', `dm ref ${ref} from ${senderTag} repeated — not redelivered`);
             return { ...seen.resp, duplicate: true };
+          }
+          if (task) {
+            const t = manager._remoteTaskDone({ senderTag, origin, ticketId: task.id, report: body });
+            const tresp = { ok: t.ok, delivered: t.ok, task: { id: task.id, reply: t.reply }, ...(t.ok ? {} : { error: t.reply }) };
+            if (refKey && t.ok) manager._dmRefRemember(refKey, tresp);
+            manager._broadcast('ipc-message', { type: 'task', from: senderTag, to: t.lead || 'board', body: `WIRE←${origin} task done ${task.id}: ${t.reply}` });
+            return tresp;
           }
           const r = manager._gatedDeliver(to, senderTag, body, urgent === true);
           manager._broadcast('ipc-message', { type: 'dm', from: senderTag, to, body: `WIRE←${origin}: ${body}` });

@@ -437,7 +437,7 @@ test('parseIntent: task assign / done / reject / cancel / list', () => {
   assert.deepStrictEqual(parseIntent('[agent:task assign t7]'),
     { type: 'task', sub: 'assign', id: 't7', who: null, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:task done t7] shipped it'),
-    { type: 'task', sub: 'done', id: 't7', who: null, body: 'shipped it' });
+    { type: 'task', sub: 'done', id: 't7', who: null, board: null, body: 'shipped it' });
   assert.deepStrictEqual(parseIntent('[agent:task reject t7] needs rework'),
     { type: 'task', sub: 'reject', id: 't7', who: null, body: 'needs rework' });
   // t339: respec's body is the REPLACEMENT SPEC, so it parses like reject's —

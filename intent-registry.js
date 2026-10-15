@@ -12,6 +12,7 @@ const {
 } = require('./intent-catalog');
 const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
 const { PLUGIN_GLYPH, pluginGlyphOk } = require('./intent-glyphs');
+const { AGENT_NAME_RE } = require('./catalogs');
 const PLUGIN_REPLY_WAIT_MS = 30 * 1000;
 const PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1000;
 const REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
@@ -178,6 +179,14 @@ function parseTask(cleaned) {
     return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
   }
   if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+  if (sub === 'done') {
+    const tok = argToks[0] || null;
+    const at = tok ? tok.indexOf('@') : -1;
+    if (at > 0 && AGENT_NAME_RE.test(tok.slice(at + 1))) {
+      return { type: 'task', sub, id: tok.slice(0, at), who: null, board: tok.slice(at + 1), body };
+    }
+    return { type: 'task', sub, id: tok, who: null, board: null, body };
+  }
   return { type: 'task', sub, id: argToks[0] || null, who: null, body };
 }
 

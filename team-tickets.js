@@ -2712,6 +2712,15 @@ function createTicketMethods(deps, shared) {
       let stale = '';
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       const ack = (msg) => this._taskAck(session, `[agent:task] ${msg}${stale}`);
+      if (intent.sub === 'done' && intent.board && intent.board !== SELF_LABEL) {
+        const report = String(intent.body == null ? '' : intent.body).trim();
+        if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
+        const r = this._sendToFederatedTarget(session.name, `board@${intent.board}`, report, false, {
+          session, onBounce: (m) => reply(m), task: { kind: 'done', id: intent.id },
+        });
+        if (r && r.queued) reply(`done ${intent.id}@${intent.board} sent to that board — its answer follows.`);
+        return;
+      }
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
       // This is the only rejecting return reached before the verb runs, so the payload spill lives here
@@ -2741,6 +2750,29 @@ function createTicketMethods(deps, shared) {
         log.warn('intent', `task ${intent.sub} ${intent.id || ''} by ${session.name} failed: ${e.message}`);
         reply(`error: task ${intent.sub} failed: ${e.message}`);
       }
+    },
+
+    _remoteTaskDone({ senderTag, origin, ticketId, report }) {
+      let names = [];
+      try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
+      for (const name of names) {
+        let team;
+        try { team = loadManifest(name); } catch { continue; }
+        if (!team || !team.root || team.sandboxed) continue;
+        let tickets;
+        try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag)) continue;
+        const pseudo = { name: senderTag, cwd: team.root, agentType: null, remote: true };
+        let captured = null;
+        this._taskDone(pseudo, team, { sub: 'done', id: ticketId, body: report }, (msg) => { captured = msg; });
+        log.info('intent', `remote task done ${ticketId} from ${senderTag} (origin ${origin}) on ${team.name}: ${String(captured || 'closed').split('\n')[0]}`);
+        return {
+          ok: !/^error:/.test(captured || ''),
+          reply: captured || `ticket ${ticketId} done — report delivered to ${team.lead}`,
+          lead: team.lead,
+        };
+      }
+      return { ok: false, reply: `no ticket ${ticketId} assigned to ${senderTag} on this host` };
     },
 
     _assigneeMissText(team, who) {
@@ -2900,7 +2932,7 @@ function createTicketMethods(deps, shared) {
           + `so do tree work only and leave committing to the lead.\n`
         : '';
       const remoteLine = remote
-        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
+        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}. Close it with [agent:task done ${ticket.id}@${SELF_LABEL}] <report> — it crosses the wire to the board; the board's answer comes back as [agent:task] text.\n`
         : '';
       // Rendered beside the spec, never into it: `ticket.spec` is the lead's text and only `respec` replaces it.
       const taskDirLine = remote ? '' : this._ticketTaskDirRender(team, ticket).line;
@@ -3005,7 +3037,7 @@ function createTicketMethods(deps, shared) {
           + `keep going rather than starting them again.\n`
         : '';
       const close = remoteLead
-        ? `REMOTE: report by dm to ${remoteLead}@${SELF_LABEL}; task done from your host does not reach this board yet.\n`
+        ? `REMOTE: close with [agent:task done ${ticketId}@${SELF_LABEL}] <report>; it crosses the wire to the board.\n`
         : ticketCloseLine(ticketId);
       return `${head}[ticket ${ticketId} ${label}] ${close}${reason}`;
     },

@@ -38,3 +38,7 @@ Lists core tool rows (`dm` for a seat holding `dm`, `term_exec` for one whose in
 ## parseDm
 
 The dm head takes `urgent` and an optional `ref:<token>` (`DM_REF_RE`) in either order; a malformed, empty or repeated head token fails the whole parse (null), as an unknown head token always has.
+
+## parseTask
+
+`done` alone takes `tN@origin` (origin per `AGENT_NAME_RE`): it returns `id: 'tN'` and `board: origin`, and `board: null` for a bare id; every other sub keeps the `@` inside its token untouched.

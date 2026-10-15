@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const crypto = require('crypto');
-const { relayVersionOk, isQualifiedSender } = require('./relay-protocol');
+const { relayVersionOk, isQualifiedSender, isDoneTaskEnvelope } = require('./relay-protocol');
 const { makeTokenGate, isLoopbackHost } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
@@ -1276,8 +1276,12 @@ class RemoteServer {
         if (text.length > MAX_BODY) return this._json(res, 413, { ok: false, error: 'message too large' });
         const ref = msg.ref == null ? null : msg.ref;
         if (ref !== null && (typeof ref !== 'string' || !DM_REF_RE.test(ref))) return this._json(res, 400, { ok: false, error: 'bad ref' });
+        const task = msg.task == null ? null : msg.task;
+        if (task !== null && !isDoneTaskEnvelope(task)) {
+          return this._json(res, 400, { ok: false, error: 'bad task envelope' });
+        }
         Promise.resolve()
-          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true, ...(ref ? { ref } : {}) }))
+          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true, ...(ref ? { ref } : {}), ...(task ? { task: { kind: 'done', id: task.id } } : {}) }))
           .then((out) => {
             const resp = out || { ok: false, error: 'delivery failed' };
             this._json(res, resp.ok ? 200 : 404, ref ? { ...resp, ref } : resp);

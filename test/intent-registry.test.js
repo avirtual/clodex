@@ -137,6 +137,12 @@ function parseIntentLegacy(rawLine) {
       return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
     }
     if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+    if (sub === 'done') {
+      const tm = /^([^@]+)@((?!\.+$)[a-zA-Z0-9._-]{1,64})$/.exec(argToks[0] || '');
+      return tm
+        ? { type: 'task', sub, id: tm[1], who: null, board: tm[2], body }
+        : { type: 'task', sub, id: argToks[0] || null, who: null, board: null, body };
+    }
     return { type: 'task', sub, id: argToks[0] || null, who: null, body };
   }
 
@@ -1485,4 +1491,14 @@ test('t1719 a dm refusal or rate limit is refused, an undelivered dm is an error
     ["[agent:dm] parked for b (cold) as p1 — it'll be delivered with b's next turn.", 'ok'],
     ['[agent:dm] error: x', 'error'],
   ]) assert.strictEqual(classifyReplyLine('dm', line), want, line);
+});
+
+test('C1b (a) parseTask done takes tN@origin; other subs keep the token whole', () => {
+  const parseIntent = (line) => registry.parseWithRegistry(line, line);
+  const pick = (line) => { const o = parseIntent(line); return o && { sub: o.sub, id: o.id, board: o.board, body: o.body, who: o.who }; };
+  assert.deepStrictEqual(pick('[agent:task done t7@laptop] r'), { sub: 'done', id: 't7', board: 'laptop', body: 'r', who: null });
+  assert.deepStrictEqual(pick('[agent:task done t7] r'), { sub: 'done', id: 't7', board: null, body: 'r', who: null });
+  const add = parseIntent('[agent:task add t7@laptop] spec');
+  assert.strictEqual(add.who, 't7@laptop');
+  assert.strictEqual('board' in add, false);
 });
