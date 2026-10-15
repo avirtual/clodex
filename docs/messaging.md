@@ -399,6 +399,11 @@ announced in hello — in that order, case-insensitively, through the one
   synchronous HTTP response. Box-side `deliverDm` (remote-wiring.js) records
   the origin, tags the sender `from@origin`, and runs the same
   `_gatedDeliver` as local mail.
+  A dm to a configured peer that is offline (its caps list `dm`, or is empty)
+  is held in memory (`_peerHeld`, 20 per peer, 10 min) and sent by
+  `_flushPeerHeld` when peer-wiring sees that peer's online `peer-state`.
+  The sender is told once that it is held, and told again only if it is
+  dropped (full queue, 10-minute TTL); a host restart loses the held queue.
 - **Box → consumer**: no dial-back, so replies go to a per-origin **outbox**
   (peer-outbox.js: tmp+rename publish, atomic whole-dir claim, `validOrigin`
   path-traversal guard). Delivery is pull: the box advertises pending
