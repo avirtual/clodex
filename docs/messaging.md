@@ -101,8 +101,8 @@ is minted lazily, so the edge can arrive well after the keystroke.
   `scratch end <summary>` and a bare `scratch cancel` route to the probe arms
   (`_handleScratchIntent`). The in-place transcript cut is deleted; its forms
   (bare `begin`, `mark`, `rewind`, `end replay`, `cancel <label>`) still parse,
-  only to bounce with one line: *scratch <sub> is retired — use [agent:probe]
-  <question + return shape> … [agent:end]*.
+  only to bounce with one line:
+  `scratch <sub> is retired — use [agent:probe] <question + return shape> … [agent:end]`.
   - **Clone path.** `begin` WITH a body (`[agent:probe] <brief>` or
     `[agent:scratch begin] <brief>`, closed by `[agent:end]`):
     `_scratchCloneBegin` (`scratch-clone.js`) forks a clone seat named
