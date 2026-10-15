@@ -2712,7 +2712,7 @@ function createTicketMethods(deps, shared) {
       let stale = '';
       const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
       const ack = (msg) => this._taskAck(session, `[agent:task] ${msg}${stale}`);
-      if (intent.sub === 'done' && intent.board) {
+      if (intent.sub === 'done' && intent.board && intent.board !== SELF_LABEL) {
         const report = String(intent.body == null ? '' : intent.body).trim();
         if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
         const r = this._sendToFederatedTarget(session.name, `board@${intent.board}`, report, false, {

@@ -131,7 +131,7 @@ const { fmtAge } = require('./memory-store');
 const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
-  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk,
+  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
@@ -8379,14 +8379,22 @@ function createSessionManager(deps) {
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
         const senderTag = `${m.from || 'peer'}@${origin}`;
         const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
-        if (refKey && this._dmRefRepeat(refKey)) {
+        const answer = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:task] ${text}`, false, {});
+        const seen = refKey ? this._dmRefRepeat(refKey) : null;
+        if (seen) {
           log.info('peer', `dm ref ${m.ref} from ${senderTag} repeated — not redelivered`);
+          if (m.task && seen.resp && seen.resp.task) answer(`the board already answered ref ${m.ref}: ${seen.resp.task.reply}`);
           continue;
         }
-        if (m.task && typeof m.task === 'object') {
+        if (m.task != null) {
+          if (!isDoneTaskEnvelope(m.task)) {
+            log.info('peer', `claimed task from ${senderTag} dropped — bad task envelope`);
+            continue;
+          }
           const t = this._remoteTaskDone({ senderTag, origin, ticketId: m.task.id, report: m.body || '' });
-          if (refKey && t.ok) this._dmRefRemember(refKey, { delivered: true });
+          if (refKey && t.ok) this._dmRefRemember(refKey, { delivered: true, task: { id: m.task.id, reply: t.reply } });
           this._broadcast('ipc-message', { type: 'task', from: senderTag, to: t.lead || 'board', body: `WIRE←${origin} task done ${m.task.id}: ${t.reply}` });
+          answer(t.reply);
           continue;
         }
         const local = this.sessions.get(m.to);

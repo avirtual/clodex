@@ -168,7 +168,13 @@ function buildTerminalDm({ to, from, body, urgent }) {
   return { to, from, body, urgent: !!urgent };
 }
 
+function isDoneTaskEnvelope(task) {
+  return !!task && typeof task === 'object' && !Array.isArray(task)
+    && task.kind === 'done' && typeof task.id === 'string' && /^t\d+$/.test(task.id);
+}
+
 module.exports = {
+  isDoneTaskEnvelope,
   RELAY_ENVELOPE_V,
   RELAY_MAX_HOPS,
   RELAY_ROSTER_TTL_MS,

@@ -169,13 +169,16 @@ function boardRig() {
     file: path.join(home, 'teams', 'team', 'team.json'),
     roles: { lead: { instantiate: 'session', brief: 'the lead' }, hand: { instantiate: 'session', brief: 'the hand' } },
   };
-  const m = mk({ REGISTRY_DIR: home, listTeams: () => ['team'], loadManifest: () => team, getPeerManager: () => ({ statuses: () => [{ id: 'p', label: 'p' }] }), log: { info() {}, warn() {}, error() {}, debug() {} } });
+  const wire = [];
+  const conn = { dm: (msg, cb) => { wire.push(msg); cb({ ok: true, delivered: true }); } };
+  const pm = { statuses: () => [{ id: 'p', label: 'p', online: true, caps: ['dm'] }], get: (id) => (id === 'p' ? conn : null) };
+  const m = mk({ REGISTRY_DIR: home, listTeams: () => ['team'], loadManifest: () => team, getPeerManager: () => pm, log: { info() {}, warn() {}, error() {}, debug() {} } });
   const leadGot = [];
   m._gatedDeliver = (to, from, body) => { leadGot.push({ to, from, body }); return { queued: true }; };
   m._broadcast = () => {};
   tstore.save(team.root, [{ id: 't7', state: 'open', assignee: 'x@p', spec: 'do it', createdAt: 1, events: [] }]);
   const one = () => tstore.load(team.root).find((t) => t.id === 't7');
-  return { m, team, tstore, leadGot, one };
+  return { m, team, tstore, leadGot, one, wire };
 }
 
 async function withBoard(r, fn) {
@@ -268,6 +271,33 @@ test('C1b a claimed record with a task closes through _remoteTaskDone', () => {
   m._deliverClaimedDms('p', [{ from: 'x', to: 'board', body: 'via outbox', urgent: false, task: { kind: 'done', id: 't7' } }]);
   assert.deepStrictEqual(calls.map((c) => [c.senderTag, c.ticketId]), [['x@p', 't7']]);
   assert.strictEqual(r.one().state, 'done');
+  assert.deepStrictEqual(r.wire.map((w) => [w.to, w.from, w.body]), [['x', 'board', '[agent:task] ticket t7 closed (done) — report delivered to lead — closed WITHOUT review: the ticket records no branch, so the loop had nothing to verify']]);
+});
+
+test('C1b a refused claimed done is answered over the dial back to its sender', () => {
+  const r = boardRig();
+  r.m._deliverClaimedDms('p', [{ from: 'y', to: 'board', body: 'r', urgent: false, task: { kind: 'done', id: 't7' } }]);
+  assert.strictEqual(r.one().state, 'open');
+  assert.strictEqual(r.wire.length, 1);
+  assert.strictEqual(r.wire[0].to, 'y');
+  assert.strictEqual(r.wire[0].body, '[agent:task] no ticket t7 assigned to y@p on this host');
+});
+
+test('C1b a repeated claimed done ref closes once and answers already-answered', () => {
+  const r = boardRig();
+  const rec = { from: 'x', to: 'board', body: 'r', urgent: false, ref: 'k2', task: { kind: 'done', id: 't7' } };
+  r.m._deliverClaimedDms('p', [rec, { ...rec }]);
+  assert.strictEqual(r.leadGot.length, 1);
+  assert.strictEqual(r.wire.length, 2);
+  assert.match(r.wire[1].body, /^\[agent:task\] the board already answered ref k2: ticket t7 closed \(done\)/);
+});
+
+test('C1b a claimed record with a malformed task envelope is dropped', () => {
+  const r = boardRig();
+  r.m._deliverClaimedDms('p', [{ from: 'x', to: 'board', body: 'r', urgent: false, task: { kind: 'reject', id: 't7' } }]);
+  assert.strictEqual(r.one().state, 'open');
+  assert.deepStrictEqual(r.wire, []);
+  assert.deepStrictEqual(r.leadGot, []);
 });
 
 test('C1b enqueueOutbox carries task only when present', () => {
