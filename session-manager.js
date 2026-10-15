@@ -7987,6 +7987,12 @@ function createSessionManager(deps) {
 
 
     _gatedDeliver(targetName, senderTag, body, urgent, tag = '', onWrite = null, opts = {}) {
+      const at = typeof targetName === 'string' ? targetName.indexOf('@') : -1;
+      if (at > 0 && AGENT_NAME_RE.test(targetName.slice(0, at)) && AGENT_NAME_RE.test(targetName.slice(at + 1))) {
+        const r = this._sendToFederatedTarget(senderTag, targetName, body, urgent === true, {});
+        if (!r.error && typeof onWrite === 'function') { try { onWrite('queued', 'federated'); } catch {} }
+        return r;
+      }
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };
@@ -8234,68 +8240,72 @@ function createSessionManager(deps) {
     }
 
     _routeFederatedDm(session, senderName, intent) {
-      const at = intent.target.indexOf('@');
-      const name = intent.target.slice(0, at);
-      const origin = intent.target.slice(at + 1);
       const bounce = (msg) => { if (session) this._injectText(session, `[agent:dm] ${msg}`, { parkable: true }); };
-      const ref = intent.ref || this._mintDmRef(senderName);
+      this._sendToFederatedTarget(senderName, intent.target, intent.body, intent.urgent === true,
+        { ref: intent.ref, onBounce: bounce, session });
+    }
+
+    _sendToFederatedTarget(senderName, target, body, urgent, { ref: givenRef, onBounce, session = null } = {}) {
+      const at = target.indexOf('@');
+      const name = target.slice(0, at);
+      const origin = target.slice(at + 1);
+      const notice = (msg) => { if (typeof onBounce === 'function') onBounce(msg); };
+      const fail = (msg) => { notice(msg); return { error: msg }; };
+      const ref = givenRef || this._mintDmRef(senderName);
       if (!AGENT_NAME_RE.test(name) || !AGENT_NAME_RE.test(origin)) {
-        bounce(`can't route "${intent.target}" — a federated target is name@peer, both plain names.`);
-        return;
+        return fail(`can't route "${target}" — a federated target is name@peer, both plain names.`);
       }
       const peers = getPeerManager() ? getPeerManager().statuses() : [];
       const match = findPeerByOrigin(peers, origin);
       if (match) {
         const caps = Array.isArray(match.caps) ? match.caps : [];
         if (!match.online) {
-          if (caps.length && !caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
+          if (caps.length && !caps.includes('dm')) return fail(`peer '${origin}' predates dm federation — update its Clodex.`);
           let held = this._peerHeld.get(match.id);
           if (!held) { held = []; this._peerHeld.set(match.id, held); }
-          if (held.length >= PEER_HELD_CAP) { bounce(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued. (ref ${ref})`); return; }
+          if (held.length >= PEER_HELD_CAP) return fail(`peer '${origin}' is offline and its held queue is full (${PEER_HELD_CAP}) — not queued. (ref ${ref})`);
           held.push({
-            to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, ts: Date.now(),
-            target: intent.target, origin, sessionName: session && session.name, ref,
+            to: name, from: senderName, body, urgent, ts: Date.now(),
+            target, origin, sessionName: session && session.name, ref,
           });
           this._armPeerHeldSweep();
-          bounce(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min). (ref ${ref})`);
-          this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (held) [${ref}]: ${intent.body}` });
-          return;
+          notice(`peer '${origin}' is offline — held; sent when it reconnects (dropped if this host restarts or ${origin} stays offline 10 min). (ref ${ref})`);
+          this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (held) [${ref}]: ${body}` });
+          return { queued: true, ref };
         }
-        if (!caps.includes('dm')) { bounce(`peer '${origin}' predates dm federation — update its Clodex.`); return; }
+        if (!caps.includes('dm')) return fail(`peer '${origin}' predates dm federation — update its Clodex.`);
         const conn = getPeerManager().get(match.id);
-        if (!conn) { bounce(`peer '${origin}' is not reachable right now.`); return; }
+        if (!conn) return fail(`peer '${origin}' is not reachable right now.`);
         this._sendFederatedDm(conn, origin,
-          { to: name, from: senderName, body: intent.body, urgent: intent.urgent === true, target: intent.target, ref },
+          { to: name, from: senderName, body, urgent, target, ref },
           () => session);
-        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} [${ref}]: ${intent.body}` });
-        return;
+        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} [${ref}]: ${body}` });
+        return { queued: true, ref };
       }
       if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) {
         const r = enqueueOutbox(OUTBOX_DIR, origin,
-          { from: senderName, to: name, body: intent.body, urgent: intent.urgent === true, ts: Date.now(), ref },
+          { from: senderName, to: name, body, urgent, ts: Date.now(), ref },
           this._nextParkSeq());
-        if (!r.ok) { bounce(`could not queue for ${intent.target}: ${r.error} (ref ${ref})`); return; }
+        if (!r.ok) return fail(`could not queue for ${target}: ${r.error} (ref ${ref})`);
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(origin); } catch {} }
-        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (outbox) [${ref}]: ${intent.body}` });
-        return;
+        this._broadcast('ipc-message', { type: 'dm', from: senderName, to: `${name}@${origin}`, body: `WIRE→${origin} (outbox) [${ref}]: ${body}` });
+        return { queued: true, ref };
       }
       const via = this._relayViaForOrigin(origin);
       if (via) {
         const qualifiedFrom = `${senderName}@${SELF_LABEL}`;
         const env = buildRelayEnvelope({
-          to: name, finalTarget: intent.target, from: qualifiedFrom, origin: via,
-          body: intent.body, urgent: intent.urgent === true,
+          to: name, finalTarget: target, from: qualifiedFrom, origin: via,
+          body, urgent,
         });
         const r = enqueueOutbox(OUTBOX_DIR, via, { ...env, ts: Date.now() }, this._nextParkSeq());
-        if (!r.ok) { bounce(`could not relay to ${intent.target} via ${via}: ${r.error}`); return; }
+        if (!r.ok) return fail(`could not relay to ${target} via ${via}: ${r.error}`);
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(via); } catch {} }
-        if (session) this._injectText(session,
-          `[agent:dm] relayed via ${via} → ${intent.target} (best-effort; no delivery receipt${intent.urgent ? '' : ', held for a warm/active recipient'}).`,
-          { parkable: true });
-        this._broadcast('ipc-message', { type: 'dm', from: qualifiedFrom, to: intent.target, body: `WIRE→${via} (relay→${intent.target}): ${intent.body}` });
-        return;
+        notice(`relayed via ${via} → ${target} (best-effort; no delivery receipt${urgent ? '' : ', held for a warm/active recipient'}).`);
+        this._broadcast('ipc-message', { type: 'dm', from: qualifiedFrom, to: target, body: `WIRE→${via} (relay→${target}): ${body}` });
+        return { queued: true, ref };
       }
-      bounce(`no route to '${intent.target}' — peer '${origin}' is not configured, has never contacted this box, and no hub advertises it.`);
+      return fail(`no route to '${target}' — peer '${origin}' is not configured, has never contacted this box, and no hub advertises it.`);
     }
 
     _sendFederatedDm(conn, origin, item, getSession) {
@@ -8970,7 +8980,7 @@ function createSessionManager(deps) {
   // defineProperty, not Object.assign: class methods are non-enumerable and an enumerable graft changes what for-in sees.
   // Ticket state (_ticketWatch, _stallProbing) stays initialised in the constructor; moving it needs a new init call.
   const graftedMethods = {
-    ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS }),
+    ...createTicketMethods(deps, { ticketsStore, nameConflict, SPEC_CONFIRM_MS, findPeerByOrigin }),
     ...createScratchCloneMethods(deps, { SCRATCH_CLONE_CEILING_MS }),
   };
   for (const [k, v] of Object.entries(graftedMethods)) {

@@ -367,6 +367,7 @@ function createTicketMethods(deps, shared) {
     withoutPrivilegedIntentsFor,
     PENDING_DIR,
     parkedTexts,
+    SELF_LABEL,
   } = deps;
   const seedFetch = deps.fetch || ((...a) => globalThis.fetch(...a));
   const accountStore = () => {
@@ -385,6 +386,7 @@ function createTicketMethods(deps, shared) {
     nameConflict,
     // Derived core-side; re-deriving it here would put the same default in two files.
     SPEC_CONFIRM_MS,
+    findPeerByOrigin,
   } = shared;
 
   // Aliased to the spec latch's window, not re-derived: two numbers for one question drift, and the confirm term cannot be
@@ -2742,13 +2744,31 @@ function createTicketMethods(deps, shared) {
     },
 
     _assigneeMissText(team, who) {
-      return (team && team.solo)
+      return ((team && team.solo)
         ? `"${who}" is not a live session in ${team.name} — with no team, an assignee is a live session name`
-        : `"${who}" is neither a team role nor a live seat on ${team.name}`;
+        : `"${who}" is neither a team role nor a live seat on ${team.name}`)
+        + (String(who).includes('@') ? ' (name@peer needs that peer online with dm federation)' : '');
+    },
+
+    _isRemoteSeat(name) {
+      return typeof name === 'string' && name.includes('@');
+    },
+
+    _resolveRemoteAssignee(who) {
+      const at = who.indexOf('@');
+      const name = who.slice(0, at);
+      const origin = who.slice(at + 1);
+      if (!AGENT_NAME_RE || !AGENT_NAME_RE.test(name) || !AGENT_NAME_RE.test(origin)) return null;
+      if (typeof findPeerByOrigin !== 'function' || typeof getPeerManager !== 'function') return null;
+      const pm = getPeerManager();
+      const peer = pm ? findPeerByOrigin(pm.statuses() || [], origin) : null;
+      if (!peer || !peer.online || !Array.isArray(peer.caps) || !peer.caps.includes('dm')) return null;
+      return who;
     },
 
     _resolveAssignee(team, who) {
       if (!who) return null;
+      if (this._isRemoteSeat(who)) return this._resolveRemoteAssignee(who);
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who;
       if (this._teamLiveSeatNames(team.root).includes(who)) return who;
       return null;
@@ -2764,6 +2784,7 @@ function createTicketMethods(deps, shared) {
     _ticketAssigneeSeat(team, ticket, liveNames = null) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
+      if (this._isRemoteSeat(a)) return a;
       const live = liveNames || this._teamLiveSeatNames(team.root);
       const isRoleKey = (k) => !!(k && team.roles && Object.prototype.hasOwnProperty.call(team.roles, k));
       const firstSeatFor = (roleKey) => {
@@ -2813,6 +2834,8 @@ function createTicketMethods(deps, shared) {
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat) return { undelivered: true };
       if (seat === team.lead) return { self: true };
+      const remote = this._isRemoteSeat(seat);
+      if (remote && replay) return { undelivered: true, remote: true };
       // Worded true of both replay cases (respawn, and never reached a seat): "your process restarted"
       // would be false in the second.
       // Working tree first, since a dead incarnation may never have written an artifact; three branches,
@@ -2883,7 +2906,10 @@ function createTicketMethods(deps, shared) {
       const closeLine = ticketCloseLine(ticket.id);
       // Every dispatch spills (close line ~410 chars, worktree ~730, threshold 500), so the pointer line must
       // carry the id and the close verb; a spilled body shows only "Message (N bytes) attached".
-      const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
+      const remoteLine = remote
+        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
+        : '';
+      const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${remoteLine}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
           : respec
@@ -2903,6 +2929,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _armSpecConfirm(seatName, ticketId, disposition, redirect = null, divertedBy = null) {
+      if (this._isRemoteSeat(seatName)) return;
       const s = this.sessions.get(seatName);
       if (!s || !s.agentType || s._dead) return;
       const kind = redirect ? 'redirect' : 'spec';
@@ -3380,6 +3407,7 @@ function createTicketMethods(deps, shared) {
 
     _advanceSeat(team, seatName, closed, delivery = null) {
       if (team && team.solo) return null;
+      if (this._isRemoteSeat(seatName)) return null;
       if (!ticketStarted(closed)) return null;
       const queue = this._openTicketsFor(team, seatName, closed && closed.id);
       const next = queue.find((t) => this._ticketAssigneeSeat(team, t) === seatName);
@@ -6517,7 +6545,7 @@ function createTicketMethods(deps, shared) {
     async _stallEvidence(team, ticket) {
       const out = { tool: null, commits: null, dirty: null, apiError: null };
       const seat = this._ticketAssigneeSeat(team, ticket);
-      if (seat) {
+      if (seat && !this._isRemoteSeat(seat)) {
         try {
           const link = pathFor(REGISTRY_DIR, seat, 'transcript');
           // The wide re-read runs only when the tail named no tool: a later moment
