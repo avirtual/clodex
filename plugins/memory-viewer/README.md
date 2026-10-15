@@ -19,6 +19,8 @@ an operator-pinned box that starts ticked. Saving goes through
 `source: operator`. An operator-pinned directive takes one of the agent's three
 operator pin slots, is refused past that cap, and is served in full at the
 agent's next conversation.
+A directive written or edited for a live seat also arrives on that seat's next
+turn.
 
 Each unit has a ✎ control that edits its body in place through
 `host.library.edit('memory', …)`; id, timestamp, source, tags and pins are kept.
