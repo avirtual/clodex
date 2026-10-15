@@ -1378,7 +1378,7 @@ test('t222 — the second argument is optional, and no other verb reads it', () 
     { type: 'term', sub: 'exec', body: 'ls' });
   // Same line, a raw form that differs everywhere: every non-term verb ignores it.
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:dm bob] hi', '[agent:dm zed] DIFFERENT'),
-    { type: 'dm', target: 'bob', urgent: false, body: 'hi' });
+    { type: 'dm', target: 'bob', urgent: false, ref: null, body: 'hi' });
   assert.deepStrictEqual(registry.parseWithRegistry('[agent:exec c] {}', '[agent:exec other] {"x":1}'),
     { type: 'exec', cmd: 'c', body: '{}' });
 });

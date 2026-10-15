@@ -117,7 +117,7 @@ test('t1829 a repeated ref older than 10 min is delivered again', () => {
 });
 
 test('t1829 _deliverClaimedDms delivers two claimed records sharing a ref once', () => {
-  const m = mk({ getPeerManager: () => ({ statuses: () => [{ id: 'p1', label: 'hub' }] }) });
+  const m = mk({ getPeerManager: () => ({ statuses: () => [{ id: 'p1', label: 'hub' }] }), log: { info() {}, warn() {}, error() {} } });
   m.sessions.set('alpha', { name: 'alpha', agentType: 'claude' });
   const calls = [];
   m._gatedDeliver = (...a) => { calls.push(a); return { queued: true }; };
