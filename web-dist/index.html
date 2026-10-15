@@ -31088,6 +31088,135 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // catalogs.js
+  var require_catalogs = __commonJS({
+    "catalogs.js"(exports, module) {
+      var { deferredSkillDeny } = require_skills_off();
+      var CLAUDE_TOOLS = [
+        // Filesystem & code
+        "Read",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Glob",
+        "Grep",
+        "LSP",
+        // Shell
+        "Bash",
+        "PowerShell",
+        "Monitor",
+        // Web
+        "WebFetch",
+        "WebSearch",
+        // Subagents & teams
+        "Agent",
+        "SendMessage",
+        "ListAgents",
+        // Skills & workflows
+        "Skill",
+        "Workflow",
+        // Plan mode & worktrees
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "EnterWorktree",
+        "ExitWorktree",
+        // Task list
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TodoWrite",
+        // Scheduling
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        // Notifications, remote & prompts
+        "PushNotification",
+        "RemoteTrigger",
+        "ShareOnboardingGuide",
+        "AskUserQuestion",
+        // Conversation control
+        "EndConversation",
+        "SendFeedback",
+        // Publishing & review (Artifact uploads local content to claude.ai hosting)
+        "Artifact",
+        "ReportFindings",
+        // MCP plumbing
+        "ListMcpResourcesTool",
+        "ReadMcpResourceTool",
+        "WaitForMcpServers",
+        // Connectors
+        "DesignSync"
+      ];
+      var OPTIMIZED_TOOLS = [
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+        "Agent",
+        "SendMessage",
+        "Skill"
+      ];
+      var DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
+      var CLAUDE_SKILLS = [
+        "code-review",
+        "security-review",
+        "review",
+        "deep-research",
+        "verify",
+        "init",
+        "update-config",
+        "simplify",
+        "run",
+        "loop",
+        "schedule",
+        "claude-api",
+        "keybindings-help",
+        "fewer-permission-prompts",
+        "design",
+        "dataviz",
+        "artifact-design",
+        "artifact-diagramming",
+        "artifact-capabilities"
+      ];
+      var SKILL_REENABLE_CONFIRMED = false;
+      var OPTIMIZED_SKILLS = [
+        "code-review",
+        "security-review",
+        "review",
+        "verify",
+        "simplify",
+        "claude-api",
+        "dataviz",
+        "artifact-diagramming"
+      ];
+      var DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny(OPTIMIZED_SKILLS);
+      var DEFAULT_BUILTIN_DENY_FLOOR = ["Plan", "claude", "claude-code-guide", "statusline-setup"];
+      var DEFAULT_WORKSPACE_ID = "default";
+      var AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var THEME_KEYS = ["midnight", "claude", "paper", "light"];
+      module.exports = {
+        CLAUDE_TOOLS,
+        OPTIMIZED_TOOLS,
+        DEFAULT_TOOL_DENY_FLOOR,
+        CLAUDE_SKILLS,
+        OPTIMIZED_SKILLS,
+        DEFAULT_SKILL_DENY_FLOOR,
+        SKILL_REENABLE_CONFIRMED,
+        DEFAULT_BUILTIN_DENY_FLOOR,
+        DEFAULT_WORKSPACE_ID,
+        AGENT_NAME_RE,
+        THEME_KEYS
+      };
+    }
+  });
+
   // intent-registry.js
   var require_intent_registry = __commonJS({
     "intent-registry.js"(exports, module) {
@@ -31101,6 +31230,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       } = require_intent_catalog();
       var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
       var { PLUGIN_GLYPH, pluginGlyphOk } = require_intent_glyphs();
+      var { AGENT_NAME_RE } = require_catalogs();
       var PLUGIN_REPLY_WAIT_MS = 30 * 1e3;
       var PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1e3;
       var REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
@@ -31223,6 +31353,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return { type: "task", sub, id: rest[0] || null, who: null, reviewer, body: "" };
         }
         if (sub === "park") return { type: "task", sub, id: argToks[0] || null, who: null, body: "" };
+        if (sub === "done") {
+          const tok = argToks[0] || null;
+          const at = tok ? tok.indexOf("@") : -1;
+          if (at > 0 && AGENT_NAME_RE.test(tok.slice(at + 1))) {
+            return { type: "task", sub, id: tok.slice(0, at), who: null, board: tok.slice(at + 1), body };
+          }
+          return { type: "task", sub, id: tok, who: null, board: null, body };
+        }
         return { type: "task", sub, id: argToks[0] || null, who: null, body };
       }
       function parseTeamCreate(cleaned) {

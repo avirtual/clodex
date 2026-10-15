@@ -162,7 +162,7 @@ test('t1829 enqueueOutbox without a ref writes no ref key; with one it carries i
 });
 
 function boardRig() {
-  const home = mkTmpRoot('clodex-c1b-');
+  const home = mkTmpRoot('clodex-ts-');
   const tstore = require('../tickets-store').createTicketsStore({ clodexHome: home });
   const team = {
     name: 'team', root: '/proj', lead: 'lead', watchdogMs: null,
@@ -271,7 +271,7 @@ test('C1b a claimed record with a task closes through _remoteTaskDone', () => {
 });
 
 test('C1b enqueueOutbox carries task only when present', () => {
-  const root = mkTmpRoot('clodex-c1b-out-');
+  const root = mkTmpRoot('clodex-dm-ref-');
   const a = enqueueOutbox(root, 'laptop', { from: 'a', to: 'board', body: 'x', urgent: false, ts: 5, task: { kind: 'done', id: 't7' } }, '1');
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', a.file), 'utf8')).task, { kind: 'done', id: 't7' });
   const b = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, task: null }, '2');
