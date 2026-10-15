@@ -33,6 +33,7 @@ function rig({ online = true, caps = ['dm'] } = {}) {
     AGENT_NAME_RE,
     SELF_LABEL: 'laptop',
     getPeerManager: () => pm,
+    outboxKnowsOrigin: () => false,
     knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
