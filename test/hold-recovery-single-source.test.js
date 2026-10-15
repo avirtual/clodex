@@ -36,6 +36,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── the scanner ────────────────────────────────────────────────────────────
 //
@@ -832,6 +833,22 @@ test('every verifyHold recovery reader in team-tickets.js routes through holdRec
     'a reader formats its own recovery sentence instead of calling holdRecoveryText');
 });
 
+function findVerifyHoldReaders(root) {
+  const skip = new Set(['node_modules', '.git', 'dist', 'out', 'tasks', 'test', '.clodex-wt']);
+  const found = [];
+  const walk = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) { walk(full); continue; }
+      if (!ent.name.endsWith('.js')) continue;
+      if (fs.readFileSync(full, 'utf8').includes('verifyHold')) found.push(path.relative(root, full));
+    }
+  };
+  walk(root);
+  return found;
+}
+
 test('the stamp is read in team-tickets.js ALONE, which is what makes the scan sufficient', () => {
   // The scan reads one file. That is only enough while the field is read in one
   // file — and `holdRecoveryText` is NOT exported (module.exports carries
@@ -849,18 +866,7 @@ test('the stamp is read in team-tickets.js ALONE, which is what makes the scan s
   // kind of false alarm that gets a subject deleted rather than fixed. Tests
   // are not readers: they cannot mislead a seat.
   const root = path.join(__dirname, '..');
-  const skip = new Set(['node_modules', '.git', 'dist', 'out', 'tasks', 'test']);
-  const found = [];
-  const walk = (dir) => {
-    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (skip.has(ent.name)) continue;
-      const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) { walk(full); continue; }
-      if (!ent.name.endsWith('.js')) continue;
-      if (fs.readFileSync(full, 'utf8').includes('verifyHold')) found.push(path.relative(root, full));
-    }
-  };
-  walk(root);
+  const found = findVerifyHoldReaders(root);
   // ENTER: the walk actually reached source. A walk that found nothing would
   // satisfy the containment claim below while proving the opposite.
   assert.ok(found.includes('team-tickets.js'),
@@ -1314,4 +1320,12 @@ test('the MERGED notice states the opposite tense and keeps its intent off colum
     'the verb never opens the line — IntentScanner is ^-anchored and the lead would auto-accept on receipt');
   assert.ok(rendered.indexOf('[agent:task accept') > 'Nothing was torn down: '.length - 1,
     'prose precedes it, which is the entire reason it is inert');
+});
+
+test('t1835 the verifyHold reader scan skips an in-root .clodex-wt ticket tree', () => {
+  const root = mkTmpRoot('clodex-ts-');
+  fs.mkdirSync(path.join(root, '.clodex-wt', 'x'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.clodex-wt', 'x', 'team-tickets.js'), 'verifyHold\n');
+  fs.writeFileSync(path.join(root, 'team-tickets.js'), 'verifyHold\n');
+  assert.deepStrictEqual(findVerifyHoldReaders(root), ['team-tickets.js']);
 });
