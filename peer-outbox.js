@@ -114,8 +114,6 @@ function claimOutbox(root, origin) {
           ...(typeof obj.finalTarget === 'string' && obj.finalTarget ? { finalTarget: obj.finalTarget } : {}),
           ...(Number.isInteger(obj.hops) ? { hops: obj.hops } : {}),
           ...(Number.isInteger(obj.rv) ? { rv: obj.rv } : {}),
-          ...(typeof obj.ref === 'string' && obj.ref ? { ref: obj.ref } : {}),
-          ...(obj.task && typeof obj.task === 'object' ? { task: obj.task } : {}),
         });
       }
     } catch { /* skip a corrupt entry rather than abort the whole claim */ }

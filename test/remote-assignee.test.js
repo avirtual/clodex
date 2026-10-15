@@ -7,7 +7,6 @@ const pathReal = require('node:path');
 
 const { createSessionManager } = require('../session-manager');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { enqueueOutbox, claimOutbox } = require('../peer-outbox');
 const ticketsMod = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { AGENT_NAME_RE } = require('../catalogs');
@@ -44,7 +43,6 @@ function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = require(
   const conn = { dm: (msg, cb) => { sent.push(msg); cb({ ok: true, delivered: true }); } };
   const pm = { statuses: () => [peer], get: (id) => (id === 'p1' ? conn : null) };
   const injected = [];
-  const logs = [];
   const deps = {
     AGENT_NAME_RE,
     SELF_LABEL: 'laptop',
@@ -73,7 +71,7 @@ function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = require(
     MSG_MAX_AGE: 1800,
     termAvailableFor: require('../drawer-avail').termAvailableFor,
     REGISTRY_DIR: home,
-    log: { info: (...a) => logs.push(a.join(' ')), warn: () => {}, error: () => {}, debug: () => {} },
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
     findProjectRoot: (cwd) => (cwd && cwd.startsWith(root) ? root : null),
     listTeams: () => ['team'],
@@ -101,7 +99,7 @@ function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = require(
     while (minting.length) await minting.shift();
     await new Promise(setImmediate);
   };
-  return { m, settle, team, tstore, peer, conn, sent, injected, logs, lead, task, one: (id) => tstore.load(team.root).find((t) => t.id === id) };
+  return { m, settle, team, tstore, peer, conn, sent, injected, lead, task, one: (id) => tstore.load(team.root).find((t) => t.id === id) };
 }
 
 test('(a) name@peer resolves only while that peer is online with dm federation; add names the precondition', () => {
@@ -441,21 +439,4 @@ test('C2b (e) stall evidence on a remote ticket reads branch progress from the h
   assert.ok(ev.commits >= 1, JSON.stringify(ev));
   assert.strictEqual(ev.dirty, false);
   assert.strictEqual(ev.tool, null);
-});
-
-test('t1835 a done enqueued to the outbox and claimed back from disk closes the remote ticket', async () => {
-  const r = rig();
-  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
-  await r.settle();
-  r.m._runTicketLoop = () => {};
-  const outbox = mkTmpRoot('clodex-outbox-');
-  enqueueOutbox(outbox, 'laptop', { from: 'x', to: 'board', body: 'built', urgent: false, ts: 5, ref: 'r1', task: { kind: 'done', id: 't1' } }, '1');
-  const stripped = claimOutbox(outbox, 'laptop').map(({ task, ...rest }) => ({ ...rest, ref: 'r0' }));
-  r.m._deliverClaimedDms('p1', stripped);
-  assert.notStrictEqual(r.one('t1').state, 'done');
-  assert.ok(r.logs.some((l) => l.includes('no local agent "board"')), r.logs.join('\n'));
-  enqueueOutbox(outbox, 'laptop', { from: 'x', to: 'board', body: 'built', urgent: false, ts: 6, ref: 'r1', task: { kind: 'done', id: 't1' } }, '2');
-  const claimed = claimOutbox(outbox, 'laptop');
-  r.m._deliverClaimedDms('p1', claimed);
-  assert.strictEqual(r.one('t1').state, 'done');
 });

@@ -28,7 +28,6 @@ blocks a release.
 - A seat on a connected peer closes its ticket with `[agent:task done tN@<board-host>] <report>`; the report crosses the dm wire, the board closes the ticket only if its recorded assignee is that exact seat, and the board's answer comes back to the seat as [agent:task] text.
 - A ticket assigned to a seat on the team's sandbox box and started (`task start`, `task add … start`) gets its worktree inside the repo root (`.clodex-wt/<branch>`) with relative git pointers, so the box sees the same tree through its bind mount; the spec names the box path and the board keeps the host path. The stored remote assignee is canonical, so its `task done` matches on both wire paths.
 - A ticket worked by a seat on the sandbox box runs the same verify, cold review, suite and merge as a local one, and accept removes its in-root tree and branch; rejections to that seat carry the box path, and its spec warns that `git worktree prune` in the box would delete the tree.
-- A ticket closed from the sandbox box with `task done tN@<host>` now reaches the board when the board is the dialing side: the outbox claim round trip kept the report but dropped the task envelope, so the done was discarded as a dm to a seat named "board".
 
 ## 5.125.0 — 2026-10-15
 

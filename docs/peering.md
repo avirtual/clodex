@@ -117,7 +117,7 @@ patch with kill+respawn on `restart:true`) and `GET /api/sessions/:name/skills` 
 `PATCH /api/sessions/:name/skills` (Edit Skills over the wire: read the box's skill
 catalog, persist the disabled/inject sets — a separate `POST /api/sessions/:name/restart`
 applies) — all four under the `args` cap, shipped together — and `POST /api/dm` (optional `ref`, echoed in the response, deduped 10 min per origin+from; a malformed one is a 400; optional `task` envelope `{kind:'done', id:'tN'}` closes that ticket on the board and is answered in the response's `task.reply`, anything else is a 400) +
-`/api/dm/claim` (federation, `dm` cap; a claimed record carries `ref` and `task` when the enqueued one did) and `POST /api/peer/roster` (hub-relay
+`/api/dm/claim` (federation, `dm` cap) and `POST /api/peer/roster` (hub-relay
 federation, `relay` cap — the hub pushes this spoke the roster of agents on its
 OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
 `GET /api/inbox?limit=&before=` (newest-first page + `unread`; limit clamped

@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { RemoteServer } = require('../remote');
-const { enqueueOutbox, claimOutbox } = require('../peer-outbox');
+const { enqueueOutbox } = require('../peer-outbox');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -306,12 +306,4 @@ test('C1b enqueueOutbox carries task only when present', () => {
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', a.file), 'utf8')).task, { kind: 'done', id: 't7' });
   const b = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, task: null }, '2');
   assert.strictEqual('task' in JSON.parse(fs.readFileSync(path.join(root, 'laptop', b.file), 'utf8')), false);
-});
-
-test('t1835 claimOutbox reads back ref and task only when the enqueued record had them', () => {
-  const root = mkTmpRoot('clodex-dm-ref-');
-  enqueueOutbox(root, 'laptop', { from: 'a', to: 'board', body: 'x', urgent: false, ts: 5, ref: 'r1', task: { kind: 'done', id: 't7' } }, '1');
-  assert.deepStrictEqual(claimOutbox(root, 'laptop'), [{ from: 'a', to: 'board', body: 'x', urgent: false, ts: 5, ref: 'r1', task: { kind: 'done', id: 't7' } }]);
-  enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5 }, '2');
-  assert.deepStrictEqual(claimOutbox(root, 'laptop'), [{ from: 'a', to: 'b', body: 'x', urgent: false, ts: 5 }]);
 });
