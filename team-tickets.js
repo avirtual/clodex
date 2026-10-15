@@ -94,7 +94,7 @@ async function readContainerStartedAt(box) {
 
 function recreatedClause(before, after) {
   if (!after) return '';
-  return before === after ? ' · container NOT recreated (unchanged)' : ' · container recreated';
+  return before === after ? ' · container NOT restarted (unchanged)' : ' · container restarted';
 }
 
 function sandboxPortClause(st) {

@@ -1017,7 +1017,7 @@ function recordingSpawn(calls, results = {}) {
   };
 }
 
-test('rebuild: dev build kind uses `up -d --build`, then registers the peer', async () => {
+test('rebuild: dev build kind uses `up -d --build --force-recreate`, then registers the peer', async () => {
   const settings = fakeSettings();
   const calls = [];
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
@@ -1031,7 +1031,6 @@ test('rebuild: dev build kind uses `up -d --build`, then registers the peer', as
   const r = await sb.rebuild();
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.ports, { web: 7810, wirescope: 7811, wire: 7820 });
-  // Exactly one compose invocation: up -d --build (no pull in the build path).
   const composeCalls = composeSubcommands(calls);
   assert.deepStrictEqual(composeCalls, [['up', '-d', '--build', '--force-recreate']]);
   assert.strictEqual(settings._state().peers.length, 1);
@@ -1039,7 +1038,7 @@ test('rebuild: dev build kind uses `up -d --build`, then registers the peer', as
   assert.deepStrictEqual(r.image, { kind: 'build', ref: null, sha: null });
 });
 
-test('rebuild: packaged pinned image kind pulls then `up -d`', async () => {
+test('rebuild: packaged pinned image kind pulls then `up -d --force-recreate`', async () => {
   const settings = fakeSettings();
   const calls = [];
   const sb = createSandbox({ registryDir: TMP_REGISTRY,

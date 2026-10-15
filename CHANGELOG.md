@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+### Teams
+
+- The sandbox up/rebuild reply says "container restarted" rather than "recreated": docker's StartedAt moves on a plain start of a stopped container too, so the old word claimed more than was checked.
+
 ## 5.125.0 — 2026-10-15
 
 ### Messaging
