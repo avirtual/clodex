@@ -22220,7 +22220,7 @@ test('scratch cancel <label>: drops that mark ONLY, records a cancelled row with
   assert.strictEqual(f.s._scratchMarks.get('b'), b, 'b is untouched');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'zz', replay: false, body: '' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    '[agent:scratch] cancel refused: no mark named "zz" is set — marks set: b (most recent first). Nothing was cut.');
+    '[agent:scratch] cancel refused: no mark named "zz" is set — marks set: b (most recent first). Nothing was cut.' + RETIRED);
   const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepStrictEqual(rows.map((r) => [r.outcome, r.label, r.nonce]), [['cancelled', 'a', a.nonce]]);
   assert.deepStrictEqual(f.order, []);
@@ -22244,7 +22244,7 @@ test('scratch cancel (bare): drops the most recent open mark like a bare rewind 
   assert.ok(b.sizeAtBegin > ep.sizeAtBegin);
   g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.strictEqual(g.injected[g.injected.length - 1],
-    `[agent:scratch] mark b dropped · mark ${b.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+    `[agent:scratch] mark b dropped · mark ${b.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(g.s._scratchMarks.has('b'), false);
   assert.strictEqual(g.s._scratch, ep, 'the older unlabeled episode stays open');
   g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
@@ -22264,7 +22264,7 @@ test('scratch rewind: an unknown label lists the open marks most recent first; a
   scratchNamed(f, tape, 'b');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'zz', replay: false, body: 'x' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    '[agent:scratch] rewind refused: no mark named "zz" is set — marks set: b, a (most recent first). Nothing was cut.');
+    '[agent:scratch] rewind refused: no mark named "zz" is set — marks set: b, a (most recent first). Nothing was cut.' + RETIRED);
 });
 
 test('scratch scratchMark (operator): marks at END OF FILE on an idle seat — not at the last reply — and a rewind to it drops nothing the operator saw', async () => {
