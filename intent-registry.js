@@ -119,6 +119,11 @@ function parseTerm(cleaned, raw) {
   return { type: 'term', sub, body };
 }
 
+function parseCtl(cleaned) {
+  const m = cleaned.match(/^\[agent:ctl\s+([A-Za-z0-9._-]{1,32})\]\s*([^\n]*)/);
+  return m ? { type: 'ctl', ctx: m[1], line: m[2].trim() } : null;
+}
+
 function parseRemind(cleaned) {
   const m = cleaned.match(/^\[agent:remind\s+([^\]]+)\]\s*(.*)/s);
   return m ? { type: 'remind', spec: m[1].trim(), body: m[2] } : null;
@@ -354,6 +359,7 @@ const CORE_ROWS = [
   // what makes this row different from dm/memory/task.
   { type: 'term', parse: parseTerm, bodyMode: NONE, classifyReply: (line) => (/^\[agent:term\] /.test(line) ? 'refused' : 'ok'), tools: [TERM_EXEC_TOOL, TERM_READ_TOOL] },
   { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
+  { type: 'ctl', parse: parseCtl, bodyMode: NONE },
   { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/i.test(i.spec) ? 'none' : 'greedy') },
   { type: 'shout', parse: parseShout, bodyMode: GREEDY },
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },

@@ -487,6 +487,28 @@ const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, create
 const { subagentRefusal, subagentCatalogFor, classifyReplyLine, toolRowFor, toolIntentFor } = require('./intent-registry');
 
 const { TERM_REPLY_WAIT_MS } = require('./drawer-avail');
+const { tokenize: ctlTokenize } = require('./ctl-service');
+
+const CTL_REPLY_MAX_BYTES = 12000;
+const CTL_REPLY_WAIT_MS = 30000;
+const CTL_OPERATOR_ONLY = new Set(['input', 'exec', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'attach', 'web', 'use']);
+const CTL_PINNED_FLAGS = new Set(['ctx', 'url', 'token', 'ssh', 'remote-port', 'remotePort']);
+
+function ctlRefusal(tokens) {
+  const verb = tokens[0];
+  if (verb === undefined) return 'ctl: no command — write [agent:ctl <ctx>] <verb> [args]';
+  if (verb.startsWith('-')) return 'ctl: put the verb first, flags after it';
+  for (const t of tokens) {
+    const m = /^--([^=]+)/.exec(t);
+    if (m && CTL_PINNED_FLAGS.has(m[1])) return `ctl: --${m[1]} is fixed by the context and cannot be set`;
+  }
+  if (CTL_OPERATOR_ONLY.has(verb)) return `ctl: ${verb} is operator-only`;
+  if (verb === 'delete' && (tokens[1] === 'node' || tokens[1] === 'nodes')) return 'ctl: delete node is operator-only';
+  if (verb === 'logs' && tokens.some((t) => t === '--follow' || t.startsWith('--follow=') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t))) {
+    return 'ctl: logs --follow is operator-only';
+  }
+  return null;
+}
 
 const intentReplyScope = new AsyncLocalStorage();
 const streamSeatLib = require('./stream-seat');
@@ -678,6 +700,7 @@ function createSessionManager(deps) {
     termAvailableFor,
     termExec: termExecDep,
     termRead: termReadDep,
+    getCtlService,
     whichBin,
     writeClaudeDigestFile,
     deliverSkills,
@@ -5685,6 +5708,11 @@ function createSessionManager(deps) {
           this._handleExecIntent(session, intent.cmd, intent.body || '');
           break;
         }
+        case 'ctl': {
+          if (!session || !session.agentType) break;
+          this._handleCtlIntent(session, intent, (msg) => this._injectText(session, msg, { parkable: true }));
+          break;
+        }
         case 'remind': {
           if (!session || !session.agentType) break;
           this._handleRemindIntent(session, intent.spec, intent.body || '');
@@ -5762,6 +5790,7 @@ function createSessionManager(deps) {
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
+          if (intent.type === 'ctl') return CTL_REPLY_WAIT_MS;
           const row = pluginRowFor(intent.type);
           return row && row.handler ? row.replyWaitMs(intent) : 0;
         },
@@ -6270,7 +6299,12 @@ function createSessionManager(deps) {
           return;
         }
       }
-      if (!entry || typeof entry !== 'object' || !Array.isArray(entry.argv) || !entry.argv.length) {
+      const inProcess = entry && typeof entry === 'object' && 'inProcess' in entry ? entry.inProcess : undefined;
+      if (inProcess !== undefined && inProcess !== 'ctl') {
+        fail('malformed registry entry (inProcess must be "ctl")');
+        return;
+      }
+      if (!entry || typeof entry !== 'object' || (inProcess === undefined && (!Array.isArray(entry.argv) || !entry.argv.length))) {
         fail('malformed registry entry (needs a non-empty argv)');
         return;
       }
@@ -6278,6 +6312,14 @@ function createSessionManager(deps) {
       if (!v.ok) {
         fail(v.error);
         return;
+      }
+      if (inProcess === 'ctl') {
+        const replyMax = (typeof entry.replyMaxBytes === 'number' && entry.replyMaxBytes > 0)
+          ? Math.floor(entry.replyMaxBytes) : CTL_REPLY_MAX_BYTES;
+        const p = v.value || {};
+        const line = `${p.verb || ''} ${p.args || ''}`.trim();
+        this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ctl ${p.ctx}: ${line}` });
+        return this._handleCtlIntent(session, { ctx: p.ctx, line }, (msg) => reply(`${cmd}: ${msg}`), replyMax);
       }
 
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
@@ -6442,6 +6484,42 @@ function createSessionManager(deps) {
 
     // Seat and window both come from the sender, never from the agent, so it cannot reach another
     // agent's terminal or the seatless workspace shell.
+    _handleCtlIntent(session, intent, reply, maxBytes = CTL_REPLY_MAX_BYTES) {
+      const ctx = String(intent.ctx || '');
+      const line = String(intent.line || '').trim();
+      const svc = typeof getCtlService === 'function' ? getCtlService() : null;
+      if (!svc) {
+        reply('ctl is not enabled on this host');
+        return Promise.resolve(null);
+      }
+      if (!/^[A-Za-z0-9._-]{1,32}$/.test(ctx)) {
+        reply('ctl: the context must be a name ([A-Za-z0-9._-]{1,32})');
+        return Promise.resolve(null);
+      }
+      let tokens;
+      try { tokens = ctlTokenize(line); } catch (e) {
+        reply(`ctl: ${e.message}`);
+        return Promise.resolve(null);
+      }
+      const verb = tokens[0] || '';
+      const denied = ctlRefusal(tokens);
+      if (denied) {
+        log.warn('ctl', `${session.name} ctx=${ctx} verb=${verb}: refused`);
+        reply(denied);
+        return Promise.resolve(null);
+      }
+      const clamp = clampReplyBody || ((t, n) => String(t == null ? '' : t).trim().slice(0, n));
+      return svc.run(`--ctx ${ctx} ${line}`).then((block) => {
+        log.info('ctl', `${session.name} ctx=${ctx} verb=${verb} exit=${block.exitCode}`);
+        reply(`[ctl ${ctx} exit ${block.exitCode}] ${clamp(block.output, maxBytes)}`);
+        return block;
+      }, (e) => {
+        log.warn('ctl', `${session.name} ctx=${ctx} verb=${verb}: failed (${e && e.message})`);
+        reply(`ctl: run failed (${(e && e.message) || e})`);
+        return null;
+      });
+    }
+
     _handleTermIntent(session, sub, rawBody) {
       const reply = (msg) => this._injectText(session, `[agent:term] ${msg}`, { parkable: true });
       if (sub !== 'exec' && sub !== 'read') {

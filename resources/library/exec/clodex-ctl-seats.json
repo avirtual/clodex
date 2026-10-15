@@ -1,0 +1,18 @@
+{
+  "inProcess": "ctl",
+  "description": "Act on peer sessions through clodexctl: the read verbs plus create, patch, restart and dm, against a context the operator listed in the ctx enum.",
+  "timeoutMs": 20000,
+  "maxBytes": 1024,
+  "replyStderr": true,
+  "replyMaxBytes": 12000,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ctx", "verb"],
+    "properties": {
+      "ctx": { "type": "string", "enum": [] },
+      "verb": { "type": "string", "enum": ["get", "describe", "query", "logs", "nodes", "create", "patch", "restart", "dm"] },
+      "args": { "type": "string", "maxLength": 400 }
+    }
+  }
+}

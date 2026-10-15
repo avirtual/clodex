@@ -1231,6 +1231,7 @@ const SessionManager = createSessionManager({
     termAvailableFor,
     termExec,
     termRead,
+    getCtlService: () => ctlService,
     whichBin,
     writeClaudeDigestFile,
     readVoiceCapability: readVoiceCapabilityCached,
