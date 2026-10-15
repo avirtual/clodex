@@ -257,10 +257,74 @@
 }
 
 .mv-compose-text,
+.mv-edit-text,
+.mv-compose-tags {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  background: var(--bg-elevated, #2a2a3a);
+  color: inherit;
+}
+
+.mv-compose-text,
 .mv-edit-text {
   min-height: 80px;
   resize: vertical;
-  font: inherit;
+}
+
+.mv-compose-title {
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+.mv-compose-pin {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.92em;
+  opacity: 0.85;
+}
+
+.mv-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.mv-add,
+.mv-compose-save,
+.mv-compose-cancel,
+.mv-edit-save,
+.mv-edit-cancel {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  background: var(--bg-elevated, #2a2a3a);
+  color: var(--text, #ddd);
+}
+
+.mv-compose-save,
+.mv-edit-save {
+  background: var(--accent, #e94560);
+  color: #fff;
+}
+
+.mv-add:hover:not(:disabled),
+.mv-compose-save:hover:not(:disabled),
+.mv-compose-cancel:hover,
+.mv-edit-save:hover:not(:disabled),
+.mv-edit-cancel:hover {
+  filter: brightness(1.25);
+}
+
+.mv-compose-save:disabled,
+.mv-edit-save:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .mv-edit-btn {

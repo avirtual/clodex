@@ -255,7 +255,10 @@ module.exports.activate = (rhost) => {
         submitDirective(agent, { text: String(text.value ?? ''), tags: String(tags.value ?? ''), operatorPinned: !!pinBox.checked }, save)
           .catch((e) => rhost.log.error('add failed', e));
       });
-      for (const n of [text, tags, pinLabel, save, cancel]) form.appendChild(n);
+      const actions = el('div', 'mv-actions');
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      for (const n of [text, tags, pinLabel, actions]) form.appendChild(n);
       composeBar.appendChild(form);
     }
 
@@ -308,7 +311,10 @@ module.exports.activate = (rhost) => {
         saveEdit(agent, u, text.value, save, () => { bodyEl.textContent = u.body; close(); })
           .catch((e) => rhost.log.error('edit failed', e));
       });
-      for (const n of [text, save, cancel]) editor.appendChild(n);
+      const actions = el('div', 'mv-actions');
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+      for (const n of [text, actions]) editor.appendChild(n);
       card.removeChild(bodyEl);
       card.appendChild(editor);
     }
