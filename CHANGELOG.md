@@ -18,6 +18,7 @@ blocks a release.
 - [agent:term read] [tail N | grep <regex>] (and the term_read MCP tool) returns the agent's own terminal tab's scrollback as plain text — the last N lines (default 50, max 400) or the last 50 lines matching a pattern, capped at 16 KB — so an agent can look at what the operator ran without a copy-paste.
 - A seat resumed after a host restart is told, on its first turn, which of its clodex-monitor watches and long exec runs the restart killed, so "is it still running?" is answered truthfully instead of from stale memory; nothing is re-run.
 - A seat's allowed directories now include the resolved location of its message and image files (the per-seat messages dir is a symlink into sessions/<seat>/), so a Claude seat running with permissions on no longer stops on an "outside the working directories" dialog the first time a message arrives as a file.
+- A spilled message that reaches a seat through its hook is inlined again (up to 10 KB): the hook compared the file against the shared messages dir while every seat's files live under its own session dir, so since the seat layout landed every attached message cost a Read call.
 
 ### Teams
 
