@@ -2900,15 +2900,15 @@ function createTicketMethods(deps, shared) {
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
         : '';
+      const remoteLine = remote
+        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
+        : '';
       // Rendered beside the spec, never into it: `ticket.spec` is the lead's text and only `respec` replaces it.
       const taskDirLine = this._ticketTaskDirRender(team, ticket).line;
       // Rides every dispatch, replays included: a respawned seat has no memory of the verb.
       const closeLine = ticketCloseLine(ticket.id);
       // Every dispatch spills (close line ~410 chars, worktree ~730, threshold 500), so the pointer line must
       // carry the id and the close verb; a spilled body shows only "Message (N bytes) attached".
-      const remoteLine = remote
-        ? `REMOTE: you are on ${seat.slice(seat.indexOf('@') + 1)}; this ticket's board is on ${SELF_LABEL}; report by dm to ${team.lead}@${SELF_LABEL} (task done from your host does not reach this board yet).\n`
-        : '';
       const r = this._gatedDeliver(seat, fromName, `${prelude}${head}${remoteLine}${supersededLine}${backlogLine}${wtLine}${areaLine}${sharedLine}${taskDirLine}${closeLine}${specText}`, urgent,
         replay
           ? `[ticket ${ticket.id} REPLAY] close with ${ticketCloseVerb(ticket.id)}`
