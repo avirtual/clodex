@@ -415,7 +415,7 @@ test('C2b (d) a second ticket to the same remote seat gets its own tree and leav
   await r.settle();
   const first = r.one('t1').worktree;
   fsReal.writeFileSync(pathReal.join(first.path, 'mark.txt'), 'first\n');
-  r.task({ sub: 'add', who: 'x@p', start: true, body: `${SPEC}\nsecond` });
+  r.task({ sub: 'add', who: 'x@p', start: true, body: 'build the second gadget\nartifact tasks/second/SPEC.md' });
   await r.settle();
   const second = r.one('t2').worktree;
   assert.ok(second && second.path, 'ENTER: the second ticket minted a tree');
