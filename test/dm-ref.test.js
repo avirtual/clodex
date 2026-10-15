@@ -130,7 +130,7 @@ test('t1829 _deliverClaimedDms delivers two claimed records sharing a ref once',
 test('t1829 enqueueOutbox without a ref writes no ref key; with one it carries it', () => {
   const root = mkTmpRoot('clodex-dm-ref-');
   const a = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5 }, '1');
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(a.file, 'utf8')), { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5 });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', a.file), 'utf8')), { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5 });
   const b = enqueueOutbox(root, 'laptop', { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, ref: 'r1' }, '2');
-  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.file, 'utf8')), { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, ref: 'r1' });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root, 'laptop', b.file), 'utf8')), { from: 'a', to: 'b', body: 'x', urgent: false, ts: 5, ref: 'r1' });
 });
