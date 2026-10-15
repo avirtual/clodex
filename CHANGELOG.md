@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.125.0 — 2026-10-15
+
 ### Messaging
 
 - [agent:term read] [tail N | grep <regex>] (and the term_read MCP tool) returns the agent's own terminal tab's scrollback as plain text — the last N lines (default 50, max 400) or the last 50 lines matching a pattern, capped at 16 KB — so an agent can look at what the operator ran without a copy-paste.
