@@ -8,6 +8,7 @@
 // the class), and the create() name-collision guard (the pre-spawn path).
 // The spawn/create happy path and intent dispatch need a live PTY / CLI and are
 // left to integration + Bogdan's GUI smoke test.
+const RETIRED = ' — the in-place cut is retired; use [agent:probe]';
 const { test } = require('node:test');
 const assert = require('node:assert');
 const { intentEnabled } = require('../intent-catalog');
@@ -1662,7 +1663,7 @@ test('near-miss bounce: the WHOLE valid-intents string is pinned, byte for byte'
     // this seat was granted. Omitting a granted verb here is the defect that put
     // term in it — a seat that typos `[agent:term exex]` would be handed a list
     // missing the one verb it can actually use.
-    + 'Valid intents: dm, sub, resend, who, name, context, scratch, memory, spawn, file, exec, remind, shout, team-review, review-done, task, term, reboot, end. '
+    + 'Valid intents: dm, sub, resend, who, name, context, probe, scratch, memory, spawn, file, exec, remind, shout, team-review, review-done, task, term, reboot, end. '
     + 'To quote an intent literally, put it in a ``` code fence or escape it as \\[agent:…].',
   );
 });
@@ -20868,7 +20869,7 @@ test('scratch begin: refused when the reply went on to call tools — the ack wo
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
   assert.strictEqual(f.injected[0],
     '[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
-    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.' + RETIRED);
   assert.strictEqual(f.s._scratch, undefined);
 });
 
@@ -20969,7 +20970,7 @@ test('scratch begin (wire): a reply that goes on to call tools is still refused 
   await waitFor(() => f.injected.length > 0);
   assert.strictEqual(f.injected[0],
     '[agent:scratch] begin refused: it must be the last line of a reply (your reply went on to '
-    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.');
+    + 'call tools). Emit it alone and stop; the episode opens when Clodex acks it. Not marked.' + RETIRED);
   assert.strictEqual(f.s._scratch, undefined);
   assert.strictEqual(f.s._scratchPendingBegin, null);
 });
@@ -20988,7 +20989,7 @@ test('scratch begin (wire): the wait times out on a transcript that moved on —
   t.mock.timers.tick(1);
   assert.strictEqual(f.injected[0],
     '[agent:scratch] begin refused: the transcript moved on before the turn end could be confirmed '
-    + '(the wait timed out after 120s). Emit it again as the last line of your next reply. Not marked.');
+    + '(the wait timed out after 120s). Emit it again as the last line of your next reply. Not marked.' + RETIRED);
   assert.strictEqual(f.s._scratch, undefined, 'no mark');
   assert.strictEqual(f.s._scratchPendingBegin, null, 'and no wait left armed');
 });
@@ -21054,7 +21055,7 @@ test('scratch cancel: drops the mark, cuts nothing, and says so', () => {
   assert.strictEqual(f.s._scratch, null);
   assert.strictEqual(f.injected[1],
     `[agent:scratch] episode cancelled · mark ${n} is dropped. Nothing was cut; everything `
-    + 'you read since begin stays in your transcript as ordinary history.');
+    + 'you read since begin stays in your transcript as ordinary history.' + RETIRED);
   assert.strictEqual(f.read(), before, 'the transcript is untouched');
 });
 
@@ -21069,7 +21070,7 @@ test('scratch cancel: a label whose begin is still pending is acknowledged, not 
     'ENTER: the mark a request is pending');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'a', replay: false, body: '' });
   assert.strictEqual(f.s._scratchPendingBegin, null, 'the pending request is gone');
-  assert.deepStrictEqual(f.injected, ['[agent:scratch] mark a cancelled before it was set']);
+  assert.deepStrictEqual(f.injected, ['[agent:scratch] mark a cancelled before it was set' + RETIRED]);
 });
 
 test('scratch cancel: a bare cancel while an unlabelled begin is pending acknowledges dropping it', () => {
@@ -21083,13 +21084,13 @@ test('scratch cancel: a bare cancel while an unlabelled begin is pending acknowl
     'ENTER: the anonymous begin is pending and no episode is open');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', replay: false, body: '' });
   assert.strictEqual(f.s._scratchPendingBegin, null, 'the pending begin is gone');
-  assert.deepStrictEqual(f.injected, ['[agent:scratch] pending begin cancelled before it opened']);
+  assert.deepStrictEqual(f.injected, ['[agent:scratch] pending begin cancelled before it opened' + RETIRED]);
 });
 
 test('scratch cancel: with no mark open it says so rather than pretending it dropped one', () => {
   const f = mkScratch();
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', replay: false, body: '' });
-  assert.strictEqual(f.injected[0], '[agent:scratch] cancel: no episode is open — nothing was cut.');
+  assert.strictEqual(f.injected[0], '[agent:scratch] cancel: no episode is open — nothing was cut.' + RETIRED);
 });
 
 test('scratch end: a bodyless end is REFUSED and the mark stays open', () => {
@@ -21101,7 +21102,7 @@ test('scratch end: a bodyless end is REFUSED and the mark stays open', () => {
   assert.strictEqual(f.injected[1],
     '[agent:scratch] end refused: the summary body is empty — an empty summary is a rewind that '
     + 'loses the work. Re-emit [agent:scratch end] with the briefing (what you now know, what you '
-    + `did), closed by [agent:end]. Nothing was cut; the mark ${n} is still open.`);
+    + `did), closed by [agent:end]. Nothing was cut; the mark ${n} is still open.` + RETIRED);
   assert.ok(f.s._scratch,
     'the mark survives a refusal. Deliberately not treated as a cancel: "I changed my mind" and "I '
     + 'forgot the body" are different, and the second is the one that silently loses an hour of work');
@@ -21110,7 +21111,7 @@ test('scratch end: a bodyless end is REFUSED and the mark stays open', () => {
 test('scratch end: with no mark and no tombstone it says no episode is open', () => {
   const f = mkScratch();
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'end', replay: false, body: 'a summary' });
-  assert.strictEqual(f.injected[0], '[agent:scratch] end refused: no episode is open — nothing was cut.');
+  assert.strictEqual(f.injected[0], '[agent:scratch] end refused: no episode is open — nothing was cut.' + RETIRED);
 });
 
 test('scratch end: the §3 steps run in ORDER — park, keeper, kill, bak, tmp, rename, create', async () => {
@@ -21423,7 +21424,7 @@ test('scratch end: a SECOND end while one is parked for turn-end says so instead
   assert.strictEqual(f.injected.length, n + 1, 'the second end got a reply');
   assert.strictEqual(f.injected[f.injected.length - 1],
     `[agent:scratch] end already pending for mark ${f.s._scratch.nonce} — waiting for your reply to `
-    + 'finish. Nothing was cut yet; the first end is the one that will fire.');
+    + 'finish. Nothing was cut yet; the first end is the one that will fire.' + RETIRED);
   assert.strictEqual(f.s._scratch.closing.body, 'first',
     'and the FIRST body is still the one that will be cut with — a silent return looked identical '
     + 'to a model that had lost its episode, and the summary it would rewrite is the one already parked');
@@ -22162,7 +22163,7 @@ test('scratch: a clear voids BOTH stores, and `rewind <L>` bounces with the clea
   assert.match(f.injected[f.injected.length - 1], /^\[agent:scratch\] rewind refused: the conversation was cleared after the mark — every mark is gone/);
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'a', replay: false, body: 'x' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.',
+    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.' + RETIRED,
     'the tomb is spent by the first bounce');
 });
 
@@ -22191,7 +22192,7 @@ test('scratch mark: the same label twice REPLACES the mark and says so on line 2
   assert.strictEqual(f.s._scratchMarks.size, 1);
   const lines = f.injected[1].split('\n');
   assert.ok(lines[0].startsWith(`${SCRATCH_ACK_PREFIX_T}${second} · label a`));
-  assert.strictEqual(lines[1], 'Label a re-set: the earlier point is dropped; what you read since it is ordinary history and will NOT be cut.');
+  assert.strictEqual(lines[1], 'Label a re-set: the earlier point is dropped; what you read since it is ordinary history and will NOT be cut.' + RETIRED);
 });
 
 test('scratch mark: two labels at ONE point are refused — the second is not marked', () => {
@@ -22199,7 +22200,7 @@ test('scratch mark: two labels at ONE point are refused — the second is not ma
   scratchPrefix(f);
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'a', replay: false, body: '' });
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'mark', label: 'b', replay: false, body: '' });
-  assert.strictEqual(f.injected[1], '[agent:scratch] mark refused: "a" already marks this exact point — one label per point. Not marked.');
+  assert.strictEqual(f.injected[1], '[agent:scratch] mark refused: "a" already marks this exact point — one label per point. Not marked.' + RETIRED);
   assert.strictEqual(f.s._scratchMarks.has('b'), false);
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'begin', replay: false, body: '' });
   assert.ok(f.s._scratch && f.s._scratch.sizeAtBegin === f.s._scratchMarks.get('a').sizeAtBegin,
@@ -22214,12 +22215,12 @@ test('scratch cancel <label>: drops that mark ONLY, records a cancelled row with
   const b = scratchNamed(f, tape, 'b').mark;
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'a', replay: false, body: '' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    `[agent:scratch] mark a dropped · mark ${a.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+    `[agent:scratch] mark a dropped · mark ${a.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(f.s._scratchMarks.has('a'), false);
   assert.strictEqual(f.s._scratchMarks.get('b'), b, 'b is untouched');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: 'zz', replay: false, body: '' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    '[agent:scratch] cancel refused: no mark named "zz" is set — marks set: b (most recent first). Nothing was cut.');
+    '[agent:scratch] cancel refused: no mark named "zz" is set — marks set: b (most recent first). Nothing was cut.' + RETIRED);
   const rows = fsReal.readFileSync(pathReal.join(f.root, 'scratch', 'a', 'episodes.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.deepStrictEqual(rows.map((r) => [r.outcome, r.label, r.nonce]), [['cancelled', 'a', a.nonce]]);
   assert.deepStrictEqual(f.order, []);
@@ -22231,7 +22232,7 @@ test('scratch cancel (bare): drops the most recent open mark like a bare rewind 
   const p = scratchNamed(f, tape, 'probe2').mark;
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    `[agent:scratch] mark probe2 dropped · mark ${p.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+    `[agent:scratch] mark probe2 dropped · mark ${p.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(f.s._scratchMarks.has('probe2'), false);
 
   const g = mkScratch();
@@ -22243,12 +22244,12 @@ test('scratch cancel (bare): drops the most recent open mark like a bare rewind 
   assert.ok(b.sizeAtBegin > ep.sizeAtBegin);
   g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.strictEqual(g.injected[g.injected.length - 1],
-    `[agent:scratch] mark b dropped · mark ${b.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.`);
+    `[agent:scratch] mark b dropped · mark ${b.nonce}. Nothing was cut; everything you read since it stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(g.s._scratchMarks.has('b'), false);
   assert.strictEqual(g.s._scratch, ep, 'the older unlabeled episode stays open');
   g.m._handleScratchIntent(g.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
   assert.strictEqual(g.injected[g.injected.length - 1],
-    `[agent:scratch] episode cancelled · mark ${ep.nonce} is dropped. Nothing was cut; everything you read since begin stays in your transcript as ordinary history.`);
+    `[agent:scratch] episode cancelled · mark ${ep.nonce} is dropped. Nothing was cut; everything you read since begin stays in your transcript as ordinary history.` + RETIRED);
   assert.strictEqual(g.s._scratch, null);
 });
 
@@ -22256,14 +22257,14 @@ test('scratch rewind: an unknown label lists the open marks most recent first; a
   const f = mkScratch();
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: null, replay: false, body: '' });
   assert.strictEqual(f.injected[0],
-    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.');
+    '[agent:scratch] rewind refused: no mark is set — set one with [agent:scratch mark <label>] as the last line of a reply. Nothing was cut.' + RETIRED);
   const tape = scratchPrefix(f);
   scratchNamed(f, tape, 'a');
   scratchResearch(f, 'read one');
   scratchNamed(f, tape, 'b');
   f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'rewind', label: 'zz', replay: false, body: 'x' });
   assert.strictEqual(f.injected[f.injected.length - 1],
-    '[agent:scratch] rewind refused: no mark named "zz" is set — marks set: b, a (most recent first). Nothing was cut.');
+    '[agent:scratch] rewind refused: no mark named "zz" is set — marks set: b, a (most recent first). Nothing was cut.' + RETIRED);
 });
 
 test('scratch scratchMark (operator): marks at END OF FILE on an idle seat — not at the last reply — and a rewind to it drops nothing the operator saw', async () => {
@@ -24602,7 +24603,7 @@ test('_scratchMark: a begin while the open episode\'s end is still pending is re
   assert.strictEqual(f.s._scratch, prior, 'the pending episode keeps the slot');
   const last = f.injected[f.injected.length - 1];
   assert.ok(last.startsWith('[agent:scratch] begin refused: end already pending'), last);
-  assert.ok(last.endsWith('Not marked; begin again after it settles.'), last);
+  assert.ok(last.endsWith('Not marked; begin again after it settles.' + RETIRED), last);
 });
 
 test('_streamEnqueue: after the init watchdog fires, a second composer send queues behind the kept item instead of overtaking it', async (t) => {

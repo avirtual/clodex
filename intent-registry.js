@@ -72,6 +72,13 @@ function parseScratch(cleaned) {
   return { type: 'scratch', sub, label, replay: !!m[3], body: m[4] };
 }
 
+function parseProbe(cleaned) {
+  const m = cleaned.match(/^\[agent:probe(?:\s+([^\]]*?))?\s*\]\s*(.*)$/s);
+  if (!m) return null;
+  const head = (m[1] || '').trim().toLowerCase();
+  return { type: 'probe', sub: head || 'begin', body: m[2] };
+}
+
 function parseMemory(cleaned) {
   const m = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   return m ? { type: 'memory', sub: m[1].toLowerCase(), body: m[2] } : null;
@@ -339,6 +346,7 @@ const CORE_ROWS = [
   { type: 'name', parse: parseName, bodyMode: NONE },
   { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
   { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || i.sub === 'rewind' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
+  { type: 'probe', parse: parseProbe, bodyMode: (i) => (i.sub === 'begin' || i.sub === 'end' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   // Line-scoped, unlike every other body-carrying row here: the command is
@@ -713,7 +721,7 @@ function pluginGrammarLines(intentsList, plugins) {
 // parse nor catalog order, and its omission of `team` is a known gap left as-is.
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
-  'dm', 'sub', 'resend', 'who', 'name', 'context', 'scratch', 'memory', 'spawn', 'file', 'exec',
+  'dm', 'sub', 'resend', 'who', 'name', 'context', 'probe', 'scratch', 'memory', 'spawn', 'file', 'exec',
   'remind', 'shout', 'team-review', 'review-done', 'task', 'term', 'reboot',
 ];
 

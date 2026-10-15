@@ -414,6 +414,12 @@ Codex and write-failure paths type the body as before — no snapshot.
 
 ## 3a. Scratch episodes
 
+The surface is named `probe`: `[agent:probe] <question + return shape>` forks
+a research clone (the clone path below), the clone closes with
+`[agent:probe end] <summary>`, and the parent drops it with
+`[agent:probe cancel]`. The `scratch` verbs are aliases; the in-place cut
+described here is retired and replies say so.
+
 A Claude seat that is about to read a lot, and will carry only the conclusion,
 opens an episode with `[agent:scratch begin]`. What Clodex removes afterwards is
 the seat's own transcript — a **rewind of the conversation, never of the work**:

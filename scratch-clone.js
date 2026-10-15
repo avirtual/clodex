@@ -4,10 +4,10 @@ const fs = require('fs');
 const { randomUUID, randomBytes } = require('crypto');
 const { removeSeat } = require('./seat-layout');
 
-const SCRATCH_CLONE_REFUSAL = 'you are a scratch clone — put it in your summary; only [agent:scratch end] and harness subagents are yours';
+const SCRATCH_CLONE_REFUSAL = 'you are a probe clone — put it in your summary; only [agent:probe end] and harness subagents are yours';
 
 function scratchCloneBrief(parentName, brief) {
-  return `You are a scratch clone of ${parentName}. Do exactly this, then end with [agent:scratch end] <summary> `
+  return `You are a probe clone of ${parentName}. Do exactly this, then end with [agent:probe end] <summary> `
     + '(closed by [agent:end]); you receive no messages and your other intents are refused:\n' + brief;
 }
 
@@ -45,7 +45,7 @@ function createScratchCloneMethods(deps, shared) {
       }
       const live = parent._scratchClone ? this.sessions.get(parent._scratchClone) : null;
       if (parent._scratchClone && (!live || !live._dead)) {
-        reply(`[agent:scratch] begin refused: clone ${parent._scratchClone} is still running — wait for its summary or [agent:scratch cancel] it.`);
+        reply(`[agent:scratch] begin refused: clone ${parent._scratchClone} is still running — wait for its summary or [agent:probe cancel] it.`);
         return;
       }
       const entry = getPersistence().get(parent.name);
@@ -146,7 +146,7 @@ function createScratchCloneMethods(deps, shared) {
       const body = String(intent.body == null ? '' : intent.body).trim();
       if (!body) {
         reply('[agent:scratch] end refused: the summary body is empty — an empty summary loses the work. Re-emit '
-          + '[agent:scratch end] with the briefing (what you now know, what you did), closed by [agent:end].');
+          + '[agent:probe end] with the briefing (what you now know, what you did), closed by [agent:end].');
         return;
       }
       this._scratchCloneToParent(clone, `[scratch] clone summary:\n${body}`);

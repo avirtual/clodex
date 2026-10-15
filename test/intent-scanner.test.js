@@ -103,6 +103,21 @@ test('parseIntent: context sub-command + optional body', () => {
   assert.deepStrictEqual(r, { type: 'context', sub: 'compact', body: 'keep going on task X' });
 });
 
+test('t1838 parseIntent: probe — a bare head is begin with its body, end carries a body, cancel is bare, any other head word parses for the bounce', () => {
+  assert.deepStrictEqual(parseIntent('[agent:probe] q'), { type: 'probe', sub: 'begin', body: 'q' });
+  assert.deepStrictEqual(parseIntent('[agent:probe]'), { type: 'probe', sub: 'begin', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:probe end] s'), { type: 'probe', sub: 'end', body: 's' });
+  assert.deepStrictEqual(parseIntent('[agent:probe cancel]'), { type: 'probe', sub: 'cancel', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:probe mark x]'), { type: 'probe', sub: 'mark x', body: '' });
+  const registry = require('../intent-registry');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:probe] q')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:probe]')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:probe end] s')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:probe cancel]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:probe mark x]')), 'none');
+  assert.ok(registry.validIntentNames([]).includes('probe'));
+});
+
 test('parseIntent: scratch — five sub-verbs, only `end` and `rewind` carrying a body', () => {
   assert.deepStrictEqual(parseIntent('[agent:scratch begin]'),
     { type: 'scratch', sub: 'begin', label: null, replay: false, body: '' });

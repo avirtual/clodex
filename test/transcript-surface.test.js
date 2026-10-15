@@ -79,7 +79,7 @@ test('ENTER: every record kind transcript-records.js emits has a row', () => {
 });
 
 const VERB_ROWS = [
-  ['dm', C], ['resend', I], ['who', I], ['name', I], ['context', I], ['scratch', I], ['memory', I],
+  ['dm', C], ['resend', I], ['who', I], ['name', I], ['context', I], ['scratch', I], ['probe', I], ['memory', I],
   ['file', C], ['term', I], ['exec', I], ['remind', I], ['shout', C], ['team-review', I],
   ['review-done', C], ['reboot', I], ['task', C], ['team-create', I], ['team', I], ['spawn', I],
 ];

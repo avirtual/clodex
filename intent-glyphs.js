@@ -7,6 +7,7 @@ const g = (glyph, label) => Object.freeze({ glyph, label });
 
 const CONTEXT = { compact: g('⊟', 'compact'), clear: g('⌫', 'clear'), reload: g('↺', 'reload') };
 const SCRATCH = { begin: g('⟦', 'scratch'), end: g('⟧', 'result'), rewind: g('⇤', 'rewind'), mark: g('✱', 'mark'), cancel: g('⊗', 'cancel') };
+const PROBE = { begin: g('⟦', 'probe'), end: g('⟧', 'result'), cancel: g('⊗', 'cancel') };
 const TASK = {
   assign: g('⇥', 'assign'),
   start: g('⇄', 'start'),
@@ -26,6 +27,7 @@ const CORE = {
   name: () => g('@', 'name'),
   context: (i) => CONTEXT[i.sub] || g('⊟', String(i.sub || 'context')),
   scratch: (i) => SCRATCH[i.sub] || g('⟦', String(i.sub || 'scratch')),
+  probe: (i) => PROBE[i.sub] || g('⟦', 'probe'),
   memory: (i) => g('◈', String(i.sub || 'memory')),
   file: () => g('▢', 'show'),
   term: () => g('▤', 'terminal'),
@@ -53,6 +55,7 @@ const REPLY_GLYPHS = Object.freeze({
   name: g('@', 'name'),
   context: g('⊟', 'context'),
   scratch: g('⟦', 'scratch'),
+  probe: g('⟦', 'probe'),
   memory: g('◈', 'memory'),
   file: g('▢', 'show'),
   term: g('▤', 'terminal'),

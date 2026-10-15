@@ -144,7 +144,7 @@ test('t1539 bodied begin: one create() with fork=true on the parent sid, the par
   const first = f.injected.filter((i) => i.to === name);
   assert.strictEqual(first.length, 1, 'the clone gets exactly one turn: its brief');
   assert.strictEqual(first[0].text, scratchCloneBrief('a', 'read the poller and say where strip levels live'));
-  assert.ok(first[0].text.startsWith('You are a scratch clone of a. Do exactly this, then end with [agent:scratch end] <summary>'));
+  assert.ok(first[0].text.startsWith('You are a probe clone of a. Do exactly this, then end with [agent:probe end] <summary>'));
   assert.strictEqual(f.s._scratchClone, name);
   assert.deepStrictEqual(f.replies(), [], 'the success ack never wakes the parent');
   assert.deepStrictEqual(f.passive.filter((p) => p.to === 'a').map((p) => p.text),
@@ -324,6 +324,46 @@ test('t1539 parent kill kills the clone; parent cancel kills it with no summary'
 test('t1539 grammar: a bodied begin is greedy, a bare begin is not', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin] look at x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:scratch begin]')), 'none');
+});
+
+test('t1838 probe forks through the clone arm: one create(), the brief names probe end, and the clone\'s probe end returns the summary from scratch and retires it', async () => {
+  const f = mkClone();
+  await f.m._handleIntent('a', { type: 'probe', sub: 'begin', body: 'where do strip levels live; 3 lines' });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(f.creates.length, 1, 'exactly one create()');
+  const clone = f.clone();
+  assert.ok(f.injected.some((i) => i.to === clone.name && i.text === scratchCloneBrief('a', 'where do strip levels live; 3 lines')));
+  assert.match(scratchCloneBrief('a', 'q'), /\[agent:probe end\] <summary>/);
+  assert.ok(!/scratch/.test(scratchCloneBrief('a', 'q')) && !/scratch/.test(SCRATCH_CLONE_REFUSAL));
+  await f.m._handleIntent(clone.name, { type: 'probe', sub: 'end', body: 'in stripAsserted' });
+  assert.deepStrictEqual(f.delivered, [{ to: 'a', from: 'scratch', body: '[scratch] clone summary:\nin stripAsserted' }]);
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(f.kills, [clone.name]);
+  assert.strictEqual(f.s._scratchClone, null);
+});
+
+test('t1838 probe cancel drops a live clone with no summary; with none it says so; an unknown sub bounces naming the three', async () => {
+  const f = mkClone();
+  await f.m._handleIntent('a', { type: 'probe', sub: 'cancel', body: '' });
+  assert.strictEqual(f.replies().at(-1), '[agent:probe] cancel: no clone is running.');
+  await f.m._handleIntent('a', { type: 'probe', sub: 'begin', body: 'q' });
+  await new Promise((r) => setImmediate(r));
+  const clone = f.clone();
+  await f.m._handleIntent('a', { type: 'probe', sub: 'cancel', body: '' });
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(f.kills, [clone.name]);
+  assert.strictEqual(f.replies().at(-1), '[scratch] clone cancelled, no summary');
+  await f.m._handleIntent('a', parseIntent('[agent:probe mark x]'));
+  assert.strictEqual(f.replies().at(-1), '[agent:probe] unknown sub-command "mark x" (use [agent:probe] <question>, [agent:probe end] <summary>, [agent:probe cancel])');
+  assert.strictEqual(f.creates.length, 1);
+});
+
+test('t1838 the in-place scratch verbs still answer, every reply naming probe', async () => {
+  const f = mkClone();
+  f.m._handleScratchIntent(f.s, { type: 'scratch', sub: 'cancel', label: null, replay: false, body: '' });
+  await new Promise((r) => setImmediate(r));
+  assert.match(f.replies().at(-1), / — the in-place cut is retired; use \[agent:probe\]$/);
+  assert.strictEqual(f.creates.length, 0);
 });
 
 test('t1541 the clone carries the parent\'s effective agents and skills, so items scoped to the parent\'s name by sessions: survive the new name', async () => {
