@@ -145,10 +145,13 @@ const SCRATCH_BAK_TTL_MS = 7 * 24 * 3600 * 1000;
 const isScratchCutText = (text) => typeof text === 'string' && SCRATCH_CUT_TEXT_PREFIXES.some((p) => text.startsWith(p));
 const scratchRealArrivals = (list) => (Array.isArray(list) ? list : []).filter((a) => !isScratchCutText(a && a.text));
 
+const SCRATCH_RETIRED_SUFFIX = ' — the in-place cut is retired; use [agent:probe]';
+const PROBE_SUBS = new Set(['begin', 'end', 'cancel']);
 const SCRATCH_DISPATCH_TYPES = new Set(['task', 'spawn', 'team', 'team-create', 'team-review', 'review-done']);
 const openBodyTails = new WeakMap();
 const endsContextVerb = (intent) => intent.type === 'review-done'
   || (intent.type === 'scratch' && (intent.sub === 'end' || intent.sub === 'rewind'))
+  || (intent.type === 'probe' && intent.sub === 'end')
   || (intent.type === 'context' && (intent.sub === 'clear' || intent.sub === 'compact' || intent.sub === 'reload'));
 
 const ECHOED_DUP_TYPES = new Set(['task', 'remind', 'spawn', 'team']);
@@ -5348,7 +5351,7 @@ function createSessionManager(deps) {
         return;
       }
 
-      if (session && session.clone && !(intent.type === 'scratch' && intent.sub === 'end')) {
+      if (session && session.clone && !((intent.type === 'scratch' || intent.type === 'probe') && intent.sub === 'end')) {
         this._injectText(session, `[agent:${intent.type}] ${SCRATCH_CLONE_REFUSAL}`, { parkable: true });
         return;
       }
@@ -5385,7 +5388,7 @@ function createSessionManager(deps) {
         }
       }
 
-      if (!intentEnabledForSeat(intent.type, getPersistence().get(senderName))) {
+      if (!intentEnabledForSeat(intent.type === 'probe' ? 'scratch' : intent.type, getPersistence().get(senderName))) {
         if (session && session.agentType) {
           const listed = (getPersistence().get(senderName) || {}).intents;
           const why = intent.type === 'sub' && Array.isArray(listed) && !listed.includes(LIVING_MARK)
@@ -5402,7 +5405,7 @@ function createSessionManager(deps) {
       if (openTail) {
         const head = `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}]`;
         const tail = `${openTail} following line${openTail === 1 ? '' : 's'}`;
-        const cloneBegin = intent.type === 'scratch' && intent.sub === 'begin' && intent.body;
+        const cloneBegin = (intent.type === 'scratch' || intent.type === 'probe') && intent.sub === 'begin' && intent.body;
         if (endsContextVerb(intent) || cloneBegin) {
           if (session && session.agentType) {
             const why = cloneBegin ? 'this verb forks a clone on its brief' : 'this verb ends or cuts your context';
@@ -5677,6 +5680,13 @@ function createSessionManager(deps) {
           if (!session || !session.agentType) break;
           Promise.resolve(this._handleScratchIntent(session, intent)).catch((e) => {
             log.error('intent', `scratch ${intent.sub || ''} from ${session.name} failed: ${e.message}`);
+          });
+          break;
+        }
+        case 'probe': {
+          if (!session || !session.agentType) break;
+          Promise.resolve(this._handleProbeIntent(session, intent)).catch((e) => {
+            log.error('intent', `probe ${intent.sub || ''} from ${session.name} failed: ${e.message}`);
           });
           break;
         }
@@ -7025,10 +7035,31 @@ function createSessionManager(deps) {
         return this._scratchCloneBegin(session, intent.body, reply);
       }
       if (intent.sub === 'cancel' && !intent.label && session._scratchClone) { this._scratchCloneCancel(session, reply); return; }
-      if (intent.sub === 'begin') { this._scratchBegin(session, reply); return; }
-      if (intent.sub === 'mark') { this._scratchBegin(session, reply, { label: intent.label }); return; }
-      if (intent.sub === 'cancel') { this._scratchCancel(session, reply, intent); return; }
-      if (intent.sub === 'end' || intent.sub === 'rewind') return this._scratchEnd(session, intent, reply);
+      const retired = (msg) => reply(`${msg}${SCRATCH_RETIRED_SUFFIX}`);
+      if (intent.sub === 'begin') { this._scratchBegin(session, retired); return; }
+      if (intent.sub === 'mark') { this._scratchBegin(session, retired, { label: intent.label }); return; }
+      if (intent.sub === 'cancel') { this._scratchCancel(session, retired, intent); return; }
+      if (intent.sub === 'end' || intent.sub === 'rewind') return this._scratchEnd(session, intent, retired);
+    }
+
+    _handleProbeIntent(session, intent) {
+      const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      if (!PROBE_SUBS.has(intent.sub)) {
+        reply(`[agent:probe] unknown sub-command "${intent.sub}" (use [agent:probe] <question>, [agent:probe end] <summary>, [agent:probe cancel])`);
+        return;
+      }
+      if (session.agentType !== 'claude') {
+        reply('[agent:probe] Claude seats only — a clone forks a Claude transcript.');
+        return;
+      }
+      if (session.clone) { this._scratchCloneEnd(session, intent, reply); return; }
+      if (intent.sub === 'begin') return this._scratchCloneBegin(session, intent.body, reply);
+      if (intent.sub === 'cancel') {
+        if (session._scratchClone) { this._scratchCloneCancel(session, reply); return; }
+        reply('[agent:probe] cancel: no clone is running.');
+        return;
+      }
+      reply('[agent:probe] end is the clone\'s verb — you have no clone summary to return.');
     }
 
     scratchMark(name, label) {

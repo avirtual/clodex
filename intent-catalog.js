@@ -26,7 +26,7 @@ const GATEABLE_INTENTS = [
   { type: 'sub', label: 'Message your own running subagents (sub)' },
   { type: 'who', label: 'List peers (who)' },
   { type: 'context', label: 'Self context control (compact/clear/reload)' },
-  { type: 'scratch', label: 'Scratch episodes — rewind the transcript to a research result (scratch)' },
+  { type: 'scratch', label: 'Probes — fork a research clone that returns a summary (probe)' },
   { type: 'memory', label: 'Memory management (remember/recall)' },
   { type: 'spawn', label: 'Spawn peer sessions (spawn)' },
   { type: 'file', label: 'Surface files on screen (file)' },
