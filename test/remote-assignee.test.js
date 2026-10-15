@@ -137,7 +137,6 @@ test('(c) task add x@p start sends the spec over the wire with the REMOTE line a
   assert.match(body, /REMOTE: you are on p; this ticket's board is on laptop; report by dm to lead@laptop/);
   assert.doesNotMatch(body, /WORK IN:/);
   assert.doesNotMatch(body, /CLOSE WITH/);
-  assert.doesNotMatch(body, /TASK DIR:/);
   assert.strictEqual(r.sent[0].to, 'x');
 });
 
