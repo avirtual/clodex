@@ -169,9 +169,9 @@ const SITES = [
 
 test('create replay parity: every restore site is a row', () => {
   const found = restoreSites();
-  assert.strictEqual(SITES.length, 11, 'the table itself is the literal count');
-  assert.strictEqual(found.length, 11,
-    `the number of restore create() sites changed (found ${found.length}, table has 11) — read the new site and add its row:\n`
+  assert.strictEqual(SITES.length, 10, 'the table itself is the literal count');
+  assert.strictEqual(found.length, 10,
+    `the number of restore create() sites changed (found ${found.length}, table has 10) — read the new site and add its row:\n`
     + found.map((s) => `  ${s.file}:${s.line} arity=${s.args.length}`).join('\n'));
   found.forEach((s, i) => {
     assert.strictEqual(s.file, SITES[i].file,

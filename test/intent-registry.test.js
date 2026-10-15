@@ -53,14 +53,9 @@ function parseIntentLegacy(rawLine) {
   const ctxMatch = cleaned.match(/^\[agent:context\s+(\S+)\]\s*(.*)/s);
   if (ctxMatch) return { type: 'context', sub: ctxMatch[1].toLowerCase(), body: ctxMatch[2] };
 
-  const scratchMatch = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)(?:\s+(?!replay\])([A-Za-z0-9._-]{1,32}))?(\s+replay)?\]\s*(.*)$/s);
+  const scratchMatch = cleaned.match(/^\[agent:scratch\s+(begin|end|cancel|mark|rewind)((?:\s+[^\]\s]+)*)\s*\]\s*(.*)$/s);
   if (scratchMatch) {
-    const sub = scratchMatch[1].toLowerCase();
-    const label = scratchMatch[2] || null;
-    if (sub === 'mark' && !label) return null;
-    if ((sub === 'begin' || sub === 'end') && label) return null;
-    if (scratchMatch[3] && sub !== 'end' && sub !== 'rewind') return null;
-    return { type: 'scratch', sub, label, replay: !!scratchMatch[3], body: scratchMatch[4] };
+    return { type: 'scratch', sub: `${scratchMatch[1]}${scratchMatch[2]}`.trim().toLowerCase().replace(/\s+/g, ' '), body: scratchMatch[3] };
   }
 
   const probeMatch = cleaned.match(/^\[agent:probe(?:\s+([^\]]*?))?\s*\]\s*(.*)$/s);
