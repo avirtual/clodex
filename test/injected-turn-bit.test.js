@@ -217,6 +217,11 @@ test('the same key with no dialog open, or a word typed under one, is still a dr
   g.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
   g.m.write('hand', 'hello');
   assert.strictEqual(isDraftOpen(g.s), true);
+  const k = boot();
+  k.s.needsAttention = { kind: 'permission', ts: 1, message: 'Bash' };
+  k.m.write('hand', '\x1b[B');
+  assert.strictEqual(isDraftOpen(k.s), true, 'an arrow key moves the dialog cursor, it does not answer');
+  cleanup(k);
   cleanup(h);
   cleanup(g);
 });

@@ -3094,7 +3094,7 @@ function createSessionManager(deps) {
         s._inPaste = sig.inPaste;
         const dialogKey = !wasInPaste && !sig.inPaste
           && s.needsAttention && s.needsAttention.kind === 'permission'
-          && Buffer.byteLength(String(data)) <= 3;
+          && /^(?:[0-9yYnN]|\x1b)$/.test(String(data));
         if (sig.closes) {
           s.lastUserSubmitTs = s.lastUserInputTs;
           s.lastSubmitInjected = false;
