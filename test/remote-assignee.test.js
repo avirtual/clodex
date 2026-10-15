@@ -448,7 +448,7 @@ test('t1835 a done enqueued to the outbox and claimed back from disk closes the 
   r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
   await r.settle();
   r.m._runTicketLoop = () => {};
-  const outbox = mkTmpRoot('clodex-outbox-');
+  const outbox = mkTmpRoot('clodex-ts-');
   enqueueOutbox(outbox, 'laptop', { from: 'x', to: 'board', body: 'built', urgent: false, ts: 5, ref: 'r1', task: { kind: 'done', id: 't1' } }, '1');
   const stripped = claimOutbox(outbox, 'laptop').map(({ task, ...rest }) => ({ ...rest, ref: 'r0' }));
   r.m._deliverClaimedDms('p1', stripped);

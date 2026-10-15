@@ -36,6 +36,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // ── the scanner ────────────────────────────────────────────────────────────
 //
@@ -1322,10 +1323,9 @@ test('the MERGED notice states the opposite tense and keeps its intent off colum
 });
 
 test('t1835 the verifyHold reader scan skips an in-root .clodex-wt ticket tree', () => {
-  const root = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'clodex-wt-scan-'));
+  const root = mkTmpRoot('clodex-ts-');
   fs.mkdirSync(path.join(root, '.clodex-wt', 'x'), { recursive: true });
   fs.writeFileSync(path.join(root, '.clodex-wt', 'x', 'team-tickets.js'), 'verifyHold\n');
   fs.writeFileSync(path.join(root, 'team-tickets.js'), 'verifyHold\n');
   assert.deepStrictEqual(findVerifyHoldReaders(root), ['team-tickets.js']);
-  fs.rmSync(root, { recursive: true, force: true });
 });
