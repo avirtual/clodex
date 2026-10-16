@@ -431,7 +431,10 @@ function createTicketMethods(deps, shared) {
     _handleSpawnIntent(spawner, intent, opts = {}) {
       const reply = typeof opts.onReply === 'function'
         ? (msg) => opts.onReply(msg)
-        : (msg) => this._injectText(spawner, `[agent:spawn] ${msg}`, { parkable: true });
+        : (msg) => {
+          if (/^error:/.test(msg)) this.recordMisfire(spawner, 'bounce', intent, msg);
+          this._injectText(spawner, `[agent:spawn] ${msg}`, { parkable: true });
+        };
       const name = (intent.name || '').trim();
       const seatName = this._validateSeatName(name);
       if (!seatName.ok) { reply(`error: ${seatName.error}`); return; }
@@ -2180,7 +2183,10 @@ function createTicketMethods(deps, shared) {
     },
 
     _handleTeam(session, intent) {
-      const reply = (msg) => this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
+      const reply = (msg) => {
+        if (/^error:/.test(msg)) this.recordMisfire(session, 'bounce', intent, msg);
+        this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
+      };
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
       if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
@@ -2711,7 +2717,10 @@ function createTicketMethods(deps, shared) {
 
     _handleTask(session, intent) {
       let stale = '';
-      const reply = (msg) => this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
+      const reply = (msg) => {
+        if (/^error:/.test(msg)) this.recordMisfire(session, 'bounce', intent, msg);
+        this._injectText(session, `[agent:task] ${msg}${stale}`, { parkable: true });
+      };
       const ack = (msg) => this._taskAck(session, `[agent:task] ${msg}${stale}`);
       if (intent.sub === 'done' && intent.board && intent.board !== SELF_LABEL) {
         const report = String(intent.body == null ? '' : intent.body).trim();

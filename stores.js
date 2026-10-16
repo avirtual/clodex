@@ -32,6 +32,10 @@ const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
 
 const PROMPT_KINDS = ['system', 'append'];
+const MISFIRE_KINDS = Object.freeze(['unclosed-body', 'empty-body', 'disabled', 'schema', 'exec-refused', 'bounce', 'truncated-head']);
+const MISFIRE_KEEP = 5000;
+const MISFIRE_PRUNE_AT = 6000;
+const MISFIRE_DETAIL_MAX = 200;
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
 
 const DEFAULT_SANDBOX_CONFIG = {
@@ -455,6 +459,7 @@ function initStores(userDataPath, {
   const UI_SETTINGS_FILE = path.join(userDataPath, 'ui-settings.json');
   const REMINDERS_FILE = path.join(userDataPath, 'reminders.json');
   const NOTIFICATIONS_FILE = path.join(userDataPath, 'notifications.json');
+  const MISFIRES_FILE = path.join(userDataPath, 'intent-misfires.jsonl');
   const ENV_SCOPES_FILE = path.join(userDataPath, 'env-scopes.json');
   const SKILLS_SEEN_FILE = path.join(userDataPath, 'skills-seen.json');
   const SETUP_FILE = path.join(registryDir, 'setup.json');
@@ -1462,6 +1467,55 @@ function initStores(userDataPath, {
     },
   };
 
+  const numOrNull = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const misfires = {
+    file: MISFIRES_FILE,
+    _lines: null,
+    _readLines() {
+      let raw;
+      try { raw = fs.readFileSync(MISFIRES_FILE, 'utf-8'); } catch { return []; }
+      return raw.split('\n').filter(Boolean);
+    },
+    append({ ts, agent, kind, intent, sub, detail, turnBytes, ctxTokens, sinceCompact } = {}) {
+      if (!MISFIRE_KINDS.includes(kind) || typeof agent !== 'string' || !agent) return false;
+      const row = {
+        ts: numOrNull(ts) ?? Date.now(),
+        agent,
+        kind,
+        intent: String(intent || ''),
+        ...(sub ? { sub: String(sub) } : {}),
+        detail: String(detail == null ? '' : detail).slice(0, MISFIRE_DETAIL_MAX),
+        turnBytes: numOrNull(turnBytes),
+        ctxTokens: numOrNull(ctxTokens),
+        sinceCompact: numOrNull(sinceCompact),
+      };
+      try {
+        fs.appendFileSync(MISFIRES_FILE, JSON.stringify(row) + '\n', { mode: 0o600 });
+      } catch (e) {
+        if (log) log.warn?.('stores', `intent-misfires append failed: ${(e && e.message) || e}`);
+        return false;
+      }
+      this._lines = this._lines === null ? this._readLines().length : this._lines + 1;
+      if (this._lines > MISFIRE_PRUNE_AT) {
+        const keep = this._readLines().slice(-MISFIRE_KEEP);
+        try {
+          atomicWriteFileSync(MISFIRES_FILE, keep.join('\n') + '\n');
+          this._lines = keep.length;
+        } catch (e) {
+          if (log) log.warn?.('stores', `intent-misfires prune failed: ${(e && e.message) || e}`);
+        }
+      }
+      return true;
+    },
+    list() {
+      const out = [];
+      for (const line of this._readLines()) {
+        try { out.push(JSON.parse(line)); } catch {}
+      }
+      return out;
+    },
+  };
+
   const notifications = {
     _listeners: [],
     onChange(fn) {
@@ -2196,10 +2250,10 @@ function initStores(userDataPath, {
 
   return {
     persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings,
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, misfires, notifications, uiSettings,
     envScopes, envDefaults, setupMarker, skillsSeen,
     renameWorkspaceScope,
   };
 }
 
-module.exports = { initStores, SETUP_CHOICES };
+module.exports = { initStores, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };

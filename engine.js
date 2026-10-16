@@ -1256,6 +1256,7 @@ const SessionManager = createSessionManager({
   getPeerManager: () => peerManager,
   getRemindScheduler: () => remindScheduler,
   getReminders: () => reminders,
+  getMisfires: () => misfires,
   getNotifications: () => notifications,
   getSandboxManager: () => sandboxManager,
   getUserDataPath: () => userDataPath,
@@ -2106,7 +2107,7 @@ const toolCache = createToolCache({ whichBin });
       envDefaultsFile: path.join(REGISTRY_DIR, '__no_env_defaults__.json'),
     } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
 
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 

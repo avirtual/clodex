@@ -1,0 +1,16 @@
+{
+  "id": "intent-misfires",
+  "name": "Intent Misfires",
+  "hostApi": "1",
+  "version": "0.1.0",
+  "entry": {
+    "engine": "engine.js",
+    "renderer": "renderer.js"
+  },
+  "style": "style.css",
+  "enabledByDefault": false,
+  "announce": "Every intent the seats in this workspace emitted that Clodex could not act on as written: unclosed or empty bodies, disabled intents, refused exec payloads and bounced verbs, with the seat's context size. Read-only.",
+  "surfaces": {
+    "list": "any"
+  }
+}

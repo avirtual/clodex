@@ -141,6 +141,7 @@ const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
 
 const PROBE_SUBS = new Set(['begin', 'end', 'cancel']);
 const openBodyTails = new WeakMap();
+const intentTurnBytes = new WeakMap();
 const endsContextVerb = (intent) => intent.type === 'review-done'
   || (intent.type === 'scratch' && intent.sub === 'end')
   || (intent.type === 'probe' && intent.sub === 'end')
@@ -717,7 +718,7 @@ function createSessionManager(deps) {
     writeBundlePlugins,
     getPluginBundles,
     readSystemPromptBody,
-    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getMisfires, getNotifications,
     getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
@@ -5239,15 +5240,18 @@ function createSessionManager(deps) {
         intents.push(...ex.unresolved);
       }
       let unknown = null;
+      const turnBytes = Buffer.byteLength(text, 'utf8');
+      for (const intent of intents) intentTurnBytes.set(intent, turnBytes);
       for (const seg of scanIntentLines(lines, { execBodyCap, parseIntent, fencedLines, looksLikeIntent, bodyModeFor })) {
         if (seg.kind === 'near-miss') {
           if (unknown) unknown.more++;
-          else { unknown = { type: 'unknown', text: seg.text.slice(0, 160), more: 0 }; intents.push(unknown); }
+          else { unknown = { type: 'unknown', text: seg.text.slice(0, 160), more: 0 }; intentTurnBytes.set(unknown, turnBytes); intents.push(unknown); }
           continue;
         }
         if (seg.kind !== 'intent') continue;
         if (spillAt && spillAt.has(seg.from)) seg.intent.spill = spillAt.get(seg.from);
         if (seg.tail) openBodyTails.set(seg.intent, seg.tail);
+        intentTurnBytes.set(seg.intent, turnBytes);
         intents.push(seg.intent);
       }
       return intents;
@@ -5272,6 +5276,7 @@ function createSessionManager(deps) {
       const intents = this._extractIntents(text, { receiptsFor: senderName });
       for (const intent of intents) {
         if (meta && meta.interrupted && intent.bodyOpen) {
+          if (s) this.recordMisfire(s, 'unclosed-body', intent, 'turn interrupted with the body still open; not applied');
           if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
             + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
             + 'the partial body was NOT applied; re-emit the whole intent and close it with [agent:end]',
@@ -5349,6 +5354,7 @@ function createSessionManager(deps) {
           // Seat-scoped: this list goes into the seat's context, so naming a plugin verb the seat lacks
           // would advertise a plugin invisible to it.
           const seatPlugins = getPersistence().get(senderName)?.plugins;
+          this.recordMisfire(session, 'bounce', intent, `unrecognized intent ${intent.text}${more}`);
           this._injectText(session,
             `[agent:?] unrecognized intent \`${intent.text}\`${more} — nothing was done. `
             + nearMissFormHint(intent.text)
@@ -5363,6 +5369,7 @@ function createSessionManager(deps) {
       }
 
       if (session && session.clone && !((intent.type === 'scratch' || intent.type === 'probe') && intent.sub === 'end')) {
+        this.recordMisfire(session, 'disabled', intent, SCRATCH_CLONE_REFUSAL);
         this._injectText(session, `[agent:${intent.type}] ${SCRATCH_CLONE_REFUSAL}`, { parkable: true });
         return;
       }
@@ -5407,6 +5414,7 @@ function createSessionManager(deps) {
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
             : `the ${intent.type} intent is disabled for this session${why}${this._deniedIntentPayload(session, intent)}`;
+          this.recordMisfire(session, 'disabled', intent, msg);
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
@@ -5420,6 +5428,7 @@ function createSessionManager(deps) {
         if (endsContextVerb(intent) || cloneBegin) {
           if (session && session.agentType) {
             const why = cloneBegin ? 'this verb forks a clone on its brief' : 'this verb ends or cuts your context';
+            this.recordMisfire(session, 'unclosed-body', intent, `${head} not closed; NOT applied (${tail} after its head)`);
             this._injectText(session, `[agent:intent] the body of ${head} was not closed — it was NOT applied, `
               + `because ${why} and the ${tail} after its head would be lost. `
               + 'Re-emit the whole intent and close it with [agent:end].', { parkable: true });
@@ -5427,6 +5436,7 @@ function createSessionManager(deps) {
           return;
         }
         if (session && session.agentType) {
+          this.recordMisfire(session, 'unclosed-body', intent, `${head} not closed; first line applied, ${tail} treated as prose`);
           this._injectText(session, `[agent:intent] the body of ${head} was not closed — only its first line was `
             + `applied; the ${tail} ${openTail === 1 ? 'was' : 'were'} treated as prose. Close bodies with [agent:end].`,
           { parkable: true });
@@ -5717,7 +5727,7 @@ function createSessionManager(deps) {
         }
         case 'exec': {
           if (!session || !session.agentType) break;
-          this._handleExecIntent(session, intent.cmd, intent.body || '');
+          this._handleExecIntent(session, intent.cmd, intent.body || '', intent);
           break;
         }
         case 'ctl': {
@@ -5727,7 +5737,7 @@ function createSessionManager(deps) {
         }
         case 'remind': {
           if (!session || !session.agentType) break;
-          this._handleRemindIntent(session, intent.spec, intent.body || '');
+          this._handleRemindIntent(session, intent.spec, intent.body || '', intent);
           break;
         }
         case 'shout': {
@@ -5883,6 +5893,28 @@ function createSessionManager(deps) {
       }
     }
 
+    recordMisfire(session, kind, intent, detail) {
+      const store = getMisfires && getMisfires();
+      if (!store || !session || !session.name) return false;
+      const it = intent && typeof intent === 'object' ? intent : { type: String(intent || '') };
+      try {
+        return store.append({
+          ts: Date.now(),
+          agent: session.name,
+          kind,
+          intent: it.type,
+          sub: it.sub || it.cmd || null,
+          detail,
+          turnBytes: intentTurnBytes.has(it) ? intentTurnBytes.get(it) : null,
+          ctxTokens: session.ctxInfo ? session.ctxInfo.tok : null,
+          sinceCompact: null,
+        });
+      } catch (e) {
+        log.warn('intent', `misfire record for ${session.name} failed: ${(e && e.message) || e}`);
+        return false;
+      }
+    }
+
     _spillTyped(session, senderName, intent, pointer, label) {
       const verb = verbKeyOf(intent);
       log.warn('intent', `${verb} ${senderName}: body pointer ${pointer} typed by the agent — intent dropped`);
@@ -5894,6 +5926,7 @@ function createSessionManager(deps) {
       if (!session || !session.agentType) return;
       if (intent.reqId && session.spillMimicReq === intent.reqId) return;
       session.spillMimicReq = intent.reqId || null;
+      this.recordMisfire(session, 'truncated-head', intent, `body was a ${label} (${pointer}) typed by the agent; dropped`);
       this._injectText(session, spillMimicBounce(intent, pointer), { parkable: true });
     }
 
@@ -5906,6 +5939,7 @@ function createSessionManager(deps) {
       });
       this._raiseNote(senderName, `${senderName} typed a spill pointer Clodex never wrote (${pointer}, ${r.reason}); the ${verb} was not applied`);
       if (session && session.agentType) {
+        this.recordMisfire(session, 'truncated-head', intent, `body was a pointer Clodex never wrote (${pointer}, ${r.reason}); dropped`);
         this._injectText(session,
           `[agent:${intent.type}] error: your body arrived as a pointer that Clodex never wrote — Clodex only replaces a body AFTER it has been delivered, so a pointer in your output means you typed it and no body exists. Re-emit the intent with the full text.`,
           { parkable: true });
@@ -6174,7 +6208,7 @@ function createSessionManager(deps) {
       return Number.isFinite(target._turnStartedAt) && target._turnStartedAt > parkedAt;
     }
 
-    _handleRemindIntent(session, spec, body) {
+    _handleRemindIntent(session, spec, body, intent = { type: 'remind' }) {
       const reply = (msg) => this._injectText(session, `[agent:remind] ${msg}`, { parkable: true });
       const who = session.name;
       const sched = getRemindScheduler && getRemindScheduler();
@@ -6182,6 +6216,7 @@ function createSessionManager(deps) {
 
       const parsed = parseRemindSpec(spec);
       if (!parsed.ok) {
+        this.recordMisfire(session, 'bounce', intent, parsed.error);
         reply(parsed.error);
         this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${parsed.error}` });
         return;
@@ -6203,6 +6238,7 @@ function createSessionManager(deps) {
           log.info('intent', `remind cancel ${parsed.id} by ${who}: ok`);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `cancel ${parsed.id}: ok` });
         } else {
+          this.recordMisfire(session, 'bounce', intent, `no reminder ${parsed.id}`);
           reply(`no reminder ${parsed.id}`); // unknown or not this agent's — loud, identical bounce
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: no reminder ${parsed.id}` });
         }
@@ -6275,11 +6311,12 @@ function createSessionManager(deps) {
       });
     }
 
-    _handleExecIntent(session, cmd, rawBody) {
+    _handleExecIntent(session, cmd, rawBody, intent = { type: 'exec', cmd }) {
       const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
       const notice = (msg) => this._injectTextPassive(session, `[agent:exec] ${msg}`);
       const who = session.name;
-      const fail = (msg) => {
+      const fail = (msg, kind = 'exec-refused') => {
+        this.recordMisfire(session, kind, intent, `${cmd}: ${msg}`);
         reply(`${cmd}: ${msg}`);
         log.warn('intent', `exec ${cmd} by ${who}: err (${msg})`);
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `err: ${msg}` });
@@ -6322,7 +6359,7 @@ function createSessionManager(deps) {
       }
       const v = parseAndValidate(entry, rawBody);
       if (!v.ok) {
-        fail(v.error);
+        fail(v.error, 'schema');
         return;
       }
       if (inProcess === 'ctl') {
@@ -6331,7 +6368,7 @@ function createSessionManager(deps) {
         const p = v.value || {};
         const line = `${p.verb || ''} ${p.args || ''}`.trim();
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ctl ${p.ctx}: ${line}` });
-        return this._handleCtlIntent(session, { ctx: p.ctx, line }, (msg) => reply(`${cmd}: ${msg}`), replyMax);
+        return this._handleCtlIntent(session, { ctx: p.ctx, line }, (msg) => reply(`${cmd}: ${msg}`), replyMax, intent);
       }
 
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
@@ -6500,16 +6537,17 @@ function createSessionManager(deps) {
       });
     }
 
-    _handleCtlIntent(session, intent, reply, maxBytes = CTL_REPLY_MAX_BYTES) {
+    _handleCtlIntent(session, intent, reply, maxBytes = CTL_REPLY_MAX_BYTES, origin = intent) {
+      const refuse = (msg) => { this.recordMisfire(session, 'exec-refused', origin, msg); reply(msg); };
       const ctx = String(intent.ctx || '');
       const line = String(intent.line || '').trim();
       const svc = typeof getCtlService === 'function' ? getCtlService() : null;
       if (!svc) {
-        reply('ctl is not enabled on this host');
+        refuse('ctl is not enabled on this host');
         return Promise.resolve(null);
       }
       if (!/^[A-Za-z0-9._-]{1,32}$/.test(ctx)) {
-        reply('ctl: the context must be a name ([A-Za-z0-9._-]{1,32})');
+        refuse('ctl: the context must be a name ([A-Za-z0-9._-]{1,32})');
         return Promise.resolve(null);
       }
       let tokens;
@@ -6518,14 +6556,14 @@ function createSessionManager(deps) {
         tokens = ctlTokenize(line);
         parsed = tokens.length ? ctlParseLine(line) : null;
       } catch (e) {
-        reply(`ctl: ${e.message}`);
+        refuse(`ctl: ${e.message}`);
         return Promise.resolve(null);
       }
       const verb = tokens[0] || '';
       const denied = ctlRefusal(tokens, parsed);
       if (denied) {
         log.warn('ctl', `${session.name} ctx=${ctx} verb=${verb}: refused`);
-        reply(denied);
+        refuse(denied);
         return Promise.resolve(null);
       }
       const clamp = clampReplyBody || ((t, n) => String(t == null ? '' : t).trim().slice(0, n));
