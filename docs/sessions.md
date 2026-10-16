@@ -278,7 +278,8 @@ A team template's `protectCredentials` (array of paths, e.g. `["~/.ssh",
 "~/.aws", "~/.kube", "~/.config/gh", "~/.docker"]`) makes the seat's
 `--settings` file turn on Claude Code's Bash sandbox (`credential-sandbox.js`,
 written by `setupClaudeHook`). Absent or null, the settings file is unchanged.
-An empty list still applies the always-included paths.
+An empty list still applies the always-included paths. An entry must start
+with `/` or `~/`; anything else is dropped.
 
 - **Read confinement.** `sandbox.filesystem.denyRead` and
   `sandbox.credentials.files` (mode `deny`) list the template's paths plus
@@ -290,7 +291,9 @@ An empty list still applies the always-included paths.
   `GITHUB_TOKEN` and `GH_TOKEN`.
 - **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
   sandbox's default would confine them to the cwd). `denyWrite` covers config
-  that an unsandboxed process runs later: `~/.claude`, the shell rc files,
+  that an unsandboxed process runs later: the template's own paths (a
+  credential dir's config can name a command, e.g. `credential_process`),
+  `~/.claude`, `~/.claude.json`, the shell rc files,
   `~/.gitconfig`, `~/.config/git`, `~/Library/LaunchAgents`, `~/.ssh`,
   `/Applications/Clodex.app`, and every entry of the Clodex data dir except
   `<data>/projects` (task artifacts stay writable). The data dir is listed when
