@@ -13,6 +13,7 @@ const {
 const { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require('./plugin-api');
 const { PLUGIN_GLYPH, pluginGlyphOk } = require('./intent-glyphs');
 const { AGENT_NAME_RE } = require('./catalogs');
+const { isFilenameToken } = require('./exec-schema');
 const PLUGIN_REPLY_WAIT_MS = 30 * 1000;
 const PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1000;
 const REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
@@ -339,6 +340,31 @@ const DM_TOOL = Object.freeze({
   },
 });
 
+const EXEC_TOOL = Object.freeze({
+  name: 'exec',
+  description: "Run one of this seat's granted exec commands and return the dispatcher's reply in this turn. Prefer it over the [agent:exec] intent when you need the answer before you continue — a clodexctl read, a status check, a short run's output; the intent is for a run whose result may wake you later. Main agent only: a subagent's call is refused. `payload` is the command's JSON object (omit it or pass {} for a command with no fields); the same grant and schema checks as the intent run, and a refusal names the commands this seat is granted. The reply is the `[agent:exec]` line the intent would have delivered. A reply that is a JSON object with \"status\":\"started\" means the run is detached (ceiling over a minute): its status lines and result arrive in your main conversation, so end your turn and never run it again. Waits up to 70 s; a reply starting `outcome-unknown` is not a failure — the command was not cancelled and its reply still arrives in your main conversation; do not retry.",
+  inputSchema: { type: 'object', properties: { command: { type: 'string' }, payload: { type: 'object' } }, required: ['command'], additionalProperties: false },
+  logKeys: ['command'],
+  toIntent(args) {
+    const a = args == null ? {} : args;
+    const extra = Object.keys(a).find((k) => k !== 'command' && k !== 'payload');
+    if (extra) throw new Error(`unknown argument: ${extra} (use command, payload)`);
+    if (!isFilenameToken(a.command)) throw new Error('command must be an exec command id ([A-Za-z0-9._-]{1,64}, no leading dot)');
+    const p = a.payload === undefined ? {} : a.payload;
+    if (p === null || typeof p !== 'object' || Array.isArray(p)) throw new Error('payload must be a JSON object ({} for a command with no fields)');
+    let json;
+    try { json = JSON.stringify(p); } catch { json = undefined; }
+    if (typeof json !== 'string') throw new Error('payload must be plain JSON');
+    return `[agent:exec ${a.command}] ${json}`;
+  },
+});
+
+const EXEC_REFUSED_RE = /^\[agent:exec\] \S+: (not granted to this seat|invalid command id|no such registered command|registry read failed|malformed registry entry|refused: |payload(: | too large|\.)|ctl: |ctl is not enabled)/;
+const EXEC_ERROR_RE = /^\[agent:exec\] \S+: (run #\d+ )?(run failed|spawn failed|TIMED OUT|exit \d+|killed \()/;
+function classifyExecReply(line) {
+  return EXEC_REFUSED_RE.test(line) ? 'refused' : EXEC_ERROR_RE.test(line) ? 'error' : defaultReplyStatus(line);
+}
+
 const CORE_ROWS = [
   { type: 'dm', parse: parseDm, bodyMode: GREEDY, classifyReply: (line) => (/^\[agent:dm\] refused: |^dm: rate limit — /.test(line) ? 'refused' : /^\[agent:dm\] NOT delivered/.test(line) ? 'error' : defaultReplyStatus(line)), tools: [DM_TOOL] },
   { type: 'sub', parse: parseSub, bodyMode: GREEDY },
@@ -358,7 +384,7 @@ const CORE_ROWS = [
   // running it. A body that must survive vetting cannot span lines, which is
   // what makes this row different from dm/memory/task.
   { type: 'term', parse: parseTerm, bodyMode: NONE, classifyReply: (line) => (/^\[agent:term\] /.test(line) ? 'refused' : 'ok'), tools: [TERM_EXEC_TOOL, TERM_READ_TOOL] },
-  { type: 'exec', parse: parseExec, bodyMode: () => 'json' },
+  { type: 'exec', parse: parseExec, bodyMode: () => 'json', classifyReply: classifyExecReply, tools: [EXEC_TOOL] },
   { type: 'ctl', parse: parseCtl, bodyMode: NONE },
   { type: 'remind', parse: parseRemind, bodyMode: (i) => (/^(list|cancel)\b/i.test(i.spec) ? 'none' : 'greedy') },
   { type: 'shout', parse: parseShout, bodyMode: GREEDY },
@@ -761,6 +787,7 @@ module.exports = {
   TERM_EXEC_TOOL,
   TERM_READ_TOOL,
   DM_TOOL,
+  EXEC_TOOL,
   DM_REF_RE,
   subagentCatalogFor,
   pruneForPlugins,

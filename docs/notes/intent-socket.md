@@ -10,6 +10,8 @@ A plugin's reply comes from the handle `_dispatchPluginIntent` wraps for this ca
 
 A tool call's grant check runs before the plugin's `toIntent`, so a plugin's mapper never runs on a seat that has not enabled it: `mcp-tools.json` is advisory, the live persistence entry is authoritative. A plugin tool row ignores identity fields and always runs as a subagent call: the browser pane's `release`/`close`/`--confirm` refusals rely on main's MCP calls being subagent-shaped. A core tool row (`term_exec`) has no subagent policy, so the verified one-shot `main.` stamp decides; a failed stamp answers the catalog's `unknown tool` text rather than `run`'s subagent refusal, so a subagent cannot learn from the refusal that the tool exists. The grant check runs before identity, so an ungranted call consumes no nonce.
 
+`exec` waits like term and ctl (`EXEC_REPLY_WAIT_MS`); its late reply is `outcome-unknown` with status `ok`, so the MCP loop ring never counts an unknown outcome as a failure.
+
 With no captured acknowledgement, a verified subagent's dm answers that the reply arrives as a note after its next tool call (its note queue), not in the seat's main conversation.
 
 ## isMainThread

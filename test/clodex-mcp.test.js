@@ -605,3 +605,20 @@ test('the dm tool lists name/description/inputSchema only and mcp.log names the 
     assert.ok(!lines[0].includes('SENTINELBODY') && !lines[0].includes('sub.'), lines[0]);
   } finally { await seat.close(); }
 });
+
+test('tools/call exec forwards {command, payload} with the lifted ident and logs the command id, never the payload', async () => {
+  const { EXEC_TOOL } = require('../intent-registry');
+  const listedExec = { name: EXEC_TOOL.name, description: EXEC_TOOL.description, inputSchema: EXEC_TOOL.inputSchema, logKeys: EXEC_TOOL.logKeys };
+  const seat = await fakeSeat(() => ({ ok: true, status: 'ok', reply: '[agent:exec] clodex-ctl-read: [ctl local exit 0] x' }), undefined, catalog('r1', [listedExec]));
+  try {
+    const s = server(seat);
+    const ident = 'main.aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb';
+    const r = await s.handle(call(1, { command: 'clodex-ctl-read', payload: { args: 'SENTINELPAYLOAD' }, ident }, 'exec'));
+    assert.deepStrictEqual(r.result, { content: [{ type: 'text', text: '[agent:exec] clodex-ctl-read: [ctl local exit 0] x' }] });
+    assert.deepStrictEqual(seat.got[0], { cred: CRED, tool: 'exec', args: { command: 'clodex-ctl-read', payload: { args: 'SENTINELPAYLOAD' } }, ident });
+    const lines = fs.readFileSync(path.join(seat.root, 'mcp.log'), 'utf8').split('\n').filter(Boolean);
+    assert.strictEqual(lines.length, 1);
+    assert.match(lines[0], /^\S+ exec clodex-ctl-read ok \d+ms$/);
+    assert.ok(!lines[0].includes('SENTINELPAYLOAD'), lines[0]);
+  } finally { await seat.close(); }
+});

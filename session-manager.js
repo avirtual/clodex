@@ -13,6 +13,7 @@ const DM_REF_CAP = 500;
 const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
 const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
+const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
@@ -5852,6 +5853,7 @@ function createSessionManager(deps) {
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
           if (intent.type === 'ctl') return CTL_REPLY_WAIT_MS;
+          if (intent.type === 'exec') return EXEC_REPLY_WAIT_MS;
           const row = pluginRowFor(intent.type);
           return row && row.handler ? row.replyWaitMs(intent) : 0;
         },
@@ -6355,7 +6357,13 @@ function createSessionManager(deps) {
     }
 
     _handleExecIntent(session, cmd, rawBody, intent = { type: 'exec', cmd }) {
-      const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
+      const scope = intentReplyScope.getStore();
+      const capture = scope && scope.session === session ? (text) => scope.replyTo(text) !== false : null;
+      const reply = (msg) => {
+        const text = `[agent:exec] ${msg}`;
+        if (capture && capture(text)) return;
+        this._injectText(session, text, { parkable: true, ownScope: true });
+      };
       const notice = (msg) => this._injectTextPassive(session, `[agent:exec] ${msg}`);
       const who = session.name;
       const fail = (msg, kind = null) => {
@@ -6376,7 +6384,8 @@ function createSessionManager(deps) {
       }
       const grants = getPersistence().get(who)?.execCommands || [];
       if (!Array.isArray(grants) || !grants.includes(cmd)) {
-        fail('not granted to this seat', 'exec-refused');
+        const granted = Array.isArray(grants) ? grants.filter(isFilenameToken) : [];
+        fail(`not granted to this seat (granted: ${granted.length ? granted.join(', ') : 'none'})`, 'exec-refused');
         return;
       }
       let team;
@@ -6489,9 +6498,18 @@ function createSessionManager(deps) {
             ? Math.floor(entry.statusEveryMs) : EXEC_STATUS_DEFAULT_MS;
           const everyLabel = statusEveryMs % 60000 === 0
             ? `${statusEveryMs / 60000}m` : `${Math.round(statusEveryMs / 1000)}s`;
-          notice(`${cmd}: started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m). `
-            + 'Do not poll, do not re-emit — END YOUR TURN. '
-            + `A status line arrives every ${everyLabel} and the result when it ends.`);
+          const ack = JSON.stringify({
+            status: 'started', runId: seq, cmd, pid: child.pid, ceilingMin, statusEvery: everyLabel,
+            lookup: { command: EXEC_STATUS_QUERY_CMD, payload: { seq } },
+            note: `detached: a status line every ${everyLabel} and the result arrive in your main conversation as [agent:exec] lines — do not poll or run it again; end your turn`,
+          });
+          if (capture && capture(ack)) {
+            this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m) — acknowledged in the socket reply` });
+          } else {
+            notice(`${cmd}: started (run #${seq}, pid ${child.pid}, ceiling ${ceilingMin}m). `
+              + 'Do not poll, do not re-emit — END YOUR TURN. '
+              + `A status line arrives every ${everyLabel} and the result when it ends.`);
+          }
           statusTimer = setInterval(() => {
             const latest = lastStderrLine().slice(0, 200);
             notice(`${cmd}: still running — ${execElapsedLabel(Date.now() - startedAt)} `
@@ -6563,6 +6581,7 @@ function createSessionManager(deps) {
               const shown = body.length > 200 ? `${body.slice(0, 200)}…` : body;
               this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ok: ${shown}` });
             } else {
+              if (!record && capture) capture(`[agent:exec] ${cmd}: ok (exit 0, no output)`);
               log.info('intent', `exec ${cmd} by ${who}: ok`);
               this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: 'ok' });
             }
@@ -8351,4 +8370,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
+module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, EXEC_REPLY_WAIT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };

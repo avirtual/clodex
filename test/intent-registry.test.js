@@ -1447,10 +1447,13 @@ test('subagentCatalogFor lists term_exec only for a seat whose intents name term
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['term'] }), { tools: [listed, listedRead], briefs: [] });
   const { DM_TOOL } = registry;
   const listedDm = { name: 'dm', description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: ['to'] };
-  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listed, listedRead], briefs: [DM_TOOL.brief] });
+  const { EXEC_TOOL } = registry;
+  const listedExec = { name: 'exec', description: EXEC_TOOL.description, inputSchema: EXEC_TOOL.inputSchema, logKeys: ['command'] };
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listed, listedRead, listedExec], briefs: [DM_TOOL.brief] });
   for (const entry of [{ intents: ['*'] }, undefined]) {
-    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
+    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm, listedExec], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
   }
+  assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['exec'] }), { tools: [listedExec], briefs: [] });
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: [] }), { tools: [], briefs: [] });
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['dm', 'term'] }).tools.map((t) => t.name), ['dm', 'term_exec', 'term_read']);
   const { TOOL } = require('../plugins/browser-pane/mcp-tool');
@@ -1469,6 +1472,92 @@ test('a plugin tool named term_exec is refused as held by core', () => {
       (e) => e.code === 'ETOOLTAKEN' && e.tool === 'term_exec' && e.heldBy === 'core' && e.message === 'tool "term_exec" is already registered by plugin "core"');
     assert.strictEqual(registry.pluginRowFor('aaa'), null);
   } finally { registry._resetPluginRows(); }
+});
+
+test('a plugin tool named exec is refused as held by core', () => {
+  try {
+    assert.throws(() => registry.registerIntent({ verb: 'aaa', parse: () => null, tools: [fakeTool('exec')], subagent: fakePolicy }, 'p'),
+      (e) => e.code === 'ETOOLTAKEN' && e.tool === 'exec' && e.heldBy === 'core' && e.message === 'tool "exec" is already registered by plugin "core"');
+    assert.strictEqual(registry.pluginRowFor('aaa'), null);
+  } finally { registry._resetPluginRows(); }
+});
+
+test('exec: the exec core row owns the tool, its schema is closed and it logs the command id', () => {
+  const { EXEC_TOOL } = registry;
+  const { EXEC_REPLY_WAIT_MS } = require('../session-manager');
+  assert.strictEqual(registry.toolRowFor('exec'), registry.rowFor('exec'));
+  assert.deepStrictEqual(EXEC_TOOL.inputSchema, { type: 'object', properties: { command: { type: 'string' }, payload: { type: 'object' } }, required: ['command'], additionalProperties: false });
+  assert.deepStrictEqual(EXEC_TOOL.logKeys, ['command']);
+  assert.ok(!EXEC_TOOL.description.includes('\n'));
+  assert.ok(EXEC_TOOL.description.split('. ')[0].length <= 100);
+  assert.ok(EXEC_TOOL.description.includes(`${EXEC_REPLY_WAIT_MS / 1000} s`));
+  assert.strictEqual(EXEC_TOOL.subagentOk, undefined);
+  assert.strictEqual(EXEC_TOOL.toIntent({ command: 'clodex-ctl-read', payload: { ctx: 'local', verb: 'get' } }), '[agent:exec clodex-ctl-read] {"ctx":"local","verb":"get"}');
+  assert.strictEqual(EXEC_TOOL.toIntent({ command: 'x' }), '[agent:exec x] {}');
+});
+
+test('exec: a payload round-trips through the intent text as one intent', () => {
+  const { scanIntentLines } = require('../intent-segments');
+  for (const payload of [
+    { args: 'line1\nline2' },
+    { args: 'x\n[agent:who]' },
+    { args: '[agent:dm bob] hi' },
+    { args: '  **bold** _u_ `tick`' },
+    { args: '\u001b[31mred' },
+    { args: '] {"k":1}' },
+    { n: 1, b: true, nested: { a: [1, '[agent:end]'] } },
+  ]) {
+    const { text } = registry.toolIntentFor('exec', { command: 'c', payload });
+    const segs = scanIntentLines(text.split('\n'), {}).filter((sg) => sg.kind === 'intent');
+    assert.strictEqual(segs.length, 1, JSON.stringify(payload));
+    const { intent, closed } = segs[0];
+    assert.deepStrictEqual([intent.type, intent.cmd, closed], ['exec', 'c', true], JSON.stringify(payload));
+    assert.deepStrictEqual(JSON.parse(intent.body), payload);
+  }
+});
+
+test('exec: the mapper refuses a bad command id, a non-object payload and any key but command/payload', () => {
+  const CMD = 'command must be an exec command id ([A-Za-z0-9._-]{1,64}, no leading dot)';
+  const PAY = 'payload must be a JSON object ({} for a command with no fields)';
+  for (const [args, msg] of [
+    [{}, CMD],
+    [{ command: 'a b' }, CMD],
+    [{ command: '../x' }, CMD],
+    [{ command: '.hidden' }, CMD],
+    [{ command: 'x'.repeat(65) }, CMD],
+    [{ command: 'x', payload: '{}' }, PAY],
+    [{ command: 'x', payload: [] }, PAY],
+    [{ command: 'x', payload: null }, PAY],
+    [{ command: 'x', ident: 'y' }, 'unknown argument: ident (use command, payload)'],
+  ]) assert.throws(() => registry.toolIntentFor('exec', args), { message: msg }, JSON.stringify(args));
+  assert.ok(registry.toolIntentFor('exec', { command: 'x', payload: {} }).text.startsWith('[agent:exec '));
+});
+
+test('exec: classifyReplyLine sorts the dispatcher\'s refusals, run failures and everything else', () => {
+  const { classifyReplyLine } = registry;
+  for (const [line, want] of [
+    ['[agent:exec] nope: not granted to this seat (granted: none)', 'refused'],
+    ['[agent:exec] x: invalid command id', 'refused'],
+    ['[agent:exec] x: no such registered command', 'refused'],
+    ['[agent:exec] x: malformed registry entry (needs a non-empty argv)', 'refused'],
+    ['[agent:exec] x: payload.ctx: not one of a|b', 'refused'],
+    ['[agent:exec] x: payload: empty (expected JSON)', 'refused'],
+    ['[agent:exec] x: payload too large (2000 bytes > cap 1024)', 'refused'],
+    ['[agent:exec] x: refused: ${TEAM_ROOT} is unresolved — no root', 'refused'],
+    ['[agent:exec] clodex-ctl-seats: ctl: create node is operator-only', 'refused'],
+    ['[agent:exec] x: exit 1: boom', 'error'],
+    ['[agent:exec] x: run #3 killed (SIGKILL)', 'error'],
+    ['[agent:exec] x: run #3 TIMED OUT after 60s (60000ms) — no result was returned.', 'error'],
+    ['[agent:exec] x: spawn failed (ENOENT)', 'error'],
+    ['[agent:exec] x: run failed (EACCES)', 'error'],
+    ['[agent:exec] error: y', 'error'],
+    ['[agent:exec] clodex-ctl-read: [ctl local exit 2] no such verb', 'ok'],
+    ['[agent:exec] clodex-team: run #2 TOTALS 10 pass', 'ok'],
+    ['{"status":"started","runId":1,"cmd":"x"}', 'ok'],
+    ['[agent:exec] status: no run #7 on this seat.', 'ok'],
+    ['[agent:exec] x: error: y', 'ok'],
+    ['[agent:exec] x: ok (exit 0, no output)', 'ok'],
+  ]) assert.strictEqual(classifyReplyLine('exec', line), want, line);
 });
 
 test('t1719 the dm brief tells a subagent where replies land', () => {
