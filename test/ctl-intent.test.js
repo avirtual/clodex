@@ -10,6 +10,8 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const READ_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-ctl-read.json'), 'utf-8'));
 const SEATS_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-ctl-seats.json'), 'utf-8'));
+const ADMIN_DEF = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-ctl-admin.json'), 'utf-8'));
+const { refuse: ctlServiceRefuse, ALLOWED: CTL_SERVICE_ALLOWED } = require('../ctl-service');
 
 function fakeCtl(block = { output: 'NAME  STATE\nhand  idle\n', exitCode: 0 }) {
   const calls = [];
@@ -222,4 +224,65 @@ test('a help payload through the ctl exec entry reaches the ctl service as help 
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(calls, ['--ctx ios help get']);
   assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-read: [ctl ios exit 0] usage: get <resource>']);
+});
+
+test('the admin entry is an argv launcher with the shipped verb envelope and a short timeout', () => {
+  assert.deepStrictEqual(validateExecDef(ADMIN_DEF, 'clodex-ctl-admin'), { ok: true });
+  assert.strictEqual('inProcess' in ADMIN_DEF, false);
+  assert.deepStrictEqual(ADMIN_DEF.argv, ['/usr/bin/env', 'node', '${CLODEX_BIN}/clodex-ctl-admin.js']);
+  assert.deepStrictEqual(ADMIN_DEF.schema.properties.verb.enum, ['help', 'deploy', 'upgrade', 'restart']);
+  assert.deepStrictEqual(ADMIN_DEF.schema.properties.ctx.enum, []);
+  assert.strictEqual(ADMIN_DEF.timeoutMs, 15000);
+  assert.ok(ADMIN_DEF.timeoutMs < 60000, 'timeoutMs must stay below EXEC_ACK_MIN_TIMEOUT_MS (60000) or the launcher is tracked as a long run');
+  assert.strictEqual(ADMIN_DEF.replyStderr, true);
+  assert.strictEqual(ADMIN_DEF.replyMaxBytes, 12000);
+  assert.ok(ADMIN_DEF.description.length <= 200);
+  assert.match(ADMIN_DEF.description, /enum/);
+});
+
+test('the admin entry: an empty enum names itself; the verb dial is the schema alone', () => {
+  assert.deepStrictEqual(parseAndValidate(ADMIN_DEF, '{"ctx":"ios","verb":"help"}'), {
+    ok: false,
+    error: "payload.ctx: the enum is empty — no value is allowed until the operator lists one in the entry's schema",
+  });
+  const withCtx = (def) => ({ ...def, schema: { ...def.schema, properties: { ...def.schema.properties, ctx: { type: 'string', enum: ['ios'] } } } });
+  const filled = withCtx(ADMIN_DEF);
+  assert.strictEqual(parseAndValidate(filled, '{"ctx":"ios","verb":"deploy"}').ok, true);
+  assert.strictEqual(parseAndValidate(filled, '{"ctx":"ios","verb":"undeploy"}').ok, false);
+  assert.strictEqual(parseAndValidate(filled, '{"ctx":"ios","verb":"delete","args":"session w"}').ok, false);
+  const dialed = { ...filled, schema: { ...filled.schema, properties: { ...filled.schema.properties, verb: { type: 'string', enum: ['help', 'deploy', 'upgrade', 'restart', 'undeploy'] } } } };
+  assert.strictEqual(parseAndValidate(dialed, '{"ctx":"ios","verb":"undeploy"}').ok, true);
+});
+
+test('the in-process ctl path still refuses deploy, undeploy and upgrade', () => {
+  const rows = OPERATOR_ONLY.map(([verb]) => verb);
+  for (const verb of ['deploy', 'undeploy', 'upgrade']) assert.ok(rows.includes(verb), `ENTER: OPERATOR_ONLY still has the ${verb} row`);
+  for (const verb of ['deploy', 'upgrade']) {
+    assert.match(ctlServiceRefuse([verb, 'node', 'x']) || '', new RegExp(`^refused: "${verb}" is not available in the ctl tab`));
+  }
+  for (const verb of ['deploy', 'upgrade', 'undeploy']) assert.strictEqual(Object.hasOwn(CTL_SERVICE_ALLOWED, verb), false, verb);
+});
+
+test('the docs and the changelog name the admin tier', () => {
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf-8');
+  const tools = read('docs/exec-tools.md');
+  assert.match(tools, /\| `clodex-ctl-admin` \|/);
+  assert.match(tools, /### The admin tier/);
+  const readme = read('cli/README.md');
+  assert.match(readme, /clodex-ctl-admin/);
+  assert.doesNotMatch(readme, /Deploy, undeploy, upgrade, input, exec,\s*port-forward and attach stay operator-only/);
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  assert.match(unreleased, /clodex-ctl-admin/);
+});
+
+test('restoreSessionsForWorkspace arms the ctl-admin boot sweep once, under the app interpreter and the registry root', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf-8');
+  const start = src.indexOf('async function restoreSessionsForWorkspace(');
+  assert.notStrictEqual(start, -1);
+  const body = src.slice(start, src.indexOf('\n}\n', start));
+  assert.match(src, /^let ctlAdminSweepArmed = false;$/m);
+  assert.match(body, /if \(!ctlAdminSweepArmed\) \{\s*ctlAdminSweepArmed = true;/);
+  assert.match(body, /spawn\(process\.execPath, \[path\.join\(REGISTRY_DIR, 'bin', 'clodex-ctl-admin\.js'\), '--sweep'\]/);
+  assert.match(body, /ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR/);
 });

@@ -95,6 +95,11 @@ test('a test-constructed engine seeds its OWN registry root and writes no home a
       // pointed at the home.
       assert.ok(fs.existsSync(path.join(tmpHome, 'bin', 'clodex-team.js')),
         'materializeExecScripts must follow the injected root too');
+      const adminDef = JSON.parse(fs.readFileSync(path.join(tmpHome, 'library', 'exec', 'clodex-ctl-admin.json'), 'utf8'));
+      assert.deepStrictEqual(adminDef.schema.properties.ctx.enum, [],
+        'the admin entry is seeded with an empty ctx enum');
+      assert.ok(fs.existsSync(path.join(tmpHome, 'bin', 'clodex-ctl-admin.js')),
+        'the admin launcher is materialised beside the other exec scripts');
 
       // The assertion that must fail against unfixed code: with the seam given,
       // the home-derived root is never touched. Counting files rather than

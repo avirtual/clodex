@@ -114,7 +114,7 @@ test('.dockerignore re-includes exactly the EXEC_SCRIPTS the image must ship', (
 });
 
 test('the seeded exec-defs carry the ${CLODEX_BIN} placeholder, not an absolute path', () => {
-  for (const name of ['clodex-team', 'clodex-monitor']) {
+  for (const name of ['clodex-team', 'clodex-monitor', 'clodex-ctl-admin']) {
     const def = JSON.parse(fs.readFileSync(path.join(ROOT, 'resources', 'library', 'exec', `${name}.json`), 'utf8'));
     assert.ok(Array.isArray(def.argv), `${name}: argv is an array`);
     assert.ok(def.argv.some((a) => a.includes('${CLODEX_BIN}')), `${name}: argv uses the placeholder`);
