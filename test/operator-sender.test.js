@@ -98,6 +98,18 @@ test('t886: the operator door (POST /api/sessions/:name/dm) delivers the canonic
     'the operator door produces the canonical shape, and nothing else rides it');
 });
 
+test('the operator door refuses a dm to a bash session by saying it is a bash session', () => {
+  const { m, injected, send } = wireDoors();
+  m.sessions.set('sh', { name: 'sh', type: 'bash', agentType: null });
+  const before = injected.length;
+  assert.deepStrictEqual(send('sh', 'ls'), {
+    ok: false, code: 409,
+    error: '"sh" is a bash session — only agent sessions receive dms (run a command in it with: exec sh <command>)',
+  });
+  assert.strictEqual(injected.length, before, 'nothing was delivered');
+  assert.deepStrictEqual(send('ghost', 'hi'), { ok: false, error: 'Session not found' });
+});
+
 test('t886: an operator delivery contains no [agent:dm substring anywhere', () => {
   const { m, injected, send } = wireDoors();
   m.sessions.set('user', { name: 'user', agentType: 'claude', activityState: 'idle', activityTs: Date.now() });

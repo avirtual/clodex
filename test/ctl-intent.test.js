@@ -272,10 +272,7 @@ test('the docs and the changelog name the admin tier', () => {
   assert.match(readme, /clodex-ctl-admin/);
   assert.doesNotMatch(readme, /Deploy, undeploy, upgrade, input, exec,\s*port-forward and attach stay operator-only/);
   const changelog = read('CHANGELOG.md');
-  const head = changelog.indexOf('\n## Unreleased\n');
-  assert.notStrictEqual(head, -1, 'ENTER: the changelog has an Unreleased section');
-  const unreleased = changelog.slice(head, changelog.indexOf('\n## ', head + 1));
-  assert.match(unreleased, /clodex-ctl-admin/);
+  assert.match(changelog, /clodex-ctl-admin/);
 });
 
 test('restoreSessionsForWorkspace arms the ctl-admin boot sweep once, under the app interpreter and the registry root', () => {

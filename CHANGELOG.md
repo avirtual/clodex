@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- ctl: a bare `describe node`/`get node` through the ctl exec tiers now reads the context the call was granted for, not the operator's current node; a dm to a bash session says it is a bash session instead of 'Session not found'.
 
 ## 5.128.0 — 2026-10-16 — ctl-admin: a granted seat can deploy, upgrade or restart a node; Reminders viewer plugin
 
