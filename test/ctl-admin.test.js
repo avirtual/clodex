@@ -167,12 +167,12 @@ test('A14: every prompt site in the CLI throws EXIT.USAGE under -o json before i
 });
 
 function fixture(contexts = { ios: { ssh: 'u@h', token: 'tok-ios-0123456789' } }) {
-  const tmp = mkTmpRoot('ctla-');
+  const tmp = mkTmpRoot('clodex-mon-');
   const home = path.join(tmp, '.clodex');
   fs.mkdirSync(path.join(home, 'cli'), { recursive: true });
   fs.mkdirSync(path.join(home, 'run', 'a'), { recursive: true });
   fs.writeFileSync(path.join(home, 'cli', 'contexts.json'), JSON.stringify({ current: null, contexts }));
-  const sock = path.join(mkTmpRoot('cas-'), 's.sock');
+  const sock = path.join(mkTmpRoot('clodex-mon-'), 's.sock');
   fs.writeFileSync(path.join(home, 'run', 'a', 'agent.json'), JSON.stringify({ socket: sock }));
   const fake = path.join(tmp, 'fake-clodexctl.js');
   fs.writeFileSync(fake, [
@@ -340,7 +340,7 @@ test('A12 + launcher refusals: env guard, payload, ctx, verb, record', async () 
 test('A13: the exec dispatcher passes seat, interpreter and CLI script to the child', async () => {
   const { mk: mkBase } = require('./lib/session-fixtures');
   const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
-  const REGISTRY_DIR = mkTmpRoot('clx-ctla-exec-');
+  const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   fs.writeFileSync(path.join(execDir, 'probe.json'), JSON.stringify({

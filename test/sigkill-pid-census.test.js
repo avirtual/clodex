@@ -165,6 +165,16 @@ const CENSUS = [
     why: "the killProcess default's own refusal — engine.js injects no killPid, so this default IS production",
   },
   {
+    file: 'scripts/clodex-ctl-admin.js', pid: '-child.pid', sig: "'SIGTERM'", count: 1,
+    guard: 'if (!child || !(child.pid > 0)) return;',
+    why: 'killGroup refuses before either signal; a failed spawn leaves child.pid undefined',
+  },
+  {
+    file: 'scripts/clodex-ctl-admin.js', pid: '-child.pid', sig: "'SIGKILL'", count: 1,
+    guard: 'if (!child || !(child.pid > 0)) return;',
+    why: 'the grace-period escalation inside the same killGroup, behind the same refusal',
+  },
+  {
     file: 'scripts/clodex-monitor.js', pid: '-child.pid', sig: "'SIGTERM'", count: 1,
     guard: 'if (!(child.pid > 0)) return;',
     why: "killTarget refuses before either signal; a failed spawn leaves child.pid undefined and -undefined is NaN",
@@ -222,6 +232,10 @@ const CENSUS = [
   {
     file: 'headless-main.js', pid: 'prev', sig: '0', count: 1, probe: true,
     why: 'single-instance pidfile; a lying probe refuses to start rather than starting twice',
+  },
+  {
+    file: 'scripts/clodex-ctl-admin.js', pid: 'pid', sig: '0', count: 1, probe: true,
+    why: 'isAlive refuses a non-positive or non-integer pid read from a lock or record before probing',
   },
   {
     file: 'scripts/clodex-monitor.js', pid: 'pid', sig: '0', count: 1, probe: true,
