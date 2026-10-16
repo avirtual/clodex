@@ -60,6 +60,7 @@ function mkBox(t, accounts = ACCOUNTS) {
   }, {});
   const m = Object.create(methods);
   m._injectText = (_s, text) => { injected.push(text); };
+  m.recordMisfire = () => true;
   if (t) t.after(() => {
     try { fs.rmSync(home, { recursive: true, force: true }); } catch {}
     try { fs.rmSync(root, { recursive: true, force: true }); } catch {}

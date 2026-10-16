@@ -236,3 +236,15 @@ test('misfire: a seat-less spawn reply routed through onReply is not the seat\'s
     assert.deepStrictEqual(f.rows, []);
   } finally { f.cleanup(); }
 });
+
+test('recordMisfire: a host with no misfire store records nothing and does not throw', () => {
+  const f = mkSite({ getMisfires: () => null });
+  try {
+    assert.strictEqual(f.m.recordMisfire(f.session, 'bounce', { type: 'task' }, 'x'), false);
+    const g = mkSite();
+    try {
+      assert.strictEqual(g.m.recordMisfire(g.session, 'bounce', { type: 'task', sub: 'add' }, 'x'), true);
+      assert.deepStrictEqual(g.rows.map((r) => [r.kind, r.intent, r.sub]), [['bounce', 'task', 'add']]);
+    } finally { g.cleanup(); }
+  } finally { f.cleanup(); }
+});

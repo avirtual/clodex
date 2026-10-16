@@ -273,6 +273,7 @@ function mkHandler(opts = {}) {
   const injected = [];
   const m = Object.create(methods);
   m._injectText = (_s, text) => { injected.push(text); };
+  m.recordMisfire = () => true;
   return {
     m,
     calls: fake.calls,

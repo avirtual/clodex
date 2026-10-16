@@ -58,6 +58,7 @@ function mkBox({ roles, teams = ['clodex'] } = {}) {
   const injected = [];
   const m = Object.create(methods);
   m._injectText = (_s, text) => { injected.push(text); };
+  m.recordMisfire = () => true;
   const lead = { name: 'lead', agentType: 'claude', cwd: '/proj' };
   const hand = { name: 'hand', agentType: 'claude', cwd: '/proj' };
   return {
@@ -282,6 +283,7 @@ test('a throwing refreshAppMenu is swallowed: the write still reports success', 
   const injected = [];
   const m = Object.create(methods);
   m._injectText = (_s, text) => { injected.push(text); };
+  m.recordMisfire = () => true;
   m._handleTeam({ name: 'lead', agentType: 'claude', cwd: '/proj' },
     { type: 'team', sub: 'template-save', stem: 'runner', body: '{"type":"claude"}' });
   assert.match(injected[injected.length - 1], /template "runner" saved to /,
@@ -320,6 +322,7 @@ test('templates:saveTeam and template-save produce byte-identical files', () => 
   }, {});
   const m = Object.create(methods);
   m._injectText = () => {};
+  m.recordMisfire = () => true;
 
   const bodyText = '{"type":"claude","cwd":"${TEAM_ROOT}","agents":["Explore"],"noWire":true}';
   const res = handlers['templates:saveTeam']({}, 'viaDrawer', 'seat', JSON.parse(bodyText));
