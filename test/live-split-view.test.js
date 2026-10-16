@@ -1186,10 +1186,10 @@ test('rows painted while the view was raw are a new baseline, not command output
     m.write();
     m.view.setRaw(false);
     await settle();
-    m.view.composerSent('/status');
     m.tick(250);
     m.write();
     m.write();
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', '› hello', ...CARD]));
     assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
     assert.deepStrictEqual(m.outputs(), []);
