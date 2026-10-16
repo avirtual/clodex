@@ -4,7 +4,7 @@ const { HEAD_RE } = require('./spill');
 const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, STAND_INS, pointerMatch, resolveSpill } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
-const { PLACEHOLDER, PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+const { PLACEHOLDER, PLACEHOLDER_LEGACY, SPILLED_INTENT_NOTE } = require('../spill-stand-ins');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote', 'Clodex keeps it out of the request'];
 const END_LINE = '[agent:end]';
@@ -93,7 +93,8 @@ function cutText(text, state) {
     if (isStandIn(cleanLine(lines[i]).trim())) state.parroted++;
     if (c.kind === 2) {
       const full = expansionOf(state);
-      kept.push(...(full || [c.head]), END_LINE);
+      if (full) kept.push(...full, END_LINE);
+      else kept.push(c.head, SPILLED_INTENT_NOTE);
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
     }
   }
