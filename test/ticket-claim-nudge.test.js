@@ -79,4 +79,7 @@ test('the manager injects a firing nudge parkable on a task-intent seat only', (
   m._scanJsonlText(text, 'lead', []);
   m._scanJsonlText(text, 'hand', []);
   assert.deepStrictEqual(injected, [['lead', WORDING_1('filed'), { parkable: true }]]);
+  injected.length = 0;
+  m._nudgeTicketClaims(m.sessions.get('lead'), 'Moving on.\n[agent:task cancel t1840]\n[agent:end]', intentsOf('Moving on.\n[agent:task cancel t1840]\n[agent:end]'));
+  assert.deepStrictEqual(injected, [['lead', WORDING_2('[agent:task cancel t1840]'), { parkable: true }]]);
 });
