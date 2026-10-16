@@ -57,6 +57,10 @@ function dataWriteDeny(registryDir, fsImpl) {
     .sort((a, b) => (a.p < b.p ? -1 : a.p > b.p ? 1 : 0));
 }
 
+function realSocketPath(p, fsImpl) {
+  try { return path.join(fsImpl.realpathSync(path.dirname(p)), path.basename(p)); } catch { return p; }
+}
+
 function ruleAnchor(p) {
   return p.startsWith('~/') ? p : `/${p}`;
 }
@@ -68,7 +72,7 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, home = os.homedir(), inBox = false, fsImpl = fs }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
   const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
@@ -103,6 +107,7 @@ function buildCredentialSandbox({ registryDir, list, home = os.homedir(), inBox 
     filesystem: { allowWrite: ['/'], denyRead, denyWrite },
     credentials,
   };
+  if (seatSocket) out.sandbox.network = { allowUnixSockets: [realSocketPath(seatSocket, fsImpl)] };
   return out;
 }
 

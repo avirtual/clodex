@@ -66,7 +66,7 @@ test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies an
     assert.strictEqual(s.sandbox.enabled, true);
     assert.strictEqual(s.sandbox.allowUnsandboxedCommands, true);
     assert.deepStrictEqual(s.sandbox.filesystem.allowWrite, ['/']);
-    assert.strictEqual(Object.prototype.hasOwnProperty.call(s.sandbox, 'network'), false);
+    assert.deepStrictEqual(s.sandbox.network, { allowUnixSockets: [path.join(fs.realpathSync(path.join(root, 'run', 'seat-b')), 'intent.sock')] });
     const denyRead = s.sandbox.filesystem.denyRead;
     for (const p of [...t0, path.join(HOME, '.clodex', 'cli', 'contexts.json'), '~/.aws']) {
       assert.ok(denyRead.includes(p), `denyRead lists ${p}`);

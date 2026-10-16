@@ -849,7 +849,9 @@ exit 0
     // "matches no known tool" on every startup.
     const toolSet = new Set(CLAUDE_TOOLS);
     const guard = Array.isArray(protectCredentials)
-      ? buildCredentialSandbox({ registryDir: REGISTRY_DIR, list: protectCredentials, inBox: runningInSandboxBox(process.env) })
+      ? buildCredentialSandbox({
+        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env),
+      })
       : null;
     const denyRules = [...new Set([
       ...denyAgentRules(denyBuiltins),
