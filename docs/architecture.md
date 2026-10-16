@@ -436,6 +436,11 @@ bundle), whose packaged form is the Docker image under
   reviewer seat's flushed turn reads as a verdict but carries no
   `[agent:review-done]`, so the loop tells it once to re-emit through the
   intent. Dependency-free, so `_scanJsonlText`'s tail stays a one-line call.
+- **ticket-claim-nudge.js** — the pure step function behind the ticket-claim
+  nudge: an empty-bodied `[agent:task add|reject|respec]` nags at once; turn
+  prose (outside intent bodies and fences) claiming a ticket was filed,
+  rejected, respec'd or cancelled nags at turn end only if no filing verb ran
+  anywhere in that turn.
 - **wire-intents.js** — intent helpers shared with the wire layer.
 
 ### Teams and tickets

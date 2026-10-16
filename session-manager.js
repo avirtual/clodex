@@ -478,6 +478,7 @@ function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
 
 const { speakable } = require('./speakable');
 const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
+const { isFilingVerb, stepTicketClaims } = require('./ticket-claim-nudge');
 const { expandSkillsOff } = require('./skills-off');
 const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
@@ -1060,6 +1061,7 @@ function createSessionManager(deps) {
               intent.reqId = t.reqId;
               setImmediate(() => this._handleIntent(t.agent, intent));
             }
+            this._nudgeTicketClaims(s, t.text, intents, { turnEnd: !!(t.stop && t.stop.is_turn) });
             if (t.stop && t.stop.is_turn) {
               setImmediate(() => this._maybeFireCompactLatch(s));
             }
@@ -5288,10 +5290,26 @@ function createSessionManager(deps) {
         }
         this._handleIntent(senderName, intent);
       }
+      this._nudgeTicketClaims(s, text, intents, { turnEnd: !!(meta && meta.turnEnd), interrupted: !!(meta && meta.interrupted) });
       if (proseVerdictNeedsNudge({ text, intents, session: s })) {
         s._verdictNudged = true;
         log.info('team', `reviewer ${senderName} wrote a verdict with no review-done intent — nudged once`);
         this._deliverParkedActive(senderName, s.reviewFor, PROSE_VERDICT_NUDGE, 'dm');
+      }
+    }
+
+    _nudgeTicketClaims(s, text, intents, { turnEnd = false, interrupted = false } = {}) {
+      if (!s || !s.agentType) return;
+      const listed = (getPersistence().get(s.name) || {}).intents;
+      if (Array.isArray(listed) && !listed.includes(LIVING_MARK) && !listed.includes('task')) return;
+      const { state, nudges } = stepTicketClaims(
+        { verbSeen: !!s._ticketVerbSeen, claimWord: s._ticketClaimWord || null },
+        { text, intents, turnEnd: turnEnd && !interrupted });
+      s._ticketVerbSeen = interrupted ? false : state.verbSeen;
+      s._ticketClaimWord = interrupted ? null : state.claimWord;
+      for (const n of nudges) {
+        log.info('intent', `${s.name}: ticket claim without verb (${n.word})`);
+        this._injectText(s, n.text, { parkable: true });
       }
     }
 
@@ -5783,6 +5801,11 @@ function createSessionManager(deps) {
       fs.renameSync(tmp, path.join(q, from == null ? seq : `${seq}${SUBQ_DM_SUFFIX}`));
     }
 
+    _dispatchSocketIntent(session, intent, opts) {
+      if (isFilingVerb(intent)) session._ticketVerbSeen = true;
+      return this._handleIntent(session.name, intent, opts);
+    }
+
     _startIntentSocket(session, channel) {
       const name = session.name;
       Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
@@ -5797,7 +5820,7 @@ function createSessionManager(deps) {
         refusal: subagentRefusal,
         tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
-        dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+        dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
         log,
         replyWaitMs: (intent) => {
