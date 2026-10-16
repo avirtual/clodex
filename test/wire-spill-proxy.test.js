@@ -10,6 +10,7 @@ const zlib = require('zlib');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { WireProxy } = require('../wire/proxy');
 const { mimicKindOf, spillSize, writeSpill } = require('../intent-spill');
+const { SPILLED_INTENT_NOTE } = require('../spill-stand-ins');
 
 function filed(root, spill) {
   return `${spillSize(spill.bytes)}${spill.verb === 'prose' ? ' of prose' : ''} filed at ${path.join(root, 'spill', 'tester', `${spill.id}.md`)}`;
@@ -826,7 +827,7 @@ test('the two halves compose: the stub the tee writes is what cutSpillStubs rend
   });
 });
 
-test('t1119: a seat registered with examples: 0 gets the bare head and [agent:end] for every stub, nothing expanded', async () => {
+test('t1119: a seat registered with examples: 0 gets the head and the runtime note for every stub, nothing expanded', async () => {
   const root = mkTmpRoot('clodex-spill-');
   await withProxy({}, async (proxy, up) => {
     proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: 0 } });
@@ -848,8 +849,8 @@ test('t1119: a seat registered with examples: 0 gets the bare head and [agent:en
     assert.ok(await whenEvent(events, 'stream-end', 1));
     assert.equal(events['spill-cut'].length, 1, 'ENTER: the editor ran on the request');
     const upstream = JSON.parse(up.seen.requests[0].body.toString('utf8'));
-    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
-    assert.deepEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);    for (const bad of [-1, 1.5, '0', null, undefined]) {
+    assert.deepEqual(upstream.messages[1].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }]);
+    assert.deepEqual(upstream.messages[3].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }]);    for (const bad of [-1, 1.5, '0', null, undefined]) {
       proxy.registerAgent('tester', { spill: { root, verbs: ['task.done'], examples: bad } });
       assert.equal(proxy.spillOf('tester').examples, 2, `examples ${String(bad)} falls back to 2`);
     }
@@ -969,8 +970,8 @@ test('t1798 (p1): the first two bodies stay expanded on the next request and a l
     assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content), [
       [{ type: 'text', text: `[agent:task done t1]\nA ${BIG}\n[agent:end]\n` }],
       [{ type: 'text', text: `[agent:task done t1]\nB ${BIG}\n[agent:end]\n` }],
-      [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }],
-      [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }],
+      [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }],
     ]);
   });
 });
@@ -1029,7 +1030,7 @@ test('t1146 (p3): a compact call completing between two requests is a cold bound
     assert.ok(await whenEvent(events, 'turn.completed', 3));
     assert.deepStrictEqual(events['spill-cut'].map(pickCut), [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
     const upstream = JSON.parse(up.seen.requests[2].body.toString('utf8'));
-    assert.deepStrictEqual(upstream.messages[5].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
+    assert.deepStrictEqual(upstream.messages[5].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }]);
   });
 });
 
@@ -1057,7 +1058,7 @@ test('t1798: after a compact the next request re-seeds from its own first two �
     assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content[0].text), [
       `[agent:task done t1]\nC ${BIG}\n[agent:end]\n`,
       `[agent:task done t1]\nD ${BIG}\n[agent:end]\n`,
-      `[agent:task done t1]\n[agent:end]\n`,
+      `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n`,
     ]);
   });
 });
@@ -1102,7 +1103,7 @@ test('t1146 (p4): a 61-minute gap the cache survived keeps the set; the same gap
   const reset = await idleGap(root, cold.stub, 61 * 60 * 1000);
   assert.deepStrictEqual(cold.calls, [['record', SESSION_ID], ['query', { session: SESSION_ID }], ['record', SESSION_ID]]);
   assert.deepStrictEqual(reset.cuts, [{ sticky: 0, expanded: 2 }, { sticky: 0, expanded: 2 }]);
-  assert.deepStrictEqual(reset.upstream.messages[7].content, [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }]);
+  assert.deepStrictEqual(reset.upstream.messages[7].content, [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }]);
 });
 
 for (const [label, make] of [
@@ -1142,7 +1143,7 @@ test('t1798: across [A,B] → [A..D] → 2h warm idle → [A..E], A and B ride i
     assert.ok(await whenEvent(events, 'turn.completed', 3));
     const sent = up.seen.requests.map((r) => JSON.parse(r.body.toString('utf8')).messages);
     const full = (n) => [{ type: 'text', text: `[agent:task done t1]\n${n} ${BIG}\n[agent:end]\n` }];
-    const head = [{ type: 'text', text: `[agent:task done t1]\n[agent:end]\n` }];
+    const head = [{ type: 'text', text: `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n` }];
     for (const msgs of sent) {
       assert.deepStrictEqual(msgs[1].content, full('A'));
       assert.deepStrictEqual(msgs[3].content, full('B'));
@@ -1205,8 +1206,8 @@ test('t1167 (a): a restart inside the TTL with the same session keeps the sticky
   assert.deepStrictEqual(upstream.messages.filter((m) => m.role === 'assistant').map((m) => m.content[0].text), [
     `[agent:task done t1]\nA ${BIG}\n[agent:end]\n`,
     `[agent:task done t1]\nB ${BIG}\n[agent:end]\n`,
-    `[agent:task done t1]\n[agent:end]\n`,
-    `[agent:task done t1]\n[agent:end]\n`,
+    `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n`,
+    `[agent:task done t1]\n${SPILLED_INTENT_NOTE}\n`,
   ]);
 });
 

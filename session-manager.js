@@ -141,6 +141,7 @@ const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
 
 const PROBE_SUBS = new Set(['begin', 'end', 'cancel']);
 const openBodyTails = new WeakMap();
+const openBodyTailHeads = new WeakMap();
 const endsContextVerb = (intent) => intent.type === 'review-done'
   || (intent.type === 'scratch' && intent.sub === 'end')
   || (intent.type === 'probe' && intent.sub === 'end')
@@ -235,9 +236,9 @@ function stripCodexStreamArgs(argv) {
   return { args: out, dropped };
 }
 const {
-  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
+  SPILL_VERBS, SPILL_MIN_BYTES, HEAD_RE, isSpillVerb, pointerOf, pointerMatch, trailingPointerOf, spilledBodyOf, standInBodyOf, resolveSpill, spillDirFor, spillPathFor, verbKeyOf, writeSpill,
   receiptOf, resolveReceipt,
-  capResumeSnapshot, spillMimicBounce,
+  capResumeSnapshot, spillMimicBounce, bounceHead,
 } = require('./intent-spill');
 const { createFiledRing, seedFiledRing, filedEntry, spillHead } = require('./filed-ring');
 const nodePath = require('path');
@@ -5249,7 +5250,11 @@ function createSessionManager(deps) {
         }
         if (seg.kind !== 'intent') continue;
         if (spillAt && spillAt.has(seg.from)) seg.intent.spill = spillAt.get(seg.from);
-        if (seg.tail) openBodyTails.set(seg.intent, seg.tail);
+        if (seg.tail) {
+          openBodyTails.set(seg.intent, seg.tail);
+          const tailHead = lines.slice(seg.from + 1).find((l) => l.trim());
+          if (tailHead !== undefined) openBodyTailHeads.set(seg.intent, tailHead);
+        }
         intents.push(seg.intent);
       }
       return intents;
@@ -5388,6 +5393,17 @@ function createSessionManager(deps) {
       const spilledNote = spilledBodyOf(intent.body);
       if (spilledNote !== null) {
         this._spillTyped(session, senderName, intent, spilledNote, 'runtime note');
+        return;
+      }
+
+      const standIn = standInBodyOf(intent.body, intent.bodyOpen ? openBodyTailHeads.get(intent) : undefined);
+      if (standIn !== null) {
+        const { head } = bounceHead(intent);
+        log.warn('intent', `stand-in-body ${verbKeyOf(intent)} ${senderName}: body carried a runtime stand-in note — intent dropped`);
+        if (session && session.agentType) {
+          this._injectText(session, `[agent:intent] ${head} carried the runtime stand-in note as its body — that note is never a body. `
+            + 'Re-emit the intent with its full body, closed by [agent:end].', { parkable: true });
+        }
         return;
       }
 

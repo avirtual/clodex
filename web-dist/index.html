@@ -10933,7 +10933,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </label>
         <span id="prefs-compact-on-resume-why" class="prefs-dep-reason"></span>
         <h5>Long intent bodies</h5>
-        <p class="hint-text">Long bodies over 800 bytes that an agent emits fall into three kinds, each with its own switch: ticket bodies (specs, reports, rejects), messages (dms between seats, shouts to the operator), and the prose an agent writes after its last intent on a turn Clodex typed in. A spilled body is filed, and the first two after each compact ride in full as examples until the next compact; every later one appears in the transcript as the intent head and <code>[agent:end]</code>, the model sees only the ordinary confirmation, and the terminal shows the filed path (clickable), so later turns stop re-reading them. Those later bodies are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>. Spilled prose gets a <code>[clodex] … filed at …</code> note; prose left unspilled stays in the transcript as written. The recipient still gets the whole text. Claude seats only; all three are on by default, and each applies to every running seat from its next turn.</p>
+        <p class="hint-text">Long bodies over 800 bytes that an agent emits fall into three kinds, each with its own switch: ticket bodies (specs, reports, rejects), messages (dms between seats, shouts to the operator), and the prose an agent writes after its last intent on a turn Clodex typed in. A spilled body is filed, and the first two after each compact ride in full as examples until the next compact; every later one appears in the transcript as the intent head followed by a runtime note, the model sees only the ordinary confirmation, and the terminal shows the filed path (clickable), so later turns stop re-reading them. Those later bodies are stored under <code>~/.clodex/spill/&lt;seat&gt;/</code>. Spilled prose gets a <code>[clodex] … filed at …</code> note; prose left unspilled stays in the transcript as written. The recipient still gets the whole text. Claude seats only; all three are on by default, and each applies to every running seat from its next turn.</p>
         <label class="prefs-check">
           <input type="checkbox" id="prefs-spill-tickets">
           <span>Spill ticket bodies (specs, reports, rejects)</span>
@@ -33927,8 +33927,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var SPILLED_BODY_EPHEMERAL = "[Runtime note: Clodex carries your newest long intent body in full as an example and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]";
       var PLACEHOLDER = "[Runtime note: this turn's text was delivered and filed in full; Clodex keeps it out of the request. Never write this note.]";
       var PLACEHOLDER_LEGACY = "(This turn's text was delivered in full; Clodex keeps it out of the request.)";
-      var STAND_INS = Object.freeze([PLACEHOLDER, PLACEHOLDER_LEGACY, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL]);
-      module.exports = { SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, PLACEHOLDER, PLACEHOLDER_LEGACY, STAND_INS };
+      var SPILLED_INTENT_NOTE = "[Runtime note: the body of this intent was delivered and filed in full; Clodex keeps it out of the request. Never write this note \u2014 every new intent needs its complete body.]";
+      var STAND_INS = Object.freeze([PLACEHOLDER, PLACEHOLDER_LEGACY, SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, SPILLED_INTENT_NOTE]);
+      module.exports = { SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, SPILLED_INTENT_NOTE, PLACEHOLDER, PLACEHOLDER_LEGACY, STAND_INS };
     }
   });
 

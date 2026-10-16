@@ -4,7 +4,7 @@ const { HEAD_RE } = require('./spill');
 const { POINTER_RE, FILED_POINTER_RE, RECEIPT_RE, TAIL_RECEIPT_RE, SPILL_FILLER, STAND_INS, pointerMatch, resolveSpill } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
 
-const { PLACEHOLDER, PLACEHOLDER_LEGACY } = require('../spill-stand-ins');
+const { PLACEHOLDER, PLACEHOLDER_LEGACY, SPILLED_INTENT_NOTE } = require('../spill-stand-ins');
 
 const NEEDLES = ['@spill:', ' filed at /', '[Runtime note:', '(I sent', '(I wrote', 'Clodex keeps it out of the request'];
 const END_LINE = '[agent:end]';
@@ -30,6 +30,12 @@ function headOf(t) {
 
 function isStandIn(t) {
   return STAND_INS.includes(t);
+}
+
+function isRenderedNote(line, kept) {
+  if (!kept.length || cleanLine(line).trim() !== SPILLED_INTENT_NOTE) return false;
+  const prev = cleanLine(kept[kept.length - 1]).trim();
+  return prev !== END_LINE && HEAD_RE.test(prev);
 }
 
 function classifyLine(line) {
@@ -88,12 +94,13 @@ function cutText(text, state) {
   let cut = 0;
   for (let i = 0; i < lines.length; i++) {
     const c = classifyLine(lines[i]);
-    if (c.kind === 0) { kept.push(lines[i]); continue; }
+    if (c.kind === 0 || isRenderedNote(lines[i], kept)) { kept.push(lines[i]); continue; }
     cut++;
     if (isStandIn(cleanLine(lines[i]).trim())) state.parroted++;
     if (c.kind === 2) {
       const full = expansionOf(state);
-      kept.push(...(full || [c.head]), END_LINE);
+      if (full) kept.push(...full, END_LINE);
+      else kept.push(c.head, SPILLED_INTENT_NOTE);
       if (i + 1 < lines.length && cleanLine(lines[i + 1]).trim() === END_LINE) { cut++; i++; }
     }
   }

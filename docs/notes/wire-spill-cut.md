@@ -21,7 +21,7 @@ written). A stub whose file is missing, unreadable or too large takes no slot.
 A stub expands iff its key is in `sticky` or `sticky.size` plus the keys seeded in
 this call is below `examples`; "first" is document order (`collectStubs`). The proxy
 adds every expanded key to `sticky`, so the examples stay in full until the next
-cold boundary and every later body is the bare head from its first resend
+cold boundary and every later body is the head and the runtime note from its first resend
 (Bogdan 2026-10-11: a body keeps one shape from its first resend to the next
 compact, since a shape change on a settled turn rewrites the cache behind it).
 
@@ -29,9 +29,17 @@ A loop-minted seat (persistence `ephemeral: true`: a ticket hand, a cold reviewe
 is registered with `examples: 1`: only its first resolvable stub is expanded. With zero examples, hand t1122 typed the
 stand-in as the body of its rework-round `task done`, its only prior example of that verb.
 
-Every remaining stub renders as the bare head line followed by `[agent:end]`,
-with no body: a note in history is a shape the model can copy, an empty body is not
-(2026-10-10 lead: seven turns of prose claiming an intent never emitted).
+Every remaining stub renders as its head line followed by `SPILLED_INTENT_NOTE`
+and no `[agent:end]`. The earlier head + `[agent:end]` shape was a complete, valid,
+body-less intent: wirescope 2026-10-16 (n=61 lead add/respec) found 48% title-only
+filings in requests whose history held one, 0 of 13 where none did.
+
+## isRenderedNote
+
+Keeps the note directly under a kept head line uncut: cutting it would leave
+`head\n[agent:end]` or a bare head, the fireable shape. The cost is that a model's own
+`head\nNOTE` copy rides uncut and uncounted; the scanner's stand-in-body refusal is
+the guard for it. A note anywhere else is a parroted stand-in.
 
 ## STAND_INS are cuttable
 On jarvis-lead (sid 1d05af56), 55 minutes after the old `PLACEHOLDER_LEGACY` sentence first stood in

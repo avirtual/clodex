@@ -1018,3 +1018,34 @@ test('t1113: the wire mimic arm bounces with the line the detector read — its 
     await rig.close();
   }
 });
+
+test('t1854: a body carrying the thinned-intent runtime note is refused with a nag, closed or open, wire or jsonl — a real body still applies', async () => {
+  const { SPILLED_INTENT_NOTE } = require('../spill-stand-ins');
+  const warns = [];
+  const h = mkH({ getUserDataPath: () => h.root, shadowIntentKey, log: { info: () => {}, debug: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} } });
+  const NAG = '[agent:intent] [agent:task add hand] carried the runtime stand-in note as its body — that note is never a body. Re-emit the intent with its full body, closed by [agent:end].';
+  const rig = await wireRig(h);
+  try {
+    await rig.turn(`[agent:task add hand] Title\n${SPILLED_INTENT_NOTE}\n`, 'r1');
+    assert.deepStrictEqual(h.tasks, [], 'the copied stand-in shape, unclosed, files no title-only ticket');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [NAG]);
+    assert.deepStrictEqual(h.injected[0].opts, { parkable: true });
+
+    await rig.turn(`[agent:task add hand] Title\n${SPILLED_INTENT_NOTE}\n[agent:end]\n`, 'r2');
+    assert.deepStrictEqual(h.tasks, [], 'closed by [agent:end], the note is still no body');
+    assert.deepStrictEqual(h.injected.map((i) => i.text), [NAG, NAG]);
+
+    await h.m._handleIntent('lead', { type: 'task', sub: 'add', who: 'hand', body: SPILLED_INTENT_NOTE });
+    assert.deepStrictEqual(h.tasks, [], 'the jsonl path refuses it too');
+    assert.strictEqual(h.injected.length, 3);
+    assert.strictEqual(h.injected[2].text, NAG);
+    assert.deepStrictEqual(warns.filter((w) => w.includes('stand-in-body')).length, 3, 'each refusal is recorded under kind stand-in-body');
+
+    await rig.turn('[agent:task add hand] Title\nthe real spec\n[agent:end]\n', 'r3');
+    assert.strictEqual(h.tasks.length, 1, 'ENTER: a real body applies');
+    assert.strictEqual(h.tasks[0].body, 'Title\nthe real spec');
+    assert.strictEqual(h.injected.length, 3, 'and draws no nag');
+  } finally {
+    await rig.close();
+  }
+});

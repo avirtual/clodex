@@ -151,6 +151,15 @@ function spilledBodyOf(body) {
   return null;
 }
 
+function standInBodyOf(body, tailHead) {
+  const lines = typeof body === 'string' ? body.split('\n') : [];
+  const firstOf = (ls) => { const l = ls.find((x) => x.trim()); return l === undefined ? null : l.trim(); };
+  for (const t of [firstOf(lines), firstOf(lines.slice(1)), typeof tailHead === 'string' ? tailHead.trim() : null]) {
+    if (t !== null && STAND_INS.includes(t)) return t;
+  }
+  return null;
+}
+
 function spillSize(bytes) {
   return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
 }
@@ -268,6 +277,7 @@ module.exports = {
   pointerOf,
   trailingPointerOf,
   spilledBodyOf,
+  standInBodyOf,
   spillSize,
   pointerText,
   mimicKindOf,
@@ -275,4 +285,5 @@ module.exports = {
   resolveReceipt,
   capResumeSnapshot,
   spillMimicBounce,
+  bounceHead,
 };
