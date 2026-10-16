@@ -396,6 +396,12 @@ What the call returns:
 - a wait over 70 s (`EXEC_REPLY_WAIT_MS`): `outcome-unknown: …` with status `ok` — the
   command was not cancelled and its reply lands in the main conversation.
 
+`_handleExecIntent` reads the reply scope at entry and routes every reply through that
+capture first: `_injectTextPassive` parks a Claude seat's text without consulting the
+scope, so only an explicit capture lets a tool call see the ack. There is no dispatcher
+run lock: two parallel calls of one tracked command both start, and the suite lock is the
+launcher's, contended after the ack.
+
 A grant refusal names the seat's granted commands (`(granted: a, b)` / `(granted: none)`),
 on both doors. The socket intent form `clodex-send '[agent:exec …]'` now waits for the
 reply and returns it inline too, like term and ctl.

@@ -47,7 +47,7 @@ function scopeOf() {
 }
 
 test('exec under a reply scope: an inProcess ctl reply is captured by its own call and not injected', async () => {
-  const REGISTRY_DIR = mkTmpRoot('clx-exec-tool-ctl-');
+  const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
   writeDef(REGISTRY_DIR, 'clodex-ctl-read', IOS_READ_DEF);
   const { calls, svc } = deferredCtl();
   const m = mkBase({
@@ -77,7 +77,7 @@ test('exec under a reply scope: an inProcess ctl reply is captured by its own ca
 });
 
 function argvHarness(entry, { grants = ['digest'] } = {}) {
-  const REGISTRY_DIR = mkTmpRoot('clx-exec-tool-argv-');
+  const REGISTRY_DIR = mkTmpRoot('clx-runstatus-');
   writeDef(REGISTRY_DIR, 'digest', entry);
   const children = [];
   const SessionManager = createSessionManager({
@@ -225,7 +225,7 @@ test('EXEC_REPLY_WAIT_MS exceeds the tracked-run ack threshold', () => {
 });
 
 test('_startIntentSocket waits for exec: the socket intent form returns the ctl reply inline and injects nothing', async () => {
-  const root = mkTmpRoot('clx-exec-tool-sock-');
+  const root = mkTmpRoot('isock-sm-');
   writeDef(root, 'clodex-ctl-read', IOS_READ_DEF);
   const { calls, svc } = deferredCtl();
   const injected = [];

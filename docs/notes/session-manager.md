@@ -118,7 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## _handleExecIntent
-
-The reply scope is read at entry and every reply goes through `capture` first: the started ack is sent through `_injectTextPassive`, which parks a Claude seat's text without consulting the scope, so only an explicit capture lets a tool call see it. The fallback injects with `ownScope` so the one closure answers once. The captured ack is bare JSON by design. The synthetic `ok (exit 0, no output)` line is captured only under a live scope, so the turn-text intent stays silent on success. There is no dispatcher run lock: two parallel calls of one tracked command both start; the suite lock is the launcher's, contended after the ack.

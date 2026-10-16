@@ -31701,6 +31701,241 @@ ${m[2].replace(/^\r?\n/, "")}`;
     }
   });
 
+  // exec-schema.js
+  var require_exec_schema = __commonJS({
+    "exec-schema.js"(exports, module) {
+      var DEFAULT_MAX_BYTES = 64 * 1024;
+      var FILENAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+      function isFilenameToken(v) {
+        return typeof v === "string" && FILENAME_RE.test(v) && !v.startsWith(".");
+      }
+      function clampReplyBody(stderr, maxBytes, { truncated = false } = {}) {
+        const text = String(stderr == null ? "" : stderr).trim();
+        if (!text) return "";
+        if (!truncated && text.length <= maxBytes) return text;
+        const lines = text.split("\n");
+        const footer = !truncated && lines.length > 1 ? lines[lines.length - 1] : null;
+        const body = footer ? lines.slice(0, -1) : lines;
+        const budget = footer ? maxBytes - footer.length - 1 : maxBytes;
+        const kept = [];
+        let used = 0;
+        for (const line of body) {
+          const cost = used ? line.length + 1 : line.length;
+          if (used + cost > budget) break;
+          kept.push(line);
+          used += cost;
+        }
+        if (!kept.length) return `${text.slice(0, maxBytes)}\u2026`;
+        const missing = body.length - kept.length;
+        const note = truncated ? `(+${missing} or more lines dropped \u2014 output also outran the collector)` : `(+${missing} more lines dropped at the ${maxBytes}-byte reply cap)`;
+        return [...kept, note, ...footer ? [footer] : []].join("\n");
+      }
+      function validateAgainstSchema(schema, value, at = "payload") {
+        if (!schema || typeof schema !== "object") {
+          return { ok: false, error: `${at}: no schema` };
+        }
+        const t = schema.type;
+        if (t === "object") {
+          if (value === null || typeof value !== "object" || Array.isArray(value)) {
+            return { ok: false, error: `${at}: expected object` };
+          }
+          const props = schema.properties || {};
+          const required = Array.isArray(schema.required) ? schema.required : [];
+          for (const key of required) {
+            if (!(key in value)) return { ok: false, error: `${at}.${key}: required` };
+          }
+          if (schema.additionalProperties === false) {
+            for (const key of Object.keys(value)) {
+              if (!(key in props)) return { ok: false, error: `${at}.${key}: not allowed` };
+            }
+          }
+          for (const key of Object.keys(props)) {
+            if (!(key in value)) continue;
+            const r = validateAgainstSchema(props[key], value[key], `${at}.${key}`);
+            if (!r.ok) return r;
+          }
+          return { ok: true };
+        }
+        if (t === "array") {
+          if (!Array.isArray(value)) return { ok: false, error: `${at}: expected array` };
+          if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+            return { ok: false, error: `${at}: exceeds maxItems ${schema.maxItems}` };
+          }
+          if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+            return { ok: false, error: `${at}: below minItems ${schema.minItems}` };
+          }
+          if (schema.items) {
+            for (let i = 0; i < value.length; i += 1) {
+              const r = validateAgainstSchema(schema.items, value[i], `${at}[${i}]`);
+              if (!r.ok) return r;
+            }
+          }
+          return { ok: true };
+        }
+        if (t === "filename") {
+          if (!isFilenameToken(value)) {
+            return { ok: false, error: `${at}: not a safe filename token ([A-Za-z0-9._-]{1,64}, no leading dot)` };
+          }
+          return { ok: true };
+        }
+        if (t === "string") {
+          if (typeof value !== "string") return { ok: false, error: `${at}: expected string` };
+          if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+            return { ok: false, error: `${at}: exceeds maxLength ${schema.maxLength}` };
+          }
+          if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+            return { ok: false, error: `${at}: below minLength ${schema.minLength}` };
+          }
+          if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+            return schema.enum.length ? { ok: false, error: `${at}: not one of ${schema.enum.join("|")}` } : { ok: false, error: `${at}: the enum is empty \u2014 no value is allowed until the operator lists one in the entry's schema` };
+          }
+          return { ok: true };
+        }
+        if (t === "number" || t === "integer") {
+          if (typeof value !== "number" || Number.isNaN(value)) {
+            return { ok: false, error: `${at}: expected ${t}` };
+          }
+          if (t === "integer" && !Number.isInteger(value)) {
+            return { ok: false, error: `${at}: expected integer` };
+          }
+          if (typeof schema.minimum === "number" && value < schema.minimum) {
+            return { ok: false, error: `${at}: below minimum ${schema.minimum}` };
+          }
+          if (typeof schema.maximum === "number" && value > schema.maximum) {
+            return { ok: false, error: `${at}: above maximum ${schema.maximum}` };
+          }
+          return { ok: true };
+        }
+        if (t === "boolean") {
+          if (typeof value !== "boolean") return { ok: false, error: `${at}: expected boolean` };
+          return { ok: true };
+        }
+        return { ok: false, error: `${at}: unknown schema type "${t}"` };
+      }
+      function validateExecDef(entry, name) {
+        if (name !== void 0 && !isFilenameToken(name)) {
+          return { ok: false, error: `name: not a safe command id ([A-Za-z0-9._-]{1,64}, no leading dot)` };
+        }
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+          return { ok: false, error: "def: expected a JSON object" };
+        }
+        if ("inProcess" in entry && entry.inProcess !== "ctl") {
+          return { ok: false, error: 'inProcess: must be "ctl"' };
+        }
+        if (!("inProcess" in entry) && (!Array.isArray(entry.argv) || entry.argv.length === 0)) {
+          return { ok: false, error: "argv: required non-empty array" };
+        }
+        if ("argv" in entry && !Array.isArray(entry.argv)) {
+          return { ok: false, error: "argv: must be an array" };
+        }
+        for (const a of entry.argv || []) {
+          if (typeof a !== "string" || a.length === 0) {
+            return { ok: false, error: "argv: every element must be a non-empty string" };
+          }
+        }
+        if ("cwd" in entry && typeof entry.cwd !== "string") {
+          return { ok: false, error: "cwd: must be a string" };
+        }
+        if ("timeoutMs" in entry && !(typeof entry.timeoutMs === "number" && entry.timeoutMs > 0)) {
+          return { ok: false, error: "timeoutMs: must be a positive number" };
+        }
+        if ("maxBytes" in entry && !(typeof entry.maxBytes === "number" && entry.maxBytes > 0)) {
+          return { ok: false, error: "maxBytes: must be a positive number" };
+        }
+        if ("replyStderr" in entry && typeof entry.replyStderr !== "boolean") {
+          return { ok: false, error: "replyStderr: must be a boolean" };
+        }
+        if ("replyMaxBytes" in entry && !(typeof entry.replyMaxBytes === "number" && entry.replyMaxBytes > 0)) {
+          return { ok: false, error: "replyMaxBytes: must be a positive number" };
+        }
+        if ("statusEveryMs" in entry && !(typeof entry.statusEveryMs === "number" && Number.isInteger(entry.statusEveryMs) && entry.statusEveryMs >= 3e4)) {
+          return { ok: false, error: "statusEveryMs: must be an integer of at least 30000 ms" };
+        }
+        if ("description" in entry && !(typeof entry.description === "string" && entry.description.length <= 200)) {
+          return { ok: false, error: "description: must be a string of at most 200 chars" };
+        }
+        if (!entry.schema || typeof entry.schema !== "object" || entry.schema.type !== "object") {
+          return { ok: false, error: 'schema: required object schema (type: "object")' };
+        }
+        return { ok: true };
+      }
+      function parseAndValidate(entry, raw) {
+        const cap = entry && typeof entry.maxBytes === "number" && entry.maxBytes > 0 ? entry.maxBytes : DEFAULT_MAX_BYTES;
+        const rawStr = typeof raw === "string" ? raw : "";
+        const bytes = Buffer.byteLength(rawStr, "utf8");
+        if (bytes > cap) {
+          return { ok: false, error: `payload too large (${bytes} bytes > cap ${cap})` };
+        }
+        const trimmed = rawStr.trim();
+        if (!trimmed) return { ok: false, error: "payload: empty (expected JSON)" };
+        let value;
+        try {
+          value = JSON.parse(trimmed);
+        } catch (e) {
+          return { ok: false, error: `payload: invalid JSON (${e.message})` };
+        }
+        if (!entry || !entry.schema) {
+          return { ok: false, error: "payload: command has no schema" };
+        }
+        const r = validateAgainstSchema(entry.schema, value);
+        if (!r.ok) return r;
+        return { ok: true, value };
+      }
+      function typeToken(node) {
+        if (!node || typeof node !== "object") return "<value>";
+        if (Array.isArray(node.enum) && node.enum.length) return `"${node.enum.join("|")}"`;
+        switch (node.type) {
+          case "string":
+            return '"<string>"';
+          case "filename":
+            return '"<filename>"';
+          case "number":
+            return "<number>";
+          case "integer":
+            return "<int>";
+          case "boolean":
+            return "<bool>";
+          case "object":
+            return "{...}";
+          case "array":
+            return node.items && typeof node.items === "object" ? `[${typeToken(node.items)}, \u2026]` : "[\u2026]";
+          default:
+            return "<value>";
+        }
+      }
+      function payloadForm(schema) {
+        if (!schema || typeof schema !== "object") return "{}";
+        const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+        const required = Array.isArray(schema.required) ? schema.required.filter((k) => typeof k === "string") : [];
+        const optional = Object.keys(props).filter((k) => !required.includes(k));
+        const body = required.map((k) => `"${k}":${typeToken(props[k])}`).join(",");
+        const form = `{${body}}`;
+        return optional.length ? `${form} optional: ${optional.join(", ")}` : form;
+      }
+      function commandLines(def) {
+        if (typeof def === "string") return `  [agent:exec ${def}] {}
+      (definition unreadable \u2014 payload fields unknown; {} is the minimum, add fields if it reports missing ones)`;
+        if (!def || typeof def !== "object" || !def.name) return "";
+        const head = `  [agent:exec ${def.name}] ${payloadForm(def.schema)}`;
+        const desc = typeof def.description === "string" ? def.description.trim() : "";
+        return desc ? `${head}
+      ${desc}` : head;
+      }
+      module.exports = {
+        DEFAULT_MAX_BYTES,
+        FILENAME_RE,
+        isFilenameToken,
+        clampReplyBody,
+        validateAgainstSchema,
+        validateExecDef,
+        parseAndValidate,
+        typeToken,
+        payloadForm,
+        commandLines
+      };
+    }
+  });
+
   // intent-registry.js
   var require_intent_registry = __commonJS({
     "intent-registry.js"(exports, module) {
@@ -31715,6 +31950,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { DEFAULT_PLUGIN_SCOPE, seatHasPlugin } = require_plugin_api();
       var { PLUGIN_GLYPH, pluginGlyphOk } = require_intent_glyphs();
       var { AGENT_NAME_RE } = require_catalogs();
+      var { isFilenameToken } = require_exec_schema();
       var PLUGIN_REPLY_WAIT_MS = 30 * 1e3;
       var PLUGIN_REPLY_WAIT_MAX_MS = 470 * 1e3;
       var REPLY_ERROR_RE = /^\[agent:[^\]]+\] error: /;
@@ -31986,6 +32222,33 @@ ${m[2].replace(/^\r?\n/, "")}`;
 [agent:end]`;
         }
       });
+      var EXEC_TOOL = Object.freeze({
+        name: "exec",
+        description: "Run one of this seat's granted exec commands and return the dispatcher's reply in this turn. Prefer it over the [agent:exec] intent when you need the answer before you continue \u2014 a clodexctl read, a status check, a short run's output; the intent is for a run whose result may wake you later. Main agent only: a subagent's call is refused. `payload` is the command's JSON object (omit it or pass {} for a command with no fields); the same grant and schema checks as the intent run, and a refusal names the commands this seat is granted. The reply is the `[agent:exec]` line the intent would have delivered. A reply that is a JSON object with \"status\":\"started\" means the run is detached (ceiling over a minute): its status lines and result arrive in your main conversation, so end your turn and never run it again. Waits up to 70 s; a reply starting `outcome-unknown` is not a failure \u2014 the command was not cancelled and its reply still arrives in your main conversation; do not retry.",
+        inputSchema: { type: "object", properties: { command: { type: "string" }, payload: { type: "object" } }, required: ["command"], additionalProperties: false },
+        logKeys: ["command"],
+        toIntent(args) {
+          const a = args == null ? {} : args;
+          const extra = Object.keys(a).find((k) => k !== "command" && k !== "payload");
+          if (extra) throw new Error(`unknown argument: ${extra} (use command, payload)`);
+          if (!isFilenameToken(a.command)) throw new Error("command must be an exec command id ([A-Za-z0-9._-]{1,64}, no leading dot)");
+          const p = a.payload === void 0 ? {} : a.payload;
+          if (p === null || typeof p !== "object" || Array.isArray(p)) throw new Error("payload must be a JSON object ({} for a command with no fields)");
+          let json;
+          try {
+            json = JSON.stringify(p);
+          } catch {
+            json = void 0;
+          }
+          if (typeof json !== "string") throw new Error("payload must be plain JSON");
+          return `[agent:exec ${a.command}] ${json}`;
+        }
+      });
+      var EXEC_REFUSED_RE = /^\[agent:exec\] \S+: (not granted to this seat|invalid command id|no such registered command|registry read failed|malformed registry entry|refused: |payload(: | too large|\.)|ctl: |ctl is not enabled)/;
+      var EXEC_ERROR_RE = /^\[agent:exec\] \S+: (run #\d+ )?(run failed|spawn failed|TIMED OUT|exit \d+|killed \()/;
+      function classifyExecReply(line) {
+        return EXEC_REFUSED_RE.test(line) ? "refused" : EXEC_ERROR_RE.test(line) ? "error" : defaultReplyStatus(line);
+      }
       var CORE_ROWS = [
         { type: "dm", parse: parseDm, bodyMode: GREEDY, classifyReply: (line) => /^\[agent:dm\] refused: |^dm: rate limit — /.test(line) ? "refused" : /^\[agent:dm\] NOT delivered/.test(line) ? "error" : defaultReplyStatus(line), tools: [DM_TOOL] },
         { type: "sub", parse: parseSub, bodyMode: GREEDY },
@@ -32005,7 +32268,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         // running it. A body that must survive vetting cannot span lines, which is
         // what makes this row different from dm/memory/task.
         { type: "term", parse: parseTerm, bodyMode: NONE, classifyReply: (line) => /^\[agent:term\] /.test(line) ? "refused" : "ok", tools: [TERM_EXEC_TOOL, TERM_READ_TOOL] },
-        { type: "exec", parse: parseExec, bodyMode: () => "json" },
+        { type: "exec", parse: parseExec, bodyMode: () => "json", classifyReply: classifyExecReply, tools: [EXEC_TOOL] },
         { type: "ctl", parse: parseCtl, bodyMode: NONE },
         { type: "remind", parse: parseRemind, bodyMode: (i) => /^(list|cancel)\b/i.test(i.spec) ? "none" : "greedy" },
         { type: "shout", parse: parseShout, bodyMode: GREEDY },
@@ -32355,6 +32618,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         TERM_EXEC_TOOL,
         TERM_READ_TOOL,
         DM_TOOL,
+        EXEC_TOOL,
         DM_REF_RE,
         subagentCatalogFor,
         pruneForPlugins,
