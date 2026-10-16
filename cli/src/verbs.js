@@ -979,8 +979,9 @@ async function nodeList({ store, printer, flags, args, dialHello }) {
   if (flags.versions && flags.output === 'name') {
     throw new CliError(EXIT.USAGE, 'get nodes --versions -o name: name output has one column (drop --versions, or use -o json)');
   }
-  if (flags.ctx && !Object.hasOwn(store.contexts, flags.ctx)) throw new CliError(EXIT.USAGE, `no such node: ${flags.ctx}`);
-  const rows = flags.ctx ? [nodeRow(flags.ctx, store.contexts[flags.ctx], store.current)] : nodeRows(store);
+  const one = flags.ctx && args[0] === 'node' ? flags.ctx : null;
+  if (one && !Object.hasOwn(store.contexts, one)) throw new CliError(EXIT.USAGE, `no such node: ${one}`);
+  const rows = one ? [nodeRow(one, store.contexts[one], store.current)] : nodeRows(store);
   if (flags.versions) {
     const dialed = await dialAll(rows.map((r) => r.name), dialHello);
     rows.forEach((r, i) => {
