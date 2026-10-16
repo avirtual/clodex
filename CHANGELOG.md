@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — MCP tool `exec`: granted exec commands answer inline in the same turn
+## Unreleased
+
+## 5.129.0 — 2026-10-17 — MCP tool `exec`: granted exec commands answer inline in the same turn
 - MCP tool `exec {command, payload}`: a seat runs a granted exec command and gets the dispatcher's reply in the same turn (a clodexctl read, a status check, a short run); a detached run answers a `started` JSON ack and keeps streaming to the conversation; a wait that expires says outcome-unknown, never failed — the intent form cost a turn to send and a turn to read a sub-second lookup. `clodex-send '[agent:exec …]'` (the socket intent form) now also returns the reply inline.
 
 ## 5.128.1 — 2026-10-16 — body-less intent fix: thinned stand-in is a runtime note; intent misfire ledger + plugin; filed-nothing nag; ctl fixes
