@@ -40,6 +40,7 @@ const MODULES = {
   "browser-pane": require("../../plugins/browser-pane/renderer.js"),
   "git-branches": require("../../plugins/git-branches/renderer.js"),
   "memory-viewer": require("../../plugins/memory-viewer/renderer.js"),
+  "reminders-viewer": require("../../plugins/reminders-viewer/renderer.js"),
   "tickets-viewer": require("../../plugins/tickets-viewer/renderer.js"),
   "workbench": require("../../plugins/workbench/renderer.js"),
   // >>> END BUILD-GENERATED PLUGIN MODULES

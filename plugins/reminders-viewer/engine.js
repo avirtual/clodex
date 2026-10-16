@@ -86,7 +86,7 @@ function cancel(payload) {
   const res = host.library.remove('reminder', { agent, id });
   if (res && res.ok === true) return res;
   const all = readAll();
-  const gone = Array.isArray(all) && !all.some((r) => r && r.id === id && r.agent === agent);
+  const gone = Array.isArray(all) && !all.some((r) => r && r.id === id);
   return { ...(res || { ok: false }), ok: false, gone };
 }
 
