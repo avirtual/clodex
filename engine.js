@@ -1513,7 +1513,7 @@ async function restoreSessionsForWorkspace(workspaceId) {
         spawn(process.execPath, [path.join(REGISTRY_DIR, 'bin', 'clodex-ctl-admin.js'), '--sweep'], {
           detached: true, stdio: 'ignore',
           env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR },
-        }).unref();
+        }).on('error', () => {}).unref();
       } catch {}
     }, 15000).unref();
   }

@@ -196,8 +196,8 @@ the seat's `execCommands` (docs/messaging.md §7b).
 ## clodexctl through exec
 
 Three seeded entries run clodexctl verbs against a peer node's context. The
-first two (read, seats) spawn nothing: `"inProcess": "ctl"` makes `_handleExecIntent` validate the
-payload against the entry's schema and then call `_handleCtlIntent` with
+first two (read, seats) spawn nothing: `"inProcess": "ctl"` makes
+`_handleExecIntent` validate the payload against the entry's schema and then call `_handleCtlIntent` with
 `{ctx, line: verb + ' ' + args}`, so the run happens in ctl-service inside the
 main process. `~/.clodex/cli/contexts.json` and its tokens never leave the main
 process; the seat gets the rendered output back, scrubbed by ctl-service and
@@ -267,8 +267,8 @@ Runs live under `~/.clodex/ctl-runs/`: `<seq>.log` (redacted stream) and
 time; a second submit is refused naming the live seq. Progress dms from
 `ctl-admin` are passive and at most one per 30 s; the result dm (exit, last
 lines, log path) wakes the seat. A worker that dies without a result (machine
-reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on any
-launcher call and once at app boot — and nothing is ever re-run. There is no
+reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on the
+next deploy/upgrade/restart call (help does not sweep) and once at app boot — and nothing is ever re-run. There is no
 cancel in v1: `kill` the pid in `<ctx>.lock`. `[agent:exec status]` does not
 list these runs; the launcher exits too fast to be tracked.
 
