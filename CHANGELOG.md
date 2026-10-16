@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Intent misfires are recorded: every unclosed or empty body, disabled intent, refused exec payload and bounced verb lands in <userData>/intent-misfires.jsonl with the seat's context size, and the Intent Misfires plugin lists them per seat and kind — the body-less ticket intents of 2026-10-16 were found only when hands came back blocked.
+
 ## 5.128.0 — 2026-10-16 — ctl-admin: a granted seat can deploy, upgrade or restart a node; Reminders viewer plugin
 
 - Reminders viewer plugin (Plugins ▸ Manage Plugins…): a workspace-wide table of every reminder the seats have armed — kind, next fire, text, ticket binding — filtered to the selected seat by default, with per-row cancel. Read and cancel only; agents still arm their own.
