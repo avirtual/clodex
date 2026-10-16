@@ -151,6 +151,7 @@ async function restoreSessionsForWorkspace({
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
         typeof entry.effort === 'string' ? entry.effort : null,
+        Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
       );
       restored.push({
         name: entry.name,

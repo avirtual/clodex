@@ -77,9 +77,9 @@ function mkManager() {
     // Named parameters rather than `...args` so a signature change that reorders
     // them fails here loudly instead of silently shifting which value this test
     // calls the shell rules.
-    setupClaudeHook: (n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules) => {
-      hookCalls.push({ name: n, disabledTools, extraDenyRules });
-      return hooks.setupClaudeHook(n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules);
+    setupClaudeHook: (n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules, stream, effort, protectCredentials) => {
+      hookCalls.push({ name: n, disabledTools, extraDenyRules, protectCredentials });
+      return hooks.setupClaudeHook(n, proxyBase, proxyAgent, denyBuiltins, disabledTools, disabledSkills, wireBase, createdAt, extraDenyRules, stream, effort, protectCredentials);
     },
     setupCodexHook: () => {},
     cleanupClaudeHook: () => {}, cleanupCodexHook: () => {},
@@ -127,9 +127,9 @@ function mkManager() {
   };
   // Not wrapped in try/catch: a create() that threw before reaching the hook
   // would satisfy a "rules absent" assertion for entirely the wrong reason.
-  const spawn = async (name, { disabledTools = [], shellDeny = null } = {}) => {
+  const spawn = async (name, { disabledTools = [], shellDeny = null, protectCredentials = null } = {}) => {
     await m.create(name, 'claude', os.tmpdir(), [], null, 'ws', null, false, null,
-      [], [], disabledTools, [], [], null, [], [], null, null, true, true, null, shellDeny);
+      [], [], disabledTools, [], [], null, [], [], null, null, true, true, null, shellDeny, null, 'pty', null, protectCredentials);
     stop(name);
   };
   const settingsOf = (name) => JSON.parse(fs.readFileSync(pathFor(root, name, 'settings'), 'utf-8'));
@@ -205,4 +205,18 @@ test('t673: a seat with no shellDeny hands the hook an empty list, never undefin
   assert.deepStrictEqual(f.hookCalls[0].extraDenyRules, []);
   assert.deepStrictEqual(f.settingsOf('plain-seat').permissions.deny, TOOL_DENY,
     'no shell rules means the deny block is exactly what the tool cap produced');
+});
+
+test('t1842: create() carries protectCredentials into the settings sandbox block and the record', async () => {
+  const f = mkManager();
+  await f.spawn('guarded-seat', { protectCredentials: ['~/.aws'] });
+  assert.deepStrictEqual(f.hookCalls[0].protectCredentials, ['~/.aws']);
+  const settings = f.settingsOf('guarded-seat');
+  assert.ok(settings.sandbox.filesystem.denyRead.includes('~/.aws'));
+  assert.deepStrictEqual(f.record('guarded-seat').protectCredentials, ['~/.aws']);
+  f.forget('guarded-seat');
+  await f.spawn('plain-seat');
+  assert.strictEqual(f.hookCalls[1].protectCredentials, null);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(f.settingsOf('plain-seat'), 'sandbox'), false);
+  assert.ok(!Object.prototype.hasOwnProperty.call(f.record('plain-seat'), 'protectCredentials'));
 });

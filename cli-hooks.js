@@ -9,6 +9,8 @@ const { composeDigest } = require('./memory-store');
 const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
+const { buildCredentialSandbox } = require('./credential-sandbox');
+const { runningInSandboxBox } = require('./sandbox');
 // The horizon is interpolated into the generated drain, so the constant beside
 // its reasoning stays the single source — a second literal in a template string
 // is exactly the copy that drifts the first time either is touched.
@@ -62,7 +64,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -846,12 +848,18 @@ exit 0
     // filtered against the catalog because a stale name makes the CLI warn
     // "matches no known tool" on every startup.
     const toolSet = new Set(CLAUDE_TOOLS);
+    const guard = Array.isArray(protectCredentials)
+      ? buildCredentialSandbox({ registryDir: REGISTRY_DIR, list: protectCredentials, inBox: runningInSandboxBox(process.env) })
+      : null;
     const denyRules = [...new Set([
       ...denyAgentRules(denyBuiltins),
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
       ...(Array.isArray(extraDenyRules) ? extraDenyRules : []).filter(Boolean),
+      ...(guard ? guard.deny : []),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };
+    if (guard && guard.ask.length) settings.permissions = { ...(settings.permissions || {}), ask: guard.ask };
+    if (guard && guard.sandbox) settings.sandbox = guard.sandbox;
     // skillOverrides:{name:"off"} REMOVES the skill from the injected roster,
     // reclaiming its per-turn tokens; a Skill(name) deny still pays the listing.
     const skillsOff = [...new Set((Array.isArray(disabledSkills) ? disabledSkills : []).filter(Boolean))];

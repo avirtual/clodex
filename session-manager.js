@@ -1385,7 +1385,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1398,7 +1398,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null) {
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
@@ -1653,7 +1653,7 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
@@ -2114,6 +2114,7 @@ function createSessionManager(deps) {
         denyBuiltins: Array.isArray(denyBuiltins) ? denyBuiltins : [],
         disabledTools: Array.isArray(disabledTools) ? disabledTools : [],
         ...(Array.isArray(shellDeny) ? { shellDeny } : {}),
+        ...(Array.isArray(protectCredentials) ? { protectCredentials } : {}),
         disabledSkills: Array.isArray(disabledSkills) ? disabledSkills : [],
         injectSkills: Array.isArray(injectSkills) ? injectSkills : [],
         // Persisted by create's own upsert so it survives kill()+recreate, which rebuilds the record from spawn args only;
@@ -3583,6 +3584,7 @@ function createSessionManager(deps) {
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
+            Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
           );
         } catch (err) {
           const kept = { ...entry, name: newName };
@@ -3666,6 +3668,7 @@ function createSessionManager(deps) {
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
+            Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
@@ -3917,6 +3920,7 @@ function createSessionManager(deps) {
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
+            Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry }));
@@ -6940,6 +6944,7 @@ function createSessionManager(deps) {
             typeof entry.fixFor === 'string' ? entry.fixFor : null,
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
+            Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
           );
           const lvl = stripLevelOf(entry);
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

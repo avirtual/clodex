@@ -109,7 +109,7 @@ function restoreSites() {
 }
 
 const FIRST = 10;
-const LAST = 26;
+const LAST = 27;
 
 const TAIL = [
   'E.agents || []',
@@ -129,6 +129,7 @@ const TAIL = [
   "typeof E.fixFor === 'string' ? E.fixFor : null",
   "E.io || 'pty'",
   "typeof E.effort === 'string' ? E.effort : null",
+  'Array.isArray(E.protectCredentials) ? E.protectCredentials : null',
 ];
 
 const PATCH_REASON = 'applySessionArgs replays the Edit-dialog patch over the record, so this field is the patched value, not the persisted one';

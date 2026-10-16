@@ -1016,7 +1016,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null,
+            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null,
           );
           // Report a missing prompt once: suppress create()'s finding when `promptWarn` is already carried; the two texts are worded
           // differently on purpose, so suppression keys on the warn, not on matching text.
@@ -3693,6 +3693,7 @@ function createTicketMethods(deps, shared) {
         io: tpl.io === 'stream' ? 'stream' : 'pty',
         // Not `|| []`: absent means every shipped bundle, `[]` means none.
         plugins: Array.isArray(tpl.plugins) ? tpl.plugins.map(String) : null,
+        protectCredentials: Array.isArray(tpl.protectCredentials) ? tpl.protectCredentials.filter((p) => typeof p === 'string') : null,
       };
     },
 
@@ -3848,6 +3849,7 @@ function createTicketMethods(deps, shared) {
           // `[]` (everything gated) must apply; null keeps the all-enabled default.
           intents: shape ? shape.intents : null,
           plugins: shape ? shape.plugins : null,
+          protectCredentials: (shape && shape.protectCredentials) || null,
           io: (shape && shape.io) || 'pty',
           env: withAccount((shape && shape.sessionEnv) || null),
           account: accountLabel,
@@ -3930,6 +3932,7 @@ function createTicketMethods(deps, shared) {
         // `[]`, not null: the reviewer's fallback gates every intent, where null would leave create() all-enabled.
         intents: (shape && Array.isArray(shape.intents)) ? shape.intents : [],
         plugins: shape ? shape.plugins : null,
+        protectCredentials: (shape && shape.protectCredentials) || null,
         io: (shape && shape.io) || 'pty',
         // An object always; the fallback applies when the template supplied no env object, else the reviewer boots without CLODEX_DISABLE_IPC_PROMPT.
         // REVIEWER_FALLBACK.env skips the allowlist pass: it is the shipped set and is not agent-writable.
@@ -4084,7 +4087,7 @@ function createTicketMethods(deps, shared) {
             // The `false` is noWire, a literal and never `shape.noWire`: an agent-writable template could blind the wire that measures this seat's cost;
             // it also cannot be dropped, since the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
-            false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null,
+            false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null,
           );
           // First, before anything that can throw: until claimed the seat lives in a tree no record names, so _ticketTreeHolder is blind
           // to it and session:kill orphans the checkout.

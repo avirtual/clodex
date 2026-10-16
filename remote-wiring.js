@@ -379,6 +379,7 @@ function createRemoteWiring(deps) {
         typeof rec.fixFor === 'string' ? rec.fixFor : null,
         rec.io || 'pty',
         typeof rec.effort === 'string' ? rec.effort : null,
+        Array.isArray(rec.protectCredentials) ? rec.protectCredentials : null,
       );
     } catch (e) {
       try { if (!manager.sessions.has(name)) getPersistence().remove(name); } catch {}
