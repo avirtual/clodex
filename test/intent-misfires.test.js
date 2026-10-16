@@ -114,12 +114,12 @@ const SITES = [
   {
     name: 'open body, head applied',
     run: ({ m }) => m._scanJsonlText('[agent:remind in 1m] a\nb', 'seat', [], { interrupted: false }),
-    want: { kind: 'unclosed-body', intent: 'remind', sub: null, turnBytes: 22 },
+    want: { kind: 'unclosed-body', intent: 'remind', sub: null, turnBytes: 24 },
   },
   {
     name: 'open body on a context verb, refused',
     run: ({ m }) => m._scanJsonlText('[agent:context compact] a\nb', 'seat', [], { interrupted: false }),
-    want: { kind: 'unclosed-body', intent: 'context', sub: 'compact', turnBytes: 26 },
+    want: { kind: 'unclosed-body', intent: 'context', sub: 'compact', turnBytes: 27 },
   },
   {
     name: 'turn interrupted inside a body',
@@ -139,7 +139,7 @@ const SITES = [
   {
     name: 'exec payload refused by the schema',
     run: ({ m }) => m._scanJsonlText('[agent:exec run-tests] {"scope":"own"}', 'seat', [], { interrupted: false }),
-    want: { kind: 'schema', intent: 'exec', sub: 'run-tests', turnBytes: 37 },
+    want: { kind: 'schema', intent: 'exec', sub: 'run-tests', turnBytes: 38 },
   },
   {
     name: 'exec command not granted',
@@ -148,7 +148,7 @@ const SITES = [
   },
   {
     name: 'ctl refused on a host without ctl',
-    run: ({ m, session }) => m._handleCtlIntent(session, { type: 'ctl', ctx: 'prod', line: 'get pods' }, () => {}),
+    run: ({ m, session, injected }) => m._handleCtlIntent(session, { type: 'ctl', ctx: 'prod', line: 'get pods' }, (t) => injected.push(t)),
     want: { kind: 'exec-refused', intent: 'ctl', sub: null, turnBytes: null },
   },
   {
@@ -204,7 +204,7 @@ test('misfire ENTER: the unclosed-body row carries the nag the seat saw and the 
     const hit = f.rows.find((r) => r.kind === 'unclosed-body');
     assert.ok(hit, 'ENTER: unclosed-body row');
     assert.deepStrictEqual(hit.detail, '[agent:remind] not closed; first line applied, 2 following lines treated as prose');
-    assert.strictEqual(hit.turnBytes, 24);
+    assert.strictEqual(hit.turnBytes, 26);
   } finally { f.cleanup(); }
 });
 
@@ -228,7 +228,7 @@ test('misfire: a closed, applied intent records nothing', async () => {
 });
 
 test('misfire: a seat-less spawn reply routed through onReply is not the seat\'s misfire', () => {
-  const f = mkSite();
+  const f = mkSite({ AGENT_NAME_RE: /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/ });
   try {
     const got = [];
     f.m._handleSpawnIntent(f.session, { name: '..' }, { onReply: (msg) => got.push(msg) });
