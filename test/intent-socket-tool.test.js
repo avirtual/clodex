@@ -401,3 +401,95 @@ test('dm tool: a refusal line from the dm arm reports status refused', async () 
   const { handle } = dmHandler({ reply });
   assert.deepStrictEqual(await handle({ tool: 'dm', args: { to: 'b', body: 'hi' }, ident: SUB_STAMP() }, ctl), { ok: true, status: 'refused', reply });
 });
+
+const EXEC_SEAT = { intents: ['*'] };
+const UNKNOWN_EXEC = { ok: false, status: 'refused', error: 'unknown tool: "exec"' };
+const EXEC_ARGS = { command: 'clodex-ctl-read', payload: { ctx: 'local', verb: 'get' } };
+
+function execHandler(entry = EXEC_SEAT, { reply = '[agent:exec] clodex-ctl-read: [ctl local exit 0] x', dispatch = null, replyWaitMs = null, setTimer, identSeen = new Map() } = {}) {
+  const seen = [];
+  const handle = createIntentRequestHandler({
+    seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: HCRED, log, identSeen,
+    refusal: registry.subagentRefusal, tools: TOOLS, replyWaitMs,
+    ...(setTimer ? { setTimer, clearTimer: () => {} } : {}),
+    classifyReply: (i, l) => registry.classifyReplyLine(i.type, l),
+    dispatch: dispatch || (async (intent, opts) => { seen.push({ type: intent.type, cmd: intent.cmd, body: intent.body, fromLabel: opts.fromLabel, hasIdent: 'ident' in intent }); opts.replyTo(reply); }),
+  });
+  return { handle, seen, identSeen };
+}
+
+test('exec: a verified main stamp dispatches the exec intent as main and the reply comes back verbatim', async () => {
+  const { handle, seen } = execHandler();
+  assert.deepStrictEqual(await handle({ tool: 'exec', args: EXEC_ARGS, ident: freshMain() }, ctl),
+    { ok: true, status: 'ok', reply: '[agent:exec] clodex-ctl-read: [ctl local exit 0] x' });
+  assert.deepStrictEqual(seen, [{ type: 'exec', cmd: 'clodex-ctl-read', body: '{"ctx":"local","verb":"get"}', fromLabel: null, hasIdent: false }]);
+});
+
+test('exec: no stamp, a sub stamp, a replay, another session, a bare agentId and an ungranted seat all answer unknown tool: "exec", consuming no nonce', async () => {
+  const replayed = freshMain();
+  const first = execHandler();
+  assert.strictEqual((await first.handle({ tool: 'exec', args: EXEC_ARGS, ident: replayed }, ctl)).ok, true);
+  warns.length = 0;
+  for (const [label, extra] of [
+    ['none', {}],
+    ['sub', { ident: identToken(crypto, HCRED, 'a1', 'gp', 'main-thread') }],
+    ['other session', { ident: freshMain('other-thread') }],
+    ['agentId', { agentId: 'main-thread' }],
+  ]) {
+    const { handle, seen } = execHandler();
+    assert.deepStrictEqual(await handle({ tool: 'exec', args: EXEC_ARGS, ...extra }, ctl), UNKNOWN_EXEC, label);
+    assert.deepStrictEqual(seen, [], label);
+  }
+  const before = first.seen.length;
+  assert.deepStrictEqual(await first.handle({ tool: 'exec', args: EXEC_ARGS, ident: replayed }, ctl), UNKNOWN_EXEC);
+  assert.strictEqual(first.seen.length, before);
+  assert.deepStrictEqual(warns, ['intent-socket h1: replayed identity stamp refused']);
+  warns.length = 0;
+  for (const entry of [{ intents: [] }, { intents: ['dm'] }]) {
+    const { handle, seen, identSeen } = execHandler(entry);
+    assert.deepStrictEqual(await handle({ tool: 'exec', args: EXEC_ARGS, ident: freshMain() }, ctl), UNKNOWN_EXEC, JSON.stringify(entry));
+    assert.deepStrictEqual(seen, []);
+    assert.strictEqual(identSeen.size, 0);
+  }
+});
+
+test('exec: H1 — two concurrent calls on one seat each get their own reply when the second lands first', async () => {
+  const replyTos = new Map();
+  const { handle } = execHandler(EXEC_SEAT, {
+    replyWaitMs: () => 1000,
+    setTimer: () => 0,
+    dispatch: async (intent, opts) => { replyTos.set(intent.body, opts.replyTo); },
+  });
+  const a = handle({ tool: 'exec', args: { command: 'c', payload: { k: 'A' } }, ident: freshMain() }, ctl);
+  const b = handle({ tool: 'exec', args: { command: 'c', payload: { k: 'B' } }, ident: freshMain() }, ctl);
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual([...replyTos.keys()], ['{"k":"A"}', '{"k":"B"}']);
+  assert.strictEqual(replyTos.get('{"k":"B"}')('[agent:exec] c: B'), true);
+  assert.strictEqual(replyTos.get('{"k":"A"}')('[agent:exec] c: A'), true);
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.strictEqual(ra.reply, '[agent:exec] c: A');
+  assert.strictEqual(rb.reply, '[agent:exec] c: B');
+});
+
+test('exec: a reply pushed inside dispatch returns without arming a timer', async () => {
+  const { handle } = execHandler(EXEC_SEAT, {
+    replyWaitMs: () => 70000,
+    setTimer: () => { throw new Error('timer armed'); },
+  });
+  assert.deepStrictEqual(await handle({ tool: 'exec', args: EXEC_ARGS, ident: freshMain() }, ctl),
+    { ok: true, status: 'ok', reply: '[agent:exec] clodex-ctl-read: [ctl local exit 0] x' });
+});
+
+test('exec: an expired wait answers outcome-unknown, status ok, and the reply that lands after it is left for the dm path', async () => {
+  let replyTo = null;
+  const { handle } = execHandler(EXEC_SEAT, {
+    replyWaitMs: () => 70000,
+    setTimer: (fn) => { fn(); return 0; },
+    dispatch: async (intent, opts) => { replyTo = opts.replyTo; },
+  });
+  const r = await handle({ tool: 'exec', args: EXEC_ARGS, ident: freshMain() }, ctl);
+  assert.strictEqual(r.status, 'ok');
+  assert.match(r.reply, /^outcome-unknown: exec clodex-ctl-read gave no reply within 70 s\./);
+  assert.ok(r.reply.includes('{"command":"status","payload":{}}'), r.reply);
+  assert.strictEqual(replyTo('[agent:exec] c: late'), false);
+});

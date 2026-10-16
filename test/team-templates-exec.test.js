@@ -510,7 +510,7 @@ test('t700: the grant, not the def\'s location, is still the capability', async 
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
 
-  assert.deepStrictEqual(replies, ['[agent:exec] ungranted: not granted to this seat']);
+  assert.deepStrictEqual(replies, ['[agent:exec] ungranted: not granted to this seat (granted: none)']);
   assert.strictEqual(fs.existsSync(marker), false, 'and nothing ran');
 });
 
