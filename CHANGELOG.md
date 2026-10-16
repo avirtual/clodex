@@ -17,6 +17,7 @@ blocks a release.
 
 - `[agent:ctl <ctx>] <line>` runs a clodexctl verb against a named context in the main process; two seeded exec entries (`clodex-ctl-read`, `clodex-ctl-seats`) let the operator grant it per seat with a verb allowlist, and deploy, undeploy, upgrade, input, exec, port-forward and attach are refused in every path.
 - The ctl exec entries gain a `help` verb (clodexctl's own usage text, on demand) and lose the bare `nodes` verb; the New Session exec checklist shows each entry's description instead of a bare name for in-process entries.
+- A spilled intent's retained head line is the body's whole first line; the 77-char ellipsis cut had taught leads to file tickets with the artifact path cut off.
 
 ### Docs
 

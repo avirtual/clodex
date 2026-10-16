@@ -55,7 +55,7 @@ one outcome worse than a stall.
 
 ## FILED_POINTER_RE
 
-ONE line, `[<title> — ]<size>[ of prose] filed at <abs path>`: ≤80 chars of
+ONE line, `[<title> — ]<size>[ of prose] filed at <abs path>`: ≤`HEAD_TITLE_MAX` chars of
 title, the path under `spill/<seat>/`, basename the 16-hex id (`pointerText`
 writes it; `spillSize`: `858 B` under 1024, else `5.2 KB`). The size is
 REQUIRED: a body that merely names a spill file is an agent pointing a peer at

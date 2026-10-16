@@ -6,7 +6,7 @@ const crypto = require('crypto');
 
 const { confine } = require('./path-confine');
 const { atomicWriteFileSync } = require('./fs-util');
-const { FILED_SRC, FILED_POINTER_RE } = require('./spill-grammar');
+const { TITLE_SRC, FILED_SRC, FILED_POINTER_RE } = require('./spill-grammar');
 const { SPILLED_BODY, SPILLED_BODY_FIRST, SPILLED_BODY_EPHEMERAL, STAND_INS } = require('./spill-stand-ins');
 
 const SPILL_MIN_BYTES = 800;
@@ -32,7 +32,7 @@ const SPILL_CATEGORY_OF = Object.freeze({
 const ID_RE = /^[0-9a-f]{16}$/;
 const AGENT_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const POINTER_RE = /^\s*@spill:([0-9a-f]{16})\s*$/;
-const TITLED_POINTER_RE = /^([^\n]{0,79}[^\s\n]) @spill:([0-9a-f]{16})\s*$/;
+const TITLED_POINTER_RE = new RegExp(String.raw`^(${TITLE_SRC}) @spill:([0-9a-f]{16})\s*$`);
 const TRAILING_POINTER_RE = new RegExp(String.raw`(?:(@spill:([0-9a-f]{16}))|${FILED_SRC})\s*$`);
 const HEAD_RE = /^\[agent:([a-z]+)(?:\s+([a-z-]+))?\b([^\]]*)\]/;
 const RECEIPT_RE = /^\(I sent (\S+(?: \S+)*?)(?: — "[^"]*")? in full, \d+ B; Clodex kept my text at (\/.+?\.md)\.\)$/;

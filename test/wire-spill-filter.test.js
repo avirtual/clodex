@@ -9,7 +9,7 @@ const crypto = require('node:crypto');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { SpillFilter } = require('../wire/spill');
 const { parseIntent } = require('../intent-scanner');
-const { receiptOf, mimicKindOf, pointerOf, spillSize, SPILL_FILLER, SPILL_VERBS, SPILL_MIN_BYTES } = require('../intent-spill');
+const { receiptOf, mimicKindOf, pointerOf, pointerMatch, spillSize, SPILL_FILLER, SPILL_VERBS, SPILL_MIN_BYTES } = require('../intent-spill');
 
 const BIG = 'z'.repeat(900);
 const SMALL = 'y'.repeat(50);
@@ -168,7 +168,7 @@ test('the pointer line keeps the body\'s first line, so the transcript still say
     'content-addressed on the body, never on what the transcript shows');
 });
 
-test('single-line, blank-led and over-80-char first lines: bare pointer, title from the first non-blank line, 77 + ellipsis', () => {
+test('single-line, blank-led and over-80-char first lines: bare pointer, title from the first non-blank line, the whole line', () => {
   const one = 'q'.repeat(900);
   const single = run(`[agent:task add t] ${one}\n[agent:end]\n`);
   assert.equal(single.out, stub('task add t', single.spills),
@@ -184,8 +184,8 @@ test('single-line, blank-led and over-80-char first lines: bare pointer, title f
 
   const first = 'w'.repeat(81);
   const long = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
-  assert.equal(long.out, stub('task add t', long.spills, `${'w'.repeat(77)}… — `),
-    'the cap is on characters, and the ellipsis is one of them, as ticketTitle cuts one');
+  assert.equal(long.out, stub('task add t', long.spills, `${first} — `),
+    'the head keeps the whole first line: the board cap is ticketTitle\'s, not the transcript\'s');
   assert.ok(diskOf(long.spills).body.startsWith(first), 'the file holds the untruncated line');
 });
 
@@ -431,12 +431,12 @@ test('row 14: a fenced example inside a held body bails — the documented cost'
 test('row 15-16: an escaped intent and a mid-line mention are body text, and still spill', () => {
   const esc = `[agent:task add a] ${BIG}\n\\[agent:dm x] hi\n[agent:end]\n`;
   const escRun = run(esc);
-  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(77)}… — `));
+  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(300)} — `));
   assert.ok(diskOf(escRun.spills).body.includes('\\[agent:dm x] hi'));
 
   const mid = `[agent:task add a] ${BIG}\nclose with \`[agent:task done t1]\`\n[agent:end]\n`;
   const midRun = run(mid);
-  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(77)}… — `));
+  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(300)} — `));
   assert.ok(diskOf(midRun.spills).body.includes('close with `[agent:task done t1]`'));
 });
 
@@ -748,4 +748,61 @@ test('receiptOf reads a path with whitespace in it — the root is configurable 
   assert.equal(mimicKindOf('[agent:dm bob] the spec is filed at /Users/x/.clodex/spill/wirescope/0123456789abcdef.md'), null,
     'a path named without the size the tee writes is the agent pointing a peer at a file');
   assert.equal(mimicKindOf('[agent:dm bob] 858 B filed at /Users/x/.clodex/notes/wirescope/0123456789abcdef.md'), null, 'not a spill path');
+});
+
+const HEAD_OF_STUB = /^\[agent:task add t\] (.*) — \d+(?:\.\d)? K?B filed at \/[^\n]*\.md\n\[agent:end\]\n$/;
+
+function headTitleOf(out) {
+  const m = HEAD_OF_STUB.exec(out);
+  assert.ok(m, `the stub carries a titled head: ${out.slice(0, 120)}`);
+  return m[1];
+}
+
+test('head title: a 120-char first line ending in a tasks/ path rides whole, no ellipsis, and still resolves', () => {
+  const first = `${'a'.repeat(120 - ' — tasks/foo/SPEC.md'.length)} — tasks/foo/SPEC.md`;
+  assert.equal(first.length, 120);
+  const r = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
+  assert.equal(r.out, stub('task add t', r.spills, `${first} — `));
+  assert.ok(!r.out.includes('…'), 'no ellipsis anywhere in the stub');
+  const pointerLine = r.out.split('\n')[0].slice('[agent:task add t] '.length);
+  assert.equal(pointerOf(pointerLine), diskOf(r.spills).id, 'the resolver still recognises the titled pointer');
+});
+
+test('head title: a 350-byte first line with its tasks/ token at byte 280 keeps the token whole at the end within 300 bytes', () => {
+  const token = 'tasks/some-long-dir/SPEC.md';
+  const first = `${'b'.repeat(280)}${token} ${'c'.repeat(350 - 280 - token.length - 1)}`;
+  assert.equal(Buffer.byteLength(first), 350);
+  assert.equal(first.indexOf(token), 280);
+  const r = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);
+  const title = headTitleOf(r.out);
+  assert.ok(Buffer.byteLength(title) <= 300, `the title fits the cap: ${Buffer.byteLength(title)}`);
+  assert.ok(title.endsWith(` — ${token}`), 'the token survives whole, last');
+  assert.equal(title, `${'b'.repeat(300 - Buffer.byteLength(` — ${token}`))} — ${token}`);
+  assert.ok(!title.includes('…'));
+  assert.equal(pointerOf(r.out.split('\n')[0].slice('[agent:task add t] '.length)), diskOf(r.spills).id);
+});
+
+test('head title: a long first line with no tasks/ token, or one already inside the cap, cuts UTF-8-safe at 300 bytes', () => {
+  const plain = `${'é'.repeat(200)}`;
+  const r = run(`[agent:task add t] ${plain}\n${BIG}\n[agent:end]\n`);
+  assert.equal(headTitleOf(r.out), 'é'.repeat(150), 'two-byte characters are never split');
+  const early = `see tasks/x/SPEC.md ${'d'.repeat(400)}`;
+  const e = run(`[agent:task add t] ${early}\n${BIG}\n[agent:end]\n`);
+  assert.equal(headTitleOf(e.out), early.slice(0, 300), 'a token wholly inside the prefix needs no rescue');
+});
+
+test('head title: a one-line body still renders the bare pointer', () => {
+  const r = run(`[agent:task add t] ${'q'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(r.out, stub('task add t', r.spills));
+});
+
+test('FILED_POINTER_RE and TITLED_POINTER_RE take a title of HEAD_TITLE_MAX characters and refuse one more', () => {
+  const { FILED_POINTER_RE, HEAD_TITLE_MAX } = require('../spill-grammar');
+  assert.equal(HEAD_TITLE_MAX, 300);
+  const filedTail = '3.2 KB filed at /Users/b/.clodex/spill/a/0123456789abcdef.md';
+  for (const [n, ok] of [[299, true], [300, true], [301, false]]) {
+    const title = 'x'.repeat(n);
+    assert.equal(FILED_POINTER_RE.test(`${title} — ${filedTail}`), ok, `filed, ${n} chars`);
+    assert.equal(pointerMatch(`${title} @spill:0123456789abcdef`) !== null, ok, `titled, ${n} chars`);
+  }
 });

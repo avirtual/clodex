@@ -40,3 +40,7 @@ tokens), and the copy rode uncut in every later request. The cut never sees its 
 re-sends its transcript; wirescope's request.json is post-cut, the jsonl carries only the model's copy),
 so any `STAND_INS` line in incoming assistant text is model-authored: it is cut and counted as
 `parroted`.
+
+## headOf
+
+The head keeps the body's whole first line (up to `HEAD_TITLE_MAX` bytes, with the `tasks/` token kept) because the agent copies the shape it sees: a head that has been cut teaches it to file ticket titles cut the same way.

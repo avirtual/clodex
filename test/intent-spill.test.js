@@ -144,8 +144,8 @@ test('pointerOf: a title before the pointer is accepted and contributes nothing 
   assert.equal(pointerOf(`S-E intent-spill: shout joins @spill:${id}`), id,
     'the tee emits the title so the transcript still says WHICH spec was filed');
   assert.equal(pointerOf(`x @spill:${id}`), id);
-  assert.equal(pointerOf(`${'t'.repeat(80)} @spill:${id}`), id, '80 chars of title is the cap');
-  assert.equal(pointerOf(`${'t'.repeat(81)} @spill:${id}\n`), null,
+  assert.equal(pointerOf(`${'t'.repeat(300)} @spill:${id}`), id, '300 chars of title is the cap');
+  assert.equal(pointerOf(`${'t'.repeat(301)} @spill:${id}\n`), null,
     'past the cap it is a spec that mentions a pointer, and resolving it would replace a real body');
   assert.equal(pointerOf(`title  @spill:${id}`), null, 'exactly one space, as the tee writes it');
   assert.equal(pointerOf(`title\t@spill:${id}`), null);
@@ -184,8 +184,8 @@ test('pointerOf reads the id from the filed-at tail, titled or bare, and still f
   assert.equal(pointerOf(`858 B filed at ${p}`), id);
   assert.equal(pointerOf(`858 B of prose filed at ${p}`), id);
   assert.equal(pointerOf(`S-E intent-spill: shout joins — ${tail}`), id, 'a title before the tail');
-  assert.equal(pointerOf(`${'t'.repeat(80)} — ${tail}`), id, '80 chars of title is the cap');
-  assert.equal(pointerOf(`${'t'.repeat(81)} — ${tail}`), null, 'past the cap it is a spec that mentions a path');
+  assert.equal(pointerOf(`${'t'.repeat(300)} — ${tail}`), id, '300 chars of title is the cap');
+  assert.equal(pointerOf(`${'t'.repeat(301)} — ${tail}`), null, 'past the cap it is a spec that mentions a path');
   assert.equal(pointerOf(` ${tail}\n`), id, 'surrounding whitespace, as a consumer that kept the newline sees it');
   assert.deepStrictEqual(pointerMatch(`title — ${tail}`), { id, pointer: tail },
     'the pointer text a bounce names is the tail, never the title');

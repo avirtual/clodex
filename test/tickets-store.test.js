@@ -415,3 +415,8 @@ test('recordEvent refuses an object or array field and records nothing', () => {
   assert.throws(() => recordEvent(t, { at: 1, kind: 'done', by: 'hand', rounds: [1] }), /rounds must be a scalar/);
   assert.deepStrictEqual(t.events, []);
 });
+
+test('ticketTitle keeps the board listing\'s 80-char cap: 77 characters plus an ellipsis', () => {
+  assert.strictEqual(ticketTitle('w'.repeat(80)), 'w'.repeat(80));
+  assert.strictEqual(ticketTitle('w'.repeat(81)), `${'w'.repeat(77)}…`);
+});

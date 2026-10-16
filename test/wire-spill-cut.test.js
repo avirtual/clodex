@@ -97,7 +97,7 @@ test('T1 the old @spill: stub is still cut: a transcript written before the rend
 test('T1 a titled stub past the title cap, a sized path outside spill/, and a bare titled line are NOT stubs', () => {
   const { file } = stubOf();
   for (const line of [
-    `[agent:dm hand] ${'t'.repeat(81)} — 900 B filed at ${file}\n`,
+    `[agent:dm hand] ${'t'.repeat(301)} — 900 B filed at ${file}\n`,
     `[agent:dm hand] 900 B filed at ${file.replace('/spill/', '/notes/')}\n`,
     `[agent:dm hand] the body is filed at ${file}\n`,
     `first line of the body — 900 B filed at ${file}\n`,
@@ -1016,4 +1016,19 @@ test('t1795: a runtime note typed under an intent head is parroted and cut, no l
     assert.equal(r.parroted, 1, note);
     assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] Title\n[agent:end]');
   }
+});
+
+test('a cut stub whose head carries a 120-char first line ending in a tasks/ path renders that line whole', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const spills = [];
+  const f = new SpillFilter({ agent: 'tester', root, verbs: ['task.add'], onSpill: (i) => spills.push(i) });
+  const first = `${'a'.repeat(120 - ' — tasks/foo/SPEC.md'.length)} — tasks/foo/SPEC.md`;
+  const record = f.feed(`[agent:task add hand] ${first}\n${BIG}\n[agent:end]\n`) + f.close();
+  assert.equal(spills.length, 1, 'the synthetic intent spilled');
+  const obj = withStub(fixtureRequest(), record);
+  const r = cutSpillStubs(obj);
+  assert.ok(r.cut, 'the titled stub was recognised and cut');
+  const text = obj.messages[assistantIndex(obj)].content[0].text;
+  assert.equal(text, `[agent:task add hand] ${first}\n[agent:end]\n`, 'the whole line, ending in the path');
+  assert.ok(!text.includes('…'));
 });
