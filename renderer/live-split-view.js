@@ -296,11 +296,10 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     const n = (paintSeq += 1);
     const head = tag && t - tag.at <= PAINT_TAG_MS ? tag.text.trim() : null;
     tag = null;
+    if (!head) return;
     const turn = `paint:${n}`;
-    if (head) {
-      const [name, ...args] = head.split(/\s+/u);
-      extraRecords.push({ kind: 'command', name, args: args.join(' '), ts: t, id: `paint:${n}:cmd`, turn });
-    }
+    const [name, ...args] = head.split(/\s+/u);
+    extraRecords.push({ kind: 'command', name, args: args.join(' '), ts: t, id: `paint:${n}:cmd`, turn });
     extraRecords.push({ kind: 'command-output', text, ts: t, id: turn, turn });
     paint();
   }

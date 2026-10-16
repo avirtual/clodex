@@ -103,6 +103,29 @@ for (const [name, file, shape, expected] of PLATFORM_ROWS) {
   });
 }
 
+test('a codex user row whose content_item_kinds lack user.text (AGENTS.md + environment context) yields no record', () => {
+  const text = fixture('codex-agents-md');
+  assert.match(text, /"content_item_kinds":\["agents_md\.instructions","environments\.environment_context"\]/u, 'ENTER: the fixture is the injected-context user row');
+  assert.deepStrictEqual(recordsOf(text).records, []);
+});
+
+test('a codex user.text row is kept: a typed prompt stays a prompt and a delivered roster stays an inbound', () => {
+  const text = fixture('codex-agents-md') + fixture('codex-roster') + fixture('codex-typed');
+  assert.deepStrictEqual(recordsOf(text).records.map((r) => [r.kind, r.kind === 'prompt' ? r.text : r.from]), [['inbound', 'team'], ['prompt', 'there?']]);
+});
+
+const codexRow = (id, t) => `${JSON.stringify({ timestamp: '2026-09-25T17:06:52.850Z', type: 'response_item', payload: { type: 'message', id, role: 'user', content: [{ type: 'input_text', text: t }] } })}\n`;
+
+test('a codex user row without content_item_kinds carrying AGENTS.md instructions yields no record; a plain one is still a prompt', () => {
+  assert.deepStrictEqual(recordsOf(codexRow('m1', '# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>x</INSTRUCTIONS>') + codexRow('m2', 'hi')).records.map((r) => [r.id, r.kind, r.text]), [['m2', 'prompt', 'hi']]);
+});
+
+test('the codex reader classifies a user <environment_context> row without content_item_kinds as no prompt; a plain one is a prompt', () => {
+  const { readerFor } = require('../transcript-readers');
+  const prompt = (t) => readerFor('codex').classify(JSON.parse(codexRow('m', t))).prompt;
+  assert.deepStrictEqual([prompt('<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>'), prompt('hi')], ['', 'hi']);
+});
+
 test('a muse turn read whole orders prompt, reply and turn-end in one turn', () => {
   const text = ['muse-intent', 'muse-reply', 'muse-terminal'].map(fixture).join('');
   assert.deepStrictEqual(recordsOf(text).records.map((r) => [r.kind, r.turn]), [['prompt', 1], ['assistant', 1], ['turn-end', 1]]);

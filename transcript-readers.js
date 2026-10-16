@@ -1,5 +1,7 @@
 const CODEX_TEXT_BLOCK_TYPES = ['output_text', 'input_text'];
 
+const CODEX_INJECTED_PREFIXES = ['# AGENTS.md instructions for', '<environment_context>'];
+
 const NON_FLUSHING_TYPES = ['assistant', 'response_item'];
 
 const CODEX_TYPES = ['event_msg', 'response_item', 'token_usage_record', 'session_meta', 'turn_context'];
@@ -18,10 +20,13 @@ function codexResponseMessage(obj) {
   const role = payload.role;
   if (role !== 'assistant' && role !== 'user') return null;
   if (!Array.isArray(payload.content)) return null;
+  const kinds = (payload.internal_chat_message_metadata_passthrough || {}).content_item_kinds;
+  if (role === 'user' && Array.isArray(kinds) && !kinds.includes('user.text')) return null;
   const text = payload.content
     .filter(b => b && CODEX_TEXT_BLOCK_TYPES.includes(b.type) && b.text)
     .map(b => String(b.text))
     .join('\n');
+  if (role === 'user' && !Array.isArray(kinds) && CODEX_INJECTED_PREFIXES.some(p => text.startsWith(p))) return null;
   return text ? { role, text } : null;
 }
 

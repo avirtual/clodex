@@ -25,6 +25,7 @@ blocks a release.
 ### Sessions
 
 - A template's `protectCredentials` list turns on Claude Code's Bash sandbox for that seat with read denies on the listed credential dirs plus Clodex's own token files and write denies on shell and CLI config; project writes and network stay open, and an unsandboxed retry asks the operator. An approved unsandboxed retry runs that command with no sandbox at all, denied reads included.
+- Codex and Muse conversation mode no longer scrapes the screen into the transcript (each redraw had appended the banner, injected context and the last turn again); it reads the rollout like Claude's, and the AGENTS.md/environment context rows Codex files as user messages are dropped.
 
 ## 5.126.0 — 2026-10-16 — tickets and hands on a connected peer, operator-written memory directives, the probe intent
 

@@ -1189,6 +1189,7 @@ test('rows painted while the view was raw are a new baseline, not command output
     m.tick(250);
     m.write();
     m.write();
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', '› hello', ...CARD]));
     assert.deepStrictEqual([m.view.state().mode, m.view.composerVisible()], ['split', true]);
     assert.deepStrictEqual(m.outputs(), []);
@@ -1218,19 +1219,31 @@ test('ENTER: an Enter the menu mirror handles forwards the command it submits to
   assert.match(body, /if \(hit\.command && liveSplit\) liveSplit\.composerSent\(hit\.command\);/u);
 });
 
-test('a paint block with no slash command sent in the last 10s is emitted untagged', async () => {
+test('a paint block with no slash command sent in the last 10s adds no row', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1']));
   try {
     m.view.composerSent('/status');
     m.tick(10001);
     m.paintNext(codexScreen(['  banner 1', ...CARD]));
-    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('codex redrawing its whole history with no slash command typed adds no row, however often it repaints', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.paintNext(codexScreen(['  banner 1', '› there?', '• Here.']));
+    m.paintNext(codexScreen(['  >_ OpenAI Codex', '  Tip: x', '› there?', '• Here.', 'Worked for 7s']));
+    m.view.composerSent('/status');
+    m.paintNext(codexScreen(['  >_ OpenAI Codex', '  Tip: x', '› there?', '• Here.', 'Worked for 7s', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')], 'ENTER: the tagged block after the untagged redraws is still captured');
   } finally { m.done(); }
 });
 
 test('rows painted while the codex turn is running are never collected', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)']));
   try {
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)']));
     m.paintNext(codexScreen(['  banner 1', ...CARD, 'done']));
     assert.deepStrictEqual(m.outputs(), []);
@@ -1294,12 +1307,13 @@ test('output painted before the file has a timed record survives the first promp
 test('a codex turn with a follow-up queued under its status row is still busy', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
   try {
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
     assert.deepStrictEqual(m.outputs(), []);
   } finally { m.done(); }
 });
 
-test('a picker that hides the composer clears the pending tag, so a later block is untagged', async () => {
+test('a picker that hides the composer clears the pending tag, so a later block adds no row', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1']));
   try {
     m.view.composerSent('/model');
@@ -1310,7 +1324,7 @@ test('a picker that hides the composer clears the pending tag, so a later block 
     m.write();
     m.write();
     m.paintNext(codexScreen(['  banner 1', ...CARD]));
-    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+    assert.deepStrictEqual(m.outputs(), []);
   } finally { m.done(); }
 });
 
