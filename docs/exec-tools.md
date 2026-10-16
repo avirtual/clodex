@@ -190,8 +190,9 @@ Two spawn-time grants (both ride templates / persisted config):
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 
-A subagent reaches the same grants through the seat's `clodex-send` shell verb, limited to
-the seat's `execCommands` (docs/messaging.md §7b).
+Both doors that reach these grants from outside the turn text — the seat's `clodex-send`
+verb and the `exec` MCP tool — are main-agent only: a subagent's socket exec answers
+`not available to a subagent`, its tool call `unknown tool: "exec"` (docs/messaging.md §7b).
 
 ## clodexctl through exec
 
@@ -372,3 +373,30 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   `status` is shadowed by it and unreachable. A run in flight at a host restart
   is reported to its seat as lost and must be re-emitted; the relaunch gate
   waits for in-flight runs up to 10 minutes.
+
+## The exec MCP tool
+
+One generic tool, `exec {command, payload?}` on the clodex MCP server, listed while the
+seat's `exec` intent is enabled. It maps to the very `[agent:exec <command>] <payload JSON>`
+intent (`EXEC_TOOL`, intent-registry.js) and runs through `_handleExecIntent`, so grants and
+schema are the dispatcher's, rechecked on every call; the `mcp-tools.json` roster is
+advisory. Main agent only, by the verified `main.` stamp, as `term_exec`. `payload`
+defaults to `{}`.
+
+What the call returns:
+
+- an inProcess (`ctl`) entry, an untracked run's `replyStderr` line, a refusal, a failed run
+  and the reserved `status` query: the `[agent:exec] …` line the intent would deliver;
+- an untracked run that exits 0 with nothing to reply: `[agent:exec] <cmd>: ok (exit 0, no
+  output)` — only under a live tool/socket call; the turn-text intent stays silent;
+- a tracked run (ceiling ≥ 60 s): one JSON line
+  `{"status":"started","runId":N,"cmd":…,"pid":…,"ceilingMin":…,"statusEvery":…,"lookup":{"command":"status","payload":{"seq":N}},"note":…}`;
+  the passive started notice is not parked, and status lines and the result arrive in
+  the seat's main conversation as before;
+- a wait over 70 s (`EXEC_REPLY_WAIT_MS`): `outcome-unknown: …` with status `ok` — the
+  command was not cancelled and its reply lands in the main conversation.
+
+A grant refusal names the seat's granted commands (`(granted: a, b)` / `(granted: none)`),
+on both doors. The socket intent form `clodex-send '[agent:exec …]'` now waits for the
+reply and returns it inline too, like term and ctl.
+

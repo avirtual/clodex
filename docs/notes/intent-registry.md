@@ -50,3 +50,11 @@ Any head word parses, so a mistyped sub reaches `_handleProbeIntent` and bounces
 ## parseCtl
 
 `[agent:ctl <ctx>] <line>` is bodyless: the clodexctl line is the rest of the head line. The row is privileged in intent-catalog, so no seat has it until the operator lists `ctl`; the exec path (`inProcess: "ctl"`) reaches the same handler without it.
+
+## EXEC_TOOL
+
+`toIntent` serialises the payload with `JSON.stringify` and no indent: raw newlines are escaped, so an `[agent:…]` string inside a value can never start a line of its own and open a second intent (pinned by `exec: a payload round-trips through the intent text as one intent`). `payload` defaults to `{}` because `parseAndValidate` refuses an empty body. The command id is vetted with the dispatcher's own `isFilenameToken`, so a space can never split the head into cmd and body.
+
+## classifyExecReply
+
+Anchored on the dispatcher's `${cmd}: ` prefix and fixed phrases: a false `refused` or `error` on a success would trip the MCP loop ring on the third identical call, while a false `ok` on an unmatched failure costs nothing.

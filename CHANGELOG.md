@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- MCP tool `exec {command, payload}`: a seat runs a granted exec command and gets the dispatcher's reply in the same turn (a clodexctl read, a status check, a short run); a detached run answers a `started` JSON ack and keeps streaming to the conversation; a wait that expires says outcome-unknown, never failed — the intent form cost a turn to send and a turn to read a sub-second lookup. `clodex-send '[agent:exec …]'` (the socket intent form) now also returns the reply inline.
 
 ## 5.128.1 — 2026-10-16 — body-less intent fix: thinned stand-in is a runtime note; intent misfire ledger + plugin; filed-nothing nag; ctl fixes
 - ctl: a bare `describe node`/`get node` through the ctl exec tiers now reads the context the call was granted for, not the operator's current node; a dm to a bash session says it is a bash session instead of 'Session not found'.
