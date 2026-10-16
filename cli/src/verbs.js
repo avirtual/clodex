@@ -979,7 +979,9 @@ async function nodeList({ store, printer, flags, args, dialHello }) {
   if (flags.versions && flags.output === 'name') {
     throw new CliError(EXIT.USAGE, 'get nodes --versions -o name: name output has one column (drop --versions, or use -o json)');
   }
-  const rows = nodeRows(store);
+  const one = flags.ctx && args[0] === 'node' ? flags.ctx : null;
+  if (one && !Object.hasOwn(store.contexts, one)) throw new CliError(EXIT.USAGE, `no such node: ${one}`);
+  const rows = one ? [nodeRow(one, store.contexts[one], store.current)] : nodeRows(store);
   if (flags.versions) {
     const dialed = await dialAll(rows.map((r) => r.name), dialHello);
     rows.forEach((r, i) => {
@@ -1007,9 +1009,9 @@ function nodeCurrent({ store, printer }) {
   printer.line(store.current);
 }
 
-function nodeName(store, args, verb) {
+function nodeName(store, args, verb, flags = {}) {
   const target = R.parseTarget(args, verb);
-  const name = target.name || store.current;
+  const name = target.name || flags.ctx || store.current;
   if (!name) throw new CliError(EXIT.USAGE, `${verb} node needs a name (or set a current node)`);
   return name;
 }
@@ -1019,8 +1021,8 @@ function helloLines({ hello, error }) {
   return [`version     ${hello.version || '?'}`, `host        ${hello.host || '?'}`];
 }
 
-async function nodeDescribe({ store, printer, args, dialHello }) {
-  const name = nodeName(store, args, 'describe');
+async function nodeDescribe({ store, printer, flags, args, dialHello }) {
+  const name = nodeName(store, args, 'describe', flags);
   const e = Object.hasOwn(store.contexts, name) ? store.contexts[name] : null;
   if (!e) throw new CliError(EXIT.USAGE, `no such node: ${name}`);
   const r = nodeRow(name, e, store.current);

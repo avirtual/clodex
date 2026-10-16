@@ -303,6 +303,29 @@ test('describe node redacts the token, and the block is scrubbed besides', async
   assert.doesNotMatch(b.output, /SUPERSECRET/, 'a token must never reach the renderer');
 });
 
+test('the exec line shape: bare singular describe/get node under --ctx answer for that ctx, get nodes still lists every node', async (t) => {
+  const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport: fakeTransport({ fail: () => 'offline (test)' }) });
+  t.after(() => svc.dispose());
+  await svc.run('create node home --url http://home.example');
+  await svc.run('create node ios --ssh user@ios-box');
+  assert.strictEqual(svc.context(), 'home', 'ENTER: home is the current node, so a default to current would describe it');
+  const d = await svc.run('--ctx ios describe node');
+  assert.strictEqual(d.exitCode, 0, d.output);
+  assert.match(d.output, /^name\s+ios$/m);
+  assert.doesNotMatch(d.output, /home/);
+  const g = await svc.run('--ctx ios get node -o json');
+  assert.strictEqual(g.exitCode, 0, g.output);
+  assert.deepStrictEqual(JSON.parse(g.output).nodes.map((n) => n.name), ['ios']);
+  const all = await svc.run('--ctx ios get nodes -o json');
+  assert.strictEqual(all.exitCode, 0, all.output);
+  const names = JSON.parse(all.output).nodes.map((n) => n.name);
+  assert.ok(names.includes('home'), 'ENTER: the plural under --ctx keeps the other context\'s row');
+  assert.deepStrictEqual(names, ['home', 'ios']);
+  const missing = await svc.run('--ctx nope get node');
+  assert.notStrictEqual(missing.exitCode, 0);
+  assert.match(missing.output, /no such node: nope/);
+});
+
 // ---------------------------------------------------------------------------
 // Token containment. Every test below failed before its fix (cold review found
 // all three shipped green under the previous suite, which is why the passing
