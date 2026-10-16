@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A lead whose reply says a ticket was filed, rejected or respec'd while the turn carried no such intent (or one with an empty body) is told so in one line — the claim with no verb behind it had cost a stalled ticket an hour.
+
 ## 5.128.0 — 2026-10-16 — ctl-admin: a granted seat can deploy, upgrade or restart a node; Reminders viewer plugin
 
 - Reminders viewer plugin (Plugins ▸ Manage Plugins…): a workspace-wide table of every reminder the seats have armed — kind, next fire, text, ticket binding — filtered to the selected seat by default, with per-row cancel. Read and cancel only; agents still arm their own.
