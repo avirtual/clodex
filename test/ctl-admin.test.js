@@ -152,6 +152,13 @@ test('A9: redact hides tokens and token-shaped values, leaves short tokens alone
   assert.ok(rows[5][0].includes('abcdefg'), 'ENTER: the 7-char token is still in the input');
 });
 
+test('resultBody: a failed run with a reason carries it in the head', () => {
+  const rec = { seq: 9, verb: 'deploy', ctx: 'ios', outcome: 'failed', exitCode: null, signal: null,
+    reason: 'clodexctl spawn failed: x', startedAt: '2026-01-02T03:04:05.000Z', endedAt: '2026-01-02T03:04:07.000Z' };
+  assert.strictEqual(A.resultBody(rec, '/r', ['tail one']),
+    '[run 9 deploy ios] exit null (failed: clodexctl spawn failed: x) after 2s — log /r/9.log\ntail one');
+});
+
 test('A14: every prompt site in the CLI throws EXIT.USAGE under -o json before it prompts', () => {
   let sites = 0;
   for (const rel of ['cli/src/verbs.js', 'cli/src/undeploy.js']) {
