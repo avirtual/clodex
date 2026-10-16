@@ -249,8 +249,7 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
-// Checked = this seat MAY run that registered command. The argv preview is the
-// row hint so the operator sees what a grant actually authorizes.
+// Checked = this seat MAY run that registered command.
 function renderExecChecklist(container, enabledSet) {
   container.innerHTML = '';
   if (!execLibCache.length) {
