@@ -4,6 +4,12 @@ Two processes: **main** (Electron main — flat `*.js` at the repo root) and
 **renderer** (`renderer/`). `main.js` and `renderer/renderer.js` are thin
 coordinators; everything else is a module with an explicit interface.
 
+The project-instructions file is the tracked root `AGENTS.md`, read by Claude
+Code (2.1.277+), Codex and Muse seats alike; there is no `CLAUDE.md`, because
+any `CLAUDE.md` in the cwd or above (`.claude/CLAUDE.md` included) suppresses
+Claude's `AGENTS.md` read, and the gitignored `.claude/` never reaches
+worktrees, the box or contributors.
+
 This file answers "where does code live", one line per module naming what it
 OWNS. One level down, `docs/map/` holds symbol-level maps of the
 giant modules, gated by `test/module-map-fresh.test.js`. The
