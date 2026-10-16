@@ -207,8 +207,10 @@ connection, and a slow run queues the tab's next command behind it.
 
 | Entry | `verb` enum |
 |---|---|
-| `clodex-ctl-read` | get, describe, query, logs, nodes |
-| `clodex-ctl-seats` | the read verbs plus create, patch, restart, dm |
+| `clodex-ctl-read` | help, get, describe, query, logs |
+| `clodex-ctl-seats` | help plus the read verbs plus create, patch, restart, dm |
+
+`help` is the on-demand grammar: `{"verb": "help", "args": "<verb>"}` returns clodexctl's own usage text for that verb, rendered locally without dialing the node. An operator who already edited an entry (the seeder never overwrites an edited copy) adds `"help"` to its `verb` enum by hand.
 
 Payload: `{"ctx": "<context>", "verb": "<verb>", "args": "<rest of the line, ≤400 chars>"}`.
 

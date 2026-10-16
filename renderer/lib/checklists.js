@@ -249,8 +249,7 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
-// Checked = this seat MAY run that registered command. The argv preview is the
-// row hint so the operator sees what a grant actually authorizes.
+// Checked = this seat MAY run that registered command.
 function renderExecChecklist(container, enabledSet) {
   container.innerHTML = '';
   if (!execLibCache.length) {
@@ -266,7 +265,8 @@ function renderExecChecklist(container, enabledSet) {
     cb.checked = enabledSet.has(c.name);
     const argv = (c.argv || []).join(' ');
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(c.name)}</strong>${argv ? ' — ' + esc(argv) : ''}`;
+    const detail = c.description || argv || (c.inProcess ? `in-process: ${c.inProcess}` : '');
+    txt.innerHTML = `<strong>${esc(c.name)}</strong>${detail ? ' — ' + esc(detail) : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);

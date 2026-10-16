@@ -3317,6 +3317,19 @@ test('the CLI keeps its per-kind validators PRIVATE — validateEntry is the onl
 const execFile = (registryDir, name) =>
   path.join(registryDir, 'library', 'exec', `${name}.json`);
 
+test('execLibrary.list carries description and inProcess, empty strings when absent', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.execLibrary.save('ctl-x', JSON.stringify({ inProcess: 'ctl', description: 'read verbs', schema: { type: 'object' } }));
+    stores.execLibrary.save('plain', JSON.stringify({ argv: ['echo'], schema: { type: 'object' } }));
+    const [ctl, plain] = stores.execLibrary.list();
+    assert.strictEqual(ctl.description, 'read verbs');
+    assert.strictEqual(ctl.inProcess, 'ctl');
+    assert.strictEqual(plain.description, '');
+    assert.strictEqual(plain.inProcess, '');
+  } finally { cleanup(); }
+});
+
 test('execLibrary: missing dir -> [], save/raw/list/remove round-trip', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {
