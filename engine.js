@@ -1497,6 +1497,7 @@ const readCtxFor = (name) => {
   } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
 };
 
+let ctlAdminSweepArmed = false;
 async function restoreSessionsForWorkspace(workspaceId) {
   const restored = await restoreSessionsCore({
     workspaceId, persistence, manager, proxyPoller,
@@ -1505,6 +1506,17 @@ async function restoreSessionsForWorkspace(workspaceId) {
   try { manager.maybeDeliverRebootNotice(); } catch (e) { log.error('intent', `reboot notice delivery failed: ${e.message}`); }
   try { manager.deliverLostExecRuns(); } catch (e) { log.error('intent', `lost exec run delivery failed: ${e.message}`); }
   try { manager.deliverLostMonitors(); } catch (e) { log.error('intent', `lost monitor delivery failed: ${e.message}`); }
+  if (!ctlAdminSweepArmed) {
+    ctlAdminSweepArmed = true;
+    setTimeout(() => {
+      try {
+        spawn(process.execPath, [path.join(REGISTRY_DIR, 'bin', 'clodex-ctl-admin.js'), '--sweep'], {
+          detached: true, stdio: 'ignore',
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR },
+        }).unref();
+      } catch {}
+    }, 15000).unref();
+  }
   return restored;
 }
 

@@ -146,7 +146,9 @@ function validateAgainstSchema(schema, value, at = 'payload') {
       return { ok: false, error: `${at}: below minLength ${schema.minLength}` };
     }
     if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
-      return { ok: false, error: `${at}: not one of ${schema.enum.join('|')}` };
+      return schema.enum.length
+        ? { ok: false, error: `${at}: not one of ${schema.enum.join('|')}` }
+        : { ok: false, error: `${at}: the enum is empty — no value is allowed until the operator lists one in the entry's schema` };
     }
     return { ok: true };
   }

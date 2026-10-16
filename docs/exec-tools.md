@@ -195,8 +195,8 @@ the seat's `execCommands` (docs/messaging.md §7b).
 
 ## clodexctl through exec
 
-Two seeded entries run clodexctl verbs against a peer node's context. Neither
-spawns anything: `"inProcess": "ctl"` makes `_handleExecIntent` validate the
+Three seeded entries run clodexctl verbs against a peer node's context. The
+first two (read, seats) spawn nothing: `"inProcess": "ctl"` makes `_handleExecIntent` validate the
 payload against the entry's schema and then call `_handleCtlIntent` with
 `{ctx, line: verb + ' ' + args}`, so the run happens in ctl-service inside the
 main process. `~/.clodex/cli/contexts.json` and its tokens never leave the main
@@ -209,13 +209,14 @@ connection, and a slow run queues the tab's next command behind it.
 |---|---|
 | `clodex-ctl-read` | help, get, describe, query, logs |
 | `clodex-ctl-seats` | help plus the read verbs plus create, patch, restart, dm |
+| `clodex-ctl-admin` | help, deploy, upgrade, restart (node) — argv launcher + detached worker; undeploy and delete (session) when the operator adds them to the enum |
 
 `help` is the on-demand grammar: `{"verb": "help", "args": "<verb>"}` returns clodexctl's own usage text for that verb, rendered locally without dialing the node. An operator who already edited an entry (the seeder never overwrites an edited copy) adds `"help"` to its `verb` enum by hand.
 
 Payload: `{"ctx": "<context>", "verb": "<verb>", "args": "<rest of the line, ≤400 chars>"}`.
 
-**The operator fills the `ctx` enum.** Both entries ship with `"enum": []`, and
-an empty enum refuses every payload. To make a context reachable, edit
+**The operator fills the `ctx` enum.** Every entry ships with `"enum": []`, and
+an empty enum refuses every payload (`payload.ctx: the enum is empty — …`). To make a context reachable, edit
 `~/.clodex/library/exec/clodex-ctl-read.json` (or the team copy) and list the
 names, e.g. `"enum": ["ios"]`. An entry names what it may touch. Your edit
 survives app updates (the seeder never overwrites an edited file).
@@ -225,13 +226,81 @@ exec path does not need `ctl` in the seat's `intents`; the `[agent:ctl]` row is
 a separate privileged intent for templates that opt in, with no verb tier of its
 own.
 
-**Always refused, in every path:** input, exec, deploy, undeploy, upgrade,
-port-forward, attach, web, create/delete/use node, `--import` and logs --follow
-(`ctl: <verb> is operator-only`). The node checks read the positionals the CLI's
-own parser yields, so a flag in front of the resource word does not hide it. A
-line that sets `--ctx`, `--url`, `--token`, `--ssh`, `--remote-port` or
-`--tunnel` is refused too, because those flags would re-target the context. Verbs ctl-service itself defers (delete session, restart node) stay
-refused there.
+### The admin tier (clodex-ctl-admin)
+
+`clodex-ctl-admin` is an argv entry (`${CLODEX_BIN}/clodex-ctl-admin.js`), not
+`inProcess`: the dispatcher checks the grant and the schema, then runs a short
+launcher that validates the payload, takes a lock and starts a detached worker;
+the worker runs clodexctl and reports by dm. The dispatcher hands the launcher
+`CLODEX_SEAT` (the invoking seat), `CLODEX_NODE` (the app's interpreter) and
+`CLODEX_CTL` (the CLI script); clodexctl runs as
+`ELECTRON_RUN_AS_NODE=1 $CLODEX_NODE $CLODEX_CTL …`, so it works from the DMG's
+`app.asar` as well as a checkout.
+
+Pre-created contexts only. The seat names a context listed in the enum; the
+locator comes from its record in `~/.clodex/cli/contexts.json` (`deploy.flavor`
+and its fields when present, else inferred: `ssh` → ssh installer, `ssm.target`
+→ ssm, `kubectl.target` → helm; `--docker` only when the record says
+`deploy.flavor: docker`; url / tunnel / gcloud / az records are refused). The
+fresh-box flow: the operator runs `clodexctl create node X --ssh user@host`,
+lists `X` in the entry's enum and grants the seat; the seat runs `deploy`.
+Hazard: a remote docker node saves the same `{ssh}` record as an ssh-installer
+node, so a `deploy` on an unstamped record would install a second Clodex beside
+the container — let one terminal deploy stamp `deploy.flavor` first, or do not
+list that context. An ssm re-deploy rotates the wire token.
+
+Every run is forced non-interactive: `deploy` gets `--force -o json` plus the
+record's locator, `upgrade` `-o json`, `restart node` `--ctx <ctx> --force -o json`,
+`undeploy` `--force --keep-ctx -o json`. Agent flags are a per-verb allowlist —
+deploy: `--branch --tag --image --set --param --subnets --security-group
+--assign-public-ip --persistent --use-bedrock --no-wirescope --force-conflicts
+--dry-run`; upgrade: `--tag --image --branch --set --subnets --security-group
+--assign-public-ip --persistent --force --dry-run --force-conflicts`; restart:
+none; undeploy: `--keep-data --dry-run --wait`. Locator and credential flags
+(`--ssh --ssm --host --url --token --ctx --tunnel --region --profile --target
+--src --repo --env-file --import` …) are refused by name. `--image`, `--set` and
+`--param` are the widest knob: a granted seat chooses the image. `--dry-run` is
+the agent's own evidence step before a real run.
+
+Runs live under `~/.clodex/ctl-runs/`: `<seq>.log` (redacted stream) and
+`<seq>.json` (outcome `running|ok|failed|unknown`). One run per context at a
+time; a second submit is refused naming the live seq. Progress dms from
+`ctl-admin` are passive and at most one per 30 s; the result dm (exit, last
+lines, log path) wakes the seat. A worker that dies without a result (machine
+reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on any
+launcher call and once at app boot — and nothing is ever re-run. There is no
+cancel in v1: `kill` the pid in `<ctx>.lock`. `[agent:exec status]` does not
+list these runs; the launcher exits too fast to be tracked.
+
+The worker runs outside every seat sandbox: the launcher is a child of the
+Electron main process, not of the seat's CLI, so the worker reads
+`contexts.json`, `~/.ssh`, `~/.aws`, `~/.kube` and the app's PATH while the seat
+holds none of them. The seat CAN read `~/.clodex/ctl-runs/`, so every log line,
+dm, recorded argv and reply is redacted: every context token of 8+ chars, any
+48-hex string, `token=` / `"token":` / `CLODEX_REMOTE_TOKEN=` values and
+`Authorization: Bearer` headers become `***`. `CLODEX_CLAUDE_TOKEN_FILE` in the
+app's own environment is honoured by a fargate deploy.
+
+The dial: the shipped verb enum is help, deploy, upgrade, restart. To allow
+`undeploy` or `delete session <name>`, the operator adds `"undeploy"` / `"delete"`
+to `verb.enum` in `~/.clodex/library/exec/clodex-ctl-admin.json` (or the team
+copy); the launcher already knows both spellings, and the seeder never
+overwrites the edited file.
+
+**Refused, by tier:**
+
+| what | in-process tiers (`clodex-ctl-read/seats`, `[agent:ctl]`) | admin tier |
+|---|---|---|
+| create / delete / use node | `ctl: <verb> is operator-only` | refused (`create`, `use` are not tier verbs; `delete node` is operator-only) |
+| delete session, restart node | deferred by ctl-service, and are the admin tier's business | `restart` shipped, `delete session` by enum edit |
+| attach, port-forward, web, exec, input | operator-only | not tier verbs |
+| logs --follow | operator-only | `logs` is not a tier verb |
+| `--import` | operator-only | operator-only on this tier |
+| `--ctx --url --token --ssh --remote-port --tunnel` | refused: they would re-target the context | refused, with `--ssm --host --src --repo --claude-token-file --env-file --ssh-opt --profile --region --target --token-file` |
+| deploy, undeploy, upgrade | operator-only | the tier's purpose |
+
+The in-process node checks read the positionals the CLI's own parser yields, so
+a flag in front of the resource word does not hide it.
 
 ## Terminal commands inside an open session
 
@@ -276,11 +345,10 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
 
 ## Known v1 limitations / growth path
 
-- **Invoker identity is self-supplied.** The agent passes its own `agent` name;
-  the exec runner doesn't tell the child who invoked it. A small runner change
-  (pass the invoking session name via env to the exec child) would let the tool
-  drop the `agent` field and remove the wrong-name footgun. This is the one
-  change that would touch audited core code; deferred out of v1 on purpose.
+- **Invoker identity is self-supplied for monitor and team.** Those tools take
+  the agent's own `agent` name, so the wrong-name footgun stays open there. The
+  runner now passes the invoking seat as `CLODEX_SEAT` to every argv exec child;
+  `clodex-ctl-admin` reads it and takes no `agent` field.
 - **Delivery is best-effort and ungated.** Waking DMs land via `_deliverMessage`
   directly (the socket path), so monitor events aren't subject to the cost/hold
   DM gate. Fine for status pings; revisit if a tool needs to respect quiet.

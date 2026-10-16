@@ -1,0 +1,18 @@
+{
+  "argv": ["/usr/bin/env", "node", "${CLODEX_BIN}/clodex-ctl-admin.js"],
+  "description": "Deploy/upgrade/restart the node named by ctx from its context record; progress and the result arrive as dms from ctl-admin. help <verb> explains; undeploy/delete need an operator enum edit.",
+  "timeoutMs": 15000,
+  "maxBytes": 1024,
+  "replyStderr": true,
+  "replyMaxBytes": 12000,
+  "schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ctx", "verb"],
+    "properties": {
+      "ctx": { "type": "string", "enum": [] },
+      "verb": { "type": "string", "enum": ["help", "deploy", "upgrade", "restart"] },
+      "args": { "type": "string", "maxLength": 400 }
+    }
+  }
+}
