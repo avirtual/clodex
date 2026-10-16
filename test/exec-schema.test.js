@@ -183,6 +183,10 @@ test('validateAgainstSchema: object required + properties', () => {
 test('validateAgainstSchema: string enum + number bounds + integer + boolean', () => {
   assert.strictEqual(validateAgainstSchema({ type: 'string', enum: ['a', 'b'] }, 'a').ok, true);
   assert.strictEqual(validateAgainstSchema({ type: 'string', enum: ['a', 'b'] }, 'c').ok, false);
+  const empty = validateAgainstSchema({ type: 'string', enum: [] }, 'x');
+  assert.strictEqual(empty.ok, false);
+  assert.ok(empty.error.endsWith("the enum is empty — no value is allowed until the operator lists one in the entry's schema"), empty.error);
+  assert.match(validateAgainstSchema({ type: 'string', enum: ['a'] }, 'x').error, /not one of a$/);
   assert.strictEqual(validateAgainstSchema({ type: 'number', minimum: 0, maximum: 5 }, 3).ok, true);
   assert.strictEqual(validateAgainstSchema({ type: 'number', minimum: 0 }, -1).ok, false);
   assert.strictEqual(validateAgainstSchema({ type: 'integer' }, 2.5).ok, false);

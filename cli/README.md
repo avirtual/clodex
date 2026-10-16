@@ -271,9 +271,15 @@ in-process fetch — never in argv (ps-visible), never in a URL, never logged.
 A Clodex seat does not run clodexctl itself and never sees `contexts.json`. The
 operator grants it the `clodex-ctl-read` or `clodex-ctl-seats` exec entry and
 lists the contexts it may name; Clodex then runs the verb in its own process
-and hands the seat the output. Deploy, undeploy, upgrade, input, exec,
-port-forward and attach stay operator-only. See docs/exec-tools.md, "clodexctl
-through exec".
+and hands the seat the output. A third entry, `clodex-ctl-admin`, lets a
+granted seat `deploy`, `upgrade` or `restart node` a context the operator
+pre-created and listed: the run happens in a detached worker outside the seat
+(the locator comes from the context record, the seat never holds ssh/aws
+credentials, progress and the result arrive as dms), and `undeploy` /
+`delete session` run only after the operator adds them to that entry's verb
+enum. Creating, deleting or re-pointing a context, attach, port-forward, web,
+exec, input and logs --follow stay operator-only. See docs/exec-tools.md,
+"clodexctl through exec".
 
 ## Resources
 

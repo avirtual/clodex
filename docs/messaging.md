@@ -139,7 +139,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
   undeploy, upgrade, port-forward, attach, web, create/delete/use node, --import and
   logs --follow, and refuses `--ctx`/`--url`/`--token`/`--ssh`/`--remote-port`/`--tunnel`,
   before the service is called. The exec entries with `"inProcess": "ctl"` reach the same handler
-  (docs/exec-tools.md, "clodexctl through exec").
+  (docs/exec-tools.md, "clodexctl through exec"); the deploy/upgrade/restart-node tier is a separate argv exec entry, `clodex-ctl-admin`, not an intent.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;

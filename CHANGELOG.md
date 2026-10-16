@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Reminders viewer plugin (Plugins ▸ Manage Plugins…): a workspace-wide table of every reminder the seats have armed — kind, next fire, text, ticket binding — filtered to the selected seat by default, with per-row cancel. Read and cancel only; agents still arm their own.
+- A third seeded ctl exec entry, `clodex-ctl-admin`, lets a granted seat deploy, upgrade or restart a node whose context the operator pre-created and listed: the run happens in a detached worker outside the seat with the locator taken from the context record, progress and the result arrive as dms with a redacted log under `~/.clodex/ctl-runs/`, one run per context at a time, and undeploy / delete session switch on only by an operator edit of the entry's verb enum.
 
 ## 5.127.0 — 2026-10-16 — clodexctl through exec with on-demand help, a tracked AGENTS.md, opt-in credential sandbox for Claude seats
 
