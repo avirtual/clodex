@@ -14,6 +14,7 @@ const { WarmthStore, prefixHash } = require('../wire/warmth');
 const { HoldKeeper } = require('../wire/hold');
 const { SPILL_FILLER, SPILLED_BODY, SPILLED_BODY_FIRST, spillSize, writeSpill, pointerText } = require('../intent-spill');
 const { spillGrammarLine } = require('../ipc-prompt');
+const { SPILLED_INTENT_NOTE } = require('../spill-stand-ins');
 
 const FIXTURE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'spill-cut', 'pair-257-258.json'), 'utf8'));
 const SESSION_ID = '4a59af49-cc52-44b7-8b02-7f4196a4b486';
@@ -49,7 +50,7 @@ function stubOf() {
   return stubCache;
 }
 
-const RENDERED = `[agent:dm hand] first line of the body\n[agent:end]\n`;
+const RENDERED = `[agent:dm hand] first line of the body\n${SPILLED_INTENT_NOTE}\n`;
 
 function withStub(obj, text, extra = null) {
   const i = assistantIndex(obj);
@@ -69,7 +70,7 @@ test('T1 fixture: the CLI re-sends the response text as one byte-exact block', (
   assert.deepStrictEqual(r, { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER: the captured pair carries no stub');
 });
 
-test('T1 stub after prose: the two stub lines become the head and [agent:end] in place, every other byte of the block stays', () => {
+test('T1 stub after prose: the two stub lines become the head and the runtime note in place, every other byte of the block stays', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
@@ -80,7 +81,7 @@ test('T1 stub after prose: the two stub lines become the head and [agent:end] in
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] });
   const msg = obj.messages[i];
   assert.deepStrictEqual(msg.content.map((b) => b.type), before, 'block layout unchanged');
-  assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n${RENDERED}`, 'prose bytes, then the head and the terminator where the stub stood');
+  assert.equal(msg.content[0].text, `${FIXTURE.responseText}\n\n${RENDERED}`, 'prose bytes, then the head and the runtime note where the stub stood');
   assert.ok(!JSON.stringify(obj).includes('filed at'));
 });
 
@@ -111,7 +112,7 @@ test('T1 a titled stub past the title cap, a sized path outside spill/, and a ba
   }
 });
 
-test('T1 stub-only message after a user turn: the message stays and its text is the head and [agent:end]', () => {
+test('T1 stub-only message after a user turn: the message stays and its text is the head and the runtime note', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   obj.messages.splice(1, 1);
@@ -305,7 +306,7 @@ test('T8 drop rules: a thinking+pointer message goes whole; user/system/tool_res
   assert.ok(kept.messages[0].content[0].text.startsWith('[agent:dm hand]'), 'the user block still carries the pointer');
 });
 
-test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message keeps the head and [agent:end] — no placeholder needed', () => {
+test('Q4 system-adjacent: a stub-only assistant message after a role:"system" message keeps the head and the runtime note — no placeholder needed', () => {
   const { stub } = stubOf();
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
@@ -403,9 +404,9 @@ function assistantTexts(obj) {
 }
 
 const expandedOf = (s) => `On ${s.n}.\n[agent:task add hand]\n${s.body}\n[agent:end]\n`;
-const noteOf = (s) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n[agent:end]\n`;
+const noteOf = (s) => `On ${s.n}.\n[agent:task add hand] Title ${s.n}\n${SPILLED_INTENT_NOTE}\n`;
 
-test('t1798 (a): the first two resolvable intent stubs on an empty set render as the original intent, every later one as the bare head and [agent:end]', () => {
+test('t1798 (a): the first two resolvable intent stubs on an empty set render as the original intent, every later one as the head and the runtime note', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -415,8 +416,8 @@ test('t1798 (a): the first two resolvable intent stubs on an empty set render as
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
   assert.equal(texts[0], `On A.\n[agent:task add hand]\nTitle A\n${'a'.repeat(900)}\n[agent:end]\n`);
   assert.equal(texts[1], `On B.\n[agent:task add hand]\nTitle B\n${'b'.repeat(900)}\n[agent:end]\n`);
-  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[agent:end]\n');
-  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[agent:end]\n');
+  assert.equal(texts[2], `On C.\n[agent:task add hand] Title C\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(texts[3], `On D.\n[agent:task add hand] Title D\n${SPILLED_INTENT_NOTE}\n`);
   assert.deepStrictEqual(r.expanded, [A.file, B.file]);
   assert.equal(r.placeholders, 0);
 });
@@ -534,7 +535,7 @@ test('t1118 (e): with no registration ({ root: null, agent: null }) nothing is e
   }
 });
 
-test('t1119 (a): examples: 0 expands nothing — every stub renders as the bare head and [agent:end]', () => {
+test('t1119 (a): examples: 0 expands nothing — every stub renders as the head and the runtime note', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C, D] = filedStubs(root, ['A', 'B', 'C', 'D']);
   const obj = stubPayload([A, B, C, D]);
@@ -542,10 +543,10 @@ test('t1119 (a): examples: 0 expands nothing — every stub renders as the bare 
   assert.equal(r.cut, true);
   const texts = assistantTexts(obj);
   assert.equal(texts.length, 4, 'ENTER: all four messages reached');
-  assert.equal(texts[0], 'On A.\n[agent:task add hand] Title A\n[agent:end]\n');
-  assert.equal(texts[1], 'On B.\n[agent:task add hand] Title B\n[agent:end]\n');
-  assert.equal(texts[2], 'On C.\n[agent:task add hand] Title C\n[agent:end]\n');
-  assert.equal(texts[3], 'On D.\n[agent:task add hand] Title D\n[agent:end]\n');
+  assert.equal(texts[0], `On A.\n[agent:task add hand] Title A\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(texts[1], `On B.\n[agent:task add hand] Title B\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(texts[2], `On C.\n[agent:task add hand] Title C\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(texts[3], `On D.\n[agent:task add hand] Title D\n${SPILLED_INTENT_NOTE}\n`);
   assert.equal(r.placeholders, 0);
 });
 
@@ -564,7 +565,7 @@ test('t1119 (b): examples: 0 short-circuits before resolveSpill — a counter on
   assert.deepStrictEqual(seen, []);
 });
 
-test('t1798: examples: 1 expands exactly the first; every later stub is the bare head and [agent:end]', () => {
+test('t1798: examples: 1 expands exactly the first; every later stub is the head and the runtime note', () => {
   const root = mkTmpRoot('clodex-spill-');
   const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
   const obj = stubPayload([A, B, C]);
@@ -573,14 +574,14 @@ test('t1798: examples: 1 expands exactly the first; every later stub is the bare
   assert.deepStrictEqual(r.expanded, [A.file]);
 });
 
-test('t1108 rendering: a stub between prose renders as the head and [agent:end] at its own position — whole string', () => {
+test('t1108 rendering: a stub between prose renders as the head and the runtime note at its own position — whole string', () => {
   const id = '0123456789abcdef';
   const obj = fixtureRequest();
   const i = assistantIndex(obj);
   withStub(obj, `prose\n[agent:task add hand] Title @spill:${id}\n[agent:end]\nmore prose`, obj.messages[i].content.slice(1));
   assert.deepStrictEqual(cutSpillStubs(obj), { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER');
   assert.equal(obj.messages[i].content[0].text,
-    `prose\n[agent:task add hand] Title\n[agent:end]\nmore prose`);
+    `prose\n[agent:task add hand] Title\n${SPILLED_INTENT_NOTE}\nmore prose`);
   assert.equal(SPILLED_BODY, '[Runtime note: Clodex filed this body in full; it is not carried in the transcript.]', 'the literal the tests, the renderer and the mimic guard share');
   assert.equal(SPILLED_BODY_FIRST, '[Runtime note: Clodex carries your two newest long intent bodies in full as examples and replaces earlier ones with this note; this body was delivered and filed in full. Every new intent still needs its complete body; never write this note.]', 'the long form old transcripts still carry');
 
@@ -591,14 +592,14 @@ test('t1108 rendering: a stub between prose renders as the head and [agent:end] 
   const r = cutSpillStubs(emptied);
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'a block the cut would have emptied is rendered, not dropped');
   assert.equal(assistantIndex(emptied), j, 'the message is still there');
-  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n[agent:end]\n`);
+  assert.equal(emptied.messages[j].content[0].text, `[agent:task add hand] Title\n${SPILLED_INTENT_NOTE}\n`);
 
   for (const head of ['[agent:dm bob] Title', '[agent:shout] Title', '[agent:task done t7] Title', '[agent:task reject t7] Title', '[agent:task respec t7] Title']) {
     const o = fixtureRequest();
     const k = assistantIndex(o);
     withStub(o, `${head} @spill:${id}\nkept`, o.messages[k].content.slice(1));
     assert.equal(cutSpillStubs(o).cut, true, head);
-    assert.equal(o.messages[k].content[0].text, `${head}\n[agent:end]\nkept`, `${head}: a stub without its terminator still renders the head and [agent:end]`);
+    assert.equal(o.messages[k].content[0].text, `${head}\n${SPILLED_INTENT_NOTE}\nkept`, `${head}: a stub without its terminator still renders the head and the runtime note`);
   }
 
   assert.deepStrictEqual(classifyLine(SPILLED_BODY), { kind: 1 }, 'the cut renders no note, so a runtime note on the wire is typed and is cut');
@@ -728,7 +729,7 @@ test('T4 ordering, behaviourally: the upstream bytes, the hold entry and the war
     const sent = up.seen[0].body.toString('utf8');
     assert.ok(!sent.includes('filed at'), 'upstream never sees the stub');
     const edited = JSON.parse(sent);
-    assert.equal(edited.messages[1].content[0].text, `On it.\n\n${RENDERED}`, 'upstream sees the intent head as emitted, with its terminator');
+    assert.equal(edited.messages[1].content[0].text, `On it.\n\n${RENDERED}`, 'upstream sees the intent head as emitted, then the runtime note');
     assert.equal(up.seen[0].headers['content-length'], String(Buffer.byteLength(sent)), 'content-length recomputed for the edited bytes');
 
     const entry = hold.entry(SESSION_ID);
@@ -848,7 +849,7 @@ test('T9 pref-independence: spillEnabled false still cuts; spillCut false stops 
   }
 });
 
-test('Q4 on the wire: a system-adjacent stub-only message reaches upstream as the head and [agent:end], no spill-cut-skip', async () => {
+test('Q4 on the wire: a system-adjacent stub-only message reaches upstream as the head and the runtime note, no spill-cut-skip', async () => {
   const { stub } = stubOf();
   await withProxy({}, async (proxy, up) => {
     const events = collect(proxy, ['spill-cut', 'spill-cut-skip', 'turn.completed']);
@@ -975,9 +976,9 @@ test('t1111: the FIRST stub-bearing assistant message renders the bare head like
   const r = cutSpillStubs(obj);
   assert.equal(r.cut, true, 'ENTER');
   assert.equal(r.lines, 6);
-  assert.equal(obj.messages[1].content[0].text, `first\n[agent:dm hand] first line of the body\n[agent:end]\n`);
-  assert.equal(obj.messages[3].content[0].text, `second\n[agent:dm hand] first line of the body\n[agent:end]\n`);
-  assert.equal(obj.messages[5].content[0].text, `third\n[agent:dm hand] first line of the body\n[agent:end]\n`);
+  assert.equal(obj.messages[1].content[0].text, `first\n[agent:dm hand] first line of the body\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(obj.messages[3].content[0].text, `second\n[agent:dm hand] first line of the body\n${SPILLED_INTENT_NOTE}\n`);
+  assert.equal(obj.messages[5].content[0].text, `third\n[agent:dm hand] first line of the body\n${SPILLED_INTENT_NOTE}\n`);
   const twice = build();
   cutSpillStubs(twice);
   assert.equal(JSON.stringify(twice), JSON.stringify(obj), 'the same transcript renders to the same bytes on every request');
@@ -1003,7 +1004,7 @@ test('t1795: a cut transcript round-trips — a head line right above [agent:end
   obj.messages[i].content.push({ type: 'text', text: '[agent:dm hand] x @spill:0123456789abcdef\n[agent:end]' });
   const r = cutSpillStubs(obj);
   assert.deepStrictEqual(r, { cut: true, lines: 2, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] }, 'ENTER: only the stub block is cut');
-  assert.deepStrictEqual(obj.messages[i].content.map((b) => b.text), [`On it.\n${text}`, '[agent:dm hand] x\n[agent:end]']);
+  assert.deepStrictEqual(obj.messages[i].content.map((b) => b.text), [`On it.\n${text}`, `[agent:dm hand] x\n${SPILLED_INTENT_NOTE}`]);
   const again = JSON.parse(JSON.stringify(obj));
   assert.deepStrictEqual(cutSpillStubs(again), { cut: false, lines: 0, blocks: 0, messages: 0, skipped: 0, placeholders: 0, parroted: 0, expanded: [] });
   assert.deepStrictEqual(again, obj, 'no second [agent:end]');
@@ -1029,6 +1030,26 @@ test('a cut stub whose head carries a 120-char first line ending in a tasks/ pat
   const r = cutSpillStubs(obj);
   assert.ok(r.cut, 'the titled stub was recognised and cut');
   const text = obj.messages[assistantIndex(obj)].content[0].text;
-  assert.equal(text, `[agent:task add hand] ${first}\n[agent:end]\n`, 'the whole line, ending in the path');
+  assert.equal(text, `[agent:task add hand] ${first}\n${SPILLED_INTENT_NOTE}\n`, 'the whole line, ending in the path');
   assert.ok(!text.includes('…'));
+});
+
+test('t1854: a thinned stub renders as its head and the runtime note with no [agent:end]; the two kept examples still carry head, body and [agent:end]', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const [A, B, C] = filedStubs(root, ['A', 'B', 'C']);
+  const obj = stubPayload([A, B, C]);
+  cutSpillStubs(obj, { root, agent: 'tester' });
+  const texts = assistantTexts(obj);
+  assert.equal(texts.length, 3, 'ENTER: all three messages reached');
+  assert.equal(texts[0], `On A.\n[agent:task add hand]\nTitle A\n${'a'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[1], `On B.\n[agent:task add hand]\nTitle B\n${'b'.repeat(900)}\n[agent:end]\n`);
+  assert.equal(texts[2], `On C.\n[agent:task add hand] Title C\n${SPILLED_INTENT_NOTE}\n`);
+  assert.ok(!texts[2].includes('[agent:end]'), 'the stand-in is no complete intent');
+});
+
+test('t1854: the thinned-intent note typed outside an intent head is a parroted stand-in — cut and counted', () => {
+  const { obj, i } = echoRequest([`[agent:dm bob] hi\nbody\n[agent:end]\n${SPILLED_INTENT_NOTE}`]);
+  const r = cutSpillStubs(obj);
+  assert.equal(r.parroted, 1);
+  assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] hi\nbody\n[agent:end]');
 });

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A long intent body thinned out of a seat's history is now replaced by a runtime note instead of a bare head plus [agent:end] — the bare shape was a complete, valid, body-less intent, and the lead copied it: 38% of its ticket filings over five days arrived title-only. A copied note is refused with a nag, never applied.
+
 ## 5.128.0 — 2026-10-16 — ctl-admin: a granted seat can deploy, upgrade or restart a node; Reminders viewer plugin
 
 - Reminders viewer plugin (Plugins ▸ Manage Plugins…): a workspace-wide table of every reminder the seats have armed — kind, next fire, text, ticket binding — filtered to the selected seat by default, with per-row cancel. Read and cancel only; agents still arm their own.

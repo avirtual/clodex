@@ -32,6 +32,12 @@ function isStandIn(t) {
   return STAND_INS.includes(t);
 }
 
+function isRenderedNote(lines, i) {
+  if (i === 0 || cleanLine(lines[i]).trim() !== SPILLED_INTENT_NOTE) return false;
+  const prev = cleanLine(lines[i - 1]).trim();
+  return prev !== END_LINE && HEAD_RE.test(prev);
+}
+
 function classifyLine(line) {
   const t = cleanLine(line).trim();
   if (!t) return { kind: 0 };
@@ -88,7 +94,7 @@ function cutText(text, state) {
   let cut = 0;
   for (let i = 0; i < lines.length; i++) {
     const c = classifyLine(lines[i]);
-    if (c.kind === 0) { kept.push(lines[i]); continue; }
+    if (c.kind === 0 || isRenderedNote(lines, i)) { kept.push(lines[i]); continue; }
     cut++;
     if (isStandIn(cleanLine(lines[i]).trim())) state.parroted++;
     if (c.kind === 2) {
