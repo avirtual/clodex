@@ -372,6 +372,8 @@ function createPluginHostEngine(deps) {
       sessions: Object.freeze({
         listAll: () => manager.list(),
         listWorkspace: (wsId) => manager.listForWorkspace(wsId),
+        listSavedWorkspace: (wsId) => manager.savedForWorkspace(wsId)
+          .map((e) => ({ name: e.name, type: e.type, cwd: e.cwd, workspaceId: e.workspaceId })),
         get: (name) => sessionHandle(name),
 // Answers "what cwd, and is this local?" and nothing more. NOT workspace scoping
 // (an engine half is never told which window asked — compare handle.workspaceId

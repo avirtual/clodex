@@ -2202,7 +2202,13 @@ const toolCache = createToolCache({ whichBin });
         userDataPath,
         fs, path,
         gitWorktree,
-        libraryKinds: { memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id) },
+        libraryKinds: {
+          memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id),
+          reminder: (ref) => {
+            const ok = remindScheduler.cancel(ref.agent, ref.id);
+            return ok ? { ok: true } : { ok: false, error: 'no such reminder for that agent' };
+          },
+        },
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
         libraryAddKinds: { memory: (ref, payload) => manager.addMemoryUnit(ref.agent, payload) },
         libraryEditKinds: { memory: (ref, payload) => manager.editMemoryUnit(ref.agent, ref.id, payload.text) },

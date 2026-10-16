@@ -551,6 +551,7 @@ host = {
   sessions: {
     listAll(),                           // -> [{ name, type, cwd, workspaceId, … }]  GLOBAL
     listWorkspace(workspaceId),          // -> same shape, one workspace only
+    listSavedWorkspace(workspaceId),     // -> [{ name, type, cwd, workspaceId }]  saved, not running
     get(name),                           // -> SessionHandle | null
     fsScope(name),                       // -> { cwd } | { error }
     onCreate(fn),                        // -> dispose
@@ -628,6 +629,8 @@ one:
 - **`listWorkspace(workspaceId)`** — one workspace's sessions. This is what a
   per-window UI wants; showing a user another workspace's sessions in a dropdown
   is a leak, and no other guard in this API catches it.
+- **`listSavedWorkspace(workspaceId)`** — one workspace's saved seats that are
+  not running now. Disjoint from `listWorkspace` by construction.
 
 `get(name)` returns a **SessionHandle**, or `null` if there is no such session:
 
