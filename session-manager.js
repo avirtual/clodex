@@ -5765,7 +5765,6 @@ function createSessionManager(deps) {
         }
         case 'task': {
           if (!session || !session.agentType) break;
-          if (isFilingVerb(intent)) session._ticketVerbSeen = true;
           this._handleTask(session, intent);
           break;
         }
@@ -5802,6 +5801,11 @@ function createSessionManager(deps) {
       fs.renameSync(tmp, path.join(q, from == null ? seq : `${seq}${SUBQ_DM_SUFFIX}`));
     }
 
+    _dispatchSocketIntent(session, intent, opts) {
+      if (isFilingVerb(intent)) session._ticketVerbSeen = true;
+      return this._handleIntent(session.name, intent, opts);
+    }
+
     _startIntentSocket(session, channel) {
       const name = session.name;
       Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
@@ -5816,7 +5820,7 @@ function createSessionManager(deps) {
         refusal: subagentRefusal,
         tools: { rowFor: toolRowFor, intentFor: toolIntentFor, enabled: intentEnabledForSeat },
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
-        dispatch: (intent, opts) => this._handleIntent(name, intent, opts),
+        dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
         log,
         replyWaitMs: (intent) => {

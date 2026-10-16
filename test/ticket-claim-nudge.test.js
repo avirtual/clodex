@@ -112,7 +112,7 @@ test('a claim repeated across steps with no verb fires once, at turn end, and th
 
 test('a ticket verb sent over the socket silences a later claim', async () => {
   const { m, injected, step } = mkMgr();
-  await m._handleIntent('lead', { type: 'task', sub: 'add', body: 'fix the parser' });
+  await m._dispatchSocketIntent(m.sessions.get('lead'), { type: 'task', sub: 'add', body: 'fix the parser' }, {});
   step('lead', 'Filed t1853.', true);
   assert.deepStrictEqual(injected, []);
   m._nudgeTicketClaims(m.sessions.get('lead'), 'Filed t1854.', [], { turnEnd: true });
@@ -124,4 +124,16 @@ test('an interrupted turn drops its claim instead of carrying it to the next tur
   step('lead', 'I filed the ticket.', true, { interrupted: true });
   step('lead', 'Starting over.', true);
   assert.deepStrictEqual(injected, []);
+});
+
+test('a text-borne verb dispatched after its turn end does not silence the next turn', async () => {
+  const { m, injected } = mkMgr();
+  const lead = m.sessions.get('lead');
+  const addText = '[agent:task add] fix the parser\n[agent:end]';
+  const intents = m._extractIntents(addText);
+  m._nudgeTicketClaims(lead, addText, intents, { turnEnd: true });
+  for (const intent of intents) await m._handleIntent('lead', intent);
+  assert.deepStrictEqual(injected, []);
+  m._nudgeTicketClaims(lead, 'Filed t1854.', [], { turnEnd: true });
+  assert.deepStrictEqual(injected, [['lead', WORDING_1('filed'), { parkable: true }]]);
 });
