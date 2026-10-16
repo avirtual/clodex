@@ -99,6 +99,7 @@ test('A3: the deploy locator comes from the record, one row per shape', () => {
     [{ ssm: { ecs: 'c/f' } }, 'refused: context "ios" records no deploy flavor and its ssm-ecs transport names no installer — the operator runs the first deploy'],
     [{ deploy: { flavor: 'ssh' } }, 'refused: context "ios" records deploy flavor ssh but no host — the operator re-stamps it with a deploy from a terminal'],
     [{ deploy: { flavor: 'ssm' } }, 'refused: context "ios" records deploy flavor ssm but no target — the operator re-stamps it with a deploy from a terminal'],
+    [{ ssh: 'u@h', deploy: { flavor: 'gcloud' } }, 'refused: context "ios" records deploy flavor "gcloud", which this tier does not deploy — the operator runs it from a terminal'],
     [{ kubectl: { target: 'svc/other' } }, 'refused: helm context "ios" records release "other" — deploy would save a context under the release name; use upgrade'],
   ];
   for (const [rec, want] of refusals) assert.strictEqual(refusalFor('deploy', '', rec), want, JSON.stringify(rec));
@@ -179,10 +180,14 @@ function fixture(contexts = { ios: { ssh: 'u@h', token: 'tok-ios-0123456789' } }
     "'use strict';",
     'const a = process.argv.slice(2);',
     "if (a[0] === 'help') { process.stdout.write('HELP ' + JSON.stringify(a) + '\\n'); process.exit(0); }",
+    'const go = () => {',
     "const out = [JSON.stringify(a), JSON.stringify({ erun: process.env.ELECTRON_RUN_AS_NODE, hasUrl: 'CLODEX_URL' in process.env })];",
     "for (const l of JSON.parse(process.env.FAKE_LINES || '[]')) out.push(l);",
     "process.stdout.write(out.join('\\n') + '\\n');",
     "process.exitCode = Number(process.env.FAKE_EXIT || 0);",
+    '};',
+    "const rel = process.env.FAKE_RELEASE;",
+    "if (rel) { const t = setInterval(() => { if (require('fs').existsSync(rel)) { clearInterval(t); go(); } }, 20); } else go();",
   ].join('\n'));
   const dms = [];
   const waiters = [];
@@ -302,6 +307,26 @@ test('A8: a live lock refuses naming the run; a dead one is swept to unknown and
     await f.waitDm((m) => /^\[run 1 deploy ios\] exit 0 \(ok\)/.test(m.body), 'the new run result');
     await until(() => (readRec(f.runs, 1) || {}).notified === true, 'run 1 notified');
     assert.ok(!fs.existsSync(lockFile));
+  } finally {
+    await f.close();
+  }
+});
+
+test('A10b: a silent run gets a passive heartbeat before its result', async () => {
+  const f = fixture();
+  await f.listen();
+  try {
+    const release = path.join(f.tmp, 'release');
+    const env = { ...f.env, CTLA_HEARTBEAT_MS: '50', FAKE_RELEASE: release };
+    const r = await launch(env, { ctx: 'ios', verb: 'restart', args: '' });
+    assert.strictEqual(r.code, 0, r.err);
+    const beat = await f.waitDm((m) => /still running/.test(m.body), 'the heartbeat');
+    assert.strictEqual(beat.delivery, 'passive');
+    assert.match(beat.body, /^\[run 1 restart ios\] still running — \d+s; last: $/);
+    assert.ok(!f.dms.some((m) => !m.delivery), 'no result before the child exits');
+    fs.writeFileSync(release, '');
+    await f.waitDm((m) => /^\[run 1 restart ios\] exit 0 \(ok\)/.test(m.body), 'the result');
+    await until(() => (readRec(f.runs, 1) || {}).notified === true, 'notified:true');
   } finally {
     await f.close();
   }

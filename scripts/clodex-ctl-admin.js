@@ -226,6 +226,7 @@ function deployLocator(ctx, rec) {
       ],
     };
   }
+  if (dep) refuse(`refused: context "${ctx}" records deploy flavor "${short(dep.flavor)}", which this tier does not deploy — the operator runs it from a terminal`);
   return refuse(`refused: context "${ctx}" records no deploy flavor and its ${transportLabel(rec)} transport names no installer — the operator runs the first deploy`);
 }
 
@@ -406,7 +407,7 @@ function resultHead(rec, dir) {
   let what;
   if (rec.outcome === 'unknown') what = `outcome unknown (${rec.reason})`;
   else if (rec.signal) what = `killed (${rec.signal})`;
-  else what = `exit ${rec.exitCode} (${rec.outcome})`;
+  else what = `exit ${rec.exitCode} (${rec.outcome}${rec.reason ? `: ${rec.reason}` : ''})`;
   return `${tag} ${what} after ${elapsed(Number.isFinite(ms) ? ms : 0)} — log ${log}`;
 }
 
@@ -488,10 +489,15 @@ function allocSeq(dir, initial) {
 
 function inflightRefusal(dir, lock, ctx) {
   const seq = lock.seq == null ? '?' : lock.seq;
-  const head = `refused: run ${seq} is in flight on ${ctx} (${lock.verb}, started ${hhmmss(lock.startedAt)}, seat ${lock.seat}) — wait for its result dm; log `;
+  const head = `refused: run ${seq} is in flight on ${ctx} (${lock.verb || '?'}, started ${hhmmss(lock.startedAt)}, seat ${lock.seat || '?'}) — wait for its result dm; log `;
   let log = path.join(dir, `${seq}.log`);
   if (head.length + log.length > MAX_LINE) log = '…' + log.slice(log.length - Math.max(0, MAX_LINE - head.length - 1));
   return head + log;
+}
+
+function claimLock(lockFile, seq, pid) {
+  const held = readJson(lockFile);
+  if (held && held.seq === seq && held.pid !== pid) writeJson(lockFile, { ...held, pid });
 }
 
 function takeLock(dir, ctx, lock) {
@@ -565,7 +571,7 @@ async function runLauncher() {
     }));
   } catch (e) {
     try { fs.unlinkSync(lockFile); } catch {}
-    refuse(`refused: worker spawn failed (${e.message})`);
+    refuse(`refused: could not allocate a run record (${e.message})`);
   }
   const logFile = path.join(dir, `${seq}.log`);
   writeJson(lockFile, { seq, pid: process.pid, seat, verb, startedAt });
@@ -587,12 +593,11 @@ async function runLauncher() {
     if (!(child.pid > 0)) throw new Error('no pid');
   } catch (e) {
     try { fs.unlinkSync(lockFile); } catch {}
-    updateRecord(dir, seq, { outcome: 'failed', reason: `worker spawn failed: ${e.message}`, endedAt: new Date().toISOString() });
+    updateRecord(dir, seq, { outcome: 'failed', reason: `worker spawn failed: ${e.message}`, endedAt: new Date().toISOString(), notified: true });
     refuse(`refused: worker spawn failed (${e.message})`);
   }
   child.unref();
-  writeJson(lockFile, { seq, pid: child.pid, seat, verb, startedAt });
-  updateRecord(dir, seq, { workerPid: child.pid });
+  claimLock(lockFile, seq, child.pid);
   process.stderr.write(
     `run ${seq} started: ${verb} on ${ctx} — progress and the result arrive as dms from ${FROM}; log ${logFile}\n`
     + `argv: clodexctl ${shownArgv.join(' ')}\n`,
@@ -612,10 +617,13 @@ async function runWorker() {
   const dir = path.dirname(logFile);
   const started = Date.now();
   const tag = `[run ${seq} ${verb} ${ctx}]`;
+  const heartbeatMs = Number(env.CTLA_HEARTBEAT_MS) > 0 ? Number(env.CTLA_HEARTBEAT_MS) : HEARTBEAT_MS;
   let tokens = redactionTokens();
   const stamp = () => new Date().toTimeString().slice(0, 8);
   const append = (line) => { try { fs.appendFileSync(logFile, line + '\n', { mode: 0o600 }); } catch {} };
 
+  try { updateRecord(dir, seq, { workerPid: process.pid }); } catch {}
+  claimLock(path.join(dir, `${ctx}.lock`), seq, process.pid);
   append(`# run ${seq} · ${verb} on ${ctx} · seat ${seat} · started ${new Date(started).toISOString()}`);
   append(`# argv: clodexctl ${argv.map((a) => redact(a, tokens)).join(' ')}`);
 
@@ -648,7 +656,7 @@ async function runWorker() {
       heartbeatTimer = null;
       if (closed) return;
       sendPassive(`${tag} still running — ${elapsed(Date.now() - started)}; last: ${clip(lastLine, 200)}`);
-    }, HEARTBEAT_MS);
+    }, heartbeatMs);
   }
   const milestone = (line) => {
     queue.push(line);
@@ -736,6 +744,7 @@ async function runWorker() {
     killGroup();
   }, ceilingMs);
   updateRecord(dir, seq, { childPid: child.pid || null });
+  armHeartbeat();
   process.on('SIGTERM', () => {
     if (!forced) forced = { reason: 'worker stopped (SIGTERM)' };
     killGroup();
