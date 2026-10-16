@@ -83,7 +83,7 @@ function redactionTokens(file = contextsFile()) {
 }
 
 const HEX_TOKEN_RE = /\b[0-9a-f]{48}\b/g;
-const KEYED_TOKEN_RE = /((?:^|[\s"'{,(])"?(?:token|wire[-_]?token|CLODEX_TOKEN|CLODEX_REMOTE_TOKEN|CLODEX_SANDBOX_TOKEN)"?\s*[=:]\s*"?)([^\s"',}]{8,})/gi;
+const KEYED_TOKEN_RE = /((?:^|[\s"'{,(=])"?(?:token|wire[-_]?token|CLODEX_TOKEN|CLODEX_REMOTE_TOKEN|CLODEX_SANDBOX_TOKEN)"?\s*[=:]\s*"?)([^\s"',}]{8,})/gi;
 const BEARER_RE = /(Authorization["']?\s*[:=]\s*["']?Bearer\s+)[^\s"']+/gi;
 
 function redact(text, tokens = []) {
