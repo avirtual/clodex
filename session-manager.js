@@ -6360,7 +6360,13 @@ function createSessionManager(deps) {
             cwd: runCwd,
             // CLODEX_HOME is set explicitly, not inherited, so one in the app's environment cannot point the
             // child at a different tree than the app uses.
-            env: { ...process.env, CLODEX_HOME: REGISTRY_DIR },
+            env: {
+              ...process.env,
+              CLODEX_HOME: REGISTRY_DIR,
+              CLODEX_SEAT: who,
+              CLODEX_NODE: process.execPath,
+              CLODEX_CTL: path.join(__dirname, 'cli', 'bin', 'clodexctl.js'),
+            },
             stdio: ['pipe', 'ignore', 'pipe'],
           });
         } catch (e) {
