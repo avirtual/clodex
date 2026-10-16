@@ -97,7 +97,7 @@ test('T1 the old @spill: stub is still cut: a transcript written before the rend
 test('T1 a titled stub past the title cap, a sized path outside spill/, and a bare titled line are NOT stubs', () => {
   const { file } = stubOf();
   for (const line of [
-    `[agent:dm hand] ${'t'.repeat(81)} — 900 B filed at ${file}\n`,
+    `[agent:dm hand] ${'t'.repeat(301)} — 900 B filed at ${file}\n`,
     `[agent:dm hand] 900 B filed at ${file.replace('/spill/', '/notes/')}\n`,
     `[agent:dm hand] the body is filed at ${file}\n`,
     `first line of the body — 900 B filed at ${file}\n`,

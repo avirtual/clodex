@@ -32084,9 +32084,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_spill_grammar = __commonJS({
     "spill-grammar.js"(exports, module) {
       "use strict";
+      var HEAD_TITLE_MAX = 300;
+      var TITLE_SRC = String.raw`[^\n]{0,${HEAD_TITLE_MAX - 1}}[^\s\n]`;
       var FILED_SRC = String.raw`((?:\d+ B|\d+\.\d KB)(?: of prose)? filed at (\/[^\n]*\/spill\/[^\/\n]+\/([0-9a-f]{16})\.md))`;
-      var FILED_POINTER_RE = new RegExp(String.raw`^\s*(?:([^\n]{0,79}[^\s\n]) — )?${FILED_SRC}\s*$`);
-      module.exports = { FILED_SRC, FILED_POINTER_RE };
+      var FILED_POINTER_RE = new RegExp(String.raw`^\s*(?:(${TITLE_SRC}) — )?${FILED_SRC}\s*$`);
+      module.exports = { HEAD_TITLE_MAX, TITLE_SRC, FILED_SRC, FILED_POINTER_RE };
     }
   });
 

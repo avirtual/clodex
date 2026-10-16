@@ -431,12 +431,12 @@ test('row 14: a fenced example inside a held body bails — the documented cost'
 test('row 15-16: an escaped intent and a mid-line mention are body text, and still spill', () => {
   const esc = `[agent:task add a] ${BIG}\n\\[agent:dm x] hi\n[agent:end]\n`;
   const escRun = run(esc);
-  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(77)}… — `));
+  assert.equal(escRun.out, stub('task add a', escRun.spills, `${'z'.repeat(300)} — `));
   assert.ok(diskOf(escRun.spills).body.includes('\\[agent:dm x] hi'));
 
   const mid = `[agent:task add a] ${BIG}\nclose with \`[agent:task done t1]\`\n[agent:end]\n`;
   const midRun = run(mid);
-  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(77)}… — `));
+  assert.equal(midRun.out, stub('task add a', midRun.spills, `${'z'.repeat(300)} — `));
   assert.ok(diskOf(midRun.spills).body.includes('close with `[agent:task done t1]`'));
 });
 
@@ -770,7 +770,7 @@ test('head title: a 120-char first line ending in a tasks/ path rides whole, no 
 
 test('head title: a 350-byte first line with its tasks/ token at byte 280 keeps the token whole at the end within 300 bytes', () => {
   const token = 'tasks/some-long-dir/SPEC.md';
-  const first = `${'b'.repeat(280)}${token}${' c'.repeat((350 - 280 - token.length) / 2)}`;
+  const first = `${'b'.repeat(280)}${token} ${'c'.repeat(350 - 280 - token.length - 1)}`;
   assert.equal(Buffer.byteLength(first), 350);
   assert.equal(first.indexOf(token), 280);
   const r = run(`[agent:task add t] ${first}\n${BIG}\n[agent:end]\n`);

@@ -99,10 +99,10 @@ test('a TITLED pointer resolves, and the title is discarded — the file is auth
   assert.deepStrictEqual(h.tasks[0].spill, { id, path: spillPathFor(h.root, 'lead', id) });
 });
 
-test('a title over 80 chars is NOT a pointer, so a spec that happens to end in one is dispatched whole', async () => {
+test('a title over 300 chars is NOT a pointer, so a spec that happens to end in one is dispatched whole', async () => {
   const h = mkH();
   const id = writeSpill(h.root, 'lead', BIG);
-  const body = `${'t'.repeat(81)} @spill:${id}`;
+  const body = `${'t'.repeat(301)} @spill:${id}`;
 
   await h.m._handleIntent('lead', { type: 'task', sub: 'add', body });
 
