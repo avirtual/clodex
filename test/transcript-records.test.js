@@ -114,12 +114,17 @@ test('a codex user.text row is kept: a typed prompt stays a prompt and a deliver
   assert.deepStrictEqual(recordsOf(text).records.map((r) => [r.kind, r.kind === 'prompt' ? r.text : r.from]), [['inbound', 'team'], ['prompt', 'there?']]);
 });
 
-for (const [label, body] of [['an <environment_context> block', '<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>'], ['AGENTS.md instructions', '# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>x</INSTRUCTIONS>']]) {
-  test(`a codex user row without content_item_kinds carrying ${label} yields no record; a plain one is still a prompt`, () => {
-    const row = (id, t) => `${JSON.stringify({ timestamp: '2026-09-25T17:06:52.850Z', type: 'response_item', payload: { type: 'message', id, role: 'user', content: [{ type: 'input_text', text: t }] } })}\n`;
-    assert.deepStrictEqual(recordsOf(row('m1', body) + row('m2', 'hi')).records.map((r) => [r.id, r.kind, r.text]), [['m2', 'prompt', 'hi']]);
-  });
-}
+const codexRow = (id, t) => `${JSON.stringify({ timestamp: '2026-09-25T17:06:52.850Z', type: 'response_item', payload: { type: 'message', id, role: 'user', content: [{ type: 'input_text', text: t }] } })}\n`;
+
+test('a codex user row without content_item_kinds carrying AGENTS.md instructions yields no record; a plain one is still a prompt', () => {
+  assert.deepStrictEqual(recordsOf(codexRow('m1', '# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>x</INSTRUCTIONS>') + codexRow('m2', 'hi')).records.map((r) => [r.id, r.kind, r.text]), [['m2', 'prompt', 'hi']]);
+});
+
+test('the codex reader classifies a user <environment_context> row without content_item_kinds as no prompt; a plain one is a prompt', () => {
+  const { readerFor } = require('../transcript-readers');
+  const prompt = (t) => readerFor('codex').classify(JSON.parse(codexRow('m', t))).prompt;
+  assert.deepStrictEqual([prompt('<environment_context>\n  <cwd>/repo</cwd>\n</environment_context>'), prompt('hi')], ['', 'hi']);
+});
 
 test('a muse turn read whole orders prompt, reply and turn-end in one turn', () => {
   const text = ['muse-intent', 'muse-reply', 'muse-terminal'].map(fixture).join('');

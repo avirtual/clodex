@@ -1186,6 +1186,7 @@ test('rows painted while the view was raw are a new baseline, not command output
     m.write();
     m.view.setRaw(false);
     await settle();
+    m.view.composerSent('/status');
     m.tick(250);
     m.write();
     m.write();
@@ -1242,6 +1243,7 @@ test('codex redrawing its whole history with no slash command typed adds no row,
 test('rows painted while the codex turn is running are never collected', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)']));
   try {
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)']));
     m.paintNext(codexScreen(['  banner 1', ...CARD, 'done']));
     assert.deepStrictEqual(m.outputs(), []);
@@ -1305,6 +1307,7 @@ test('output painted before the file has a timed record survives the first promp
 test('a codex turn with a follow-up queued under its status row is still busy', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1', '• Working (1s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
   try {
+    m.view.composerSent('/status');
     m.paintNext(codexScreen(['  banner 1', ...CARD, '• Working (2s • esc to interrupt)', '', '  ↳ queued: and then run the tests', '    ⌥ + ↑ edit']));
     assert.deepStrictEqual(m.outputs(), []);
   } finally { m.done(); }
