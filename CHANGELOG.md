@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — clodexctl through exec with on-demand help, a tracked AGENTS.md, opt-in credential sandbox for Claude seats
+## Unreleased
+
+## 5.127.0 — 2026-10-16 — clodexctl through exec with on-demand help, a tracked AGENTS.md, opt-in credential sandbox for Claude seats
 
 ### Messaging
 
