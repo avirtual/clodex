@@ -1,0 +1,117 @@
+.rv-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1000px, 94vw);
+  height: min(600px, 84vh);
+  margin: 6vh auto 0;
+  background: var(--bg, #1e1e1e);
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.rv-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.rv-title {
+  font-weight: 600;
+}
+
+.rv-subtitle {
+  opacity: 0.55;
+  font-size: 0.85em;
+}
+
+.rv-toggle,
+.rv-cancel {
+  background: none;
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.rv-toggle {
+  margin-left: auto;
+}
+
+.rv-toggle:hover,
+.rv-cancel:hover {
+  border-color: rgba(128, 128, 128, 0.8);
+}
+
+.rv-cancel:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rv-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.rv-close:hover {
+  opacity: 1;
+}
+
+.rv-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 14px;
+}
+
+.rv-empty {
+  opacity: 0.6;
+  padding: 12px 0;
+}
+
+.rv-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.rv-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8em;
+  opacity: 0.6;
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.rv-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+  vertical-align: top;
+}
+
+.rv-seat-inactive {
+  opacity: 0.45;
+}
+
+.rv-spec,
+.rv-next {
+  white-space: nowrap;
+  font-family: var(--mono, monospace);
+}
+
+.rv-text {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

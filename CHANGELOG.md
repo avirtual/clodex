@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Reminders viewer plugin (Plugins ▸ Manage Plugins…): a workspace-wide table of every reminder the seats have armed — kind, next fire, text, ticket binding — filtered to the selected seat by default, with per-row cancel. Read and cancel only; agents still arm their own.
+
 ## 5.127.0 — 2026-10-16 — clodexctl through exec with on-demand help, a tracked AGENTS.md, opt-in credential sandbox for Claude seats
 
 ### Messaging

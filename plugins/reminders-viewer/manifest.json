@@ -1,0 +1,17 @@
+{
+  "id": "reminders-viewer",
+  "name": "Reminders",
+  "hostApi": "1",
+  "version": "0.1.0",
+  "entry": {
+    "engine": "engine.js",
+    "renderer": "renderer.js"
+  },
+  "style": "style.css",
+  "enabledByDefault": false,
+  "announce": "Every reminder the seats in this workspace have armed: kind, next fire, text and ticket binding. Can cancel a reminder; cannot add one.",
+  "surfaces": {
+    "list": "any",
+    "cancel": "any"
+  }
+}
