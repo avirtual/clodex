@@ -21,7 +21,7 @@ written). A stub whose file is missing, unreadable or too large takes no slot.
 A stub expands iff its key is in `sticky` or `sticky.size` plus the keys seeded in
 this call is below `examples`; "first" is document order (`collectStubs`). The proxy
 adds every expanded key to `sticky`, so the examples stay in full until the next
-cold boundary and every later body is the bare head from its first resend
+cold boundary and every later body is the head and the runtime note from its first resend
 (Bogdan 2026-10-11: a body keeps one shape from its first resend to the next
 compact, since a shape change on a settled turn rewrites the cache behind it).
 
@@ -35,8 +35,11 @@ body-less intent: wirescope 2026-10-16 (n=61 lead add/respec) found 48% title-on
 filings in requests whose history held one, 0 of 13 where none did.
 
 ## isRenderedNote
-Keeps the note directly under a head line so cut(cut(x)) equals cut(x); a note
-anywhere else is a parroted stand-in.
+
+Keeps the note directly under a kept head line uncut: cutting it would leave
+`head\n[agent:end]` or a bare head, the fireable shape. The cost is that a model's own
+`head\nNOTE` copy rides uncut and uncounted; the scanner's stand-in-body refusal is
+the guard for it. A note anywhere else is a parroted stand-in.
 
 ## STAND_INS are cuttable
 On jarvis-lead (sid 1d05af56), 55 minutes after the old `PLACEHOLDER_LEGACY` sentence first stood in

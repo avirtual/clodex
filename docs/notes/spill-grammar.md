@@ -25,6 +25,6 @@ Every over-limit intent body is filed. At cut time `cutSpillStubs`
 (wire/spill-cut.js) renders the first two intent stubs after each compact whose
 file resolves as the original intent (bare head, the filed body, `[agent:end]`);
 a stub whose file is missing or unreadable is not counted. The decision is
-derived from the payload on every request and keeps no process state. Every remaining stub renders as the bare head and `[agent:end]`. The measured facts live under
+derived from the payload on every request and keeps no process state. Every remaining stub renders as the head and the runtime note. The measured facts live under
 `## expansionOf` in docs/notes/wire-spill-cut.md.
 A loop-minted seat (persistence `ephemeral: true`) gets `examples: 1`: its first long body after each compact stays in full, so a rework round has a real example of the verb it must write again.

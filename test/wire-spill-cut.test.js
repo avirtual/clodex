@@ -1053,3 +1053,10 @@ test('t1854: the thinned-intent note typed outside an intent head is a parroted 
   assert.equal(r.parroted, 1);
   assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] hi\nbody\n[agent:end]');
 });
+
+test('t1854: a runtime note typed right under a raw stub is parroted — the rendered note alone stands under the head', () => {
+  const { obj, i } = echoRequest([`[agent:dm bob] Title @spill:0123456789abcdef\n${SPILLED_INTENT_NOTE}\n[agent:end]`]);
+  const r = cutSpillStubs(obj);
+  assert.equal(r.parroted, 1);
+  assert.equal(obj.messages[i].content[0].text, `[agent:dm bob] Title\n${SPILLED_INTENT_NOTE}\n[agent:end]`);
+});
