@@ -272,7 +272,9 @@ test('the docs and the changelog name the admin tier', () => {
   assert.match(readme, /clodex-ctl-admin/);
   assert.doesNotMatch(readme, /Deploy, undeploy, upgrade, input, exec,\s*port-forward and attach stay operator-only/);
   const changelog = read('CHANGELOG.md');
-  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const head = changelog.indexOf('\n## Unreleased\n');
+  assert.notStrictEqual(head, -1, 'ENTER: the changelog has an Unreleased section');
+  const unreleased = changelog.slice(head, changelog.indexOf('\n## ', head + 1));
   assert.match(unreleased, /clodex-ctl-admin/);
 });
 
