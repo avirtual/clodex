@@ -1218,13 +1218,24 @@ test('ENTER: an Enter the menu mirror handles forwards the command it submits to
   assert.match(body, /if \(hit\.command && liveSplit\) liveSplit\.composerSent\(hit\.command\);/u);
 });
 
-test('a paint block with no slash command sent in the last 10s is emitted untagged', async () => {
+test('a paint block with no slash command sent in the last 10s adds no row', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1']));
   try {
     m.view.composerSent('/status');
     m.tick(10001);
     m.paintNext(codexScreen(['  banner 1', ...CARD]));
-    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+    assert.deepStrictEqual(m.outputs(), []);
+  } finally { m.done(); }
+});
+
+test('codex redrawing its whole history with no slash command typed adds no row, however often it repaints', async () => {
+  const m = await mountPaint('codex', codexScreen(['  banner 1']));
+  try {
+    m.paintNext(codexScreen(['  banner 1', '› there?', '• Here.']));
+    m.paintNext(codexScreen(['  >_ OpenAI Codex', '  Tip: x', '› there?', '• Here.', 'Worked for 7s']));
+    m.view.composerSent('/status');
+    m.paintNext(codexScreen(['  >_ OpenAI Codex', '  Tip: x', '› there?', '• Here.', 'Worked for 7s', ...CARD]));
+    assert.deepStrictEqual(m.outputs(), ['❯ /status', CARD.join('\n')], 'ENTER: the tagged block after the untagged redraws is still captured');
   } finally { m.done(); }
 });
 
