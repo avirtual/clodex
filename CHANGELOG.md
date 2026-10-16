@@ -21,6 +21,7 @@ blocks a release.
 ### Docs
 
 - Project instructions move to a tracked root `AGENTS.md`, read by Claude Code (2.1.277+), Codex and Muse seats alike; the untracked `.claude/CLAUDE.md` never reached worktrees, the box or contributors.
+
 ### Sessions
 
 - A template's `protectCredentials` list turns on Claude Code's Bash sandbox for that seat with read denies on the listed credential dirs plus Clodex's own token files and write denies on shell and CLI config; project writes and network stay open, and an unsandboxed retry asks the operator. An approved unsandboxed retry runs that command with no sandbox at all, denied reads included.
