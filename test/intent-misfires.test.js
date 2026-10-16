@@ -87,10 +87,10 @@ function mkSite(extra = {}) {
   fs.writeFileSync(path.join(execDir, 'run-tests.json'), JSON.stringify({
     argv: ['/bin/true'], schema: { type: 'object', required: ['tree'], properties: { tree: { type: 'string' } } },
   }));
-  fs.writeFileSync(path.join(execDir, 'fails.json'), JSON.stringify({ argv: ['/bin/false'], schema: { type: 'object' } }));
+  fs.writeFileSync(path.join(execDir, 'fails.json'), JSON.stringify({ argv: [process.execPath, '-e', 'process.exit(1)'], schema: { type: 'object' } }));
   const persisted = { intents: ['dm', 'remind', 'exec', 'context', 'task'], execCommands: ['run-tests', 'fails'] };
   const m = mk({
-    REGISTRY_DIR, fs, path, os, isFilenameToken, parseAndValidate, clampReplyBody,
+    REGISTRY_DIR, fs, path, os, childProcess: require('node:child_process'), isFilenameToken, parseAndValidate, clampReplyBody,
     parseIntent, looksLikeIntent, execBodyCap: 64 * 1024, parseRemindSpec,
     getRemindScheduler: () => ({ listForAgent: () => [], cancel: () => false }),
     getCtlService: () => null,
