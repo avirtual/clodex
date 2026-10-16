@@ -11,12 +11,10 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — body-less intent fix: thinned stand-in is a runtime note; intent misfire ledger + plugin; filed-nothing nag; ctl fixes
 - ctl: a bare `describe node`/`get node` through the ctl exec tiers now reads the context the call was granted for, not the operator's current node; a dm to a bash session says it is a bash session instead of 'Session not found'.
 - Intent misfires are recorded: every unclosed or empty body, disabled intent, refused exec payload and bounced verb lands in <userData>/intent-misfires.jsonl with the seat's context size, and the Intent Misfires plugin lists them per seat and kind — the body-less ticket intents of 2026-10-16 were found only when hands came back blocked.
-
 - A lead whose reply says a ticket was filed, rejected or respec'd while the turn carried no such intent (or one with an empty body) is told so in one line — the claim with no verb behind it had cost a stalled ticket an hour.
-
 - A long intent body thinned out of a seat's history is now replaced by a runtime note instead of a bare head plus [agent:end] — the bare shape was a complete, valid, body-less intent, and the lead copied it: 38% of its ticket filings over five days arrived title-only. A copied note is refused with a nag, never applied.
 
 ## 5.128.0 — 2026-10-16 — ctl-admin: a granted seat can deploy, upgrade or restart a node; Reminders viewer plugin
