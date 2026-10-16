@@ -4,11 +4,37 @@ const {
   SPILL_MIN_BYTES, SPILL_MAX_BYTES, HEAD_RE, validAgent, writeSpill: defaultWriteSpill, mimicKindOf, pointerText,
 } = require('../intent-spill');
 const { cleanLine } = require('../intent-scanner');
-const { titleLine, ticketTitle } = require('../tickets-store');
+const { titleLine, TASK_DIR_ABS_RE, TASK_DIR_REL_RE } = require('../tickets-store');
+const { HEAD_TITLE_MAX } = require('../spill-grammar');
 
 const TERMINATOR = '[agent:end]';
 const OPEN = '[agent:';
 const MIMIC_LINE_CAP = 1024;
+
+function utf8Prefix(s, max) {
+  let out = '';
+  let used = 0;
+  for (const ch of s) {
+    const n = Buffer.byteLength(ch, 'utf8');
+    if (used + n > max) break;
+    out += ch;
+    used += n;
+  }
+  return out;
+}
+
+function headTitle(bodyText) {
+  const line = titleLine(bodyText).replace(/\s+/g, ' ');
+  if (Buffer.byteLength(line, 'utf8') <= HEAD_TITLE_MAX) return line;
+  const cut = utf8Prefix(line, HEAD_TITLE_MAX).trimEnd();
+  const m = TASK_DIR_ABS_RE.exec(line) || TASK_DIR_REL_RE.exec(line);
+  if (!m || m.index + m[0].length <= cut.length) return cut;
+  const tail = ` — ${m[0]}`;
+  const budget = HEAD_TITLE_MAX - Buffer.byteLength(tail, 'utf8');
+  if (budget < 1) return cut;
+  const before = utf8Prefix(line.slice(0, m.index).replace(/[\s—]+$/, ''), budget).trimEnd();
+  return before ? `${before}${tail}` : m[0];
+}
 
 function couldBeHead(s) {
   return OPEN.startsWith(s.slice(0, OPEN.length)) || s.startsWith(OPEN);
@@ -249,7 +275,7 @@ class SpillFilter {
         const words = head.slice(OPEN.length, -1).trim().replace(/\s+/g, ' ');
         this._notify(this.onSpill, { verb, id, bytes, head: words });
         const first = titleLine(bodyText);
-        const title = (first && first !== bodyText.trim()) ? `${ticketTitle(bodyText)} — ` : '';
+        const title = (first && first !== bodyText.trim()) ? `${headTitle(bodyText)} — ` : '';
         return `${head} ${title}${pointerText(id, { root: this.root, agent: this.agent, bytes })}\n`;
       }
     }

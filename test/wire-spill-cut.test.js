@@ -1017,3 +1017,18 @@ test('t1795: a runtime note typed under an intent head is parroted and cut, no l
     assert.equal(obj.messages[i].content[0].text, '[agent:dm bob] Title\n[agent:end]');
   }
 });
+
+test('a cut stub whose head carries a 120-char first line ending in a tasks/ path renders that line whole', () => {
+  const root = mkTmpRoot('clodex-spill-');
+  const spills = [];
+  const f = new SpillFilter({ agent: 'tester', root, verbs: ['task.add'], onSpill: (i) => spills.push(i) });
+  const first = `${'a'.repeat(120 - ' — tasks/foo/SPEC.md'.length)} — tasks/foo/SPEC.md`;
+  const record = f.feed(`[agent:task add hand] ${first}\n${BIG}\n[agent:end]\n`) + f.close();
+  assert.equal(spills.length, 1, 'the synthetic intent spilled');
+  const obj = withStub(fixtureRequest(), record);
+  const r = cutSpillStubs(obj);
+  assert.ok(r.cut, 'the titled stub was recognised and cut');
+  const text = obj.messages[assistantIndex(obj)].content[0].text;
+  assert.equal(text, `[agent:task add hand] ${first}\n[agent:end]\n`, 'the whole line, ending in the path');
+  assert.ok(!text.includes('…'));
+});
