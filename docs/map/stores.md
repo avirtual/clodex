@@ -255,7 +255,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_readLines` | the non-empty lines of the misfire ledger, empty on absence | intent-misfires.jsonl | fs.readFileSync | intent-misfires.test.js |
+| `_readLines` | the non-empty lines of the misfire ledger, empty on absence | intent-misfires.jsonl | fs.readFileSync | unpinned |
 | `append` | misfires: appends one normalised row per MISFIRE_KINDS event (detail clipped to 200 chars, numbers or null), pruning to the newest MISFIRE_KEEP lines once past MISFIRE_PRUNE_AT | intent-misfires.jsonl, this._lines | fs.appendFileSync, atomicWriteFileSync | intent-misfires.test.js |
 | `list` | every parseable row of the ledger, oldest first | intent-misfires.jsonl | _readLines | intent-misfires.test.js |
 
