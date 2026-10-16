@@ -297,6 +297,10 @@ An empty list still applies the always-included paths.
   the settings file is written, so an entry created later is not covered until
   the seat respawns. The seat's own `run/<name>` is denied too: it holds the hook
   scripts the CLI runs outside the sandbox.
+- **Network.** No domain allowlist. Under bypass permissions the sandbox
+  proxy lets every host through; in other modes a new host prompts. The one
+  `network` entry is `allowUnixSockets` for the seat's own `intent.sock`, so
+  `clodex-send` keeps working.
 - **File tools.** Read, Edit and Write run outside the sandbox, so every read
   path also gets `Read(…)` and `Edit(…)` deny rules and every write path an
   `Edit(…)` rule, merged into `permissions.deny`.
