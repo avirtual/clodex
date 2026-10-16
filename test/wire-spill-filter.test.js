@@ -777,7 +777,7 @@ test('head title: a 350-byte first line with its tasks/ token at byte 280 keeps 
   const title = headTitleOf(r.out);
   assert.ok(Buffer.byteLength(title) <= 300, `the title fits the cap: ${Buffer.byteLength(title)}`);
   assert.ok(title.endsWith(` — ${token}`), 'the token survives whole, last');
-  assert.equal(title, `${'b'.repeat(300 - ` — ${token}`.length)} — ${token}`);
+  assert.equal(title, `${'b'.repeat(300 - Buffer.byteLength(` — ${token}`))} — ${token}`);
   assert.ok(!title.includes('…'));
   assert.equal(pointerOf(r.out.split('\n')[0].slice('[agent:task add t] '.length)), diskOf(r.spills).id);
 });

@@ -208,12 +208,12 @@ test('t1062: memory remember ending in a typed pointer is NOT saved, and the bou
   assert.deepStrictEqual(h.errors, []);
 });
 
-test('t1062: a fabricated title longer than 79 chars — past what pointerOf reads as titled — is still refused on a non-spill verb', async () => {
+test('t1062: a fabricated title longer than 299 chars — past what pointerOf reads as titled — is still refused on a non-spill verb', async () => {
   const h = mkH();
   const memos = [];
   h.m._handleMemoryIntent = (s, sub, body) => memos.push({ sub, body });
-  const body = 'scope=clodex The mid-turn thinking strip\'s cost is ONE extra uncached read of the whole context on every turn that carries it, measured at 41k @spill:e1b9f4d5c3a27b08';
-  assert.ok(body.indexOf(' @spill:') > 79, 'ENTER: the title alone overruns TITLED_POINTER_RE');
+  const body = `scope=clodex The mid-turn thinking strip's cost is ONE extra uncached read of the whole context on every turn that carries it, measured at 41k ${'and more '.repeat(20)}@spill:e1b9f4d5c3a27b08`;
+  assert.ok(body.indexOf(' @spill:') > 299, 'ENTER: the title alone overruns TITLED_POINTER_RE');
   assert.strictEqual(pointerOf(body), null, 'ENTER: pointerOf does not see it, which is why the guard reads the tail itself');
   await h.m._handleIntent('lead', { type: 'memory', sub: 'remember', body });
   assert.deepStrictEqual(memos, []);
