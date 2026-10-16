@@ -87,7 +87,8 @@ function mkSite(extra = {}) {
   fs.writeFileSync(path.join(execDir, 'run-tests.json'), JSON.stringify({
     argv: ['/bin/true'], schema: { type: 'object', required: ['tree'], properties: { tree: { type: 'string' } } },
   }));
-  const persisted = { intents: ['dm', 'remind', 'exec', 'context', 'task'], execCommands: ['run-tests'] };
+  fs.writeFileSync(path.join(execDir, 'fails.json'), JSON.stringify({ argv: ['/bin/false'], schema: { type: 'object' } }));
+  const persisted = { intents: ['dm', 'remind', 'exec', 'context', 'task'], execCommands: ['run-tests', 'fails'] };
   const m = mk({
     REGISTRY_DIR, fs, path, os, isFilenameToken, parseAndValidate, clampReplyBody,
     parseIntent, looksLikeIntent, execBodyCap: 64 * 1024, parseRemindSpec,
@@ -246,5 +247,36 @@ test('recordMisfire: a host with no misfire store records nothing and does not t
       assert.strictEqual(g.m.recordMisfire(g.session, 'bounce', { type: 'task', sub: 'add' }, 'x'), true);
       assert.deepStrictEqual(g.rows.map((r) => [r.kind, r.intent, r.sub]), [['bounce', 'task', 'add']]);
     } finally { g.cleanup(); }
+  } finally { f.cleanup(); }
+});
+
+test('misfire: a granted exec that ran and exited non-zero is a run outcome, not a misfire', async () => {
+  const f = mkSite();
+  try {
+    const closed = new Promise((resolve) => {
+      f.m._broadcast = (_c, msg) => { if (msg && msg.type === 'exec' && /^err/.test(String(msg.body))) resolve(msg.body); };
+    });
+    f.m._handleExecIntent(f.session, 'fails', '{}');
+    assert.match(await closed, /exit 1/);
+    assert.ok(f.injected.some((t) => t.startsWith('[agent:exec] fails:')), 'ENTER: the run reported its failure');
+    assert.deepStrictEqual(f.rows, []);
+  } finally { f.cleanup(); }
+});
+
+test('misfire: a disabled resend is not recorded, its message still delivers', async () => {
+  const f = mkSite();
+  try {
+    await f.m._handleIntent('seat', { type: 'resend', body: '' });
+    assert.ok(f.injected.some((t) => /resend intent is disabled/.test(t)), 'ENTER: the resend was refused');
+    assert.deepStrictEqual(f.rows, []);
+  } finally { f.cleanup(); }
+});
+
+test('misfire: a remind bound to a ticket with no team board is a bounce', () => {
+  const f = mkSite();
+  try {
+    f.m._handleRemindIntent(f.session, 'for t9 in 5m', 'check', { type: 'remind' });
+    assert.deepStrictEqual(f.rows.map((r) => [r.kind, r.intent, r.detail]),
+      [['bounce', 'remind', 'no team here — a "for t9" binding needs a team board']]);
   } finally { f.cleanup(); }
 });

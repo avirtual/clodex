@@ -5414,7 +5414,7 @@ function createSessionManager(deps) {
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
             : `the ${intent.type} intent is disabled for this session${why}${this._deniedIntentPayload(session, intent)}`;
-          this.recordMisfire(session, 'disabled', intent, msg);
+          if (intent.type !== 'resend') this.recordMisfire(session, 'disabled', intent, msg);
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }
         return;
@@ -6250,6 +6250,7 @@ function createSessionManager(deps) {
         try { team = resolveTeam(session.cwd); } catch { team = null; }
         if (!team) {
           const e = `no team here — a "for ${parsed.ticket}" binding needs a team board`;
+          this.recordMisfire(session, 'bounce', intent, e);
           reply(e);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
@@ -6258,6 +6259,7 @@ function createSessionManager(deps) {
         try { row = ticketsStore.load(team.root).find((t) => t && t.id === parsed.ticket) || null; } catch { row = null; }
         if (!row) {
           const e = `no ticket ${parsed.ticket} on ${team.name} — nothing to bind this reminder to`;
+          this.recordMisfire(session, 'bounce', intent, e);
           reply(e);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
@@ -6265,6 +6267,7 @@ function createSessionManager(deps) {
         const why = ticketTerminalReason(row);
         if (why) {
           const e = `ticket ${parsed.ticket} is ${why} — nothing left to bind to`;
+          this.recordMisfire(session, 'bounce', intent, e);
           reply(e);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
           return;
@@ -6280,6 +6283,7 @@ function createSessionManager(deps) {
         return;
       }
       if (!r.ok) {
+        this.recordMisfire(session, 'bounce', intent, r.error);
         reply(r.error);
         this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${r.error}` });
         return;
@@ -6315,8 +6319,8 @@ function createSessionManager(deps) {
       const reply = (msg) => this._injectText(session, `[agent:exec] ${msg}`, { parkable: true });
       const notice = (msg) => this._injectTextPassive(session, `[agent:exec] ${msg}`);
       const who = session.name;
-      const fail = (msg, kind = 'exec-refused') => {
-        this.recordMisfire(session, kind, intent, `${cmd}: ${msg}`);
+      const fail = (msg, kind = null) => {
+        if (kind) this.recordMisfire(session, kind, intent, `${cmd}: ${msg}`);
         reply(`${cmd}: ${msg}`);
         log.warn('intent', `exec ${cmd} by ${who}: err (${msg})`);
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `err: ${msg}` });
@@ -6328,12 +6332,12 @@ function createSessionManager(deps) {
       }
 
       if (!isFilenameToken(cmd)) {
-        fail('invalid command id');
+        fail('invalid command id', 'exec-refused');
         return;
       }
       const grants = getPersistence().get(who)?.execCommands || [];
       if (!Array.isArray(grants) || !grants.includes(cmd)) {
-        fail('not granted to this seat');
+        fail('not granted to this seat', 'exec-refused');
         return;
       }
       let team;
@@ -6344,17 +6348,17 @@ function createSessionManager(deps) {
         try {
           entry = JSON.parse(fs.readFileSync(entryPath, 'utf-8'));
         } catch (e) {
-          fail(e.code === 'ENOENT' ? 'no such registered command' : `registry read failed (${e.message})`);
+          fail(e.code === 'ENOENT' ? 'no such registered command' : `registry read failed (${e.message})`, 'exec-refused');
           return;
         }
       }
       const inProcess = entry && typeof entry === 'object' && 'inProcess' in entry ? entry.inProcess : undefined;
       if (inProcess !== undefined && inProcess !== 'ctl') {
-        fail('malformed registry entry (inProcess must be "ctl")');
+        fail('malformed registry entry (inProcess must be "ctl")', 'exec-refused');
         return;
       }
       if (!entry || typeof entry !== 'object' || (inProcess === undefined && (!Array.isArray(entry.argv) || !entry.argv.length))) {
-        fail('malformed registry entry (needs a non-empty argv)');
+        fail('malformed registry entry (needs a non-empty argv)', 'exec-refused');
         return;
       }
       const v = parseAndValidate(entry, rawBody);
@@ -6381,7 +6385,7 @@ function createSessionManager(deps) {
         .split('${TEAM_ROOT}').join(teamRoot);
       const argv = entry.argv.map(expandVars);
       if (!teamRoot && [...entry.argv, entry.cwd || ''].some((a) => String(a).includes('${TEAM_ROOT}'))) {
-        fail('refused: ${TEAM_ROOT} is unresolved — this seat\'s cwd is in no team\'s root, so the def has no root to run in');
+        fail('refused: ${TEAM_ROOT} is unresolved — this seat\'s cwd is in no team\'s root, so the def has no root to run in', 'exec-refused');
         return;
       }
       const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());
