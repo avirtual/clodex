@@ -153,6 +153,10 @@ clodex-merge-seed-
 clodex-merge-userdata-
 clodex-meta-
 clodex-meta-turns-
+clodex-mf-data-
+misfire-exec-
+misfire-reg-
+misfire-ud-
 clx-diag-dir-
 clx-policy-linux-
 clx-spill-bytes-

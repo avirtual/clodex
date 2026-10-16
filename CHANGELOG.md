@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - ctl: a bare `describe node`/`get node` through the ctl exec tiers now reads the context the call was granted for, not the operator's current node; a dm to a bash session says it is a bash session instead of 'Session not found'.
+- Intent misfires are recorded: every unclosed or empty body, disabled intent, refused exec payload and bounced verb lands in <userData>/intent-misfires.jsonl with the seat's context size, and the Intent Misfires plugin lists them per seat and kind — the body-less ticket intents of 2026-10-16 were found only when hands came back blocked.
 
 - A lead whose reply says a ticket was filed, rejected or respec'd while the turn carried no such intent (or one with an empty body) is told so in one line — the claim with no verb behind it had cost a stalled ticket an hour.
 

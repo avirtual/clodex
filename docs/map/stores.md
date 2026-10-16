@@ -76,7 +76,7 @@
 
 ### Invariants
 - Every store path is derived inside `initStores` from its arguments, never from app.getPath, which is what makes the paths post-whenReady by construction.
-- The return object of `initStores` is the list of stores: persistence, templates, workspaces, promptLibrary, agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, notifications, uiSettings, envScopes, envDefaults, setupMarker, skillsSeen, plus renameWorkspaceScope.
+- The return object of `initStores` is the list of stores: persistence, templates, workspaces, promptLibrary, agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, misfires, notifications, uiSettings, envScopes, envDefaults, setupMarker, skillsSeen, plus renameWorkspaceScope.
 - `readStoreJson` separates a read error from a parse error: an unparseable file is moved aside and reads as quarantined, while a file that cannot be read or moved reads as unreadable and is never written.
 - Every JSON store under userDataPath that is rewritten from its own read (sessions.json, workspaces.json, ui-settings.json, env-scopes.json, agent-defaults.json, reminders.json, notifications.json, skills-seen.json) loads through `readStoreJson` and carries the t1329 refusal.
 - `initStores` touches disk on every call, because the one-shot migrations and both seeders run at construction.
@@ -250,6 +250,14 @@
 - `add` spreads ticket only onto bound records, so unbound records stay byte-identical and cancelForTicket selects on presence.
 - This store does no timing: `add` round-trips nextFireAt, null for the event-driven on-compact form.
 - `_load` goes through `readStoreJson`: an unparseable reminders.json is quarantined, and an unreadable one makes every `_save` throw through `refuseUnreadable` until a later `_load` reads it.
+
+## intent-misfires.jsonl — _readLines … list
+
+| symbol | purpose | state | calls | pins |
+|---|---|---|---|---|
+| `_readLines` | the non-empty lines of the misfire ledger, empty on absence | intent-misfires.jsonl | fs.readFileSync | unpinned |
+| `append` | misfires: appends one normalised row per MISFIRE_KINDS event (detail clipped to 200 chars, numbers or null), pruning to the newest MISFIRE_KEEP lines once past MISFIRE_PRUNE_AT | intent-misfires.jsonl, this._lines | fs.appendFileSync, atomicWriteFileSync | intent-misfires.test.js |
+| `list` | every parseable row of the ledger, oldest first | intent-misfires.jsonl | _readLines | intent-misfires.test.js |
 
 ### Hazards
 - `markFired` and `remove` log and ignore a failed write because `_fireRecord` calls them unguarded from the timer; making them throw takes the timer down.
