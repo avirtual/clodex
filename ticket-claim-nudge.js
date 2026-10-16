@@ -6,6 +6,7 @@ const { scanIntentLines } = require('./intent-segments');
 const TICKET_CLAIM_RE = /\b(?:ticket|t\d{2,5})\b[^.\n]{0,80}\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b|\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b[^.\n]{0,80}\b(?:ticket|t\d{2,5})\b/i;
 const CLAIM_WORD_RE = /\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b/i;
 const FILING_SUBS = new Set(['add', 'reject', 'respec', 'cancel']);
+const EMPTY_BODY_SUBS = new Set(['add', 'reject', 'respec']);
 
 function proseOf(text) {
   const lines = text.split('\n');
@@ -23,12 +24,15 @@ function proseOf(text) {
   return out.join('\n');
 }
 
-function ticketClaimNudges({ text, intents, taskSeat } = {}) {
-  if (!taskSeat) return [];
-  const filing = (Array.isArray(intents) ? intents : [])
-    .filter((i) => i && i.type === 'task' && FILING_SUBS.has(i.sub));
+function isFilingVerb(intent) {
+  return !!intent && intent.type === 'task' && FILING_SUBS.has(intent.sub);
+}
+
+function stepTicketClaims({ verbSeen = false, claimWord = null } = {}, { text, intents, turnEnd } = {}) {
+  const list = Array.isArray(intents) ? intents : [];
   const nudges = [];
-  for (const i of filing) {
+  for (const i of list) {
+    if (!isFilingVerb(i) || !EMPTY_BODY_SUBS.has(i.sub)) continue;
     if (i.bodyOpen || String(i.body == null ? '' : i.body).trim()) continue;
     const head = `[agent:task ${i.sub}${i.id ? ' ' + i.id : ''}]`;
     nudges.push({
@@ -37,16 +41,21 @@ function ticketClaimNudges({ text, intents, taskSeat } = {}) {
         + 'Re-emit it with the full body, closed by [agent:end].',
     });
   }
-  if (filing.length || typeof text !== 'string' || !text) return nudges;
-  const claim = TICKET_CLAIM_RE.exec(proseOf(text));
-  if (!claim) return nudges;
-  const word = CLAIM_WORD_RE.exec(claim[0])[0].toLowerCase();
-  nudges.push({
-    word,
-    text: `[agent:intent] your prose says a ticket was ${word} but this turn carried no [agent:task ...] intent — `
-      + 'nothing was filed. Emit the intent with its full body, closed by [agent:end].',
-  });
-  return nudges;
+  const seen = verbSeen || list.some(isFilingVerb);
+  let word = claimWord;
+  if (!word && typeof text === 'string' && text) {
+    const claim = TICKET_CLAIM_RE.exec(proseOf(text));
+    if (claim) word = CLAIM_WORD_RE.exec(claim[0])[0].toLowerCase();
+  }
+  if (!turnEnd) return { state: { verbSeen: seen, claimWord: word }, nudges };
+  if (word && !seen) {
+    nudges.push({
+      word,
+      text: `[agent:intent] your prose says a ticket was ${word} but this turn carried no [agent:task ...] intent — `
+        + 'nothing was filed. Emit the intent with its full body, closed by [agent:end].',
+    });
+  }
+  return { state: { verbSeen: false, claimWord: null }, nudges };
 }
 
-module.exports = { TICKET_CLAIM_RE, ticketClaimNudges };
+module.exports = { TICKET_CLAIM_RE, isFilingVerb, stepTicketClaims };

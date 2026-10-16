@@ -478,7 +478,7 @@ function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
 
 const { speakable } = require('./speakable');
 const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
-const { ticketClaimNudges } = require('./ticket-claim-nudge');
+const { isFilingVerb, stepTicketClaims } = require('./ticket-claim-nudge');
 const { expandSkillsOff } = require('./skills-off');
 const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
@@ -1061,7 +1061,7 @@ function createSessionManager(deps) {
               intent.reqId = t.reqId;
               setImmediate(() => this._handleIntent(t.agent, intent));
             }
-            this._nudgeTicketClaims(s, t.text, intents);
+            this._nudgeTicketClaims(s, t.text, intents, { turnEnd: !!(t.stop && t.stop.is_turn) });
             if (t.stop && t.stop.is_turn) {
               setImmediate(() => this._maybeFireCompactLatch(s));
             }
@@ -5290,7 +5290,7 @@ function createSessionManager(deps) {
         }
         this._handleIntent(senderName, intent);
       }
-      this._nudgeTicketClaims(s, text, intents);
+      this._nudgeTicketClaims(s, text, intents, { turnEnd: !!(meta && meta.turnEnd), interrupted: !!(meta && meta.interrupted) });
       if (proseVerdictNeedsNudge({ text, intents, session: s })) {
         s._verdictNudged = true;
         log.info('team', `reviewer ${senderName} wrote a verdict with no review-done intent — nudged once`);
@@ -5298,11 +5298,16 @@ function createSessionManager(deps) {
       }
     }
 
-    _nudgeTicketClaims(s, text, intents) {
+    _nudgeTicketClaims(s, text, intents, { turnEnd = false, interrupted = false } = {}) {
       if (!s || !s.agentType) return;
       const listed = (getPersistence().get(s.name) || {}).intents;
-      const taskSeat = !Array.isArray(listed) || listed.includes(LIVING_MARK) || listed.includes('task');
-      for (const n of ticketClaimNudges({ text, intents, taskSeat })) {
+      if (Array.isArray(listed) && !listed.includes(LIVING_MARK) && !listed.includes('task')) return;
+      const { state, nudges } = stepTicketClaims(
+        { verbSeen: !!s._ticketVerbSeen, claimWord: s._ticketClaimWord || null },
+        { text, intents, turnEnd: turnEnd && !interrupted });
+      s._ticketVerbSeen = interrupted ? false : state.verbSeen;
+      s._ticketClaimWord = interrupted ? null : state.claimWord;
+      for (const n of nudges) {
         log.info('intent', `${s.name}: ticket claim without verb (${n.word})`);
         this._injectText(s, n.text, { parkable: true });
       }
@@ -5760,6 +5765,7 @@ function createSessionManager(deps) {
         }
         case 'task': {
           if (!session || !session.agentType) break;
+          if (isFilingVerb(intent)) session._ticketVerbSeen = true;
           this._handleTask(session, intent);
           break;
         }
