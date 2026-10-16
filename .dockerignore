@@ -38,6 +38,7 @@ scripts/*
 !scripts/clodex-team.js
 !scripts/clodex-monitor.js
 !scripts/clodex-run-tests.js
+!scripts/clodex-ctl-admin.js
 
 # Scratch / local artifacts.
 .DS_Store
