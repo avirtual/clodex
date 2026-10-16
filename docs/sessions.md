@@ -272,6 +272,50 @@ layout triggers a one-time, marker-gated (`run/.migrated`), name-driven sweep at
 launch (legacy-sweep.js) that deletes only exact `{knownName}{knownSuffix}`
 files — shared files can't be misattributed — plus a log-only orphan pass.
 
+### protectCredentials (Claude-seat credential hardening)
+
+A team template's `protectCredentials` (array of paths, e.g. `["~/.ssh",
+"~/.aws", "~/.kube", "~/.config/gh", "~/.docker"]`) makes the seat's
+`--settings` file turn on Claude Code's Bash sandbox (`credential-sandbox.js`,
+written by `setupClaudeHook`). Absent or null, the settings file is unchanged.
+An empty list still applies the always-included paths.
+
+- **Read confinement.** `sandbox.filesystem.denyRead` and
+  `sandbox.credentials.files` (mode `deny`) list the template's paths plus
+  Clodex's own token files, always: `<data>/cli/contexts.json` (and
+  `~/.clodex/cli/contexts.json`, the path clodexctl reads, when the data dir is
+  elsewhere), `<data>/teams/*/sandbox.json`, `<data>/boxes`. Listing `~/.aws`
+  also unsets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+  `AWS_SESSION_TOKEN` for every sandboxed command; `~/.config/gh` unsets
+  `GITHUB_TOKEN` and `GH_TOKEN`.
+- **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
+  sandbox's default would confine them to the cwd). `denyWrite` covers config
+  that an unsandboxed process runs later: `~/.claude`, the shell rc files,
+  `~/.gitconfig`, `~/.config/git`, `~/Library/LaunchAgents`, `~/.ssh`,
+  `/Applications/Clodex.app`, and every entry of the Clodex data dir except
+  `<data>/projects` (task artifacts stay writable). The data dir is listed when
+  the settings file is written, so an entry created later is not covered until
+  the seat respawns. The seat's own `run/<name>` is denied too: it holds the hook
+  scripts the CLI runs outside the sandbox.
+- **File tools.** Read, Edit and Write run outside the sandbox, so every read
+  path also gets `Read(…)` and `Edit(…)` deny rules and every write path an
+  `Edit(…)` rule, merged into `permissions.deny`.
+- **Retries.** `allowUnsandboxedCommands` stays true and `permissions.ask`
+  carries `Bash(dangerouslyDisableSandbox:true)`, so a command retried outside
+  the sandbox prompts the operator even under bypass permissions. An approved
+  unsandboxed retry runs that command with no sandbox at all, denied reads
+  included: approving it is leaving credential hardening for that command, not
+  granting only the requested operation.
+- **Boxes.** Inside a sandbox box (`CLODEX_IN_SANDBOX=1`) no `sandbox` block is
+  written: Linux boxes have no bubblewrap and the container is the perimeter.
+  The Read/Edit deny rules stay.
+- **Opting a path out.** The operator removes a path from the template's list,
+  e.g. `~/.aws` for a hand that runs terraform.
+
+This is Claude-seat credential hardening, not a laptop security boundary.
+Codex and bash seats are outside it. A seat with open network and readable
+project data can still exfiltrate what it reads.
+
 ### Seat directory
 
 One seat's durable state has ONE home, `~/.clodex/sessions/<seat>/`
