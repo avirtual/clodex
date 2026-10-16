@@ -72,7 +72,7 @@ test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies an
       assert.ok(denyRead.includes(p), `denyRead lists ${p}`);
     }
     const denyWrite = s.sandbox.filesystem.denyWrite;
-    for (const p of ['~/.claude', '~/.ssh', '~/.zshrc', '~/.gitconfig', '~/.config/git', '~/Library/LaunchAgents', '/Applications/Clodex.app',
+    for (const p of ['~/.aws', '~/.claude', '~/.claude.json', '~/.ssh', '~/.zshrc', '~/.gitconfig', '~/.config/git', '~/Library/LaunchAgents', '/Applications/Clodex.app',
       path.join(root, 'teams'), path.join(root, 'cli'), path.join(root, 'boxes'), path.join(root, 'sessions'), path.join(root, 'setup.json')]) {
       assert.ok(denyWrite.includes(p), `denyWrite lists ${p}`);
     }
@@ -121,4 +121,19 @@ test('protectCredentials inside a sandbox box: no sandbox block, file-tool denie
     assert.ok(s.permissions.deny.includes('Edit(~/.claude/**)'));
     assert.strictEqual(Object.prototype.hasOwnProperty.call(s.permissions, 'ask'), false);
   });
+});
+
+test('protectCredentials drops entries that are neither absolute nor home-anchored', () => {
+  const g = buildCredentialSandbox({ registryDir: seededRoot(), list: ['.env', '~', '~bob/x', 'rel/dir', '/abs/k', '~/.kube'], home: '/h' });
+  const listed = g.sandbox.filesystem.denyRead.slice(-2);
+  assert.deepStrictEqual(listed, ['/abs/k', '~/.kube']);
+  assert.ok(!g.deny.some((r) => r.includes('.env') || r.includes('(/~') || r.includes('rel/dir')));
+});
+
+test('a symlinked data-dir child gets both the exact and the subtree Edit rule', () => {
+  const root = seededRoot();
+  fs.symlinkSync(path.join(root, 'teams'), path.join(root, 'linked'));
+  const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
+  assert.ok(g.deny.includes(`Edit(/${path.join(root, 'linked')})`));
+  assert.ok(g.deny.includes(`Edit(/${path.join(root, 'linked')}/**)`));
 });

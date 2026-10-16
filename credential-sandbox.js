@@ -9,7 +9,7 @@ const ENV_GROUPS = [
 ];
 
 const HOME_WRITE_DENY = [
-  '~/.claude',
+  '~/.claude', '~/.claude.json',
   '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
   '~/.gitconfig', '~/.config/git',
   '~/Library/LaunchAgents',
@@ -27,7 +27,8 @@ function normalizeList(list) {
     if (typeof raw !== 'string') continue;
     let p = raw.trim();
     while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
-    if (p && !out.includes(p)) out.push(p);
+    if (!p.startsWith('/') && !p.startsWith('~/')) continue;
+    if (!out.includes(p)) out.push(p);
   }
   return out;
 }
@@ -53,7 +54,7 @@ function dataWriteDeny(registryDir, fsImpl) {
   try { entries = fsImpl.readdirSync(registryDir, { withFileTypes: true }); } catch { return []; }
   return entries
     .filter((e) => !DATA_WRITE_OPEN.has(e.name))
-    .map((e) => ({ p: path.join(registryDir, e.name), dir: e.isDirectory() }))
+    .map((e) => ({ p: path.join(registryDir, e.name), dir: e.isSymbolicLink() ? undefined : e.isDirectory() }))
     .sort((a, b) => (a.p < b.p ? -1 : a.p > b.p ? 1 : 0));
 }
 
@@ -77,7 +78,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const t0 = t0ReadPaths(registryDir, home);
   const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
-  const denyWrite = [...HOME_WRITE_DENY, ...dataEntries.map((e) => e.p), APP_BUNDLE];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
