@@ -202,7 +202,7 @@ exit 0
     const identScriptPath = pathFor(REGISTRY_DIR, name, 'identScript');
     fs.writeFileSync(identScriptPath, `#!/bin/bash
 IN=$(cat)
-case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*|*mcp__clodex__term_read*|*mcp__clodex__dm*) ;; *) exit 0;; esac
+case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*|*mcp__clodex__term_read*|*mcp__clodex__dm*|*mcp__clodex__exec*) ;; *) exit 0;; esac
 IFS= read -r -d '' JS <<'JSEOF' || true
 try {
   const fs = require("fs");
@@ -794,7 +794,7 @@ exit 0
             { type: 'command', command: identScriptPath },
           ]
         }, {
-          matcher: 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm',
+          matcher: 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm|mcp__clodex__exec',
           hooks: [{ type: 'command', command: identScriptPath }]
         }, {
           matcher: '',

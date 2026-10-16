@@ -1079,11 +1079,11 @@ test('the live observer is registered for Bash only, ahead of the tool call', ()
     matcher: '',
     hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'pollGuardScript'), onFailure: 'block', timeout: 15 }],
   }], 'the matcher-less entry carries the poll guard alone');
-  assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm'), [{
-    matcher: 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm',
+  assert.deepStrictEqual(settings.hooks.PreToolUse.filter((e) => e.matcher === 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm|mcp__clodex__exec'), [{
+    matcher: 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm|mcp__clodex__exec',
     hooks: [{ type: 'command', command: pathFor(REGISTRY_DIR, 'agent1', 'identScript') }],
   }]);
-  assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm', '']);
+  assert.deepStrictEqual(settings.hooks.PreToolUse.map((e) => e.matcher), ['Bash', 'mcp__clodex__term_exec|mcp__clodex__term_read|mcp__clodex__dm|mcp__clodex__exec', '']);
   const registry = require('../intent-registry');
   assert.deepStrictEqual(settings.hooks.PreToolUse[1].matcher.split('|').sort(), registry.CORE_ROWS.flatMap((r) => r.tools || []).map((t) => 'mcp__clodex__' + t.name).sort());
 });
@@ -1730,7 +1730,7 @@ test('ident hook: the interpreter line hands the seat catalog path to the hook',
 test('ident hook: the case gate on clodex/SubagentStart sits ahead of the interpreter line', () => {
   const REGISTRY_DIR = identSeat();
   const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'agent1', 'identScript'), 'utf-8');
-  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*|*mcp__clodex__term_read*|*mcp__clodex__dm*) ;; *) exit 0;; esac`);
+  const gate = src.indexOf(`case "$IN" in *'"command"'*clodex*|*SubagentStart*|*mcp__clodex__term_exec*|*mcp__clodex__term_read*|*mcp__clodex__dm*|*mcp__clodex__exec*) ;; *) exit 0;; esac`);
   const interp = src.indexOf('ELECTRON_RUN_AS_NODE=1');
   assert.ok(gate > 0 && interp > gate, src);
   assert.match(src, /printf '%s' "\$IN" \| ELECTRON_RUN_AS_NODE=1 /);
@@ -1944,6 +1944,18 @@ test('ident hook: a main term_exec call gets a verified main stamp in updatedInp
   const m = STAMP_MAIN.exec(ident);
   assert.ok(m, ident);
   assert.deepStrictEqual(out.hookSpecificOutput, { hookEventName: 'PreToolUse', updatedInput: { command: 'ls', ident } });
+  assert.strictEqual(ident, identToken(crypto, ICRED, null, null, 'sess-1', m[1]));
+  assert.strictEqual(identIsMain(crypto, ICRED, ident, 'sess-1'), true);
+  assert.strictEqual(fs.existsSync(identDirOf(REGISTRY_DIR)), false);
+});
+
+test('ident hook: a main exec tool call gets a verified main stamp in updatedInput.ident and no stamp file', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, mcpCall({ command: 'repo-state', payload: {} }, { tool_name: 'mcp__clodex__exec' })));
+  const { ident } = out.hookSpecificOutput.updatedInput;
+  const m = STAMP_MAIN.exec(ident);
+  assert.ok(m, ident);
+  assert.deepStrictEqual(out.hookSpecificOutput, { hookEventName: 'PreToolUse', updatedInput: { command: 'repo-state', payload: {}, ident } });
   assert.strictEqual(ident, identToken(crypto, ICRED, null, null, 'sess-1', m[1]));
   assert.strictEqual(identIsMain(crypto, ICRED, ident, 'sess-1'), true);
   assert.strictEqual(fs.existsSync(identDirOf(REGISTRY_DIR)), false);
