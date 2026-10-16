@@ -330,7 +330,8 @@ function defaultReply(intent, sub) {
   return `${intentLabel(intent)} accepted; ${RESULT_TAIL}`;
 }
 
-function lateReply(intent) {
+function lateReply(intent, waitMs) {
+  if (intent.type === 'exec') return `outcome-unknown: exec ${intent.cmd} gave no reply within ${Math.round(waitMs / 1000)} s. It was NOT cancelled and may still be running or already finished; its reply arrives in your main conversation as an [agent:exec] line. Do not run it again. exec {"command":"status","payload":{}} lists this seat's tracked runs (ceilings over a minute).`;
   return `${intent.type} accepted; its reply will arrive in the seat's main conversation`;
 }
 
@@ -408,7 +409,7 @@ function createIntentRequestHandler({
           const timer = setTimer(() => resolve(false), waitMs);
           wake = () => { clearTimer(timer); resolve(true); };
         });
-        if (!replied && !lines.length) return { ok: true, status: 'ok', reply: lateReply(intent) };
+        if (!replied && !lines.length) return { ok: true, status: 'ok', reply: lateReply(intent, waitMs) };
       }
     } finally {
       open = false;
