@@ -18,6 +18,10 @@ blocks a release.
 - `[agent:ctl <ctx>] <line>` runs a clodexctl verb against a named context in the main process; two seeded exec entries (`clodex-ctl-read`, `clodex-ctl-seats`) let the operator grant it per seat with a verb allowlist, and deploy, undeploy, upgrade, input, exec, port-forward and attach are refused in every path.
 - The ctl exec entries gain a `help` verb (clodexctl's own usage text, on demand) and lose the bare `nodes` verb; the New Session exec checklist shows each entry's description instead of a bare name for in-process entries.
 
+### Docs
+
+- Project instructions move to a tracked root `AGENTS.md`, read by Claude Code (2.1.277+), Codex and Muse seats alike; the untracked `.claude/CLAUDE.md` never reached worktrees, the box or contributors.
+
 ## 5.126.0 — 2026-10-16 — tickets and hands on a connected peer, operator-written memory directives, the probe intent
 
 ### Messaging
