@@ -196,14 +196,15 @@ the seat's `execCommands` (docs/messaging.md §7b).
 ## clodexctl through exec
 
 Three seeded entries run clodexctl verbs against a peer node's context. The
-first two (read, seats) spawn nothing: `"inProcess": "ctl"` makes `_handleExecIntent` validate the
-payload against the entry's schema and then call `_handleCtlIntent` with
-`{ctx, line: verb + ' ' + args}`, so the run happens in ctl-service inside the
-main process. `~/.clodex/cli/contexts.json` and its tokens never leave the main
-process; the seat gets the rendered output back, scrubbed by ctl-service and
-clamped to the entry's `replyMaxBytes` (12000). The run uses the same
-ctl-service as the operator's drawer ctl tab: it takes over the tab's one warm
-connection, and a slow run queues the tab's next command behind it.
+first two (read, seats) spawn nothing: `"inProcess": "ctl"` makes
+`_handleExecIntent` validate the payload against the entry's schema and then
+call `_handleCtlIntent` with `{ctx, line: verb + ' ' + args}`, so the run
+happens in ctl-service inside the main process. `~/.clodex/cli/contexts.json`
+and its tokens never leave the main process; the seat gets the rendered output
+back, scrubbed by ctl-service and clamped to the entry's `replyMaxBytes`
+(12000). The run uses the same ctl-service as the operator's drawer ctl tab: it
+takes over the tab's one warm connection, and a slow run queues the tab's next
+command behind it.
 
 | Entry | `verb` enum |
 |---|---|
@@ -267,10 +268,11 @@ Runs live under `~/.clodex/ctl-runs/`: `<seq>.log` (redacted stream) and
 time; a second submit is refused naming the live seq. Progress dms from
 `ctl-admin` are passive and at most one per 30 s; the result dm (exit, last
 lines, log path) wakes the seat. A worker that dies without a result (machine
-reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on any
-launcher call and once at app boot — and nothing is ever re-run. There is no
-cancel in v1: `kill` the pid in `<ctx>.lock`. `[agent:exec status]` does not
-list these runs; the launcher exits too fast to be tracked.
+reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on the
+next deploy/upgrade/restart call (help does not sweep) and once at app boot —
+and nothing is ever re-run. There is no cancel in v1: `kill` the pid in
+`<ctx>.lock`. `[agent:exec status]` does not list these runs; the launcher
+exits too fast to be tracked.
 
 The worker runs outside every seat sandbox: the launcher is a child of the
 Electron main process, not of the seat's CLI, so the worker reads
