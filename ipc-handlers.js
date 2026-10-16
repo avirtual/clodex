@@ -2323,6 +2323,7 @@ function registerIpcHandlers(deps) {
         typeof entry.fixFor === 'string' ? entry.fixFor : null,
         entry.io || 'pty',
         typeof entry.effort === 'string' ? entry.effort : null,
+        Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
       );
       return { ok: true, io: entry.io || 'pty' };
     } catch (err) {

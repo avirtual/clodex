@@ -93,6 +93,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     // and collapsing the two would silently gate or ungate a seat.
     intents: null,
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: null,
     account: null,
@@ -135,6 +136,7 @@ test('review purpose: the whole shape, with no template', () => {
     execCommands: [],
     intents: [],
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: {
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
@@ -213,6 +215,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     execCommands: [],
     intents: ['dm'],
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
     account: null,
@@ -277,6 +280,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     execCommands: ['ec'],
     intents: ['dm'],
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: { CLODEX_DISABLE_IPC_PROMPT: '1' },
     account: null,
@@ -1084,6 +1088,7 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     execCommands: [],
     intents: null,
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: null,
     account: null,
@@ -1127,6 +1132,7 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     execCommands: [],
     intents: null,
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: null,
     account: null,
@@ -1173,6 +1179,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     execCommands: [],
     intents: [],
     plugins: null,
+    protectCredentials: null,
     io: 'pty',
     env: {
       CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
@@ -1688,4 +1695,17 @@ test('m3: the three reviewer kinds side by side — extraArgs and capNote per ro
 test('m3: _reviewerTemplateNames admits the shipped muse reviewer template', () => {
   const m = managerWith([], { listAllTemplates: () => [MUSE_REVIEWER_TPL] });
   assert.deepStrictEqual(m._reviewerTemplateNames(), ['clodex-team-reviewer-muse']);
+});
+
+test('t1842: a template protectCredentials list rides the ticket and review shapes', () => {
+  const m = managerWith([
+    { name: 'hand-guarded', type: 'claude', cwd: '/repo', protectCredentials: ['~/.aws', 7, '~/.ssh'] },
+    { name: 'rv-guarded', type: 'claude', cwd: '/repo', protectCredentials: ['~/.kube'] },
+  ]);
+  const team = teamWith({ hand: { worktree: true, template: 'hand-guarded' }, reviewer: { template: 'rv-guarded' } });
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).protectCredentials, ['~/.aws', '~/.ssh']);
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'reviewer', 'review', LEAD).protectCredentials, ['~/.kube']);
+  const bare = managerWith([{ name: 'hand-plain', type: 'claude', cwd: '/repo' }]);
+  const plainTeam = teamWith({ hand: { worktree: true, template: 'hand-plain' } });
+  assert.strictEqual(bare.resolveSeatShape(plainTeam, 'hand', 'ticket', LEAD).protectCredentials, null);
 });

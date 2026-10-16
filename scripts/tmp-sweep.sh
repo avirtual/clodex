@@ -463,6 +463,7 @@ clx-move-reattach-
 clx-nap-
 clx-notice-wiring-
 clx-pdf-
+clx-protect-
 clx-refusal-
 clx-registry-
 clx-reload-env-

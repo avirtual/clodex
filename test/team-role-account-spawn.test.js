@@ -343,7 +343,7 @@ const HAND_TUPLE = (io) => [
   'team-hand-1', 'claude', '/proj', [], null, undefined, null, false, null,
   [], [], [], [], [], 'clodex-team-hand', [], [], null,
   { CLODEX_DISABLE_IPC_PROMPT: '1', FORCE_PROMPT_CACHING_5M: '1', CLODEX_TICKET: 't1' }, true,
-  false, null, null, null, io, null,
+  false, null, null, null, io, null, null,
 ];
 
 test('t1165: a hand template with io:stream spawns its ticket seat with io stream in the trailing slot', async () => {
@@ -368,6 +368,22 @@ for (const [label, tpl, want] of [
     f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
     await settle();
     assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
-    assert.deepStrictEqual([f.created[0].length, f.created[0][23], f.created[0][24]], [26, null, want]);
+    assert.deepStrictEqual([f.created[0].length, f.created[0][23], f.created[0][24]], [27, null, want]);
   });
 }
+
+test('t1842: a hand template protectCredentials list reaches the ticket seat create() as the 27th positional', async () => {
+  const f = mkFixture({ templates: [{ ...HAND_TEMPLATE, protectCredentials: ['~/.aws'] }, SHIPPED_REVIEWER_TEMPLATE] });
+  await dispatchTicket(f);
+  assert.strictEqual(f.created.length, 1, 'ENTER: the ticket seat must have spawned');
+  assert.deepStrictEqual(f.created[0][26], ['~/.aws']);
+});
+
+test('t1842: a reviewer template protectCredentials list reaches the reviewer create() as the 27th positional', async () => {
+  const f = mkFixture({ templates: [HAND_TEMPLATE, { ...SHIPPED_REVIEWER_TEMPLATE, protectCredentials: ['~/.kube'] }] });
+  f.seat('lead');
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
+  assert.deepStrictEqual(f.created[0][26], ['~/.kube']);
+});

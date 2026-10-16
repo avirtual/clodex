@@ -38,6 +38,7 @@ function respawnFromRecord(m, name, entry) {
     typeof entry.fixFor === 'string' ? entry.fixFor : null,
     entry.io || 'pty',
     typeof entry.effort === 'string' ? entry.effort : null,
+    Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
   );
 }
 

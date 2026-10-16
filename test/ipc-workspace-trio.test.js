@@ -26,7 +26,7 @@ const RETRY_ENTRY = { name: 'seat', type: 'claude', cwd: '/x', sessionId: 'sid' 
 function expectedCreateArgs(workspaceId) {
   return [
     'seat', 'claude', '/x', [], 'sid', workspaceId, null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'pty', null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'pty', null, null,
   ];
 }
 

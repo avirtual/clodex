@@ -593,6 +593,7 @@ test('importSeat ships a 9 MiB transcript in three chunks and the far create is 
       null,
       'stream',
       'high',
+      null,
     ]);
     assert.strictEqual(w.createCalls[0][19], false,
       'mint=false: an imported seat is a RESTORE over the shipped promptcache');
