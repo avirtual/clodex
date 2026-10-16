@@ -190,3 +190,36 @@ test('an exec entry with an unknown inProcess value is refused before any spawn'
   assert.deepStrictEqual(calls, []);
   assert.match(replies[0], /inProcess must be "ctl"/);
 });
+
+test('both ctl exec entries list help first and no bare nodes verb', () => {
+  for (const def of [READ_DEF, SEATS_DEF]) {
+    const verbs = def.schema.properties.verb.enum;
+    assert.strictEqual(verbs[0], 'help');
+    assert.strictEqual(verbs.includes('nodes'), false);
+    assert.ok(def.description.length <= 200);
+  }
+});
+
+test('a help payload through the ctl exec entry reaches the ctl service as help <verb>', async () => {
+  const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
+  const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
+  fs.mkdirSync(execDir, { recursive: true });
+  const def = { ...READ_DEF, schema: { ...READ_DEF.schema, properties: { ...READ_DEF.schema.properties, ctx: { type: 'string', enum: ['ios'] } } } };
+  fs.writeFileSync(path.join(execDir, 'clodex-ctl-read.json'), JSON.stringify(def));
+  const { calls, svc } = fakeCtl({ output: 'usage: get <resource>', exitCode: 0 });
+  const m = mk({
+    REGISTRY_DIR,
+    getCtlService: () => svc,
+    clampReplyBody,
+    parseAndValidate,
+    resolveTeam: () => null,
+    getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['clodex-ctl-read'] }) }),
+  });
+  const replies = [];
+  m._injectText = (_s, text) => replies.push(text);
+  m._broadcast = () => {};
+  await m._handleExecIntent({ ...SEAT }, 'clodex-ctl-read', JSON.stringify({ ctx: 'ios', verb: 'help', args: 'get' }));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(calls, ['--ctx ios help get']);
+  assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-read: [ctl ios exit 0] usage: get <resource>']);
+});

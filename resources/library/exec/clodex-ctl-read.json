@@ -1,6 +1,6 @@
 {
   "inProcess": "ctl",
-  "description": "Read a peer node through clodexctl: get, describe, query, logs, nodes against a context the operator listed in the ctx enum.",
+  "description": "clodexctl read verbs (get, describe, query, logs) on the peer node named by ctx. args = rest of the clodexctl line. Unsure of a verb's syntax? verb help, args <verb>.",
   "maxBytes": 1024,
   "replyMaxBytes": 12000,
   "schema": {
@@ -9,7 +9,7 @@
     "required": ["ctx", "verb"],
     "properties": {
       "ctx": { "type": "string", "enum": [] },
-      "verb": { "type": "string", "enum": ["get", "describe", "query", "logs", "nodes"] },
+      "verb": { "type": "string", "enum": ["help", "get", "describe", "query", "logs"] },
       "args": { "type": "string", "maxLength": 400 }
     }
   }

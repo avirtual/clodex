@@ -1,6 +1,6 @@
 {
   "inProcess": "ctl",
-  "description": "Act on peer sessions through clodexctl: the read verbs plus create, patch, restart and dm, against a context the operator listed in the ctx enum.",
+  "description": "clodexctl verbs (get, describe, query, logs, plus create, patch, restart, dm) on the peer node named by ctx. args = rest of the clodexctl line. Unsure of a verb's syntax? verb help, args <verb>.",
   "maxBytes": 1024,
   "replyMaxBytes": 12000,
   "schema": {
@@ -9,7 +9,7 @@
     "required": ["ctx", "verb"],
     "properties": {
       "ctx": { "type": "string", "enum": [] },
-      "verb": { "type": "string", "enum": ["get", "describe", "query", "logs", "nodes", "create", "patch", "restart", "dm"] },
+      "verb": { "type": "string", "enum": ["help", "get", "describe", "query", "logs", "create", "patch", "restart", "dm"] },
       "args": { "type": "string", "maxLength": 400 }
     }
   }

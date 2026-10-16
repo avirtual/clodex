@@ -266,7 +266,8 @@ function renderExecChecklist(container, enabledSet) {
     cb.checked = enabledSet.has(c.name);
     const argv = (c.argv || []).join(' ');
     const txt = document.createElement('span');
-    txt.innerHTML = `<strong>${esc(c.name)}</strong>${argv ? ' — ' + esc(argv) : ''}`;
+    const detail = c.description || argv || (c.inProcess ? `in-process: ${c.inProcess}` : '');
+    txt.innerHTML = `<strong>${esc(c.name)}</strong>${detail ? ' — ' + esc(detail) : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
     container.appendChild(row);
