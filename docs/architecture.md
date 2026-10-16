@@ -1308,7 +1308,9 @@ Own state + DOM, `init*(deps)`:
   `createPaintDelta` returns the rows newly painted above the input strip
   between two screens, `blockText` turns a settled run of them into one
   `command-output` record's text, `mergeByTs` interleaves those records with
-  the transcript file's. See docs/notes/renderer-lib-paint-delta.md.
+  the transcript file's. The paint scrape only captures tagged slash-command
+  output; the conversation surface is file-sourced for every platform. See
+  docs/notes/renderer-lib-paint-delta.md.
 - **lib/ansi-html.js** — pure SGR converter for the transcript pane: `ansiRuns`
   turns a local command's stdout into `{ text, style }` runs and strips every
   other escape sequence; the view builds the spans with `textContent`.

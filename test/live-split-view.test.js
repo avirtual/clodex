@@ -1310,7 +1310,7 @@ test('a codex turn with a follow-up queued under its status row is still busy', 
   } finally { m.done(); }
 });
 
-test('a picker that hides the composer clears the pending tag, so a later block is untagged', async () => {
+test('a picker that hides the composer clears the pending tag, so a later block adds no row', async () => {
   const m = await mountPaint('codex', codexScreen(['  banner 1']));
   try {
     m.view.composerSent('/model');
@@ -1321,7 +1321,7 @@ test('a picker that hides the composer clears the pending tag, so a later block 
     m.write();
     m.write();
     m.paintNext(codexScreen(['  banner 1', ...CARD]));
-    assert.deepStrictEqual(m.outputs(), [CARD.join('\n')]);
+    assert.deepStrictEqual(m.outputs(), []);
   } finally { m.done(); }
 });
 
