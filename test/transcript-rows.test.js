@@ -2092,3 +2092,22 @@ test('showThinking off drops thinking rows at render; turning it back on and rep
   m.rows.repaint();
   assert.ok(thinkingRowOf(m));
 });
+
+test('in Conversation mode a thinking row does not unhide a turn: a monitor-woken or driverless tool turn stays hidden, a prompt turn shows its thinking row', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([
+    prompt,
+    { ...thinking, id: 'k1', turn: 1 },
+    prose,
+    inb('m2', 2, 'monitor', 'build finished'),
+    { ...thinking, id: 'k2', turn: 2 },
+    call('c2', 'Bash', 'ls', 'ok', { turn: 2 }),
+    { id: 'e2', kind: 'turn-end', ts: null, turn: 2, durationMs: 5, messageCount: 1 },
+    { ...thinking, id: 'k3', turn: 3 },
+    call('c3', 'Bash', 'ls', 'ok', { turn: 3 }),
+  ]);
+  assert.deepStrictEqual(m.pane.childNodes.map((n) => [n.dataset.turn, isHidden(n)]), [['p1', false], ['m2', true], ['k3', true]]);
+  const row = thinkingRowOf(m);
+  assert.ok(row, 'ENTER: the prompt turn paints its thinking row');
+  assert.strictEqual(isHidden(row), false);
+});
