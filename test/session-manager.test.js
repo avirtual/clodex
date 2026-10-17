@@ -17994,8 +17994,8 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   // runner and the merge, none of which has any use for it — and a whole-object
   // compare is what catches it leaking there through a shared reference.
   assert.deepStrictEqual(
-    { ...t.worktree, baseSha: typeof t.worktree.baseSha },
-    { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string' },
+    { ...t.worktree, baseSha: typeof t.worktree.baseSha, baseBranch: typeof t.worktree.baseBranch },
+    { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string', baseBranch: 'string' },
     'the ticket carries the tree, so a REPLAY can re-tell a respawned seat — and nothing more');
 
   // Rides the spec even though the seat is already standing in the tree: a replay
