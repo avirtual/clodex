@@ -158,10 +158,12 @@ function pickRoleKeys(def) {
 const warnedDrops = new Set();
 
 const TRUNK_RE = /^[A-Za-z0-9._/-]{1,120}$/;
+const TRUNK_HEAD = '@head';
 
 function normalizeTrunk(v) {
   if (typeof v !== 'string') return null;
   const t = v.trim();
+  if (t === TRUNK_HEAD) return t;
   if (!TRUNK_RE.test(t) || t.startsWith('-') || t.includes('..')) return null;
   return t;
 }
@@ -1223,6 +1225,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

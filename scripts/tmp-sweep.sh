@@ -270,6 +270,7 @@ clodex-sweep-
 clodex-sweeptest-
 clodex-t1504-spill-
 clodex-t1532-
+clodex-t1858-
 clodex-t166-
 clodex-t170-
 clodex-t188-

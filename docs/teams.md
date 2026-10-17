@@ -422,6 +422,10 @@ repo) or the "merge target" field on the lead row of the roles editor; bare
 `[agent:team trunk]` shows the effective value and whether it is set or derived.
 The merge gate refuses (`merge: on-master`, kept as the key for stability) when
 the root checkout is on anything other than that branch, and names it.
+`[agent:team trunk @head]` makes the trunk per ticket instead: task start
+records the branch the root is on as `worktree.baseBranch` (refusing a detached
+root), and that ticket merges back into that branch, so the gate refuses when
+the root has since moved to another branch.
 
 **One conflict the loop resolves itself: CHANGELOG.md.** Every ticket adds its
 bullet at the end of `## Unreleased`, so the second of two in-flight tickets

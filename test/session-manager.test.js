@@ -17987,15 +17987,15 @@ test('task add: an opted-in role mints a branch, a worktree and a seat, and the 
   // fixture moves): a null one silently sends the close-time commit count to its
   // merge-base fallback, which answers differently on a merged branch.
   assert.deepStrictEqual(
-    f.worktreeSet.map((w) => ({ ...w, wt: { ...w.wt, baseSha: typeof w.wt.baseSha } })),
-    [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string', main: repo } }],
+    f.worktreeSet.map((w) => ({ ...w, wt: { ...w.wt, baseSha: typeof w.wt.baseSha, baseBranch: typeof w.wt.baseBranch } })),
+    [{ name: 'team-hand-1', wt: { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string', baseBranch: 'string', main: repo } }],
     'the worktree is recorded (with its fork point), or Delete Session… cannot remove it');
   // `main` is the SEAT's copy only. The ticket's is read by claimTree, the suite
   // runner and the merge, none of which has any use for it — and a whole-object
   // compare is what catches it leaking there through a shared reference.
   assert.deepStrictEqual(
-    { ...t.worktree, baseSha: typeof t.worktree.baseSha },
-    { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string' },
+    { ...t.worktree, baseSha: typeof t.worktree.baseSha, baseBranch: typeof t.worktree.baseBranch },
+    { path: wtPath, branch: 't1-build-the-widget', baseSha: 'string', baseBranch: 'string' },
     'the ticket carries the tree, so a REPLAY can re-tell a respawned seat — and nothing more');
 
   // Rides the spec even though the seat is already standing in the tree: a replay

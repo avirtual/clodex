@@ -2462,6 +2462,9 @@ const TRUNK_ROWS = [
   ['main', 'main'],
   ['release/2.x', 'release/2.x'],
   ['  master  ', 'master'],
+  ['@head', '@head'],
+  ['@other', null],
+  ['feat@head', null],
   ['', null],
   ['   ', null],
   [undefined, null],
@@ -2495,6 +2498,18 @@ test('setTeamTrunk writes a valid branch, clears on null, and refuses a traversa
   assert.strictEqual(tm.loadManifest('shop').trunk, 'main', 'a refused write leaves the stored value');
   assert.strictEqual(tm.setTeamTrunk('shop', null).trunk, null);
   assert.ok(!('trunk' in JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8'))));
+});
+
+test('setTeamTrunk round-trips @head and refuses @other with the branch-name message', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  mkTeam(home, 'shop', validManifest(root));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.strictEqual(tm.setTeamTrunk('shop', '@head').trunk, '@head');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8')).trunk, '@head');
+  assert.strictEqual(tm.loadManifest('shop').trunk, '@head');
+  assert.throws(() => tm.setTeamTrunk('shop', '@other'), /trunk must be a branch name matching/);
+  assert.strictEqual(tm.loadManifest('shop').trunk, '@head', 'a refused write leaves the stored value');
 });
 
 test('role cwd: a child directory named ..cache is inside the root and is stored', () => {

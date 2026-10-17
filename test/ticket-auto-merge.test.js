@@ -3861,6 +3861,65 @@ test('a configured trunk that is not the checked-out branch trips the guard, nam
   assert.strictEqual(git(repo.dir, ['rev-parse', 'release']), repo.baseSha, 'nor did release');
 });
 
+test('trunk @head: a ticket that recorded feat-1 merges into feat-1 while the root is on feat-1', async () => {
+  const repo = mkRepo();
+  git(repo.dir, ['checkout', '-q', '-b', 'feat-1']);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha: repo.baseSha, baseBranch: 'feat-1' } } });
+  f.team.trunk = '@head';
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc().map((e) => e.body.split('\n')[0]), [], 'no escalation');
+  assert.strictEqual(git(repo.dir, ['rev-list', '--parents', '-n', '1', 'feat-1']).split(/\s+/).length, 3, 'a merge commit on feat-1');
+  assert.strictEqual(f.masterHead(), repo.baseSha, 'master did not move');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1);
+  assert.match(notes[0].body, /^\[ticket t1 MERGED\] tl-1 → feat-1 as /);
+});
+
+test('trunk @head: a ticket that recorded feat-1 refuses on-master, naming feat-1, while the root is on feat-2', async () => {
+  const repo = mkRepo();
+  git(repo.dir, ['branch', 'feat-1']);
+  git(repo.dir, ['checkout', '-q', '-b', 'feat-2']);
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha: repo.baseSha, baseBranch: 'feat-1' } } });
+  f.team.trunk = '@head';
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /merge: on-master/);
+  assert.match(esc[0].body, /on "feat-2", not the team's trunk feat-1/);
+  assert.match(esc[0].body, /check out feat-1 in /);
+  assert.strictEqual(git(repo.dir, ['rev-parse', 'feat-1']), repo.baseSha, 'feat-1 did not move');
+  assert.strictEqual(git(repo.dir, ['rev-parse', 'feat-2']), repo.baseSha, 'nor did feat-2');
+});
+
+test('trunk @head: a ticket with no recorded base branch refuses, naming the cause', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  f.team.trunk = '@head';
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /could not resolve the merge target branch for team: trunk is @head and this ticket recorded no base branch/);
+  assert.strictEqual(f.masterHead(), repo.baseSha, 'master did not move');
+});
+
+test('bare [agent:team trunk] on an @head team says each ticket merges into its start branch', async () => {
+  const repo = mkRepo();
+  const f = mkMerge({ repo });
+  f.team.trunk = '@head';
+  const replies = [];
+  await f.m._handleTeamTrunk(f.team, { type: 'team', sub: 'trunk', branch: null }, (msg) => replies.push(msg));
+  assert.deepStrictEqual(replies, ['trunk of team is @head — each ticket merges into the branch the root was on when it started']);
+});
+
 test('[agent:team trunk <branch>] refuses a branch the root repo does not have, naming the ones it does', async () => {
   const repo = mkRepo();
   const f = mkMerge({ repo });
