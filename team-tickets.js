@@ -17,7 +17,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
   matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -1455,7 +1455,7 @@ function createTicketMethods(deps, shared) {
       const t = this._loadTicket(team, id);
       if (!isWaiting(t)) return;
       const branch = t.worktree.branch;
-      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      const target = await gitWorktree.mergeTargetFor(team, t).catch(() => null);
       if (target) {
         const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
         if (m && m.ok && m.merged) {
@@ -1574,9 +1574,12 @@ function createTicketMethods(deps, shared) {
         const branch = wt.branch;
         const baseSha = wt.baseSha;
         if (!branch || !baseSha) return;
-        target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+        target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
         if (!target) {
-          fail('on-master', `could not resolve the merge target branch for ${team.name}: no trunk is set and ${team.root} has no origin/HEAD, main, master or checked-out branch`,
+          const cause = team.trunk === TRUNK_HEAD
+            ? 'trunk is @head and this ticket recorded no base branch'
+            : `no trunk is set and ${team.root} has no origin/HEAD, main, master or checked-out branch`;
+          fail('on-master', `could not resolve the merge target branch for ${team.name}: ${cause}`,
             'nothing was merged; set one with [agent:team trunk <branch>]');
           return;
         }
@@ -1841,7 +1844,7 @@ function createTicketMethods(deps, shared) {
 
     _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, mergedTip = null, branchTip = null }) {
       try {
-        const into = target || gitWorktree.mergeTargetForSync(team);
+        const into = target || gitWorktree.mergeTargetForSync(team, this._loadTicket(team, ticketId));
         const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
         const oneLine = (v) => collapse(v, 300);
         const wideLine = (v) => collapse(v, 600);
@@ -2418,9 +2421,18 @@ function createTicketMethods(deps, shared) {
     async _handleTeamTrunk(team, intent, reply) {
       const derived = await gitWorktree.mergeTargetFor({ root: team.root });
       if (!intent.branch) {
+        if (team.trunk === TRUNK_HEAD) {
+          reply(`trunk of ${team.name} is @head — each ticket merges into the branch the root was on when it started`);
+          return;
+        }
         reply(team.trunk
           ? `trunk of ${team.name} is "${team.trunk}" (set in team.json; the repo's default would be ${derived ? `"${derived}"` : 'unresolvable'})`
           : `trunk of ${team.name} is ${derived ? `"${derived}"` : 'unresolvable'} (derived from the repo's default branch; not set — [agent:team trunk <branch>] sets it)`);
+        return;
+      }
+      if (intent.branch === TRUNK_HEAD) {
+        setTeamTrunk(team.name, TRUNK_HEAD);
+        reply(`trunk of ${team.name} set to @head — each ticket merges into the branch the root was on when it started`);
         return;
       }
       const branches = await gitWorktree.localBranches(team.root);
@@ -3666,7 +3678,16 @@ function createTicketMethods(deps, shared) {
       if (this._ticketTreeHolder(wt.path)) return null;
       // baseSha was captured at mint and is unrecoverable, so dropping it on reuse downgrades the close-time commit count
       // to its merge-base fallback.
-      return { path: wt.path, branch: wt.branch, ...(wt.baseSha ? { baseSha: wt.baseSha } : {}) };
+      return { path: wt.path, branch: wt.branch, ...(wt.baseSha ? { baseSha: wt.baseSha } : {}), ...(wt.baseBranch ? { baseBranch: wt.baseBranch } : {}) };
+    },
+
+    async _rootBaseBranch(team) {
+      const cur = await gitWorktree.currentBranch(team.root).catch(() => null);
+      const branch = cur && cur.ok && cur.branch ? cur.branch : null;
+      if (!branch && team.trunk === TRUNK_HEAD) {
+        return { error: `error: trunk is @head but ${team.root} is not on a branch (detached HEAD) — check out the branch this ticket should merge into first` };
+      }
+      return { branch };
     },
 
     // A template is agent-writable: privileged intents are stripped and env is confined to REVIEWER_ENV_ALLOWLIST,
@@ -4037,6 +4058,14 @@ function createTicketMethods(deps, shared) {
           else {
             // Fork from HEAD, not the default branch: a ticket is written against the lead's tree, which may have unpushed commits,
             // and merging a fork of origin/HEAD back would revert them.
+            const priorWt = (ticket.worktree && ticket.worktree.branch === seat.branch) ? ticket.worktree : null;
+            const base = priorWt && priorWt.baseBranch ? { branch: priorWt.baseBranch } : await this._rootBaseBranch(team);
+            if (base.error) {
+              getPersistence().remove(seat.name);
+              if (!(ticket.worktree && ticket.worktree.path)) unpin();
+              reply(base.error);
+              return;
+            }
             const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD' });
             if (!r || !r.ok) {
               getPersistence().remove(seat.name);
@@ -4053,7 +4082,7 @@ function createTicketMethods(deps, shared) {
             const prior = (ticket.worktree && ticket.worktree.branch === r.branch)
               ? ticket.worktree.baseSha : null;
             const keep = r.baseSha || prior || null;
-            wt = { path: r.path, branch: r.branch, ...(keep ? { baseSha: keep } : {}) };
+            wt = { path: r.path, branch: r.branch, ...(keep ? { baseSha: keep } : {}), ...(base.branch ? { baseBranch: base.branch } : {}) };
           }
           // Skipped for a spawn seat rather than writing `worktree: null`: absent is what every reader tests for, and a stored null is a second spelling of it.
           if (!isSpawn) {
@@ -4368,6 +4397,14 @@ function createTicketMethods(deps, shared) {
           }
         }
       } catch (e) { log.warn('worktree', `could not add .clodex-wt/ to ${team.root}/.git/info/exclude: ${e.message}`); }
+      const base = await this._rootBaseBranch(team);
+      if (base.error) {
+        const all = ticketsStore.load(team.root);
+        const rec = all.find((x) => x.id === ticketId);
+        if (rec) { rec.startedAt = null; ticketsStore.save(team.root, all); }
+        reply(base.error);
+        return null;
+      }
       const r = await gitWorktree.createWorktree(team.root, branch, { base: 'HEAD', targetPath });
       const rel = (r && r.ok) ? gitWorktree.relativizeWorktreePointers(team.root, r.path) : null;
       const all = ticketsStore.load(team.root);
@@ -4386,7 +4423,7 @@ function createTicketMethods(deps, shared) {
         reply(`ticket ${ticketId}: worktree "${branch}" could not be created (${why}) — nothing sent${moved ? '' : `, ticket left assigned to "${rec.assignee}" and unstarted`}`);
         return null;
       }
-      rec.worktree = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}) };
+      rec.worktree = { path: r.path, branch: r.branch, ...(r.baseSha ? { baseSha: r.baseSha } : {}), ...(base.branch ? { baseBranch: base.branch } : {}) };
       ticketsStore.save(team.root, all);
       if (fs.existsSync(path.join(team.root, 'package.json'))) {
         const e = this._linkWorktreeNodeModules(team.root, r.path);
@@ -5366,7 +5403,7 @@ function createTicketMethods(deps, shared) {
       const branch = wt.branch;
       if (!branch) return [];
       if (preMergeBase !== undefined) return this._slowTestsOwnedFrom(team, branch, wanted, preMergeBase || wt.baseSha || null);
-      const target = await gitWorktree.mergeTargetFor(team).catch(() => null);
+      const target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
       const mb = target
         ? await gitWorktree.mergeBase(team.root, target, branch).catch((e) => ({ ok: false, error: e.message }))
         : { ok: false, error: 'no merge target resolved' };

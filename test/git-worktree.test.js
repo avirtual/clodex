@@ -893,3 +893,20 @@ test('relativizeWorktreePointers: refuses a .git file that points outside repoTo
   assert.match(rel.error, /does not point under/);
   assert.strictEqual(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), before);
 });
+
+test('mergeTargetFor: trunk @head returns the ticket\'s recorded base branch, or null without one', async () => {
+  const team = { root: '/nonexistent-root', trunk: '@head' };
+  assert.strictEqual(await wt.mergeTargetFor(team, { worktree: { branch: 't1-x', baseBranch: 'feat-1' } }), 'feat-1');
+  assert.strictEqual(wt.mergeTargetForSync(team, { worktree: { branch: 't1-x', baseBranch: 'feat-1' } }), 'feat-1');
+  assert.strictEqual(await wt.mergeTargetFor(team, { worktree: { branch: 't1-x' } }), null);
+  assert.strictEqual(wt.mergeTargetForSync(team, { worktree: { branch: 't1-x' } }), null);
+  assert.strictEqual(await wt.mergeTargetFor(team), null);
+  assert.strictEqual(wt.mergeTargetForSync(team, null), null);
+});
+
+test('mergeTargetFor: a named trunk ignores the ticket\'s recorded base branch', async () => {
+  const team = { root: '/nonexistent-root', trunk: 'release' };
+  const ticket = { worktree: { branch: 't1-x', baseBranch: 'feat-1' } };
+  assert.strictEqual(await wt.mergeTargetFor(team, ticket), 'release');
+  assert.strictEqual(wt.mergeTargetForSync(team, ticket), 'release');
+});

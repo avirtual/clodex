@@ -214,12 +214,19 @@ function localTrunkName(ref) {
   return ref ? String(ref).replace(/^origin\//, '') : null;
 }
 
-async function mergeTargetFor(team) {
+function headTrunkTarget(ticket) {
+  const b = ticket && ticket.worktree && ticket.worktree.baseBranch;
+  return typeof b === 'string' && b ? b : null;
+}
+
+async function mergeTargetFor(team, ticket) {
+  if (team && team.trunk === '@head') return headTrunkTarget(ticket);
   if (team && team.trunk) return team.trunk;
   return localTrunkName(team && team.root ? await defaultBranch(team.root) : null);
 }
 
-function mergeTargetForSync(team) {
+function mergeTargetForSync(team, ticket) {
+  if (team && team.trunk === '@head') return headTrunkTarget(ticket);
   if (team && team.trunk) return team.trunk;
   return localTrunkName(team && team.root ? defaultBranchSync(team.root) : null);
 }
