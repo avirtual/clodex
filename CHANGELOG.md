@@ -13,6 +13,10 @@ blocks a release.
 
 ## Unreleased
 
+- Exec tool replies: schema-vetting failures classify as refused and the ctl in-process `run failed` as an error, so the MCP exec loop and the misfire ledger see them.
+- Ticket-claim nag splits prose on `?`, `!` and `;` as well as `.`, so a question before a claim no longer hides it.
+- Resume snapshot under `trunk @head` names the seat's recorded base branch instead of HEAD.
+
 ## 5.131.0 — 2026-10-17 — merge wait names the holding tree; CHANGELOG section ratchet
 
 - The suite fails a branch whose CHANGELOG edit lands outside `## Unreleased` (a bullet appended to an old release section used to ship unnoticed).
