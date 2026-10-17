@@ -404,6 +404,8 @@ waits: other tickets merge past a waiting one. Only this one refusal retries; a
 dirty tree, a moved branch and a red suite still stop on the first try, because
 each of those is a state a human has to look at.
 A merge still waiting when the app relaunches is requeued at boot from its `mergeWaiting: suite-in-flight` stamp, with a fresh twenty-minute cap.
+The wait and its escalation name the tree whose suite holds the lock, read from the `tree` file the runner writes beside `pid`.
+A change of holder pid between samples resets the twenty-minute budget, since a succession of suites is not one stall; a one-hour cap from the first deferral still escalates and says how many distinct holders it saw.
 An `[agent:reboot]` holds while a merge or its post-merge suite is in flight, like an exec run, and the held line names the ticket.
 
 The rule that follows, for anyone reading a refusal: **a lock collision is not a

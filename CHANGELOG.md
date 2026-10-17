@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The suite fails a branch whose CHANGELOG edit lands outside `## Unreleased` (a bullet appended to an old release section used to ship unnoticed).
+- Merge wait: the suite-in-flight message names the tree whose suite holds the lock; a succession of different suites resets the 20-minute budget (hard cap one hour) instead of escalating as one stall.
 
 ## 5.130.2 — 2026-10-17 — release pruning keeps media assets
 

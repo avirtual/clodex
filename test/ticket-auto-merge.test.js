@@ -3103,6 +3103,121 @@ test('a merge meeting a running suite waits at least twenty minutes before it es
     `the scheduled wait before escalating is ${total}ms, shorter than one suite at the runner's twenty-minute ceiling`);
 });
 
+function stepRetry(r, f) {
+  const next = r.scheduled.shift();
+  next.fn();
+  return f.m._mergeChain;
+}
+
+test('the deferral and the escalation name the tree whose suite holds the root lock', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'tree'), '/work/wt-holder\n');
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  now += 21 * 60 * 1000;
+  await r.drain();
+
+  const deferred = f.logs.filter((l) => /deferred:/.test(l.msg));
+  assert.strictEqual(deferred.length, 1, 'ENTER: the first sample deferred');
+  assert.ok(deferred[0].msg.includes(`a suite running in /work/wt-holder holds ${repo.dir}'s lock (pid ${process.pid})`),
+    `the deferral names the holding tree; got ${deferred[0].msg}`);
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.ok(esc[0].body.includes(`a test suite is running in /work/wt-holder and holds the lock of the root checkout ${repo.dir} (pid ${process.pid})`),
+    `the escalation names the holding tree; got ${esc[0].body}`);
+});
+
+test('a holder with no tree file keeps the root-checkout wording', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  plantLock(repo);
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  now += 21 * 60 * 1000;
+  await r.drain();
+
+  const deferred = f.logs.filter((l) => /deferred:/.test(l.msg));
+  assert.strictEqual(deferred.length, 1, 'ENTER: the first sample deferred');
+  assert.ok(deferred[0].msg.includes(`deferred: a suite holds ${repo.dir}'s lock (pid ${process.pid})`),
+    `got ${deferred[0].msg}`);
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: it escalated');
+  assert.ok(esc[0].body.includes(`a test suite is already running in the root checkout ${repo.dir} (pid ${process.pid}) — merging now`),
+    `got ${esc[0].body}`);
+  assert.ok(!/ and holds the lock of /.test(esc[0].body), 'no tree clause when no tree was recorded');
+});
+
+test('a change of holder between samples resets the retry budget instead of escalating', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+  const pids = [process.pid, process.ppid];
+  plantLock(repo, pids[0]);
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.lock', 'tree'), '/work/wt-a\n');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  let ran = 0;
+  while (r.scheduled.length && ran < 45) {
+    ran += 1;
+    if (ran === 30) plantLock(repo, pids[1]);
+    now += r.scheduled[0].ms;
+    await stepRetry(r, f);
+  }
+
+  assert.strictEqual(ran, 45, 'forty-five retries ran, past the forty-attempt cap, without stopping');
+  assert.deepStrictEqual(f.esc(), [], 'and nothing escalated while the holder kept changing');
+  assert.strictEqual(r.scheduled.length, 1, 'a retry is still armed');
+  const resets = f.logs.filter((l) => /budget reset/.test(l.msg));
+  assert.strictEqual(resets.length, 1, 'one reset for the one holder change');
+  assert.ok(resets[0].msg.includes(`holder changed (pid ${process.pid} → pid ${process.ppid} in /work/wt-a) — budget reset`),
+    `got ${resets[0].msg}`);
+
+  clearLock(repo);
+  assert.strictEqual(await r.drain(), 1, 'the lock clears and the next retry lands it');
+  assert.match(f.masterLog(), /Merge t1:/);
+});
+
+test('the one-hour hard cap escalates even while holders keep changing, naming the distinct holders', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const r = captureRetries(f);
+  let now = 1_000_000;
+  f.m._mergeRetryNow = () => now;
+  const pids = [process.pid, process.ppid];
+  plantLock(repo, pids[0]);
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  let ran = 0;
+  while (r.scheduled.length && ran < 20) {
+    ran += 1;
+    plantLock(repo, pids[ran % 2]);
+    now += 10 * 60 * 1000;
+    await stepRetry(r, f);
+  }
+
+  assert.strictEqual(ran, 6, 'it stopped at sixty minutes, six ten-minute samples each with a new holder');
+  assert.strictEqual(f.logs.filter((l) => /budget reset/.test(l.msg)).length, 6, 'ENTER: every sample saw a new holder and reset the budget');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
+  assert.match(esc[0].body, /suite-in-flight/);
+  assert.ok(esc[0].body.includes('it waited 3600s, past the one-hour cap, and the lock was held on every sample by 2 distinct suites'),
+    `got ${esc[0].body}`);
+});
+
 test('a NON-suite-in-flight failure is still terminal on the FIRST try', async () => {
   // The retry is scoped to ONE arm on purpose. Every other fail() here names a
   // state a human has to look at — a dirty tree, a moved branch, a red suite —
