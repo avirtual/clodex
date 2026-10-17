@@ -556,8 +556,10 @@ test('lock: a waiting runner says it is queued once, then when it acquires, then
   const lockDir = path.join(root, '.test-digest.lock');
   fs.mkdirSync(lockDir);
   fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid));
+  fs.writeFileSync(path.join(lockDir, 'tree'), '/work/wt-holder');
   fs.writeFileSync(path.join(root, '.test-digest.last'), '300000\n');
-  fs.writeFileSync(path.join(root, 'stub.test.js'), "require('node:test').test('stub', () => {});\n");
+  fs.writeFileSync(path.join(root, 'stub.test.js'), "const fs = require('fs'); require('node:test').test('stub', () => {"
+    + " fs.writeFileSync('held-tree.txt', fs.readFileSync('.test-digest.lock/tree', 'utf8')); });\n");
   const env = { ...process.env, CLODEX_TEST_LOCK_WAIT_MS: '100000' };
   delete env.NODE_TEST_CONTEXT;
   delete env.CLODEX_TEST_LOCK_DIR;
@@ -579,10 +581,12 @@ test('lock: a waiting runner says it is queued once, then when it acquires, then
     assert.ok(released, `ENTER: the runner never reported the live holder pid ${process.pid}; stderr ${JSON.stringify(err)}`);
     const notes = err.split('\n').filter((l) => /queued behind|lock acquired/.test(l));
     assert.strictEqual(notes.length, 2, `one queued line and one acquired line; got ${JSON.stringify(notes)}`);
-    assert.match(notes[0], new RegExp(`^run-tests: queued behind pid ${process.pid} \\(running \\d+:\\d{2} of a ~5 min suite\\)$`));
+    assert.match(notes[0], new RegExp(`^run-tests: queued behind pid ${process.pid} in /work/wt-holder \\(running \\d+:\\d{2} of a ~5 min suite\\)$`));
     assert.match(notes[1], /^run-tests: lock acquired after \d+:\d{2}$/);
     assert.match(out, /TOTALS:/, 'and the suite then runs');
     assert.strictEqual(code, 0);
+    assert.strictEqual(fs.readFileSync(path.join(root, 'held-tree.txt'), 'utf8'), fs.realpathSync(root),
+      'the runner records its own checkout in the lock it holds');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 

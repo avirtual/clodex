@@ -121,6 +121,7 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 21 * 60 * 1000;
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_WAIT_MS = 20 * 60 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = Math.ceil(MERGE_RETRY_MAX_WAIT_MS / MERGE_RETRY_DELAY_MS);
+const MERGE_RETRY_HARD_CAP_MS = 60 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_POLL_MS = 2 * 1000;
 
@@ -1495,8 +1496,10 @@ function createTicketMethods(deps, shared) {
       try {
         pid = Number(fs.readFileSync(path.join(team.root, '.test-digest.lock', 'pid'), 'utf8').trim()) || null;
       } catch { return null; }
-      if (!pid) return null;
-      return isAlive(pid) ? pid : null;
+      if (!pid || !isAlive(pid)) return null;
+      let tree = null;
+      try { tree = fs.readFileSync(path.join(team.root, '.test-digest.lock', 'tree'), 'utf8').trim() || null; } catch {}
+      return { pid, tree };
     },
 
     _stampMergeError(team, ticketId, step) {
@@ -1637,13 +1640,28 @@ function createTicketMethods(deps, shared) {
         if (holder) {
           // Scheduled, not slept: a sleep would hold the chain and block every merge process-wide.
           // Bounded by attempts and deadline because a stale lock is invisible to isAlive.
-          const attempt = (retry && retry.attempt) || 0;
-          const since = (retry && retry.since) || this._mergeRetryNow();
-          const waited = this._mergeRetryNow() - since;
-          if (attempt < MERGE_RETRY_MAX_ATTEMPTS && waited < MERGE_RETRY_MAX_WAIT_MS) {
-            log.info('ticket', `auto-merge for ${ticketId} deferred: a suite holds ${team.root}'s lock (pid ${holder}) — retry ${attempt + 1}/${MERGE_RETRY_MAX_ATTEMPTS} in ${Math.round(MERGE_RETRY_DELAY_MS / 1000)}s, ${Math.round(waited / 1000)}s waited so far`);
+          const now = this._mergeRetryNow();
+          const inTree = holder.tree ? ` in ${holder.tree}` : '';
+          let attempt = (retry && retry.attempt) || 0;
+          let since = (retry && retry.since) || now;
+          const firstSince = (retry && (retry.firstSince || retry.since)) || now;
+          const holderPids = [...new Set([...((retry && retry.holderPids) || []), holder.pid])];
+          const lastHolderPid = retry && retry.lastHolderPid;
+          if (lastHolderPid && lastHolderPid !== holder.pid) {
+            log.info('ticket', `auto-merge for ${ticketId}: holder changed (pid ${lastHolderPid} → pid ${holder.pid}${inTree}) — budget reset`);
+            attempt = 0;
+            since = now;
+          }
+          const waited = now - since;
+          const total = now - firstSince;
+          if (total < MERGE_RETRY_HARD_CAP_MS && attempt < MERGE_RETRY_MAX_ATTEMPTS && waited < MERGE_RETRY_MAX_WAIT_MS) {
+            const holds = holder.tree
+              ? `a suite running in ${holder.tree} holds ${team.root}'s lock (pid ${holder.pid})`
+              : `a suite holds ${team.root}'s lock (pid ${holder.pid})`;
+            log.info('ticket', `auto-merge for ${ticketId} deferred: ${holds} — retry ${attempt + 1}/${MERGE_RETRY_MAX_ATTEMPTS} in ${Math.round(MERGE_RETRY_DELAY_MS / 1000)}s, ${Math.round(waited / 1000)}s waited so far`);
+            const next = { attempt: attempt + 1, since, firstSince, lastHolderPid: holder.pid, holderPids };
             this._scheduleMergeRetry(() => {
-              try { this._queueAutoMerge(team, ticketId, landedOn, verdictText, { attempt: attempt + 1, since }); }
+              try { this._queueAutoMerge(team, ticketId, landedOn, verdictText, next); }
               catch (e) { log.error('ticket', `auto-merge retry for ${ticketId} failed to requeue: ${e && e.message ? e.message : String(e)}`); }
             }, MERGE_RETRY_DELAY_MS);
             if (!abandonedWhy()) {
@@ -1654,8 +1672,15 @@ function createTicketMethods(deps, shared) {
           }
           // The message reports that every sample found the lock held, not a wedge: the pid was verified
           // alive, and naming a wedge invites clearing a valid lock.
-          fail('suite-in-flight', `a test suite is already running in the root checkout ${team.root} (pid ${holder}) — merging now would rewrite the files under it`,
-            `nothing was merged, and the loop will NOT retry — it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held on every sample. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
+          const what = holder.tree
+            ? `a test suite is running in ${holder.tree} and holds the lock of the root checkout ${team.root} (pid ${holder.pid})`
+            : `a test suite is already running in the root checkout ${team.root} (pid ${holder.pid})`;
+          const n = holderPids.length;
+          const tried = total >= MERGE_RETRY_HARD_CAP_MS
+            ? `it waited ${Math.round(total / 1000)}s, past the one-hour cap, and the lock was held on every sample by ${n} distinct suite${n === 1 ? '' : 's'}`
+            : `it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held on every sample`;
+          fail('suite-in-flight', `${what} — merging now would rewrite the files under it`,
+            `nothing was merged, and the loop will NOT retry — ${tried}. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
           return;
         }
 
@@ -1743,12 +1768,12 @@ function createTicketMethods(deps, shared) {
           // The revert rewrites the shared checkout like the merge, so it takes the same lock gate; our own
           // killed runner is not a blocker, since isAlive still sees its unreaped pid.
           const holder = this._suiteLockHolder(team);
-          const blocker = (holder && holder === suite.runnerPid) ? null : holder;
+          const blocker = (holder && holder.pid === suite.runnerPid) ? null : holder;
           if (blocker) {
             const state = suite.ran
               ? `is RED: the merge ${merged.sha} IS on it and the suite FAILED`
               : `carries an UNVERIFIED merge ${merged.sha}: its suite never ran`;
-            fail('revert-blocked', `${why}\n\n${target} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker}), so reverting now would rewrite the files under it.`,
+            fail('revert-blocked', `${why}\n\n${target} ${state}, and it was left that way deliberately: a test suite is running in ${team.root} (pid ${blocker.pid}), so reverting now would rewrite the files under it.`,
               `merged ${branch} as ${merged.sha} and did NOT revert. Undo it yourself once that suite finishes: \`git -C ${team.root} revert -m 1 ${merged.sha}\`.${keptWhere(false)}`);
             return;
           }

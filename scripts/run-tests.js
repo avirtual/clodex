@@ -187,6 +187,7 @@ function acquireLock() {
     try {
       fs.mkdirSync(LOCK);
       fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
+      fs.writeFileSync(path.join(LOCK, 'tree'), ROOT);
       if (queued) lockNote(`lock acquired after ${clock(Date.now() - startedAt)}`);
       return;
     } catch (e) {
@@ -206,7 +207,9 @@ function acquireLock() {
       if (Date.now() < deadline) {
         if (!queued) {
           queued = true;
-          lockNote(`queued behind pid ${holder} (running ${clock(holderRunningMs())}${suiteOf()})`);
+          let tree = '';
+          try { tree = fs.readFileSync(path.join(LOCK, 'tree'), 'utf8').trim(); } catch {}
+          lockNote(`queued behind pid ${holder}${tree ? ` in ${tree}` : ''} (running ${clock(holderRunningMs())}${suiteOf()})`);
         }
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
         continue;
