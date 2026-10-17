@@ -8868,6 +8868,37 @@ body.web-frontend #sidebar-header {
   white-space: pre-wrap;
   padding: var(--sp-1) 0;
 }
+.tr-thinking {
+  padding: var(--sp-1) 0;
+  color: var(--text-tertiary);
+}
+.tr-thinking-head {
+  display: flex;
+  gap: 0.5em;
+  align-items: baseline;
+  min-width: 0;
+}
+.tr-thinking-head[role=button] {
+  cursor: pointer;
+}
+.tr-thinking-teaser {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.tr-thinking-open .tr-thinking-teaser {
+  display: none;
+}
+.tr-thinking-body {
+  white-space: pre-wrap;
+  padding: var(--sp-1) 0 0 1.75em;
+  color: var(--text-secondary);
+}
+.tr-thinking-cut {
+  color: var(--text-tertiary);
+  margin-top: var(--sp-1);
+}
 .tr-sender-app .tr-sender-glyph {
   background: none;
   width: auto;
@@ -10788,6 +10819,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </select>
         </div>
         <p class="hint-text">Where Claude, Codex and Muse seats start. Switch any seat from its bar. When the CLI shows a picker or a dialog, its terminal opens under the conversation. Shell and peer seats always show the terminal.</p>
+        <label class="prefs-check">
+          <input type="checkbox" id="prefs-show-thinking">
+          <span>Transcript pane › show thinking</span>
+        </label>
+        <p class="hint-text">A Claude seat's reasoning shows as a collapsed 🧠 row before its reply. Click the row to read it.</p>
       </details>
       <details class="prefs-group" data-group="voice">
         <summary><h4>Voice input</h4><span class="prefs-group-sub">Per seat</span></summary>
@@ -34328,6 +34364,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return rec.verb === "task" && rec.ticket ? CONVERSATION : INTERNALS;
           case "notice":
             return LOUD_LEVELS.has(rec.level) ? CONVERSATION : INTERNALS;
+          case "thinking":
+            return CONVERSATION;
           case "assistant":
             if (rec.apiError || !Array.isArray(rec.segments) || !rec.segments.length) return CONVERSATION;
             return rec.segments.some((s) => segmentSurface(s) === CONVERSATION) ? CONVERSATION : INTERNALS;
@@ -35131,6 +35169,36 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function isTalk(r) {
         return r.kind !== "turn-end" && surfaceOf(r) === "conversation";
       }
+      function thinkingRow(doc, rec) {
+        const row = el(doc, "div", `tr-row tr-thinking${rec.redacted ? " tr-thinking-redacted" : ""}`);
+        row.dataset.id = rec.id;
+        const head = el(doc, "div", "tr-thinking-head");
+        head.appendChild(el(doc, "span", "tr-thinking-glyph", "\u{1F9E0}"));
+        row.appendChild(head);
+        if (rec.redacted || typeof rec.text !== "string") {
+          head.appendChild(el(doc, "span", "tr-thinking-teaser", "redacted"));
+          return row;
+        }
+        head.appendChild(el(doc, "span", "tr-thinking-teaser", previewText(rec.text)));
+        head.setAttribute("role", "button");
+        head.setAttribute("aria-expanded", "false");
+        const body = el(doc, "div", "tr-thinking-body", rec.text);
+        if (rec.truncated) body.appendChild(el(doc, "div", "tr-thinking-cut", "\u2026 (truncated at 8 KB)"));
+        body.hidden = true;
+        row.appendChild(body);
+        let before = "";
+        head.addEventListener("mousedown", () => {
+          before = selectedText(doc);
+        });
+        head.addEventListener("click", () => {
+          const now = selectedText(doc);
+          if (now && now !== before) return;
+          body.hidden = !body.hidden;
+          head.setAttribute("aria-expanded", body.hidden ? "false" : "true");
+          toggleClass(row, "tr-thinking-open", !body.hidden);
+        });
+        return row;
+      }
       function hasInternalSeg(r) {
         return r.kind === "assistant" && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== "conversation");
       }
@@ -35170,6 +35238,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             else appendProse(doc, row, rec.text, ctx);
             return row;
           }
+          case "thinking":
+            return thinkingRow(doc, rec);
           case "notice":
             return noticeRow(doc, rec, rec.level, rec.text, ctx);
           case "boundary": {
@@ -35351,7 +35421,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return runs;
       }
       function createTranscriptRows(doc, paneEl, ctx = {}) {
-        const deps = { lead: null, mode: "internals", seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+        const deps = { lead: null, mode: "internals", seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, showThinking: () => true, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
         const turnCache = /* @__PURE__ */ new Map();
         const opened = /* @__PURE__ */ new Set();
         const shut = /* @__PURE__ */ new Set();
@@ -35579,7 +35649,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           };
         }
         function render(records, source) {
-          const list = Array.isArray(records) ? records : [];
+          const all = Array.isArray(records) ? records : [];
+          const list = deps.showThinking() === false ? all.filter((r) => !r || r.kind !== "thinking") : all;
           if (source != null) {
             if (lastSource != null && source !== lastSource) {
               for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
@@ -35591,7 +35662,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
             lastSource = source;
           }
-          lastRecords = list;
+          lastRecords = all;
           const attached = attachedReplies(list);
           const runs = groupRuns(groupTurns(list));
           const keys = new Set(runs.filter((run) => run.hosted).map((run) => run.key));
@@ -35663,7 +35734,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
           render(lastRecords);
           restore(anchor);
         }
-        return { render, setWorking, setMode };
+        function repaint() {
+          const anchor = anchorOf();
+          render(lastRecords);
+          restore(anchor);
+        }
+        return { render, setWorking, setMode, repaint };
       }
       module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
     }
@@ -36213,7 +36289,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (typeof effort === "string" && effort.trim() && effort.trim() !== "default") chips.push(statusChip(doc, "effort", effort.trim(), "neutral", "Effort level for this seat", null));
         el.replaceChildren(...chips);
       }
-      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, peekFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => "internals", onMode = NOOP, onHelp = null, onTerminal = null, onInset = NOOP }) {
+      function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () => "claude", pullTranscript, now = Date.now, onChange = null, seatName = null, onTranscriptChanged = null, resolveFile = NOOP, peekFile = NOOP, openFilePeek = NOOP, openExternal = NOOP, toast = NOOP, echoPalette = null, showThinking = () => true, composerEl = null, sheet = false, menuMirror = null, statusChips = null, mode = () => "internals", onMode = NOOP, onHelp = null, onTerminal = null, onInset = NOOP }) {
         const paneEl = document.createElement("div");
         paneEl.className = "transcript-pane";
         paneEl.hidden = true;
@@ -36260,7 +36336,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let tag = null;
         let fileHead = null;
         const bandKey = (b) => b ? `${b.top}:${b.bottom}` : "";
-        const rowsCtx = { seatName, resolveFile, peekFile, openFilePeek, openExternal, toast, echoPalette, now, lead: toggle.bar, mode: mode() };
+        const rowsCtx = { seatName, resolveFile, peekFile, openFilePeek, openExternal, toast, echoPalette, showThinking, now, lead: toggle.bar, mode: mode() };
         let turnRunning = false;
         let working = null;
         function stickToBottom() {
@@ -36592,6 +36668,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const next = mode();
             toggle.setMode(next);
             transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
+            transcriptRowsFor(document, paneEl, rowsCtx).repaint();
             evaluate();
             layout();
           },
@@ -50421,6 +50498,7 @@ ${detail}` });
       var terminalWebglEnabled = false;
       var transcriptPaneEnabled = true;
       var transcriptPaneMode = "conversation";
+      var showThinkingEnabled = true;
       var seatViewMemory = /* @__PURE__ */ new Map();
       var seatViewPrefs = (name) => ({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? "stream" : "pty" });
       var initialViewFor = (name) => rememberedSeatView(seatViewMemory.get(name), seatViewPrefs(name));
@@ -50434,6 +50512,7 @@ ${detail}` });
         terminalWebglEnabled = !!(s && s.terminalWebgl === true);
         transcriptPaneEnabled = !(s && s.transcriptPane === false);
         transcriptPaneMode = s && s.transcriptPaneMode === "internals" ? "internals" : "conversation";
+        showThinkingEnabled = !(s && s.showThinking === false);
         refreshTranscriptPanes();
       }).catch(() => {
       });
@@ -52163,6 +52242,7 @@ ${detail}` });
           openExternal: (url) => window.api.openExternal(url),
           toast: showToast,
           echoPalette: currentEchoPalette,
+          showThinking: () => showThinkingEnabled,
           lead: modeToggle.bar,
           mode: seat.lastView
         };
@@ -52405,6 +52485,7 @@ ${detail}` });
           setMode(next) {
             modeToggle.setMode(next);
             transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
+            transcriptRowsFor(document, paneEl, rowsCtx).repaint();
           },
           setTurnRunning(activity, since) {
             turnRunning = activity === "thinking" || activity === "attention";
@@ -52738,6 +52819,7 @@ ${detail}` });
           openExternal: (url) => window.api.openExternal(url),
           toast: showToast,
           echoPalette: currentEchoPalette,
+          showThinking: () => showThinkingEnabled,
           ...agentSeat ? seatViewDeps(seat, { onHelp: openAtAGlance }) : { mode: () => "conversation" },
           onInset: () => {
             if (activeSession === name) refitActiveTerminal();
@@ -55986,6 +56068,7 @@ Click for live activity`;
       var prefsDisableDesignMcp = document.getElementById("prefs-disable-design-mcp");
       var prefsTerminalWebgl = document.getElementById("prefs-terminal-webgl");
       var prefsSeatView = document.getElementById("prefs-seat-view");
+      var prefsShowThinking = document.getElementById("prefs-show-thinking");
       var prefsCompactOnResume = document.getElementById("prefs-compact-on-resume");
       var prefsContextHints = document.getElementById("prefs-context-hints");
       var prefsSemanticHints = document.getElementById("prefs-semantic-hints");
@@ -58524,6 +58607,7 @@ ${res.stderr}` : "");
         prefsProxyEnabled.checked = !!s.proxyEnabled;
         prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
         if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
+        if (prefsShowThinking) prefsShowThinking.checked = s.showThinking !== false;
         if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: "pty" });
         prefsCompactOnResume.checked = !!s.compactOnResume;
         prefsContextHints.checked = !!s.contextHints;
@@ -58634,6 +58718,7 @@ ${res.stderr}` : "");
           proxyEnabled: prefsProxyEnabled.checked,
           disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
           terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
+          ...prefsShowThinking ? { showThinking: prefsShowThinking.checked } : {},
           ...seatView || {},
           compactOnResume: prefsCompactOnResume.checked,
           contextHints: prefsContextHints.checked,
@@ -58663,9 +58748,13 @@ ${res.stderr}` : "");
           ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });
         terminalWebglEnabled = prefsTerminalWebgl ? prefsTerminalWebgl.checked : false;
-        if (seatView && (seatView.transcriptPane !== transcriptPaneEnabled || seatView.transcriptPaneMode !== transcriptPaneMode)) {
-          transcriptPaneEnabled = seatView.transcriptPane;
-          transcriptPaneMode = seatView.transcriptPaneMode;
+        const thinkingChanged = Boolean(prefsShowThinking) && prefsShowThinking.checked !== showThinkingEnabled;
+        if (thinkingChanged) showThinkingEnabled = prefsShowThinking.checked;
+        if (thinkingChanged || seatView && (seatView.transcriptPane !== transcriptPaneEnabled || seatView.transcriptPaneMode !== transcriptPaneMode)) {
+          if (seatView) {
+            transcriptPaneEnabled = seatView.transcriptPane;
+            transcriptPaneMode = seatView.transcriptPaneMode;
+          }
           refreshTranscriptPanes();
         }
         await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));
