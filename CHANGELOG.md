@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — merge wait names the holding tree; CHANGELOG section ratchet
+## Unreleased
+
+## 5.131.0 — 2026-10-17 — merge wait names the holding tree; CHANGELOG section ratchet
 
 - The suite fails a branch whose CHANGELOG edit lands outside `## Unreleased` (a bullet appended to an old release section used to ship unnoticed).
 - Merge wait: the suite-in-flight message names the tree whose suite holds the lock; a succession of different suites resets the 20-minute budget (hard cap one hour) instead of escalating as one stall.
