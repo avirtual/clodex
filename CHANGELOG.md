@@ -11,10 +11,11 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — thinking row in conversation mode; `trunk @head` for per-task branches; nag precision
 
 - The filed-nothing nag no longer fires on prose that recounts a past filing (an 'already filed' sentence, 'filed in FOLLOWUPS', a ticket id with a closed verdict) — it fired twice on a status report and once on the explanation of that false positive.
 - Conversation mode shows a Claude seat's thinking as a collapsed 🧠 row before its reply (click to expand; `Transcript pane › show thinking` hides it) — the reasoning was always in the seat's transcript, the pane just never rendered it.
+- `[agent:team trunk @head]`: each ticket merges back into the branch the team root was on when the ticket started, so an ephemeral hand and a cold reviewer work on a per-task feature branch (a client repo where main is off limits) — until now the loop refused unless the root sat on the team's one fixed trunk.
 
 ## 5.129.0 — 2026-10-17 — MCP tool `exec`: granted exec commands answer inline in the same turn
 - MCP tool `exec {command, payload}`: a seat runs a granted exec command and gets the dispatcher's reply in the same turn (a clodexctl read, a status check, a short run); a detached run answers a `started` JSON ack and keeps streaming to the conversation; a wait that expires says outcome-unknown, never failed — the intent form cost a turn to send and a turn to read a sub-second lookup. `clodex-send '[agent:exec …]'` (the socket intent form) now also returns the reply inline.
@@ -543,7 +544,6 @@ blocks a release.
 - Wire stripping: new sessions default to level 2, ticket hands start with stripping off (they are short-lived, so the one-time re-cache never pays back), and choosing Off in New Session now sticks instead of reverting to the level the name last ran at.
 - Stock hand prompts now tell a ticket hand to append its CHANGELOG bullet as the last line of `## Unreleased` instead of directly under the heading, the placement that made parallel tickets' merges escalate on a CHANGELOG conflict.
 - New Session and Settings label Standard mode "Standard (all tools)" instead of "CLI as-is", since Standard sessions now start with wire stripping on too.
-- `[agent:team trunk @head]`: each ticket merges back into the branch the team root was on when the ticket started, so an ephemeral hand and a cold reviewer work on a per-task feature branch (a client repo where main is off limits) — until now the loop refused unless the root sat on the team's one fixed trunk.
 
 ## 5.92.0 — 2026-09-29
 
