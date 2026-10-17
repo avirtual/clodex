@@ -440,7 +440,8 @@ bundle), whose packaged form is the Docker image under
   nudge: an empty-bodied `[agent:task add|reject|respec]` nags at once; turn
   prose (outside intent bodies and fences) claiming a ticket was filed,
   rejected, respec'd or cancelled nags at turn end only if no filing verb ran
-  anywhere in that turn.
+  anywhere in that turn; a sentence recounting a past filing (a retrospective
+  marker, FOLLOWUPS, or filed/dispatched next to a ticket id) is skipped.
 - **wire-intents.js** — intent helpers shared with the wire layer.
 
 ### Teams and tickets

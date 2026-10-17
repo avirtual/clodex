@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The filed-nothing nag no longer fires on prose that recounts a past filing (an 'already filed' sentence, 'filed in FOLLOWUPS', a ticket id with a closed verdict) — it fired twice on a status report and once on the explanation of that false positive.
+
 ## 5.129.0 — 2026-10-17 — MCP tool `exec`: granted exec commands answer inline in the same turn
 - MCP tool `exec {command, payload}`: a seat runs a granted exec command and gets the dispatcher's reply in the same turn (a clodexctl read, a status check, a short run); a detached run answers a `started` JSON ack and keeps streaming to the conversation; a wait that expires says outcome-unknown, never failed — the intent form cost a turn to send and a turn to read a sub-second lookup. `clodex-send '[agent:exec …]'` (the socket intent form) now also returns the reply inline.
 

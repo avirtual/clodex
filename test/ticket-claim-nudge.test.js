@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { TICKET_CLAIM_RE } = require('../ticket-claim-nudge');
+const { TICKET_CLAIM_RE, RETROSPECTIVE_RE, FOLLOWUPS_RE, MINTING_WORD_RE, TICKET_ID_RE } = require('../ticket-claim-nudge');
 const { parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { mk } = require('./lib/session-fixtures');
 
@@ -45,6 +45,18 @@ test('the claim regex is pinned to its literal', () => {
   assert.strictEqual(TICKET_CLAIM_RE.flags, 'i');
 });
 
+test('the sentence-filter regexes are pinned to their literals', () => {
+  assert.strictEqual(RETROSPECTIVE_RE.source,
+    '\\b(already|earlier|previously|was|were|had|has been|have been|last (night|time|turn|session)|yesterday|since)\\b');
+  assert.strictEqual(RETROSPECTIVE_RE.flags, 'i');
+  assert.strictEqual(FOLLOWUPS_RE.source, 'followups');
+  assert.strictEqual(FOLLOWUPS_RE.flags, 'i');
+  assert.strictEqual(MINTING_WORD_RE.source, '^(?:filed|dispatched)$');
+  assert.strictEqual(MINTING_WORD_RE.flags, 'i');
+  assert.strictEqual(TICKET_ID_RE.source, '\\bt\\d{2,5}\\b');
+  assert.strictEqual(TICKET_ID_RE.flags, 'i');
+});
+
 test('each one-step reply row fires its wording, parkable, or stays silent', async () => {
   const rows = [
     { what: 'claim, no verb', seat: 'lead', text: 'I filed the ticket for the parser.',
@@ -61,13 +73,29 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [] },
     { what: 'claim inside a fence', seat: 'lead', text: 'Draft:\n```\nI filed the ticket\n```\nDone.',
       want: [] },
-    { what: 'claim in an escaped intent line', seat: 'lead', text: '\\[agent:task add] the ticket was filed here',
+    { what: 'claim in an escaped intent line', seat: 'lead', text: '\\[agent:task add] I filed the ticket here',
       want: [] },
     { what: 'hand seat, claim, no verb', seat: 'hand', text: 'I filed the ticket for the parser.',
       want: [] },
     { what: 'quoted loop notice, no claim verb', seat: 'lead', text: 'ticket t1850 MERGED',
       want: [] },
-    { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 was rejected upstream\n[agent:end]',
+    { what: 'filed in FOLLOWUPS', seat: 'lead', text: 't1851 sat 20 minutes at suite-in-flight; filed in FOLLOWUPS.',
+      want: [] },
+    { what: 'already filed and closed', seat: 'lead', text: 'tickets already filed and closed (t1855, t1856) passed review.',
+      want: [] },
+    { what: 'retrospective, no id', seat: 'lead', text: 'The parser ticket was filed this morning.',
+      want: [] },
+    { what: 'FOLLOWUPS, no id', seat: 'lead', text: 'The parser ticket is filed in FOLLOWUPS.',
+      want: [] },
+    { what: 'filed with a named id', seat: 'lead', text: 'I filed t1860 for the parser.',
+      want: [] },
+    { what: 'rejected with a named id, no verb', seat: 'lead', text: 'rejected t1851 with one must-fix',
+      want: [WORDING_1('rejected')] },
+    { what: 'non-claim retrospective sentence, then a live claim', seat: 'lead', text: 'Already filed earlier. I filed the ticket for the parser now.',
+      want: [WORDING_1('filed')] },
+    { what: 'dropped claim sentence, then a live claim', seat: 'lead', text: 'The ticket was already filed. I filed the ticket for the parser now.',
+      want: [WORDING_1('filed')] },
+    { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 rejected upstream\n[agent:end]',
       want: [] },
   ];
   const fired = [];
@@ -81,12 +109,15 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
   assert.ok(fired.includes('claim, no verb'));
   assert.ok(fired.includes('claim, reject with empty body'));
   assert.ok(fired.includes('no claim, respec with empty body'));
+  assert.ok(fired.includes('rejected with a named id, no verb'));
+  assert.ok(fired.includes('non-claim retrospective sentence, then a live claim'));
+  assert.ok(fired.includes('dropped claim sentence, then a live claim'));
 });
 
 test('a verb in an earlier step of the turn silences a later claim', async () => {
   const { injected, step } = mkMgr();
   step('lead', '[agent:task add] fix the parser\n[agent:end]', false);
-  step('lead', 'Filed t1853 for the parser.', true);
+  step('lead', 'Filed the ticket for the parser.', true);
   await settle();
   assert.deepStrictEqual(injected, []);
 });
@@ -113,9 +144,9 @@ test('a claim repeated across steps with no verb fires once, at turn end, and th
 test('a ticket verb sent over the socket silences a later claim', async () => {
   const { m, injected, step } = mkMgr();
   await m._dispatchSocketIntent(m.sessions.get('lead'), { type: 'task', sub: 'add', body: 'fix the parser' }, {});
-  step('lead', 'Filed t1853.', true);
+  step('lead', 'Filed the ticket.', true);
   assert.deepStrictEqual(injected, []);
-  m._nudgeTicketClaims(m.sessions.get('lead'), 'Filed t1854.', [], { turnEnd: true });
+  m._nudgeTicketClaims(m.sessions.get('lead'), 'Filed the ticket.', [], { turnEnd: true });
   assert.deepStrictEqual(injected, [['lead', WORDING_1('filed'), { parkable: true }]]);
 });
 
@@ -134,6 +165,6 @@ test('a text-borne verb dispatched after its turn end does not silence the next 
   m._nudgeTicketClaims(lead, addText, intents, { turnEnd: true });
   for (const intent of intents) await m._handleIntent('lead', intent);
   assert.deepStrictEqual(injected, []);
-  m._nudgeTicketClaims(lead, 'Filed t1854.', [], { turnEnd: true });
+  m._nudgeTicketClaims(lead, 'Filed the ticket.', [], { turnEnd: true });
   assert.deepStrictEqual(injected, [['lead', WORDING_1('filed'), { parkable: true }]]);
 });
