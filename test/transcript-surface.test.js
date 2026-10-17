@@ -58,6 +58,8 @@ const KIND_ROWS = [
   ['command-output', { kind: 'command-output', text: 'done' }, C],
   ['boundary', { kind: 'boundary', what: 'compact' }, C],
   ['turn-end', { kind: 'turn-end', durationMs: 5 }, I],
+  ['thinking', { kind: 'thinking', text: 'weighing it' }, C],
+  ['thinking, redacted', { kind: 'thinking', redacted: true }, C],
   ['assistant without segments', { kind: 'assistant', text: 'hello' }, C],
   ['assistant apiError', { kind: 'assistant', text: 'API Error', apiError: true, segments: [intent('exec')] }, C],
   ['assistant with a conversation segment', said(intent('exec'), prose('ran it')), C],
@@ -73,7 +75,7 @@ test('ENTER: every record kind transcript-records.js emits has a row', () => {
   const emitted = new Set([...src('transcript-records.js').matchAll(/kind: '([a-z-]+)'/g)].map((m) => m[1]));
   for (const seg of ['intent', 'prose', 'inert']) emitted.delete(seg);
   assert.deepStrictEqual([...emitted].sort(),
-    ['assistant', 'boundary', 'command', 'command-output', 'inbound', 'notice', 'notification', 'prompt', 'reply', 'tool', 'turn-end']);
+    ['assistant', 'boundary', 'command', 'command-output', 'inbound', 'notice', 'notification', 'prompt', 'reply', 'thinking', 'tool', 'turn-end']);
   const covered = new Set(KIND_ROWS.map(([, r]) => r.kind));
   for (const kind of emitted) assert.ok(covered.has(kind), `${kind} has a row`);
 });
@@ -185,6 +187,7 @@ const END_ROWS = [
   ['a record with no segments', [endDriver, tool, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'carrying on' }], ['carrying on']],
   ['narration followed by a tool call', [endDriver, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'checking' }, tool], null],
   ['an API-error record', [endDriver, { kind: 'assistant', apiError: true, text: 'API Error: 500' }], null],
+  ['a trailing thinking row after the reply', [endDriver, { id: 'a', kind: 'assistant', ts: null, turn: 1, text: 'shipped' }, { id: 'k', kind: 'thinking', ts: null, turn: 1, text: 'should I add more?' }], ['shipped']],
 ];
 
 test('turnEndProse: one literal row per case, the prose after the last intent of the turn\'s last assistant record', () => {

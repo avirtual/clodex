@@ -792,6 +792,39 @@ function isTalk(r) {
   return r.kind !== 'turn-end' && surfaceOf(r) === 'conversation';
 }
 
+function thinkingRow(doc, rec) {
+  const row = el(doc, 'div', `tr-row tr-thinking${rec.redacted ? ' tr-thinking-redacted' : ''}`);
+  row.dataset.id = rec.id;
+  const head = el(doc, 'div', 'tr-thinking-head');
+  head.appendChild(el(doc, 'span', 'tr-thinking-glyph', '🧠'));
+  row.appendChild(head);
+  if (rec.redacted || typeof rec.text !== 'string') {
+    head.appendChild(el(doc, 'span', 'tr-thinking-teaser', 'redacted'));
+    return row;
+  }
+  head.appendChild(el(doc, 'span', 'tr-thinking-teaser', previewText(rec.text)));
+  head.setAttribute('role', 'button');
+  head.setAttribute('aria-expanded', 'false');
+  const body = el(doc, 'div', 'tr-thinking-body', rec.text);
+  if (rec.truncated) body.appendChild(el(doc, 'div', 'tr-thinking-cut', '… (truncated at 8 KB)'));
+  body.hidden = true;
+  row.appendChild(body);
+  let before = '';
+  head.addEventListener('mousedown', () => { before = selectedText(doc); });
+  head.addEventListener('click', () => {
+    const now = selectedText(doc);
+    if (now && now !== before) return;
+    body.hidden = !body.hidden;
+    head.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+    toggleClass(row, 'tr-thinking-open', !body.hidden);
+  });
+  return row;
+}
+
+function speaks(r) {
+  return r.kind !== 'thinking' && isTalk(r);
+}
+
 function hasInternalSeg(r) {
   return r.kind === 'assistant' && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== 'conversation');
 }
@@ -829,6 +862,7 @@ function buildRow(doc, rec, ctx, attached, boxed) {
       else appendProse(doc, row, rec.text, ctx);
       return row;
     }
+    case 'thinking': return thinkingRow(doc, rec);
     case 'notice': return noticeRow(doc, rec, rec.level, rec.text, ctx);
     case 'boundary': {
       const row = el(doc, 'div', 'tr-row tr-boundary');
@@ -1008,7 +1042,7 @@ function groupTurns(records) {
 }
 
 function logicalHead(t) {
-  return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records[0];
+  return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records.find((r) => r.kind !== 'thinking') || t.records[0];
 }
 
 function groupRuns(turns) {
@@ -1020,13 +1054,13 @@ function groupRuns(turns) {
   }
   for (const run of runs) {
     run.records = run.turns.flatMap((t) => t.records);
-    run.hosted = run.turns.some((t) => t.records.some(isTalk));
+    run.hosted = run.turns.some((t) => t.records.some(speaks));
   }
   return runs;
 }
 
 function createTranscriptRows(doc, paneEl, ctx = {}) {
-  const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
+  const deps = { lead: null, mode: 'internals', seatName: null, resolveFile: NOOP, openFilePeek: NOOP, peekFile: () => null, openExternal: NOOP, toast: NOOP, echoPalette: null, showThinking: () => true, now: () => Date.now(), setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (t) => clearInterval(t), ...ctx };
   const turnCache = new Map();
   const opened = new Set();
   const shut = new Set();
@@ -1036,6 +1070,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   let lastSource = null;
   let mode = deps.mode === 'conversation' ? 'conversation' : 'internals';
   let lastRecords = [];
+  let thinkingShown = true;
   let working = null;
   let workingEl = null;
   let workingTimer = null;
@@ -1266,7 +1301,9 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   }
 
   function render(records, source) {
-    const list = Array.isArray(records) ? records : [];
+    const all = Array.isArray(records) ? records : [];
+    thinkingShown = deps.showThinking() !== false;
+    const list = !thinkingShown ? all.filter((r) => !r || r.kind !== 'thinking') : all;
     if (source != null) {
       if (lastSource != null && source !== lastSource) {
         for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
@@ -1278,7 +1315,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
       }
       lastSource = source;
     }
-    lastRecords = list;
+    lastRecords = all;
     const attached = attachedReplies(list);
     const runs = groupRuns(groupTurns(list));
     const keys = new Set(runs.filter((run) => run.hosted).map((run) => run.key));
@@ -1290,7 +1327,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     for (const run of runs) {
       const open = openRuns.has(run.key);
       const hostable = run.turns.filter((t) => open || !turnFolds(t.records, mode));
-      const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(isTalk)).pop() : null;
+      const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(speaks)).pop() : null;
       run.turns.forEach((t, i) => items.push({
         key: t.key,
         sig: '',
@@ -1309,7 +1346,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end, unfolded ? turnDriver(t.records) : null);
           reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : []), ...(end ? [endProseItem(end)] : [])] : rows);
           toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
-          toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(isTalk));
+          toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(speaks));
           toggleClass(c.el, 'tr-turn-cont', mode === 'conversation' && i > 0);
         },
       }));
@@ -1355,7 +1392,14 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     restore(anchor);
   }
 
-  return { render, setWorking, setMode };
+  function repaint() {
+    if ((deps.showThinking() !== false) === thinkingShown) return;
+    const anchor = anchorOf();
+    render(lastRecords);
+    restore(anchor);
+  }
+
+  return { render, setWorking, setMode, repaint };
 }
 
 module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };

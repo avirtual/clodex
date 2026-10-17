@@ -138,6 +138,7 @@ let activeSession = null;
 let terminalWebglEnabled = false;
 let transcriptPaneEnabled = true;
 let transcriptPaneMode = 'conversation';
+let showThinkingEnabled = true;
 const seatViewMemory = new Map();
 const seatViewPrefs = (name) => ({ transcriptPane: transcriptPaneEnabled, transcriptPaneMode, io: streamSeatNames.has(name) ? 'stream' : 'pty' });
 const initialViewFor = (name) => rememberedSeatView(seatViewMemory.get(name), seatViewPrefs(name));
@@ -152,6 +153,7 @@ const terminalWebglReady = window.api.getSettings()
     terminalWebglEnabled = !!(s && s.terminalWebgl === true);
     transcriptPaneEnabled = !(s && s.transcriptPane === false);
     transcriptPaneMode = s && s.transcriptPaneMode === 'internals' ? 'internals' : 'conversation';
+    showThinkingEnabled = !(s && s.showThinking === false);
     refreshTranscriptPanes();
   })
   .catch(() => {});
@@ -1900,6 +1902,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
+    showThinking: () => showThinkingEnabled,
     lead: modeToggle.bar,
     mode: seat.lastView,
   };
@@ -2118,6 +2121,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     setMode(next) {
       modeToggle.setMode(next);
       transcriptRowsFor(document, paneEl, rowsCtx).setMode(next);
+      transcriptRowsFor(document, paneEl, rowsCtx).repaint();
     },
     setTurnRunning(activity, since) {
       turnRunning = activity === 'thinking' || activity === 'attention';
@@ -2485,6 +2489,7 @@ function createTerminal(name, peer = null) {
     openExternal: (url) => window.api.openExternal(url),
     toast: showToast,
     echoPalette: currentEchoPalette,
+    showThinking: () => showThinkingEnabled,
     ...(agentSeat ? seatViewDeps(seat, { onHelp: openAtAGlance }) : { mode: () => 'conversation' }),
     onInset: () => { if (activeSession === name) refitActiveTerminal(); },
     composerEl,
@@ -5984,6 +5989,7 @@ const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
 const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
 const prefsSeatView = document.getElementById('prefs-seat-view');
+const prefsShowThinking = document.getElementById('prefs-show-thinking');
 const prefsCompactOnResume = document.getElementById('prefs-compact-on-resume');
 const prefsContextHints = document.getElementById('prefs-context-hints');
 const prefsSemanticHints = document.getElementById('prefs-semantic-hints');
@@ -8489,6 +8495,7 @@ async function openPrefs() {
   prefsProxyEnabled.checked = !!s.proxyEnabled;
   prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
+  if (prefsShowThinking) prefsShowThinking.checked = s.showThinking !== false;
   if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: 'pty' });
   prefsCompactOnResume.checked = !!s.compactOnResume;
   prefsContextHints.checked = !!s.contextHints;
@@ -8596,6 +8603,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     proxyEnabled: prefsProxyEnabled.checked,
     disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
+    ...(prefsShowThinking ? { showThinking: prefsShowThinking.checked } : {}),
     ...(seatView || {}),
     compactOnResume: prefsCompactOnResume.checked,
     contextHints: prefsContextHints.checked,
@@ -8627,9 +8635,13 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       : {}),
   });
   terminalWebglEnabled = prefsTerminalWebgl ? prefsTerminalWebgl.checked : false;
-  if (seatView && (seatView.transcriptPane !== transcriptPaneEnabled || seatView.transcriptPaneMode !== transcriptPaneMode)) {
-    transcriptPaneEnabled = seatView.transcriptPane;
-    transcriptPaneMode = seatView.transcriptPaneMode;
+  const thinkingChanged = Boolean(prefsShowThinking) && prefsShowThinking.checked !== showThinkingEnabled;
+  if (thinkingChanged) showThinkingEnabled = prefsShowThinking.checked;
+  if (thinkingChanged || (seatView && (seatView.transcriptPane !== transcriptPaneEnabled || seatView.transcriptPaneMode !== transcriptPaneMode))) {
+    if (seatView) {
+      transcriptPaneEnabled = seatView.transcriptPane;
+      transcriptPaneMode = seatView.transcriptPaneMode;
+    }
     refreshTranscriptPanes();
   }
   await window.api.setDefaultToolDeny(collectToolChecklist(prefsToolsList));

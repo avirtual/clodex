@@ -316,11 +316,12 @@ test('ENTER: the origin-less plain-text queued_command fixture parses to a promp
   assert.deepStrictEqual(records.map((r) => [r.kind, r.text]), [['prompt', 'done']]);
 });
 
-test('an assistant record with two text blocks suffixes each id with its block index; thinking yields nothing', () => {
+test('an assistant record with two text blocks suffixes each id with its block index, a thinking block included', () => {
   const { records } = recordsOf(rec({ type: 'assistant', uuid: 'u1', message: { content: [
     { type: 'thinking', thinking: 'hidden' }, { type: 'text', text: 'one' }, { type: 'text', text: ' two ' },
   ] } }));
   assert.deepStrictEqual(records, [
+    { id: 'u1:0', kind: 'thinking', ts: null, turn: 0, text: 'hidden' },
     { id: 'u1:1', kind: 'assistant', ts: null, turn: 0, text: 'one' },
     { id: 'u1:2', kind: 'assistant', ts: null, turn: 0, text: 'two' },
   ]);
@@ -975,4 +976,33 @@ test('a > inside the summary attribute does not end the teammate tag early, for 
   const idle = '{"type":"idle_notification","from":"nits-coords","idleReason":"available","result":"done: 17 open"}';
   const { records } = recordsOf([typed('u1', 'p1', teammate('hello lead', attrs)), typed('u2', 'p2', teammate(idle, attrs))].join('\n'));
   assert.deepStrictEqual(records.map((r) => [r.kind, r.from, r.text]), [['inbound', 'nits-coords', 'hello lead'], ['inbound', 'nits-coords', 'done: 17 open']]);
+});
+
+const thought = (content) => recordsOf(rec({ type: 'assistant', uuid: 'a', message: { content } })).records;
+
+test('a thinking block is its own row, emitted before the text of the same assistant row', () => {
+  assert.deepStrictEqual(thought([{ type: 'thinking', thinking: '  weigh the options\n  pick one ', signature: 's' }, { type: 'text', text: 'picked one' }]), [
+    { id: 'a:0', kind: 'thinking', ts: null, turn: 0, text: 'weigh the options\n  pick one' },
+    { id: 'a', kind: 'assistant', ts: null, turn: 0, text: 'picked one' },
+  ]);
+  assert.deepStrictEqual(thought([{ type: 'thinking', thinking: 'alone', signature: 's' }]), [{ id: 'a', kind: 'thinking', ts: null, turn: 0, text: 'alone' }]);
+  assert.deepStrictEqual(thought([{ type: 'thinking', thinking: '  \n', signature: 's' }]), []);
+});
+
+test('thinking over 8192 chars keeps its first 8192 and carries the truncated mark', () => {
+  const [row] = thought([{ type: 'thinking', thinking: `${'x'.repeat(8192)}TAIL`, signature: 's' }]);
+  assert.deepStrictEqual({ ...row, text: row.text.length }, { id: 'a', kind: 'thinking', ts: null, turn: 0, text: 8192, truncated: true });
+  assert.ok(!row.text.includes('TAIL'));
+});
+
+test('redacted_thinking is a thinking row with redacted: true and no text key', () => {
+  assert.deepStrictEqual(thought([{ type: 'redacted_thinking', data: 'opaque' }, { type: 'text', text: 'ok' }]), [
+    { id: 'a:0', kind: 'thinking', ts: null, turn: 0, redacted: true },
+    { id: 'a', kind: 'assistant', ts: null, turn: 0, text: 'ok' },
+  ]);
+});
+
+test('an intent line inside a thinking block never reaches the intent scanner or the reply text', () => {
+  const records = thought([{ type: 'thinking', thinking: '[agent:dm lead] draft\n[agent:end]', signature: 's' }, { type: 'text', text: 'plain answer' }]);
+  assert.deepStrictEqual(records.map((r) => [r.kind, r.text, 'segments' in r]), [['thinking', '[agent:dm lead] draft\n[agent:end]', false], ['assistant', 'plain answer', false]]);
 });

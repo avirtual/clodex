@@ -79,3 +79,17 @@ test('legacy transcriptPaneInternals/transcriptPaneTools on disk are ignored, no
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ transcriptPaneInternals: false, transcriptPaneTools: false }), { mode: 0o600 });
   assert.deepStrictEqual(paneSlice(openStores(dir).uiSettings.get()), { transcriptPane: true, transcriptPaneMode: 'conversation' });
 });
+
+test('showThinking defaults to true, a stored false survives set() and a reload, a non-boolean loads as true', () => {
+  const dir = mkTmpRoot('clodex-uisettings-');
+  const ui = openStores(dir).uiSettings;
+  assert.strictEqual(ui.get().showThinking, true);
+  ui.set({ showThinking: false });
+  assert.strictEqual(ui.get().showThinking, false);
+  ui.set({ theme: 'midnight' });
+  assert.strictEqual(openStores(dir).uiSettings.get().showThinking, false);
+  ui.set({ showThinking: 'no' });
+  assert.strictEqual(ui.get().showThinking, false);
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ showThinking: 'no' }), { mode: 0o600 });
+  assert.strictEqual(openStores(dir).uiSettings.get().showThinking, true);
+});
