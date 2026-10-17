@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — release pruning keeps media assets
 
 - Release pruning keeps media assets (video, images, captions) attached to old releases; only build binaries expire. The site's demo video had been pruned and 404'd.
 
