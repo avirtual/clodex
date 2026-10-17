@@ -39,6 +39,7 @@ function surfaceOf(rec) {
     case 'inbound': return inboundSurface(rec);
     case 'reply': return rec.verb === 'task' && rec.ticket ? CONVERSATION : INTERNALS;
     case 'notice': return LOUD_LEVELS.has(rec.level) ? CONVERSATION : INTERNALS;
+    case 'thinking': return CONVERSATION;
     case 'assistant':
       if (rec.apiError || !Array.isArray(rec.segments) || !rec.segments.length) return CONVERSATION;
       return rec.segments.some((s) => segmentSurface(s) === CONVERSATION) ? CONVERSATION : INTERNALS;

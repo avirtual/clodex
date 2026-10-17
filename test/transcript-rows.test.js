@@ -2042,3 +2042,53 @@ test('t1556: in Conversation mode a folded turn driven by an agent inbound shows
   assert.ok(!all.some((n) => /\btr-turn-end-prose\b/.test(n.className || '') && n.textContent.includes(PLACEHOLDER_LEGACY)));
   assert.ok(!m.pane.textContent.includes(PLACEHOLDER_LEGACY));
 });
+
+const thinking = { id: 'k1', kind: 'thinking', ts: null, turn: 1, text: `first line of reasoning ${'y'.repeat(150)}\nsecond line` };
+const thinkingRowOf = (m) => m.pane.childNodes[0].childNodes.find((n) => /\btr-thinking\b/.test(n.className));
+
+test('a thinking row paints collapsed: the brain glyph and a first-line teaser, the full text hidden until a click', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([prompt, thinking, prose]);
+  const row = thinkingRowOf(m);
+  assert.ok(row, 'ENTER: the thinking row is painted');
+  assert.strictEqual(row.className, 'tr-row tr-thinking');
+  const [head, body] = row.childNodes;
+  assert.deepStrictEqual(head.childNodes.map((n) => n.textContent), ['🧠', `first line of reasoning ${'y'.repeat(96)}…`]);
+  assert.strictEqual(head.getAttribute('aria-expanded'), 'false');
+  assert.strictEqual(body.hidden, true);
+  assert.strictEqual(body.textContent, thinking.text);
+  head.listeners.click();
+  assert.strictEqual(body.hidden, false);
+  assert.strictEqual(head.getAttribute('aria-expanded'), 'true');
+  assert.strictEqual(row.className, 'tr-row tr-thinking tr-thinking-open');
+  head.listeners.click();
+  assert.strictEqual(body.hidden, true);
+});
+
+test('a truncated thinking row ends its expanded text with the 8 KB mark', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([prompt, { ...thinking, text: 'cut short', truncated: true }]);
+  const body = thinkingRowOf(m).childNodes[1];
+  assert.deepStrictEqual(body.childNodes.map((n) => n.textContent), ['cut short', '… (truncated at 8 KB)']);
+});
+
+test('a redacted thinking row is the glyph and "redacted", with no text and no click', () => {
+  const m = mount({ mode: 'conversation' });
+  m.render([prompt, { id: 'k1', kind: 'thinking', ts: null, turn: 1, redacted: true }]);
+  const row = thinkingRowOf(m);
+  assert.strictEqual(row.className, 'tr-row tr-thinking tr-thinking-redacted');
+  assert.strictEqual(row.childNodes.length, 1);
+  assert.deepStrictEqual(row.childNodes[0].childNodes.map((n) => n.textContent), ['🧠', 'redacted']);
+  assert.deepStrictEqual(row.childNodes[0].listeners, {});
+});
+
+test('showThinking off drops thinking rows at render; turning it back on and repainting brings them back', () => {
+  let on = false;
+  const m = mount({ mode: 'conversation', showThinking: () => on });
+  m.render([prompt, thinking, prose]);
+  assert.ok(m.pane.childNodes[0].childNodes.length > 0, 'ENTER: the turn painted');
+  assert.strictEqual(thinkingRowOf(m), undefined);
+  on = true;
+  m.rows.repaint();
+  assert.ok(thinkingRowOf(m));
+});

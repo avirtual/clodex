@@ -1325,8 +1325,8 @@ Own state + DOM, `init*(deps)`:
   `{ ok, rev, records, source }` built by `transcript-records.js`; `source` = `hash(realpath):epoch`.
 - **transcript-records.js** — pure, electron-free record builder:
   `recordsOf(text)` turns transcript JSONL into typed records (prompt, inbound,
-  reply, notification, assistant, tool paired with its result summary, command,
-  command-output, notice, boundary, turn-end), capped at 400 on a turn boundary.
+  reply, notification, thinking, assistant, tool paired with its result summary,
+  command, command-output, notice, boundary, turn-end), capped at 400 on a turn boundary.
   An assistant record holding an intent line also carries `segments` from
   `segmentsOf`, each intent's card head computed here, main-side.
   See docs/explorations/pane-app-view.md §1 and intent-cards.md §4.

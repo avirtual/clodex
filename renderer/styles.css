@@ -6163,6 +6163,13 @@ body.web-frontend #sidebar-header {
 .tr-time { color: var(--text-tertiary); font-size: var(--fs-xs); white-space: nowrap; }
 
 .tr-prose { white-space: pre-wrap; padding: var(--sp-1) 0; }
+.tr-thinking { padding: var(--sp-1) 0; color: var(--text-tertiary); }
+.tr-thinking-head { display: flex; gap: 0.5em; align-items: baseline; min-width: 0; }
+.tr-thinking-head[role="button"] { cursor: pointer; }
+.tr-thinking-teaser { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tr-thinking-open .tr-thinking-teaser { display: none; }
+.tr-thinking-body { white-space: pre-wrap; padding: var(--sp-1) 0 0 1.75em; color: var(--text-secondary); }
+.tr-thinking-cut { color: var(--text-tertiary); margin-top: var(--sp-1); }
 .tr-sender-app .tr-sender-glyph { background: none; width: auto; border-radius: 0; font-weight: 400; color: var(--text-tertiary); }
 .tr-sender-app .tr-sender-name { font-family: var(--font-ui); }
 .tr-reply-attached { margin-top: calc(-1 * var(--sp-1)); padding-left: calc(var(--sp-2) + var(--sp-3)); background: none; }

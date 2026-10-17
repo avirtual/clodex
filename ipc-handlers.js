@@ -1140,6 +1140,7 @@ function registerIpcHandlers(deps) {
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,
       transcriptPaneMode: s.transcriptPaneMode,
+      showThinking: s.showThinking,
       sidebarWidth: s.sidebarWidth,
       sidePaneWidth: s.sidePaneWidth,
       dockSplit: s.dockSplit,

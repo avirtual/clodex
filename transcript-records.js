@@ -13,6 +13,7 @@ const { TURN_KINDS, isInternalRow } = require('./transcript-internal');
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
 const PROSE_CAP = 65536;
+const THINKING_CAP = 8192;
 const IMAGE_CAP = 1024 * 1024;
 const IMAGE_MARK_RE = /\[Image #(\d+)\]/g;
 const NOTE_CAP = 300;
@@ -416,6 +417,7 @@ function assistantRecords(rec, base, tools, spawned) {
   const content = rec.message.content;
   if (!Array.isArray(content)) return [];
   const texts = content.filter((b) => b && b.type === 'text').length;
+  const blockId = (i) => (content.length > 1 ? `${base.id}:${i}` : base.id);
   const out = [];
   content.forEach((b, i) => {
     if (!b) return;
@@ -430,6 +432,10 @@ function assistantRecords(rec, base, tools, spawned) {
         if (truncated) r.truncated = true;
       }
       out.push(rec.isApiErrorMessage ? { ...r, apiError: true } : r);
+    } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
+      out.push(capped({ ...base, id: blockId(i), kind: 'thinking' }, 'text', b.thinking.trim(), THINKING_CAP));
+    } else if (b.type === 'redacted_thinking') {
+      out.push({ ...base, id: blockId(i), kind: 'thinking', redacted: true });
     } else if (b.type === 'tool_use' && b.id) {
       const tool = toolRecord(base, b, rec.cwd);
       tools.set(b.id, { rec: tool, input: b.input });
@@ -596,4 +602,4 @@ function recordsOf(text, max = RECORD_CAP) {
   return { records: cutOnTurn(all, max) };
 }
 
-module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, IMAGE_CAP, imagesOf, clientTagOf, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };
+module.exports = { RECORD_CAP, PROMPT_CAP, PROSE_CAP, THINKING_CAP, IMAGE_CAP, imagesOf, clientTagOf, recordsOf, segmentsOf, toolInputLine, isInternalRow, ticketOf };
