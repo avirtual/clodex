@@ -29,7 +29,7 @@ function mkRepo(dir, subject = 'the base commit') {
   return String(execFileSync('git', ['-C', dir, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })).trim();
 }
 
-function mkSnap({ withTeam = true, repo = true, tickets = [], subject = 'the base commit' } = {}) {
+function mkSnap({ withTeam = true, repo = true, tickets = [], subject = 'the base commit', trunk = undefined } = {}) {
   const root = mkTmpRoot('clodex-spill-');
   const proj = mkTmpRoot('clodex-spill-');
   const sha = repo ? mkRepo(proj, subject) : null;
@@ -37,6 +37,7 @@ function mkSnap({ withTeam = true, repo = true, tickets = [], subject = 'the bas
   const team = {
     name: 'team', root: proj, lead: 'lead',
     roles: { lead: { instantiate: 'session' }, hand: { instantiate: 'session' } },
+    ...(trunk ? { trunk } : {}),
   };
   const injected = [];
   const deps = {
@@ -223,4 +224,11 @@ test('a board too big for the cap is truncated ON THE REAL PATH, host/git/roster
   assert.ok(kept > 0 && kept < 200, `some rows survived and some did not: kept ${kept}`);
   assert.strictEqual(kept + Number(m[1]), 200, 'the count names exactly the ticket rows that were dropped');
   assert.match(snap, /\ntickets on team:\n/, 'and the listing head line is not one of the rows that gave way');
+});
+
+test('under trunk @head the head line names the seat\'s open ticket base branch, and HEAD without one', () => {
+  const withTicket = mkSnap({ trunk: '@head', tickets: [{ id: 't5', title: 'x', role: 'hand', assignee: 'team-hand', state: 'open', openedAt: Date.now(), closedAt: null, worktree: { branch: 't5-x', baseBranch: 'feature/x' } }] });
+  assert.match(spilled(withTicket).body.split(SEP)[1], new RegExp(`\\nhost 9\\.9\\.9; feature/x ${withTicket.sha} "the base commit" \\(`));
+  const without = mkSnap({ trunk: '@head' });
+  assert.match(spilled(without).body.split(SEP)[1], new RegExp(`\\nhost 9\\.9\\.9; HEAD ${without.sha} "the base commit" \\(`));
 });

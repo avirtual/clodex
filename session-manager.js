@@ -7281,9 +7281,15 @@ function createSessionManager(deps) {
       } catch { log = null; }
       let team = null;
       try { team = resolveTeam(session && session.cwd); } catch { team = null; }
+      let seatTicket = null;
+      if (team) {
+        try {
+          seatTicket = ticketsStore.load(team.root).find((t) => t && t.state === 'open' && t.assignee === session.name) || null;
+        } catch { seatTicket = null; }
+      }
       let trunk = null;
       try {
-        if (log && typeof gitWorktree.mergeTargetForSync === 'function') trunk = gitWorktree.mergeTargetForSync({ root, trunk: team && team.trunk });
+        if (log && typeof gitWorktree.mergeTargetForSync === 'function') trunk = gitWorktree.mergeTargetForSync({ root, trunk: team && team.trunk }, seatTicket);
       } catch { trunk = null; }
       head.push(log
         ? `host ${appVersion || 'unknown'}; ${trunk || 'HEAD'} ${log.sha} "${log.subject}" (${root})`
