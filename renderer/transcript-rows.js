@@ -7,7 +7,7 @@ const { scanLinks } = require('./lib/path-scan');
 const { rewriteEchoSgr } = require('./lib/prompt-echo');
 const { isExternallyOpenable } = require('../external-link');
 const { TURN_KINDS, isInternalRow } = require('../transcript-internal');
-const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('./lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse, turnEndThinking } = require('./lib/transcript-surface');
 const { renderMarkdown } = require('./lib/render-markdown');
 const { cleanLine } = require('../intent-scanner');
 const { STAND_INS } = require('../spill-stand-ins');
@@ -1274,6 +1274,10 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     };
   }
 
+  function foldThinkingItem(rec) {
+    return { key: 'fold-thinking', sig: rec.id, build: () => thinkingRow(doc, rec) };
+  }
+
   function foldItem(t, unfolded) {
     const driver = turnDriver(t.records);
     const stats = runStatsOf(t.records);
@@ -1343,8 +1347,9 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
           const m = unfolded ? 'internals' : mode;
           const tail = m === 'conversation' && t === host ? runToggleItem(run, open) : null;
           const end = folds ? turnEndProse(t.records) : null;
+          const think = end && !unfolded ? turnEndThinking(t.records) : null;
           const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end, unfolded ? turnDriver(t.records) : null);
-          reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : []), ...(end ? [endProseItem(end)] : [])] : rows);
+          reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...(unfolded ? rows : []), ...(think ? [foldThinkingItem(think)] : []), ...(end ? [endProseItem(end)] : [])] : rows);
           toggleClass(c.el, 'tr-turn-folded', folds && !unfolded);
           toggleClass(c.el, 'tr-hidden', mode === 'conversation' && !open && !t.records.some(speaks));
           toggleClass(c.el, 'tr-turn-cont', mode === 'conversation' && i > 0);

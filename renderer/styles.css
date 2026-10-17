@@ -6334,7 +6334,7 @@ body.web-frontend #sidebar-header {
 .tr-turn-fold .tr-turn-fold-line { display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--sp-2); flex: 1; min-width: 0; overflow: hidden; border-left: none; }
 .tr-turn-fold-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tr-turn-fold-stats { flex: none; }
-.tr-turn-folded > :not(.tr-turn-fold):not(.tr-turn-end-prose) { display: none; }
+.tr-turn-folded > :not(.tr-turn-fold):not(.tr-thinking):not(.tr-turn-end-prose) { display: none; }
 
 .tr-boundary {
   display: flex;

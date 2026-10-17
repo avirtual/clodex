@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require('../renderer/lib/transcript-surface');
+const { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse, turnEndThinking } = require('../renderer/lib/transcript-surface');
 
 const C = 'conversation';
 const I = 'internals';
@@ -194,6 +194,23 @@ test('turnEndProse: one literal row per case, the prose after the last intent of
   for (const [name, records, want] of END_ROWS) assert.deepStrictEqual(endTexts(records), want, name);
   const spilled = END_ROWS[3][1];
   assert.deepStrictEqual(turnEndProse(spilled), { rec: spilled[1], segs: [spilled[1].segments[1]] });
+});
+
+const think = (id) => ({ id, kind: 'thinking', ts: null, turn: 1, text: id });
+const ENDTHINK_ROWS = [
+  ['the last thinking after the last tool', [endDriver, think('k1'), tool, think('k2'), said(prose('done'))], 'k2'],
+  ['thinking only before the last tool', [endDriver, think('k1'), tool, said(prose('done'))], null],
+  ['thinking with no tool before the reply', [endDriver, think('k1'), said(intent('exec'))], 'k1'],
+  ['thinking after the last assistant record', [endDriver, said(prose('done')), think('k1')], null],
+  ['no assistant record', [endDriver, think('k1'), tool, think('k2')], null],
+];
+
+test('turnEndThinking: one literal row per case, the last thinking record after the last tool and before the last assistant record', () => {
+  for (const [name, records, want] of ENDTHINK_ROWS) {
+    const rec = turnEndThinking(records);
+    assert.deepStrictEqual(rec && rec.id, want, name);
+  }
+  assert.strictEqual(endTexts(ENDTHINK_ROWS[2][1]), null, 'ENTER: a turn with thinking but no end prose has nothing for the caller to show');
 });
 
 test('ENTER: every record kind userRecords emits has a driver row', () => {
