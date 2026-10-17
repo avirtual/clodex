@@ -29,7 +29,7 @@ function proseOf(text) {
 }
 
 function liveClaimWord(prose) {
-  for (const sentence of prose.split(/[.\n]/)) {
+  for (const sentence of prose.split(/[.?!;\n]/)) {
     const claim = TICKET_CLAIM_RE.exec(sentence);
     if (!claim) continue;
     if (RETROSPECTIVE_RE.test(sentence) || FOLLOWUPS_RE.test(sentence)) continue;
