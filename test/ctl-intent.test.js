@@ -263,7 +263,7 @@ test('the in-process ctl path still refuses deploy, undeploy and upgrade', () =>
   for (const verb of ['deploy', 'upgrade', 'undeploy']) assert.strictEqual(Object.hasOwn(CTL_SERVICE_ALLOWED, verb), false, verb);
 });
 
-test('the docs and the changelog name the admin tier', () => {
+test('the docs and the cli readme name the admin tier and its verbs', () => {
   const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf-8');
   const tools = read('docs/exec-tools.md');
   assert.match(tools, /\| `clodex-ctl-admin` \|/);
@@ -271,8 +271,7 @@ test('the docs and the changelog name the admin tier', () => {
   const readme = read('cli/README.md');
   assert.match(readme, /clodex-ctl-admin/);
   assert.doesNotMatch(readme, /Deploy, undeploy, upgrade, input, exec,\s*port-forward and attach stay operator-only/);
-  const changelog = read('CHANGELOG.md');
-  assert.match(changelog, /clodex-ctl-admin/);
+  assert.match(tools, /\| `clodex-ctl-admin` \| help, deploy, upgrade, restart \(node\) — argv launcher \+ detached worker;/);
 });
 
 test('restoreSessionsForWorkspace arms the ctl-admin boot sweep once, under the app interpreter and the registry root', () => {
