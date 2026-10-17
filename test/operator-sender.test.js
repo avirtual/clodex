@@ -108,6 +108,9 @@ test('the operator door refuses a dm to a bash session by saying it is a bash se
   });
   assert.strictEqual(injected.length, before, 'nothing was delivered');
   assert.deepStrictEqual(send('ghost', 'hi'), { ok: false, error: 'Session not found' });
+  m.sessions.set('deadsh', { name: 'deadsh', type: 'bash', agentType: null, _dead: true });
+  assert.deepStrictEqual(send('deadsh', 'ls'), { ok: false, error: 'Session not found' });
+  assert.strictEqual(injected.length, before, 'nothing was delivered');
 });
 
 test('t886: an operator delivery contains no [agent:dm substring anywhere', () => {
