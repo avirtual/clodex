@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — thinking row in conversation mode; `trunk @head` for per-task branches; nag precision
+## Unreleased
+
+## 5.130.0 — 2026-10-17 — thinking row in conversation mode; `trunk @head` for per-task branches; nag precision
 
 - The filed-nothing nag no longer fires on prose that recounts a past filing (an 'already filed' sentence, 'filed in FOLLOWUPS', a ticket id with a closed verdict) — it fired twice on a status report and once on the explanation of that false positive.
 - Conversation mode shows a Claude seat's thinking as a collapsed 🧠 row before its reply (click to expand; `Transcript pane › show thinking` hides it) — the reasoning was always in the seat's transcript, the pane just never rendered it.
