@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The 🧠 thinking row also shows on a folded conversation turn (a dm or ticket reply the lead answered), between the fold head and its closing prose — on a lead seat almost every turn is folded, so 5.130.0's row was invisible there.
+
 ## 5.130.0 — 2026-10-17 — thinking row in conversation mode; `trunk @head` for per-task branches; nag precision
 
 - The filed-nothing nag no longer fires on prose that recounts a past filing (an 'already filed' sentence, 'filed in FOLLOWUPS', a ticket id with a closed verdict) — it fired twice on a status report and once on the explanation of that false positive.

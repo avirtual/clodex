@@ -1386,7 +1386,7 @@ test('folds: a closed fold shows the turn-end prose as its own visible row after
   assert.strictEqual(isHidden(rows[0]), false);
   assert.ok(turn.childNodes.indexOf(rows[0]) > turn.childNodes.indexOf(findCls(turn, 'tr-turn-fold')[0]));
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
-  assert.match(css, /^\.tr-turn-folded > :not\(\.tr-turn-fold\):not\(\.tr-turn-end-prose\) \{ display: none; \}/m);
+  assert.match(css, /^\.tr-turn-folded > :not\(\.tr-turn-fold\):not\(\.tr-thinking\):not\(\.tr-turn-end-prose\) \{ display: none; \}/m);
   assert.match(css, /^\.tr-turn > \.tr-row\.tr-turn-end-prose \{ margin-left: 0; \}/m);
 });
 
@@ -2110,4 +2110,25 @@ test('in Conversation mode a thinking row does not unhide a turn: a monitor-woke
   const row = thinkingRowOf(m);
   assert.ok(row, 'ENTER: the prompt turn paints its thinking row');
   assert.strictEqual(isHidden(row), false);
+});
+
+test('a folded dm turn shows its trailing thinking row collapsed between the fold head and the end prose; showThinking off drops it; a tool-only folded turn stays a bare fold head', () => {
+  const turnEnd = (turn) => ({ id: `e${turn}`, kind: 'turn-end', ts: null, turn, durationMs: 5, messageCount: 1 });
+  const records = [
+    inb('m1', 1, 'hand', 'please answer'), { ...thinking, id: 'k1', turn: 1 }, talk('a1', 1, 'answered'), turnEnd(1),
+    inb('m2', 2, 'hand', 'run it'), { ...thinking, id: 'k2', turn: 2 }, call('c2', 'Bash', 'ls', 'ok', { turn: 2 }), turnEnd(2),
+  ];
+  let on = true;
+  const m = mount({ mode: 'conversation', showThinking: () => on });
+  m.render(records);
+  const dm = turnOf(m, 'm1');
+  assert.ok(/\btr-turn-folded\b/.test(dm.className), 'ENTER: the dm turn folds');
+  assert.deepStrictEqual(shown(dm), ['tr-row tr-turn-fold', 'tr-row tr-thinking', END]);
+  const row = dm.childNodes[1];
+  assert.strictEqual(row.dataset.id, 'k1');
+  assert.strictEqual(row.childNodes[1].hidden, true);
+  assert.deepStrictEqual(turnOf(m, 'm2').childNodes.map((n) => n.className), ['tr-row tr-turn-fold']);
+  on = false;
+  m.rows.repaint();
+  assert.deepStrictEqual(shown(turnOf(m, 'm1')), ['tr-row tr-turn-fold', END]);
 });

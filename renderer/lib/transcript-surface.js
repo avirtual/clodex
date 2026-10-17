@@ -84,4 +84,13 @@ function turnEndProse(records) {
   return tail.length ? { rec, segs: tail } : null;
 }
 
-module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse };
+function turnEndThinking(records) {
+  if (!Array.isArray(records)) return null;
+  const kindAt = (kind) => records.reduce((at, r, i) => (r && r.kind === kind ? i : at), -1);
+  const said = kindAt('assistant');
+  const from = kindAt('tool');
+  const rec = records.slice(from + 1, said < 0 ? 0 : said).filter((r) => r && r.kind === 'thinking').pop();
+  return rec || null;
+}
+
+module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse, turnEndThinking };
