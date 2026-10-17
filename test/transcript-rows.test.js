@@ -2069,7 +2069,7 @@ test('a truncated thinking row ends its expanded text with the 8 KB mark', () =>
   const m = mount({ mode: 'conversation' });
   m.render([prompt, { ...thinking, text: 'cut short', truncated: true }]);
   const body = thinkingRowOf(m).childNodes[1];
-  assert.deepStrictEqual(body.childNodes.map((n) => n.textContent), ['cut short', '… (truncated at 8 KB)']);
+  assert.deepStrictEqual(body.childNodes.map((n) => n.data ?? n.textContent), ['cut short', '… (truncated at 8 KB)']);
 });
 
 test('a redacted thinking row is the glyph and "redacted", with no text and no click', () => {
