@@ -93,6 +93,8 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [WORDING_1('rejected')] },
     { what: 'dropped sentence, then a live claim', seat: 'lead', text: 'Already filed earlier. I filed the ticket for the parser now.',
       want: [WORDING_1('filed')] },
+    { what: 'dropped claim sentence, then a live claim', seat: 'lead', text: 'The ticket was already filed. I filed the ticket for the parser now.',
+      want: [WORDING_1('filed')] },
     { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 was rejected upstream\n[agent:end]',
       want: [] },
   ];
@@ -109,6 +111,7 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
   assert.ok(fired.includes('no claim, respec with empty body'));
   assert.ok(fired.includes('rejected with a named id, no verb'));
   assert.ok(fired.includes('dropped sentence, then a live claim'));
+  assert.ok(fired.includes('dropped claim sentence, then a live claim'));
 });
 
 test('a verb in an earlier step of the turn silences a later claim', async () => {
