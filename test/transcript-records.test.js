@@ -316,7 +316,7 @@ test('ENTER: the origin-less plain-text queued_command fixture parses to a promp
   assert.deepStrictEqual(records.map((r) => [r.kind, r.text]), [['prompt', 'done']]);
 });
 
-test('an assistant record with two text blocks suffixes each id with its block index, the thinking block's too', () => {
+test('an assistant record with two text blocks suffixes each id with its block index, a thinking block included', () => {
   const { records } = recordsOf(rec({ type: 'assistant', uuid: 'u1', message: { content: [
     { type: 'thinking', thinking: 'hidden' }, { type: 'text', text: 'one' }, { type: 'text', text: ' two ' },
   ] } }));
