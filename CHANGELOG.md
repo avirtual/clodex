@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Release pruning keeps media assets (video, images, captions) attached to old releases; only build binaries expire. The site's demo video had been pruned and 404'd.
+
 ## 5.130.1 — 2026-10-17 — thinking row shows on folded conversation turns
 
 - The 🧠 thinking row also shows on a folded conversation turn (a dm or ticket reply the lead answered), between the fold head and its closing prose — on a lead seat almost every turn is folded, so 5.130.0's row was invisible there.

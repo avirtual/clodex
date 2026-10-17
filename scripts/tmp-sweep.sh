@@ -210,6 +210,7 @@ clodex-poll-
 clodex-pr-
 clodex-preflight-
 clodex-proj-
+clodex-prune-
 clodex-ptr-
 clodex-quiet-host-
 clodex-quota-

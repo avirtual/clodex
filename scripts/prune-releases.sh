@@ -6,6 +6,7 @@
 # Retention: the newest KEEP releases (by creation date) keep their assets;
 # everything older has its assets deleted. Deleting an asset is permanent —
 # hence dry-run by default.
+# Media assets (by extension, MEDIA_EXT_RE) are never pruned.
 #
 #   scripts/prune-releases.sh            # dry-run: print what would be deleted
 #   scripts/prune-releases.sh --delete   # actually delete
@@ -15,6 +16,7 @@ set -euo pipefail
 REPO="avirtual/clodex"
 KEEP="${KEEP:-5}"
 MODE="dry-run"
+MEDIA_EXT_RE='\.(mp4|mov|webm|jpg|jpeg|png|gif|srt|vtt)$'
 [[ "${1:-}" == "--delete" ]] && MODE="delete"
 
 # KEEP must be a positive integer — a typo (KEEP=abc) or KEEP=0 would otherwise
@@ -45,6 +47,11 @@ while IFS= read -r row; do
   fi
   while IFS=$'\t' read -r id name size; do
     [[ -z "$id" ]] && continue
+    lname=$(tr '[:upper:]' '[:lower:]' <<<"$name")
+    if [[ "$lname" =~ $MEDIA_EXT_RE ]]; then
+      echo "KEEP    $tag  $name  (media)"
+      continue
+    fi
     total_assets=$((total_assets + 1))
     total_bytes=$((total_bytes + size))
     if [[ "$MODE" == "delete" ]]; then
