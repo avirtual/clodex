@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — exec reply classes, nag clause split, @head snapshot
+## Unreleased
+
+## 5.131.1 — 2026-10-17 — exec reply classes, nag clause split, @head snapshot
 
 - Exec tool replies: schema-vetting failures classify as refused and the ctl in-process `run failed` as an error, so the MCP exec loop and the misfire ledger see them.
 - Ticket-claim nag splits prose on `?`, `!` and `;` as well as `.`, so a question before a claim no longer hides it.
