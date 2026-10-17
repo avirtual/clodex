@@ -73,7 +73,7 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [] },
     { what: 'claim inside a fence', seat: 'lead', text: 'Draft:\n```\nI filed the ticket\n```\nDone.',
       want: [] },
-    { what: 'claim in an escaped intent line', seat: 'lead', text: '\\[agent:task add] the ticket was filed here',
+    { what: 'claim in an escaped intent line', seat: 'lead', text: '\\[agent:task add] I filed the ticket here',
       want: [] },
     { what: 'hand seat, claim, no verb', seat: 'hand', text: 'I filed the ticket for the parser.',
       want: [] },
@@ -91,11 +91,11 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [] },
     { what: 'rejected with a named id, no verb', seat: 'lead', text: 'rejected t1851 with one must-fix',
       want: [WORDING_1('rejected')] },
-    { what: 'dropped sentence, then a live claim', seat: 'lead', text: 'Already filed earlier. I filed the ticket for the parser now.',
+    { what: 'non-claim retrospective sentence, then a live claim', seat: 'lead', text: 'Already filed earlier. I filed the ticket for the parser now.',
       want: [WORDING_1('filed')] },
     { what: 'dropped claim sentence, then a live claim', seat: 'lead', text: 'The ticket was already filed. I filed the ticket for the parser now.',
       want: [WORDING_1('filed')] },
-    { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 was rejected upstream\n[agent:end]',
+    { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 rejected upstream\n[agent:end]',
       want: [] },
   ];
   const fired = [];
@@ -110,7 +110,7 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
   assert.ok(fired.includes('claim, reject with empty body'));
   assert.ok(fired.includes('no claim, respec with empty body'));
   assert.ok(fired.includes('rejected with a named id, no verb'));
-  assert.ok(fired.includes('dropped sentence, then a live claim'));
+  assert.ok(fired.includes('non-claim retrospective sentence, then a live claim'));
   assert.ok(fired.includes('dropped claim sentence, then a live claim'));
 });
 
