@@ -9325,7 +9325,7 @@ body.web-frontend #sidebar-header {
 .tr-turn-fold-stats {
   flex: none;
 }
-.tr-turn-folded > :not(.tr-turn-fold):not(.tr-turn-end-prose) {
+.tr-turn-folded > :not(.tr-turn-fold):not(.tr-thinking):not(.tr-turn-end-prose) {
   display: none;
 }
 .tr-boundary {
@@ -34402,7 +34402,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const tail = segs.slice(from).filter((s) => segmentSurface(s) === CONVERSATION);
         return tail.length ? { rec, segs: tail } : null;
       }
-      module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse };
+      function turnEndThinking(records) {
+        if (!Array.isArray(records)) return null;
+        const kindAt = (kind) => records.reduce((at, r, i) => r && r.kind === kind ? i : at, -1);
+        const said = kindAt("assistant");
+        const from = kindAt("tool");
+        const rec = records.slice(from + 1, said < 0 ? 0 : said).filter((r) => r && r.kind === "thinking").pop();
+        return rec || null;
+      }
+      module.exports = { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse, turnEndThinking };
     }
   });
 
@@ -34432,7 +34440,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { rewriteEchoSgr } = require_prompt_echo();
       var { isExternallyOpenable } = require_external_link();
       var { TURN_KINDS, isInternalRow } = require_transcript_internal();
-      var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse } = require_transcript_surface();
+      var { surfaceOf, segmentSurface, turnDriver, turnFolds, turnEndProse, turnEndThinking } = require_transcript_surface();
       var { renderMarkdown } = require_render_markdown();
       var { cleanLine } = require_intent_scanner();
       var { STAND_INS } = require_spill_stand_ins();
@@ -35627,6 +35635,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           };
         }
+        function foldThinkingItem(rec) {
+          return { key: "fold-thinking", sig: rec.id, build: () => thinkingRow(doc, rec) };
+        }
         function foldItem(t, unfolded) {
           const driver = turnDriver(t.records);
           const stats = runStatsOf(t.records);
@@ -35695,8 +35706,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
                 const m = unfolded ? "internals" : mode;
                 const tail = m === "conversation" && t === host ? runToggleItem(run, open) : null;
                 const end = folds ? turnEndProse(t.records) : null;
+                const think = end && !unfolded ? turnEndThinking(t.records) : null;
                 const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end, unfolded ? turnDriver(t.records) : null);
-                reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...unfolded ? rows : [], ...end ? [endProseItem(end)] : []] : rows);
+                reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...unfolded ? rows : [], ...think ? [foldThinkingItem(think)] : [], ...end ? [endProseItem(end)] : []] : rows);
                 toggleClass(c.el, "tr-turn-folded", folds && !unfolded);
                 toggleClass(c.el, "tr-hidden", mode === "conversation" && !open && !t.records.some(speaks));
                 toggleClass(c.el, "tr-turn-cont", mode === "conversation" && i > 0);

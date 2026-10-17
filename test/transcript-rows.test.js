@@ -1386,7 +1386,7 @@ test('folds: a closed fold shows the turn-end prose as its own visible row after
   assert.strictEqual(isHidden(rows[0]), false);
   assert.ok(turn.childNodes.indexOf(rows[0]) > turn.childNodes.indexOf(findCls(turn, 'tr-turn-fold')[0]));
   const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
-  assert.match(css, /^\.tr-turn-folded > :not\(\.tr-turn-fold\):not\(\.tr-turn-end-prose\) \{ display: none; \}/m);
+  assert.match(css, /^\.tr-turn-folded > :not\(\.tr-turn-fold\):not\(\.tr-thinking\):not\(\.tr-turn-end-prose\) \{ display: none; \}/m);
   assert.match(css, /^\.tr-turn > \.tr-row\.tr-turn-end-prose \{ margin-left: 0; \}/m);
 });
 
