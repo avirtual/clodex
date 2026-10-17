@@ -359,8 +359,8 @@ const EXEC_TOOL = Object.freeze({
   },
 });
 
-const EXEC_REFUSED_RE = /^\[agent:exec\] \S+: (not granted to this seat|invalid command id|no such registered command|registry read failed|malformed registry entry|refused: |payload(: | too large|\.)|ctl: |ctl is not enabled)/;
-const EXEC_ERROR_RE = /^\[agent:exec\] \S+: (run #\d+ )?(run failed|spawn failed|TIMED OUT|exit \d+|killed \()/;
+const EXEC_REFUSED_RE = /^\[agent:exec\] \S+: (not granted to this seat|invalid command id|no such registered command|registry read failed|malformed registry entry|refused: |payload(: | too large|[.[])|ctl: (?!run failed)|ctl is not enabled)/;
+const EXEC_ERROR_RE = /^\[agent:exec\] \S+: (run #\d+ |ctl: )?(run failed|spawn failed|TIMED OUT|exit \d+|killed \()/;
 function classifyExecReply(line) {
   return EXEC_REFUSED_RE.test(line) ? 'refused' : EXEC_ERROR_RE.test(line) ? 'error' : defaultReplyStatus(line);
 }
