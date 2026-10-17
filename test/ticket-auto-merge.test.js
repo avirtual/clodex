@@ -3210,7 +3210,7 @@ test('the one-hour hard cap escalates even while holders keep changing, naming t
   }
 
   assert.strictEqual(ran, 6, 'it stopped at sixty minutes, six ten-minute samples each with a new holder');
-  assert.strictEqual(f.logs.filter((l) => /budget reset/.test(l.msg)).length, 5, 'ENTER: every sample before the cap reset the budget');
+  assert.strictEqual(f.logs.filter((l) => /budget reset/.test(l.msg)).length, 6, 'ENTER: every sample saw a new holder and reset the budget');
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
   assert.match(esc[0].body, /suite-in-flight/);
