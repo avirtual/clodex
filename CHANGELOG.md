@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The suite fails a branch whose CHANGELOG edit lands outside `## Unreleased` (a bullet appended to an old release section used to ship unnoticed).
+
 ## 5.130.2 — 2026-10-17 — release pruning keeps media assets
 
 - Release pruning keeps media assets (video, images, captions) attached to old releases; only build binaries expire. The site's demo video had been pruned and 404'd.
