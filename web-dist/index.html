@@ -35199,6 +35199,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         });
         return row;
       }
+      function speaks(r) {
+        return r.kind !== "thinking" && isTalk(r);
+      }
       function hasInternalSeg(r) {
         return r.kind === "assistant" && !r.apiError && Array.isArray(r.segments) && isTalk(r) && r.segments.some((s) => segmentSurface(s) !== "conversation");
       }
@@ -35405,7 +35408,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return turns;
       }
       function logicalHead(t) {
-        return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records[0];
+        return t.records.find((r) => TURN_KINDS.has(r.kind)) || t.records.find((r) => r.kind !== "thinking") || t.records[0];
       }
       function groupRuns(turns) {
         const runs = [];
@@ -35416,7 +35419,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         for (const run of runs) {
           run.records = run.turns.flatMap((t) => t.records);
-          run.hosted = run.turns.some((t) => t.records.some(isTalk));
+          run.hosted = run.turns.some((t) => t.records.some(speaks));
         }
         return runs;
       }
@@ -35431,6 +35434,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let lastSource = null;
         let mode = deps.mode === "conversation" ? "conversation" : "internals";
         let lastRecords = [];
+        let thinkingShown = true;
         let working = null;
         let workingEl = null;
         let workingTimer = null;
@@ -35650,7 +35654,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function render(records, source) {
           const all = Array.isArray(records) ? records : [];
-          const list = deps.showThinking() === false ? all.filter((r) => !r || r.kind !== "thinking") : all;
+          thinkingShown = deps.showThinking() !== false;
+          const list = !thinkingShown ? all.filter((r) => !r || r.kind !== "thinking") : all;
           if (source != null) {
             if (lastSource != null && source !== lastSource) {
               for (const c of turnCache.values()) if (c.el.parentNode === paneEl) paneEl.removeChild(c.el);
@@ -35674,7 +35679,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           for (const run of runs) {
             const open = openRuns.has(run.key);
             const hostable = run.turns.filter((t) => open || !turnFolds(t.records, mode));
-            const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(isTalk)).pop() : null;
+            const host = open ? hostable[hostable.length - 1] : run.hosted ? hostable.filter((t) => t.records.some(speaks)).pop() : null;
             run.turns.forEach((t, i) => items.push({
               key: t.key,
               sig: "",
@@ -35693,7 +35698,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
                 const rows = rowItems(t.records, attached, open, tail, live, m, unfolded, end, unfolded ? turnDriver(t.records) : null);
                 reconcile(c.el, c.sub, folds ? [foldItem(t, unfolded), ...unfolded ? rows : [], ...end ? [endProseItem(end)] : []] : rows);
                 toggleClass(c.el, "tr-turn-folded", folds && !unfolded);
-                toggleClass(c.el, "tr-hidden", mode === "conversation" && !open && !t.records.some(isTalk));
+                toggleClass(c.el, "tr-hidden", mode === "conversation" && !open && !t.records.some(speaks));
                 toggleClass(c.el, "tr-turn-cont", mode === "conversation" && i > 0);
               }
             }));
@@ -35735,6 +35740,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           restore(anchor);
         }
         function repaint() {
+          if (deps.showThinking() !== false === thinkingShown) return;
           const anchor = anchorOf();
           render(lastRecords);
           restore(anchor);
