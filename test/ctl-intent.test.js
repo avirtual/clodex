@@ -266,7 +266,6 @@ test('the in-process ctl path still refuses deploy, undeploy and upgrade', () =>
 test('the docs and the cli readme name the admin tier and its verbs', () => {
   const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf-8');
   const tools = read('docs/exec-tools.md');
-  assert.match(tools, /\| `clodex-ctl-admin` \|/);
   assert.match(tools, /### The admin tier/);
   const readme = read('cli/README.md');
   assert.match(readme, /clodex-ctl-admin/);

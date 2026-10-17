@@ -29,7 +29,7 @@ function mkRepo(dir, subject = 'the base commit') {
   return String(execFileSync('git', ['-C', dir, 'rev-parse', '--short', 'HEAD'], { encoding: 'utf8' })).trim();
 }
 
-function mkSnap({ withTeam = true, repo = true, tickets = [], subject = 'the base commit', trunk = undefined } = {}) {
+function mkSnap({ withTeam = true, repo = true, tickets = [], subject = 'the base commit', trunk } = {}) {
   const root = mkTmpRoot('clodex-spill-');
   const proj = mkTmpRoot('clodex-spill-');
   const sha = repo ? mkRepo(proj, subject) : null;

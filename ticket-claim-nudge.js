@@ -29,13 +29,15 @@ function proseOf(text) {
 }
 
 function liveClaimWord(prose) {
-  for (const sentence of prose.split(/[.?!;\n]/)) {
-    const claim = TICKET_CLAIM_RE.exec(sentence);
-    if (!claim) continue;
-    if (RETROSPECTIVE_RE.test(sentence) || FOLLOWUPS_RE.test(sentence)) continue;
-    const word = CLAIM_WORD_RE.exec(claim[0])[0].toLowerCase();
-    if (MINTING_WORD_RE.test(word) && TICKET_ID_RE.test(sentence)) continue;
-    return word;
+  for (const sentence of prose.split(/[.?!\n]/)) {
+    for (const clause of sentence.split(';')) {
+      const claim = TICKET_CLAIM_RE.exec(clause);
+      if (!claim) continue;
+      if (RETROSPECTIVE_RE.test(clause) || FOLLOWUPS_RE.test(clause)) continue;
+      const word = CLAIM_WORD_RE.exec(claim[0])[0].toLowerCase();
+      if (MINTING_WORD_RE.test(word) && TICKET_ID_RE.test(sentence)) continue;
+      return word;
+    }
   }
   return null;
 }

@@ -97,10 +97,10 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [WORDING_1('filed')] },
     { what: 'question sentence, then a live claim', seat: 'lead', text: 'Was it picked up? I filed the ticket.',
       want: [WORDING_1('filed')] },
-    { what: 'semicolon half without the id, live claim', seat: 'lead', text: 'I filed the ticket; it is t12 already done',
-      want: [WORDING_1('filed')] },
-    { what: 'semicolon half with the id skips', seat: 'lead', text: 'I filed t12; it is already done',
+    { what: 'semicolon clause without the id, id elsewhere in the sentence', seat: 'lead', text: 'I filed the ticket; it is t12 already done',
       want: [] },
+    { what: 'retrospective clause, then a live claim clause', seat: 'lead', text: 'It was slow; I filed the ticket for the parser',
+      want: [WORDING_1('filed')] },
     { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 rejected upstream\n[agent:end]',
       want: [] },
   ];
@@ -119,6 +119,7 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
   assert.ok(fired.includes('non-claim retrospective sentence, then a live claim'));
   assert.ok(fired.includes('dropped claim sentence, then a live claim'));
   assert.ok(fired.includes('question sentence, then a live claim'));
+  assert.ok(fired.includes('retrospective clause, then a live claim clause'));
 });
 
 test('a verb in an earlier step of the turn silences a later claim', async () => {
