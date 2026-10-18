@@ -41,11 +41,14 @@ function rig({ windowExists }) {
   const manager = {
     sessions: new Map([['alice', seat]]),
     list: () => [seat],
+    savedForWorkspace: () => [],
+    listForWorkspace: () => [seat],
     allLiveWindows: () => [win],
     windowForWorkspace: (ws) => { events.push(['windowFor', ws]); return windowExists ? win : null; },
   };
   const workspaces = {
     list: () => [{ id: 'w2', name: 'Two' }],
+    sortedByRecent: () => [{ id: 'w2', name: 'Two' }],
     setView: (ws, v) => events.push(['setView', ws, v]),
   };
   const nothing = () => ({ list: () => [], get: () => ({}), sortedByRecent: () => [], statuses: () => [] });
@@ -63,8 +66,10 @@ function rig({ windowExists }) {
   return { menus, events };
 }
 
-function trayClick(menus) {
-  const item = menus.buildTrayMenu().find((i) => i && typeof i.label === 'string' && i.label.includes('alice (claude)'));
+function trayClick(menus, events) {
+  const tpl = menus.buildTrayMenu();
+  events.length = 0;
+  const item = tpl.find((i) => i && typeof i.label === 'string' && i.label.includes('alice (claude)'));
   assert.ok(item, 'ENTER: the tray lists the seat');
   item.click();
 }
@@ -72,7 +77,7 @@ function trayClick(menus) {
 for (const windowExists of [true, false]) {
   test(`tray seat click and revealSession run one code path (window ${windowExists ? 'open' : 'absent'})`, () => {
     const viaTray = rig({ windowExists });
-    trayClick(viaTray.menus);
+    trayClick(viaTray.menus, viaTray.events);
     const viaReveal = rig({ windowExists });
     assert.deepStrictEqual(viaReveal.menus.revealSession('alice'), { ok: true });
     assert.ok(viaTray.events.some((e) => e[0] === 'send' && e[1] === 'request-switch-session' && e[2] === 'alice'),
