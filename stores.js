@@ -447,7 +447,7 @@ function sanitizeSpeakRate(raw) {
 }
 
 function initStores(userDataPath, {
-  log, registryDir, resourcesDir, skillsResourcesDir, envDefaultsFile, knownSkillNames,
+  log, registryDir, resourcesDir, skillsResourcesDir, envDefaultsFile, knownSkillNames, seedWritable,
 } = {}) {
   // Path locals — derived here so nothing needs app.getPath before whenReady.
   const PERSIST_FILE = path.join(userDataPath, 'sessions.json');
@@ -1964,6 +1964,14 @@ function initStores(userDataPath, {
   // some unrelated live seat.
   const SEED_REPORT_FROM = 'Clodex library';
   const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+  function probeSeedWritable(dest) {
+    try { fs.accessSync(dest, fs.constants.W_OK); return true; }
+    catch (e) {
+      if (log) log.info?.('seed', `not writable, left to its owner: ${dest} (${e && e.code})`);
+      return false;
+    }
+  }
+  const writable = seedWritable || probeSeedWritable;
   function seedRoot(srcRoot, destRoot, rootLabel) {
     let src;
     try { src = fs.statSync(srcRoot); } catch { return; } // no seed tree shipped
@@ -2002,7 +2010,7 @@ function initStores(userDataPath, {
           if (stamped === undefined || (typeof stamped === 'string' && stamped.startsWith(SEED_ADOPTED_PREFIX))) {
             if (destHash === shippedHash) {
               state[childRel] = shippedHash; changed = true;
-            } else {
+            } else if (writable(dest)) {
               if (stamped === undefined) { state[childRel] = SEED_ADOPTED_PREFIX + destHash; changed = true; }
               stranded.push({ rel: childRel, shippedHash });
             }
@@ -2028,7 +2036,7 @@ function initStores(userDataPath, {
               // converging it destroys nothing and is what puts a
               // hand-repaired file back on the upgrade path for the NEXT ship.
               state[childRel] = shippedHash; changed = true;
-            } else {
+            } else if (writable(dest)) {
               stranded.push({ rel: childRel, shippedHash });
             }
           }
