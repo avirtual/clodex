@@ -1042,7 +1042,12 @@ function createSessionManager(deps) {
           if (s && s.intentSource === 'wire') {
             if (s.sentinel) s.sentinel.noteWireHealthy();
             const fired = new Set();
+            const cut = !(t.stop && t.stop.stop_reason) || t.stop.stop_reason === 'max_tokens' || !!t.truncated;
             for (const intent of intents) {
+              if (cut && intent.bodyRanToTurnEnd) {
+                this._refuseInterruptedBody(s, intent);
+                continue;
+              }
               const bkey = shadowIntentKey(t.agent, intent);
               if (intent.type !== 'exec' && fired.has(bkey)) {
                 log.warn('intent', `intra-turn dup ${intent.type} ${t.agent} — swallowed`);
@@ -5265,6 +5270,14 @@ function createSessionManager(deps) {
       return intents;
     }
 
+    _refuseInterruptedBody(s, intent) {
+      this.recordMisfire(s, 'unclosed-body', intent, 'turn interrupted with the body still open; not applied');
+      this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
+        + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
+        + 'the partial body was NOT applied; re-emit the whole intent and close it with [agent:end]',
+      { parkable: true });
+    }
+
     _scanJsonlText(text, senderName, touches, meta) {
       const s = this.sessions.get(senderName);
       if (s) s._flushTurnEnd = !!(meta && meta.turnEnd);
@@ -5284,11 +5297,7 @@ function createSessionManager(deps) {
       const intents = this._extractIntents(text, { receiptsFor: senderName });
       for (const intent of intents) {
         if (meta && meta.interrupted && (intent.bodyOpen || intent.bodyRanToTurnEnd)) {
-          if (s) this.recordMisfire(s, 'unclosed-body', intent, 'turn interrupted with the body still open; not applied');
-          if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
-            + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
-            + 'the partial body was NOT applied; re-emit the whole intent and close it with [agent:end]',
-          { parkable: true });
+          if (s) this._refuseInterruptedBody(s, intent);
           continue;
         }
         if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {

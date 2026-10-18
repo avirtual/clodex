@@ -17346,12 +17346,13 @@ test('a throw after the wire listens stops the hold keeper and rejects _ensureWi
 // drops one. The `swallowed` warn is asserted alongside the fire count because
 // counts alone cannot say WHICH layer answered.
 
-async function wireRig(text) {
+async function wireRig(text, stop = { is_turn: true }) {
   const { m, warns } = mkRecovery();
   const fired = [];
   const errors = [];
   const injected = [];
-  m._handleIntent = (_agent, intent) => { fired.push(`${intent.type}:${intent.sub}:${intent.id || intent.name || ''}`); };
+  const bodies = [];
+  m._handleIntent = (_agent, intent) => { fired.push(`${intent.type}:${intent.sub}:${intent.id || intent.name || ''}`); bodies.push(intent.body); };
   m._injectText = (sess, msg) => { injected.push([sess && sess.name, msg]); };
   m._broadcast = () => {};
   m._publishAgentText = () => {};
@@ -17364,17 +17365,40 @@ async function wireRig(text) {
   const wire = await m._ensureWire();
   try {
     m.sessions.set('a', { name: 'a', intentSource: 'wire', sessionId: 'sid-1' });
-    wire.emit('turn.completed', { agent: 'a', text, reqId: 'r1', sessionId: 'sid-1', stop: { is_turn: true } });
+    wire.emit('turn.completed', { agent: 'a', text, reqId: 'r1', sessionId: 'sid-1', stop });
     await new Promise((r) => setImmediate(r));
     // The handler body is wrapped in a try that only shadow-logs: a throw would
     // leave `fired` empty and every assertion below would read as "deduped".
     assert.deepStrictEqual(errors, [], 'ENTER: the wire handler ran to completion, so the fire counts below are real');
-    return { fired, warns, injected };
+    return { fired, warns, injected, bodies };
   } finally {
     await wire.close();
     if (m._holdKeeper) m._holdKeeper.stop();
   }
 }
+
+test('wire: a task done cut before the request finished is refused with the interrupt note', async () => {
+  const { fired, injected } = await wireRig('[agent:task done t1] a\nb', { stop_reason: null, is_turn: false });
+  assert.deepStrictEqual(fired, []);
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0][1], /interrupted while the body of \[agent:task done\] was still open/);
+});
+
+test('wire: a task done on a finished request is dispatched whole', async () => {
+  for (const stop_reason of ['end_turn', 'tool_use']) {
+    const { fired, injected, bodies } = await wireRig('[agent:task done t1] a\nb', { stop_reason, is_turn: stop_reason === 'end_turn' });
+    assert.deepStrictEqual(fired, ['task:done:t1'], stop_reason);
+    assert.deepStrictEqual(bodies, ['a\nb'], stop_reason);
+    assert.deepStrictEqual(injected, [], stop_reason);
+  }
+});
+
+test('wire: a max_tokens cut task done is refused, while a cut dm still dispatches', async () => {
+  const done = await wireRig('[agent:task done t1] a\nb', { stop_reason: 'max_tokens', is_turn: true });
+  assert.deepStrictEqual(done.fired, []);
+  const dm = await wireRig('[agent:dm bob] a\nb', { stop_reason: null, is_turn: false });
+  assert.deepStrictEqual(dm.fired, ['dm:undefined:']);
+});
 
 test('t313: two bodyless `task start` with distinct ids both fire on the wire path', async () => {
   const { fired, warns } = await wireRig('[agent:task start t210]\n[agent:task start t309]');
