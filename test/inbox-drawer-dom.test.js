@@ -44,13 +44,14 @@ class FakeEl {
     const ev = { stopPropagation() {}, preventDefault() {}, shiftKey: false, isComposing: false, ...extra };
     return Promise.all((this.listeners[type] || []).map((fn) => fn(ev)));
   }
+  setAttribute(k, v) { this[`attr:${k}`] = String(v); }
   focus() { this.doc.activeElement = this; }
   setSelectionRange(a, b) { this.selection = [a, b]; }
   all() { return [this, ...this.children.flatMap((c) => (c.all ? c.all() : []))]; }
   find(cls) { return this.all().filter((e) => e.classList && e.classList.contains(cls)); }
 }
 
-function harness({ snapshot, focusSeat = () => false, reveal = { ok: true } }) {
+function harness({ snapshot, focusSeat = () => false, reveal = { ok: true }, reply = async () => ({ ok: true }) }) {
   const doc = { activeElement: null };
   const ids = {};
   for (const id of ['inbox-drawer', 'inbox-list', 'inbox-empty', 'inbox-coverage', 'inbox-mark-all', 'inbox-close', 'inbox-open', 'inbox-count']) {
@@ -68,7 +69,7 @@ function harness({ snapshot, focusSeat = () => false, reveal = { ok: true } }) {
     openRequestCount: async () => ({ open: snapshot().open }),
     listWorkspaces: async () => [],
     revealSession: async (name) => { calls.push(['revealSession', name]); return reveal; },
-    replyNotification: async (id, text) => { calls.push(['replyNotification', id, text]); return { ok: true }; },
+    replyNotification: async (id, text) => { calls.push(['replyNotification', id, text]); return reply(); },
     markNotificationRead: async (id) => { calls.push(['markNotificationRead', id]); },
     removeNotification: async () => {},
     markAllNotificationsRead: async () => {},
@@ -173,4 +174,30 @@ test('a permission-row click focuses the local seat first, then asks main', asyn
   assert.deepStrictEqual(remote.calls.filter((c) => c[0] === 'focusSeat' || c[0] === 'revealSession'),
     [['focusSeat', 'seat-c'], ['revealSession', 'seat-c']]);
   assert.ok(remote.calls.some((c) => c[0] === 'toast' && /seat-c is in workspace/.test(c[1])), 'a refused reveal toasts');
+});
+
+test('a repaint during an in-flight reply cannot send it twice, and a failure shows on the rebuilt row', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let settle;
+  const h = harness({ snapshot: shoutSnap, reply: () => new Promise((r) => { settle = r; }) });
+  h.drawer.openDrawer();
+  await flush();
+  await h.list.find('inbox-reply-toggle')[0].fire('click');
+  await flush();
+  const ta = h.list.find('inbox-reply-input')[0];
+  ta.value = 'once';
+  await ta.fire('input');
+  h.list.find('inbox-reply-send')[0].fire('click');
+  await flush();
+  h.subs.attention();
+  await flush();
+  const rebuilt = h.list.find('inbox-reply-send')[0];
+  assert.ok(rebuilt && rebuilt.disabled, 'ENTER: the rebuilt Send is disabled while the reply is in flight');
+  await rebuilt.fire('click');
+  assert.strictEqual(h.calls.filter((c) => c[0] === 'replyNotification').length, 1, 'one reply sent');
+  settle({ ok: false, code: 'gone' });
+  await flush();
+  const status = h.list.find('inbox-reply-status')[0];
+  assert.ok(status && /seat-a is no longer running/.test(status.textContent), 'the error is on the attached row');
+  assert.strictEqual(h.list.find('inbox-reply-input')[0].value, 'once', 'the draft stays');
 });

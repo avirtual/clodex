@@ -6084,7 +6084,7 @@ body.web-frontend #sidebar-header {
   margin-bottom: 2px;
   transition: background var(--dur) var(--ease);
 }
-.inbox-item:hover { background: var(--surface-hover); }
+.inbox-item.request:hover { background: var(--surface-hover); }
 .inbox-item.unread { background: var(--accent-soft); }
 .inbox-item.unread:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .inbox-item-head { gap: var(--sp-2); margin-bottom: 2px; }

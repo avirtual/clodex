@@ -22,6 +22,7 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
   let tick = null;
   const drafts = new Map();
   const replyStatus = new Map();
+  const sending = new Set();
 
   async function refreshBadge() {
     let n = 0;
@@ -75,11 +76,10 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     return head;
   }
 
-// The note body is AGENT-AUTHORED text and this renderer runs
+  // The note body is AGENT-AUTHORED text and this renderer runs
   // nodeIntegration:true, so an injection here is arbitrary local code. Build it
   // out of DOM nodes ONLY — never by splicing generated <a>/<button> markup into
-  // an escaped string, which is how linkifying reintroduces the hole that a
-  // single esc() currently closes. textContent is the whole defence.
+  // an escaped string. textContent is the whole defence.
   function renderBody(note) {
     const body = document.createElement('div');
     body.className = 'inbox-body';
@@ -146,7 +146,14 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     msg.className = 'inbox-body';
     msg.textContent = req.message == null ? '' : String(req.message);
     el.appendChild(msg);
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
     el.addEventListener('click', () => revealRequest(req, wsLabel));
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      revealRequest(req, wsLabel);
+    });
     return el;
   }
 
@@ -166,12 +173,15 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     status.className = 'inbox-reply-status';
     status.textContent = replyStatus.get(note.id) || '';
     const sendBtn = button('inbox-reply-send', 'Send', 'Send this reply to the seat', () => send());
+    sendBtn.disabled = sending.has(note.id);
     async function send() {
       const text = ta.value;
-      if (!text.trim() || sendBtn.disabled) return;
+      if (!text.trim() || sending.has(note.id)) return;
+      sending.add(note.id);
       sendBtn.disabled = true;
       const res = await window.api.replyNotification(note.id, text)
         .catch((e) => ({ ok: false, error: String(e) }));
+      sending.delete(note.id);
       if (res && res.ok) {
         drafts.delete(note.id);
         if (openReply === note.id) openReply = null;
@@ -185,8 +195,7 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
         ? `${note.from} is no longer running — this note stays open; Done resolves it without a reply.`
         : (res && res.error) || 'The reply could not be sent.';
       replyStatus.set(note.id, why);
-      status.textContent = why;
-      sendBtn.disabled = false;
+      await renderList();
     }
     ta.addEventListener('input', () => {
       drafts.set(note.id, ta.value);
