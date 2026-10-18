@@ -16642,7 +16642,7 @@ test('plugin verb: live on the BASH PTY feed too — but with no body (documente
 // wrapped class goes only to create(); the returned `Transport` stays the real
 // one, so tests keep building genuine victim servers with it.
 function mkAgentCreateProbe(opts = {}) {
-  const REGISTRY_DIR = mkTmpRoot('clodex-t57-');
+  const REGISTRY_DIR = mkTmpRoot('t57-');
   const { isAlive, registry, Transport } = require('../agent-transport')
     .createAgentTransport({ REGISTRY_DIR, MAX_MSG: 65536 });
   // The REAL delivery (t747), on this probe's temp root: the codex arm calls it
@@ -16982,9 +16982,9 @@ test('create: the Docker own-pid force-clean still works when nothing is listeni
   // wraps. Without that third case this test passes with the pid check deleted
   // outright, and proves nothing about the veto.
   const cases = [
-    { name: 'docker-leftover', socketFile: true, field: true, expect: false },
-    { name: 'docker-clean', socketFile: false, field: true, expect: false },
-    { name: 'docker-nosocketfield', socketFile: false, field: false, expect: null },
+    { name: 'dk-left', socketFile: true, field: true, expect: false },
+    { name: 'dk-clean', socketFile: false, field: true, expect: false },
+    { name: 'dk-nofield', socketFile: false, field: false, expect: null },
   ];
   for (const c of cases) {
     const verdicts = [];
@@ -16999,6 +16999,8 @@ test('create: the Docker own-pid force-clean still works when nothing is listeni
     });
     const { m, REGISTRY_DIR, agentCreate, closeAll } = probe;
     const sock = pathForReal(REGISTRY_DIR, c.name, 'socket');
+    assert.ok(Buffer.byteLength(sock) <= 100,
+      `ENTER: ${sock} is ${Buffer.byteLength(sock)} bytes; macOS caps a Unix socket path at 104, so the bind fails EINVAL before any branch under test runs`);
     fsReal.mkdirSync(runDirForReal(REGISTRY_DIR, c.name), { recursive: true });
     if (c.socketFile) fsReal.writeFileSync(sock, '');
     fsReal.writeFileSync(pathForReal(REGISTRY_DIR, c.name, 'registry'),

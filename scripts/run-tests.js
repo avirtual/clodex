@@ -247,7 +247,9 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(sig, () => { releaseLock(); process.exit(130); });
 }
 
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-test-'));
+const suiteTmp = path.join(os.tmpdir(), 'clodex-suite');
+fs.mkdirSync(suiteTmp, { recursive: true });
+const tmpDir = fs.mkdtempSync(path.join(suiteTmp, 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
 // Unconditional, because the refusal paths between here and the analysis below
 // exit through die() -> process.exit and would otherwise each leak this dir: a
