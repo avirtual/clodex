@@ -4920,7 +4920,7 @@ function createSessionManager(deps) {
       this._sendToSession(session.name, 'session-attention', session.name, attn);
       const workspaceId = session.workspaceId || null;
       this._broadcast('attention:changed', { name: session.name, workspaceId, attn });
-      if (getRemoteServer()) { try { getRemoteServer().notifyAttention(session.name, workspaceId, attn); } catch {} }
+      try { const remote = getRemoteServer && getRemoteServer(); if (remote) remote.notifyAttention(session.name, workspaceId, attn); } catch {}
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       if (!attn) this._maybeFlushInjectQueue(session);
     }
