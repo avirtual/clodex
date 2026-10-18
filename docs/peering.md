@@ -125,9 +125,20 @@ OTHER relay-enabled peers; see messaging.md §4a) and the operator inbox —
 (idempotent, 404 unknown), `POST /api/inbox/read-all` (`marked`),
 `POST /api/inbox/remove/:id` (404 unknown) — all five under the `inbox` cap,
 which is present only when the notifications store is injected.
+Under the `requests` cap (present only when the store, `openRequests` and
+`replyNote` are all wired) the inbox gains three additive pieces: `GET
+/api/inbox` adds `requests` (open permission dialogs `{name, workspaceId, ts,
+message, pending}`, oldest first), `open`, `at` and `blindSeats`, and each note
+gains `kind` (`'shout'|'other'`) and `replyable`; `GET /api/inbox/unread` adds
+`open`; `POST /api/inbox/reply/:id` body `{text, client?}` answers a shout via
+`manager.replyToNote` with the same client-tag spoof check as the dm route —
+200 `{ok, id, repliedAt}`, 400 `empty`/`too-long`/`not-replyable`, 404
+`unknown`, 409 `gone`/`unavailable`/`delivery`. A named `attention` SSE event
+`{name, workspaceId, kind, ts}` fires on every dialog set and clear (`kind`
+and `ts` null on clear); it is a trigger to re-read `/api/inbox/unread`.
 
 Inbox changes push an `inbox` SSE event on `/api/events`:
-`{kind:'added'|'read'|'read-all'|'removed', id?, unread, note?}` (`added`
+`{kind:'added'|'read'|'read-all'|'removed'|'replied', id?, unread, note?}` (`added`
 carries the full note). It is emitted from the STORE's `onChange`, not from the
 routes, so a desktop-side mark-read moves the phone's badge and vice versa.
 A peer entry marked `inbox: 'claim'` (set by the sandbox on its OWN box, and on

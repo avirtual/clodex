@@ -120,7 +120,7 @@
 - `handle:update:check`, `handle:update:info` and `handle:update:releases` are desktop-only in effect: web-host stubs checkForUpdate and answers null for the caches.
 - `handle:tools:check` swallows a probe failure into an empty result, so an empty list does not prove no tools are installed.
 
-## Libraries: templates, prompts, agents, skills, exec defs, notifications — handle:templates:list … handle:notifications:unreadCount
+## Libraries: templates, prompts, agents, skills, exec defs, notifications — handle:templates:list … handle:session:reveal
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
@@ -154,6 +154,10 @@
 | `handle:notifications:markAllRead` | marks every inbox note read | notifications store | notifications.markAllRead | unpinned |
 | `handle:notifications:remove` | deletes an inbox note | notifications store | notifications.remove | unpinned |
 | `handle:notifications:unreadCount` | the unread inbox count | notifications store (read) | notifications.unreadCount | unpinned |
+| `handle:notifications:reply` | answers a shout note; tagged `(via web)` off the desktop, with no workspace guard | notifications store | manager.replyToNote | requests-ipc-boundary.test.js |
+| `handle:requests:snapshot` | the open-requests list, scoped to the sender's workspace off the desktop | open-requests (read) | openRequests.snapshot, requestScope | requests-ipc-boundary.test.js |
+| `handle:requests:count` | the open-requests badge count, scoped like the snapshot | open-requests (read) | openRequests.count, requestScope | requests-ipc-boundary.test.js |
+| `handle:session:reveal` | focuses the window owning a seat | windows | revealSession | unpinned |
 
 ### Invariants
 - `handle:exec:save` is operator-only by construction: no intent verb writes exec defs, so an agent cannot register or grant itself a command.
