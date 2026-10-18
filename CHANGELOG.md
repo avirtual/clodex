@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A `[agent:task done]` report no longer needs a closing `[agent:end]`: the body runs to the end of the turn, since nothing follows a done by rule. A turn cut mid-report still refuses to close the ticket, so a partial report never lands.
+
 ## 5.131.3 — 2026-10-18 — nag skips negated and self-describing claims; own-scope CHANGELOG ratchet
 
 - Ticket-claim nag no longer fires on a negated claim ('no ticket filed') or on a sentence describing the nag itself.

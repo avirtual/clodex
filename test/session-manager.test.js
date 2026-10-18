@@ -13718,6 +13718,17 @@ test('bodyOpen: a body closed by [agent:end] or a following intent carries no ke
   assert.ok(!('bodyOpen' in two[1]), 'and a bodiless intent has no body to leave open');
 });
 
+test('bodyRanToTurnEnd: a task done body runs to the end of the text; a dm body stays open', () => {
+  const m = mkExtract();
+  const [done] = m._extractIntents('[agent:task done t1] line one\nline two');
+  assert.strictEqual(done.body, 'line one\nline two');
+  assert.ok(!('bodyOpen' in done));
+  assert.strictEqual(done.bodyRanToTurnEnd, true);
+  const [dm] = m._extractIntents('[agent:dm bob] a\nb');
+  assert.strictEqual(dm.bodyOpen, true);
+  assert.ok(!('bodyRanToTurnEnd' in dm));
+});
+
 test('bodyOpen: a bodiless intent never carries the key', () => {
   const m = mkExtract();
   const [who] = m._extractIntents('[agent:who]');
@@ -13789,6 +13800,24 @@ test('interrupt guard: the note names the sub-verb, so the seat knows what to re
   m._scanJsonlText('[agent:team prompt-save append x] body', 'seat', [], { interrupted: true });
   assert.deepStrictEqual(handled, [], 'the incident shape: this is the save that must not happen');
   assert.match(injected[0].text, /\[agent:team prompt-save\]/);
+});
+
+test('interrupt guard: an unclosed task done is applied whole with no open-body note', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:task done t1] a\nb', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(handled.map((h) => [h.intent.type, h.intent.sub, h.intent.body]), [['task', 'done', 'a\nb']]);
+  assert.deepStrictEqual(injected.filter((x) => /\[agent:intent\]/.test(x.text)), []);
+  const dm = mkScan();
+  dm.m._scanJsonlText('[agent:dm bob] a\nb', 'seat', [], { interrupted: false });
+  assert.strictEqual(dm.injected.filter((x) => /\[agent:intent\]/.test(x.text)).length, 1);
+});
+
+test('interrupt guard: an interrupted task done is refused, not dispatched', () => {
+  const { m, handled, injected } = mkScan();
+  m._scanJsonlText('[agent:task done t1] a\nb', 'seat', [], { interrupted: true });
+  assert.deepStrictEqual(handled, []);
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0].text, /interrupted while the body of \[agent:task done\] was still open/);
 });
 
 test('interrupt guard: a flush with no meta at all is untouched', () => {

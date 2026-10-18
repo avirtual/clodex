@@ -336,7 +336,7 @@ function spillOf(text) {
 }
 
 function intentSegment(intent, closed) {
-  const { type, sub, body, bodyOpen, spill: _spill, ...fields } = intent;
+  const { type, sub, body, bodyOpen, bodyRanToTurnEnd: _ranToEnd, spill: _spill, ...fields } = intent;
   const head = headOf(intent, pluginRowFor(type));
   const filed = pointerMatch(typeof body === 'string' ? body.trim() : body);
   return {

@@ -408,6 +408,10 @@ const CORE_ROWS = [
   source: 'core',
 }));
 
+function bodyRunsToTurnEnd(intent) {
+  return !!intent && intent.type === 'task' && intent.sub === 'done';
+}
+
 const CORE_TYPES = new Set(CORE_ROWS.map((r) => r.type));
 
 // Verbs a plugin may never claim. The core set, plus the three the scanner
@@ -775,6 +779,7 @@ module.exports = {
   visiblePluginRows,
   parseWithRegistry,
   bodyModeFor,
+  bodyRunsToTurnEnd,
   intentEnabledFor,
   intentEnabledForSeat,
   subagentAllows,

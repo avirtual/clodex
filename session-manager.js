@@ -5283,7 +5283,7 @@ function createSessionManager(deps) {
       }
       const intents = this._extractIntents(text, { receiptsFor: senderName });
       for (const intent of intents) {
-        if (meta && meta.interrupted && intent.bodyOpen) {
+        if (meta && meta.interrupted && (intent.bodyOpen || intent.bodyRanToTurnEnd)) {
           if (s) this.recordMisfire(s, 'unclosed-body', intent, 'turn interrupted with the body still open; not applied');
           if (s) this._injectText(s, `[agent:intent] your turn was interrupted while the body of `
             + `[agent:${intent.type}${intent.sub ? ' ' + intent.sub : ''}] was still open — `
