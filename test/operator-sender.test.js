@@ -9,6 +9,7 @@ const { createRemoteWiring } = require('../remote-wiring');
 const { mkPark } = require('./lib/session-fixtures');
 
 const NO_REPLY = '(no reply path)';
+const OPEN_REQUESTS = { summary() {}, count() {} };
 
 function wireDoors({ seatIntents = undefined } = {}) {
   const { m, injected } = mkPark({
@@ -60,6 +61,7 @@ function wireDoors({ seatIntents = undefined } = {}) {
     getUiSettings: () => ({ get: () => ({ remoteEnabled: true, remotePort: 0 }) }),
     getWorkspaces: () => ({ get: () => ({}) }),
     getNotifications: () => null,
+    openRequests: OPEN_REQUESTS,
     getRemoteServer: () => srv,
     setRemoteServer: (v) => { srv = v; },
     setRemoteError: () => {},
@@ -86,7 +88,7 @@ function wireDoors({ seatIntents = undefined } = {}) {
   }
 
   m.sessions.set('seat', { name: 'seat', agentType: 'claude', activityState: 'idle', activityTs: Date.now() });
-  return { m, injected, send: opts.send, deliverDm: opts.deliverDm };
+  return { m, injected, send: opts.send, deliverDm: opts.deliverDm, replyNote: opts.replyNote, openRequests: opts.openRequests };
 }
 
 test('t886: the operator door (POST /api/sessions/:name/dm) delivers the canonical [agent:from user] shape', () => {
@@ -162,4 +164,21 @@ test('t1457: a client tag rides right after the operator marker, inline and on t
   assert.ok(injected.at(-1).startsWith('[agent:from user] (via ios) Message ('), injected.at(-1));
   send('seat', 'ship it');
   assert.strictEqual(injected.at(-1), '[agent:from user] ship it');
+});
+
+test('the phone reply door hands openRequests through and tags replyToNote with the send door\'s spoof check', () => {
+  const { m, replyNote, openRequests } = wireDoors();
+  assert.strictEqual(openRequests, OPEN_REQUESTS);
+  const calls = [];
+  m.replyToNote = (...a) => { calls.push(a); return { ok: true }; };
+  assert.deepStrictEqual(replyNote('n1', 'yes', 'phone'), { ok: true });
+  replyNote('n2', 'no', 'seat');
+  replyNote('n3', 'eh', 'team');
+  replyNote('n4', 'ok');
+  assert.deepStrictEqual(calls, [
+    ['n1', 'yes', '(via phone)'],
+    ['n2', 'no', ''],
+    ['n3', 'eh', ''],
+    ['n4', 'ok', ''],
+  ]);
 });

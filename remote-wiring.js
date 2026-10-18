@@ -127,7 +127,7 @@ function createRemoteWiring(deps) {
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary, getHelpCorpus,
-    getPersistence, getUiSettings, getWorkspaces, getNotifications,
+    getPersistence, getUiSettings, getWorkspaces, getNotifications, openRequests,
     getReminders, getAccounts,
     getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
@@ -142,6 +142,13 @@ function createRemoteWiring(deps) {
     thumbnail,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
+
+  function clientTag(client) {
+    if (!client) return '';
+    const spoof = [...manager.sessions.keys()].some((k) => k.toLowerCase() === client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client);
+    if (spoof) { log.info('remote', `dm client tag refused: ${client}`); return ''; }
+    return `(via ${client})`;
+  }
 
   let inboxWatched = false;
   function watchInbox() {
@@ -461,6 +468,8 @@ function createRemoteWiring(deps) {
         insecure: remoteInsecure,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
         notifications: (getNotifications && getNotifications()) || null,
+        openRequests: openRequests || null,
+        replyNote: (id, text, client = null) => manager.replyToNote(id, text, clientTag(client)),
         // Agents AND bash: bash sessions are IPC-private (no registry/socket/who)
         // but ARE exposed on the peer surface for visibility/attach/control. The
         // wire payload carries sess.type so the viewer buckets bash like a local
@@ -493,9 +502,7 @@ function createRemoteWiring(deps) {
             return { ok: false, code: 409, error: `"${name}" is a ${sess.type || 'non-agent'} session — only agent sessions receive dms${sess.type === 'bash' ? ` (run a command in it with: exec ${name} <command>)` : ''}` };
           }
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
-          const spoof = client && ([...manager.sessions.keys()].some((k) => k.toLowerCase() === client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client));
-          if (spoof) log.info('remote', `dm client tag refused: ${client}`);
-          const tag = client && !spoof ? `(via ${client})` : '';
+          const tag = clientTag(client);
           try {
             if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, null, null, images);
             else manager._deliverMessage(name, 'user', text, 'dm', ...(tag ? [tag] : []));
