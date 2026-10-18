@@ -13803,13 +13803,15 @@ test('interrupt guard: the note names the sub-verb, so the seat knows what to re
 });
 
 test('interrupt guard: an unclosed task done is applied whole with no open-body note', () => {
-  const { m, handled, injected } = mkScan();
+  const { m, injected } = mkOpenBody();
+  const tasks = [];
+  m._handleTask = (s, intent) => tasks.push([intent.sub, intent.body]);
   m._scanJsonlText('[agent:task done t1] a\nb', 'seat', [], { interrupted: false });
-  assert.deepStrictEqual(handled.map((h) => [h.intent.type, h.intent.sub, h.intent.body]), [['task', 'done', 'a\nb']]);
-  assert.deepStrictEqual(injected.filter((x) => /\[agent:intent\]/.test(x.text)), []);
-  const dm = mkScan();
-  dm.m._scanJsonlText('[agent:dm bob] a\nb', 'seat', [], { interrupted: false });
-  assert.strictEqual(dm.injected.filter((x) => /\[agent:intent\]/.test(x.text)).length, 1);
+  assert.deepStrictEqual(tasks, [['done', 'a\nb']]);
+  assert.deepStrictEqual(injected.filter((t) => /\[agent:intent\]/.test(t)), []);
+  m._scanJsonlText('[agent:task add bob] a\nb', 'seat', [], { interrupted: false });
+  assert.deepStrictEqual(tasks, [['done', 'a\nb'], ['add', 'a']]);
+  assert.strictEqual(injected.filter((t) => /\[agent:intent\]/.test(t)).length, 1);
 });
 
 test('interrupt guard: an interrupted task done is refused, not dispatched', () => {
