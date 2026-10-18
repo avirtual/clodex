@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — nag skips negated and self-describing claims; own-scope CHANGELOG ratchet
+## Unreleased
+
+## 5.131.3 — 2026-10-18 — nag skips negated and self-describing claims; own-scope CHANGELOG ratchet
 
 - Ticket-claim nag no longer fires on a negated claim ('no ticket filed') or on a sentence describing the nag itself.
 - A hand's own-scope test digest runs the CHANGELOG section ratchet, so a bullet under the wrong release heading is caught before review.
