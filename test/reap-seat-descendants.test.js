@@ -104,6 +104,22 @@ process.kill = (pid, sig) => {
   return true;
 };
 
+const backstops = [];
+
+async function killFenced(m, name) {
+  const realSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, ms, ...args) => {
+    const t = realSetTimeout(fn, ms, ...args);
+    if (ms === 5000) backstops.push(t);
+    return t;
+  };
+  try { return await m.kill(name); } finally { global.setTimeout = realSetTimeout; }
+}
+
+function clearBackstops() {
+  for (const t of backstops.splice(0)) clearTimeout(t);
+}
+
 // `alive` and `reapFixture` must reach the real OS: they only ever ask about, or
 // clean up, pids this file spawned.
 function alive(pid) {
@@ -285,9 +301,10 @@ for (const tree of FOREIGN_TREES) {
     };
     try {
       seat(m, 'dummy', tree.ptyPid);
-      await m.kill('dummy');
+      await killFenced(m, 'dummy');
     } finally {
       childProcess.execFile = realExecFile;
+      clearBackstops();
     }
 
     // The pty pid itself is excluded, not overlooked: `pty.kill()` and its
@@ -321,9 +338,10 @@ test('ENTER: the same shape, owned, really does reap — so the refusal above is
   };
   try {
     seat(m, 'owned', 4242);
-    await m.kill('owned');
+    await killFenced(m, 'owned');
   } finally {
     childProcess.execFile = realExecFile;
+    clearBackstops();
   }
 
   assert.deepStrictEqual(signalled.filter((c) => c.pid !== 4242).map((c) => c.pid).sort((a, b) => a - b), [500, 502],
@@ -359,9 +377,10 @@ for (const bad of BROADCAST_PIDS) {
     };
     try {
       seat(m, 'z', 4242);
-      await m.kill('z');
+      await killFenced(m, 'z');
     } finally {
       childProcess.execFile = realExecFile;
+      clearBackstops();
     }
 
     assert.deepStrictEqual(signalled.filter((c) => !(c.pid > 0)), [],
