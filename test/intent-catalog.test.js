@@ -10,10 +10,10 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 16 gateable types in grammar order (privileged last), name excluded', () => {
+test('catalog: the 15 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'sub', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create', 'ctl'],
+    ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create', 'ctl'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -32,7 +32,22 @@ test('catalog: the 16 gateable types in grammar order (privileged last), name ex
   for (const i of GATEABLE_INTENTS) assert.ok(i.label && typeof i.label === 'string');
   // GATEABLE_TYPES is the type set of the ordered list.
   assert.strictEqual(GATEABLE_TYPES.size, GATEABLE_INTENTS.length);
-  assert.strictEqual(intentEnabled('sub', ['dm']), false);
+});
+
+test('t1865 sub is ungateable: on under any list, absent from the catalog', () => {
+  assert.strictEqual(GATEABLE_TYPES.has('sub'), false);
+  assert.strictEqual(intentEnabled('sub', ['dm']), true);
+  assert.strictEqual(intentEnabled('sub', []), true);
+});
+
+test('t1865 a frozen list carrying a stale sub counts and serializes as if sub were absent', () => {
+  const { catalogRows } = require('../intent-registry');
+  const rows = catalogRows([]);
+  assert.ok(rows.some((r) => r.type === 'dm'), 'ENTER: the dm row survived');
+  assert.strictEqual(rows.some((r) => r.type === 'sub'), false);
+  assert.strictEqual(deniedIntentCount(['dm', 'sub']), 10);
+  assert.strictEqual(deniedIntentCount(['dm']), 10);
+  assert.deepStrictEqual(intentsAllowlistFromChecked(['dm', 'sub']), ['dm']);
 });
 
 test('intentEnabled: absent list → ordinary intents enabled, PRIVILEGED off (Task 27)', () => {

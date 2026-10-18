@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The `sub` intent (message your own subagents) is always on and no longer a checkbox: templates saved before it existed had it silently denied.
+
 ## 5.131.1 — 2026-10-17 — exec reply classes, nag clause split, @head snapshot
 
 - Exec tool replies: schema-vetting failures classify as refused and the ctl in-process `run failed` as an error, so the MCP exec loop and the misfire ledger see them.
