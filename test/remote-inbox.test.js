@@ -305,7 +305,6 @@ test('with no store injected every /api/inbox route answers 501', async () => {
   });
 });
 
-// ── open requests (t1883): additive fields, reply, attention ────────────────
 
 const PERMISSION_SEAT = {
   name: 'builder', workspaceId: 'ws-1', io: 'stream', agentType: 'claude', pending: 2,
