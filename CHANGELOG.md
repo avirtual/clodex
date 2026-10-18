@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Ticket-claim nag no longer fires on a negated claim ('no ticket filed') or on a sentence describing the nag itself.
+- A hand's own-scope test digest runs the CHANGELOG section ratchet, so a bullet under the wrong release heading is caught before review.
 
 ## 5.131.2 — 2026-10-18 — the sub intent is always on
 

@@ -173,6 +173,7 @@ function resolveMeasure(payload) {
 
 const OWN_SCANNERS = [
   'test/architecture-map-complete.test.js',
+  'test/changelog-section-ratchet.test.js',
   'test/comment-ratchet.test.js',
   'test/create-mint-census.test.js',
   'test/electron-boundary.test.js',
