@@ -502,7 +502,7 @@ function createAppMenus(deps) {
         },
         { type: 'separator' },
         {
-          label: 'Inbox…',
+          label: 'Requests…',
           click: () => sendToFocused('request-open-inbox-drawer'),
         },
       ],

@@ -450,10 +450,10 @@ test('t680: Library replaces Agents and Skills at their position, with one subme
   const iEdit = labels.indexOf('Edit');
   assert.ok(iFile >= 0 && iLibrary === iFile + 1 && iEdit === iLibrary + 1, `File → Library → Edit, got ${labels}`);
   assert.deepStrictEqual(shape(template[iLibrary].submenu),
-    ['Prompts ▸', 'Templates ▸', 'Agents ▸', 'Skills ▸', 'Exec Commands ▸', '—', 'Inbox…']);
+    ['Prompts ▸', 'Templates ▸', 'Agents ▸', 'Skills ▸', 'Exec Commands ▸', '—', 'Requests…']);
 
   const win = template.find((m) => m.label === 'Window').submenu.map((i) => i.label).filter(Boolean);
-  for (const gone of ['Prompts…', 'Templates…', 'Exec Commands…', 'Inbox…']) {
+  for (const gone of ['Prompts…', 'Templates…', 'Exec Commands…', 'Requests…']) {
     assert.ok(!win.includes(gone), `${gone} left Window for Library, got ${win}`);
   }
   const view = template.find((m) => m.label === 'View').submenu;
@@ -514,7 +514,7 @@ test('t680: a plugin entry click sends the drawer channel with {plugin, name}; l
   item('Exec Commands', 'cmd-one').click();
   item('Skills', 'New Skill…').click();
   item('Skills', 'Manage Skills…').click();
-  lib.find((i) => i.label === 'Inbox…').click();
+  lib.find((i) => i.label === 'Requests…').click();
   assert.deepStrictEqual(sent, [
     ['request-open-prompts-drawer', { plugin: 'rev', kind: 'append', name: 'rules' }],
     ['request-open-prompts-drawer', { kind: 'system', name: 'lib-sys' }],
