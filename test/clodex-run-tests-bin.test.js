@@ -697,6 +697,11 @@ function listFromScript(name) {
 const OWN_SCANNERS = listFromScript('OWN_SCANNERS');
 const LOCK_BOUND = listFromScript('LOCK_BOUND');
 
+test('own scope runs the CHANGELOG section ratchet', () => {
+  assert.ok(OWN_SCANNERS.includes('test/changelog-section-ratchet.test.js'),
+    'every branch edits CHANGELOG.md, so the section ratchet must run in own scope');
+});
+
 function git(root, ...args) {
   execFileSync('git', [
     '-C', root,
