@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Ticket-claim nag no longer fires on a negated claim ('no ticket filed') or on a sentence describing the nag itself.
+
 ## 5.131.2 — 2026-10-18 — the sub intent is always on
 
 - The `sub` intent (message your own subagents) is always on and no longer a checkbox: templates saved before it existed had it silently denied.

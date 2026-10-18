@@ -6,6 +6,8 @@ const { scanIntentLines } = require('./intent-segments');
 const TICKET_CLAIM_RE = /\b(?:ticket|t\d{2,5})\b[^.\n]{0,80}\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b|\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b[^.\n]{0,80}\b(?:ticket|t\d{2,5})\b/i;
 const CLAIM_WORD_RE = /\b(?:filed|dispatched|rejected|respec'?d|cancell?ed)\b/i;
 const RETROSPECTIVE_RE = /\b(already|earlier|previously|was|were|had|has been|have been|last (night|time|turn|session)|yesterday|since)\b/i;
+const NEGATION_RE = /\b(no|not|never|nothing|none|without|didn't|did not|haven't|have not|wasn't|isn't)\b/i;
+const META_RE = /\b(claims?|claiming|nag|nudge|wording|false positive)\b/i;
 const FOLLOWUPS_RE = /followups/i;
 const MINTING_WORD_RE = /^(?:filed|dispatched)$/i;
 const TICKET_ID_RE = /\bt\d{2,5}\b/i;
@@ -33,6 +35,8 @@ function liveClaimWord(prose) {
     for (const clause of sentence.split(';')) {
       const claim = TICKET_CLAIM_RE.exec(clause);
       if (!claim) continue;
+      if (NEGATION_RE.test(clause.slice(0, claim.index + claim[0].length))) continue;
+      if (META_RE.test(clause)) continue;
       if (RETROSPECTIVE_RE.test(clause) || FOLLOWUPS_RE.test(clause)) continue;
       const word = CLAIM_WORD_RE.exec(claim[0])[0].toLowerCase();
       if (MINTING_WORD_RE.test(word) && TICKET_ID_RE.test(sentence)) continue;
@@ -75,4 +79,4 @@ function stepTicketClaims({ verbSeen = false, claimWord = null } = {}, { text, i
   return { state: { verbSeen: false, claimWord: null }, nudges };
 }
 
-module.exports = { TICKET_CLAIM_RE, RETROSPECTIVE_RE, FOLLOWUPS_RE, MINTING_WORD_RE, TICKET_ID_RE, isFilingVerb, stepTicketClaims };
+module.exports = { TICKET_CLAIM_RE, RETROSPECTIVE_RE, NEGATION_RE, META_RE, FOLLOWUPS_RE, MINTING_WORD_RE, TICKET_ID_RE, isFilingVerb, stepTicketClaims };
