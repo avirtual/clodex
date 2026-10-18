@@ -13683,11 +13683,11 @@ test('[agent:end]: closes a scratch end summary; begin and cancel capture no bod
 });
 
 // The contrast that makes the terminator worth documenting on the line at all.
-test('[agent:end]: without it a task report applies only the head line; the trailing prose is not the body', () => {
+test('[agent:end]: without it a task spec applies only the head line; the trailing prose is not the body', () => {
   const m = mkExtract();
-  const out = m._extractIntents('[agent:task done t42] the report\nNow I talk to my operator.');
+  const out = m._extractIntents('[agent:task add bob] the spec\nNow I talk to my operator.');
   assert.strictEqual(out.length, 1);
-  assert.strictEqual(out[0].body, 'the report');
+  assert.strictEqual(out[0].body, 'the spec');
   assert.strictEqual(out[0].bodyOpen, true);
 });
 
