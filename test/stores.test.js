@@ -1643,6 +1643,68 @@ test('seed reconcile: a stranded file is REPORTED, naming the file', () => {
   });
 });
 
+function seedUnwritableRun(writableResult) {
+  let out;
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('exec', 'clodex-ctl-admin.json');
+    fs.mkdirSync(path.join(resourcesDir, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'HOST_OPERATOR_EDIT');
+    const log = captureLog();
+    const probed = [];
+    const seedWritable = (dest) => { probed.push(dest); return writableResult; };
+    const stores = initStores(userData, { log, registryDir, resourcesDir, seedWritable });
+    const reportPath = path.join(registryDir, 'library', '.seed-report.json');
+    out = {
+      rel, probed, dest: path.join(registryDir, 'library', rel),
+      warnings: log.seedWarnings(),
+      notes: stores.notifications.list().filter((n) => n.from === 'Clodex library'),
+      report: fs.existsSync(reportPath) ? readSeedReport(registryDir) : {},
+      state: fs.existsSync(seedStatePath(registryDir)) ? readSeedState(registryDir) : {},
+      destBytes: fs.readFileSync(path.join(registryDir, 'library', rel), 'utf-8'),
+    };
+  });
+  return out;
+}
+
+test('seed reconcile: a destination the seeder cannot write is not stranded', () => {
+  const enter = seedUnwritableRun(true);
+  assert.strictEqual(enter.warnings.length, 1, 'ENTER: writable, the same fixture is stranded');
+  assert.strictEqual(enter.notes.length, 1, 'ENTER: and posts the inbox note');
+  assert.ok(enter.rel in enter.report, 'ENTER: and records a report row');
+
+  const ro = seedUnwritableRun(false);
+  assert.deepStrictEqual(ro.probed, [ro.dest], 'the probe was asked about the destination');
+  assert.deepStrictEqual(ro.warnings, [], 'no stranded warning');
+  assert.deepStrictEqual(ro.notes, [], 'no inbox note');
+  assert.strictEqual(ro.rel in ro.report, false, 'no report row');
+  assert.strictEqual(ro.rel in ro.state, false, 'state is left for a writable mount to reconcile');
+  assert.strictEqual(ro.destBytes, 'HOST_OPERATOR_EDIT', 'the file is untouched');
+});
+
+test('seed reconcile: the default writability probe is false when fs.accessSync throws', (t) => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const rel = path.join('exec', 'clodex-ctl-read.json');
+    fs.mkdirSync(path.join(resourcesDir, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, rel), 'SHIPPED_V2');
+    stageDest(registryDir, rel, 'HOST_OPERATOR_EDIT', 'SHIPPED_V1');
+    const dest = path.join(registryDir, 'library', rel);
+    const realAccess = fs.accessSync;
+    t.mock.method(fs, 'accessSync', (p, mode) => {
+      if (p === dest) { const e = new Error('read-only file system'); e.code = 'EROFS'; throw e; }
+      return realAccess(p, mode);
+    });
+    const log = captureLog();
+
+    initStores(userData, { log, registryDir, resourcesDir });
+
+    const infos = log.calls.filter((c) => c.level === 'info' && c.chan === 'seed' && c.msg.includes(dest));
+    assert.strictEqual(infos.length, 1, 'one info line names the unwritable path');
+    assert.match(infos[0].msg, /EROFS/, 'and its errno');
+    assert.deepStrictEqual(log.seedWarnings(), [], 'not reported as stranded');
+  });
+});
+
 test('seed reconcile: an operator edit is NOT reported while the ship has not moved', () => {
   withSeedDirs(({ userData, registryDir, resourcesDir }) => {
     const rel = path.join('templates', 'reviewer.json');
