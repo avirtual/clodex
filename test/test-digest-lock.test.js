@@ -764,7 +764,7 @@ test('lock: npm test reclaims a lock whose holder is dead, and releases on exit'
 function runDigest({
   tap, exit, cwd, seed, holdLock, then, home: homeIn,
 }) {
-  const root = mkTmpRoot('clx-t88-');
+  const root = mkTmpRoot('d-');
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
   fs.mkdirSync(path.join(root, 'bin'));
@@ -1224,7 +1224,7 @@ test('keep: the dump lands outside the measured tree, even when that is a worktr
   // Not in the user's repo: the measured tree may be a worktree that gets
   // REMOVED (with the evidence in it), and their checkout is not ours to dirty.
   const { base, root, wt } = mkRepo();
-  const home = path.join(base, 'home');
+  const home = path.join(base, 'h');
   const env = { ...stubNode(base, { tap: RICH_FAIL_TAP, exit: 1 }), CLODEX_HOME: home };
   try {
     const r = runWithPayload(root, JSON.stringify({ tree: wt }), env);
@@ -1500,7 +1500,7 @@ test('digest: a digest path cannot be added without the tree marker', () => {
 // authorization is `git worktree list` — a fake directory tree would let a test
 // pass against an allowlist that never ran.
 function mkRepo() {
-  const base = fs.realpathSync(mkTmpRoot('clx-t358-'));
+  const base = fs.realpathSync(mkTmpRoot('w-'));
   const root = path.join(base, 'root');
   fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
   fs.copyFileSync(SCRIPT, path.join(root, 'scripts', 'test-digest.sh'));
@@ -1510,7 +1510,7 @@ function mkRepo() {
   git('config', 'user.name', 't');
   git('add', '-A');
   git('commit', '-qm', 'x');
-  const wt = path.join(base, 'wt-branch');
+  const wt = path.join(base, 'wt');
   git('worktree', 'add', '-q', '-b', 'feature', wt);
   return { base, root, wt };
 }
