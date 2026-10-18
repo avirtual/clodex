@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — the sub intent is always on
+## Unreleased
+
+## 5.131.2 — 2026-10-18 — the sub intent is always on
 
 - The `sub` intent (message your own subagents) is always on and no longer a checkbox: templates saved before it existed had it silently denied.
 
