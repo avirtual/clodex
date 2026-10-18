@@ -773,6 +773,32 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task list]')), 'none');
 });
 
+test('bodyRunsToTurnEnd: only task done runs its body to the end of the turn', () => {
+  assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:task done t1] report')), true);
+  assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:task add bob] spec')), false);
+  assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:task reject t1] why')), false);
+  assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:dm bob] hi')), false);
+  assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:review-done] verdict')), false);
+});
+
+test('scanIntentLines: a task done body runs to the end of the text as a closed segment', () => {
+  const { scanIntentLines } = require('../intent-segments');
+  const rows = [
+    ['[agent:task done t1] a\nb\n', { from: 0, to: 3, closed: true, body: 'a\nb', tail: undefined, ran: true }],
+    ['[agent:task add bob] a\nb', { from: 0, to: 1, closed: false, body: 'a', tail: 1, ran: undefined }],
+    ['[agent:dm bob] a\nb', { from: 0, to: 1, closed: false, body: 'a', tail: 1, ran: undefined }],
+  ];
+  for (const [text, want] of rows) {
+    const segs = scanIntentLines(text.split('\n'), {}).filter((sg) => sg.kind === 'intent');
+    assert.strictEqual(segs.length, 1, text);
+    const sg = segs[0];
+    assert.strictEqual('tail' in sg, want.tail !== undefined, text);
+    assert.deepStrictEqual(
+      { from: sg.from, to: sg.to, closed: sg.closed, body: sg.intent.body, tail: sg.tail, ran: sg.intent.bodyRanToTurnEnd },
+      want, text);
+  }
+});
+
 test('bodyMode for remind: list and cancel take no body, a schedule captures one', () => {
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind list]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind cancel abc]')), 'none');

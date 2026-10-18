@@ -32326,6 +32326,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         handler: null,
         source: "core"
       }));
+      function bodyRunsToTurnEnd(intent) {
+        return !!intent && intent.type === "task" && intent.sub === "done";
+      }
       var CORE_TYPES = new Set(CORE_ROWS.map((r) => r.type));
       var RESERVED_TYPES = /* @__PURE__ */ new Set([...CORE_TYPES, "end", "escape", "unknown"]);
       var PLUGIN_VERB_RE = /^[a-z0-9][a-z0-9._-]{0,31}$/;
@@ -32641,6 +32644,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         visiblePluginRows,
         parseWithRegistry,
         bodyModeFor,
+        bodyRunsToTurnEnd,
         intentEnabledFor,
         intentEnabledForSeat,
         subagentAllows,

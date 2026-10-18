@@ -143,7 +143,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
   remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;
-  review-done, scratch end, probe end and context clear/compact/reload are refused outright (an open head with nothing after it still applies).
+  review-done, scratch end, probe end and context clear/compact/reload are refused outright (an open head with nothing after it still applies). A `task done` body runs to the end of the turn without `[agent:end]` (`bodyRunsToTurnEnd`); an interrupted turn still refuses it.
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss

@@ -14,6 +14,7 @@ function scanIntentLines(lines, opts = {}) {
   const fencedLines = opts.fencedLines || scanner.fencedLines;
   const looksLikeIntent = opts.looksLikeIntent || scanner.looksLikeIntent;
   const bodyModeFor = opts.bodyModeFor || registry.bodyModeFor;
+  const bodyRunsToTurnEnd = opts.bodyRunsToTurnEnd || registry.bodyRunsToTurnEnd;
   const execBodyCap = opts.execBodyCap;
   const segs = [];
   let proseFrom = null;
@@ -79,6 +80,10 @@ function scanIntentLines(lines, opts = {}) {
         i++;
       }
       while (body.length && !body[body.length - 1].trim()) body.pop();
+      if (!closed && bodyRunsToTurnEnd(intent)) {
+        intent.bodyRanToTurnEnd = true;
+        closed = true;
+      }
       if (!closed) {
         intent.bodyOpen = true;
         i = headAt + 1;
