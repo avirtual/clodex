@@ -355,7 +355,7 @@ function buildLibraryMenu(ctx) {
           }),
         },
         { sep: true },
-        { label: 'Inbox…', run: () => emit('request-open-inbox-drawer') },
+        { label: 'Requests…', run: () => emit('request-open-inbox-drawer') },
       ];
     },
   };

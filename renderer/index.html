@@ -111,9 +111,9 @@
         <span class="footer-label">Files</span>
         <span class="footer-badge zero"></span>
       </button>
-      <button id="inbox-open" data-tip="Operator inbox — notes agents raised for you" type="button">
+      <button id="inbox-open" data-tip="Requests for you — open permission dialogs and notes agents raised with [agent:shout]" type="button">
         <span class="footer-glyph">&#9993;</span>
-        <span class="footer-label">Inbox</span>
+        <span class="footer-label">Requests</span>
         <span class="inbox-count zero" id="inbox-count">0</span>
       </button>
     </div>
@@ -271,17 +271,16 @@
     </div>
   </div>
 
-  <!-- Operator inbox drawer. Notes agents raised via [agent:shout] when
-       blocked on Bogdan's decision. Newest-first, read-on-click; no editor. -->
   <div id="inbox-drawer" class="hidden">
     <div id="inbox-header">
-      <span class="prompts-title">Inbox</span>
+      <span class="prompts-title">Requests for you</span>
       <button id="inbox-mark-all" title="Mark every note read" type="button">Mark All Read</button>
       <button id="inbox-close" title="Close" type="button">×</button>
     </div>
+    <div id="inbox-coverage" class="hint"></div>
     <div id="inbox-list"></div>
     <div id="inbox-empty" class="hint">
-      No notes yet. Agents raise one with <code>[agent:shout]</code> when they're blocked on a decision only you can make — it lands here and fires a notification.
+      Nothing here yet. A permission dialog open on a seat shows here, and agents raise a note with <code>[agent:shout]</code> when they're blocked on a decision only you can make.
     </div>
   </div>
 

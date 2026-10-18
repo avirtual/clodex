@@ -3603,11 +3603,97 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
   padding: 8px 10px;
   border-radius: 6px;
   margin-bottom: 4px;
-  cursor: pointer;
   border-left: 3px solid transparent;
 }
 
-.inbox-item:hover { background: var(--sidebar-hover); }
+.inbox-item.request {
+  cursor: pointer;
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.inbox-item.request:hover { background: var(--sidebar-hover); }
+
+#inbox-coverage {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.inbox-section {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.inbox-fold > summary { cursor: pointer; }
+
+.inbox-kind,
+.inbox-pending {
+  font-size: 10px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.inbox-action {
+  margin-left: 6px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.inbox-action:hover { color: var(--text); }
+
+.inbox-reply { margin-top: 6px; }
+
+.inbox-reply-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.inbox-reply-input {
+  flex: 1;
+  resize: none;
+  min-height: 24px;
+  max-height: 160px;
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.inbox-reply-send {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.inbox-reply-status,
+.inbox-reply-text {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .inbox-item.unread {
   background: var(--accent-soft);
@@ -5998,7 +6084,7 @@ body.web-frontend #sidebar-header {
   margin-bottom: 2px;
   transition: background var(--dur) var(--ease);
 }
-.inbox-item:hover { background: var(--surface-hover); }
+.inbox-item.request:hover { background: var(--surface-hover); }
 .inbox-item.unread { background: var(--accent-soft); }
 .inbox-item.unread:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .inbox-item-head { gap: var(--sp-2); margin-bottom: 2px; }

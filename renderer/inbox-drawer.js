@@ -1,44 +1,35 @@
-// inbox-drawer.js — the operator inbox: a left-side drawer listing notes agents
-// raised via [agent:shout] when blocked on Bogdan's decision, plus the
-// always-visible unread badge in the sidebar footer. Newest-first; a note is
-// marked read when its row is clicked; a "Mark all read" button clears the lot.
-//
-// FACTORY (matches ipc-log's genus, not the CRUD library drawers): live counter
-// + event-driven list, fed by the `notify` broadcast per arrival and by
-// `notifications:changed` per store mutation, from any surface including a
-// phone over /api/inbox. Still no core STATE injected — the store, unread
-// count, and workspace-name resolution are all pulled over ipc, and the "click a
-// live row to focus its session" nice-to-have stays dropped to keep it that way.
-// What is injected is two FUNCTIONS, both owned by the core because a second
-// copy would diverge from the terminal's behaviour: `openFilePeek` (the peek
-// modal is core-owned, and a path click here must land in the SAME modal a path
-// click in the terminal does) and `showToast` (a path in a note routinely fails
-// to resolve — see the path handler below — and a silent miss is the wrong
-// outcome for the same reason it is in the terminal).
-//
-// The badge shows the GLOBAL unread count (store-derived via unreadCount()), not
-// per-window traffic — every window's badge agrees. Workspace names resolve at
-// RENDER time from the live workspaces list, so a rename stays correct and a
-// since-deleted workspace falls back to a label rather than crashing the row.
-//
-// DOM-bound, so no unit tests per the R1 rule — leak-scanned like every island.
-
-const { esc, fmtAgo } = require('./lib/format');
+const { fmtAgo } = require('./lib/format');
 const { scanLinks } = require('./lib/path-scan');
+const { coverageText, hhmm } = require('../open-requests');
 
-function createInboxDrawer({ openFilePeek, showToast }) {
+const REFRESH_MS = 30000;
+
+function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
   const drawer = document.getElementById('inbox-drawer');
   const listEl = document.getElementById('inbox-list');
   const emptyEl = document.getElementById('inbox-empty');
+  const coverageEl = document.getElementById('inbox-coverage');
   const markAllBtn = document.getElementById('inbox-mark-all');
   const closeBtn = document.getElementById('inbox-close');
   const openBtn = document.getElementById('inbox-open');
   const countEl = document.getElementById('inbox-count');
   let loaded = 30;
+  let otherOpen = false;
+  let resolvedOpen = false;
+  let openReply = null;
+  let focusReply = false;
+  let renderGen = 0;
+  let tick = null;
+  const drafts = new Map();
+  const replyStatus = new Map();
+  const sending = new Set();
 
   async function refreshBadge() {
     let n = 0;
-    try { n = await window.api.notificationUnreadCount(); } catch { n = 0; }
+    try {
+      const c = await window.api.openRequestCount();
+      n = (c && Number(c.open)) || 0;
+    } catch { n = 0; }
     countEl.textContent = String(n);
     countEl.classList.toggle('zero', !n);
   }
@@ -53,11 +44,42 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     return map;
   }
 
+  function wsLabelOf(wsNames, workspaceId) {
+    if (workspaceId == null) return '';
+    return wsNames.get(workspaceId) || (workspaceId ? '(deleted workspace)' : '');
+  }
+
+  function span(className, text) {
+    const el = document.createElement('span');
+    el.className = className;
+    el.textContent = text;
+    return el;
+  }
+
+  function button(className, text, title, onClick) {
+    const b = document.createElement('button');
+    b.className = className;
+    b.type = 'button';
+    if (title) b.title = title;
+    b.textContent = text;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  function rowHead({ kind, from, wsLabel, ago }) {
+    const head = document.createElement('div');
+    head.className = 'inbox-item-head';
+    if (kind) head.appendChild(span('inbox-kind', kind));
+    head.appendChild(span('inbox-from', from));
+    if (wsLabel) head.appendChild(span('inbox-ws', wsLabel));
+    head.appendChild(span('inbox-ago', ago));
+    return head;
+  }
+
   // The note body is AGENT-AUTHORED text and this renderer runs
   // nodeIntegration:true, so an injection here is arbitrary local code. Build it
   // out of DOM nodes ONLY — never by splicing generated <a>/<button> markup into
-  // an escaped string, which is how linkifying reintroduces the hole that a
-  // single esc() currently closes. textContent is the whole defence.
+  // an escaped string. textContent is the whole defence.
   function renderBody(note) {
     const body = document.createElement('div');
     body.className = 'inbox-body';
@@ -100,76 +122,262 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     return body;
   }
 
-  async function renderList() {
-    const [page, wsNames] = await Promise.all([
-      window.api.pageNotifications({ limit: loaded }).catch(() => ({ items: [], hasMore: false })),
-      workspaceNames(),
-    ]);
-    const items = (page && page.items) || [];
-    listEl.innerHTML = '';
-    if (items.length === 0) {
-      emptyEl.style.display = '';
-      return;
-    }
-    emptyEl.style.display = 'none';
-    for (const note of items) {
-      const wsLabel = note.workspaceId == null
-        ? ''
-        : (wsNames.get(note.workspaceId) || (note.workspaceId ? '(deleted workspace)' : ''));
-      const el = document.createElement('div');
-      el.className = 'inbox-item' + (note.readAt == null ? ' unread' : '');
-      const head = document.createElement('div');
-      head.className = 'inbox-item-head';
-      head.innerHTML = `
-        <span class="inbox-from">${esc(note.from)}</span>
-        ${wsLabel ? `<span class="inbox-ws">${esc(wsLabel)}</span>` : ''}
-        <span class="inbox-ago">${esc(fmtAgo(note.createdAt))}</span>
-      `;
-      const del = document.createElement('button');
-      del.className = 'inbox-delete';
-      del.type = 'button';
-      del.title = 'Delete this note';
-      del.textContent = '×';
-      del.addEventListener('click', async (ev) => {
-        ev.stopPropagation();
-        try { await window.api.removeNotification(note.id); } catch { return; }
+  async function revealRequest(req, wsLabel) {
+    if (focusSeat(req.name)) { closeDrawer(); return; }
+    const res = await window.api.revealSession(req.name).catch((e) => ({ ok: false, error: String(e) }));
+    if (res && res.ok) { closeDrawer(); return; }
+    showToast(`${req.name} is in workspace ${wsLabel || req.workspaceId || '(unknown)'} — open it to answer the dialog`,
+      { kind: 'warn', duration: 5000 });
+  }
+
+  function renderRequest(req, wsNames) {
+    const wsLabel = wsLabelOf(wsNames, req.workspaceId);
+    const el = document.createElement('div');
+    el.className = 'inbox-item request';
+    const head = rowHead({
+      kind: 'permission',
+      from: String(req.name),
+      wsLabel,
+      ago: `since ${hhmm(req.ts)} · ${fmtAgo(req.ts)}`,
+    });
+    if (req.pending > 1) head.insertBefore(span('inbox-pending', `${req.pending} dialogs`), head.lastChild);
+    el.appendChild(head);
+    const msg = document.createElement('div');
+    msg.className = 'inbox-body';
+    msg.textContent = req.message == null ? '' : String(req.message);
+    el.appendChild(msg);
+    el.tabIndex = 0;
+    el.setAttribute('role', 'button');
+    el.addEventListener('click', () => revealRequest(req, wsLabel));
+    el.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      ev.preventDefault();
+      revealRequest(req, wsLabel);
+    });
+    return el;
+  }
+
+  function renderReplyBox(note) {
+    const box = document.createElement('div');
+    box.className = 'inbox-reply';
+    const ta = document.createElement('textarea');
+    ta.className = 'inbox-reply-input';
+    ta.rows = 1;
+    ta.placeholder = `Reply to ${note.from}`;
+    ta.value = drafts.get(note.id) || '';
+    const grow = () => {
+      ta.style.height = 'auto';
+      ta.style.height = `${ta.scrollHeight}px`;
+    };
+    const status = document.createElement('div');
+    status.className = 'inbox-reply-status';
+    status.textContent = replyStatus.get(note.id) || '';
+    const sendBtn = button('inbox-reply-send', 'Send', 'Send this reply to the seat', () => send());
+    sendBtn.disabled = sending.has(note.id);
+    async function send() {
+      const text = ta.value;
+      if (!text.trim() || sending.has(note.id)) return;
+      sending.add(note.id);
+      sendBtn.disabled = true;
+      const res = await window.api.replyNotification(note.id, text)
+        .catch((e) => ({ ok: false, error: String(e) }));
+      sending.delete(note.id);
+      if (res && res.ok) {
+        drafts.delete(note.id);
+        if (openReply === note.id) openReply = null;
+        if (res.warn) replyStatus.set(note.id, res.warn);
+        else replyStatus.delete(note.id);
         await renderList();
         await refreshBadge();
-      });
-      head.appendChild(del);
-      el.appendChild(head);
-      el.appendChild(renderBody(note));
-      // Click a row to mark it read (idempotent main-side). Repaint + rebadge so
-      // the unread styling and the footer count both settle.
-      el.addEventListener('click', async () => {
-        if (note.readAt == null) {
-          try { await window.api.markNotificationRead(note.id); } catch { /* leave unread */ }
-          await renderList();
-          await refreshBadge();
-        }
-      });
-      listEl.appendChild(el);
+        return;
+      }
+      const why = res && res.code === 'gone'
+        ? `${note.from} is no longer running — this note stays open; Done resolves it without a reply.`
+        : (res && res.error) || 'The reply could not be sent.';
+      replyStatus.set(note.id, why);
+      await renderList();
     }
-    if (page.hasMore) {
-      const more = document.createElement('button');
-      more.className = 'inbox-load-older';
-      more.textContent = 'Load older';
-      more.addEventListener('click', async () => {
-        loaded += 30;
+    ta.addEventListener('input', () => {
+      drafts.set(note.id, ta.value);
+      grow();
+    });
+    ta.addEventListener('keydown', (ev) => {
+      if (ev.isComposing) return;
+      if (ev.key === 'Enter' && !ev.shiftKey) {
+        ev.preventDefault();
+        send();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openReply = null;
+        renderList();
+      }
+    });
+    ta.addEventListener('click', (ev) => ev.stopPropagation());
+    const row = document.createElement('div');
+    row.className = 'inbox-reply-row';
+    row.appendChild(ta);
+    row.appendChild(sendBtn);
+    box.appendChild(row);
+    box.appendChild(status);
+    requestAnimationFrame(grow);
+    return { box, ta };
+  }
+
+  function renderNote(note, wsNames, focusTarget) {
+    const el = document.createElement('div');
+    el.className = 'inbox-item' + (note.readAt == null ? ' unread' : '');
+    const resolvedMeta = note.readAt == null
+      ? ''
+      : note.repliedAt ? `replied ${hhmm(note.repliedAt)}` : `read ${hhmm(note.readAt)}`;
+    const head = rowHead({
+      kind: note.kind === 'shout' ? 'shout' : '',
+      from: String(note.from),
+      wsLabel: wsLabelOf(wsNames, note.workspaceId),
+      ago: resolvedMeta ? `${fmtAgo(note.createdAt)} · ${resolvedMeta}` : fmtAgo(note.createdAt),
+    });
+    if (note.replyable) {
+      head.appendChild(button('inbox-action inbox-reply-toggle', 'Reply', `Reply to ${note.from}`, (ev) => {
+        ev.stopPropagation();
+        openReply = openReply === note.id ? null : note.id;
+        focusReply = openReply === note.id;
+        renderList();
+      }));
+    }
+    if (note.readAt == null) {
+      head.appendChild(button('inbox-action inbox-done', 'Done', 'Resolve without a reply', async (ev) => {
+        ev.stopPropagation();
+        try { await window.api.markNotificationRead(note.id); } catch { return; }
+        if (openReply === note.id) openReply = null;
         await renderList();
-      });
-      listEl.appendChild(more);
+        await refreshBadge();
+      }));
+    }
+    const del = document.createElement('button');
+    del.className = 'inbox-delete';
+    del.type = 'button';
+    del.title = 'Delete this note';
+    del.textContent = '×';
+    del.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      try { await window.api.removeNotification(note.id); } catch { return; }
+      drafts.delete(note.id);
+      if (openReply === note.id) openReply = null;
+      await renderList();
+      await refreshBadge();
+    });
+    head.appendChild(del);
+    el.appendChild(head);
+    el.appendChild(renderBody(note));
+    if (note.repliedAt && note.reply) {
+      const r = document.createElement('div');
+      r.className = 'inbox-reply-text';
+      r.textContent = note.reply;
+      el.appendChild(r);
+    }
+    if (note.replyable && openReply === note.id) {
+      const { box, ta } = renderReplyBox(note);
+      el.appendChild(box);
+      focusTarget.ta = ta;
+    } else if (replyStatus.has(note.id)) {
+      const s = document.createElement('div');
+      s.className = 'inbox-reply-status';
+      s.textContent = replyStatus.get(note.id);
+      el.appendChild(s);
+    }
+    return el;
+  }
+
+  function sectionHead(title, n) {
+    const h = document.createElement('div');
+    h.className = 'inbox-section';
+    h.textContent = `${title} (${n})`;
+    return h;
+  }
+
+  function fold(title, n, isOpen, onToggle) {
+    const d = document.createElement('details');
+    d.className = 'inbox-fold';
+    d.open = isOpen;
+    const s = document.createElement('summary');
+    s.className = 'inbox-section';
+    s.textContent = `${title} (${n})`;
+    d.appendChild(s);
+    d.addEventListener('toggle', () => onToggle(d.open));
+    return d;
+  }
+
+  async function renderList() {
+    const gen = ++renderGen;
+    const [snap, wsNames] = await Promise.all([
+      window.api.openRequests({ limit: loaded }).catch(() => null),
+      workspaceNames(),
+    ]);
+    if (gen !== renderGen) return;
+    const active = document.activeElement;
+    const refocus = focusReply || !!(active && active.classList && active.classList.contains('inbox-reply-input'));
+    focusReply = false;
+    listEl.innerHTML = '';
+    if (!snap) {
+      coverageEl.textContent = 'Could not load requests.';
+      emptyEl.style.display = 'none';
+      return;
+    }
+    coverageEl.textContent = coverageText({ open: snap.open, at: snap.at, blindSeats: snap.blindSeats });
+    const requests = Array.isArray(snap.requests) ? snap.requests : [];
+    const shouts = Array.isArray(snap.shouts) ? snap.shouts : [];
+    const other = Array.isArray(snap.other) ? snap.other : [];
+    const resolved = (snap.resolved && Array.isArray(snap.resolved.items)) ? snap.resolved.items : [];
+    const hasMore = !!(snap.resolved && snap.resolved.hasMore);
+    const ids = new Set([...shouts, ...other, ...resolved].map((n) => n.id));
+    if (openReply != null && !ids.has(openReply)) openReply = null;
+    emptyEl.style.display = (requests.length + shouts.length + other.length + resolved.length) ? 'none' : '';
+    const focusTarget = { ta: null };
+    if (requests.length) {
+      listEl.appendChild(sectionHead('Permission dialogs', requests.length));
+      for (const req of requests) listEl.appendChild(renderRequest(req, wsNames));
+    }
+    if (shouts.length) {
+      listEl.appendChild(sectionHead('Shouts', shouts.length));
+      for (const note of shouts) listEl.appendChild(renderNote(note, wsNames, focusTarget));
+    }
+    if (other.length) {
+      const d = fold('Other notes', other.length, otherOpen, (v) => { otherOpen = v; });
+      for (const note of other) d.appendChild(renderNote(note, wsNames, focusTarget));
+      listEl.appendChild(d);
+    }
+    if (resolved.length) {
+      const d = fold('Resolved', `${resolved.length}${hasMore ? '+' : ''}`, resolvedOpen, (v) => { resolvedOpen = v; });
+      for (const note of resolved) d.appendChild(renderNote(note, wsNames, focusTarget));
+      if (hasMore) {
+        d.appendChild(button('inbox-load-older', 'Load older', '', async () => {
+          loaded += 30;
+          await renderList();
+        }));
+      }
+      listEl.appendChild(d);
+    }
+    if (refocus && focusTarget.ta) {
+      const ta = focusTarget.ta;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
     }
   }
 
   function openDrawer() {
     drawer.classList.remove('hidden');
     loaded = 30;
+    otherOpen = false;
+    resolvedOpen = false;
+    clearInterval(tick);
+    tick = setInterval(refreshFromEvent, REFRESH_MS);
     renderList();
     refreshBadge();
   }
   function closeDrawer() {
     drawer.classList.add('hidden');
+    clearInterval(tick);
+    tick = null;
   }
   const isOpen = () => !drawer.classList.contains('hidden');
 
@@ -181,8 +389,6 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     await refreshBadge();
   });
 
-  // Badge always; a full refetch-repaint only when the drawer is open, so a note
-  // arriving live inserts its row rather than only bumping the count.
   function refreshFromEvent() {
     refreshBadge();
     if (isOpen()) renderList();
@@ -193,6 +399,8 @@ function createInboxDrawer({ openFilePeek, showToast }) {
     refreshFromEvent();
   });
   window.api.onNotificationsChanged(() => refreshFromEvent());
+  window.api.onAttentionChanged(() => refreshFromEvent());
+  window.addEventListener('focus', refreshBadge);
 
   window.api.onRequestOpenInboxDrawer(() => openDrawer());
 

@@ -60,7 +60,7 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
   const lib = buildMenus(ctx).find((m) => m.label === 'Library');
   const top = await Promise.resolve(lib.items());
   assert.deepStrictEqual(top.map((r) => r.label || (r.sep ? '—' : '?')),
-    ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Inbox…']);
+    ['Prompts', 'Templates', 'Agents', 'Skills', 'Exec Commands', '—', 'Requests…']);
 
   const shape = (rows) => rows.map((r) => (r.sep ? '—' : r.head ? `[${r.head}]` : r.submenu ? `${r.label} ▸` : r.label));
   const sub = async (label) => shape(await Promise.resolve(top.find((r) => r.label === label).submenu()));
@@ -91,7 +91,7 @@ test('t680: the Library menu carries one submenu per kind, library first, then e
   ], 'a plugin entry carries {plugin, name}; a library prompt carries {kind, name}');
 
   const file = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'File').items());
-  assert.deepStrictEqual(file.map((r) => r.label).filter((l) => /Prompts…|Templates…|Exec Commands…|Inbox…/.test(l || '')), [],
+  assert.deepStrictEqual(file.map((r) => r.label).filter((l) => /Prompts…|Templates…|Exec Commands…|Requests…/.test(l || '')), [],
     'the four items left File for the Library menu');
   const view = await Promise.resolve(buildMenus(ctx).find((m) => m.label === 'View').items());
   assert.ok(view.some((r) => r.label === 'Show IPC Traffic…'), 'IPC traffic moved to View with the Agents menu gone');
