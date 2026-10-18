@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { TICKET_CLAIM_RE, RETROSPECTIVE_RE, FOLLOWUPS_RE, MINTING_WORD_RE, TICKET_ID_RE } = require('../ticket-claim-nudge');
+const { TICKET_CLAIM_RE, RETROSPECTIVE_RE, NEGATION_RE, META_RE, FOLLOWUPS_RE, MINTING_WORD_RE, TICKET_ID_RE } = require('../ticket-claim-nudge');
 const { parseIntent, looksLikeIntent } = require('../intent-scanner');
 const { mk } = require('./lib/session-fixtures');
 
@@ -49,6 +49,10 @@ test('the sentence-filter regexes are pinned to their literals', () => {
   assert.strictEqual(RETROSPECTIVE_RE.source,
     '\\b(already|earlier|previously|was|were|had|has been|have been|last (night|time|turn|session)|yesterday|since)\\b');
   assert.strictEqual(RETROSPECTIVE_RE.flags, 'i');
+  assert.strictEqual(NEGATION_RE.source, "\\b(no|not|never|nothing|none|without|didn't|did not|haven't|have not|wasn't|isn't)\\b");
+  assert.strictEqual(NEGATION_RE.flags, 'i');
+  assert.strictEqual(META_RE.source, '\\b(claims?|claiming|nag|nudge|wording|false positive)\\b');
+  assert.strictEqual(META_RE.flags, 'i');
   assert.strictEqual(FOLLOWUPS_RE.source, 'followups');
   assert.strictEqual(FOLLOWUPS_RE.flags, 'i');
   assert.strictEqual(MINTING_WORD_RE.source, '^(?:filed|dispatched)$');
@@ -101,6 +105,16 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
       want: [] },
     { what: 'retrospective clause, then a live claim clause', seat: 'lead', text: 'It was slow; I filed the ticket for the parser',
       want: [WORDING_1('filed')] },
+    { what: 'negated claim', seat: 'lead', text: 'No product or PO ticket filed; both would be me finding something to do.',
+      want: [] },
+    { what: 'negation before the claim word', seat: 'lead', text: 'I have not filed the ticket yet',
+      want: [] },
+    { what: 'negation after the claim', seat: 'lead', text: 'Filed the ticket, not the other one',
+      want: [WORDING_1('filed')] },
+    { what: 'sentence describing the nag', seat: 'lead', text: 'the nag fires when prose claims a ticket is filed',
+      want: [] },
+    { what: 'regex as the ticket subject', seat: 'lead', text: 'Filed the parser ticket for the regex bug',
+      want: [WORDING_1('filed')] },
     { what: 'claim inside a task done body', seat: 'lead', text: '[agent:task done t1852] t1851 rejected upstream\n[agent:end]',
       want: [] },
   ];
@@ -120,6 +134,8 @@ test('each one-step reply row fires its wording, parkable, or stays silent', asy
   assert.ok(fired.includes('dropped claim sentence, then a live claim'));
   assert.ok(fired.includes('question sentence, then a live claim'));
   assert.ok(fired.includes('retrospective clause, then a live claim clause'));
+  assert.ok(fired.includes('negation after the claim'));
+  assert.ok(fired.includes('regex as the ticket subject'));
 });
 
 test('a verb in an earlier step of the turn silences a later claim', async () => {
