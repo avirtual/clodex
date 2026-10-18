@@ -253,6 +253,7 @@ function spillAckLine(ev, filePath) {
   return `[clodex] the ${ev.bytes} B of prose you wrote after your last intent were removed from your retained transcript to save context; they reached the operator's log and were filed at ${filePath}.`;
 }
 const { previewLine } = require('./body-preview');
+const { isReplyable, hhmm } = require('./open-requests');
 const { createMemoryLoad } = require('./memory-load');
 const { foldDraft, HOLD_MAX_MS: HINT_HOLD_MAX_MS } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
@@ -2993,6 +2994,23 @@ function createSessionManager(deps) {
       return { rev: s._streamPermRev || 0, items: s.streamPermissions ? [...s.streamPermissions.values()] : [] };
     }
 
+    listSeatAttention() {
+      const out = [];
+      for (const s of this.sessions.values()) {
+        if (!s.agentType || s._dead || s.clone) continue;
+        const a = s.needsAttention;
+        out.push({
+          name: s.name,
+          workspaceId: s.workspaceId || null,
+          agentType: s.agentType,
+          io: s.io === 'stream' ? 'stream' : 'pty',
+          attn: a ? { kind: a.kind, ts: a.ts, message: a.message } : null,
+          pending: s.streamPermissions ? s.streamPermissions.size : 0,
+        });
+      }
+      return out;
+    }
+
     _onStreamEvent(s, ev, onSessionId, onProcExit) {
       if (ev.close) {
         this._clearStreamResultHold(s);
@@ -4699,6 +4717,7 @@ function createSessionManager(deps) {
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
       if (s.agentType === 'muse') cleanupMuseSeat(name);
       if (s.agentType) cleanupSkills(s.agentType, name);
+      if (s.needsAttention) this._setAttention(s, null);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());
       try { this._intentDeduper.prune(live); this._activity.prune(live); } catch {}
@@ -4899,6 +4918,9 @@ function createSessionManager(deps) {
     _setAttention(session, attn) {
       session.needsAttention = attn;
       this._sendToSession(session.name, 'session-attention', session.name, attn);
+      const workspaceId = session.workspaceId || null;
+      this._broadcast('attention:changed', { name: session.name, workspaceId, attn });
+      try { const remote = getRemoteServer && getRemoteServer(); if (remote) remote.notifyAttention(session.name, workspaceId, attn); } catch {}
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       if (!attn) this._maybeFlushInjectQueue(session);
     }
@@ -5938,6 +5960,37 @@ function createSessionManager(deps) {
         });
         log.info('session', `fix session ${who} archived after DEPLOY OK`);
       }
+    }
+
+    replyToNote(id, text, tag = '') {
+      const store = getNotifications && getNotifications();
+      if (!store) return { ok: false, code: 'unavailable', error: 'the operator inbox is unavailable' };
+      const rec = store.list().find((n) => n && n.id === id);
+      if (!rec) return { ok: false, code: 'unknown', error: 'no such note' };
+      const reply = String(text == null ? '' : text).trim();
+      if (!reply) return { ok: false, code: 'empty', error: 'empty reply' };
+      if (Buffer.byteLength(reply, 'utf8') > SHOUT_MAX_BYTES) {
+        return { ok: false, code: 'too-long', error: `reply too long (>${Math.round(SHOUT_MAX_BYTES / 1024)}KB)` };
+      }
+      if (!isReplyable(rec.from)) return { ok: false, code: 'not-replyable', error: `${rec.from} has no local seat to answer` };
+      const s = this.sessions.get(rec.from);
+      if (!s || s._dead || !s.agentType || s.clone || (s.io === 'stream' && !s.stream)) {
+        return { ok: false, code: 'gone', error: `${rec.from} is no longer running` };
+      }
+      this._lastOperatorInputAt = Date.now();
+      const body = `${reply}\n> replying to your shout from ${hhmm(rec.createdAt)}: ${previewLine(rec.body, 120)}`;
+      try {
+        this._deliverMessage(rec.from, 'user', body, 'dm', tag);
+      } catch (e) {
+        log.error('session', `reply to ${rec.from} failed: ${(e && e.message) || e}`);
+        return { ok: false, code: 'delivery', error: `delivery failed: ${(e && e.message) || e}` };
+      }
+      let stamped = null;
+      try { stamped = store.markReplied(id, reply); } catch (e) {
+        log.warn('session', `reply to ${rec.from} delivered, note ${id} not stamped: ${(e && e.message) || e}`);
+      }
+      if (!stamped) return { ok: true, id, repliedAt: null, warn: 'delivered, but the note could not be marked resolved' };
+      return { ok: true, id, repliedAt: stamped.repliedAt };
     }
 
     recordMisfire(session, kind, intent, detail) {

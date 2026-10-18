@@ -366,6 +366,10 @@ bundle), whose packaged form is the Docker image under
 - **statusline.js** — statusline script generation + proxy-base resolution.
 - **ctx-reminder.js** — context-pressure reminders on the session's own tail.
 - **attention.js** — which sessions are asking for the operator's attention.
+- **open-requests.js** — the operator's open-requests list: open permission
+  dialogs (from `manager.listSeatAttention()`) plus unread shout notes, with a
+  coverage sentence naming what the list cannot see. One assembly that the
+  desktop drawer, the web tab and the phone all read, so the count agrees.
 
 ### Intents and messaging
 

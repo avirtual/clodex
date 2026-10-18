@@ -1758,6 +1758,11 @@ function applySessionSkills(name, disabledSkills, injectSkills) {
 }
 
 
+const { createOpenRequests } = require('./open-requests');
+const openRequests = createOpenRequests({
+  listSeatAttention: () => manager.listSeatAttention(),
+  getNotifications: () => notifications,
+});
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({
@@ -1783,6 +1788,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
   getNotifications: () => notifications,
+  openRequests,
   getReminders: () => reminders,
   getAccounts: () => accounts,
   getRemoteServer: () => remoteServer,
@@ -2292,7 +2298,7 @@ const toolCache = createToolCache({ whichBin });
   }
 
   return {
-    manager, stores, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
+    manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
     knownSkillNames,
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),

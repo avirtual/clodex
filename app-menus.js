@@ -126,6 +126,22 @@ function createAppMenus(deps) {
     else win.webContents.send(ch, ...a);
   }
 
+  function revealSession(name) {
+    const s = getManager().sessions.get(name);
+    if (!s) return { ok: false, error: `no session named ${name}` };
+    let win = getManager().windowForWorkspace(s.workspaceId);
+    const fresh = !win;
+    if (fresh) {
+      getWorkspaces().setView(s.workspaceId, { activeSession: name });
+      win = createWindow(s.workspaceId);
+    }
+    if (!win) return { ok: false, error: 'no window for that workspace' };
+    win.show();
+    win.focus();
+    sendWhenReady(win, fresh, 'request-switch-session', name);
+    return { ok: true };
+  }
+
   function buildTrayMenu() {
     const sessions = getManager().list();
     const wsList = getWorkspaces().list();
@@ -172,17 +188,7 @@ function createAppMenus(deps) {
             : s.activity === 'thinking' ? '●' : '○';
           template.push({
             label: `  ${indicator} ${s.name} (${s.type})`,
-            click: () => {
-              let win = getManager().windowForWorkspace(s.workspaceId);
-              const fresh = !win;
-              if (fresh) {
-                getWorkspaces().setView(s.workspaceId, { activeSession: s.name });
-                win = createWindow(s.workspaceId);
-              }
-              win.show();
-              win.focus();
-              sendWhenReady(win, fresh, 'request-switch-session', s.name);
-            },
+            click: () => revealSession(s.name),
           });
         }
         template.push({ type: 'separator' });
@@ -1071,7 +1077,7 @@ function createAppMenus(deps) {
   return {
     buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
     buildLibraryMenu, buildPluginsMenu, buildTeamsMenu, setUiTheme, buildAppMenu,
-    refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
+    refreshAppMenu, scheduleAppMenuRefresh, sendToFocused, revealSession,
   };
 }
 

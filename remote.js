@@ -389,6 +389,10 @@ class RemoteServer {
     this._broadcast('inbox', payload);
   }
 
+  notifyAttention(name, workspaceId, attn) {
+    this._broadcast('attention', { name, workspaceId, attn });
+  }
+
   notifySessions() {
     const live = new Set((this._getSessions() || []).map(s => s.name));
     for (const name of this._activity.keys()) {

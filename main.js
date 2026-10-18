@@ -248,7 +248,7 @@ const { createAppMenus } = require('./app-menus');
 const {
   buildTrayMenu, initTray, refreshTrayMenu, scheduleTrayRefresh,
   buildLibraryMenu, setUiTheme, buildAppMenu,
-  refreshAppMenu, scheduleAppMenuRefresh, sendToFocused,
+  refreshAppMenu, scheduleAppMenuRefresh, sendToFocused, revealSession,
 } = createAppMenus({
   DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
   checkForUpdate, confirmRestartClodex, createWindow,
@@ -658,7 +658,7 @@ app.whenReady().then(() => {
     // supplied per-transport, exactly like workspaceOfSender, so a transport
     // that supplies nothing lands in the restricted branch by default.
     surfaceOfSender: () => 'desktop',
-    refreshAppMenu, refreshTrayMenu, setUiTheme,
+    refreshAppMenu, refreshTrayMenu, setUiTheme, revealSession,
     getUpdateInfo: () => updateInfo,
     getReleasesCache: () => releasesCache,
   });

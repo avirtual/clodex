@@ -180,3 +180,37 @@ test('onChange: a throwing listener does not break the mutation or starve the ne
     assert.deepStrictEqual(seen, ['added'], 'the second listener still ran');
   } finally { cleanup(); }
 });
+
+test('markReplied: keeps an existing readAt, sets repliedAt and reply, emits {kind:replied, id, unread}', () => {
+  const read = { ...note(1), readAt: 7 };
+  const { notifications, cleanup } = freshNotifications([read, note(2)]);
+  try {
+    const events = [];
+    notifications.onChange((p) => events.push(p));
+    const rec = notifications.markReplied('n1', 'go ahead');
+    assert.strictEqual(rec.readAt, 7);
+    assert.strictEqual(typeof rec.repliedAt, 'number');
+    const stored = notifications.list().find((n) => n.id === 'n1');
+    assert.deepStrictEqual(stored, { ...read, repliedAt: rec.repliedAt, reply: 'go ahead' });
+    assert.deepStrictEqual(events, [{ kind: 'replied', id: 'n1', unread: 1 }]);
+  } finally { cleanup(); }
+});
+
+test('markReplied: stamps readAt on an unread note', () => {
+  const { notifications, cleanup } = freshNotifications([note(1)]);
+  try {
+    const rec = notifications.markReplied('n1', 'ok');
+    assert.strictEqual(rec.readAt, rec.repliedAt);
+    assert.strictEqual(notifications.unreadCount(), 0);
+  } finally { cleanup(); }
+});
+
+test('markReplied: false for an unknown id, no event', () => {
+  const { notifications, cleanup } = freshNotifications([note(1)]);
+  try {
+    const events = [];
+    notifications.onChange((p) => events.push(p));
+    assert.strictEqual(notifications.markReplied('nope', 'x'), false);
+    assert.deepStrictEqual(events, []);
+  } finally { cleanup(); }
+});

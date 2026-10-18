@@ -98,7 +98,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
-    getHelpCorpus, SELF_LABEL,
+    getHelpCorpus, SELF_LABEL, openRequests, revealSession,
   } = deps;
 
   function refreshMenusAfterWrite(channel, ...refreshers) {
@@ -723,6 +723,25 @@ function registerIpcHandlers(deps) {
   handle('notifications:markAllRead', () => notifications.markAllRead());
   handle('notifications:remove', (_e, id) => notifications.remove(id));
   handle('notifications:unreadCount', () => notifications.unreadCount());
+  handle('notifications:reply', (e, id, text) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    return manager.replyToNote(id, text, surface === 'desktop' ? '' : '(via web)');
+  });
+
+  function requestScope(e) {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface === 'desktop') return null;
+    const ws = workspaceOfSender(e);
+    return ws == null ? '' : ws;
+  }
+  handle('requests:snapshot', (e, opts) => {
+    const limit = opts && typeof opts === 'object' ? opts.limit : undefined;
+    return openRequests.snapshot({ limit, workspaceId: requestScope(e) });
+  });
+  handle('requests:count', (e) => openRequests.count({ workspaceId: requestScope(e) }));
+  handle('session:reveal', (_e, name) => (typeof revealSession === 'function'
+    ? revealSession(String(name || ''))
+    : { ok: false, error: 'not available on this surface' }));
 
   handle('prompts:inject', (_e, name, body) => {
     const s = manager.sessions.get(name);

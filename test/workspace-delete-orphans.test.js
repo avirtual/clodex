@@ -244,6 +244,7 @@ function closedWorkspaceMenu({ sessions = [] } = {}) {
   const w = unloadedWindow();
   const manager = {
     list: () => sessions,
+    sessions: new Map(sessions.map((s) => [s.name, s])),
     windowForWorkspace: () => null,
     allLiveWindows: () => [],
     savedForWorkspace: () => [],

@@ -22554,7 +22554,8 @@ test('t1180: a permission-request record holds the prompt, raises a permission a
   const got = c.h.m.seatPermissions('pm1');
   assert.strictEqual(got.rev, 1);
   assert.deepStrictEqual(got.items.map((i) => [i.id, i.toolName, i.choices.length, typeof i.ts]), [['r1', 'Bash', 2, 'number']]);
-  assert.deepStrictEqual(bcast, [['ipc-message', { type: 'attention', from: 'pm1', to: '', body: 'permission: Run command: rm -rf build' }]]);
+  assert.deepStrictEqual(bcast.map((b) => b[0]), ['attention:changed', 'ipc-message']);
+  assert.deepStrictEqual(bcast[1], ['ipc-message', { type: 'attention', from: 'pm1', to: '', body: 'permission: Run command: rm -rf build' }]);
   assert.ok(changed.includes('transcript-changed'));
   c.h.line('pm1', { rec: c.rec('r2', { preview: null }) });
   assert.strictEqual(s.needsAttention.message, 'Run command');
