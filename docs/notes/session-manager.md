@@ -118,10 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## replyToNote
-
-Deliver, then stamp. Stamping first and then failing delivery shows a note as
-resolved for a reply the seat never got; delivering first and then failing the
-stamp leaves the note open after a real delivery, which costs at most a
-duplicate reply.
