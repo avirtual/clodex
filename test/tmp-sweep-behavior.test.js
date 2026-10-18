@@ -175,3 +175,26 @@ test('a root that cannot be removed is reported, not fatal, and the rest of the 
     fs.chmodSync(poisoned, 0o755);
   }
 });
+
+test('tmp-sweep.sh refuses a TMPDIR that is not a per-user temp dir, and refuses an age of zero', () => {
+  const run = (env, args = []) => cp.spawnSync('bash', [SCRIPT, ...args], {
+    env: { ...process.env, ...env }, encoding: 'utf8',
+  });
+  const noTmp = { ...process.env };
+  delete noTmp.TMPDIR;
+  const unset = cp.spawnSync('bash', [SCRIPT], { env: noTmp, encoding: 'utf8' });
+  assert.strictEqual(unset.status, 2, 'an unset TMPDIR must refuse, not guess');
+  assert.match(unset.stderr, /TMPDIR is unset/);
+
+  for (const bad of ['/tmp', process.env.HOME]) {
+    const r = run({ TMPDIR: bad });
+    assert.strictEqual(r.status, 2, `TMPDIR=${bad} must refuse: a sweep there would delete another owner's data`);
+    assert.match(r.stderr, /per-user temp dir|not a directory/);
+  }
+
+  for (const bad of ['0', '-1', 'abc', '']) {
+    const r = run({}, ['--older-than', bad]);
+    assert.strictEqual(r.status, 2, `--older-than ${JSON.stringify(bad)} must refuse: age is the gate that spares a live run's fixtures`);
+    assert.match(r.stderr, /older-than must be a whole number/);
+  }
+});

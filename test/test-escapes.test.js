@@ -270,7 +270,7 @@ test('a refusing run removes its own tmp dir — the silent leak (t500)', () => 
     // would still pass if `--bogus-node-flag` ever stopped being refused — a
     // green over a case nothing exercised.
     assert.match(out, /run-tests: the tap stream is missing/, 'did not reach the refusal being pinned');
-    const left = fs.readdirSync(privateTmp).filter((n) => n.startsWith('clodex-test-'));
+    const left = fs.readdirSync(path.join(privateTmp, 'clodex-suite')).filter((n) => n.startsWith('clodex-test-'));
     assert.deepStrictEqual(left, [], 'a refusing run left its tmp dir behind');
   } finally { s.clean(); }
 });

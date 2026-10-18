@@ -86,7 +86,7 @@ test('mkTmpDirIn refuses a parent that is not already tracked', () => {
     'and a `..` that resolves back INSIDE the tracked root is accepted and mints at the resolved path — '
     + 'the check and the mint must agree on which directory the caller meant');
 
-  const escaped = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('tmp-roots-pin-escape-') || n.startsWith('tmp-roots-pin-dotdot-'));
+  const escaped = [os.tmpdir(), path.join(os.tmpdir(), 'clodex-suite')].flatMap((d) => fs.readdirSync(d)).filter((n) => n.startsWith('tmp-roots-pin-escape-') || n.startsWith('tmp-roots-pin-dotdot-'));
   assert.deepStrictEqual(escaped, [],
     'the refusal happens BEFORE the mint — a throw that left a directory behind leaks exactly what it refused. '
     + "Scanned by this file's OWN prefixes rather than by an entry count: $TMPDIR is shared with every other "

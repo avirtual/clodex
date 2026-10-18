@@ -12,6 +12,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const A = require('../src/attach');
 const { run } = require('../src/main');
+const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 const { RESOURCES_DOC, docWithout } = require('./fixtures/resources-doc');
 
 // ── leaf: scanEscape ─────────────────────────────────────────────────────────
@@ -505,8 +506,7 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', T, 
   const proxy = `const net=require('net');const local=+process.argv[1],remote=${stubPort};`
     + `net.createServer(c=>{const u=net.connect(remote,'127.0.0.1');c.pipe(u);u.pipe(c);c.on('error',()=>{});u.on('error',()=>{});})`
     + `.listen(local,'127.0.0.1');setInterval(()=>{},1000);`;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-attach-'));
-  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} });
+  const dir = mkTmpRoot('clodexctl-attach-');
   const cf = path.join(dir, 'contexts.json');
   fs.writeFileSync(cf, JSON.stringify({
     current: 'tun',
