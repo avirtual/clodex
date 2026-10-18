@@ -1390,7 +1390,7 @@ test('t1678: sub parses target + greedy body, is a core verb and a near-miss nam
   assert.deepStrictEqual(parseIntent('[agent:sub a606bb8c5bfa9764e]'), { type: 'sub', target: 'a606bb8c5bfa9764e', body: '' });
   assert.strictEqual(registry.rowFor('sub').bodyMode, registry.rowFor('dm').bodyMode);
   assert.ok(registry.CORE_VALID_INTENT_NAMES.includes('sub'));
-  assert.strictEqual(registry.intentEnabledFor('sub', ['dm']), false);
+  assert.strictEqual(registry.intentEnabledFor('sub', ['dm']), true);
   assert.strictEqual(registry.intentEnabledFor('sub', null), true);
 });
 

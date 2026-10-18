@@ -505,18 +505,15 @@ drifting from the literal. It reaches the CLI via `--append-system-prompt-file`
 via SessionStart `additionalContext`. SETTLED: the transcript symlink is the
 hook's job; the prompt rides the append file.
 The PREAMBLE's transport sentence names the `sub` intent for a seat's own
-subagents and `dm` for clodex agents; the `sub` grammar line renders only for a
-seat whose allowlist admits `sub`.
+subagents and `dm` for clodex agents. `sub` is not gateable: it reaches only
+the seat's own subagents, so it is always on and its grammar line always renders.
 
 Allowlist shape: an absent `intents` is the living default (every ordinary
 intent on, privileged off); an explicit array is a frozen subset; `'*'` inside
 an array is the living default carried beside privileged or plugin grants and
 grants none of them itself; `['*']` is equivalent to absent. `persistence._load`
 rewrites a pre-`sub` array holding every ordinary intent plus a grant to the
-`'*'` form once. An explicit array a template saved before `sub` existed
-therefore does not admit `sub`; the disabled bounce names the explicit list,
-and the fix is `[agent:team template-save <stem>]` with `sub` added, or Edit
-Session › Intents.
+`'*'` form once.
 
 ## 7. Hook drains (cli-hooks.js, per Claude session)
 

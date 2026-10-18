@@ -5443,12 +5443,9 @@ function createSessionManager(deps) {
 
       if (!intentEnabledForSeat(intent.type === 'probe' ? 'scratch' : intent.type, getPersistence().get(senderName))) {
         if (session && session.agentType) {
-          const listed = (getPersistence().get(senderName) || {}).intents;
-          const why = intent.type === 'sub' && Array.isArray(listed) && !listed.includes(LIVING_MARK)
-            ? " — this seat's explicit intents list omits it; enable it in Edit Session › Intents" : '';
           const msg = intent.type === 'resend'
             ? "the resend intent is disabled for this session — the message will deliver with the peer's next turn"
-            : `the ${intent.type} intent is disabled for this session${why}${this._deniedIntentPayload(session, intent)}`;
+            : `the ${intent.type} intent is disabled for this session${this._deniedIntentPayload(session, intent)}`;
           if (intent.type !== 'resend') this.recordMisfire(session, 'disabled', intent, msg);
           this._injectText(session, `[agent:${intent.type}] ${msg}`, { parkable: true });
         }

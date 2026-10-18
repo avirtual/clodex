@@ -207,10 +207,10 @@ test('t1678 a denied sub body is spilled like a dm', () => {
   assert.deepStrictEqual(deniedBodyDisposition({ type: 'sub', body: 'x' }), { how: 'spill', label: 'sub' });
 });
 
-test('t1678 the sub grammar line renders only for a seat granted sub', () => {
+test('t1865 the sub grammar line renders for every seat, like name', () => {
   const { buildIpcPrompt, IPC_PROMPT } = require('../ipc-prompt');
-  assert.ok(!buildIpcPrompt(['dm']).includes('[agent:sub'));
-  assert.ok(buildIpcPrompt(['sub']).includes('[agent:sub TARGET] body'));
+  assert.ok(buildIpcPrompt(['dm']).includes('[agent:sub TARGET] body'));
+  assert.ok(buildIpcPrompt([]).includes('[agent:sub TARGET] body'));
   assert.ok(IPC_PROMPT.includes('[agent:sub TARGET] body'));
 });
 

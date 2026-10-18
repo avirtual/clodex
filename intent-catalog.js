@@ -9,7 +9,7 @@
 // Pure string/array work over its own const + an injected list — no electron, no
 // main.js state, no IO — so it's unit-tested in isolation and leak-scanned.
 //
-// NOT gateable (deliberately absent from the catalog):
+// NOT gateable (deliberately absent from the catalog; sub reaches only the seat's own subagents):
 //   * name  — identity. An agent must always be able to answer "who am I"; there
 //             is no coherent session that can't name itself.
 // Everything the scanner parses that ISN'T here is ungateable by omission:
@@ -23,7 +23,6 @@
 // _handleIntent) — so the prompt builder skips it while the gate still honors it.
 const GATEABLE_INTENTS = [
   { type: 'dm', label: 'Direct messages (dm)' },
-  { type: 'sub', label: 'Message your own running subagents (sub)' },
   { type: 'who', label: 'List peers (who)' },
   { type: 'context', label: 'Self context control (compact/clear/reload)' },
   { type: 'scratch', label: 'Probes — fork a research clone that returns a summary (probe)' },
