@@ -5534,7 +5534,7 @@ createTermTab({
   },
 });
 
-createInboxDrawer({ openFilePeek, showToast });
+createInboxDrawer({ openFilePeek, showToast, focusSeat: (name) => (sessions.has(name) ? (switchSession(name), true) : false) });
 
 const voiceCore = createVoiceCore({ showToast, getSeat: () => activeSession });
 

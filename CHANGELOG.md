@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Open requests have one source: a main-side `open-requests` assembly of open permission dialogs and unread shouts, broadcast as `attention:changed`, with `replyToNote` delivering an operator reply to the shouting seat and stamping the note resolved.
+- The Inbox is now **Requests**: open permission dialogs and unread shouts on top under a timestamped coverage line, reply to a shout from the row, other notes and resolved history folded; the footer badge counts open requests only.
 
 ## 5.131.4 — 2026-10-18 — task done body runs to turn end; one suite temp root
 
