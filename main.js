@@ -538,7 +538,16 @@ app.whenReady().then(() => {
       openExternal: (url) => shell.openExternal(url),
       notifyOS: (opts) => {
         try {
-          if (Notification.isSupported()) new Notification(opts).show();
+          if (!Notification.isSupported()) return;
+          const n = new Notification(opts);
+          n.on('click', () => {
+            try {
+              const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+              if (win) { win.show(); win.focus(); }
+              sendToFocused('request-open-inbox-drawer');
+            } catch {}
+          });
+          n.show();
         } catch {}
       },
       setAppQuitting: (v) => { appQuitting = v; },

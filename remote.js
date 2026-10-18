@@ -14,6 +14,7 @@ const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./seat-images');
 const { kernelStartTime } = require('./stream-seat');
 const { DM_REF_RE } = require('./intent-registry');
+const { annotate: annotateNote } = require('./open-requests');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -115,6 +116,7 @@ const VERB_CALLBACK = {
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
 const DM_CLIENT_RE = /^[a-z][a-z0-9-]{0,15}$/;
+const REPLY_STATUS = { empty: 400, 'too-long': 400, 'not-replyable': 400, unknown: 404 };
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + MAX_BODY;
@@ -162,7 +164,7 @@ class RemoteServer {
                 listDocs, getDoc, getDocSection, searchDocs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, notifications,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 token, insecure }) {
     this._port = port;
@@ -223,6 +225,8 @@ class RemoteServer {
     this._listDmOrigins = listDmOrigins || null;
     this._receiveRoster = receiveRoster || null;
     this._notifications = notifications || null;
+    this._openRequests = openRequests || null;
+    this._replyNote = replyNote || null;
     // The peer terminal (t219). Four callbacks that are passed together or not
     // at all: remote-wiring supplies them only while some peer holds the grant,
     // and their ABSENCE is the capability gate — the endpoints 501 and `shell`
@@ -390,7 +394,12 @@ class RemoteServer {
   }
 
   notifyAttention(name, workspaceId, attn) {
-    this._broadcast('attention', { name, workspaceId, attn });
+    this._broadcast('attention', {
+      name,
+      workspaceId: workspaceId == null ? null : workspaceId,
+      kind: attn && attn.kind ? attn.kind : null,
+      ts: attn && typeof attn.ts === 'number' ? attn.ts : null,
+    });
   }
 
   notifySessions() {
@@ -1054,6 +1063,7 @@ class RemoteServer {
       if (this._receiveRoster) caps.push('relay'); // accepts a hub-pushed relay roster (hub-relay federation)
       if (this._wtermOpen) caps.push('shell'); // peer terminal — present only while a peer holds the grant
       if (this._notifications) caps.push('inbox');
+      if (this._notifications && this._openRequests && this._replyNote) caps.push('requests');
       if (this._voiceCapable) caps.push('voice');
       if (this._seatImport && this._importCreate) caps.push('import');
       caps.push('resources');
@@ -1507,13 +1517,37 @@ class RemoteServer {
       const rawBefore = parseInt(url.searchParams.get('before'), 10);
       const before = Number.isFinite(rawBefore) ? rawBefore : null;
       const page = this._notifications.page({ limit, before });
+      const unread = this._notifications.unreadCount();
+      if (!this._openRequests) return this._json(res, 200, { ok: true, notes: page.items, unread });
+      const { requests, open, at, blindSeats } = this._openRequests.summary();
       return this._json(res, 200, {
-        ok: true, notes: page.items, unread: this._notifications.unreadCount(),
+        ok: true, notes: page.items.map(annotateNote), unread, requests, open, at, blindSeats,
       });
     }
     if (req.method === 'GET' && p === '/api/inbox/unread') {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
-      return this._json(res, 200, { ok: true, unread: this._notifications.unreadCount() });
+      const unread = this._notifications.unreadCount();
+      if (!this._openRequests) return this._json(res, 200, { ok: true, unread });
+      return this._json(res, 200, { ok: true, unread, open: this._openRequests.count().open });
+    }
+    if (req.method === 'POST' && p.startsWith('/api/inbox/reply/')) {
+      if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });
+      if (!this._replyNote) return this._json(res, 501, { ok: false, error: 'reply not available' });
+      const id = decodeSeg(p.slice('/api/inbox/reply/'.length));
+      if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
+      return this._readBody(req, res, (body) => {
+        if (!this._replyNote) return this._json(res, 501, { ok: false, error: 'reply not available' });
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        const text = typeof msg.text === 'string' ? msg.text : '';
+        const client = typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
+        let out;
+        try { out = this._replyNote(id, text, client); } catch (e) {
+          return this._json(res, 500, { ok: false, error: `reply failed: ${(e && e.message) || e}` });
+        }
+        if (!out) out = { ok: false, code: 'unavailable', error: 'reply failed' };
+        return this._json(res, out.ok ? 200 : (REPLY_STATUS[out.code] || 409), out);
+      });
     }
     if (req.method === 'POST' && p.startsWith('/api/inbox/read/')) {
       if (!this._notifications) return this._json(res, 501, { ok: false, error: 'inbox not available' });

@@ -14,6 +14,7 @@ const assert = require('node:assert');
 const http = require('node:http');
 const path = require('node:path');
 const { RemoteServer } = require('../remote');
+const { createOpenRequests } = require('../open-requests');
 
 const PAGE = path.join(__dirname, '..', 'renderer', 'remote.html');
 
@@ -57,6 +58,15 @@ function fakeStore(initial = []) {
       if (count) store._emit({ kind: 'read-all', unread: store.unreadCount() });
       return count;
     },
+    markReplied(id, text) {
+      const rec = notes.find((n) => n.id === id);
+      if (!rec) return null;
+      if (rec.readAt == null) rec.readAt = 7000;
+      rec.repliedAt = 7000;
+      rec.reply = text;
+      store._emit({ kind: 'replied', id, unread: store.unreadCount() });
+      return rec;
+    },
     remove(id) {
       const i = notes.findIndex((n) => n.id === id);
       if (i < 0) return false;
@@ -68,11 +78,12 @@ function fakeStore(initial = []) {
   return store;
 }
 
-async function withServer(notifications, fn) {
+async function withServer(notifications, fn, extra = {}) {
   const server = new RemoteServer({
     port: 0, host: '127.0.0.1', pagePath: PAGE,
     getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
     notifications,
+    ...extra,
   });
   await server.start();
   // The wiring remote-wiring.js performs: the STORE drives the SSE frame, so a
@@ -81,9 +92,10 @@ async function withServer(notifications, fn) {
   try { return await fn(server); } finally { server.stop(); }
 }
 
-function req(server, method, p) {
+function req(server, method, p, body = null) {
   return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port: server.port, path: p, method }, (res) => {
+    const headers = body == null ? {} : { 'content-type': 'application/json' };
+    const r = http.request({ host: '127.0.0.1', port: server.port, path: p, method, headers }, (res) => {
       let buf = '';
       res.on('data', (d) => { buf += d; });
       res.on('end', () => {
@@ -93,7 +105,7 @@ function req(server, method, p) {
       });
     });
     r.on('error', reject);
-    r.end();
+    r.end(body == null ? undefined : JSON.stringify(body));
   });
 }
 
@@ -284,10 +296,170 @@ test('with no store injected every /api/inbox route answers 501', async () => {
       ['POST', '/api/inbox/read/a'],
       ['POST', '/api/inbox/read-all'],
       ['POST', '/api/inbox/remove/a'],
+      ['POST', '/api/inbox/reply/a'],
     ]) {
       const { status, json } = await req(server, method, p);
       assert.strictEqual(status, 501, `${method} ${p} 501s`);
       assert.deepStrictEqual(json, { ok: false, error: 'inbox not available' }, `${method} ${p} body`);
     }
   });
+});
+
+
+const PERMISSION_SEAT = {
+  name: 'builder', workspaceId: 'ws-1', io: 'stream', agentType: 'claude', pending: 2,
+  attn: { kind: 'permission', ts: 4000, message: 'Bash: git push' },
+};
+
+function wired(store, { seats = [PERMISSION_SEAT], replyNote = () => ({ ok: true }) } = {}) {
+  const openRequests = createOpenRequests({
+    listSeatAttention: () => seats,
+    getNotifications: () => store,
+    now: () => 4242,
+  });
+  return { openRequests, replyNote };
+}
+
+function collectUntilSentinel(server, emit) {
+  return new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port: server.port, path: '/api/events' }, (res) => {
+      let buf = '';
+      res.on('data', (d) => {
+        buf += d;
+        if (!r._emitted && buf.includes('\n\n')) {
+          r._emitted = true;
+          Promise.resolve(emit()).then(() => server.notifyProgress('sentinel'), reject);
+          return;
+        }
+        if (/event: progress\ndata: \{"name":"sentinel"\}\n\n/.test(buf)) { r.destroy(); resolve(buf); }
+      });
+    });
+    r.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); });
+    r.end();
+  });
+}
+
+const framesOf = (buf, event) => [...buf.matchAll(new RegExp(`event: ${event}\\ndata: (\\{.*\\})\\n\\n`, 'g'))]
+  .map((m) => JSON.parse(m[1]));
+
+test('GET /api/inbox keeps notes/unread and adds requests, open, at, blindSeats, with kind/replyable on each note', async () => {
+  const store = fakeStore([
+    mkNote('a', 100),
+    { ...mkNote('p', 200), from: 'plugin:weather' },
+    { ...mkNote('f', 300), from: 'carol@otherbox' },
+    mkNote('r', 400, 9),
+  ]);
+  await withServer(store, async (server) => {
+    const { status, json } = await req(server, 'GET', '/api/inbox');
+    assert.strictEqual(status, 200);
+    assert.deepStrictEqual(json, {
+      ok: true,
+      notes: [
+        { ...mkNote('r', 400, 9), kind: 'shout', replyable: true },
+        { ...mkNote('f', 300), from: 'carol@otherbox', kind: 'shout', replyable: false },
+        { ...mkNote('p', 200), from: 'plugin:weather', kind: 'other', replyable: false },
+        { ...mkNote('a', 100), kind: 'shout', replyable: true },
+      ],
+      unread: 3,
+      requests: [{ name: 'builder', workspaceId: 'ws-1', ts: 4000, message: 'Bash: git push', pending: 2 }],
+      open: 3,
+      at: 4242,
+      blindSeats: [],
+    });
+  }, wired(store));
+});
+
+test('GET /api/inbox/unread carries open beside unread once open requests are wired', async () => {
+  const store = fakeStore([mkNote('a', 100), { ...mkNote('p', 200), from: 'plugin:weather' }]);
+  await withServer(store, async (server) => {
+    const { status, json } = await req(server, 'GET', '/api/inbox/unread');
+    assert.strictEqual(status, 200);
+    assert.deepStrictEqual(json, { ok: true, unread: 2, open: 2 });
+  }, wired(store));
+});
+
+test('POST /api/inbox/reply/:id maps each replyNote code to its status', async () => {
+  const store = fakeStore([]);
+  const calls = [];
+  const replyNote = (id, text, client) => {
+    calls.push([id, text, client]);
+    return id === 'ok' ? { ok: true, id, repliedAt: 7000 } : { ok: false, code: id, error: `e-${id}` };
+  };
+  await withServer(store, async (server) => {
+    for (const [code, status] of [
+      ['ok', 200],
+      ['empty', 400],
+      ['too-long', 400],
+      ['not-replyable', 400],
+      ['unknown', 404],
+      ['gone', 409],
+      ['unavailable', 409],
+      ['delivery', 409],
+    ]) {
+      const out = await req(server, 'POST', `/api/inbox/reply/${code}`, { text: ' yes ', client: 'phone' });
+      assert.strictEqual(out.status, status, `${code} answers ${status}`);
+      assert.deepStrictEqual(out.json, code === 'ok'
+        ? { ok: true, id: 'ok', repliedAt: 7000 }
+        : { ok: false, code, error: `e-${code}` });
+    }
+    assert.deepStrictEqual(calls[0], ['ok', ' yes ', 'phone'], 'text and a well-formed client pass through');
+    const bad = await req(server, 'POST', '/api/inbox/reply/ok', { text: 'x', client: 'Not A Tag!' });
+    assert.strictEqual(bad.status, 200);
+    assert.deepStrictEqual(calls.at(-1), ['ok', 'x', null], 'a malformed client is dropped before the spoof check');
+    const junk = await req(server, 'POST', '/api/inbox/reply/ok', 'not an object');
+    assert.strictEqual(junk.status, 400);
+  }, wired(store, { replyNote }));
+});
+
+test('without replyNote the reply route answers 501 and the store-backed routes still serve', async () => {
+  const store = fakeStore([mkNote('a', 100)]);
+  await withServer(store, async (server) => {
+    const out = await req(server, 'POST', '/api/inbox/reply/a', { text: 'hi' });
+    assert.strictEqual(out.status, 501);
+    assert.deepStrictEqual(out.json, { ok: false, error: 'reply not available' });
+  });
+});
+
+test('a phone reply yields exactly one inbox/replied frame, from the store, and no attention frame', async () => {
+  const store = fakeStore([mkNote('a', 100)]);
+  const replyNote = (id, text) => {
+    const rec = store.markReplied(id, text);
+    return { ok: true, id, repliedAt: rec.repliedAt };
+  };
+  await withServer(store, async (server) => {
+    const buf = await collectUntilSentinel(server, () => req(server, 'POST', '/api/inbox/reply/a', { text: 'go' }));
+    assert.deepStrictEqual(framesOf(buf, 'inbox'), [{ kind: 'replied', id: 'a', unread: 0 }],
+      `one frame, not a route+store double: ${JSON.stringify(buf)}`);
+    assert.deepStrictEqual(framesOf(buf, 'attention'), [], 'a route never emits attention');
+  }, wired(store, { replyNote }));
+});
+
+test('notifyAttention broadcasts { name, workspaceId, kind, ts } on set and on clear, never the tool preview', async () => {
+  await withServer(null, async (server) => {
+    const buf = await collectUntilSentinel(server, () => {
+      server.notifyAttention('builder', 'ws-1', { kind: 'permission', ts: 4000, message: 'Bash: rm -rf /' });
+      server.notifyAttention('builder', 'ws-1', null);
+    });
+    assert.deepStrictEqual(framesOf(buf, 'attention'), [
+      { name: 'builder', workspaceId: 'ws-1', kind: 'permission', ts: 4000 },
+      { name: 'builder', workspaceId: 'ws-1', kind: null, ts: null },
+    ]);
+    assert.ok(!buf.includes('rm -rf'), 'the preview crosses workspaces, so it never reaches the wire');
+  });
+});
+
+test("hello advertises 'requests' only when the store, open requests and replyNote are all wired", async () => {
+  const store = fakeStore([]);
+  const both = wired(store);
+  for (const [label, notifications, extra, want] of [
+    ['all three', store, both, true],
+    ['no replyNote', store, { openRequests: both.openRequests }, false],
+    ['no openRequests', store, { replyNote: both.replyNote }, false],
+    ['no store', null, both, false],
+  ]) {
+    await withServer(notifications, async (server) => {
+      const { json } = await req(server, 'GET', '/api/peer/hello');
+      assert.strictEqual(json.caps.includes('requests'), want, `${label}: ${json.caps}`);
+    }, extra);
+  }
 });
