@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The sandbox box no longer sends a 'shipped update is being withheld' inbox note for library files the host mounts into it read-only: the seeder skips a destination it cannot write instead of calling it stranded.
+
 ## 5.131.5 — 2026-10-18
 
 - Open requests have one source: a main-side `open-requests` assembly of open permission dialogs and unread shouts, broadcast as `attention:changed`, with `replyToNote` delivering an operator reply to the shouting seat and stamping the note resolved.
