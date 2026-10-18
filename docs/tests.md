@@ -84,3 +84,9 @@ A test that spawns node, bash or claude and waits on its exit passes a
 otherwise hangs the whole suite, not the one test. t1470 gave every hook spawn
 in `cli-hooks.test.js` a 30s SIGKILL timeout, so its ARG_MAX drain case now
 fails as one ETIMEDOUT test instead of stalling the run.
+
+## Scratch directories live under one root
+
+The suite mints its scratch directories under `$TMPDIR/clodex-suite`, through
+`mkTmpRoot` in `test/lib/tmp-roots.js`. `scripts/tmp-sweep.sh` removes that
+root's stale children by age. A new test needs no registration.

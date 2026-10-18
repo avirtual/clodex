@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A `[agent:task done]` report no longer needs a closing `[agent:end]`: the body runs to the end of the turn, since nothing follows a done by rule. A turn cut mid-report still refuses to close the ticket, so a partial report never lands.
+- Suite scratch directories live under one `$TMPDIR/clodex-suite` root and `scripts/tmp-sweep.sh` reaps that root by age; the 720-entry prefix list and the coverage test that made every new test register its prefix are gone.
 
 ## 5.131.3 — 2026-10-18 — nag skips negated and self-describing claims; own-scope CHANGELOG ratchet
 

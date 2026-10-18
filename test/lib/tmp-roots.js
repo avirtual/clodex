@@ -27,8 +27,14 @@ const ROOTS = [];
 // Mint a scratch root and register it for the sweep. Registration happens AT
 // MINT TIME, before the caller can do anything with the directory, so a subject
 // that throws half way through still gets its root reaped.
+function suiteRoot() {
+  const root = path.join(os.tmpdir(), 'clodex-suite');
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
 function mkTmpRoot(prefix) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const root = fs.mkdtempSync(path.join(suiteRoot(), prefix));
   ROOTS.push(root);
   return root;
 }
@@ -58,10 +64,10 @@ function mkTmpDirIn(parent, prefix) {
 // answer to different concerns and one file's force-exit is not the other's.
 //
 // Siblings are globbed on `path.basename(root) + '-'`, NEVER on the shared
-// prefix the call site passed. All 204 minting files share one $TMPDIR, so
-// uniqueness comes only from mkdtempSync's random characters: a sweep of
-// `clodex-repo-*` would delete another file's LIVE fixtures, and under parallel
-// load that failure reads as a flake anywhere except the file that caused it.
+// prefix the call site passed. Uniqueness comes only from mkdtempSync's random
+// characters: a sweep of `clodex-repo-*` would delete another file's LIVE
+// fixtures, and under parallel load that failure reads as a flake anywhere
+// except the file that caused it.
 // The per-root prefix cannot touch anything this process did not make.
 //
 // That glob is also how derived siblings are covered — git-worktree.js places
