@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Open requests have one source: a main-side `open-requests` assembly of open permission dialogs and unread shouts, broadcast as `attention:changed`, with `replyToNote` delivering an operator reply to the shouting seat and stamping the note resolved.
+
 ## 5.131.4 — 2026-10-18 — task done body runs to turn end; one suite temp root
 
 - A `[agent:task done]` report no longer needs a closing `[agent:end]`: the body runs to the end of the turn, since nothing follows a done by rule. A turn cut mid-report still refuses to close the ticket, so a partial report never lands.

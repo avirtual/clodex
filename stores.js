@@ -1605,6 +1605,18 @@ function initStores(userDataPath, {
       this._emit({ kind: 'removed', id, unread: this.unreadCount() });
       return true;
     },
+    markReplied(id, reply) {
+      const all = this._load();
+      const rec = all.find((n) => n.id === id);
+      if (!rec) return false;
+      const now = Date.now();
+      if (rec.readAt == null) rec.readAt = now;
+      rec.repliedAt = now;
+      rec.reply = String(reply == null ? '' : reply);
+      if (!this._save(all)) throw new Error('notifications.json could not be written');
+      this._emit({ kind: 'replied', id, unread: this.unreadCount() });
+      return rec;
+    },
     unreadCount() { return this._load().reduce((n, r) => n + (r.readAt == null ? 1 : 0), 0); },
   };
 

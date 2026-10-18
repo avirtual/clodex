@@ -271,6 +271,7 @@
 | `page` | a newest-first page of notes older than a cursor, limit clamped to 1..200, plus hasMore | notifications.json | _load | notification-page.test.js |
 | `markRead` | stamps readAt once on one note and emits read; false only for an unknown id | notifications.json | _save, _emit | notification-page.test.js stores.test.js |
 | `markAllRead` | stamps every unread note with one timestamp, emitting only when something changed; returns the count | notifications.json | _save, _emit | notification-page.test.js stores.test.js |
+| `markReplied` | stamps repliedAt and the reply text on one note in one write, readAt only if still null, and emits replied; false only for an unknown id, throws when the write fails | notifications.json | _save, _emit | notification-page.test.js |
 | `unreadCount` | the number of notes with a null readAt | notifications.json | _load | remote-inbox.test.js stores.test.js |
 
 ### Invariants
