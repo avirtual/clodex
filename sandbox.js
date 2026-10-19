@@ -27,7 +27,88 @@ const DEFAULT_CONFIG = {
   ref: null,
   mounts: [],
   ports: [],
+  limits: { cpus: null, memory: null, pids: null, shmSize: null },
+  platform: null,
 };
+
+const OPERATOR_ONLY_MSG = 'limits and platform are operator settings: change them in the Sandbox panel';
+const PLATFORMS = ['linux/amd64', 'linux/arm64'];
+const CPUS_MIN = 0.25;
+const MEMORY_MIN_BYTES = 512 * 1024 * 1024;
+const PIDS_MIN = 64;
+const GIB = 1024 * 1024 * 1024;
+const SIZE_RE = /^(\d+)([mg])$/;
+const GATEWAY_LIMITS = { cpus: '0.5', memory: '256m' };
+
+function sizeToBytes(raw) {
+  const m = SIZE_RE.exec(String(raw == null ? '' : raw).trim().toLowerCase());
+  if (!m) return null;
+  return Number(m[1]) * (m[2] === 'g' ? GIB : 1024 * 1024);
+}
+
+function gibText(bytes) {
+  const gib = bytes / GIB;
+  return Number.isInteger(gib) ? String(gib) : gib.toFixed(1);
+}
+
+function blank(v) { return v == null || (typeof v === 'string' && v.trim() === ''); }
+
+function validateLimitsForSave(raw, { figures } = {}) {
+  if (raw == null) return { limits: { ...DEFAULT_CONFIG.limits } };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: 'limits must be an object with cpus, memory, pids and shmSize.' };
+  }
+  const ncpu = figures && Number.isFinite(figures.ncpu) && figures.ncpu > 0 ? figures.ncpu : null;
+  const memTotal = figures && Number.isFinite(figures.memTotal) && figures.memTotal > 0 ? figures.memTotal : null;
+  const out = { cpus: null, memory: null, pids: null, shmSize: null };
+  if (!blank(raw.cpus)) {
+    const cpus = Number(raw.cpus);
+    const ok = Number.isFinite(cpus) && cpus >= CPUS_MIN && (ncpu == null || cpus <= ncpu);
+    if (!ok) {
+      return { error: ncpu == null
+        ? `limits.cpus must be a number of at least ${CPUS_MIN}`
+        : `limits.cpus must be between ${CPUS_MIN} and ${ncpu} (the Docker VM has ${ncpu} cores)` };
+    }
+    out.cpus = cpus;
+  }
+  if (!blank(raw.memory)) {
+    const bytes = sizeToBytes(raw.memory);
+    const ok = bytes != null && bytes >= MEMORY_MIN_BYTES && (memTotal == null || bytes <= memTotal);
+    if (!ok) {
+      return { error: memTotal == null
+        ? 'limits.memory must be a size of at least 512m (like 512m or 4g)'
+        : `limits.memory must be between 512m and ${Math.floor(memTotal / GIB)}g (the Docker VM has ${gibText(memTotal)} GiB)` };
+    }
+    out.memory = String(raw.memory).trim().toLowerCase();
+  }
+  if (!blank(raw.pids)) {
+    const pids = Number(raw.pids);
+    if (!Number.isInteger(pids) || pids < PIDS_MIN) {
+      return { error: `limits.pids must be a whole number of at least ${PIDS_MIN}` };
+    }
+    out.pids = pids;
+  }
+  if (!blank(raw.shmSize)) {
+    const bytes = sizeToBytes(raw.shmSize);
+    if (!bytes) return { error: 'limits.shmSize must be a size of at least 1m (like 64m or 1g)' };
+    out.shmSize = String(raw.shmSize).trim().toLowerCase();
+  }
+  return { limits: out };
+}
+
+function normalizePlatform(raw) {
+  if (blank(raw)) return { platform: null };
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!PLATFORMS.includes(s)) {
+    return { error: `platform must be ${PLATFORMS.join(' or ')}, or empty for the host's architecture` };
+  }
+  return { platform: s };
+}
+
+function limitsSet(limits) {
+  const l = limits || {};
+  return ['cpus', 'memory', 'pids'].filter((k) => l[k] != null);
+}
 
 const REF_RE = /^[A-Za-z0-9._/-]+$/;
 const REF_MAX = 128;
@@ -285,7 +366,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -309,6 +390,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   } else {
     L.push(`    image: ${image.image}`);
   }
+  if (platform) L.push(`    platform: ${platform}`);
   if (hostUser) L.push('    user: "0:0"');
   // Loopback publishes — the v1 trust boundary (only this machine reaches them).
   L.push('    ports:');
@@ -366,6 +448,17 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`      - ${RUN_TMPFS_TARGET}:${RUN_TMPFS_OPTIONS}`);
   L.push('    init: true');
   L.push('    restart: always');
+  const boxLimits = limits || {};
+  const setKeys = limitsSet(boxLimits);
+  if (setKeys.length) {
+    L.push('    deploy:');
+    L.push('      resources:');
+    L.push('        limits:');
+    if (boxLimits.cpus != null) L.push(`          cpus: "${boxLimits.cpus}"`);
+    if (boxLimits.memory != null) L.push(`          memory: ${boxLimits.memory}`);
+    if (boxLimits.pids != null) L.push(`          pids: ${boxLimits.pids}`);
+  }
+  if (boxLimits.shmSize != null) L.push(`    shm_size: ${boxLimits.shmSize}`);
   L.push('    healthcheck:');
   L.push(`      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:${CONTAINER_PORTS.web}/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]`);
   L.push('      interval: 30s');
@@ -384,6 +477,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     } else {
       L.push(`    image: ${image.image}`);
     }
+    if (platform) L.push(`    platform: ${platform}`);
     L.push(`    entrypoint: ["node", "${PORT_FORWARDER_PATH}"]`);
     L.push('    ports:');
     for (const p of published.ports) {
@@ -396,6 +490,11 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     L.push('    cap_drop:');
     L.push('      - ALL');
     L.push('    restart: unless-stopped');
+    L.push('    deploy:');
+    L.push('      resources:');
+    L.push('        limits:');
+    L.push(`          cpus: "${GATEWAY_LIMITS.cpus}"`);
+    L.push(`          memory: ${GATEWAY_LIMITS.memory}`);
     L.push('');
   }
   if (!workDir) {
@@ -541,6 +640,60 @@ async function probeDocker(spawn) {
   return { ...info, compose };
 }
 
+const NO_FIGURES = Object.freeze({ ncpu: null, memTotal: null });
+
+function parseFigures(stdout) {
+  const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(String(stdout || ''));
+  if (!m) return { ...NO_FIGURES };
+  const ncpu = Number(m[1]);
+  const memTotal = Number(m[2]);
+  return { ncpu: ncpu > 0 ? ncpu : null, memTotal: memTotal > 0 ? memTotal : null };
+}
+
+function probeDockerFigures(spawn) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('docker', ['info', '--format', '{{.NCPU}} {{.MemTotal}}'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      resolve({ ...NO_FIGURES });
+      return;
+    }
+    let stdout = '';
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      done({ ...NO_FIGURES });
+    }, DETECT_TIMEOUT_MS);
+    if (child.stdout) child.stdout.on('data', (d) => { stdout += d; });
+    child.on('error', () => done({ ...NO_FIGURES }));
+    child.on('exit', (code) => done(code === 0 ? parseFigures(stdout) : { ...NO_FIGURES }));
+  });
+}
+
+function parseStatsLine(stdout) {
+  const m = /^\s*([\d.]+)%\s+([\d.]+)\s*([KMGT]?i?B)\s*\//i.exec(String(stdout || ''));
+  if (!m) return null;
+  const units = { b: 1, kib: 1024, mib: 1024 ** 2, gib: 1024 ** 3, tib: 1024 ** 4, kb: 1e3, mb: 1e6, gb: 1e9, tb: 1e12 };
+  const unit = units[m[3].toLowerCase()];
+  if (unit == null) return null;
+  return { cpuPercent: Number(m[1]), memBytes: Math.round(Number(m[2]) * unit) };
+}
+
+function parseAppliedLimits(hostConfigJson) {
+  let hc;
+  try { hc = JSON.parse(String(hostConfigJson || '').trim()); } catch { return null; }
+  if (!hc || typeof hc !== 'object') return null;
+  const pos = (v) => (Number.isFinite(v) && v > 0 ? v : null);
+  return {
+    cpus: pos(hc.NanoCpus) == null ? null : hc.NanoCpus / 1e9,
+    memory: pos(hc.Memory),
+    pids: pos(hc.PidsLimit),
+    shmSize: pos(hc.ShmSize),
+  };
+}
+
 function probeDockerLocal(spawn, env) {
   if ((env || {}).DOCKER_HOST) return Promise.resolve({ local: false });
   return new Promise((resolve) => {
@@ -620,6 +773,7 @@ function createSandbox(deps = {}) {
   const env = deps.env || process.env;
   const localCache = createDetectCache({ probe: () => probeDockerLocal(spawn, env) });
   const dockerIsLocal = deps.dockerIsLocal || (() => localCache.get().then((r) => r.local));
+  const getFigures = deps.getFigures || (() => NO_FIGURES);
 
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
@@ -648,6 +802,8 @@ function createSandbox(deps = {}) {
   }
   function setConfig(partial, opts = {}) {
     const writer = opts.writer === 'panel' ? 'panel' : 'intent';
+    const operatorKeys = !!partial && ('limits' in partial || 'platform' in partial);
+    if (operatorKeys && writer !== 'panel') return { ok: false, error: OPERATOR_ONLY_MSG };
     const before = getConfig();
     const next = { ...before, ...(partial || {}) };
     delete next.hasToken;   // derived, file-backed — never persisted to ui-settings
@@ -667,6 +823,16 @@ function createSandbox(deps = {}) {
       const checked = normalizeRef(next.ref);
       if (checked.error) return { ok: false, error: checked.error };
       next.ref = checked.ref;
+    }
+    if (partial && 'limits' in partial) {
+      const checked = validateLimitsForSave(next.limits, { figures: getFigures() });
+      if (checked.error) return { ok: false, error: checked.error };
+      next.limits = checked.limits;
+    }
+    if (partial && 'platform' in partial) {
+      const checked = normalizePlatform(next.platform);
+      if (checked.error) return { ok: false, error: checked.error };
+      next.platform = checked.platform;
     }
     if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
     if (portsChanged) {
@@ -953,7 +1119,7 @@ function createSandbox(deps = {}) {
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
-      hostUser: hostUser(config, image), appPorts,
+      hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: config.platform,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -1115,6 +1281,34 @@ function createSandbox(deps = {}) {
     return waitHealthy({ id, url, timeoutMs, fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
   }
 
+  function advancedStatus(config, live) {
+    const configured = { ...DEFAULT_CONFIG.limits, ...(config.limits || {}) };
+    return {
+      limits: { configured, applied: live ? live.limits : null },
+      platform: { configured: config.platform || null, applied: live ? live.platform : null },
+      usage: live ? live.usage : null,
+    };
+  }
+
+  async function liveBoxFigures() {
+    const ps = await runCompose(['ps', '-q', 'clodex']);
+    const cid = ps.ok ? ps.stdout.split('\n').map((l) => l.trim()).find(Boolean) : null;
+    if (!cid) return null;
+    const hc = await runDocker(['inspect', cid, '--format', '{{json .HostConfig}}']);
+    const limits = hc.ok ? parseAppliedLimits(hc.stdout) : null;
+    let platform = null;
+    const img = await runDocker(['inspect', cid, '--format', '{{.Image}}']);
+    const imageId = img.ok ? img.stdout.trim() : '';
+    if (imageId) {
+      const arch = await runDocker(['image', 'inspect', imageId, '--format', '{{.Os}}/{{.Architecture}}']);
+      const text = arch.ok ? arch.stdout.trim() : '';
+      if (/^[a-z0-9]+\/[a-z0-9]+$/.test(text)) platform = text;
+    }
+    const stats = await runDocker(['stats', '--no-stream', '--format', '{{.CPUPerc}} {{.MemUsage}}', cid]);
+    const usage = stats.ok ? parseStatsLine(stats.stdout) : null;
+    return { limits, platform, usage };
+  }
+
   async function status() {
     const statusConfig = getConfig();
     const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
@@ -1123,11 +1317,12 @@ function createSandbox(deps = {}) {
     if (!r.ok && !r.stdout.trim()) {
       const absent = { state: 'absent', ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null, error: r.stderr.trim() || undefined };
       if (owner) absent.foreign = owner;
-      return absent;
+      return { ...absent, ...advancedStatus(statusConfig, null) };
     }
     const state = parseComposeState(r.stdout);
     const out = { state, ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null };
     if (owner) out.foreign = owner;
+    Object.assign(out, advancedStatus(statusConfig, state === 'running' ? await liveBoxFigures() : null));
     // Only meaningful while running: the compose file persists after Stop, but its
     // ports then describe no live listener, and Start regenerates them.
     if (state === 'running') {
@@ -1197,6 +1392,13 @@ function createSandboxManager(deps = {}) {
   const detectCache = createDetectCache({ probe: () => probeDocker(managerSpawn), now });
   const localCache = createDetectCache({ probe: () => probeDockerLocal(managerSpawn, deps.env || process.env), now });
   detectCache.get().catch(() => {});
+  const figuresCache = createDetectCache({ probe: () => probeDockerFigures(managerSpawn), now });
+  let lastFigures = NO_FIGURES;
+  function figures() {
+    return figuresCache.get().then(
+      (r) => { lastFigures = { ncpu: r.ncpu, memTotal: r.memTotal }; return lastFigures; },
+      () => lastFigures);
+  }
 
   const instances = new Map();
   let chain = Promise.resolve();
@@ -1224,6 +1426,7 @@ function createSandboxManager(deps = {}) {
         .map((inst) => inst.composePath()),
       detect: () => detectCache.get(),
       invalidateDetect: () => detectCache.invalidate(),
+      getFigures: () => lastFigures,
       dockerIsLocal: deps.dockerIsLocal || (() => localCache.get().then((r) => r.local)),
       readBoxConfig: () => {
         const row = listBoxes().find((b) => b && b.id === boxId);
@@ -1306,7 +1509,7 @@ function createSandboxManager(deps = {}) {
     return { ok: true, downError };
   }
 
-  return { get, list, create, remove, detect: () => detectCache.get(), invalidateDetect: () => detectCache.invalidate() };
+  return { get, list, create, remove, figures, detect: () => detectCache.get(), invalidateDetect: () => detectCache.invalidate() };
 }
 
 function defaultIsPortInUse(port) {
@@ -1323,7 +1526,8 @@ function defaultIsPortInUse(port) {
 module.exports = {
   createSandbox, createSandboxManager,
   // Pure parts, exported for the unit suite.
-  createDetectCache, dockerUnavailableError, probeDocker,
+  createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseStatsLine, parseAppliedLimits,
+  validateLimitsForSave, normalizePlatform, sizeToBytes, OPERATOR_ONLY_MSG,
   resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parsePortOwners, parseOwnPortMap, normalizePorts, gatewayServiceName, probeDockerLocal, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,

@@ -1808,6 +1808,11 @@ function registerIpcHandlers(deps) {
     return { inBox, label: inBox ? (process.env.CLODEX_BOX_LABEL || SELF_LABEL || null) : null, libraryWritable };
   });
   handle('sandbox:status', (_e, boxId) => withBox(boxId, (s) => s.status()));
+  handle('sandbox:figures', () => {
+    const mgr = getSandboxManager();
+    if (!mgr || typeof mgr.figures !== 'function') return { ncpu: null, memTotal: null };
+    return mgr.figures();
+  });
   handle('sandbox:openWeb', (_e, boxId) => withBox(boxId, async (s) => {
     const st = await s.status();
     const port = st && st.ports && st.ports.web;
