@@ -48,6 +48,6 @@ test('C2: the reviewer prompt no longer says the lead spawned it', () => {
 
 test('the shipped lead and hand prompts both name `sandbox port add`', () => {
   const lead = fs.readFileSync(path.join(DIR, 'clodex-team-lead.md'), 'utf-8');
-  assert.match(lead, /\[agent:team sandbox port add <container>\[:<host>\] \[proto:http\]\]/);
-  assert.match(hand, /`sandbox port add`\) or the operator \(Sandbox panel\)/);
+  assert.match(lead, /From a desktop seat, publish a port[\s\S]*\[agent:team sandbox port add <container>\[:<host>\] \[proto:http\]\][\s\S]*Inside the\s+box the intent is unavailable: dm a desktop seat or ask the operator\./);
+  assert.match(hand, /a missing one is\s+published from the Sandbox panel by the operator or by a lead on a desktop\s+seat with `sandbox port add`\./);
 });
