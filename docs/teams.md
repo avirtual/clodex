@@ -764,8 +764,11 @@ what keeps parallel work from colliding in one checkout.
 Where a ticket tree goes: by default beside the root, as `<root>-<branch>`. With
 `worktrees: in-root` in team.json, or when unset inside a sandbox box, it goes
 under `<root>/.clodex-wt/<branch>` (excluded via `.git/info/exclude`), because the
-box's `/` is a small image overlay and only the work bind is persisted;
-`worktrees: sibling` keeps the default even in a box.
+box's `/` is a small image overlay. What survives a rebuild is `/data`,
+`~/work`, `~/.clodex`, `~/.claude`, `~/.codex`, `~/.config` and
+`~/.local/share`; everything else (apt packages, `/run`, `/etc`) is the overlay —
+use `sandbox bootstrap` for those. `worktrees: sibling` keeps the default even in
+a box.
 `[agent:team worktrees sibling|in-root]` (lead only) sets it; bare
 `[agent:team worktrees]` shows the effective value and whether it is set or
 derived from the box flag. Existing trees are not moved.
