@@ -24,7 +24,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 const WEB_TOKEN = 'feedface0000feedface1111feedface2222feedface3333feedface4444feed';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedAts = ['2026-10-15T01:00:00.000000001Z', '2026-10-15T02:00:00.000000002Z'], upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null, applied = [], portsError = null } = {}) {
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedAts = ['2026-10-15T01:00:00.000000001Z', '2026-10-15T02:00:00.000000002Z'], upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null, applied = [], portsError = null, restartResult = null, applyTarget = 'rebuild' } = {}) {
   const calls = { create: [], get: [], setConfig: [], setConfigOpts: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
@@ -45,6 +45,8 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedA
     async up() { calls.up++; return upResult || { ok: true, ports }; },
     async rebuild() { calls.rebuild++; return upResult || { ok: true, ports }; },
     async down() { calls.down++; return downResult || { ok: true }; },
+    async restart() { calls.restart = (calls.restart || 0) + 1; return restartResult || { ok: true }; },
+    bootstrapApplyTarget: () => applyTarget,
     unregisterPeer() { calls.unregisterPeer++; },
     // `ref` is read back off config, exactly as the real status() derives it from
     // getConfig(). Hardcoding it would make this fake report a ref the box is not
@@ -508,8 +510,8 @@ test('no sandbox manager on this host → the "not enabled" error, and nothing i
 
 test('an unknown action is refused before any box is touched', async () => {
   const b = mkBox();
-  await fire(b, b.lead, { action: 'restart' });
-  assert.match(b.last(), /error: sandbox action must be up \| rebuild \| down \| status \| port \(got "restart"\)/);
+  await fire(b, b.lead, { action: 'explode' });
+  assert.match(b.last(), /error: sandbox action must be up \| rebuild \| down \| status \| port \| bootstrap \| restart \(got "explode"\)/);
   assert.strictEqual(b.calls.create.length, 0);
   assert.strictEqual(b.calls.get.length, 0);
 });
@@ -866,4 +868,144 @@ test('the REAL setConfig stores relay from the host and the panel writers', () =
   assert.strictEqual(box.setConfig({ relay: true }, { writer: 'host' }).relay, true);
   assert.strictEqual(box.setConfig({ relay: false }, { writer: 'panel' }).relay, false);
   assert.deepStrictEqual(written.map((w) => w.relay), [true, false]);
+});
+
+const boot = (op, extra = {}) => ({ action: 'bootstrap', op, field: null, packages: [], body: '', ...extra });
+
+test('bootstrap packages a b saves through the intent writer with the seat, and names the rebuild', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  await fire(b, b.lead, boot('packages', { field: 'a', packages: ['a', 'b'] }));
+  assert.deepStrictEqual(b.calls.setConfig, [{ bootstrap: { packages: ['a', 'b'], setup: '', start: '' } }]);
+  assert.deepStrictEqual(b.calls.setConfigOpts, [{ writer: 'intent', seat: 'lead' }]);
+  assert.strictEqual(b.last(), '[agent:team] bootstrap packages saved (2): a b — applies on the next sandbox rebuild');
+});
+
+test('bootstrap setup with a body saves the body verbatim beside the existing fields', async () => {
+  const body = 'service smbd start\necho "done"\n';
+  const b = mkBox({ boxes: ['team-clodex'], config: { bootstrap: { packages: ['smbclient'], setup: '', start: 'x' } } });
+  await fire(b, b.lead, boot('setup', { body }));
+  assert.deepStrictEqual(b.calls.setConfig, [{ bootstrap: { packages: ['smbclient'], setup: body, start: 'x' } }]);
+  assert.strictEqual(b.last(), '[agent:team] bootstrap setup saved (31 B, sha f92330ec) — applies on the next sandbox rebuild');
+});
+
+test('bootstrap start names restart once the box carries the bind', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], applyTarget: 'restart' });
+  await fire(b, b.lead, boot('start', { body: 'echo hi' }));
+  assert.strictEqual(b.last(), '[agent:team] bootstrap start saved (7 B, sha 56a79f3b) — applies on the next sandbox restart');
+});
+
+test('bootstrap setup with an empty body is refused and saves nothing', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  await fire(b, b.lead, boot('setup', { body: '  \n' }));
+  assert.strictEqual(b.calls.setConfig.length, 0);
+  assert.strictEqual(b.last(), '[agent:team] error: bootstrap setup needs a body — [agent:team sandbox bootstrap setup] <script> … [agent:end]');
+});
+
+test('bootstrap show prints each field under its header line', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: {
+    bootstrap: { packages: ['smbclient'], setup: 'echo hi', start: '' },
+    bootstrapHistory: [
+      { at: '2026-10-20T01:00:00.000Z', writer: 'intent', seat: 'lead', field: 'setup', sha: 'old' },
+      { at: '2026-10-20T02:00:00.000Z', writer: 'panel', seat: null, field: 'setup', sha: '56a79f3b1154' },
+    ] } });
+  await fire(b, b.lead, boot('show', { field: 'setup' }));
+  assert.strictEqual(b.last(), '[agent:team] ## setup (7 B, sha 56a79f3b, last changed 2026-10-20T02:00:00.000Z by panel/-)\necho hi');
+  await fire(b, b.lead, boot('show'));
+  assert.strictEqual(b.last(), [
+    '[agent:team] ## packages (9 B, sha 5f7ca3fb, never changed)', 'smbclient',
+    '## setup (7 B, sha 56a79f3b, last changed 2026-10-20T02:00:00.000Z by panel/-)', 'echo hi',
+    '## start (0 B, sha e3b0c442, never changed)', '',
+  ].join('\n'));
+  assert.strictEqual(b.calls.setConfig.length, 0);
+});
+
+test('bootstrap clear start empties only that field; clear alone empties all three', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { bootstrap: { packages: ['a'], setup: 's', start: 't' } } });
+  await fire(b, b.lead, boot('clear', { field: 'start' }));
+  assert.deepStrictEqual(b.calls.setConfig[0], { bootstrap: { packages: ['a'], setup: 's', start: '' } });
+  assert.strictEqual(b.last(), '[agent:team] bootstrap start cleared — applies on the next sandbox rebuild');
+  await fire(b, b.lead, boot('clear'));
+  assert.deepStrictEqual(b.calls.setConfig[1], { bootstrap: { packages: [], setup: '', start: '' } });
+  assert.strictEqual(b.last(), '[agent:team] bootstrap packages, setup, start cleared — applies on the next sandbox rebuild');
+});
+
+test('a bootstrap setConfig refusal is relayed verbatim', async () => {
+  const refusal = "bootstrap.setup line 1 looks like a secret: put it in the box's env_file, not in a script";
+  const b = mkBox({ boxes: ['team-clodex'], setConfigResult: { ok: false, error: refusal } });
+  await fire(b, b.lead, boot('setup', { body: 'DB_PASSWORD=x' }));
+  assert.strictEqual(b.last(), `[agent:team] error: ${refusal}`);
+});
+
+test('restart restarts the box and names what happens to its seats', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  await fire(b, b.lead, { action: 'restart' });
+  assert.strictEqual(b.calls.restart, 1);
+  assert.strictEqual(b.calls.setConfig.length, 0);
+  assert.strictEqual(b.last(), '[agent:team] restarting team-clodex — every seat inside it dies and is restored by the box; the start hook runs after healthz');
+});
+
+test('restart on a team with no box creates none', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'restart' });
+  assert.strictEqual(b.calls.create.length, 0);
+  assert.strictEqual(b.last(), '[agent:team] sandbox team-clodex: no box — this team has none; [agent:team sandbox up] creates it');
+});
+
+test('in-box restart keeps the rebuild refusal and sends nothing', async () => {
+  const b = mkInBox(IN_BOX);
+  await fire(b, b.lead, { action: 'restart' });
+  assert.match(b.last(), /error: sandboxes are not enabled on this host — inside a sandbox box there is no docker/);
+  assert.deepStrictEqual(b.sent, []);
+});
+
+const BOOT_ST = (bootstrap) => ({ state: 'running', ref: null, sha: null, bootstrap });
+
+test('status prints the bootstrap rows: configured, setup ok, start running', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: BOOT_ST({
+    configured: { packages: 2, setup: true, start: true },
+    setup: { sha: 'abcdef0123456789', exit: 0, at: '2026-10-20T01:00:00Z', timedOut: false },
+    start: { pid: 42, at: '2026-10-20T01:00:05Z', exit: null }, degraded: false }) });
+  await fire(b, b.lead, { action: 'status' });
+  const lines = b.last().split('\n');
+  assert.doesNotMatch(lines[0], /DEGRADED/);
+  assert.deepStrictEqual(lines.slice(-3), [
+    'bootstrap: 2 packages, setup yes, start yes',
+    'setup: ok abcdef01 at 2026-10-20T01:00:00Z',
+    'start hook: running pid 42 since 2026-10-20T01:00:05Z',
+  ]);
+});
+
+test('status on a degraded box: the first line says so and the setup row says FAILED (timed out)', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: BOOT_ST({
+    configured: { packages: 0, setup: true, start: false },
+    setup: { sha: 'abcdef0123456789', exit: 124, at: '2026-10-20T01:00:00Z', timedOut: true },
+    start: { pid: 7, at: '2026-10-19T01:00:05Z', exit: 1 }, degraded: true }) });
+  await fire(b, b.lead, { action: 'status' });
+  const lines = b.last().split('\n');
+  assert.match(lines[0], / — ENVIRONMENT DEGRADED \(setup failed\)$/);
+  assert.deepStrictEqual(lines.slice(-3), [
+    'bootstrap: 0 packages, setup yes, start no',
+    'setup: FAILED exit 124 at 2026-10-20T01:00:00Z (timed out) — fix the script and sandbox rebuild',
+    'start hook: exited 1 at 2026-10-19T01:00:05Z',
+  ]);
+});
+
+test('status with bootstrap but no records says none for both hooks', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: BOOT_ST({
+    configured: { packages: 0, setup: false, start: false }, setup: null, start: null, degraded: false }) });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /\nplatform: host\nbootstrap: 0 packages, setup no, start no\nsetup: none\nstart hook: none$/);
+});
+
+test('the relayed status DTO carries the bootstrap rows and the degraded clause', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: BOOT_ST({
+    configured: { packages: 1, setup: false, start: false },
+    setup: { sha: 'abcdef0123456789', exit: 3, at: '2026-10-20T01:00:00Z', timedOut: false }, start: null, degraded: true }) });
+  const r = await b.m._sandboxVerb(b.team, b.box(), 'status', { action: 'status' }, { relay: true });
+  assert.strictEqual(r.reply, [
+    'sandbox team-clodex running — ENVIRONMENT DEGRADED (setup failed)', 'ports: none', 'limits: none', 'platform: host',
+    'bootstrap: 1 packages, setup no, start no',
+    'setup: FAILED exit 3 at 2026-10-20T01:00:00Z — fix the script and sandbox rebuild',
+    'start hook: none',
+  ].join('\n'));
 });

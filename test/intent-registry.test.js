@@ -976,6 +976,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // prompts/append/team-project.md.
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
+    || (i.type === 'team' && i.sub === 'sandbox' && i.action === 'bootstrap' && (i.op === 'setup' || i.op === 'start'))
     || i.type === 'team-create'
     || i.type === 'sub'
     || (i.type === 'scratch' && i.sub === 'end')
