@@ -26,6 +26,7 @@ const DEFAULT_CONFIG = {
   image: null,
   ref: null,
   mounts: [],
+  ports: [],
 };
 
 const REF_RE = /^[A-Za-z0-9._/-]+$/;
@@ -53,6 +54,54 @@ const WORK_CONTAINER_DIR = '/home/clodex/work';
 // Container-side ports — FIXED by the image (docker/web/Dockerfile env), so the
 // host publishes map host<config> → container<these>. Not user-configurable.
 const CONTAINER_PORTS = { web: 8080, wirescope: 7800, wire: 7900 };
+
+const PORT_PROTOS = ['tcp', 'http', 'https'];
+const PORT_LABEL_MAX = 32;
+const APP_HOST_PORT_MIN = 1024;
+const PORT_FORWARDER_PATH = '/app/sandbox-port-forwarder.js';
+const PORTS_RECORD_FILE = 'sandbox-ports.json';
+const LOCAL_DOCKER_CONTEXTS = new Set(['default', 'desktop-linux']);
+
+function gatewayServiceName(hostname) { return `${hostname}-ports`; }
+
+function toPortNumber(raw) {
+  const n = typeof raw === 'string' && /^\s*\d+\s*$/.test(raw) ? parseInt(raw, 10) : raw;
+  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+}
+
+function normalizePorts(rawPorts) {
+  if (rawPorts == null) return { ports: [] };
+  if (!Array.isArray(rawPorts)) return { error: 'Ports must be a list.' };
+  const ports = [];
+  for (const raw of rawPorts) {
+    const e = raw || {};
+    const container = toPortNumber(e.container);
+    if (container === null) return { error: `Container port must be a whole number 1–65535 (got ${JSON.stringify(e.container)}).` };
+    const role = Object.keys(CONTAINER_PORTS).find((k) => CONTAINER_PORTS[k] === container);
+    if (role) return { error: `Container port ${container} is Clodex's own ${role} port inside the box; run the app on another port.` };
+    const host = (e.host == null || e.host === '') ? container : toPortNumber(e.host);
+    if (host === null || host < APP_HOST_PORT_MIN) {
+      return { error: `Host port must be a whole number ${APP_HOST_PORT_MIN}–65535 (got ${JSON.stringify(e.host == null || e.host === '' ? container : e.host)}).` };
+    }
+    const proto = e.proto == null || e.proto === '' ? 'tcp' : e.proto;
+    if (!PORT_PROTOS.includes(proto)) return { error: `Port protocol must be one of ${PORT_PROTOS.join(', ')} (got ${JSON.stringify(e.proto)}).` };
+    const label = e.label == null ? '' : String(e.label).trim();
+    if (label.length > PORT_LABEL_MAX) return { error: `Port label is too long (${label.length} characters, max ${PORT_LABEL_MAX}).` };
+    ports.push({ container, host, allInterfaces: e.allInterfaces === true, proto, label });
+  }
+  return { ports };
+}
+
+function samePortPair(a, b) { return a.container === b.container && a.host === b.host; }
+
+function samePortEntry(a, b) {
+  return samePortPair(a, b) && a.allInterfaces === b.allInterfaces && a.proto === b.proto && a.label === b.label;
+}
+
+function portUrl(entry, local) {
+  if (!local) return undefined;
+  return entry.proto === 'tcp' ? `localhost:${entry.host}` : `${entry.proto}://localhost:${entry.host}`;
+}
 
 // Read-only host binds layered on top of the clodex-dot volume, deliberately
 // SHADOWING these subpaths: the box reads host libraries live while still
@@ -236,7 +285,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -324,6 +373,31 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push('      retries: 3');
   L.push('      start_period: 10s');
   L.push('');
+  const published = normalizePorts(appPorts);
+  if (published.error) throw new Error(published.error);
+  if (published.ports.length) {
+    L.push(`  ${gatewayServiceName(boxHostname)}:`);
+    if (image.kind === 'build') {
+      L.push('    build:');
+      L.push(`      context: ${yamlQuote(image.context)}`);
+      L.push(`      dockerfile: ${yamlQuote(image.dockerfile)}`);
+    } else {
+      L.push(`    image: ${image.image}`);
+    }
+    L.push(`    entrypoint: ["node", "${PORT_FORWARDER_PATH}"]`);
+    L.push('    ports:');
+    for (const p of published.ports) {
+      L.push(`      - "${p.allInterfaces ? '0.0.0.0' : '127.0.0.1'}:${p.host}:${p.host}"`);
+    }
+    const map = published.ports.map((p) => ({ host: p.host, target: `clodex:${p.container}` }));
+    L.push('    environment:');
+    L.push(`      CLODEX_PORT_MAP: ${yamlQuote(JSON.stringify(map))}`);
+    L.push('    read_only: true');
+    L.push('    cap_drop:');
+    L.push('      - ALL');
+    L.push('    restart: unless-stopped');
+    L.push('');
+  }
   if (!workDir) {
     L.push('volumes:');
     L.push('  clodex-work:');
@@ -339,11 +413,23 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
 function parseOwnPorts(yamlText) {
   const out = [];
   if (!yamlText) return out;
-  for (const m of yamlText.matchAll(/127\.0\.0\.1:(\d+):\d+/g)) {
+  for (const m of yamlText.matchAll(/(?:127\.0\.0\.1|0\.0\.0\.0):(\d+):\d+/g)) {
     const p = parseInt(m[1], 10);
     if (Number.isInteger(p)) out.push(p);
   }
   return out;
+}
+
+function parsePortOwners(yamlText) {
+  if (!yamlText) return [];
+  const named = /^\s+hostname:\s*(\S+)\s*$/m.exec(yamlText);
+  const boxId = named ? named[1] : null;
+  return parseOwnPorts(yamlText).map((port) => ({ port, boxId }));
+}
+
+function clodexServiceText(yamlText) {
+  const gateway = /^  \S+-ports:\s*$/m.exec(yamlText);
+  return gateway ? yamlText.slice(0, gateway.index) : yamlText;
 }
 
 function parseOwnPortMap(yamlText) {
@@ -354,7 +440,7 @@ function parseOwnPortMap(yamlText) {
     [CONTAINER_PORTS.wirescope]: 'wirescope',
     [CONTAINER_PORTS.wire]: 'wire',
   };
-  for (const m of yamlText.matchAll(/127\.0\.0\.1:(\d+):(\d+)/g)) {
+  for (const m of clodexServiceText(yamlText).matchAll(/127\.0\.0\.1:(\d+):(\d+)/g)) {
     const host = parseInt(m[1], 10);
     const role = roleByContainer[parseInt(m[2], 10)];
     if (role && Number.isInteger(host)) out[role] = host;
@@ -455,6 +541,29 @@ async function probeDocker(spawn) {
   return { ...info, compose };
 }
 
+function probeDockerLocal(spawn, env) {
+  if ((env || {}).DOCKER_HOST) return Promise.resolve({ local: false });
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn('docker', ['context', 'show'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      resolve({ local: false });
+      return;
+    }
+    let out = '';
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch {}
+      done({ local: false });
+    }, DETECT_TIMEOUT_MS);
+    if (child.stdout) child.stdout.on('data', (d) => { out += d; });
+    child.on('error', () => done({ local: false }));
+    child.on('exit', (code) => done({ local: code === 0 && LOCAL_DOCKER_CONTEXTS.has(out.trim()) }));
+  });
+}
+
 
 // Operator-facing docker-remedy copy. KEEP IN SYNC with
 // renderer/lib/sandbox-view.js detectNotice — the dialog shows the same
@@ -508,6 +617,9 @@ function createSandbox(deps = {}) {
   const siblingComposePaths = deps.siblingComposePaths || (() => []);
   const platform = deps.platform || process.platform;
   const userInfo = deps.userInfo || os.userInfo;
+  const env = deps.env || process.env;
+  const localCache = createDetectCache({ probe: () => probeDockerLocal(spawn, env) });
+  const dockerIsLocal = deps.dockerIsLocal || (() => localCache.get().then((r) => r.local));
 
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
@@ -534,9 +646,18 @@ function createSandbox(deps = {}) {
     try { s = readBoxConfig() || {}; } catch { s = {}; }
     return { ...DEFAULT_CONFIG, ...s, hasToken: hasAuthToken() };
   }
-  function setConfig(partial) {
-    const next = { ...getConfig(), ...(partial || {}) };
+  function setConfig(partial, opts = {}) {
+    const writer = opts.writer === 'panel' ? 'panel' : 'intent';
+    const before = getConfig();
+    const next = { ...before, ...(partial || {}) };
     delete next.hasToken;   // derived, file-backed — never persisted to ui-settings
+    let portsChanged = false;
+    if (partial && 'ports' in partial) {
+      const checked = validatePortsForSave(next.ports, { writer, prior: before.ports });
+      if (checked.error) return { ok: false, error: checked.error };
+      next.ports = checked.ports;
+      portsChanged = JSON.stringify(normalizePorts(before.ports).ports || []) !== JSON.stringify(next.ports);
+    }
     if (partial && 'mounts' in partial) {
       const checked = validateMountsForSave(next.mounts);
       if (checked.error) return { ok: false, error: checked.error };
@@ -548,7 +669,145 @@ function createSandbox(deps = {}) {
       next.ref = checked.ref;
     }
     if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
+    if (portsChanged) {
+      return serialize(async () => (await isRunning() ? applyPortsNow() : null))
+        .then((applied) => (applied && !applied.ok ? { ...getConfig(), portsError: applied.error } : getConfig()));
+    }
     return getConfig();
+  }
+
+  function ownClodexHostPorts() {
+    const c = getConfig();
+    const out = new Set([c.webPort, c.wirescopePort, c.wirePort]);
+    try {
+      for (const p of Object.values(parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')))) out.add(p);
+    } catch {}
+    return out;
+  }
+
+  function siblingPortOwners() {
+    const owners = new Map();
+    for (const file of siblingComposePaths()) {
+      try {
+        for (const row of parsePortOwners(fs.readFileSync(file, 'utf8'))) {
+          if (!owners.has(row.port)) owners.set(row.port, row.boxId);
+        }
+      } catch {}
+    }
+    return owners;
+  }
+
+  function validatePortsForSave(rawPorts, { writer = 'intent', prior = [] } = {}) {
+    const norm = normalizePorts(rawPorts);
+    if (norm.error) return norm;
+    const ports = norm.ports;
+    const priorList = normalizePorts(prior).ports || [];
+    const clodexHost = ownClodexHostPorts();
+    const owners = siblingPortOwners();
+    const listed = new Set(ports.map((p) => p.host));
+    const seen = new Set();
+    const nextFree = (from) => {
+      let p = from + 1;
+      while (p <= 65535 && (owners.has(p) || clodexHost.has(p) || listed.has(p))) p++;
+      return p <= 65535 ? p : null;
+    };
+    for (const p of ports) {
+      if (seen.has(p.host)) return { error: `Host port ${p.host} is listed twice.` };
+      seen.add(p.host);
+      if (clodexHost.has(p.host)) return { error: `Host port ${p.host} is one of this box's Clodex ports; pick another host port.` };
+      if (owners.has(p.host)) {
+        const free = nextFree(p.host);
+        const hint = free ? `; use ${p.container}:${free}` : '';
+        return { error: `${p.host} is published by sandbox ${owners.get(p.host) || '(unknown)'}${hint}` };
+      }
+    }
+    const priorWide = priorList.filter((p) => p.allInterfaces);
+    if (writer !== 'panel') {
+      for (const was of priorWide) {
+        const now = ports.find((p) => samePortPair(p, was));
+        if (!now || !samePortEntry(now, was)) {
+          return { error: `${was.container}:${was.host} is published on all IPv4 interfaces; only the Sandbox panel may change it.` };
+        }
+      }
+      if (ports.some((p) => p.allInterfaces && !priorWide.some((was) => samePortEntry(p, was)))) {
+        return { error: 'All-interfaces exposure can only be turned on from the Sandbox panel.' };
+      }
+    }
+    ports.forEach((p, i) => {
+      if (!p.allInterfaces || priorWide.some((was) => samePortPair(p, was))) return;
+      const was = priorList[i];
+      if (was && was.allInterfaces && !ports.some((q) => samePortPair(q, was))) p.allInterfaces = false;
+    });
+    return { ports };
+  }
+
+  function portsRecordPath() { return path.join(sandboxDir(), PORTS_RECORD_FILE); }
+  function boxPortsRecordPath() { return path.join(stateDir(), 'dot', PORTS_RECORD_FILE); }
+
+  function writePortsRecord(rows) {
+    const text = `${JSON.stringify(rows, null, 2)}\n`;
+    for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, text);
+    }
+  }
+
+  function readPortsRecord() {
+    try {
+      const rows = JSON.parse(fs.readFileSync(portsRecordPath(), 'utf8'));
+      return Array.isArray(rows) ? rows : [];
+    } catch { return []; }
+  }
+
+  async function recordPorts(ports, result) {
+    const local = result.ok && ports.length ? await dockerIsLocal() : false;
+    const error = result.ok ? undefined : String(result.stderr || '').trim().slice(-200) || `docker compose exited ${result.code}`;
+    const rows = ports.map((p) => {
+      const row = { container: p.container, host: p.host, proto: p.proto, allInterfaces: p.allInterfaces, applied: !!result.ok };
+      if (error) row.error = error;
+      const url = result.ok ? portUrl(p, local) : undefined;
+      if (url) row.url = url;
+      return row;
+    });
+    writePortsRecord(rows);
+    return rows;
+  }
+
+  async function isRunning() {
+    return parseComposeState((await runCompose(['ps', '--format', 'json'])).stdout) === 'running';
+  }
+
+  async function applyPortsNow() {
+    const owner = await foreignOwner();
+    if (owner) return foreignError(owner);
+    const ports = normalizePorts(getConfig().ports).ports || [];
+    const svc = gatewayServiceName(id);
+    const rewrite = async () => {
+      try { await writeComposeFile(); return null; } catch (e) {
+        return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
+      }
+    };
+    let r;
+    if (ports.length) {
+      const failed = await rewrite();
+      if (failed) return failed;
+      r = await runCompose(['up', '-d', '--no-deps', svc]);
+    } else {
+      r = await runCompose(['rm', '-sf', svc]);
+      if (r.ok) {
+        const failed = await rewrite();
+        if (failed) return failed;
+      }
+    }
+    const rows = await recordPorts(ports, r);
+    if (!r.ok) return { ok: false, error: rows.length ? rows[0].error : (r.stderr.trim() || `docker compose exited ${r.code}`), ports: rows };
+    return { ok: true, ports: rows };
+  }
+
+  function applyPorts() { return serialize(applyPortsNow); }
+
+  function portsState() {
+    return { ports: normalizePorts(getConfig().ports).ports || [], applied: readPortsRecord() };
   }
 
   function validateMountsForSave(rawMounts) {
@@ -679,6 +938,8 @@ function createSandbox(deps = {}) {
     let ownPorts = [];
     try { ownPorts = parseOwnPorts(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
     const busy = await buildBusySet(config, ownPorts);
+    const appPorts = normalizePorts(config.ports).ports || [];
+    for (const p of appPorts) busy.add(p.host);
     const ports = resolvePorts(config, (p) => busy.has(p));
     const authFile = fs.existsSync(authEnvPath()) ? authEnvPath() : null;
     for (const d of LIBRARY_MOUNT_DIRS) {
@@ -691,7 +952,7 @@ function createSandbox(deps = {}) {
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
-      hostUser: hostUser(config, image),
+      hostUser: hostUser(config, image), appPorts,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -795,6 +1056,10 @@ function createSandbox(deps = {}) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
       const r = await runSteps(gen);
+      const appPorts = normalizePorts(config.ports).ports || [];
+      if (appPorts.length || fs.existsSync(portsRecordPath())) {
+        try { await recordPorts(appPorts, r); } catch {}
+      }
       if (!r.ok) {
         const gone = dockerUnavailableError(r.stderr);
         if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
@@ -830,11 +1095,14 @@ function createSandbox(deps = {}) {
   async function down() {
     const owner = await foreignOwner();
     if (owner) return foreignError(owner);
-    const r = await runCompose(['down']);
+    const r = await runCompose(['down', '--remove-orphans']);
     if (!r.ok) {
       const gone = dockerUnavailableError(r.stderr);
       if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
+    }
+    for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
+      try { fs.rmSync(file, { force: true }); } catch {}
     }
     return { ok: true };
   }
@@ -909,7 +1177,7 @@ function createSandbox(deps = {}) {
 
   return {
     id, label: boxLabel,
-    detect, getConfig, setConfig, writeComposeFile, translateHostPath,
+    detect, getConfig, setConfig, validatePortsForSave, applyPorts, portsState, writeComposeFile, translateHostPath,
     up, rebuild, down, status, logsTail, registerPeer, unregisterPeer, containerStartedAt,
     waitHealthy: boxWaitHealthy,
     hasAuthToken, authToken, setAuthToken, clearAuthToken,
@@ -926,6 +1194,7 @@ function createSandboxManager(deps = {}) {
   const managerSpawn = deps.spawn || cp.spawn;
   const now = deps.now || Date.now;
   const detectCache = createDetectCache({ probe: () => probeDocker(managerSpawn), now });
+  const localCache = createDetectCache({ probe: () => probeDockerLocal(managerSpawn, deps.env || process.env), now });
   detectCache.get().catch(() => {});
 
   const instances = new Map();
@@ -954,6 +1223,7 @@ function createSandboxManager(deps = {}) {
         .map((inst) => inst.composePath()),
       detect: () => detectCache.get(),
       invalidateDetect: () => detectCache.invalidate(),
+      dockerIsLocal: deps.dockerIsLocal || (() => localCache.get().then((r) => r.local)),
       readBoxConfig: () => {
         const row = listBoxes().find((b) => b && b.id === boxId);
         return (row && row.config) || {};
@@ -1054,7 +1324,7 @@ module.exports = {
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError, probeDocker,
   resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
-  parseOwnPorts, parseOwnPortMap, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
+  parseOwnPorts, parsePortOwners, parseOwnPortMap, normalizePorts, gatewayServiceName, probeDockerLocal, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
   runningInSandboxBox,
   DEFAULT_CONFIG, DEFAULT_PORTS, CONTAINER_PORTS, RESERVED_MOUNT_TARGETS, WORK_CONTAINER_DIR,

@@ -838,6 +838,10 @@ accept teardown removes.
   every Start). Electron-free and deps-injected so the unit suite drives it with
   spawn/docker mocked; `<userData>/<subdir>/compose.yaml` is regenerated from
   config on every Start and is never the source of truth.
+- **sandbox-port-forwarder.js** — the TCP forwarder a box's `<box>-ports`
+  gateway service runs: listens on each host port of `CLODEX_PORT_MAP` and pipes
+  every connection to the box's in-box port, half-closes included. Runs from the
+  same image as the box, so it ships in `/app` with the rest of the repo.
 - **sandbox-seeds.js** — `seedSandboxSessions`: create a box's starting seats
   over its peer-wire API (`GET /api/sessions`, then one `POST` per missing
   name), so `[agent:team sandbox up]` can reply with a box that is already

@@ -4370,6 +4370,48 @@ body.drawer-dragging #work-row {
 #sandbox-mounts-restart {
   color: var(--warn, #c88a2a);
 }
+.sandbox-app-port-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.sandbox-app-port-row input[type=number] {
+  width: 72px;
+}
+.sandbox-app-port-label {
+  flex: 1;
+  min-width: 80px;
+}
+.sandbox-app-port-wide {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sandbox-app-port-warn {
+  flex-basis: 100%;
+  color: var(--warn, #c88a2a);
+}
+.sandbox-app-port-warn.hidden {
+  display: none;
+}
+.sandbox-app-port-chip {
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--bg-tertiary, rgba(127, 127, 127, 0.2));
+}
+.sandbox-app-port-chip.failed {
+  color: var(--error, #d9534f);
+}
+.sandbox-app-port-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+#sandbox-app-ports-save {
+  margin-left: 6px;
+}
 #sandbox-open-link {
   color: var(--accent);
   text-decoration: none;
@@ -11311,6 +11353,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <button id="sandbox-mounts-add" class="secondary" type="button">Add Folder…</button>
         <p class="hint-text hidden" id="sandbox-mounts-restart">Mounts changed — restart the sandbox (Stop then Start, or Rebuild) to apply.</p>
       </div>
+      <div class="sandbox-field" id="sandbox-app-ports-field">
+        <label>Ports</label>
+        <p class="hint-text">Publish an app port from inside the box on this machine. The app must listen on 0.0.0.0 in the box. A running box applies a save at once by recreating only its port gateway, which drops every connection through it.</p>
+        <div id="sandbox-app-ports-list"></div>
+        <button id="sandbox-app-ports-add" class="secondary" type="button">Add Port</button>
+        <button id="sandbox-app-ports-save" type="button">Save Ports</button>
+      </div>
       <div class="sandbox-field" id="sandbox-auth-field">
         <label for="sandbox-token">Claude auth token</label>
         <div class="sandbox-workdir-row">
@@ -11644,6 +11693,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "sandboxOpenWeb", kind: "invoke", channel: "sandbox:openWeb" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
         { name: "sandboxSetConfig", kind: "invoke", channel: "sandbox:setConfig" },
+        { name: "sandboxPorts", kind: "invoke", channel: "sandbox:ports" },
         { name: "sandboxTranslatePath", kind: "invoke", channel: "sandbox:translatePath" },
         { name: "sandboxUp", kind: "invoke", channel: "sandbox:up" },
         { name: "sandboxRebuild", kind: "invoke", channel: "sandbox:rebuild" },
@@ -58460,6 +58510,9 @@ ${res.stderr}` : "");
       var sbMountsList = document.getElementById("sandbox-mounts-list");
       var sbMountsAdd = document.getElementById("sandbox-mounts-add");
       var sbMountsRestart = document.getElementById("sandbox-mounts-restart");
+      var sbAppPortsList = document.getElementById("sandbox-app-ports-list");
+      var sbAppPortsAdd = document.getElementById("sandbox-app-ports-add");
+      var sbAppPortsSave = document.getElementById("sandbox-app-ports-save");
       var sbBoxList = document.getElementById("sandbox-box-list");
       var sbBoxNewId = document.getElementById("sandbox-box-new-id");
       var sbBoxCreate = document.getElementById("sandbox-box-create");
@@ -58479,6 +58532,9 @@ ${res.stderr}` : "");
       var sbBoxes = [];
       var sbMounts = [];
       var sbMountsDirty = false;
+      var sbAppPorts = [];
+      var sbAppPortRecord = [];
+      var sbAppPortChips = [];
       function renderSandboxNotice(row, notice) {
         row.innerHTML = "";
         const dot = document.createElement("span");
@@ -58542,6 +58598,7 @@ ${res.stderr}` : "");
           if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
           applyActionGate();
           sbMountsRestart.classList.toggle("hidden", !(sbMountsDirty && sbRunning));
+          refreshAppPortRecord();
           const selRow = sbBoxList.querySelector(".sandbox-box-row.selected");
           if (selRow) {
             const dot = selRow.querySelector(".sandbox-dot");
@@ -58602,6 +58659,167 @@ ${res.stderr}` : "");
         if (sbRunning) sbMountsDirty = true;
         renderMounts();
       }
+      var SB_APP_PORT_WIDE_WARNING = "publishes on every interface of this machine, including VPNs";
+      function appPortNumberInput(value, placeholder, onInput) {
+        const el = document.createElement("input");
+        el.type = "number";
+        el.min = "1";
+        el.max = "65535";
+        el.placeholder = placeholder;
+        el.value = value == null ? "" : String(value);
+        el.addEventListener("input", () => onInput(el.value.trim() === "" ? null : Number(el.value)));
+        return el;
+      }
+      function appPortRecordFor(p) {
+        return sbAppPortRecord.find((r) => r && r.container === p.container && r.host === (p.host == null ? p.container : p.host) && r.proto === (p.proto || "tcp") && !!r.allInterfaces === !!p.allInterfaces) || null;
+      }
+      function updateAppPortChips() {
+        sbAppPortChips.forEach((cell, i) => {
+          const p = sbAppPorts[i];
+          cell.innerHTML = "";
+          const rec = p ? appPortRecordFor(p) : null;
+          const chip = document.createElement("span");
+          chip.className = "sandbox-app-port-chip";
+          if (!rec) chip.textContent = "pending";
+          else if (rec.applied) chip.textContent = "published";
+          else {
+            chip.textContent = `failed: ${rec.error || "not applied"}`;
+            chip.classList.add("failed");
+          }
+          cell.appendChild(chip);
+          if (!rec || !rec.applied) return;
+          if ((rec.proto === "http" || rec.proto === "https") && rec.url) {
+            const a = document.createElement("a");
+            a.className = "sandbox-app-port-link";
+            a.textContent = rec.url;
+            a.addEventListener("click", (e) => {
+              e.preventDefault();
+              window.api.openExternal(rec.url);
+            });
+            cell.appendChild(a);
+            return;
+          }
+          const target = rec.url || `localhost:${rec.host}`;
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "secondary";
+          copy.textContent = `Copy ${target}`;
+          copy.title = rec.url ? "Copy host:port" : "Docker is not local: this port is published on the Docker host, not on localhost";
+          copy.addEventListener("click", () => {
+            navigator.clipboard.writeText(target).catch(() => {
+            });
+          });
+          cell.appendChild(copy);
+        });
+      }
+      function renderAppPorts() {
+        sbAppPortsList.innerHTML = "";
+        sbAppPortChips = [];
+        sbAppPorts.forEach((p, i) => {
+          const row = document.createElement("div");
+          row.className = "sandbox-app-port-row";
+          const pairEdited = () => {
+            if (!p.allInterfaces) return;
+            p.allInterfaces = false;
+            wideBox.checked = false;
+            warn.classList.add("hidden");
+          };
+          const container = appPortNumberInput(p.container, "box port", (v) => {
+            p.container = v;
+            pairEdited();
+          });
+          const host = appPortNumberInput(p.host, "host port", (v) => {
+            p.host = v;
+            pairEdited();
+          });
+          const proto = document.createElement("select");
+          for (const v of ["tcp", "http", "https"]) {
+            const o = document.createElement("option");
+            o.value = v;
+            o.textContent = v;
+            proto.appendChild(o);
+          }
+          proto.value = p.proto || "tcp";
+          proto.addEventListener("change", () => {
+            p.proto = proto.value;
+          });
+          const label = document.createElement("input");
+          label.type = "text";
+          label.className = "sandbox-app-port-label";
+          label.maxLength = 32;
+          label.placeholder = "label";
+          label.value = p.label || "";
+          label.addEventListener("input", () => {
+            p.label = label.value;
+          });
+          const wide = document.createElement("label");
+          wide.className = "sandbox-app-port-wide";
+          const wideBox = document.createElement("input");
+          wideBox.type = "checkbox";
+          wideBox.checked = !!p.allInterfaces;
+          wide.title = SB_APP_PORT_WIDE_WARNING;
+          wide.append(wideBox, document.createTextNode("all IPv4 interfaces"));
+          const warn = document.createElement("span");
+          warn.className = `hint-text sandbox-app-port-warn${p.allInterfaces ? "" : " hidden"}`;
+          warn.textContent = SB_APP_PORT_WIDE_WARNING;
+          wideBox.addEventListener("change", () => {
+            p.allInterfaces = wideBox.checked;
+            warn.classList.toggle("hidden", !wideBox.checked);
+          });
+          const rmBtn = document.createElement("button");
+          rmBtn.type = "button";
+          rmBtn.className = "secondary";
+          rmBtn.textContent = "Remove";
+          rmBtn.addEventListener("click", () => {
+            sbAppPorts.splice(i, 1);
+            renderAppPorts();
+          });
+          const state = document.createElement("span");
+          sbAppPortChips.push(state);
+          row.append(container, host, proto, label, wide, rmBtn, state, warn);
+          sbAppPortsList.appendChild(row);
+        });
+        updateAppPortChips();
+      }
+      async function refreshAppPortRecord() {
+        const box = sbCurrentBox;
+        let record = [];
+        try {
+          const r = await window.api.sandboxPorts(box);
+          record = r && Array.isArray(r.applied) ? r.applied : [];
+        } catch {
+          record = [];
+        }
+        if (box !== sbCurrentBox) return;
+        sbAppPortRecord = record;
+        updateAppPortChips();
+      }
+      function loadAppPorts(cfg) {
+        sbAppPorts = Array.isArray(cfg.ports) ? cfg.ports.map((p) => ({ ...p })) : [];
+        renderAppPorts();
+        refreshAppPortRecord();
+      }
+      sbAppPortsAdd.addEventListener("click", () => {
+        sbAppPorts.push({ container: null, host: null, proto: "tcp", label: "", allInterfaces: false });
+        renderAppPorts();
+      });
+      sbAppPortsSave.addEventListener("click", async () => {
+        const box = sbCurrentBox;
+        sbAppPortsSave.disabled = true;
+        let r;
+        try {
+          r = await window.api.sandboxSetConfig({ ports: sbAppPorts.map((p) => ({ ...p })) }, box);
+        } finally {
+          sbAppPortsSave.disabled = false;
+        }
+        if (box !== sbCurrentBox) return;
+        if (r && r.ok === false) {
+          showToast(`Ports rejected: ${r.error || "invalid port"}`, { kind: "error", duration: 9e3 });
+          return;
+        }
+        if (r && r.portsError) showToast(`Ports saved but not applied: ${r.portsError}`, { kind: "error", duration: 9e3 });
+        loadAppPorts(r || {});
+      });
       sbMountsAdd.addEventListener("click", async () => {
         const dir = await window.api.selectDirectory();
         if (!dir) return;
@@ -58663,6 +58881,7 @@ ${res.stderr}` : "");
         sbMounts = Array.isArray(cfg.mounts) ? cfg.mounts.map((m) => ({ host: m.host, ro: !!m.ro })) : [];
         sbMountsDirty = false;
         renderMounts();
+        loadAppPorts(cfg);
         applyTokenState(!!cfg.hasToken);
       }
       function showDetail(show) {

@@ -1423,6 +1423,13 @@
         <button id="sandbox-mounts-add" class="secondary" type="button">Add Folder…</button>
         <p class="hint-text hidden" id="sandbox-mounts-restart">Mounts changed — restart the sandbox (Stop then Start, or Rebuild) to apply.</p>
       </div>
+      <div class="sandbox-field" id="sandbox-app-ports-field">
+        <label>Ports</label>
+        <p class="hint-text">Publish an app port from inside the box on this machine. The app must listen on 0.0.0.0 in the box. A running box applies a save at once by recreating only its port gateway, which drops every connection through it.</p>
+        <div id="sandbox-app-ports-list"></div>
+        <button id="sandbox-app-ports-add" class="secondary" type="button">Add Port</button>
+        <button id="sandbox-app-ports-save" type="button">Save Ports</button>
+      </div>
       <div class="sandbox-field" id="sandbox-auth-field">
         <label for="sandbox-token">Claude auth token</label>
         <div class="sandbox-workdir-row">

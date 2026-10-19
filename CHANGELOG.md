@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The sandbox box no longer sends a 'shipped update is being withheld' inbox note for library files the host mounts into it read-only: the seeder skips a destination it cannot write instead of calling it stranded.
+- Sandbox boxes can publish app ports: a per-box `ports` list in the Sandbox panel maps a port inside the box to `localhost` on this machine through a stateless gateway that is recreated alone, so adding or removing a port never restarts the box or its seats; collisions are refused by name, all-interfaces exposure is per-mapping and panel-only.
 
 ## 5.131.5 — 2026-10-18
 

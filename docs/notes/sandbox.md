@@ -25,3 +25,24 @@ noexec mount they fail EACCES and the seat comes up nameless and deaf.
 `mode=` as octal. The long syntax's `mode: 1777` is YAML, where a plain integer
 is decimal — 1777 decimal is 0o3361, which would leave the container's non-root
 `clodex` user unable to mkdir under the dir.
+
+## applyPortsNow
+
+A port change runs `up -d --no-deps <box>-ports`, never a bare `up`: Docker
+cannot add a mapping to a running container, and a general `up` would also
+recreate the box whenever its own definition drifted (image, ref), killing every
+seat. The gateway has no `depends_on`: one would pull the box into any plain
+`up <box>-ports`. An emptied list runs `rm -sf <box>-ports` before the compose
+file is rewritten, because `rm` refuses a service the file no longer names.
+
+## validatePortsForSave
+
+All-interfaces consent is scoped to the `(container, host)` pair it was given
+for: a pair change resets it for every writer, and a non-panel writer may
+neither set it nor edit or remove an entry that carries it.
+
+## generateCompose
+
+The gateway forwards to `clodex:<container>`, the box's compose service name:
+Docker's embedded DNS resolves service names and aliases, not the `hostname:`
+a service sets.
