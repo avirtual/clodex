@@ -24,8 +24,8 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const TOKEN = 'deadbeefcafe0000deadbeefcafe1111deadbeefcafe2222deadbeefcafe3333';
 const WEB_TOKEN = 'feedface0000feedface1111feedface2222feedface3333feedface4444feed';
 
-function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedAts = ['2026-10-15T01:00:00.000000001Z', '2026-10-15T02:00:00.000000002Z'], upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null } = {}) {
-  const calls = { create: [], get: [], setConfig: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
+function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedAts = ['2026-10-15T01:00:00.000000001Z', '2026-10-15T02:00:00.000000002Z'], upResult, statusResult, downResult, setConfigResult, healthResult, config = {}, noStateDir = false, stateRoot = null, applied = [], portsError = null } = {}) {
+  const calls = { create: [], get: [], setConfig: [], setConfigOpts: [], up: 0, rebuild: 0, down: 0, status: 0, waitHealthy: 0, unregisterPeer: 0 };
   const rows = new Map(boxes.map((id) => [id, { id }]));
   // The box's config is REAL state here, not a spy log: the handler reads it back
   // (to decide whether to seed a default ref) and the "config survives" subjects
@@ -33,12 +33,14 @@ function mkFakeManager({ boxes = [], ports = { web: 7810, wire: 7820 }, startedA
   const makeBox = (id) => ({
     id,
     getConfig() { return { ...config }; },
-    setConfig(partial) {
+    setConfig(partial, opts) {
       calls.setConfig.push(partial);
+      calls.setConfigOpts.push(opts);
       if (setConfigResult) return setConfigResult;
       Object.assign(config, partial);
-      return { ...config };
+      return portsError ? { ...config, portsError } : { ...config };
     },
+    portsState() { return { ports: config.ports || [], applied }; },
     async containerStartedAt() { calls.startedAt = (calls.startedAt || 0) + 1; return startedAts[Math.min(calls.startedAt, startedAts.length) - 1]; },
     async up() { calls.up++; return upResult || { ok: true, ports }; },
     async rebuild() { calls.rebuild++; return upResult || { ok: true, ports }; },
@@ -632,4 +634,96 @@ test('t1096: _shipTeamIntoBox drops `removedRoleAccounts` — a host label must 
   assert.strictEqual('removedRoleAccounts' in obj, false);
   assert.strictEqual(obj.name, 'clodex');
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.team.file, 'utf-8')).removedRoleAccounts, { reviewer: 'work' }, 'the host manifest still has it');
+});
+
+const PUBLISHED = { container: 3000, host: 3000, proto: 'http', allInterfaces: false, label: '' };
+const FAILED = { container: 5432, host: 15432, proto: 'tcp', allInterfaces: false, label: '' };
+const PENDING = { container: 4000, host: 4000, proto: 'https', allInterfaces: false, label: '' };
+const APPLIED = [
+  { container: 3000, host: 3000, proto: 'http', allInterfaces: false, applied: true, url: 'http://localhost:3000' },
+  { container: 5432, host: 15432, proto: 'tcp', allInterfaces: false, applied: false, error: 'port is already allocated' },
+];
+const THREE_ROWS = [
+  'port 3000 → localhost:3000 (http, published)',
+  'port 5432 → localhost:15432 (tcp, failed: port is already allocated)',
+  'port 4000 → localhost:4000 (https, pending: box not running — sandbox up applies)',
+].join('\n');
+
+const port = (op, spec, extra = {}) => ({ action: 'port', op, spec, proto: null, label: null, ...extra });
+
+test('port add 3000 saves the loopback entry through the intent writer', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  await fire(b, b.lead, port('add', '3000'));
+  assert.deepStrictEqual(b.calls.setConfig, [{ ports: [{ container: 3000, host: 3000, proto: 'tcp', allInterfaces: false }] }]);
+  assert.deepStrictEqual(b.calls.setConfigOpts, [{ writer: 'intent' }]);
+  assert.strictEqual(b.last(), '[agent:team] port 3000 → localhost:3000 (tcp, pending: box not running — sandbox up applies)');
+});
+
+test('port add 3000:3100 proto:http web sets host, proto and label, after the prior entries', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [FAILED] } });
+  await fire(b, b.lead, port('add', '3000:3100', { proto: 'http', label: 'web' }));
+  assert.deepStrictEqual(b.calls.setConfig, [{ ports: [FAILED, { container: 3000, host: 3100, proto: 'http', allInterfaces: false, label: 'web' }] }]);
+});
+
+test('port add of a listed pair is a no-op that names the existing url', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [PUBLISHED] }, applied: APPLIED });
+  await fire(b, b.lead, port('add', '3000'));
+  assert.strictEqual(b.calls.setConfig.length, 0);
+  assert.strictEqual(b.last(), '[agent:team] already listed: port 3000 → localhost:3000 (http, published)');
+});
+
+test('port add reports a failed apply with the error setConfig returned', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], portsError: 'Bind failed' });
+  await fire(b, b.lead, port('add', '3000'));
+  assert.strictEqual(b.last(), '[agent:team] port 3000 → localhost:3000 (tcp, failed: Bind failed)');
+});
+
+test('port rm 5432 removes only that entry', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [PUBLISHED, FAILED, PENDING] } });
+  await fire(b, b.lead, port('rm', '5432'));
+  assert.deepStrictEqual(b.calls.setConfig, [{ ports: [PUBLISHED, PENDING] }]);
+  assert.deepStrictEqual(b.calls.setConfigOpts, [{ writer: 'intent' }]);
+  assert.strictEqual(b.last(), '[agent:team] port 5432 removed (unpublished)');
+});
+
+test('a setConfig refusal is relayed verbatim', async () => {
+  const refusal = '3000 is published by sandbox game-old; use 3000:3001';
+  const b = mkBox({ boxes: ['team-clodex'], setConfigResult: { ok: false, error: refusal } });
+  await fire(b, b.lead, port('add', '3000'));
+  assert.strictEqual(b.last(), `[agent:team] error: ${refusal}`);
+});
+
+test('port list prints a published, a failed and a pending row and the coverage note', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [PUBLISHED, FAILED, PENDING] }, applied: APPLIED });
+  await fire(b, b.lead, port('list', null));
+  assert.strictEqual(b.last(), `[agent:team] ${THREE_ROWS}\nURLs are for this machine; a remote Docker host shows host:port`);
+  assert.strictEqual(b.calls.setConfig.length, 0);
+});
+
+test('status lists the port rows after the status line', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ref: 'master', ports: [PUBLISHED, FAILED, PENDING] }, applied: APPLIED });
+  await fire(b, b.lead, { action: 'status' });
+  const [head, ...rest] = b.last().split('\n');
+  assert.match(head, /^\[agent:team\] sandbox team-clodex running \(ref master\)/);
+  assert.strictEqual(rest.join('\n'), THREE_ROWS);
+});
+
+test('status with no ports says ports: none', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ref: 'master' } });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /\nports: none$/);
+});
+
+test('port add from a seat that is not the lead is refused and saves nothing', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  await fire(b, b.hand, port('add', '3000'));
+  assert.strictEqual(b.calls.setConfig.length, 0);
+  assert.strictEqual(b.last(), '[agent:team] error: only the team lead (lead) can edit team metadata');
+});
+
+test('port on a team with no box creates none', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, port('add', '3000'));
+  assert.strictEqual(b.calls.create.length, 0);
+  assert.strictEqual(b.calls.setConfig.length, 0);
 });

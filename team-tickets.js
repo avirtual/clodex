@@ -35,7 +35,9 @@ const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util'
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
 
-const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status'];
+const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status', 'port'];
+const SANDBOX_PORT_PENDING = 'pending: box not running — sandbox up applies';
+const SANDBOX_PORT_COVERAGE = 'URLs are for this machine; a remote Docker host shows host:port';
 const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
@@ -95,6 +97,21 @@ async function readContainerStartedAt(box) {
 function recreatedClause(before, after) {
   if (!after) return '';
   return before === after ? ' · container NOT restarted (unchanged)' : ' · container restarted';
+}
+
+function sandboxAppPortRow(entry, applied, error) {
+  const rec = (applied || []).find((r) => r && r.container === entry.container && r.host === entry.host);
+  let state = SANDBOX_PORT_PENDING;
+  if (error) state = `failed: ${error}`;
+  else if (rec && rec.applied) state = 'published';
+  else if (rec && rec.error) state = `failed: ${rec.error}`;
+  return `port ${entry.container} → localhost:${entry.host} (${entry.proto || 'tcp'}, ${state})`;
+}
+
+function sandboxAppPortRows(box) {
+  if (typeof box.portsState !== 'function') return [];
+  const st = box.portsState() || {};
+  return (st.ports || []).map((p) => sandboxAppPortRow(p, st.applied));
 }
 
 function sandboxPortClause(st) {
@@ -2517,7 +2534,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       let box = mgr.get(boxId);
-      if (!box && (action === 'status' || action === 'down')) {
+      if (!box && (action === 'status' || action === 'down' || action === 'port')) {
         let removed = false;
         let staleFile = null;
         if (action === 'down') {
@@ -2549,14 +2566,56 @@ function createTicketMethods(deps, shared) {
         const st = await box.status();
         const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
         const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
-        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}`);
+        const rows = sandboxAppPortRows(box);
+        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}`);
         return;
       }
+      if (action === 'port') { await this._handleTeamSandboxPort(box, intent, reply); return; }
 
       const patch = { workDir: team.root };
       if (intent.ref) patch.ref = intent.ref;
       else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;
       return this._bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply });
+    },
+
+    async _handleTeamSandboxPort(box, intent, reply) {
+      const prior = (box.getConfig().ports || []).map((p) => ({ ...p }));
+      if (intent.op === 'list') {
+        const rows = sandboxAppPortRows(box);
+        reply(`${rows.length ? rows.join('\n') : 'ports: none'}\n${SANDBOX_PORT_COVERAGE}`);
+        return;
+      }
+      const m = /^(\d+)(?::(\d+))?$/.exec(intent.spec || '');
+      if (intent.op === 'rm') {
+        if (!m || m[2] !== undefined) { reply('error: usage: [agent:team sandbox port rm <container>]'); return; }
+        const container = Number(m[1]);
+        const next = prior.filter((p) => p.container !== container);
+        if (next.length === prior.length) { reply(`error: no port ${container} is listed`); return; }
+        const saved = await box.setConfig({ ports: next }, { writer: 'intent' });
+        if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+        const applied = (box.portsState() || {}).applied || [];
+        let state = 'unpublished';
+        if (saved && saved.portsError) state = `failed: ${saved.portsError}`;
+        else if (applied.some((r) => r && r.container === container)) state = SANDBOX_PORT_PENDING;
+        reply(`port ${container} removed (${state})`);
+        return;
+      }
+      if (intent.op !== 'add' || !m) {
+        reply('error: usage: [agent:team sandbox port add <container>[:<host>] [proto:tcp|http|https] [label]] | port rm <container> | port list');
+        return;
+      }
+      const entry = { container: Number(m[1]), host: Number(m[2] || m[1]), proto: intent.proto || 'tcp', allInterfaces: false };
+      if (intent.label) entry.label = intent.label;
+      const existing = prior.find((p) => Number(p.container) === entry.container && Number(p.host) === entry.host);
+      if (existing) {
+        reply(`already listed: ${sandboxAppPortRow(existing, (box.portsState() || {}).applied)}`);
+        return;
+      }
+      const saved = await box.setConfig({ ports: [...prior, entry] }, { writer: 'intent' });
+      if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
+      const st = box.portsState() || {};
+      const row = (st.ports || []).find((p) => p.container === entry.container && p.host === entry.host) || entry;
+      reply(sandboxAppPortRow(row, st.applied, saved && saved.portsError));
     },
 
     async _bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply }) {
