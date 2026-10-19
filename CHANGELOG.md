@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Sandbox panel gains an Advanced fold: per-box CPU, memory, pids and shm limits (validated against the Docker VM's figures, applied on the next Start, live usage shown while running) and a platform choice — `linux/amd64` runs a legacy x86 stack under emulation on Apple Silicon. Both are operator-only: an agent's `sandbox status` reports them but cannot change them.
+
 ## 5.131.6 — 2026-10-19
 
 - The sandbox box no longer sends a 'shipped update is being withheld' inbox note for library files the host mounts into it read-only: the seeder skips a destination it cannot write instead of calling it stranded.

@@ -48,3 +48,11 @@ a prior wide pair is gone from the same save.
 The gateway forwards to `clodex:<container>`, the box's compose service name:
 Docker's embedded DNS resolves service names and aliases, not the `hostname:`
 a service sets.
+
+## validateLimitsForSave
+
+The upper bounds come from `docker info` figures (`probeDockerFigures`: NCPU and
+the Docker VM's MemTotal) and are skipped when those are unknown; the lower
+bounds always hold. The gateway service's cap (`GATEWAY_LIMITS`) is fixed and
+not configurable. `platform` applies only on Rebuild, because the image must be
+pulled or built for that architecture.

@@ -607,6 +607,10 @@ already tracking; `master` is a seed applied only to a box tracking none yet. So
 a `status` or `down` after `sandbox rebuild ref:my-branch` leaves that branch in
 place rather than quietly resetting it to master.
 
+A box's CPU, memory, pids and shm limits and its platform are operator settings
+in the Sandbox panel's Advanced fold; no intent can change them, and `sandbox
+status` reports both, marked `(applied)` or `(pending)` until the next Start.
+
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
 
