@@ -11374,6 +11374,29 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
         <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits on a branch ref; a box pinned to a commit rebuilds that commit.</p>
       </div>
+      <details id="sandbox-advanced" class="sandbox-field">
+        <summary>Advanced</summary>
+        <div class="sandbox-field" id="sandbox-limits-field">
+          <label>Limits</label>
+          <div class="sandbox-ports-row">
+            <div><label for="sandbox-limit-cpus">CPUs</label><input id="sandbox-limit-cpus" type="number" min="0.25" step="0.25" placeholder="unlimited" /><p class="hint-text" id="sandbox-limit-cpus-hint">of unknown cores</p></div>
+            <div><label for="sandbox-limit-memory">Memory</label><input id="sandbox-limit-memory" type="text" spellcheck="false" placeholder="unlimited (e.g. 4g)" /><p class="hint-text" id="sandbox-limit-memory-hint">of unknown VM memory</p></div>
+            <div><label for="sandbox-limit-pids">Processes</label><input id="sandbox-limit-pids" type="number" min="64" step="1" placeholder="unlimited" /><p class="hint-text">at least 64</p></div>
+            <div><label for="sandbox-limit-shm">Shared memory</label><input id="sandbox-limit-shm" type="text" spellcheck="false" placeholder="Docker default (64m)" /><p class="hint-text">e.g. 1g</p></div>
+          </div>
+          <button id="sandbox-limits-save" type="button">Save Limits</button>
+          <p class="hint-text" id="sandbox-limits-line">applies on the next Start</p>
+        </div>
+        <div class="sandbox-field" id="sandbox-platform-field">
+          <label for="sandbox-platform">Platform</label>
+          <select id="sandbox-platform">
+            <option value="">(host)</option>
+            <option value="linux/amd64">linux/amd64</option>
+            <option value="linux/arm64">linux/arm64</option>
+          </select>
+          <p class="hint-text">amd64 on Apple Silicon runs under emulation: slower, but it is how a 2008 stack runs at all. Applies on Rebuild.</p>
+        </div>
+      </details>
       <div class="sandbox-field" id="sandbox-ports-field">
         <div class="sandbox-ports-row">
           <div><label for="sandbox-web-port">Web port</label><input id="sandbox-web-port" type="number" min="1024" max="65535" step="1" /></div>
@@ -11690,6 +11713,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onWtermData", kind: "on", channel: "wterm:data" },
         { name: "sandboxDetect", kind: "invoke", channel: "sandbox:detect" },
         { name: "sandboxStatus", kind: "invoke", channel: "sandbox:status" },
+        { name: "sandboxFigures", kind: "invoke", channel: "sandbox:figures" },
         { name: "sandboxOpenWeb", kind: "invoke", channel: "sandbox:openWeb" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
         { name: "sandboxSetConfig", kind: "invoke", channel: "sandbox:setConfig" },
@@ -28383,7 +28407,41 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const pinned = FIXED_SHA_RE.test(image.ref) ? " \u2014 pinned; set ref to a branch to track it" : "";
         return `Rebuilt ${label} on ${at}${pinned}`;
       }
-      module.exports = { sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+      var GIB = 1024 * 1024 * 1024;
+      var MIB = 1024 * 1024;
+      function sizeText(bytes) {
+        if (bytes % GIB === 0) return `${bytes / GIB}g`;
+        return `${Math.round(bytes / MIB)}m`;
+      }
+      function usageMemText(bytes) {
+        if (bytes >= GIB) return `${(bytes / GIB).toFixed(1)} GiB`;
+        return `${Math.round(bytes / MIB)} MiB`;
+      }
+      function limitsLineText(status) {
+        const applied = status && status.state === "running" && status.limits ? status.limits.applied : null;
+        if (!applied) return "applies on the next Start";
+        const parts = [];
+        if (applied.cpus != null) parts.push(`${applied.cpus} cpu`);
+        if (applied.memory != null) parts.push(sizeText(applied.memory));
+        if (applied.pids != null) parts.push(`${applied.pids} pids`);
+        let text = `applied: ${parts.length ? parts.join(" / ") : "no limits"}`;
+        const u = status.usage;
+        if (u && Number.isFinite(u.cpuPercent) && Number.isFinite(u.memBytes)) {
+          text += ` \xB7 using ${Math.round(u.cpuPercent)}% cpu, ${usageMemText(u.memBytes)}`;
+        }
+        return text;
+      }
+      function figuresHint(figures) {
+        const f = figures || {};
+        const ncpu = Number.isFinite(f.ncpu) && f.ncpu > 0 ? f.ncpu : null;
+        const mem = Number.isFinite(f.memTotal) && f.memTotal > 0 ? f.memTotal : null;
+        const gib = mem == null ? null : mem / GIB;
+        return {
+          cpus: ncpu == null ? "of unknown cores" : `of ${ncpu} cores`,
+          memory: gib == null ? "of unknown VM memory" : `of ${Number.isInteger(gib) ? gib : gib.toFixed(1)} GiB VM`
+        };
+      }
+      module.exports = { limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
     }
   });
 
@@ -50887,7 +50945,7 @@ ${detail}` });
       var { altChordAction } = require_web_shortcuts();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -58526,6 +58584,15 @@ ${res.stderr}` : "");
       var sbDetail = document.getElementById("sandbox-detail");
       var sbDetailLabel = document.getElementById("sandbox-detail-label");
       var sbDeleteBtn = document.getElementById("btn-sandbox-delete");
+      var sbLimitCpus = document.getElementById("sandbox-limit-cpus");
+      var sbLimitMemory = document.getElementById("sandbox-limit-memory");
+      var sbLimitPids = document.getElementById("sandbox-limit-pids");
+      var sbLimitShm = document.getElementById("sandbox-limit-shm");
+      var sbLimitCpusHint = document.getElementById("sandbox-limit-cpus-hint");
+      var sbLimitMemoryHint = document.getElementById("sandbox-limit-memory-hint");
+      var sbLimitsSave = document.getElementById("sandbox-limits-save");
+      var sbLimitsLine = document.getElementById("sandbox-limits-line");
+      var sbPlatform = document.getElementById("sandbox-platform");
       var sbPollTimer = null;
       var sbRunning = false;
       var sbBusy = false;
@@ -58593,7 +58660,7 @@ ${res.stderr}` : "");
         try {
           const [detect, status] = await Promise.all([
             window.api.sandboxDetect(sbCurrentBox),
-            window.api.sandboxStatus(sbCurrentBox)
+            window.api.sandboxStatus(sbCurrentBox, { live: true })
           ]);
           sbGate = sandboxActionGate(detect);
           renderSandboxNotice(sbDockerRow, sbGate.notice);
@@ -58602,6 +58669,7 @@ ${res.stderr}` : "");
           const refLine = sandboxRefLineText(status);
           renderSandboxNotice(sbStatusRow, sbForeign || (refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn));
           if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
+          sbLimitsLine.textContent = sandboxLimitsLineText(status);
           applyActionGate();
           sbMountsRestart.classList.toggle("hidden", !(sbMountsDirty && sbRunning));
           refreshAppPortRecord();
@@ -58889,7 +58957,57 @@ ${res.stderr}` : "");
         renderMounts();
         loadAppPorts(cfg);
         applyTokenState(!!cfg.hasToken);
+        applyLimitsConfig(cfg);
+        sbLimitsLine.textContent = sandboxLimitsLineText(null);
+        refreshSandboxFigures();
       }
+      function applyLimitsConfig(cfg) {
+        const l = cfg.limits || {};
+        sbLimitCpus.value = l.cpus != null ? String(l.cpus) : "";
+        sbLimitMemory.value = l.memory || "";
+        sbLimitPids.value = l.pids != null ? String(l.pids) : "";
+        sbLimitShm.value = l.shmSize || "";
+        sbPlatform.value = cfg.platform || "";
+      }
+      async function refreshSandboxFigures() {
+        let figures = null;
+        try {
+          figures = await window.api.sandboxFigures();
+        } catch {
+        }
+        const hint = sandboxFiguresHint(figures);
+        sbLimitCpusHint.textContent = hint.cpus;
+        sbLimitMemoryHint.textContent = hint.memory;
+      }
+      async function saveSandboxAdvanced(patch, control, apply) {
+        const box = sbCurrentBox;
+        control.disabled = true;
+        let r;
+        try {
+          r = await window.api.sandboxSetConfig(patch, box);
+        } finally {
+          control.disabled = false;
+        }
+        if (box !== sbCurrentBox) return;
+        if (!r || r.ok === false) {
+          showToast(r && r.error || "Sandbox settings were rejected.", { kind: "error", duration: 1e4 });
+          return;
+        }
+        apply(r);
+      }
+      sbLimitsSave.addEventListener("click", () => saveSandboxAdvanced({ limits: {
+        cpus: sbLimitCpus.value.trim() || null,
+        memory: sbLimitMemory.value.trim() || null,
+        pids: sbLimitPids.value.trim() || null,
+        shmSize: sbLimitShm.value.trim() || null
+      } }, sbLimitsSave, applyLimitsConfig));
+      sbPlatform.addEventListener("change", () => saveSandboxAdvanced(
+        { platform: sbPlatform.value || null },
+        sbPlatform,
+        (r) => {
+          sbPlatform.value = r.platform || "";
+        }
+      ));
       function showDetail(show) {
         sbDetail.style.display = show ? "" : "none";
       }

@@ -159,4 +159,43 @@ function sandboxRebuiltLine(label, image) {
   return `Rebuilt ${label} on ${at}${pinned}`;
 }
 
-module.exports = { sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+const GIB = 1024 * 1024 * 1024;
+const MIB = 1024 * 1024;
+
+function sizeText(bytes) {
+  if (bytes % GIB === 0) return `${bytes / GIB}g`;
+  return `${Math.round(bytes / MIB)}m`;
+}
+
+function usageMemText(bytes) {
+  if (bytes >= GIB) return `${(bytes / GIB).toFixed(1)} GiB`;
+  return `${Math.round(bytes / MIB)} MiB`;
+}
+
+function limitsLineText(status) {
+  const applied = status && status.state === 'running' && status.limits ? status.limits.applied : null;
+  if (!applied) return 'applies on the next Start';
+  const parts = [];
+  if (applied.cpus != null) parts.push(`${applied.cpus} cpu`);
+  if (applied.memory != null) parts.push(sizeText(applied.memory));
+  if (applied.pids != null) parts.push(`${applied.pids} pids`);
+  let text = `applied: ${parts.length ? parts.join(' / ') : 'no limits'}`;
+  const u = status.usage;
+  if (u && Number.isFinite(u.cpuPercent) && Number.isFinite(u.memBytes)) {
+    text += ` · using ${Math.round(u.cpuPercent)}% cpu, ${usageMemText(u.memBytes)}`;
+  }
+  return text;
+}
+
+function figuresHint(figures) {
+  const f = figures || {};
+  const ncpu = Number.isFinite(f.ncpu) && f.ncpu > 0 ? f.ncpu : null;
+  const mem = Number.isFinite(f.memTotal) && f.memTotal > 0 ? f.memTotal : null;
+  const gib = mem == null ? null : mem / GIB;
+  return {
+    cpus: ncpu == null ? 'of unknown cores' : `of ${ncpu} cores`,
+    memory: gib == null ? 'of unknown VM memory' : `of ${Number.isInteger(gib) ? gib : gib.toFixed(1)} GiB VM`,
+  };
+}
+
+module.exports = { limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };

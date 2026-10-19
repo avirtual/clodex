@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Sandbox image: git inside the box no longer fails `git merge` with `fatal: stash failed` on a clean repo under the work volume — the image sets `core.checkStat=minimal` and `core.trustctime=false` system-wide, since virtiofs stat fields never matched git's index. Takes effect on the next sandbox rebuild.
+- The Sandbox panel gains an Advanced fold: per-box CPU, memory, pids and shm limits (validated against the Docker VM's figures, applied on the next Start, live usage shown while running) and a platform choice — `linux/amd64` runs a legacy x86 stack under emulation on Apple Silicon. Both are operator-only: an agent's `sandbox status` reports them but cannot change them.
 
 ## 5.131.6 — 2026-10-19
 

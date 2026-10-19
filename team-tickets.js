@@ -30,7 +30,7 @@ const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
-const { BOX_ID_RE } = require('./sandbox');
+const { BOX_ID_RE, sizeToBytes } = require('./sandbox');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
@@ -80,6 +80,38 @@ function sha8(sha) {
 
 function sandboxRefClause(st) {
   return (st && st.ref) ? ` (ref ${st.ref})` : '';
+}
+
+const HOST_DOCKER_PLATFORM = { arm64: 'linux/arm64', x64: 'linux/amd64' };
+
+function sandboxLimitsRow(st) {
+  const lim = (st && st.limits) || {};
+  const c = lim.configured || {};
+  const parts = [];
+  if (c.cpus != null) parts.push(`cpus ${c.cpus}`);
+  if (c.memory != null) parts.push(`memory ${c.memory}`);
+  if (c.pids != null) parts.push(`pids ${c.pids}`);
+  if (c.shmSize != null) parts.push(`shm ${c.shmSize}`);
+  const a = lim.applied;
+  if (!parts.length) {
+    const stale = !!a && ['cpus', 'memory', 'pids'].some((k) => a[k] != null);
+    return stale ? 'limits: none (pending)' : 'limits: none';
+  }
+  const applied = !!a
+    && (c.cpus == null ? a.cpus == null : a.cpus === c.cpus)
+    && (c.memory == null ? a.memory == null : a.memory === sizeToBytes(c.memory))
+    && (c.pids == null ? a.pids == null : a.pids === c.pids)
+    && (c.shmSize == null || a.shmSize === sizeToBytes(c.shmSize));
+  return `limits: ${parts.join(' / ')} (${applied ? 'applied' : 'pending'})`;
+}
+
+function sandboxPlatformRow(st) {
+  const p = (st && st.platform) || {};
+  if (!p.configured) {
+    const host = HOST_DOCKER_PLATFORM[process.arch];
+    return p.applied && host && p.applied !== host ? 'platform: host (pending)' : 'platform: host';
+  }
+  return `platform: ${p.configured} (${p.applied === p.configured ? 'applied' : 'pending'})`;
 }
 
 function sandboxVersionClause(peerStatus) {
@@ -2564,11 +2596,11 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (action === 'status') {
-        const st = await box.status();
+        const st = await box.status({ live: true });
         const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
         const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
         const rows = sandboxAppPortRows(box);
-        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}`);
+        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}\n${sandboxLimitsRow(st)}\n${sandboxPlatformRow(st)}`);
         return;
       }
       if (action === 'port') { await this._handleTeamSandboxPort(box, intent, reply); return; }

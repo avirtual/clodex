@@ -29,7 +29,7 @@ const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -7875,6 +7875,15 @@ const sbBoxNew = document.getElementById('sandbox-box-new');   // the create-box
 const sbDetail = document.getElementById('sandbox-detail');
 const sbDetailLabel = document.getElementById('sandbox-detail-label');
 const sbDeleteBtn = document.getElementById('btn-sandbox-delete');
+const sbLimitCpus = document.getElementById('sandbox-limit-cpus');
+const sbLimitMemory = document.getElementById('sandbox-limit-memory');
+const sbLimitPids = document.getElementById('sandbox-limit-pids');
+const sbLimitShm = document.getElementById('sandbox-limit-shm');
+const sbLimitCpusHint = document.getElementById('sandbox-limit-cpus-hint');
+const sbLimitMemoryHint = document.getElementById('sandbox-limit-memory-hint');
+const sbLimitsSave = document.getElementById('sandbox-limits-save');
+const sbLimitsLine = document.getElementById('sandbox-limits-line');
+const sbPlatform = document.getElementById('sandbox-platform');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
@@ -7953,7 +7962,7 @@ async function refreshSandboxStatus() {
   try {
     const [detect, status] = await Promise.all([
       window.api.sandboxDetect(sbCurrentBox),
-      window.api.sandboxStatus(sbCurrentBox),
+      window.api.sandboxStatus(sbCurrentBox, { live: true }),
     ]);
     sbGate = sandboxActionGate(detect);
     renderSandboxNotice(sbDockerRow, sbGate.notice);
@@ -7965,6 +7974,7 @@ async function refreshSandboxStatus() {
     // reads sbRunning, and applying the gate on a stale value would mis-gate the
     // toggle right after a state flip (defect #1).
     if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
+    sbLimitsLine.textContent = sandboxLimitsLineText(status);
     applyActionGate();
     sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
     refreshAppPortRecord();
@@ -8245,7 +8255,54 @@ async function loadBoxDetail() {
   renderMounts();
   loadAppPorts(cfg);
   applyTokenState(!!cfg.hasToken);
+  applyLimitsConfig(cfg);
+  sbLimitsLine.textContent = sandboxLimitsLineText(null);
+  refreshSandboxFigures();
 }
+
+function applyLimitsConfig(cfg) {
+  const l = cfg.limits || {};
+  sbLimitCpus.value = l.cpus != null ? String(l.cpus) : '';
+  sbLimitMemory.value = l.memory || '';
+  sbLimitPids.value = l.pids != null ? String(l.pids) : '';
+  sbLimitShm.value = l.shmSize || '';
+  sbPlatform.value = cfg.platform || '';
+}
+
+async function refreshSandboxFigures() {
+  let figures = null;
+  try { figures = await window.api.sandboxFigures(); } catch {}
+  const hint = sandboxFiguresHint(figures);
+  sbLimitCpusHint.textContent = hint.cpus;
+  sbLimitMemoryHint.textContent = hint.memory;
+}
+
+async function saveSandboxAdvanced(patch, control, apply) {
+  const box = sbCurrentBox;
+  control.disabled = true;
+  let r;
+  try {
+    r = await window.api.sandboxSetConfig(patch, box);
+  } finally {
+    control.disabled = false;
+  }
+  if (box !== sbCurrentBox) return;
+  if (!r || r.ok === false) {
+    showToast((r && r.error) || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
+    return;
+  }
+  apply(r);
+}
+
+sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced({ limits: {
+  cpus: sbLimitCpus.value.trim() || null,
+  memory: sbLimitMemory.value.trim() || null,
+  pids: sbLimitPids.value.trim() || null,
+  shmSize: sbLimitShm.value.trim() || null,
+} }, sbLimitsSave, applyLimitsConfig));
+
+sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform,
+  (r) => { sbPlatform.value = r.platform || ''; }));
 
 function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
 

@@ -5,7 +5,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts } = require('../renderer/lib/sandbox-view');
+const { limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts } = require('../renderer/lib/sandbox-view');
 
 test('detectNotice: docker not installed → error + install remedy', () => {
   const n = detectNotice({ present: false, running: false });
@@ -400,4 +400,27 @@ test('sandboxRebuiltLine callers hand it the rebuild reply\'s image field', () =
   ]) {
     assert.match(fs.readFileSync(path.join(__dirname, '..', 'renderer', file), 'utf8'), re, file);
   }
+});
+
+const GIB = 1024 * 1024 * 1024;
+const LIMITS_LINE_ROWS = [
+  ['running with limits and usage', { state: 'running', limits: { applied: { cpus: 2, memory: 4 * GIB, pids: 512, shmSize: 64 * 1024 * 1024 } }, usage: { cpuPercent: 12.34, memBytes: Math.round(1.2 * GIB) } },
+    'applied: 2 cpu / 4g / 512 pids · using 12% cpu, 1.2 GiB'],
+  ['running, memory in MiB, no usage', { state: 'running', limits: { applied: { cpus: 0.5, memory: 768 * 1024 * 1024, pids: null, shmSize: null } }, usage: null },
+    'applied: 0.5 cpu / 768m'],
+  ['running, no ceiling, small usage', { state: 'running', limits: { applied: { cpus: null, memory: null, pids: null, shmSize: null } }, usage: { cpuPercent: 0.4, memBytes: 300 * 1024 * 1024 } },
+    'applied: no limits · using 0% cpu, 300 MiB'],
+  ['stopped', { state: 'exited', limits: { applied: null }, usage: null }, 'applies on the next Start'],
+  ['running but inspect failed', { state: 'running', limits: { applied: null } }, 'applies on the next Start'],
+  ['no status', null, 'applies on the next Start'],
+];
+for (const [name, status, want] of LIMITS_LINE_ROWS) {
+  test(`limitsLineText: ${name}`, () => { assert.strictEqual(limitsLineText(status), want); });
+}
+
+test('figuresHint: names the Docker VM figures, unknown when null', () => {
+  assert.deepStrictEqual(figuresHint({ ncpu: 12, memTotal: 16 * GIB }), { cpus: 'of 12 cores', memory: 'of 16 GiB VM' });
+  assert.deepStrictEqual(figuresHint({ ncpu: 8, memTotal: 16766767104 }), { cpus: 'of 8 cores', memory: 'of 15.6 GiB VM' });
+  assert.deepStrictEqual(figuresHint({ ncpu: null, memTotal: null }), { cpus: 'of unknown cores', memory: 'of unknown VM memory' });
+  assert.deepStrictEqual(figuresHint(null), { cpus: 'of unknown cores', memory: 'of unknown VM memory' });
 });

@@ -432,6 +432,7 @@
 | `handle:sandbox:detect` | whether docker is usable, host-wide and not box-scoped | none | sandbox manager detect | engine-sandbox-seam.test.js |
 | `handle:sandbox:self` | whether this engine runs inside a box, its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner, and whether the library templates dir is writable there | none | runningInSandboxBox, templates.dirWritable | engine-sandbox-seam.test.js |
 | `handle:sandbox:status` | one box's status | box container (read) | withBox | unpinned |
+| `handle:sandbox:figures` | the Docker VM's cpu count and memory total, host-wide, for the limits bounds | none | sandbox manager figures | unpinned |
 | `handle:sandbox:openWeb` | opens a box's web UI with its token in the external browser | none | withBox, openExternal | sandbox-open-web.test.js |
 | `handle:sandbox:getConfig` | one box's config | box config (read) | withBox | unpinned |
 | `handle:sandbox:setConfig` | patches one box's config | box config | withBox | unpinned |

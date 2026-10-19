@@ -1444,6 +1444,29 @@
         <input id="sandbox-ref" type="text" spellcheck="false" autocomplete="off" maxlength="128" placeholder="(the running app's version)" />
         <p class="hint-text" id="sandbox-ref-hint">Build this sandbox from a commit, branch or tag of the Clodex checkout instead of the running app's version. Rebuild to pick up new commits on a branch ref; a box pinned to a commit rebuilds that commit.</p>
       </div>
+      <details id="sandbox-advanced" class="sandbox-field">
+        <summary>Advanced</summary>
+        <div class="sandbox-field" id="sandbox-limits-field">
+          <label>Limits</label>
+          <div class="sandbox-ports-row">
+            <div><label for="sandbox-limit-cpus">CPUs</label><input id="sandbox-limit-cpus" type="number" min="0.25" step="0.25" placeholder="unlimited" /><p class="hint-text" id="sandbox-limit-cpus-hint">of unknown cores</p></div>
+            <div><label for="sandbox-limit-memory">Memory</label><input id="sandbox-limit-memory" type="text" spellcheck="false" placeholder="unlimited (e.g. 4g)" /><p class="hint-text" id="sandbox-limit-memory-hint">of unknown VM memory</p></div>
+            <div><label for="sandbox-limit-pids">Processes</label><input id="sandbox-limit-pids" type="number" min="64" step="1" placeholder="unlimited" /><p class="hint-text">at least 64</p></div>
+            <div><label for="sandbox-limit-shm">Shared memory</label><input id="sandbox-limit-shm" type="text" spellcheck="false" placeholder="Docker default (64m)" /><p class="hint-text">e.g. 1g</p></div>
+          </div>
+          <button id="sandbox-limits-save" type="button">Save Limits</button>
+          <p class="hint-text" id="sandbox-limits-line">applies on the next Start</p>
+        </div>
+        <div class="sandbox-field" id="sandbox-platform-field">
+          <label for="sandbox-platform">Platform</label>
+          <select id="sandbox-platform">
+            <option value="">(host)</option>
+            <option value="linux/amd64">linux/amd64</option>
+            <option value="linux/arm64">linux/arm64</option>
+          </select>
+          <p class="hint-text">amd64 on Apple Silicon runs under emulation: slower, but it is how a 2008 stack runs at all. Applies on Rebuild.</p>
+        </div>
+      </details>
       <div class="sandbox-field" id="sandbox-ports-field">
         <div class="sandbox-ports-row">
           <div><label for="sandbox-web-port">Web port</label><input id="sandbox-web-port" type="number" min="1024" max="65535" step="1" /></div>
