@@ -156,7 +156,7 @@ test('entrypoint: drops to the remapped user with setpriv as its last step', () 
 });
 
 const { execFileSync } = require('node:child_process');
-const os = require('node:os');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const HOOKS_PATH = path.join(__dirname, '..', 'docker', 'web', 'clodex-hooks.sh');
 const HOOKS = fs.readFileSync(HOOKS_PATH, 'utf8');
@@ -191,7 +191,7 @@ test('entrypoint.sh and clodex-hooks.sh pass sh -n', () => {
 const FAKE_SHA = 'feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface';
 
 function hooksSandbox(setupText) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-hooks-'));
+  const root = mkTmpRoot('clx-hooks-');
   const dirs = { hooks: path.join(root, 'hooks'), marks: path.join(root, 'marks'), data: path.join(root, 'data'), bin: path.join(root, 'bin') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d);
   const stub = (name, body) => fs.writeFileSync(path.join(dirs.bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
