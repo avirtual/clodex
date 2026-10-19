@@ -202,7 +202,7 @@ test('entrypoint.sh and clodex-hooks.sh pass sh -n', () => {
 
 const FAKE_SHA = 'feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface';
 
-function hooksSandbox(setupText) {
+function hooksSandbox(setupText, { sudoShell = null } = {}) {
   const root = mkTmpRoot('clx-hooks-');
   const dirs = { hooks: path.join(root, 'hooks'), marks: path.join(root, 'marks'), data: path.join(root, 'data'), bin: path.join(root, 'bin') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d);
@@ -212,6 +212,7 @@ function hooksSandbox(setupText) {
   stub('sha256sum', `echo "${FAKE_SHA}  $1"`);
   stub('wget', 'exit 0');
   stub('sudo', `printf '%s\\n' "$*" >> "${path.join(root, 'sudo-calls')}"\n[ "$1" = -n ] && shift\nexec "$@"`);
+  if (sudoShell) fs.writeFileSync(path.join(dirs.bin, 'sudo'), `#!${sudoShell}\n[ "$1" = -n ] && shift\n"$@"\n`, { mode: 0o755 });
   if (setupText != null) fs.writeFileSync(path.join(dirs.hooks, 'setup.sh'), setupText);
   const run = (extraEnv = {}, shell = 'sh') => execFileSync(shell, ['-c', '. "$0"; echo "FAILED=${CLODEX_SETUP_FAILED:-}"', HOOKS_PATH], {
     env: {
@@ -270,7 +271,7 @@ test('clodex-hooks.sh: every kill names its signal with -s, so dash reads the --
 const DASH = ['/bin/dash', '/usr/bin/dash'].find((p) => fs.existsSync(p)) || null;
 
 test('clodex-hooks.sh under dash: a setup past CLODEX_SETUP_TIMEOUT is killed and recorded as exit 124, timed out', { skip: DASH ? false : 'dash is not installed' }, () => {
-  const box = hooksSandbox('sleep 30 &\necho $! > "$OUT.child"\nwait\n');
+  const box = hooksSandbox('sleep 30 &\necho $! > "$OUT.child"\nwait\n', { sudoShell: DASH });
   try {
     assert.strictEqual(box.run({ CLODEX_SETUP_TIMEOUT: '1' }, DASH).trim(), 'FAILED=1');
     const child = fs.readFileSync(path.join(box.root, 'ran.child'), 'utf8').trim();
