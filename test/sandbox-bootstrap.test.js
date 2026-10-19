@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { mkTmpRoot, mkTmpDirIn } = require('./lib/tmp-roots');
-const { createSandbox, generateCompose, validateBootstrapForSave, DEFAULT_CONFIG } = require('../sandbox');
+const { createSandbox, generateCompose, validateBootstrapForSave, DEFAULT_CONFIG, HEALTH_TIMEOUT_MS, SETUP_TIMEOUT_S } = require('../sandbox');
 
 const TMP = mkTmpRoot('clx-sbboot-');
 process.on('exit', () => { try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} });
@@ -189,13 +189,14 @@ test('status: reads the setup and start records from the box data dir, degraded 
     setup: { sha: 'abcdef0123456789', exit: 3, at: '2026-10-20T01:00:00Z', timedOut: false },
     start: { pid: 42, at: '2026-10-20T01:00:05Z', exit: null },
     degraded: true,
+    noHooks: false,
   });
 });
 
 test('status: no records → null rows, not degraded', async () => {
   const { sb } = bootBox();
   const st = await sb.status();
-  assert.deepStrictEqual(st.bootstrap, { configured: { packages: 0, setup: false, start: false }, setup: null, start: null, degraded: false });
+  assert.deepStrictEqual(st.bootstrap, { configured: { packages: 0, setup: false, start: false }, setup: null, start: null, degraded: false, noHooks: false });
 });
 
 test('bootstrapApplyTarget: rebuild until the written compose carries the bind, then restart', async () => {
@@ -220,4 +221,50 @@ test('restart: rewrites the scripts when bound, then compose restart of the box 
 test('DEFAULT_CONFIG carries an empty bootstrap and history', () => {
   assert.deepStrictEqual(DEFAULT_CONFIG.bootstrap, { packages: [], setup: '', start: '' });
   assert.deepStrictEqual(DEFAULT_CONFIG.bootstrapHistory, []);
+});
+
+test('generateCompose: noHooks adds exactly one env line after the environment block; without it the bytes are the baseline', () => {
+  const hash = (y) => crypto.createHash('sha256').update(y).digest('hex');
+  assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, noHooks: false })), '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495');
+  const base = generateCompose(COMPOSE_ARGS).split('\n');
+  const withNoHooks = generateCompose({ ...COMPOSE_ARGS, noHooks: true }).split('\n');
+  const at = base.indexOf('      XDG_DATA_HOME: /home/clodex/.local/share');
+  assert.ok(at > 0, 'ENTER: the XDG_DATA_HOME line is in the baseline');
+  assert.deepStrictEqual(withNoHooks, [...base.slice(0, at + 1), '      CLODEX_NO_HOOKS: "1"', ...base.slice(at + 1)]);
+});
+
+test('status: bootstrap.noHooks reads the written compose.yaml', async () => {
+  const { sb } = bootBox();
+  fs.mkdirSync(path.dirname(sb.composePath()), { recursive: true });
+  fs.writeFileSync(sb.composePath(), 'services:\n  clodex:\n    environment:\n      CLODEX_NO_HOOKS: "1"\n    volumes:\n');
+  assert.strictEqual((await sb.status()).bootstrap.noHooks, true);
+  fs.writeFileSync(sb.composePath(), 'services:\n  clodex:\n    environment:\n      XDG_DATA_HOME: /x\n');
+  assert.strictEqual((await sb.status()).bootstrap.noHooks, false);
+});
+
+test('up({ noHooks: true }) writes CLODEX_NO_HOOKS into that compose; the next plain up drops it', async () => {
+  const { sb } = bootBox();
+  await sb.up({ noHooks: true });
+  assert.match(fs.readFileSync(sb.composePath(), 'utf8'), /\n {6}CLODEX_NO_HOOKS: "1"\n/);
+  await sb.up();
+  assert.doesNotMatch(fs.readFileSync(sb.composePath(), 'utf8'), /CLODEX_NO_HOOKS/);
+});
+
+test('bootstrapLog: returns the last 64 KB of last.log, truncated on a 65 KB file', () => {
+  const { sb } = bootBox();
+  assert.deepStrictEqual(sb.bootstrapLog(), { text: '', truncated: false });
+  const dir = path.join(sb.stateDir(), 'data', '.clodex-setup');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'last.log'), `${'a'.repeat(1024)}${'b'.repeat(65536)}`);
+  const r = sb.bootstrapLog();
+  assert.strictEqual(r.truncated, true);
+  assert.strictEqual(r.text, 'b'.repeat(65536));
+  fs.writeFileSync(path.join(dir, 'last.log'), 'apt-get ok\n');
+  assert.deepStrictEqual(sb.bootstrapLog(), { text: 'apt-get ok\n', truncated: false });
+});
+
+test('SETUP_TIMEOUT_S is the default clodex-hooks.sh uses for CLODEX_SETUP_TIMEOUT', () => {
+  const hooks = fs.readFileSync(path.join(__dirname, '..', 'docker', 'web', 'clodex-hooks.sh'), 'utf8');
+  assert.match(hooks, /_ch_timeout=\$\{CLODEX_SETUP_TIMEOUT:-600\}/);
+  assert.deepStrictEqual([SETUP_TIMEOUT_S, HEALTH_TIMEOUT_MS], [600, 180000]);
 });

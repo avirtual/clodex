@@ -29,7 +29,7 @@ const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -7885,6 +7885,15 @@ const sbLimitsSave = document.getElementById('sandbox-limits-save');
 const sbLimitsLine = document.getElementById('sandbox-limits-line');
 const sbPlatform = document.getElementById('sandbox-platform');
 const sbRelay = document.getElementById('sandbox-relay');
+const sbBootPackages = document.getElementById('sandbox-bootstrap-packages');
+const sbBootSetup = document.getElementById('sandbox-bootstrap-setup');
+const sbBootStart = document.getElementById('sandbox-bootstrap-start');
+const sbBootSave = document.getElementById('sandbox-bootstrap-save');
+const sbBootLine = document.getElementById('sandbox-bootstrap-line');
+const sbBootHistoryRows = document.getElementById('sandbox-bootstrap-history-rows');
+const sbBootLogBtn = document.getElementById('sandbox-bootstrap-log');
+const sbBootLogText = document.getElementById('sandbox-bootstrap-log-text');
+const sbNoHooksBtn = document.getElementById('sandbox-nohooks');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
@@ -7976,6 +7985,7 @@ async function refreshSandboxStatus() {
     // toggle right after a state flip (defect #1).
     if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
     sbLimitsLine.textContent = sandboxLimitsLineText(status);
+    sbBootLine.textContent = sandboxBootstrapLineText(status);
     applyActionGate();
     sbMountsRestart.classList.toggle('hidden', !(sbMountsDirty && sbRunning));
     refreshAppPortRecord();
@@ -8259,7 +8269,23 @@ async function loadBoxDetail() {
   applyLimitsConfig(cfg);
   sbRelay.checked = cfg.relay === true;
   sbLimitsLine.textContent = sandboxLimitsLineText(null);
+  applyBootstrapConfig(cfg);
+  sbBootLine.textContent = sandboxBootstrapLineText(null);
+  sbBootLogText.textContent = '';
+  sbBootLogText.classList.add('hidden');
   refreshSandboxFigures();
+}
+
+function applyBootstrapConfig(cfg) {
+  const b = cfg.bootstrap || {};
+  sbBootPackages.value = Array.isArray(b.packages) ? b.packages.join(' ') : '';
+  sbBootSetup.value = b.setup || '';
+  sbBootStart.value = b.start || '';
+  sbBootHistoryRows.replaceChildren(...sandboxBootstrapHistoryRows(cfg).map((row) => {
+    const div = document.createElement('div');
+    div.textContent = row;
+    return div;
+  }));
 }
 
 function applyLimitsConfig(cfg) {
@@ -8308,6 +8334,39 @@ sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPl
 
 sbRelay.addEventListener('change', () => saveSandboxAdvanced({ relay: sbRelay.checked }, sbRelay,
   (r) => { sbRelay.checked = r.relay === true; }));
+
+sbBootSave.addEventListener('click', () => saveSandboxAdvanced({ bootstrap: {
+  packages: sbBootPackages.value.trim().split(/\s+/).filter(Boolean),
+  setup: sbBootSetup.value,
+  start: sbBootStart.value,
+} }, sbBootSave, applyBootstrapConfig));
+
+sbBootLogBtn.addEventListener('click', async () => {
+  const box = sbCurrentBox;
+  let r;
+  try { r = await window.api.sandboxBootstrapLog(box); } catch (e) { r = { ok: false, error: (e && e.message) || String(e) }; }
+  if (box !== sbCurrentBox) return;
+  if (!r || r.ok === false) sbBootLogText.textContent = (r && r.error) || 'The setup log could not be read.';
+  else sbBootLogText.textContent = `${r.truncated ? '… (last 64 KB)\n' : ''}${r.text || '(no setup log yet)'}`;
+  sbBootLogText.classList.remove('hidden');
+});
+
+sbNoHooksBtn.addEventListener('click', async () => {
+  if (sbBusy) return;
+  sbBusy = true;
+  sbNoHooksBtn.disabled = true;
+  try {
+    const r = await window.api.sandboxUp(sbCurrentBox, { noHooks: true });
+    if (!r || r.ok === false) showToast(`Sandbox start without hooks failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
+  } catch (e) {
+    showToast(`Sandbox start without hooks failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
+  } finally {
+    sbBusy = false;
+    sbNoHooksBtn.disabled = false;
+    applyActionGate();
+    await refreshSandboxStatus();
+  }
+});
 
 function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
 

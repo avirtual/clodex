@@ -1466,6 +1466,21 @@
           </select>
           <p class="hint-text">amd64 on Apple Silicon runs under emulation: slower, but it is how a 2008 stack runs at all. Applies on Rebuild.</p>
         </div>
+        <div class="sandbox-field" id="sandbox-bootstrap-field">
+          <label>Bootstrap</label>
+          <label for="sandbox-bootstrap-packages">Packages</label>
+          <input id="sandbox-bootstrap-packages" type="text" spellcheck="false" placeholder="smbclient mariadb-server" />
+          <label for="sandbox-bootstrap-setup">Setup script (root, once per rebuild)</label>
+          <textarea id="sandbox-bootstrap-setup" rows="6" spellcheck="false"></textarea>
+          <label for="sandbox-bootstrap-start">Start script (every start, after healthz)</label>
+          <textarea id="sandbox-bootstrap-start" rows="6" spellcheck="false"></textarea>
+          <button id="sandbox-bootstrap-save" type="button">Save Bootstrap</button>
+          <p class="hint-text" id="sandbox-bootstrap-line">not configured</p>
+          <details id="sandbox-bootstrap-history"><summary>History</summary><div id="sandbox-bootstrap-history-rows" class="hint-text"></div></details>
+          <button id="sandbox-bootstrap-log" type="button">View setup log</button>
+          <button id="sandbox-nohooks" type="button">Start without hooks</button>
+          <pre id="sandbox-bootstrap-log-text" class="hidden"></pre>
+        </div>
         <label class="sandbox-check"><input id="sandbox-relay" type="checkbox" /> Allow the team lead inside the box to publish ports (relay)</label>
       </details>
       <div class="sandbox-field" id="sandbox-ports-field">

@@ -1813,6 +1813,11 @@ function registerIpcHandlers(deps) {
     if (!mgr || typeof mgr.figures !== 'function') return { ncpu: null, memTotal: null };
     return mgr.figures();
   });
+  handle('sandbox:bootstrapLog', (e, boxId) => {
+    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
+    if (surface !== 'desktop') return { ok: false, error: 'the setup log is readable from the desktop app only' };
+    return withBox(boxId, (s) => s.bootstrapLog());
+  });
   handle('sandbox:openWeb', (_e, boxId) => withBox(boxId, async (s) => {
     const st = await s.status();
     const port = st && st.ports && st.ports.web;
@@ -1826,7 +1831,7 @@ function registerIpcHandlers(deps) {
   handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {}, { writer: 'panel' })));
   handle('sandbox:ports', (_e, boxId) => withBox(boxId, (s) => s.portsState()));
   handle('sandbox:translatePath', (_e, hostPath, boxId) => withBox(boxId, (s) => s.translateHostPath(hostPath)));
-  handle('sandbox:up', (_e, boxId) => withBox(boxId, (s) => s.up()));
+  handle('sandbox:up', (_e, boxId, opts) => withBox(boxId, (s) => s.up({ noHooks: !!(opts && opts.noHooks === true) })));
   handle('sandbox:rebuild', (_e, boxId) => withBox(boxId, (s) => s.rebuild()));
   handle('sandbox:down', (_e, boxId) => withBox(boxId, (s) => s.down()));
   handle('sandbox:logsTail', (_e, n, boxId) => withBox(boxId, (s) => s.logsTail(n)));

@@ -433,12 +433,13 @@
 | `handle:sandbox:self` | whether this engine runs inside a box, its label (CLODEX_BOX_LABEL or SELF_LABEL) for the login-expired banner, and whether the library templates dir is writable there | none | runningInSandboxBox, templates.dirWritable | engine-sandbox-seam.test.js |
 | `handle:sandbox:status` | one box's status | box container (read) | withBox | unpinned |
 | `handle:sandbox:figures` | the Docker VM's cpu count and memory total, host-wide, for the limits bounds | none | sandbox manager figures | unpinned |
+| `handle:sandbox:bootstrapLog` | the last 64 KB of the box's setup log; refused unless the sender surface is the desktop | box state dir (read) | withBox | unpinned |
 | `handle:sandbox:openWeb` | opens a box's web UI with its token in the external browser | none | withBox, openExternal | sandbox-open-web.test.js |
 | `handle:sandbox:getConfig` | one box's config | box config (read) | withBox | unpinned |
 | `handle:sandbox:setConfig` | patches one box's config | box config | withBox | unpinned |
 | `handle:sandbox:ports` | one box's published-ports config and applied record | box config + sandbox-ports.json (read) | withBox | unpinned |
 | `handle:sandbox:translatePath` | maps a host path into the box's filesystem | none | withBox | unpinned |
-| `handle:sandbox:up` | brings a box up | box container | withBox | unpinned |
+| `handle:sandbox:up` | brings a box up; `{ noHooks: true }` writes `CLODEX_NO_HOOKS` into that start's compose | box container | withBox | unpinned |
 | `handle:sandbox:rebuild` | rebuilds a box's image and container | box container | withBox | unpinned |
 | `handle:sandbox:down` | stops a box | box container | withBox | unpinned |
 | `handle:sandbox:logsTail` | the last lines of a box's logs | none | withBox | unpinned |
