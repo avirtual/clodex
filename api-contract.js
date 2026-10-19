@@ -281,6 +281,7 @@ const API_CONTRACT = [
   { name: 'sandboxOpenWeb', kind: 'invoke', channel: 'sandbox:openWeb' },
   { name: 'sandboxGetConfig', kind: 'invoke', channel: 'sandbox:getConfig' },
   { name: 'sandboxSetConfig', kind: 'invoke', channel: 'sandbox:setConfig' },
+  { name: 'sandboxPorts', kind: 'invoke', channel: 'sandbox:ports' },
   { name: 'sandboxTranslatePath', kind: 'invoke', channel: 'sandbox:translatePath' },
   { name: 'sandboxUp', kind: 'invoke', channel: 'sandbox:up' },
   { name: 'sandboxRebuild', kind: 'invoke', channel: 'sandbox:rebuild' },

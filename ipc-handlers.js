@@ -1818,7 +1818,8 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   }));
   handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));
-  handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {})));
+  handle('sandbox:setConfig', (_e, partial, boxId) => withBox(boxId, (s) => s.setConfig(partial || {}, { writer: 'panel' })));
+  handle('sandbox:ports', (_e, boxId) => withBox(boxId, (s) => s.portsState()));
   handle('sandbox:translatePath', (_e, hostPath, boxId) => withBox(boxId, (s) => s.translateHostPath(hostPath)));
   handle('sandbox:up', (_e, boxId) => withBox(boxId, (s) => s.up()));
   handle('sandbox:rebuild', (_e, boxId) => withBox(boxId, (s) => s.rebuild()));

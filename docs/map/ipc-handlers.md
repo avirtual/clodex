@@ -435,6 +435,7 @@
 | `handle:sandbox:openWeb` | opens a box's web UI with its token in the external browser | none | withBox, openExternal | sandbox-open-web.test.js |
 | `handle:sandbox:getConfig` | one box's config | box config (read) | withBox | unpinned |
 | `handle:sandbox:setConfig` | patches one box's config | box config | withBox | unpinned |
+| `handle:sandbox:ports` | one box's published-ports config and applied record | box config + sandbox-ports.json (read) | withBox | unpinned |
 | `handle:sandbox:translatePath` | maps a host path into the box's filesystem | none | withBox | unpinned |
 | `handle:sandbox:up` | brings a box up | box container | withBox | unpinned |
 | `handle:sandbox:rebuild` | rebuilds a box's image and container | box container | withBox | unpinned |
