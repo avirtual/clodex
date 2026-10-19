@@ -727,6 +727,15 @@ Two seats can hold the same role; a ticket assigned to a role that has a
 worktree `dispatch` mints a fresh branch and a fresh seat per ticket, which is
 what keeps parallel work from colliding in one checkout.
 
+Where a ticket tree goes: by default beside the root, as `<root>-<branch>`. With
+`worktrees: in-root` in team.json, or when unset inside a sandbox box, it goes
+under `<root>/.clodex-wt/<branch>` (excluded via `.git/info/exclude`), because the
+box's `/` is a small image overlay and only the work bind is persisted;
+`worktrees: sibling` keeps the default even in a box.
+`[agent:team worktrees sibling|in-root]` (lead only) sets it; bare
+`[agent:team worktrees]` shows the effective value and whether it is set or
+derived from the box flag. Existing trees are not moved.
+
 The lead's team roster spells out the reachable actions for whatever roles exist,
 so you do not have to teach it the vocabulary.
 A ticket seat (hand, scout, reviewer) gets the two-line brief form instead: its own role and its lead, in both its SessionStart digest and its spawn message.
