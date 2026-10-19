@@ -5210,7 +5210,7 @@ function createSessionManager(deps) {
       const at = Date.now();
       const counts = session._submitNudges || (session._submitNudges = { fired: 0, exhausted: 0 });
       counts.exhausted += 1;
-      session._injectStuck = { at, probe };
+      session._injectStuck = { at, probe, entered };
       const body = `submit nudge exhausted for ${session.name}: unit "${probe}…" written ${Math.round((at - wroteAt) / 1000)}s ago, `
         + `${entered ? 'Enter sent' : 'no Enter sent (no echo or never quiet)'}, no turn — operator action needed`;
       log.warn('inject', body);
@@ -5243,7 +5243,7 @@ function createSessionManager(deps) {
         if (!echoed || painting || this._anyDraftOpen(session)) {
           if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) {
             this._clearSubmitNudge(session);
-            if (probe) this._markInjectStuck(session, probe, wroteAt, false);
+            if (probe && !painting) this._markInjectStuck(session, probe, wroteAt, false);
             return;
           }
           arm(BOOT_NUDGE_QUIET_MS);
@@ -7602,7 +7602,8 @@ function createSessionManager(deps) {
       };
 
       const senders = [...new Set([...entries.map((e) => e.sender), ...overflow.map((r) => r.sender)])];
-      const stuckNote = session._injectStuck ? ' — the seat\'s composer holds an unsubmitted unit; a submit nudge was sent and did not take' : '';
+      const stuckNote = !session._injectStuck ? ''
+        : ` — the seat's composer holds an unsubmitted unit; ${session._injectStuck.entered ? 'a submit nudge was sent and did not take' : 'no submit nudge could be sent'}`;
       log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent${stuckNote}`);
       // Broadcast first and outside the per-sender loop: the notices travel by the channel whose
       // reliability is in question, so the report must not depend on it.

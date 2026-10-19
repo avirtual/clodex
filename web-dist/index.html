@@ -31539,7 +31539,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             return;
           }
           showToast(
-            `${req.name} is in workspace ${wsLabel || req.workspaceId || "(unknown)"} \u2014 open it to answer the dialog`,
+            `${req.name} is in workspace ${wsLabel || req.workspaceId || "(unknown)"} \u2014 open it to ${req.kind === "inject-stuck" ? "submit the stuck message" : "answer the dialog"}`,
             { kind: "warn", duration: 5e3 }
           );
         }

@@ -1642,3 +1642,14 @@ test('POST /api/sessions/:name/dm: a delivery that throws on the box answers 500
     assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, error: 'Session not found' });
   });
 });
+
+test('t1891: sessionRow carries submitNudges once the seat has counts, and omits it before', () => {
+  const { deps } = makeDeps();
+  deps.manager.sessions = new Map([
+    ['s1', { name: 's1', type: 'claude', cwd: '/w/s1', workspaceId: 'ws-alpha', _submitNudges: { fired: 3, exhausted: 1 } }],
+    ['s2', { name: 's2', type: 'claude', cwd: '/w/s2', workspaceId: 'ws-alpha' }],
+  ]);
+  const opts = captureOptions(deps);
+  assert.deepStrictEqual(opts.getSession('s1').submitNudges, { fired: 3, exhausted: 1 });
+  assert.strictEqual('submitNudges' in opts.getSession('s2'), false);
+});

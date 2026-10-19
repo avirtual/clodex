@@ -1765,3 +1765,16 @@ test('resend to a target that is no longer live keeps the parked copy', async ()
       'and it is re-parked under the same id, so the sender still holds a live handle');
   } finally { app.stop(); }
 });
+
+test('t1891: a dm-confirm report for an inject-stuck seat says the submit nudge did not take', async () => {
+  const { app, target } = await swallowed();
+  try {
+    const before = app.seen('sender');
+    target._injectStuck = { at: Date.now(), probe: 'x', entered: true };
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    assert.ok(notice.length > before.length, 'ENTER: the report is a new write to the sender');
+    assert.match(notice.slice(before.length), /composer holds an unsubmitted unit; a submit nudge was sent and did not take/);
+  } finally { app.stop(); }
+});

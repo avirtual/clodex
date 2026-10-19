@@ -16125,6 +16125,10 @@ test('t771: a seat that NEVER goes quiet gives up silently at bootNudgeMaxWaitMs
   // never warranted. The give-up is polled as a POSITIVE observable (the field goes
   // null and stays null), so this asserts an outcome, never elapsed time.
   const p = mkNudgeProbe({ bootNudgeMs: 30, bootNudgeMaxWaitMs: 200 });
+  const warned = [];
+  p.m._broadcast = () => {};
+  const realWarn = p.m._markInjectStuck.bind(p.m);
+  p.m._markInjectStuck = (...a) => { warned.push(a[0].name); return realWarn(...a); };
   let paint = null;
   const { s, writes } = await drainOnlyMocked(t, p, 'nudge-f', () => {
     p.fireData(DRAIN_ECHO);
@@ -16135,6 +16139,8 @@ test('t771: a seat that NEVER goes quiet gives up silently at bootNudgeMaxWaitMs
   assert.deepStrictEqual(writes, DRAINED, 'gave up without writing — the cap, not a nudge');
   assert.strictEqual(p.logged.some((l) => l.includes('submit nudge for nudge-f')), false,
     'and silently: no marker for a nudge that never fired');
+  assert.strictEqual(s._injectStuck, undefined, 'a seat painting to the cap is busy, not stuck');
+  assert.deepStrictEqual(warned, [], 'and no stuck mark was attempted');
 });
 
 test('t771: no Enter while the seat has been silent since the write — the nudge waits for the echo', async (t) => {
@@ -16233,7 +16239,7 @@ test('t771: a seat killed before the timer fires writes no Enter into a dead pty
 const LATE_UNIT = ['\x15', '[agent:from lead] the results', '\r'];
 const LATE_ECHO = '\x1b[2C[agent:from\x1b[15Glead]\x1b[21Gthe\x1b[25Gresults';
 
-function mkLateProbe() {
+function mkLateProbe(overrides = {}) {
   const logged = [];
   const warned = [];
   const broadcasts = [];
@@ -16241,6 +16247,7 @@ function mkLateProbe() {
     bootNudgeMs: 40, bootNudgeQuietMs: 10,
     isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal,
     log: { info: (t, m) => logged.push(`${t}: ${m}`), warn: (t, m) => warned.push(`${t}: ${m}`), error: () => {}, debug: () => {} },
+    ...overrides,
   });
   p.m._broadcast = (ch, msg) => broadcasts.push([ch, msg]);
   return { ...p, logged, warned, broadcasts };
@@ -16321,6 +16328,18 @@ test('t1891: Enter sent and no turn within BOOT_NUDGE_MS marks the seat inject-s
   assert.strictEqual(s.needsAttention, null);
   assert.strictEqual(s._submitStuckTimer, null);
   assert.deepStrictEqual(writes, [...LATE_UNIT, '\r'], 'and no second Enter');
+  t.mock.timers.reset();
+});
+
+test('t1891: no echo up to the cap marks the seat stuck without an Enter', async (t) => {
+  const p = mkLateProbe({ bootNudgeMaxWaitMs: 200 });
+  const { s, writes } = await lateSeat(t, p, 'late-f');
+  await tickUntil(t, () => !!s._injectStuck, 400);
+  assert.deepStrictEqual(writes, LATE_UNIT, 'no Enter was ever written');
+  assert.strictEqual(s._injectStuck.entered, false);
+  assert.ok(p.warned.some((l) => l.startsWith('inject: submit nudge exhausted for late-f:') && l.includes('no Enter sent')), p.warned.join('\n'));
+  assert.strictEqual(s.needsAttention.kind, 'inject-stuck');
+  assert.deepStrictEqual(s._submitNudges, { fired: 0, exhausted: 1 });
   t.mock.timers.reset();
 });
 
