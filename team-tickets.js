@@ -2743,7 +2743,9 @@ function createTicketMethods(deps, shared) {
           const text = bootstrapFieldText(current, f);
           const row = [...history].reverse().find((h) => h && h.field === f);
           const changed = row ? `last changed ${row.at} by ${row.writer}/${row.seat || '-'}` : 'never changed';
-          const script = f === 'setup' ? ` · script sha ${bootstrapSha(bootstrapScripts(current)['setup.sh']).slice(0, 8)}` : '';
+          const setupSh = bootstrapScripts(current)['setup.sh'];
+          let script = '';
+          if (f === 'setup') script = setupSh ? ` · script sha ${bootstrapSha(setupSh).slice(0, 8)}` : ' · no script';
           return `## ${f} (${Buffer.byteLength(text, 'utf8')} B, sha ${bootstrapSha(text).slice(0, 8)}${script}, ${changed})\n${text}`;
         }).join('\n');
       }
@@ -2858,7 +2860,7 @@ function createTicketMethods(deps, shared) {
       const booted = await box.status();
       const setupRec = booted && booted.bootstrap && booted.bootstrap.degraded ? (booted.bootstrap.setup || {}) : null;
       if (setupRec) {
-        reply(`box ${boxId} is up but ENVIRONMENT DEGRADED: setup failed exit ${setupRec.exit} at ${setupRec.at} — no seats seeded; fix the script ([agent:team sandbox bootstrap show setup]) and [agent:team sandbox rebuild], or Start without hooks from the Sandbox panel`);
+        reply(`box ${boxId} is up but ENVIRONMENT DEGRADED: setup failed exit ${setupRec.exit == null ? '?' : setupRec.exit} at ${setupRec.at || '?'} — no seats seeded; fix the script ([agent:team sandbox bootstrap show setup]) and [agent:team sandbox rebuild], or Start without hooks from the Sandbox panel`);
         return { ok: false, degraded: true };
       }
 

@@ -268,3 +268,15 @@ test('SETUP_TIMEOUT_S is the default clodex-hooks.sh uses for CLODEX_SETUP_TIMEO
   assert.match(hooks, /_ch_timeout=\$\{CLODEX_SETUP_TIMEOUT:-600\}/);
   assert.deepStrictEqual([SETUP_TIMEOUT_S, HEALTH_TIMEOUT_MS], [600, 180000]);
 });
+
+test('a port apply keeps the Start-without-hooks line; the next plain up drops it', async () => {
+  const { sb } = bootBox();
+  await sb.up({ noHooks: true });
+  assert.strictEqual((await sb.status()).bootstrap.noHooks, true, 'ENTER: the no-hooks start wrote the line');
+  await sb.setConfig({ ports: [{ container: 18080, host: 18080, proto: 'tcp', allInterfaces: false }] }, { writer: 'panel' });
+  await sb.applyPorts();
+  assert.match(fs.readFileSync(sb.composePath(), 'utf8'), /18080/, 'ENTER: the port apply rewrote the compose');
+  assert.strictEqual((await sb.status()).bootstrap.noHooks, true);
+  await sb.up();
+  assert.strictEqual((await sb.status()).bootstrap.noHooks, false);
+});

@@ -7958,6 +7958,7 @@ function applyActionGate() {
   const foreign = sbForeign ? sbForeign.text : '';
   sbToggleBtn.disabled = sbBusy || t.startDisabled || !!foreign;
   sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
+  sbNoHooksBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
   sbBoxCreate.disabled = t.boxCreateDisabled;
   sbToggleBtn.title = foreign || (t.startDisabled ? (t.reason || '') : '');
   sbRebuildBtn.title = foreign || (t.rebuildDisabled ? (t.reason || '') : '');
@@ -8362,7 +8363,6 @@ sbNoHooksBtn.addEventListener('click', async () => {
     showToast(`Sandbox start without hooks failed: ${(e && e.message) || e}`, { kind: 'error', duration: 12000 });
   } finally {
     sbBusy = false;
-    sbNoHooksBtn.disabled = false;
     applyActionGate();
     await refreshSandboxStatus();
   }

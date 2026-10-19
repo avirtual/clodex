@@ -1089,3 +1089,17 @@ test('status says hooks are disabled for this start when the compose carried CLO
   await fire(b, b.lead, { action: 'status' });
   assert.match(b.last(), /\nsetup: none\nstart hook: none\nbootstrap: hooks disabled for this start$/);
 });
+
+test('bootstrap show setup with no script to write says so instead of the empty sha', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { bootstrap: { packages: [], setup: '', start: 'echo s' } } });
+  await fire(b, b.lead, boot('show', { field: 'setup' }));
+  assert.strictEqual(b.last(), '[agent:team] ## setup (0 B, sha e3b0c442 · no script, never changed)\n');
+});
+
+test('a degraded bring-up with no last.json record prints ? for exit and time', async () => {
+  const st = { ...DEGRADED_ST, bootstrap: { ...DEGRADED_ST.bootstrap, setup: null } };
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: st });
+  const replies = [];
+  await b.m._bringUpTeamBox(b.team, { mgr: b.mgr, box: b.box(), boxId: 'team-clodex', patch: {}, action: 'up', reply: (line) => replies.push(line) });
+  assert.match(replies[replies.length - 1], /^box team-clodex is up but ENVIRONMENT DEGRADED: setup failed exit \? at \? — no seats seeded;/);
+});

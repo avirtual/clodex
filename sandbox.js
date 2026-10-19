@@ -1260,11 +1260,12 @@ function createSandbox(deps = {}) {
     fs.mkdirSync(bootstrapDirPath(), { recursive: true, mode: 0o755 });
     const bound = prior != null && prior.includes(`:${BOOTSTRAP_CONTAINER_DIR}:ro`);
     const bootstrapOn = keepBootstrap ? bound : writeBootstrapScripts(bootstrapDirPath(), config.bootstrap);
+    const keptNoHooks = keepBootstrap && prior != null && prior.includes('      CLODEX_NO_HOOKS: "1"\n');
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
       hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: keepPlatform ? writtenPlatform : config.platform,
-      hostLabel: deps.selfLabel || null, bootstrapDir: bootstrapOn ? bootstrapDirPath() : null, noHooks,
+      hostLabel: deps.selfLabel || null, bootstrapDir: bootstrapOn ? bootstrapDirPath() : null, noHooks: noHooks || keptNoHooks,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
