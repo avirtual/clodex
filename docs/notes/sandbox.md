@@ -43,6 +43,13 @@ neither set it nor edit or remove an entry that carries it. Entries are matched
 to `prior` by pair, never by index: a wide entry on a new pair is reset whenever
 a prior wide pair is gone from the same save.
 
+## RESERVED_MOUNT_TARGETS
+
+The persisted homes, each a bind from the box state dir: `/data`, `~/work`,
+`~/.clodex`, `~/.claude`, `~/.config` (with `~/.config/muse` nested), `~/.codex`
+and `~/.local/share`. A path an agent writes credentials to is a bind, not
+overlay: the overlay is discarded on every box recreate.
+
 ## generateCompose
 
 The gateway forwards to `clodex:<container>`, the box's compose service name:

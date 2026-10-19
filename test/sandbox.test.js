@@ -1473,7 +1473,7 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   await sb.writeComposeFile();
   const base = path.join(reg, 'boxes', SANDBOX_PEER_ID);
   assert.strictEqual(sb.stateDir(), base);
-  for (const d of ['data', 'dot', 'claude', 'muse', 'muse-data']) {
+  for (const d of ['data', 'dot', 'claude', 'config', 'muse', 'muse-data', 'codex']) {
     const dir = path.join(base, d);
     assert.ok(fs.existsSync(dir), `${d} created`);
     assert.strictEqual(fs.statSync(dir).mode & 0o777, 0o700, `${d} is 0700`);
@@ -1482,6 +1482,8 @@ test('writeComposeFile: creates the box state dirs 0700 under <registryDir>/boxe
   assert.ok(yaml.includes(`- "${path.join(base, 'data')}:/data"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'dot')}:/home/clodex/.clodex"`));
   assert.ok(yaml.includes(`- "${path.join(base, 'claude')}:/home/clodex/.claude"`));
+  assert.ok(yaml.includes(`- "${path.join(base, 'config')}:/home/clodex/.config"`));
+  assert.ok(yaml.includes(`- "${path.join(base, 'codex')}:/home/clodex/.codex"`));
 });
 
 test('generateCompose: the per-agent run dir is an exec,mode=1777 tmpfs on the service tmpfs key', () => {
@@ -1529,6 +1531,23 @@ test('generateCompose: the muse data dir binds the host state dir right after th
   const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
   assert.ok(yaml.includes(`      - "${path.join(STATE_DIR, 'muse')}:/home/clodex/.config/muse"\n      - "${path.join(STATE_DIR, 'muse-data')}:/home/clodex/.local/share"\n`), yaml);
 });
+
+test('generateCompose: config and codex bind the host state dir, config before muse and codex after muse-data', () => {
+  const yaml = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
+  assert.ok(yaml.includes(
+    `      - "${STATE_DIR}/config:/home/clodex/.config"\n`
+    + `      - "${STATE_DIR}/muse:/home/clodex/.config/muse"\n`
+    + `      - "${STATE_DIR}/muse-data:/home/clodex/.local/share"\n`
+    + `      - "${STATE_DIR}/codex:/home/clodex/.codex"\n`), yaml);
+});
+
+for (const target of ['/home/clodex/.config', '/home/clodex/.codex']) {
+  test(`normalizeMounts: a user mount at ${target} is refused as a reserved target`, () => {
+    assert.ok(RESERVED_MOUNT_TARGETS.includes(target), `${target} is not in the reserved set`);
+    assert.strictEqual(normalizeMounts([{ host: '/h', container: target }]).error,
+      `Mount target ${target} would shadow the sandbox's ${target}`);
+  });
+}
 
 test('generateCompose: a user mount at the run tmpfs target, or under it, is refused', () => {
   assert.ok(RESERVED_MOUNT_TARGETS.includes('/home/clodex/.clodex/run'),
