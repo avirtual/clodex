@@ -106,7 +106,7 @@ RUN chmod 0755 /usr/local/bin/clodex-entrypoint \
 # the "trust this folder?" dialog is pure friction on every new session. The
 # file sits OUTSIDE the volumes on purpose — it's derived state, and baking it
 # means every recreate starts onboarded + trusted.
-RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config /home/clodex/.config/muse /home/clodex/.local/share /home/clodex/.codex /home/clodex/work \
+RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/.local/share /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
  && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
  && printf '[core]\n\tcheckStat = minimal\n\ttrustctime = false\n' > /etc/gitconfig \
