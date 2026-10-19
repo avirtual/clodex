@@ -710,7 +710,9 @@ at once on a running box. Each reply is the entry's row, e.g.
 verbatim. `list` prints every row, and `[agent:team sandbox status]` adds the
 same rows (or `ports: none`) after its status line. The intent is loopback-only:
 `allInterfaces` is panel-only, and the intent can neither set it nor change or
-remove an entry that carries it.
+remove an entry that carries it. Like `sandbox up`, the verb is refused inside
+the box, which has no docker: a lead seated there asks the operator, who uses
+the panel. Label words may not contain `:`, which the parser reads as a key.
 
 ## Scaling the team
 

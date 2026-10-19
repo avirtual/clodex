@@ -105,7 +105,8 @@ function sandboxAppPortRow(entry, applied, error) {
   if (error) state = `failed: ${error}`;
   else if (rec && rec.applied) state = 'published';
   else if (rec && rec.error) state = `failed: ${rec.error}`;
-  return `port ${entry.container} → localhost:${entry.host} (${entry.proto || 'tcp'}, ${state})`;
+  const where = rec && rec.applied && !rec.url ? `:${entry.host} on the Docker host` : `localhost:${entry.host}`;
+  return `port ${entry.container} → ${where} (${entry.proto || 'tcp'}, ${state})`;
 }
 
 function sandboxAppPortRows(box) {
@@ -2579,7 +2580,7 @@ function createTicketMethods(deps, shared) {
     },
 
     async _handleTeamSandboxPort(box, intent, reply) {
-      const prior = (box.getConfig().ports || []).map((p) => ({ ...p }));
+      const prior = ((box.portsState() || {}).ports || []).map((p) => ({ ...p }));
       if (intent.op === 'list') {
         const rows = sandboxAppPortRows(box);
         reply(`${rows.length ? rows.join('\n') : 'ports: none'}\n${SANDBOX_PORT_COVERAGE}`);
@@ -2595,7 +2596,7 @@ function createTicketMethods(deps, shared) {
         if (saved && saved.ok === false) { reply(`error: ${saved.error}`); return; }
         const applied = (box.portsState() || {}).applied || [];
         let state = 'unpublished';
-        if (saved && saved.portsError) state = `failed: ${saved.portsError}`;
+        if (saved && saved.portsError) state = `failed: ${saved.portsError} — \`sandbox up\` retries the removal`;
         else if (applied.some((r) => r && r.container === container)) state = SANDBOX_PORT_PENDING;
         reply(`port ${container} removed (${state})`);
         return;
@@ -2606,7 +2607,7 @@ function createTicketMethods(deps, shared) {
       }
       const entry = { container: Number(m[1]), host: Number(m[2] || m[1]), proto: intent.proto || 'tcp', allInterfaces: false };
       if (intent.label) entry.label = intent.label;
-      const existing = prior.find((p) => Number(p.container) === entry.container && Number(p.host) === entry.host);
+      const existing = prior.find((p) => p.container === entry.container && p.host === entry.host);
       if (existing) {
         reply(`already listed: ${sandboxAppPortRow(existing, (box.portsState() || {}).applied)}`);
         return;

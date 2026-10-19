@@ -727,3 +727,15 @@ test('port on a team with no box creates none', async () => {
   assert.strictEqual(b.calls.create.length, 0);
   assert.strictEqual(b.calls.setConfig.length, 0);
 });
+
+test('a row applied on a remote Docker host shows the port on that host, not localhost', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [PUBLISHED] }, applied: [{ container: 3000, host: 3000, proto: 'http', allInterfaces: false, applied: true }] });
+  await fire(b, b.lead, port('list', null));
+  assert.strictEqual(b.last(), '[agent:team] port 3000 → :3000 on the Docker host (http, published)\nURLs are for this machine; a remote Docker host shows host:port');
+});
+
+test('a failed port rm names `sandbox up` as the retry', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { ports: [PUBLISHED] }, portsError: 'boom' });
+  await fire(b, b.lead, port('rm', '3000'));
+  assert.strictEqual(b.last(), '[agent:team] port 3000 removed (failed: boom — `sandbox up` retries the removal)');
+});
