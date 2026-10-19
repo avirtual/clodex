@@ -259,21 +259,14 @@ dictated draft through, `drainPending` claimed the directory destructively, and
 the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
 `.passive.` park came back active, and a passive park never earns a turn.
 
-Any unit the inject queue writes into a Claude seat that is idle at write time and that produces no turn within
-`BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty (the submit nudge), once the CLI has drawn the unit into its composer
-(its first 32 visible characters, or the `[Pasted text #N]` placeholder, appear in pty output after the write), the seat has
-then been quiet `BOOT_NUDGE_QUIET_MS` (1s), and no draft is open. This holds at any time, not only after boot; a second unit
-written while one is armed re-probes against its own text. A `--resume` loading a large transcript is silent while its input
-loop is not reading stdin, then reads everything buffered as ONE paste, so an Enter sent during the silence lands as content
-(measured: 61 MB resume, first `\x1b[?2004h` at +0.18s, loop reading at ~+20s, both Enters eaten by the "Removed 1 invisible
-character · review and press Enter" gate). Neither silence nor a boot render tail is the echo: no echo yet, further output, or an open draft re-arm
-the nudge for `BOOT_NUDGE_QUIET_MS`. It is cleared by the turn edge, by human pty input (an Enter would submit the operator's
-draft) and by kill, and logs `submit nudge for <seat>` when it fires. If it gives up `BOOT_NUDGE_MAXWAIT_MS` (120s) after the
-write, or its Enter is followed by no turn within another `BOOT_NUDGE_MS`, the seat is marked stuck: a WARN `submit nudge
-exhausted for <seat>`, an `ipc-message` of kind `inject-stuck`, and an `inject-stuck` attention that lists the seat and the
-stuck text on the Requests list. The next turn edge or human input clears the mark. A dm-confirm report for a stuck seat says
-so. Each fired nudge counts on the seat (`submitNudges` in its session row) and `[agent:who]` shows `(nudged N)` for the
-nudges of the last hour. Nothing is ever re-sent. The boot replay pass waits for the
+Any unit the inject queue writes into a Claude seat that is idle at write time and that produces no turn within `BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty (the submit nudge), once the CLI has drawn the unit into its
+composer (its first 32 visible characters, or the `[Pasted text #N]` placeholder, appear in pty output after the write), the seat has then been quiet `BOOT_NUDGE_QUIET_MS` (1s), and no draft is open. This holds at any time,
+not only after boot; a second unit written while one is armed re-probes against its own text. A `--resume` loading a large transcript is silent while its input loop is not reading stdin, then reads everything buffered as ONE
+paste, so an Enter sent during the silence lands as content (measured: 61 MB resume, first `\x1b[?2004h` at +0.18s, loop reading at ~+20s, both Enters eaten by the "Removed 1 invisible character · review and press Enter"
+gate). Neither silence nor a boot render tail is the echo: no echo yet, further output, or an open draft re-arm the nudge for `BOOT_NUDGE_QUIET_MS`. It is cleared by the turn edge, by human pty input (an Enter would submit the
+operator's draft) and by kill, and logs `submit nudge for <seat>` when it fires. If it gives up `BOOT_NUDGE_MAXWAIT_MS` (120s) after the write, or its Enter is followed by no turn within another `BOOT_NUDGE_MS`, the seat is
+marked stuck: a WARN `submit nudge exhausted for <seat>`, an `ipc-message` of kind `inject-stuck`, and an `inject-stuck` attention that lists the seat and the stuck text on the Requests list. The next turn edge or human input
+clears the mark. A dm-confirm report for a stuck seat says so. Each fired nudge counts on the seat (`submitNudges` in its session row) and `[agent:who]` shows `(nudged N)` for the nudges of the last hour. Nothing is ever re-sent. The boot replay pass waits for the
 inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spawn-path spec is stamped before the pass looks for its stamp.
 
 ### Parking & resend (pending-store.js)
