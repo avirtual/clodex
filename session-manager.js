@@ -7764,7 +7764,7 @@ function createSessionManager(deps) {
         return { queued: true, ref };
       }
       const via = this._relayViaForOrigin(origin);
-      if (via && task) return fail('task done cannot cross a relay — the board\'s host must be a direct peer.');
+      if (via && task) return fail('a task envelope cannot cross a relay — the board\'s host must be a direct peer.');
       if (via) {
         const qualifiedFrom = `${senderName}@${SELF_LABEL}`;
         const env = buildRelayEnvelope({

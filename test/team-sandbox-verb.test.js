@@ -823,12 +823,19 @@ test('in-box with no host label keeps the old refusal and sends nothing', async 
   assert.deepStrictEqual(b.sent, []);
 });
 
-test('up grants the team box the relay as the host writer, before docker', async () => {
+test('an up that creates the team box grants it the relay as the host writer, before docker', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'up' });
   assert.deepStrictEqual(b.calls.setConfig[0], { relay: true });
   assert.deepStrictEqual(b.calls.setConfigOpts[0], { writer: 'host' });
   assert.strictEqual(b.calls.up, 1);
+});
+
+test('an up on an existing box leaves its relay setting alone', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { relay: false } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 'master' }]);
+  assert.strictEqual(b.box().getConfig().relay, false);
 });
 
 function realBox(written) {

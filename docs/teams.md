@@ -621,7 +621,7 @@ the sender: the host resolves the box from the wire peer that delivered the
 envelope (its peer id is the box id), never from the message, and any seat in
 the box reaches exactly what its lead does. The host acts only on a box whose
 config carries `relay: true` — a host setting the box cannot write, set when
-`[agent:team sandbox up|rebuild]` provisions the team's own box and shown as a
+`[agent:team sandbox up|rebuild]` creates the team's box (a later up leaves it alone) and shown as a
 checkbox in the Sandbox panel's Advanced fold. A repeated ref is answered with
 `already applied: <the first reply>` and not re-run. `up`, `rebuild` and `down`
 are never relayed, and a box built before the host label existed keeps the

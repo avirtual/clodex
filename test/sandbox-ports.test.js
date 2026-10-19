@@ -68,7 +68,7 @@ const SIBLING_YAML = [
   '',
 ].join('\n');
 
-function portBox({ ports = [], spawn, dockerIsLocal = async () => true } = {}) {
+function portBox({ ports = [], spawn, dockerIsLocal = async () => true, selfLabel } = {}) {
   const ud = mkTmpDirIn(TMP_USERDATA, 'ud-');
   const sibling = path.join(ud, 'sibling-compose.yaml');
   fs.writeFileSync(sibling, SIBLING_YAML);
@@ -84,6 +84,7 @@ function portBox({ ports = [], spawn, dockerIsLocal = async () => true } = {}) {
     platform: 'darwin',
     spawn: spawn || recordingSpawn([]),
     dockerIsLocal,
+    ...(selfLabel ? { selfLabel } : {}),
   });
   return { sb, settings };
 }
@@ -159,6 +160,24 @@ test('generateCompose: no app ports is byte-identical to the pre-ports output', 
   const golden = '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495';
   assert.strictEqual(hash(generateCompose(COMPOSE_ARGS)), golden);
   assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, appPorts: [] })), golden);
+});
+
+test('generateCompose: a host label lands as CLODEX_HOST_LABEL in the box environment, and only when passed', () => {
+  const yaml = generateCompose({ ...COMPOSE_ARGS, hostLabel: 'mac' });
+  const env = yaml.split('\n');
+  const at = env.indexOf('      CLODEX_HOST_LABEL: "mac"');
+  assert.ok(at > env.indexOf('    environment:') && env.indexOf('    environment:') > env.indexOf('  clodex:'), yaml);
+  assert.ok(!env.slice(env.indexOf('    environment:') + 1, at).some((l) => !l.startsWith('      ')), 'the line sits inside the environment block');
+  assert.doesNotMatch(generateCompose(COMPOSE_ARGS), /CLODEX_HOST_LABEL/);
+});
+
+test('writeComposeFile passes the selfLabel dep through as the host label', async () => {
+  const { sb } = portBox({ selfLabel: 'mac' });
+  await sb.writeComposeFile();
+  assert.match(fs.readFileSync(sb.composePath(), 'utf8'), /^ {6}CLODEX_HOST_LABEL: "mac"$/m);
+  const { sb: bare } = portBox();
+  await bare.writeComposeFile();
+  assert.doesNotMatch(fs.readFileSync(bare.composePath(), 'utf8'), /CLODEX_HOST_LABEL/);
 });
 
 test('generateCompose: app ports add a locked-down gateway service after the box', () => {

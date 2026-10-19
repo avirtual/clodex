@@ -2620,6 +2620,8 @@ function createTicketMethods(deps, shared) {
         if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
         box = mgr.get(boxId);
         if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }
+        const granted = box.setConfig({ relay: true }, { writer: 'host' });
+        if (granted && granted.ok === false) { reply(`error: ${granted.error}`); return; }
       }
 
       const file = this._teamSandboxFile(team);
@@ -2636,8 +2638,6 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
-      const granted = box.setConfig({ relay: true }, { writer: 'host' });
-      if (granted && granted.ok === false) { reply(`error: ${granted.error}`); return; }
       const patch = { workDir: team.root };
       if (intent.ref) patch.ref = intent.ref;
       else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;

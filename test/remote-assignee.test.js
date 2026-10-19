@@ -254,7 +254,7 @@ test('C1b (f) a task envelope never takes the relay branch', () => {
   r.m._relayViaForOrigin = (origin) => (origin === 'far' ? 'hub' : null);
   const notices = [];
   const out = r.m._sendToFederatedTarget('x', 'board@far', 'r', false, { onBounce: (m) => notices.push(m), task: { kind: 'done', id: 't7' } });
-  assert.match(out.error, /task done cannot cross a relay — the board's host must be a direct peer\./);
+  assert.match(out.error, /a task envelope cannot cross a relay — the board's host must be a direct peer\./);
   assert.deepStrictEqual(notices, [out.error]);
   assert.strictEqual(out.queued, undefined);
   assert.deepStrictEqual(r.sent, []);
