@@ -58660,7 +58660,7 @@ ${res.stderr}` : "");
         try {
           const [detect, status] = await Promise.all([
             window.api.sandboxDetect(sbCurrentBox),
-            window.api.sandboxStatus(sbCurrentBox)
+            window.api.sandboxStatus(sbCurrentBox, { live: true })
           ]);
           sbGate = sandboxActionGate(detect);
           renderSandboxNotice(sbDockerRow, sbGate.notice);
@@ -58979,7 +58979,7 @@ ${res.stderr}` : "");
         sbLimitCpusHint.textContent = hint.cpus;
         sbLimitMemoryHint.textContent = hint.memory;
       }
-      async function saveSandboxAdvanced(patch, control) {
+      async function saveSandboxAdvanced(patch, control, apply) {
         const box = sbCurrentBox;
         control.disabled = true;
         let r;
@@ -58993,15 +58993,21 @@ ${res.stderr}` : "");
           showToast(r && r.error || "Sandbox settings were rejected.", { kind: "error", duration: 1e4 });
           return;
         }
-        applyLimitsConfig(r);
+        apply(r);
       }
       sbLimitsSave.addEventListener("click", () => saveSandboxAdvanced({ limits: {
         cpus: sbLimitCpus.value.trim() || null,
         memory: sbLimitMemory.value.trim() || null,
         pids: sbLimitPids.value.trim() || null,
         shmSize: sbLimitShm.value.trim() || null
-      } }, sbLimitsSave));
-      sbPlatform.addEventListener("change", () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform));
+      } }, sbLimitsSave, applyLimitsConfig));
+      sbPlatform.addEventListener("change", () => saveSandboxAdvanced(
+        { platform: sbPlatform.value || null },
+        sbPlatform,
+        (r) => {
+          sbPlatform.value = r.platform || "";
+        }
+      ));
       function showDetail(show) {
         sbDetail.style.display = show ? "" : "none";
       }

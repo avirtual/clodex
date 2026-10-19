@@ -531,6 +531,11 @@ function clodexServiceText(yamlText) {
   return gateway ? yamlText.slice(0, gateway.index) : yamlText;
 }
 
+function parseComposePlatform(yamlText) {
+  const m = /^    platform: (\S+)\s*$/m.exec(clodexServiceText(yamlText || ''));
+  return m ? m[1] : null;
+}
+
 function parseOwnPortMap(yamlText) {
   const out = {};
   if (!yamlText) return out;
@@ -948,7 +953,7 @@ function createSandbox(deps = {}) {
     const ports = normalizePorts(getConfig().ports).ports || [];
     const svc = gatewayServiceName(id);
     const rewrite = async () => {
-      try { await writeComposeFile(); return null; } catch (e) {
+      try { await writeComposeFile({ keepPlatform: true }); return null; } catch (e) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
     };
@@ -1099,11 +1104,14 @@ function createSandbox(deps = {}) {
     return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
   }
 
-  async function writeComposeFile() {
+  async function writeComposeFile({ keepPlatform = false } = {}) {
     const config = getConfig();
     const image = await resolveImageForConfig(config);
     let ownPorts = [];
-    try { ownPorts = parseOwnPorts(fs.readFileSync(composePath(), 'utf8')); } catch { /* no prior file */ }
+    let prior = null;
+    try { prior = fs.readFileSync(composePath(), 'utf8'); } catch { /* no prior file */ }
+    if (prior != null) ownPorts = parseOwnPorts(prior);
+    const writtenPlatform = prior == null ? null : parseComposePlatform(prior);
     const busy = await buildBusySet(config, ownPorts);
     const appPorts = normalizePorts(config.ports).ports || [];
     for (const p of appPorts) busy.add(p.host);
@@ -1119,7 +1127,7 @@ function createSandbox(deps = {}) {
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
-      hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: config.platform,
+      hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: keepPlatform ? writtenPlatform : config.platform,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -1294,22 +1302,26 @@ function createSandbox(deps = {}) {
     const ps = await runCompose(['ps', '-q', 'clodex']);
     const cid = ps.ok ? ps.stdout.split('\n').map((l) => l.trim()).find(Boolean) : null;
     if (!cid) return null;
-    const hc = await runDocker(['inspect', cid, '--format', '{{json .HostConfig}}']);
-    const limits = hc.ok ? parseAppliedLimits(hc.stdout) : null;
-    let platform = null;
-    const img = await runDocker(['inspect', cid, '--format', '{{.Image}}']);
-    const imageId = img.ok ? img.stdout.trim() : '';
-    if (imageId) {
+    const imagePlatform = async () => {
+      const img = await runDocker(['inspect', cid, '--format', '{{.Image}}']);
+      const imageId = img.ok ? img.stdout.trim() : '';
+      if (!imageId) return null;
       const arch = await runDocker(['image', 'inspect', imageId, '--format', '{{.Os}}/{{.Architecture}}']);
       const text = arch.ok ? arch.stdout.trim() : '';
-      if (/^[a-z0-9]+\/[a-z0-9]+$/.test(text)) platform = text;
-    }
-    const stats = await runDocker(['stats', '--no-stream', '--format', '{{.CPUPerc}} {{.MemUsage}}', cid]);
+      return /^[a-z0-9]+\/[a-z0-9]+$/.test(text) ? text : null;
+    };
+    const [hc, platform, stats] = await Promise.all([
+      runDocker(['inspect', cid, '--format', '{{json .HostConfig}}']),
+      imagePlatform(),
+      runDocker(['stats', '--no-stream', '--format', '{{.CPUPerc}} {{.MemUsage}}', cid]),
+    ]);
+    const limits = hc.ok ? parseAppliedLimits(hc.stdout) : null;
     const usage = stats.ok ? parseStatsLine(stats.stdout) : null;
     return { limits, platform, usage };
   }
 
-  async function status() {
+  async function status(opts = {}) {
+    const live = !!(opts && opts.live);
     const statusConfig = getConfig();
     const trackedRef = (statusConfig.ref && !statusConfig.image) ? statusConfig.ref : null;
     const owner = await foreignOwner();
@@ -1322,7 +1334,7 @@ function createSandbox(deps = {}) {
     const state = parseComposeState(r.stdout);
     const out = { state, ref: trackedRef, sha: trackedRef ? await headSha(srcDir()) : null };
     if (owner) out.foreign = owner;
-    Object.assign(out, advancedStatus(statusConfig, state === 'running' ? await liveBoxFigures() : null));
+    Object.assign(out, advancedStatus(statusConfig, live && state === 'running' ? await liveBoxFigures() : null));
     // Only meaningful while running: the compose file persists after Stop, but its
     // ports then describe no live listener, and Start regenerates them.
     if (state === 'running') {
@@ -1526,7 +1538,7 @@ function defaultIsPortInUse(port) {
 module.exports = {
   createSandbox, createSandboxManager,
   // Pure parts, exported for the unit suite.
-  createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseStatsLine, parseAppliedLimits,
+  createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseComposePlatform, parseStatsLine, parseAppliedLimits,
   validateLimitsForSave, normalizePlatform, sizeToBytes, OPERATOR_ONLY_MSG,
   resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parsePortOwners, parseOwnPortMap, normalizePorts, gatewayServiceName, probeDockerLocal, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,

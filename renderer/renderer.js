@@ -7962,7 +7962,7 @@ async function refreshSandboxStatus() {
   try {
     const [detect, status] = await Promise.all([
       window.api.sandboxDetect(sbCurrentBox),
-      window.api.sandboxStatus(sbCurrentBox),
+      window.api.sandboxStatus(sbCurrentBox, { live: true }),
     ]);
     sbGate = sandboxActionGate(detect);
     renderSandboxNotice(sbDockerRow, sbGate.notice);
@@ -8277,7 +8277,7 @@ async function refreshSandboxFigures() {
   sbLimitMemoryHint.textContent = hint.memory;
 }
 
-async function saveSandboxAdvanced(patch, control) {
+async function saveSandboxAdvanced(patch, control, apply) {
   const box = sbCurrentBox;
   control.disabled = true;
   let r;
@@ -8291,7 +8291,7 @@ async function saveSandboxAdvanced(patch, control) {
     showToast((r && r.error) || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
     return;
   }
-  applyLimitsConfig(r);
+  apply(r);
 }
 
 sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced({ limits: {
@@ -8299,9 +8299,10 @@ sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced({ limits: {
   memory: sbLimitMemory.value.trim() || null,
   pids: sbLimitPids.value.trim() || null,
   shmSize: sbLimitShm.value.trim() || null,
-} }, sbLimitsSave));
+} }, sbLimitsSave, applyLimitsConfig));
 
-sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform));
+sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform,
+  (r) => { sbPlatform.value = r.platform || ''; }));
 
 function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
 

@@ -757,3 +757,22 @@ test('a failed port rm names `sandbox up` as the retry', async () => {
   await fire(b, b.lead, port('rm', '3000'));
   assert.strictEqual(b.last(), '[agent:team] port 3000 removed (failed: boom — `sandbox up` retries the removal)');
 });
+
+test('status marks cleared limits and platform pending while the box still runs the old ones', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: { state: 'running', ref: null, sha: null,
+    limits: { configured: { cpus: null, memory: null, pids: null, shmSize: null },
+      applied: { cpus: 2, memory: null, pids: null, shmSize: 67108864 } },
+    platform: { configured: null, applied: 'linux/s390x' } } });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /\nlimits: none \(pending\)\nplatform: host \(pending\)$/);
+});
+
+test('status asks the box for its live figures', async () => {
+  const b = mkBox({ boxes: ['team-clodex'] });
+  const box = b.mgr.get('team-clodex');
+  const seen = [];
+  const orig = box.status;
+  box.status = async (opts) => { seen.push(opts); return orig.call(box, opts); };
+  await fire(b, b.lead, { action: 'status' });
+  assert.deepStrictEqual(seen, [{ live: true }]);
+});

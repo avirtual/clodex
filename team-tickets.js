@@ -82,6 +82,8 @@ function sandboxRefClause(st) {
   return (st && st.ref) ? ` (ref ${st.ref})` : '';
 }
 
+const HOST_DOCKER_PLATFORM = { arm64: 'linux/arm64', x64: 'linux/amd64' };
+
 function sandboxLimitsRow(st) {
   const lim = (st && st.limits) || {};
   const c = lim.configured || {};
@@ -90,8 +92,11 @@ function sandboxLimitsRow(st) {
   if (c.memory != null) parts.push(`memory ${c.memory}`);
   if (c.pids != null) parts.push(`pids ${c.pids}`);
   if (c.shmSize != null) parts.push(`shm ${c.shmSize}`);
-  if (!parts.length) return 'limits: none';
   const a = lim.applied;
+  if (!parts.length) {
+    const stale = !!a && ['cpus', 'memory', 'pids'].some((k) => a[k] != null);
+    return stale ? 'limits: none (pending)' : 'limits: none';
+  }
   const applied = !!a
     && (c.cpus == null ? a.cpus == null : a.cpus === c.cpus)
     && (c.memory == null ? a.memory == null : a.memory === sizeToBytes(c.memory))
@@ -102,7 +107,10 @@ function sandboxLimitsRow(st) {
 
 function sandboxPlatformRow(st) {
   const p = (st && st.platform) || {};
-  if (!p.configured) return 'platform: host';
+  if (!p.configured) {
+    const host = HOST_DOCKER_PLATFORM[process.arch];
+    return p.applied && host && p.applied !== host ? 'platform: host (pending)' : 'platform: host';
+  }
   return `platform: ${p.configured} (${p.applied === p.configured ? 'applied' : 'pending'})`;
 }
 
@@ -2588,7 +2596,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (action === 'status') {
-        const st = await box.status();
+        const st = await box.status({ live: true });
         const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
         const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
         const rows = sandboxAppPortRows(box);

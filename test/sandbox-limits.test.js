@@ -140,16 +140,24 @@ test('probeDockerFigures: parses ncpu and memTotal, nulls on a non-zero exit', a
 
 test('manager: figures() probes once and setConfig bounds use the cached figures', async () => {
   let boxes = [{ id: 'b1', label: 'b1', config: {} }];
+  let infoProbes = 0;
   const settings = { get: () => ({ boxes }), set: (p) => { if (p.boxes) boxes = p.boxes; } };
   const mgr = createSandboxManager({ getUiSettings: () => settings, getUserDataPath: () => TMP, registryDir: TMP,
-    spawn: (_c, args) => fakeChild(args[0] === 'info' && args[2] === '{{.NCPU}} {{.MemTotal}}' ? { stdout: '4 8589934592' } : {}) });
+    spawn: (_c, args) => {
+      const figuresProbe = args[0] === 'info' && args[2] === '{{.NCPU}} {{.MemTotal}}';
+      if (figuresProbe) infoProbes++;
+      return fakeChild(figuresProbe ? { stdout: '4 8589934592' } : {});
+    } });
   assert.deepStrictEqual(await mgr.figures(), { ncpu: 4, memTotal: 8 * GIB });
+  assert.deepStrictEqual(await mgr.figures(), { ncpu: 4, memTotal: 8 * GIB });
+  assert.strictEqual(infoProbes, 1, 'the second figures() call is served from the cache');
   assert.deepStrictEqual(mgr.get('b1').setConfig({ limits: { cpus: 6 } }, { writer: 'panel' }),
     { ok: false, error: 'limits.cpus must be between 0.25 and 4 (the Docker VM has 4 cores)' });
 });
 
-function statusSpawn({ state = 'running' } = {}) {
+function statusSpawn({ state = 'running', calls = [] } = {}) {
   return (_cmd, args) => {
+    calls.push(args);
     const f = args.indexOf('-f');
     const sub = f >= 0 ? args.slice(f + 2) : args;
     if (sub[0] === 'ps' && sub[1] === '--format') return fakeChild({ stdout: `[{"Service":"clodex","State":"${state}"}]` });
@@ -172,7 +180,7 @@ function statusBox(spawn) {
 }
 
 test('status: a running box reports applied limits, platform and usage from inspect and stats', async () => {
-  const st = await statusBox(statusSpawn()).status();
+  const st = await statusBox(statusSpawn()).status({ live: true });
   assert.strictEqual(st.state, 'running');
   assert.deepStrictEqual(st.limits, {
     configured: { cpus: 2, memory: '4g', pids: 512, shmSize: '1g' },
@@ -183,9 +191,37 @@ test('status: a running box reports applied limits, platform and usage from insp
 });
 
 test('status: a stopped box has configured values and null applied/usage', async () => {
-  const st = await statusBox(statusSpawn({ state: 'exited' })).status();
+  const st = await statusBox(statusSpawn({ state: 'exited' })).status({ live: true });
   assert.strictEqual(st.state, 'exited');
   assert.deepStrictEqual(st.limits, { configured: { cpus: 2, memory: '4g', pids: 512, shmSize: '1g' }, applied: null });
   assert.deepStrictEqual(st.platform, { configured: 'linux/amd64', applied: null });
   assert.strictEqual(st.usage, null);
+});
+
+test('status: without live a running box spawns no inspect or stats and reports applied null', async () => {
+  const calls = [];
+  const st = await statusBox(statusSpawn({ calls })).status();
+  assert.strictEqual(st.state, 'running', 'ENTER: the box is running, so only the live flag gates the probes');
+  const verbs = calls.map((a) => { const f = a.indexOf('-f'); return (f >= 0 ? a.slice(f + 2) : a).slice(0, 2).join(' '); });
+  assert.deepStrictEqual(verbs.filter((v) => /^(inspect|image|stats|ps -q)/.test(v)), []);
+  assert.deepStrictEqual(st.limits.applied, null);
+  assert.strictEqual(st.platform.applied, null);
+  assert.strictEqual(st.usage, null);
+});
+
+test('applyPorts: a pending platform stays off the recreated gateway until the next full up', async () => {
+  const dir = mkTmpDirIn(TMP, 'gw-');
+  const config = { platform: 'linux/amd64', ports: [{ container: 3000, host: 3100 }] };
+  const sb = createSandbox({ registryDir: dir, getUserDataPath: () => dir, spawn: () => fakeChild(),
+    isPortInUse: async () => false, dockerIsLocal: async () => true,
+    readBoxConfig: () => config, writeBoxConfig: () => {} });
+  fs.mkdirSync(path.dirname(sb.composePath()), { recursive: true });
+  fs.writeFileSync(sb.composePath(), generateCompose({ ...COMPOSE_ARGS, hostname: 'sandbox', stateDir: sb.stateDir(), appPorts: config.ports }));
+  const r = await sb.applyPorts();
+  assert.notStrictEqual(r && r.ok, false, JSON.stringify(r));
+  const yaml = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.ok(yaml.includes('  sandbox-ports:\n'), 'ENTER: the gateway was rewritten');
+  assert.ok(!yaml.includes('platform:'), yaml);
+  await sb.writeComposeFile();
+  assert.strictEqual(fs.readFileSync(sb.composePath(), 'utf8').split('platform: linux/amd64').length - 1, 2);
 });

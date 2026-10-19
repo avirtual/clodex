@@ -609,7 +609,7 @@ place rather than quietly resetting it to master.
 
 A box's CPU, memory, pids and shm limits and its platform are operator settings
 in the Sandbox panel's Advanced fold; no intent can change them, and `sandbox
-status` reports both, marked `(applied)` or `(pending)` until the next Start.
+status` reports both, marked `(applied)` or `(pending)` until the next Start (Rebuild for platform).
 
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
