@@ -357,6 +357,7 @@ payloads are documented in `docs/renderer-events.md`.
 | renderBoxList | rebuilds the box list with status dot and per-row Start or Stop | `#sandbox-box-list` | toggleBox | sandbox-view.test.js |
 | toggleBox | a row's Start or Stop for any box, serialised through `sbBusy` | `sbBusy` | window.api.sandboxUp, window.api.sandboxDown, renderBoxList | sandbox-view.test.js |
 | openSandboxDialog | lists boxes, picks the current one, loads detail and list, shows the overlay and starts the poll | current box | loadBoxDetail, renderBoxList | unpinned |
+| renderAppPorts | rebuilds the Ports rows editor (box port, host port, proto, label, all-interfaces checkbox with its warning, remove) and one chip cell per row | `sbAppPorts`, `sbAppPortChips` | updateAppPortChips | unpinned |
 
 ### Invariants
 - `refreshSandboxStatus` updates `sbRunning` before `applyActionGate`, because the gate's Start-versus-Stop choice reads it.
