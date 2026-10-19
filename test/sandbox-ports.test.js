@@ -292,3 +292,47 @@ test('probeDockerLocal: DOCKER_HOST is remote without a probe; the context name 
   assert.deepStrictEqual(await probeDockerLocal(spawnWith('colima\n'), {}), { local: false });
   assert.deepStrictEqual(seen[0], ['context', 'show']);
 });
+
+const LOOP = { container: 3001, host: 3001, allInterfaces: false, proto: 'tcp', label: '' };
+const PAIR_ROWS = [
+  { name: 'a reorder keeps consent on the same pair', prior: [WIDE, LOOP], ports: [LOOP, WIDE], want: [LOOP, WIDE] },
+  { name: 'a reorder does not carry consent onto a changed pair', prior: [WIDE, LOOP], ports: [LOOP, { ...WIDE, host: 4001 }], want: [LOOP, { container: 4000, host: 4001, allInterfaces: false, proto: 'http', label: 'lan' }] },
+];
+
+for (const row of PAIR_ROWS) {
+  test(`validatePortsForSave pair matching: ${row.name}`, () => {
+    const { sb } = portBox();
+    assert.deepStrictEqual(sb.validatePortsForSave(row.ports, { writer: 'panel', prior: row.prior }), { ports: row.want });
+  });
+}
+
+test('applyPorts: a failed gateway rm leaves the prior record byte-identical', async () => {
+  const results = { ps: RUNNING };
+  const { sb } = portBox({ ports: [{ container: 3001 }], spawn: recordingSpawn([], results) });
+  await sb.applyPorts();
+  const before = fs.readFileSync(path.join(path.dirname(sb.composePath()), 'sandbox-ports.json'), 'utf8');
+  results.rm = { code: 1, stderr: 'boom\n' };
+  const cfg = await sb.setConfig({ ports: [] }, { writer: 'panel' });
+  assert.strictEqual(cfg.portsError, 'boom');
+  assert.strictEqual(fs.readFileSync(path.join(path.dirname(sb.composePath()), 'sandbox-ports.json'), 'utf8'), before);
+});
+
+test('applyPorts: a compose rewrite that throws after the gateway rm records no ports', async () => {
+  let sb;
+  const record = recordingSpawn([], { ps: RUNNING });
+  const spawn = (cmd, args) => {
+    const f = args.indexOf('-f');
+    if (f >= 0 && args[f + 2] === 'rm') {
+      fs.rmSync(sb.composePath());
+      fs.mkdirSync(sb.composePath());
+      fs.writeFileSync(path.join(sb.composePath(), 'x'), '');
+    }
+    return record(cmd, args);
+  };
+  ({ sb } = portBox({ ports: [{ container: 3001 }], spawn }));
+  await sb.applyPorts();
+  assert.strictEqual(sb.portsState().applied.length, 1);
+  const cfg = await sb.setConfig({ ports: [] }, { writer: 'panel' });
+  assert.match(cfg.portsError, /^compose write failed: /);
+  assert.deepStrictEqual(sb.portsState().applied, []);
+});
