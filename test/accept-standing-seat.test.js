@@ -1602,3 +1602,34 @@ test('t1473: an accept that merged commits rides as an ack and replies nothing',
   assert.match(acks[0], /accepted — merged into master/);
   assert.strictEqual(exists(wt), false, 'ENTER: the teardown completed, which is what makes the close-out merged');
 });
+
+test('t1892: an in-root ticket tree minted by task start is removed, and its branch deleted, by accept', async (t) => {
+  const f = mkFixture(t);
+  f.team.worktrees = 'in-root';
+  f.team.roles = { lead: { brief: 'the lead', dispatch: 'standing' }, hand: { brief: 'the hand', dispatch: 'worktree' } };
+  f.persistence.setWorktree = (n, w) => { const e = f.persistence.get(n); if (e) e.worktree = w; };
+  let seated;
+  const spawned = new Promise((r) => { seated = r; });
+  f.m.create = async (name, type, cwd) => { f.seat(name, cwd); seated(); return { name }; };
+  f.seat('lead');
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'build it' });
+  const all = f.tstore.load(f.team.root);
+  for (const x of all) x.taskDir = `tasks/${x.id}-fixture/SPEC.md`;
+  f.tstore.save(f.team.root, all);
+  f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+  await spawned;
+  const wt = f.one('t1').worktree;
+  assert.ok(wt && wt.path, 'ENTER: the start minted a tree');
+  assert.strictEqual(wt.path, pathReal.join(f.repoDir, '.clodex-wt', wt.branch));
+  assert.ok(exists(wt.path), 'ENTER: the in-root tree is on disk');
+  assert.ok(branches(f).includes(wt.branch), 'ENTER: its branch exists');
+  const seatName = f.one('t1').assignee;
+  const rows = f.tstore.load(f.team.root);
+  Object.assign(rows[0], { state: 'done', closedAt: 2, closedBy: seatName });
+  f.tstore.save(f.team.root, rows);
+
+  await accept(f, 't1');
+
+  assert.strictEqual(exists(wt.path), false, 'the in-root tree is removed');
+  assert.strictEqual(branches(f).includes(wt.branch), false, 'and its branch deleted');
+});

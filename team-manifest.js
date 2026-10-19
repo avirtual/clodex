@@ -168,6 +168,12 @@ function normalizeTrunk(v) {
   return t;
 }
 
+const WORKTREES_VALUES = ['sibling', 'in-root'];
+
+function normalizeWorktrees(v) {
+  return WORKTREES_VALUES.includes(v) ? v : null;
+}
+
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
@@ -533,7 +539,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
-    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, version, droppedFields };
+    const worktrees = normalizeWorktrees(m.worktrees);
+    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -1056,9 +1063,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  function setTeamWorktrees(teamName, value) {
+    const team = loadManifest(teamName);
+    const v = normalizeWorktrees(value);
+    if (!v) throw new Error(`worktrees must be one of ${WORKTREES_VALUES.join(' | ')} (${team.file})`);
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.worktrees = v;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamWorktrees, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE,
   };
@@ -1225,6 +1242,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, WORKTREES_VALUES, normalizeWorktrees,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

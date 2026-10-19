@@ -2512,6 +2512,29 @@ test('setTeamTrunk round-trips @head and refuses @other with the branch-name mes
   assert.strictEqual(tm.loadManifest('shop').trunk, '@head', 'a refused write leaves the stored value');
 });
 
+for (const [raw, want] of [['in-root', 'in-root'], ['sibling', 'sibling'], ['elsewhere', undefined], [true, undefined]]) {
+  test(`worktrees ${JSON.stringify(raw)} loads as ${JSON.stringify(want)}`, () => {
+    const home = mkHome();
+    const root = mkTmpRoot('proj-');
+    mkTeam(home, 'shop', { ...validManifest(root), worktrees: raw });
+    const team = createTeamManifest({ fs, clodexHome: home }).loadManifest('shop');
+    assert.strictEqual(team.worktrees, want);
+    assert.strictEqual('worktrees' in team, want !== undefined);
+  });
+}
+
+test('setTeamWorktrees writes in-root and sibling and refuses anything else', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  mkTeam(home, 'shop', validManifest(root));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.strictEqual(tm.setTeamWorktrees('shop', 'in-root').worktrees, 'in-root');
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8')).worktrees, 'in-root');
+  assert.throws(() => tm.setTeamWorktrees('shop', 'elsewhere'), /worktrees must be one of sibling \| in-root/);
+  assert.strictEqual(tm.loadManifest('shop').worktrees, 'in-root', 'a refused write leaves the stored value');
+  assert.strictEqual(tm.setTeamWorktrees('shop', 'sibling').worktrees, 'sibling');
+});
+
 test('role cwd: a child directory named ..cache is inside the root and is stored', () => {
   const { tm, root, file } = teamForCwd();
   fs.mkdirSync(path.join(root, '..cache'));
