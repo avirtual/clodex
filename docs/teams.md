@@ -611,6 +611,22 @@ A box's CPU, memory, pids and shm limits and its platform are operator settings
 in the Sandbox panel's Advanced fold; no intent can change them, and `sandbox
 status` reports both, marked `(applied)` or `(pending)` until the next Start (Rebuild for platform).
 
+Inside the box there is no docker, so a lead there gets `sandbox port …` and
+`sandbox status` relayed to the desktop Clodex that owns the box: the intent
+rides the claim path to `board@<CLODEX_HOST_LABEL>` (an env line the host
+writes into the box's compose file) as a `sandbox` task envelope, and the host
+answers with the same reply the desktop verb gives (`status` over the relay
+reports state, ports, limits and platform only). The box is the principal, not
+the sender: the host resolves the box from the wire peer that delivered the
+envelope (its peer id is the box id), never from the message, and any seat in
+the box reaches exactly what its lead does. The host acts only on a box whose
+config carries `relay: true` — a host setting the box cannot write, set when
+`[agent:team sandbox up|rebuild]` provisions the team's own box and shown as a
+checkbox in the Sandbox panel's Advanced fold. A repeated ref is answered with
+`already applied: <the first reply>` and not re-run. `up`, `rebuild` and `down`
+are never relayed, and a box built before the host label existed keeps the
+`sandboxes are not enabled on this host` refusal.
+
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
 

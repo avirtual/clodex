@@ -31,6 +31,8 @@ const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { BOX_ID_RE, sizeToBytes, runningInSandboxBox } = require('./sandbox');
+const { SANDBOX_RELAY_VERBS } = require('./relay-protocol');
+const { parseWithRegistry } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
@@ -2486,7 +2488,7 @@ function createTicketMethods(deps, shared) {
             return;
           }
           case 'sandbox': {
-            this._handleTeamSandbox(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
+            this._handleTeamSandbox(team, intent, reply, session).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
           default:
@@ -2575,13 +2577,24 @@ function createTicketMethods(deps, shared) {
       return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };
     },
 
-    async _handleTeamSandbox(team, intent, reply) {
+    async _handleTeamSandbox(team, intent, reply, session = null) {
       const action = intent.action || 'up';
       if (!SANDBOX_ACTIONS.includes(action)) {
         reply(`error: sandbox action must be ${SANDBOX_ACTIONS.join(' | ')} (got "${action}")`);
         return;
       }
       const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+      const env = deps.env || process.env;
+      if (!mgr && session && runningInSandboxBox(env) && SANDBOX_RELAY_VERBS.includes(action) && env.CLODEX_HOST_LABEL) {
+        const args = action === 'port'
+          ? [intent.op, intent.spec, intent.proto ? `proto:${intent.proto}` : null, intent.label].filter(Boolean).join(' ')
+          : '';
+        const r = this._sendToFederatedTarget(session.name, `board@${env.CLODEX_HOST_LABEL}`, `sandbox ${action}${args ? ` ${args}` : ''}`, false, {
+          session, onBounce: (m) => reply(m), task: { kind: 'sandbox', verb: action, args },
+        });
+        if (r && r.queued) reply(`sandbox ${action} sent to the host — its answer follows`);
+        return;
+      }
       if (!mgr) { reply('error: sandboxes are not enabled on this host — inside a sandbox box there is no docker; run [agent:team sandbox …] from a desktop seat, or use Settings > Sandboxes on the desktop'); return; }
 
       const boxId = `team-${team.name}`;
@@ -2618,20 +2631,59 @@ function createTicketMethods(deps, shared) {
         reply(`sandbox ${boxId} down — ${file} removed, peer entry ${boxId} unregistered`);
         return;
       }
-      if (action === 'status') {
-        const st = await box.status({ live: true });
-        const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
-        const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
-        const rows = sandboxAppPortRows(box);
-        reply(`sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}\n${sandboxLimitsRow(st)}\n${sandboxPlatformRow(st)}`);
+      if (action === 'status' || action === 'port') {
+        reply((await this._sandboxVerb(team, box, action, intent)).reply);
         return;
       }
-      if (action === 'port') { await this._handleTeamSandboxPort(box, intent, reply); return; }
 
+      const granted = box.setConfig({ relay: true }, { writer: 'host' });
+      if (granted && granted.ok === false) { reply(`error: ${granted.error}`); return; }
       const patch = { workDir: team.root };
       if (intent.ref) patch.ref = intent.ref;
       else if (!box.getConfig().ref) patch.ref = SANDBOX_DEFAULT_REF;
       return this._bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply });
+    },
+
+    async _sandboxVerb(team, box, verb, intent, { relay = false } = {}) {
+      const boxId = `team-${team.name}`;
+      if (verb === 'status') {
+        const st = await box.status({ live: true });
+        const rows = sandboxAppPortRows(box);
+        if (relay) {
+          const dto = { state: st.state, ports: rows, limits: st.limits, platform: st.platform };
+          return { reply: `sandbox ${boxId} ${dto.state}\n${dto.ports.length ? dto.ports.join('\n') : 'ports: none'}\n${sandboxLimitsRow(dto)}\n${sandboxPlatformRow(dto)}` };
+        }
+        const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
+        const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
+        return { reply: `sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}\n${sandboxLimitsRow(st)}\n${sandboxPlatformRow(st)}` };
+      }
+      let out = null;
+      await this._handleTeamSandboxPort(box, intent, (m) => { out = m; });
+      return { reply: out };
+    },
+
+    async _remoteSandboxVerb({ peerId, origin, from, verb, args }) {
+      const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+      const box = mgr && typeof peerId === 'string' ? mgr.get(peerId) : null;
+      if (!box) return { reply: `error: peer "${peerId}" is not a managed box` };
+      const name = peerId.startsWith('team-') ? peerId.slice('team-'.length) : null;
+      let team = null;
+      try { team = name ? loadManifest(name) : null; } catch { team = null; }
+      if (!team) return { reply: `error: no team owns box ${peerId}` };
+      if (box.getConfig().relay !== true) return { reply: 'error: this box has no relay grant (Sandbox panel ▸ Advanced)' };
+      const text = String(args == null ? '' : args);
+      const intent = /[\]\r\n]/.test(text) ? null : parseWithRegistry(`[agent:team sandbox ${verb}${text ? ` ${text}` : ''}]`);
+      if (!intent || intent.type !== 'team' || intent.sub !== 'sandbox' || intent.action !== verb) {
+        return { reply: `error: bad sandbox ${verb} arguments` };
+      }
+      let r;
+      try {
+        r = await this._sandboxVerb(team, box, verb, intent, { relay: true });
+      } catch (e) {
+        r = { reply: `error: ${(e && e.message) || e}` };
+      }
+      log.info('intent', `relayed sandbox ${verb} from ${from}@${origin} on ${peerId}: ${String(r.reply || '').split('\n')[0]}`);
+      return r;
     },
 
     async _handleTeamSandboxPort(box, intent, reply) {

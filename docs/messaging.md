@@ -351,6 +351,8 @@ announced in hello — in that order, case-insensitively, through the one
 
 A seat closes a ticket filed on a peer's board with `task done tN@origin`; see [teams.md](teams.md#scaling-the-team).
 
+A `sandbox` task envelope (`{ kind: 'sandbox', verb: 'port'|'status', args }`, `isSandboxEnvelope`) rides the same claim path as `done`: an in-box lead's `[agent:team sandbox port …|status]` goes to `board@<CLODEX_HOST_LABEL>`, and the claiming host answers it as `[agent:team] …`; see [teams.md](teams.md#team-sandbox).
+
 A federated dm may carry `ref:<token>` on its head (`[agent:dm name@peer ref:t1830 urgent]`, `DM_REF_RE`; a malformed ref token fails the whole head, and on a local target it is ignored). When absent, `_routeFederatedDm` mints one, and the held/parked/not-delivered notices of a send attempt, the held-queue-full bounce and the outbox bounce end with `(ref …)`. The receiving peer does not redeliver a repeated ref from the same origin and sender within 10 minutes of a delivered or parked first attempt (it answers `duplicate: true` with that result); a failed attempt is not remembered, so its ref can be resent at once, so resending after a timeout is safe.
 
 - **Consumer → box**: `_routeFederatedDm` matches `@origin` against a

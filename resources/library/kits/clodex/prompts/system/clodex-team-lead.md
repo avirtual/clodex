@@ -203,7 +203,9 @@ lives in a worktree: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`.
 - From a desktop seat, publish a port the app listens on inside your team's
   box: `[agent:team sandbox port add <container>[:<host>] [proto:http]]`; the
   reply carries the operator's URL; the server must bind 0.0.0.0. Inside the
-  box the intent is unavailable: dm a desktop seat or ask the operator.
+  box, `sandbox port …` and `sandbox status` are relayed to the host (the box
+  needs the relay grant, on by default for a team's own box); up, rebuild and
+  down stay desktop-only.
 
 ## Your team's prompts are yours
 

@@ -7884,6 +7884,7 @@ const sbLimitMemoryHint = document.getElementById('sandbox-limit-memory-hint');
 const sbLimitsSave = document.getElementById('sandbox-limits-save');
 const sbLimitsLine = document.getElementById('sandbox-limits-line');
 const sbPlatform = document.getElementById('sandbox-platform');
+const sbRelay = document.getElementById('sandbox-relay');
 let sbPollTimer = null;
 let sbRunning = false;
 let sbBusy = false;
@@ -8256,6 +8257,7 @@ async function loadBoxDetail() {
   loadAppPorts(cfg);
   applyTokenState(!!cfg.hasToken);
   applyLimitsConfig(cfg);
+  sbRelay.checked = cfg.relay === true;
   sbLimitsLine.textContent = sandboxLimitsLineText(null);
   refreshSandboxFigures();
 }
@@ -8303,6 +8305,9 @@ sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced({ limits: {
 
 sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform,
   (r) => { sbPlatform.value = r.platform || ''; }));
+
+sbRelay.addEventListener('change', () => saveSandboxAdvanced({ relay: sbRelay.checked }, sbRelay,
+  (r) => { sbRelay.checked = r.relay === true; }));
 
 function showDetail(show) { sbDetail.style.display = show ? '' : 'none'; }
 
