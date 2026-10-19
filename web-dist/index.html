@@ -32652,13 +32652,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (sub === "prompt-rm") return { type: "team", sub, kind: positional[0] || null, stem: positional[1] || null, body: "" };
         if (sub === "sandbox") {
           const refM = argStr.match(/\bref:(\S+)/);
-          const action = positional[0] || "up";
-          if (action === "port") {
-            const protoM = argStr.match(/\bproto:(\S+)/);
-            const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
-            return { type: "team", sub, action, ref: refM ? refM[1] : null, op: words[1] || null, spec: words[2] || null, proto: protoM ? protoM[1] : null, label: words.slice(3).join(" ") || null, body: "" };
-          }
-          return { type: "team", sub, action, ref: refM ? refM[1] : null, body: "" };
+          return { type: "team", sub, action: positional[0] || "up", ref: refM ? refM[1] : null, body: "" };
         }
         const ms = positional[0] != null ? Number(positional[0]) : null;
         return { type: "team", sub, ms: Number.isFinite(ms) ? ms : null, body: "" };

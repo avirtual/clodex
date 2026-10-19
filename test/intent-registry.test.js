@@ -203,13 +203,7 @@ function parseIntentLegacy(rawLine) {
     // same lockstep rule as gather and the four file verbs above.
     if (sub === 'sandbox') {
       const refM = argStr.match(/\bref:(\S+)/);
-      const action = positional[0] || 'up';
-      if (action === 'port') {
-        const protoM = argStr.match(/\bproto:(\S+)/);
-        const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
-        return { type: 'team', sub, action, ref: refM ? refM[1] : null, op: words[1] || null, spec: words[2] || null, proto: protoM ? protoM[1] : null, label: words.slice(3).join(' ') || null, body: '' };
-      }
-      return { type: 'team', sub, action, ref: refM ? refM[1] : null, body: '' };
+      return { type: 'team', sub, action: positional[0] || 'up', ref: refM ? refM[1] : null, body: '' };
     }
     const ms = positional[0] != null ? Number(positional[0]) : null;
     return { type: 'team', sub, ms: Number.isFinite(ms) ? ms : null, body: '' };
@@ -435,7 +429,6 @@ const ADVERSARIAL = [
   '[agent:team prompt-rm system lead]', '[agent:team prompt-rm append lead]',
   '[agent:team sandbox]', '[agent:team sandbox rebuild ref:t9-x]', '[agent:team sandbox down]',
   '[agent:team sandbox status]', '[agent:team sandbox ref:release/1.2]', '[agent:team sandboxx]',
-  '[agent:team sandbox port add 3000:3100 proto:http dev server]', '[agent:team sandbox port rm 3000]', '[agent:team sandbox port list]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
@@ -756,15 +749,6 @@ test('t808: sandbox parses action and ref as LITERALS — action defaults, ref d
   // ref: is a kv, so it can never be mistaken for the action positional.
   assert.deepStrictEqual(parseIntent('[agent:team sandbox ref:release/1.2]'),
     { type: 'team', sub: 'sandbox', action: 'up', ref: 'release/1.2', body: '' });
-});
-
-test('sandbox port parses op, container:host spec, proto and a multi-word label as LITERALS', () => {
-  assert.deepStrictEqual(parseIntent('[agent:team sandbox port add 3000:3100 proto:http dev server]'),
-    { type: 'team', sub: 'sandbox', action: 'port', ref: null, op: 'add', spec: '3000:3100', proto: 'http', label: 'dev server', body: '' });
-  assert.deepStrictEqual(parseIntent('[agent:team sandbox port rm 3000]'),
-    { type: 'team', sub: 'sandbox', action: 'port', ref: null, op: 'rm', spec: '3000', proto: null, label: null, body: '' });
-  assert.deepStrictEqual(parseIntent('[agent:team sandbox port list]'),
-    { type: 'team', sub: 'sandbox', action: 'port', ref: null, op: 'list', spec: null, proto: null, label: null, body: '' });
 });
 
 test('end and escape are NOT rows — the scanner shell owns them', () => {

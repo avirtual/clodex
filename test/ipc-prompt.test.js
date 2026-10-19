@@ -188,7 +188,7 @@ test('t754: the role-add row documents dispatch:/cwd: in the lead\'s prompt, gat
 });
 
 test('t808: the sandbox row is present in the lead\'s prompt, gated or not', () => {
-  const ROW = /^ {2}\[agent:team sandbox \[up\|rebuild\|down\|status\|port add\|rm\|list …\] \[ref:<ref>\]\]/m;
+  const ROW = /^ {2}\[agent:team sandbox \[up\|rebuild\|down\|status\] \[ref:<ref>\]\]/m;
   assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries the sandbox row');
   assert.ok(ROW.test(leadPrompt([])), 'and so does a fully-gated lead\'s');
   for (const src of [leadPrompt(null), leadPrompt([])]) {

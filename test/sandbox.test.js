@@ -1017,7 +1017,7 @@ function recordingSpawn(calls, results = {}) {
   };
 }
 
-test('rebuild: dev build kind uses `up -d --build --force-recreate --remove-orphans`, then registers the peer', async () => {
+test('rebuild: dev build kind uses `up -d --build --force-recreate`, then registers the peer', async () => {
   const settings = fakeSettings();
   const calls = [];
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
@@ -1032,13 +1032,13 @@ test('rebuild: dev build kind uses `up -d --build --force-recreate --remove-orph
   assert.strictEqual(r.ok, true);
   assert.deepStrictEqual(r.ports, { web: 7810, wirescope: 7811, wire: 7820 });
   const composeCalls = composeSubcommands(calls);
-  assert.deepStrictEqual(composeCalls, [['up', '-d', '--build', '--force-recreate', '--remove-orphans']]);
+  assert.deepStrictEqual(composeCalls, [['up', '-d', '--build', '--force-recreate']]);
   assert.strictEqual(settings._state().peers.length, 1);
   assert.strictEqual(settings._state().peers[0].id, 'sandbox');
   assert.deepStrictEqual(r.image, { kind: 'build', ref: null, sha: null });
 });
 
-test('rebuild: packaged pinned image kind pulls then `up -d --force-recreate --remove-orphans`', async () => {
+test('rebuild: packaged pinned image kind pulls then `up -d --force-recreate`', async () => {
   const settings = fakeSettings();
   const calls = [];
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
@@ -1052,7 +1052,7 @@ test('rebuild: packaged pinned image kind pulls then `up -d --force-recreate --r
   const r = await sb.rebuild();
   assert.strictEqual(r.ok, true);
   const composeCalls = composeSubcommands(calls);
-  assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d', '--force-recreate', '--remove-orphans']]);
+  assert.deepStrictEqual(composeCalls, [['pull'], ['up', '-d', '--force-recreate']]);
   assert.strictEqual(settings._state().peers.length, 1);
   assert.deepStrictEqual(r.image, { kind: 'image', image: 'ghcr.io/avirtual/clodex:9.9.9' });
 });
@@ -1077,7 +1077,7 @@ test('rebuild: a failed pull surfaces stderr, skips up, and does NOT register th
   assert.strictEqual(settings._state().peers.length, 0);
 });
 
-test('up: brings the box up with `up -d --remove-orphans` — never --force-recreate', async () => {
+test('up: brings the box up with plain `up -d` — never --force-recreate', async () => {
   const calls = [];
   const sb = createSandbox({ registryDir: TMP_REGISTRY,
     spawn: recordingSpawn(calls),
@@ -1089,7 +1089,7 @@ test('up: brings the box up with `up -d --remove-orphans` — never --force-recr
   });
   const r = await sb.up();
   assert.strictEqual(r.ok, true);
-  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d', '--remove-orphans']]);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
 });
 
 test('containerStartedAt: inspects the compose container and returns its State.StartedAt', async () => {
@@ -2331,7 +2331,7 @@ test('up: a project whose label matches OUR compose path proceeds', async () => 
   assert.strictEqual(sb.composePath(), mine, 'ENTER: the fake label is spelled exactly as composePath()');
   const r = await sb.up();
   assert.strictEqual(r.ok, true);
-  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d', '--remove-orphans']]);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
   assert.strictEqual(settings._state().peers.length, 1);
 });
 
@@ -2341,7 +2341,7 @@ test('up: a failed `docker ps` is unknown, not foreign — the box still comes u
   const { sb } = ownedBox(calls, { code: 1, stderr: 'Cannot connect to the Docker daemon' }, ud);
   const r = await sb.up();
   assert.strictEqual(r.ok, true);
-  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d', '--remove-orphans']]);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
 });
 
 test('status: carries foreign:<owner path> for another instance\'s project, and no key for ours or an empty project', async () => {
@@ -2404,5 +2404,5 @@ test('foreignOwner: a label spelled through a symlinked userData still reads as 
   fs.writeFileSync(path.join(real, 'sandbox', 'compose.yaml'), '');
   const r = await viaLink.up();
   assert.strictEqual(r.ok, true, `own box behind a symlink must not read as foreign: ${r.error || ''}`);
-  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d', '--remove-orphans']]);
+  assert.deepStrictEqual(composeSubcommands(calls), [['up', '-d']]);
 });

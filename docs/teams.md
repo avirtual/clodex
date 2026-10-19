@@ -699,21 +699,6 @@ a `ports` list, edited in the Sandboxes panel's Ports rows:
   Docker host, not this laptop, and the panel shows the port to copy.
 - UDP and host networking are out of scope.
 
-The lead can publish ports by intent on its own team's box:
-`[agent:team sandbox port add <container>[:<host>] [proto:tcp|http|https] [label]]`,
-`[agent:team sandbox port rm <container>]` and `[agent:team sandbox port list]`.
-`add` appends a loopback entry (an already-listed pair is a no-op that names the
-existing entry), `rm` removes every entry on that container port, and both apply
-at once on a running box. Each reply is the entry's row, e.g.
-`port 3000 → localhost:3000 (http, published)`, `(failed: <docker error>)` or
-`(pending: box not running — sandbox up applies)`; a refusal comes back
-verbatim. `list` prints every row, and `[agent:team sandbox status]` adds the
-same rows (or `ports: none`) after its status line. The intent is loopback-only:
-`allInterfaces` is panel-only, and the intent can neither set it nor change or
-remove an entry that carries it. The intent is desktop-only for now: like
-`sandbox up` it is refused inside the box, so a lead seated there dms a desktop
-seat or asks the operator, who uses the panel. Label words may not contain `:`, which the parser reads as a key.
-
 ## Scaling the team
 
 Roles are cheap. Add one in the roles popover — click your team in the sidebar —

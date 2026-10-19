@@ -733,10 +733,11 @@ function createSandbox(deps = {}) {
         return { error: 'All-interfaces exposure can only be turned on from the Sandbox panel.' };
       }
     }
-    const wideDropped = priorWide.some((was) => !ports.some((q) => samePortPair(q, was)));
-    for (const p of ports) {
-      if (p.allInterfaces && wideDropped && !priorWide.some((was) => samePortPair(p, was))) p.allInterfaces = false;
-    }
+    ports.forEach((p, i) => {
+      if (!p.allInterfaces || priorWide.some((was) => samePortPair(p, was))) return;
+      const was = priorList[i];
+      if (was && was.allInterfaces && !ports.some((q) => samePortPair(q, was))) p.allInterfaces = false;
+    });
     return { ports };
   }
 
@@ -793,11 +794,9 @@ function createSandbox(deps = {}) {
       r = await runCompose(['up', '-d', '--no-deps', svc]);
     } else {
       r = await runCompose(['rm', '-sf', svc]);
-      if (!r.ok) return { ok: false, error: r.stderr.trim() || `docker compose exited ${r.code}`, ports: [] };
-      const failed = await rewrite();
-      if (failed) {
-        await recordPorts([], r);
-        return failed;
+      if (r.ok) {
+        const failed = await rewrite();
+        if (failed) return failed;
       }
     }
     const rows = await recordPorts(ports, r);
@@ -1079,15 +1078,15 @@ function createSandbox(deps = {}) {
   }
 
   async function up() {
-    return bringUp((_gen) => runCompose(['up', '-d', '--remove-orphans']), 'up');
+    return bringUp((_gen) => runCompose(['up', '-d']), 'up');
   }
 
   async function rebuild() {
     return bringUp(async (gen) => {
-      if (gen.image.kind === 'build') return runCompose(['up', '-d', '--build', '--force-recreate', '--remove-orphans']);
+      if (gen.image.kind === 'build') return runCompose(['up', '-d', '--build', '--force-recreate']);
       const pulled = await runCompose(['pull']);
       if (!pulled.ok) return pulled;   // pull failed → skip up, surface its stderr
-      return runCompose(['up', '-d', '--force-recreate', '--remove-orphans']);
+      return runCompose(['up', '-d', '--force-recreate']);
     }, 'rebuild');
   }
 
