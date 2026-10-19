@@ -6,7 +6,7 @@ const { mk } = require('./lib/session-fixtures');
 
 const PUBLISHED_REPLY = 'port 18080 → localhost:18080 (http, published)';
 
-function relayRig({ relay = true, boxes = ['team-x'] } = {}) {
+function relayRig({ relay = true, boxes = ['team-x'], timers = null, warns = null } = {}) {
   const wire = [];
   const conn = { dm: (msg, cb) => { wire.push(msg); cb({ ok: true, delivered: true }); } };
   const pm = {
@@ -33,7 +33,8 @@ function relayRig({ relay = true, boxes = ['team-x'] } = {}) {
     loadManifest: (name) => { if (name !== 'x') throw new Error('no team'); return team; },
     AGENT_NAME_RE: require('../catalogs').AGENT_NAME_RE,
     SELF_LABEL: 'mac',
-    log: { info() {}, warn() {}, error() {}, debug() {} },
+    log: { info() {}, warn(...a) { if (warns) warns.push(a); }, error() {}, debug() {} },
+    ...(timers ? { setTimeout: timers.set, clearTimeout: timers.clear } : {}),
   });
   m._broadcast = () => {};
   const verbCalls = [];
@@ -116,4 +117,58 @@ test('relayed args that do not parse as the port grammar are refused', async () 
   await settle();
   assert.deepStrictEqual(r.calls.setConfig, []);
   assert.deepStrictEqual(r.wire.map((w) => w.body), ['[agent:team] error: bad sandbox port arguments']);
+});
+
+function fakeTimers() {
+  const pending = [];
+  return {
+    pending,
+    set: (fn, ms) => { const t = { fn, ms, cleared: false }; pending.push(t); return t; },
+    clear: (t) => { if (t) t.cleared = true; },
+    fire: () => { for (const t of pending) if (!t.cleared) t.fn(); },
+  };
+}
+
+test('a claimed bootstrap envelope reaches _remoteSandboxVerb with its body verbatim', async () => {
+  const r = relayRig();
+  const body = 'service smbd start\necho "done"\n';
+  r.m._deliverClaimedDms('team-x', [env({ body: 'sandbox bootstrap setup', task: { kind: 'sandbox', verb: 'bootstrap', args: 'setup', body } })]);
+  await settle();
+  assert.deepStrictEqual(r.verbCalls, [{ peerId: 'team-x', origin: 'team-x', from: 'lead', verb: 'bootstrap', args: 'setup', body }]);
+});
+
+test('a relayed verb that never resolves answers the timeout once, remembers it, and the late result is only logged', async () => {
+  const timers = fakeTimers();
+  const warns = [];
+  const r = relayRig({ timers, warns });
+  let resolveLate;
+  r.m._remoteSandboxVerb = (a) => { r.verbCalls.push(a); return new Promise((res) => { resolveLate = res; }); };
+  r.m._deliverClaimedDms('team-x', [env()]);
+  await settle();
+  assert.deepStrictEqual(timers.pending.map((t) => t.ms), [60000]);
+  assert.deepStrictEqual(r.wire, []);
+  timers.fire();
+  await settle();
+  const TIMEOUT = '[agent:team] error: sandbox port timed out on the host after 60 s — run [agent:team sandbox status] to see what applied';
+  assert.deepStrictEqual(r.wire.map((w) => w.body), [TIMEOUT]);
+  r.m._deliverClaimedDms('team-x', [env()]);
+  await settle();
+  assert.strictEqual(r.verbCalls.length, 1);
+  assert.deepStrictEqual(r.wire.map((w) => w.body), [TIMEOUT, `[agent:team] already applied: ${TIMEOUT.slice('[agent:team] '.length)}`]);
+  resolveLate({ reply: `${PUBLISHED_REPLY}\nsecond line` });
+  await settle();
+  assert.strictEqual(r.wire.length, 2);
+  assert.deepStrictEqual(warns, [['intent', `relayed sandbox port finished after its reply timed out: ${PUBLISHED_REPLY}`]]);
+});
+
+test('a port add that finishes before the timer answers its real reply and clears the timer', async () => {
+  const timers = fakeTimers();
+  const r = relayRig({ timers });
+  r.m._deliverClaimedDms('team-x', [env()]);
+  await settle();
+  assert.deepStrictEqual(r.wire.map((w) => w.body), [`[agent:team] ${PUBLISHED_REPLY}`]);
+  assert.deepStrictEqual(timers.pending.map((t) => [t.ms, t.cleared]), [[60000, true]]);
+  timers.fire();
+  await settle();
+  assert.strictEqual(r.wire.length, 1);
 });

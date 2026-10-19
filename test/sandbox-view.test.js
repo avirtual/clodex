@@ -424,3 +424,31 @@ test('figuresHint: names the Docker VM figures, unknown when null', () => {
   assert.deepStrictEqual(figuresHint({ ncpu: null, memTotal: null }), { cpus: 'of unknown cores', memory: 'of unknown VM memory' });
   assert.deepStrictEqual(figuresHint(null), { cpus: 'of unknown cores', memory: 'of unknown VM memory' });
 });
+
+test('bootstrapLineText: each state reads as its literal line', () => {
+  const { bootstrapLineText } = require('../renderer/lib/sandbox-view');
+  const cfg = { packages: 1, setup: true, start: true };
+  const ok = { sha: 'abcdef0123456789', exit: 0, at: '2026-10-20T01:00:00Z', timedOut: false };
+  const rows = [
+    ['no status', null, 'not configured'],
+    ['nothing configured', { bootstrap: { configured: { packages: 0, setup: false, start: false }, setup: ok, start: null, degraded: false } }, 'not configured'],
+    ['ok with a running start hook', { bootstrap: { configured: cfg, setup: ok, start: { pid: 42, at: 'x', exit: null }, degraded: false } }, 'setup ok (script sha abcdef01) at 2026-10-20T01:00:00Z · start hook running pid 42'],
+    ['ok, no start record', { bootstrap: { configured: cfg, setup: ok, start: null, degraded: false } }, 'setup ok (script sha abcdef01) at 2026-10-20T01:00:00Z'],
+    ['failed', { bootstrap: { configured: cfg, setup: { sha: 'abcdef0123456789', exit: 124, at: '2026-10-20T02:00:00Z', timedOut: true }, start: null, degraded: true } }, 'SETUP FAILED exit 124 at 2026-10-20T02:00:00Z — box is degraded'],
+    ['configured, never run', { bootstrap: { configured: cfg, setup: null, start: null, degraded: false } }, 'applies on the next Rebuild'],
+    ['started without hooks', { bootstrap: { configured: cfg, setup: null, start: null, degraded: false, noHooks: true } }, 'running WITHOUT hooks'],
+  ];
+  for (const [name, status, want] of rows) assert.strictEqual(bootstrapLineText(status), want, name);
+});
+
+test('bootstrapHistoryRows: newest first, a null seat reads as a dash', () => {
+  const { bootstrapHistoryRows } = require('../renderer/lib/sandbox-view');
+  assert.deepStrictEqual(bootstrapHistoryRows({ bootstrapHistory: [
+    { at: '2026-10-20T01:00:00.000Z', writer: 'intent', seat: 'lead@team-x', field: 'setup', sha: '56a79f3b1154' },
+    { at: '2026-10-20T02:00:00.000Z', writer: 'panel', seat: null, field: 'packages', sha: '5f7ca3fb0000' },
+  ] }), [
+    '2026-10-20T02:00:00.000Z panel/- packages 5f7ca3fb0000',
+    '2026-10-20T01:00:00.000Z intent/lead@team-x setup 56a79f3b1154',
+  ]);
+  assert.deepStrictEqual(bootstrapHistoryRows({}), []);
+});

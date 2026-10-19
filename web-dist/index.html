@@ -4349,6 +4349,21 @@ body.drawer-dragging #work-row {
 .sandbox-check input {
   margin: 0;
 }
+#sandbox-bootstrap-field textarea,
+#sandbox-bootstrap-log-text {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 12px;
+}
+#sandbox-bootstrap-log-text {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+#sandbox-bootstrap-log-text.hidden {
+  display: none;
+}
 .sandbox-mount-row {
   display: flex;
   align-items: center;
@@ -11396,6 +11411,21 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </select>
           <p class="hint-text">amd64 on Apple Silicon runs under emulation: slower, but it is how a 2008 stack runs at all. Applies on Rebuild.</p>
         </div>
+        <div class="sandbox-field" id="sandbox-bootstrap-field">
+          <label>Bootstrap</label>
+          <label for="sandbox-bootstrap-packages">Packages</label>
+          <input id="sandbox-bootstrap-packages" type="text" spellcheck="false" placeholder="smbclient mariadb-server" />
+          <label for="sandbox-bootstrap-setup">Setup script (root, once per rebuild)</label>
+          <textarea id="sandbox-bootstrap-setup" rows="6" spellcheck="false"></textarea>
+          <label for="sandbox-bootstrap-start">Start script (every start, after healthz)</label>
+          <textarea id="sandbox-bootstrap-start" rows="6" spellcheck="false"></textarea>
+          <button id="sandbox-bootstrap-save" type="button">Save Bootstrap</button>
+          <p class="hint-text" id="sandbox-bootstrap-line">not configured</p>
+          <details id="sandbox-bootstrap-history"><summary>History</summary><div id="sandbox-bootstrap-history-rows" class="hint-text"></div></details>
+          <button id="sandbox-bootstrap-log" type="button">View setup log</button>
+          <button id="sandbox-nohooks" type="button">Start without hooks</button>
+          <pre id="sandbox-bootstrap-log-text" class="hidden"></pre>
+        </div>
         <label class="sandbox-check"><input id="sandbox-relay" type="checkbox" /> Allow the team lead inside the box to publish ports (relay)</label>
       </details>
       <div class="sandbox-field" id="sandbox-ports-field">
@@ -11715,6 +11745,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "sandboxDetect", kind: "invoke", channel: "sandbox:detect" },
         { name: "sandboxStatus", kind: "invoke", channel: "sandbox:status" },
         { name: "sandboxFigures", kind: "invoke", channel: "sandbox:figures" },
+        { name: "sandboxBootstrapLog", kind: "invoke", channel: "sandbox:bootstrapLog" },
         { name: "sandboxOpenWeb", kind: "invoke", channel: "sandbox:openWeb" },
         { name: "sandboxGetConfig", kind: "invoke", channel: "sandbox:getConfig" },
         { name: "sandboxSetConfig", kind: "invoke", channel: "sandbox:setConfig" },
@@ -28442,7 +28473,25 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
           memory: gib == null ? "of unknown VM memory" : `of ${Number.isInteger(gib) ? gib : gib.toFixed(1)} GiB VM`
         };
       }
-      module.exports = { limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+      function bootstrapLineText(status) {
+        const b = status && status.bootstrap;
+        const c = b && b.configured || {};
+        if (!b || !(Number(c.packages) > 0 || c.setup || c.start)) return "not configured";
+        if (b.noHooks === true) return "running WITHOUT hooks";
+        const setup = b.setup && typeof b.setup === "object" ? b.setup : null;
+        const start = b.start && typeof b.start === "object" ? b.start : null;
+        if (b.degraded === true) return `SETUP FAILED${setup ? ` exit ${setup.exit} at ${setup.at}` : ""} \u2014 box is degraded`;
+        let startText = "";
+        if (start && start.exit == null) startText = `start hook running pid ${start.pid}`;
+        else if (start) startText = `start hook exited ${start.exit}`;
+        if (setup && setup.exit === 0) return `setup ok (script sha ${String(setup.sha || "").slice(0, 8)}) at ${setup.at}${startText ? ` \xB7 ${startText}` : ""}`;
+        return startText || "applies on the next Rebuild";
+      }
+      function bootstrapHistoryRows(config) {
+        const rows = config && Array.isArray(config.bootstrapHistory) ? config.bootstrapHistory : [];
+        return rows.filter((h) => h && typeof h === "object").reverse().map((h) => `${h.at} ${h.writer}/${h.seat || "-"} ${h.field} ${h.sha}`);
+      }
+      module.exports = { bootstrapLineText, bootstrapHistoryRows, limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
     }
   });
 
@@ -50954,7 +51003,7 @@ ${detail}` });
       var { altChordAction } = require_web_shortcuts();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
-      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint } = require_sandbox_view();
+      var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
       var { bumpDefaultName, teamNamePrefill } = require_name_suggest();
       var { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require_name_validity();
@@ -58603,6 +58652,15 @@ ${res.stderr}` : "");
       var sbLimitsLine = document.getElementById("sandbox-limits-line");
       var sbPlatform = document.getElementById("sandbox-platform");
       var sbRelay = document.getElementById("sandbox-relay");
+      var sbBootPackages = document.getElementById("sandbox-bootstrap-packages");
+      var sbBootSetup = document.getElementById("sandbox-bootstrap-setup");
+      var sbBootStart = document.getElementById("sandbox-bootstrap-start");
+      var sbBootSave = document.getElementById("sandbox-bootstrap-save");
+      var sbBootLine = document.getElementById("sandbox-bootstrap-line");
+      var sbBootHistoryRows = document.getElementById("sandbox-bootstrap-history-rows");
+      var sbBootLogBtn = document.getElementById("sandbox-bootstrap-log");
+      var sbBootLogText = document.getElementById("sandbox-bootstrap-log-text");
+      var sbNoHooksBtn = document.getElementById("sandbox-nohooks");
       var sbPollTimer = null;
       var sbRunning = false;
       var sbBusy = false;
@@ -58657,6 +58715,7 @@ ${res.stderr}` : "");
         const foreign = sbForeign ? sbForeign.text : "";
         sbToggleBtn.disabled = sbBusy || t.startDisabled || !!foreign;
         sbRebuildBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
+        sbNoHooksBtn.disabled = sbBusy || t.rebuildDisabled || !!foreign;
         sbBoxCreate.disabled = t.boxCreateDisabled;
         sbToggleBtn.title = foreign || (t.startDisabled ? t.reason || "" : "");
         sbRebuildBtn.title = foreign || (t.rebuildDisabled ? t.reason || "" : "");
@@ -58680,6 +58739,7 @@ ${res.stderr}` : "");
           renderSandboxNotice(sbStatusRow, sbForeign || (refLine ? { ...sn, text: `${sn.text} ${refLine}` } : sn));
           if (!sbBusy) applySandboxRunning(sn.running, status && status.ports);
           sbLimitsLine.textContent = sandboxLimitsLineText(status);
+          sbBootLine.textContent = sandboxBootstrapLineText(status);
           applyActionGate();
           sbMountsRestart.classList.toggle("hidden", !(sbMountsDirty && sbRunning));
           refreshAppPortRecord();
@@ -58970,7 +59030,22 @@ ${res.stderr}` : "");
         applyLimitsConfig(cfg);
         sbRelay.checked = cfg.relay === true;
         sbLimitsLine.textContent = sandboxLimitsLineText(null);
+        applyBootstrapConfig(cfg);
+        sbBootLine.textContent = sandboxBootstrapLineText(null);
+        sbBootLogText.textContent = "";
+        sbBootLogText.classList.add("hidden");
         refreshSandboxFigures();
+      }
+      function applyBootstrapConfig(cfg) {
+        const b = cfg.bootstrap || {};
+        sbBootPackages.value = Array.isArray(b.packages) ? b.packages.join(" ") : "";
+        sbBootSetup.value = b.setup || "";
+        sbBootStart.value = b.start || "";
+        sbBootHistoryRows.replaceChildren(...sandboxBootstrapHistoryRows(cfg).map((row) => {
+          const div = document.createElement("div");
+          div.textContent = row;
+          return div;
+        }));
       }
       function applyLimitsConfig(cfg) {
         const l = cfg.limits || {};
@@ -59026,6 +59101,39 @@ ${res.stderr}` : "");
           sbRelay.checked = r.relay === true;
         }
       ));
+      sbBootSave.addEventListener("click", () => saveSandboxAdvanced({ bootstrap: {
+        packages: sbBootPackages.value.trim().split(/\s+/).filter(Boolean),
+        setup: sbBootSetup.value,
+        start: sbBootStart.value
+      } }, sbBootSave, applyBootstrapConfig));
+      sbBootLogBtn.addEventListener("click", async () => {
+        const box = sbCurrentBox;
+        let r;
+        try {
+          r = await window.api.sandboxBootstrapLog(box);
+        } catch (e) {
+          r = { ok: false, error: e && e.message || String(e) };
+        }
+        if (box !== sbCurrentBox) return;
+        if (!r || r.ok === false) sbBootLogText.textContent = r && r.error || "The setup log could not be read.";
+        else sbBootLogText.textContent = `${r.truncated ? "\u2026 (last 64 KB)\n" : ""}${r.text || "(no setup log yet)"}`;
+        sbBootLogText.classList.remove("hidden");
+      });
+      sbNoHooksBtn.addEventListener("click", async () => {
+        if (sbBusy) return;
+        sbBusy = true;
+        sbNoHooksBtn.disabled = true;
+        try {
+          const r = await window.api.sandboxUp(sbCurrentBox, { noHooks: true });
+          if (!r || r.ok === false) showToast(`Sandbox start without hooks failed: ${r && r.error || "unknown error"}`, { kind: "error", duration: 12e3 });
+        } catch (e) {
+          showToast(`Sandbox start without hooks failed: ${e && e.message || e}`, { kind: "error", duration: 12e3 });
+        } finally {
+          sbBusy = false;
+          applyActionGate();
+          await refreshSandboxStatus();
+        }
+      });
       function showDetail(show) {
         sbDetail.style.display = show ? "" : "none";
       }

@@ -201,7 +201,7 @@ test('buildTerminalDm: STRIPS relay fields and preserves from fully-qualified', 
   assert.strictEqual(term.from, 'agent@docker', 'from is sacred — never rewritten to the hop origin');
 });
 
-test('isSandboxEnvelope accepts port and status, refuses other verbs and oversized args', () => {
+test('isSandboxEnvelope accepts port, status and bootstrap, refuses other verbs, oversized args and stray bodies', () => {
   const { isSandboxEnvelope, isDoneTaskEnvelope } = require('../relay-protocol');
   const rows = [
     ['port ok', { kind: 'sandbox', verb: 'port', args: 'add 18080 proto:http' }, true],
@@ -213,6 +213,12 @@ test('isSandboxEnvelope accepts port and status, refuses other verbs and oversiz
     ['args not a string', { kind: 'sandbox', verb: 'port', args: ['add'] }, false],
     ['array refused', [], false],
     ['done is no sandbox envelope', { kind: 'done', id: 't7' }, false],
+    ['bootstrap ok', { kind: 'sandbox', verb: 'bootstrap', args: 'packages smbclient' }, true],
+    ['bootstrap body 16384 ok', { kind: 'sandbox', verb: 'bootstrap', args: 'setup', body: 'a'.repeat(16384) }, true],
+    ['bootstrap body 16385 refused', { kind: 'sandbox', verb: 'bootstrap', args: 'setup', body: 'a'.repeat(16385) }, false],
+    ['body on port refused', { kind: 'sandbox', verb: 'port', args: 'add 18080', body: 'x' }, false],
+    ['non-string body refused', { kind: 'sandbox', verb: 'bootstrap', args: 'setup', body: ['x'] }, false],
+    ['restart refused', { kind: 'sandbox', verb: 'restart', args: '' }, false],
   ];
   for (const [name, task, want] of rows) assert.strictEqual(isSandboxEnvelope(task), want, name);
   assert.strictEqual(isDoneTaskEnvelope({ kind: 'done', id: 't7' }), true, 'kind done still ok');

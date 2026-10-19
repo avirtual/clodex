@@ -279,6 +279,7 @@ const API_CONTRACT = [
   { name: 'sandboxDetect', kind: 'invoke', channel: 'sandbox:detect' },
   { name: 'sandboxStatus', kind: 'invoke', channel: 'sandbox:status' },
   { name: 'sandboxFigures', kind: 'invoke', channel: 'sandbox:figures' },
+  { name: 'sandboxBootstrapLog', kind: 'invoke', channel: 'sandbox:bootstrapLog' },
   { name: 'sandboxOpenWeb', kind: 'invoke', channel: 'sandbox:openWeb' },
   { name: 'sandboxGetConfig', kind: 'invoke', channel: 'sandbox:getConfig' },
   { name: 'sandboxSetConfig', kind: 'invoke', channel: 'sandbox:setConfig' },

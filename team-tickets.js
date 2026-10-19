@@ -30,8 +30,8 @@ const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
-const { BOX_ID_RE, sizeToBytes, runningInSandboxBox, normalizeBootstrap, bootstrapFieldText, bootstrapSha } = require('./sandbox');
-const { SANDBOX_RELAY_VERBS } = require('./relay-protocol');
+const { BOX_ID_RE, sizeToBytes, runningInSandboxBox, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, HEALTH_TIMEOUT_MS, SETUP_TIMEOUT_S } = require('./sandbox');
+const { SANDBOX_RELAY_VERBS, SANDBOX_RELAY_BODY_MAX } = require('./relay-protocol');
 const { parseWithRegistry } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
@@ -126,12 +126,13 @@ function sandboxBootstrapRows(st) {
   const rows = [`bootstrap: ${Number(c.packages) || 0} packages, setup ${yes(c.setup)}, start ${yes(c.start)}`];
   const setup = b.setup && typeof b.setup === 'object' ? b.setup : null;
   if (!setup) rows.push('setup: none');
-  else if (setup.exit === 0) rows.push(`setup: ok ${sha8(setup.sha)} at ${setup.at}`);
+  else if (setup.exit === 0) rows.push(`setup: ok (script sha ${sha8(setup.sha)}) at ${setup.at}`);
   else rows.push(`setup: FAILED exit ${setup.exit} at ${setup.at}${setup.timedOut === true ? ' (timed out)' : ''} — fix the script and sandbox rebuild`);
   const start = b.start && typeof b.start === 'object' ? b.start : null;
   if (!start) rows.push('start hook: none');
   else if (start.exit == null) rows.push(`start hook: running pid ${start.pid} since ${start.at}`);
   else rows.push(`start hook: exited ${start.exit} at ${start.at}`);
+  if (b.noHooks === true) rows.push('bootstrap: hooks disabled for this start');
   return `\n${rows.join('\n')}`;
 }
 
@@ -2608,12 +2609,22 @@ function createTicketMethods(deps, shared) {
       }
       const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
       const env = deps.env || process.env;
+      if (!mgr && runningInSandboxBox(env) && action === 'restart') {
+        reply('sandbox restart is desktop-only: it kills every seat in the box, including the one asking — ask the operator, or a desktop seat');
+        return;
+      }
       if (!mgr && session && runningInSandboxBox(env) && SANDBOX_RELAY_VERBS.includes(action) && env.CLODEX_HOST_LABEL) {
-        const args = action === 'port'
-          ? [intent.op, intent.spec, intent.proto ? `proto:${intent.proto}` : null, intent.label].filter(Boolean).join(' ')
-          : '';
+        let args = '';
+        if (action === 'port') args = [intent.op, intent.spec, intent.proto ? `proto:${intent.proto}` : null, intent.label].filter(Boolean).join(' ');
+        else if (action === 'bootstrap') args = [intent.op, ...(intent.op === 'packages' ? (intent.packages || []) : [intent.field])].filter(Boolean).join(' ');
+        const task = { kind: 'sandbox', verb: action, args };
+        if (action === 'bootstrap' && typeof intent.body === 'string' && intent.body) {
+          const bytes = Buffer.byteLength(intent.body, 'utf8');
+          if (bytes > SANDBOX_RELAY_BODY_MAX) { reply(`error: bootstrap.${intent.op} is ${bytes} bytes; the cap is ${SANDBOX_RELAY_BODY_MAX}`); return; }
+          task.body = intent.body;
+        }
         const r = this._sendToFederatedTarget(session.name, `board@${env.CLODEX_HOST_LABEL}`, `sandbox ${action}${args ? ` ${args}` : ''}`, false, {
-          session, onBounce: (m) => reply(m), task: { kind: 'sandbox', verb: action, args },
+          session, onBounce: (m) => reply(m), task,
         });
         if (r && r.queued) reply(`sandbox ${action} sent to the host — its answer follows`);
         return;
@@ -2732,13 +2743,16 @@ function createTicketMethods(deps, shared) {
           const text = bootstrapFieldText(current, f);
           const row = [...history].reverse().find((h) => h && h.field === f);
           const changed = row ? `last changed ${row.at} by ${row.writer}/${row.seat || '-'}` : 'never changed';
-          return `## ${f} (${Buffer.byteLength(text, 'utf8')} B, sha ${bootstrapSha(text).slice(0, 8)}, ${changed})\n${text}`;
+          const setupSh = bootstrapScripts(current)['setup.sh'];
+          let script = '';
+          if (f === 'setup') script = setupSh ? ` · script sha ${bootstrapSha(setupSh).slice(0, 8)}` : ' · no script';
+          return `## ${f} (${Buffer.byteLength(text, 'utf8')} B, sha ${bootstrapSha(text).slice(0, 8)}${script}, ${changed})\n${text}`;
         }).join('\n');
       }
       return SANDBOX_BOOTSTRAP_USAGE;
     },
 
-    async _remoteSandboxVerb({ peerId, origin, from, verb, args }) {
+    async _remoteSandboxVerb({ peerId, origin, from, verb, args, body }) {
       const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
       const box = mgr && typeof peerId === 'string' ? mgr.get(peerId) : null;
       if (!box) return { reply: `error: peer "${peerId}" is not a managed box` };
@@ -2752,9 +2766,10 @@ function createTicketMethods(deps, shared) {
       if (!intent || intent.type !== 'team' || intent.sub !== 'sandbox' || intent.action !== verb) {
         return { reply: `error: bad sandbox ${verb} arguments` };
       }
+      if (verb === 'bootstrap') intent.body = typeof body === 'string' ? body : '';
       let r;
       try {
-        r = await this._sandboxVerb(team, box, verb, intent, { relay: true });
+        r = await this._sandboxVerb(team, box, verb, intent, { relay: true, seat: `${from}@${peerId}` });
       } catch (e) {
         r = { reply: `error: ${(e && e.message) || e}` };
       }
@@ -2838,8 +2853,16 @@ function createTicketMethods(deps, shared) {
       ensureDirMode700(path.dirname(file));
       atomicWriteFileSync(file, `${JSON.stringify(record, null, 2)}\n`);
 
-      const health = await box.waitHealthy();
+      const configured = normalizeBootstrap(box.getConfig().bootstrap);
+      const healthMs = configured.packages.length || configured.setup ? HEALTH_TIMEOUT_MS + SETUP_TIMEOUT_S * 1000 : HEALTH_TIMEOUT_MS;
+      const health = await box.waitHealthy(healthMs);
       if (!health || health.ok === false) { reply(`error: ${(health && health.error) || 'health check failed'}`); return { ok: false }; }
+      const booted = await box.status();
+      const setupRec = booted && booted.bootstrap && booted.bootstrap.degraded ? (booted.bootstrap.setup || {}) : null;
+      if (setupRec) {
+        reply(`box ${boxId} is up but ENVIRONMENT DEGRADED: setup failed exit ${setupRec.exit == null ? '?' : setupRec.exit} at ${setupRec.at || '?'} — no seats seeded; fix the script ([agent:team sandbox bootstrap show setup]) and [agent:team sandbox rebuild], or Start without hooks from the Sandbox panel`);
+        return { ok: false, degraded: true };
+      }
 
       const seeds = [
         { name: 'bash', type: 'bash', cwd: SANDBOX_HOME_DIR },

@@ -1296,7 +1296,7 @@ class RemoteServer {
           return this._json(res, 400, { ok: false, error: 'bad task envelope' });
         }
         Promise.resolve()
-          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true, ...(ref ? { ref } : {}), ...(task ? { task: sandboxTask ? { kind: 'sandbox', verb: task.verb, args: task.args } : { kind: 'done', id: task.id } } : {}) }))
+          .then(() => this._deliverDm({ to, from, origin, body: text, urgent: msg.urgent === true, ...(ref ? { ref } : {}), ...(task ? { task: sandboxTask ? { kind: 'sandbox', verb: task.verb, args: task.args, ...(typeof task.body === 'string' ? { body: task.body } : {}) } : { kind: 'done', id: task.id } } : {}) }))
           .then((out) => {
             const resp = out || { ok: false, error: 'delivery failed' };
             this._json(res, resp.ok ? 200 : 404, ref ? { ...resp, ref } : resp);

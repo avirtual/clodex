@@ -198,4 +198,25 @@ function figuresHint(figures) {
   };
 }
 
-module.exports = { limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+function bootstrapLineText(status) {
+  const b = status && status.bootstrap;
+  const c = (b && b.configured) || {};
+  if (!b || !(Number(c.packages) > 0 || c.setup || c.start)) return 'not configured';
+  if (b.noHooks === true) return 'running WITHOUT hooks';
+  const setup = b.setup && typeof b.setup === 'object' ? b.setup : null;
+  const start = b.start && typeof b.start === 'object' ? b.start : null;
+  if (b.degraded === true) return `SETUP FAILED${setup ? ` exit ${setup.exit} at ${setup.at}` : ''} — box is degraded`;
+  let startText = '';
+  if (start && start.exit == null) startText = `start hook running pid ${start.pid}`;
+  else if (start) startText = `start hook exited ${start.exit}`;
+  if (setup && setup.exit === 0) return `setup ok (script sha ${String(setup.sha || '').slice(0, 8)}) at ${setup.at}${startText ? ` · ${startText}` : ''}`;
+  return startText || 'applies on the next Rebuild';
+}
+
+function bootstrapHistoryRows(config) {
+  const rows = config && Array.isArray(config.bootstrapHistory) ? config.bootstrapHistory : [];
+  return rows.filter((h) => h && typeof h === 'object').reverse()
+    .map((h) => `${h.at} ${h.writer}/${h.seat || '-'} ${h.field} ${h.sha}`);
+}
+
+module.exports = { bootstrapLineText, bootstrapHistoryRows, limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
