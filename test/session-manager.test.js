@@ -16315,7 +16315,7 @@ test('t1891: Enter sent and no turn within BOOT_NUDGE_MS marks the seat inject-s
   p.fireData(LATE_ECHO);
   await tickUntil(t, () => writes.length >= 4);
   await tickUntil(t, () => !!s._injectStuck, 200);
-  assert.deepStrictEqual(s._injectStuck, { at: s._injectStuck.at, probe: '[agent:fromlead]theresults' });
+  assert.deepStrictEqual(s._injectStuck, { at: s._injectStuck.at, probe: '[agent:fromlead]theresults', entered: true });
   assert.ok(p.warned.some((l) => /^inject: submit nudge exhausted for late-d: unit "\[agent:fromlead\]theresults…" written \d+s ago, Enter sent, no turn — operator action needed$/.test(l)), p.warned.join('\n'));
   const stuck = p.broadcasts.filter(([ch, m]) => ch === 'ipc-message' && m.kind === 'inject-stuck');
   assert.strictEqual(stuck.length, 1);
