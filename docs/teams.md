@@ -637,7 +637,13 @@ closed by `[agent:end]`. `bootstrap show [field]` prints them, `bootstrap clear
 `start` applies on `[agent:team sandbox restart]` once the box was rebuilt with
 bootstrap, which restarts the box container (every seat inside it dies and is
 restored). A failed setup boots the box degraded: no seats are restored and
-`sandbox status` says so. Desktop seats only until the relay carries it.
+`sandbox status` says so. Inside the box, `bootstrap` is relayed to the host
+like `port` (the script body rides the envelope and the host validates it as it
+does the panel's; the history records the seat as `<seat>@<box>`); `restart`
+stays desktop-only because it kills the asking seat. A `sandbox up`/`rebuild`
+whose setup failed seeds no seats and says so; the Sandbox panel's Advanced fold
+has **Start without hooks** for recovery, which skips both hooks for that one
+start.
 
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
