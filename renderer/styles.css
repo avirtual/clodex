@@ -2781,6 +2781,16 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .sandbox-mount-path { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .sandbox-mount-mode { min-width: 88px; }
 #sandbox-mounts-restart { color: var(--warn, #c88a2a); }
+.sandbox-app-port-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 12px; }
+.sandbox-app-port-row input[type="number"] { width: 72px; }
+.sandbox-app-port-label { flex: 1; min-width: 80px; }
+.sandbox-app-port-wide { display: flex; align-items: center; gap: 4px; }
+.sandbox-app-port-warn { flex-basis: 100%; color: var(--warn, #c88a2a); }
+.sandbox-app-port-warn.hidden { display: none; }
+.sandbox-app-port-chip { padding: 1px 6px; border-radius: 8px; background: var(--bg-tertiary, rgba(127, 127, 127, 0.2)); }
+.sandbox-app-port-chip.failed { color: var(--error, #d9534f); }
+.sandbox-app-port-link { cursor: pointer; text-decoration: underline; }
+#sandbox-app-ports-save { margin-left: 6px; }
 /* cursor: an anchor without href gets no implicit pointer from the UA, and this
    one deliberately has none (t445 — a live href is a modifier-click path around
    the loopback gate). */
