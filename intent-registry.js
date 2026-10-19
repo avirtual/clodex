@@ -253,6 +253,11 @@ function parseTeam(cleaned) {
       const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
       return { type: 'team', sub, action, ref: refM ? refM[1] : null, op: words[1] || null, spec: words[2] || null, proto: protoM ? protoM[1] : null, label: words.slice(3).join(' ') || null, body: '' };
     }
+    if (action === 'bootstrap') {
+      const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
+      const op = words[1] || null;
+      return { type: 'team', sub, action, ref: refM ? refM[1] : null, op, field: words[2] || null, packages: op === 'packages' ? words.slice(2) : [], body };
+    }
     return { type: 'team', sub, action, ref: refM ? refM[1] : null, body: '' };
   }
   const ms = positional[0] != null ? Number(positional[0]) : null;
@@ -283,6 +288,7 @@ const TEAM_ROLE_KV_KEYS = ['prompt', 'template', 'dispatch', 'cwd', 'model', 'ac
 
 function teamBodyMode(intent) {
   if (intent.sub === 'template-save' || intent.sub === 'prompt-save') return 'greedy';
+  if (intent.sub === 'sandbox' && intent.action === 'bootstrap' && (intent.op === 'setup' || intent.op === 'start')) return 'greedy';
   if (intent.sub === 'role-add' || intent.sub === 'role-set') {
     const carriesKv = TEAM_ROLE_KV_KEYS.some((k) => intent[k] != null);
     return carriesKv && !(intent.body || '').trim() ? 'none' : 'greedy';

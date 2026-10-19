@@ -21,6 +21,7 @@ deploy
 # not from the context).
 docker
 !docker/web/entrypoint.sh
+!docker/web/clodex-hooks.sh
 
 # Not needed at build or runtime.
 .git

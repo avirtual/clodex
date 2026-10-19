@@ -30,6 +30,8 @@ const DEFAULT_CONFIG = {
   limits: { cpus: null, memory: null, pids: null, shmSize: null },
   platform: null,
   relay: false,
+  bootstrap: { packages: [], setup: '', start: '' },
+  bootstrapHistory: [],
 };
 
 const RELAY_HOST_ONLY_MSG = 'relay is a host setting';
@@ -96,6 +98,107 @@ function validateLimitsForSave(raw, { figures } = {}) {
     out.shmSize = String(raw.shmSize).trim().toLowerCase();
   }
   return { limits: out };
+}
+
+const BOOTSTRAP_FIELDS = ['packages', 'setup', 'start'];
+const BOOTSTRAP_PACKAGES_MAX = 64;
+const BOOTSTRAP_SCRIPT_MAX = 16384;
+const BOOTSTRAP_HISTORY_KEEP = 20;
+const BOOTSTRAP_CONTAINER_DIR = '/etc/clodex/bootstrap';
+const DEBIAN_PACKAGE_RE = /^[a-z0-9][a-z0-9+.-]{1,127}$/;
+const BOOTSTRAP_SECRET_RE = /^\s*(export\s+)?[A-Z0-9_]*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|PRIVATE_KEY)[A-Z0-9_]*\s*=/i;
+
+function normalizeBootstrap(raw) {
+  const b = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    packages: Array.isArray(b.packages) ? b.packages.filter((p) => typeof p === 'string') : [],
+    setup: typeof b.setup === 'string' ? b.setup : '',
+    start: typeof b.start === 'string' ? b.start : '',
+  };
+}
+
+function bootstrapFieldText(bootstrap, field) {
+  const b = normalizeBootstrap(bootstrap);
+  return field === 'packages' ? b.packages.join(' ') : b[field];
+}
+
+function bootstrapSha(text) {
+  return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex').slice(0, 12);
+}
+
+function validateBootstrapForSave(raw, _opts = {}) {
+  if (raw == null) return { bootstrap: normalizeBootstrap(null) };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { error: 'bootstrap must be an object with packages, setup and start.' };
+  }
+  const packages = raw.packages == null ? [] : raw.packages;
+  if (!Array.isArray(packages)) return { error: 'bootstrap.packages must be a list of Debian package names' };
+  if (packages.length > BOOTSTRAP_PACKAGES_MAX) {
+    return { error: `bootstrap.packages lists ${packages.length} packages; the cap is ${BOOTSTRAP_PACKAGES_MAX}` };
+  }
+  for (const p of packages) {
+    if (typeof p !== 'string' || !DEBIAN_PACKAGE_RE.test(p)) {
+      return { error: `bootstrap.packages: ${JSON.stringify(String(p))} is not a Debian package name` };
+    }
+  }
+  const out = { packages: [...packages], setup: '', start: '' };
+  for (const field of ['setup', 'start']) {
+    const text = raw[field] == null ? '' : raw[field];
+    if (typeof text !== 'string') return { error: `bootstrap.${field} must be a string` };
+    const bytes = Buffer.byteLength(text, 'utf8');
+    if (bytes > BOOTSTRAP_SCRIPT_MAX) return { error: `bootstrap.${field} is ${bytes} bytes; the cap is ${BOOTSTRAP_SCRIPT_MAX}` };
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (BOOTSTRAP_SECRET_RE.test(lines[i]) || lines[i].includes('-----BEGIN ')) {
+        return { error: `bootstrap.${field} line ${i + 1} looks like a secret: put it in the box's env_file, not in a script` };
+      }
+    }
+    out[field] = text;
+  }
+  return { bootstrap: out };
+}
+
+function bootstrapScripts(raw) {
+  const b = normalizeBootstrap(raw);
+  let setup = '';
+  if (b.packages.length || b.setup) {
+    setup = '#!/bin/sh\nset -e\n';
+    if (b.packages.length) {
+      setup += `export DEBIAN_FRONTEND=noninteractive\napt-get update -qq\napt-get install -y -qq --no-install-recommends ${b.packages.join(' ')}\n`;
+    }
+    if (b.setup) setup += b.setup.endsWith('\n') ? b.setup : `${b.setup}\n`;
+  }
+  return { 'setup.sh': setup, 'start.sh': b.start ? `#!/bin/sh\n${b.start}` : '' };
+}
+
+function regularOrAbsent(file) {
+  let st;
+  try { st = fs.lstatSync(file); } catch (e) {
+    if (e && e.code === 'ENOENT') return false;
+    throw e;
+  }
+  if (!st.isFile()) throw new Error(`bootstrap: ${file} is not a regular file`);
+  return true;
+}
+
+function writeBootstrapScripts(dir, raw) {
+  const st = fs.lstatSync(dir);
+  if (!st.isDirectory()) throw new Error(`bootstrap: ${dir} is not a directory`);
+  const scripts = bootstrapScripts(raw);
+  for (const [name, text] of Object.entries(scripts)) {
+    const target = path.join(dir, name);
+    const present = regularOrAbsent(target);
+    if (!text) {
+      if (present) fs.unlinkSync(target);
+      continue;
+    }
+    const tmp = `${target}.tmp`;
+    if (regularOrAbsent(tmp)) fs.unlinkSync(tmp);
+    fs.writeFileSync(tmp, text, { mode: 0o644, flag: 'wx' });
+    fs.chmodSync(tmp, 0o644);
+    fs.renameSync(tmp, target);
+  }
+  return Object.values(scripts).some(Boolean);
 }
 
 function normalizePlatform(raw) {
@@ -368,7 +471,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform, hostLabel }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform, hostLabel, bootstrapDir = null }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -429,6 +532,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'claude')}:/home/clodex/.claude`)}`);
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'muse')}:/home/clodex/.config/muse`)}`);
   L.push(`      - ${yamlQuote(`${path.join(stateDir, 'muse-data')}:/home/clodex/.local/share`)}`);
+  if (bootstrapDir) L.push(`      - ${yamlQuote(`${bootstrapDir}:${BOOTSTRAP_CONTAINER_DIR}:ro`)}`);
   if (workDir) {
     // Quoted via yamlQuote, not by hand: a host path with YAML-special chars
     // (`#` truncates, leading specials can change the node type) survives
@@ -782,6 +886,7 @@ function createSandbox(deps = {}) {
   const localCache = createDetectCache({ probe: () => probeDockerLocal(spawn, env) });
   const dockerIsLocal = deps.dockerIsLocal || (() => localCache.get().then((r) => r.local));
   const getFigures = deps.getFigures || (() => NO_FIGURES);
+  const nowMs = deps.now || Date.now;
 
   function sandboxDir() { return path.join(getUserDataPath(), subdir); }
   function composePath() { return path.join(sandboxDir(), 'compose.yaml'); }
@@ -844,6 +949,18 @@ function createSandbox(deps = {}) {
       next.platform = checked.platform;
     }
     if (partial && 'relay' in partial) next.relay = next.relay === true;
+    if (partial && 'bootstrapHistory' in partial) next.bootstrapHistory = before.bootstrapHistory;
+    if (partial && 'bootstrap' in partial) {
+      const checked = validateBootstrapForSave(next.bootstrap, { writer });
+      if (checked.error) return { ok: false, error: checked.error };
+      next.bootstrap = checked.bootstrap;
+      const at = new Date(nowMs()).toISOString();
+      const rows = BOOTSTRAP_FIELDS
+        .filter((field) => bootstrapFieldText(before.bootstrap, field) !== bootstrapFieldText(next.bootstrap, field))
+        .map((field) => ({ at, writer, seat: opts.seat || null, field, sha: bootstrapSha(bootstrapFieldText(next.bootstrap, field)) }));
+      const prior = Array.isArray(before.bootstrapHistory) ? before.bootstrapHistory : [];
+      next.bootstrapHistory = [...prior, ...rows].slice(-BOOTSTRAP_HISTORY_KEEP);
+    }
     if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
     if (portsChanged) {
       return serialize(async () => (await isRunning() ? applyPortsNow() : null))
@@ -958,7 +1075,7 @@ function createSandbox(deps = {}) {
     const ports = normalizePorts(getConfig().ports).ports || [];
     const svc = gatewayServiceName(id);
     const rewrite = async () => {
-      try { await writeComposeFile({ keepPlatform: true }); return null; } catch (e) {
+      try { await writeComposeFile({ keepPlatform: true, keepBootstrap: true }); return null; } catch (e) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
     };
@@ -1109,7 +1226,15 @@ function createSandbox(deps = {}) {
     return Number.isInteger(uid) && Number.isInteger(gid) && uid >= 0 && gid >= 0 ? { uid, gid } : null;
   }
 
-  async function writeComposeFile({ keepPlatform = false } = {}) {
+  function bootstrapDirPath() { return path.join(stateDir(), 'bootstrap'); }
+
+  function bootstrapApplyTarget() {
+    let text = '';
+    try { text = fs.readFileSync(composePath(), 'utf8'); } catch { text = ''; }
+    return text.includes(`:${BOOTSTRAP_CONTAINER_DIR}:ro`) ? 'restart' : 'rebuild';
+  }
+
+  async function writeComposeFile({ keepPlatform = false, keepBootstrap = false } = {}) {
     const config = getConfig();
     const image = await resolveImageForConfig(config);
     let ownPorts = [];
@@ -1129,11 +1254,14 @@ function createSandbox(deps = {}) {
     for (const d of ['data', 'dot', 'claude', 'muse', 'muse-data']) {
       fs.mkdirSync(path.join(stateDir(), d), { recursive: true, mode: 0o700 });
     }
+    fs.mkdirSync(bootstrapDirPath(), { recursive: true, mode: 0o755 });
+    const bound = prior != null && prior.includes(`:${BOOTSTRAP_CONTAINER_DIR}:ro`);
+    const bootstrapOn = keepBootstrap ? bound : writeBootstrapScripts(bootstrapDirPath(), config.bootstrap);
     const yaml = generateCompose({
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
       hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: keepPlatform ? writtenPlatform : config.platform,
-      hostLabel: deps.selfLabel || null,
+      hostLabel: deps.selfLabel || null, bootstrapDir: bootstrapOn ? bootstrapDirPath() : null,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -1271,6 +1399,25 @@ function createSandbox(deps = {}) {
     }, 'rebuild');
   }
 
+  function restart() {
+    return serialize(async () => {
+      const owner = await foreignOwner();
+      if (owner) return foreignError(owner);
+      if (bootstrapApplyTarget() === 'restart') {
+        try { writeBootstrapScripts(bootstrapDirPath(), getConfig().bootstrap); } catch (e) {
+          return { ok: false, error: (e && e.message) || String(e) };
+        }
+      }
+      const r = await runCompose(['restart', 'clodex']);
+      if (!r.ok) {
+        const gone = dockerUnavailableError(r.stderr);
+        if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
+        return { ok: false, error: r.stderr.trim() || `docker compose restart exited ${r.code}` };
+      }
+      return { ok: true };
+    });
+  }
+
   // Stop the sandbox. The peer row STAYS (goes offline) — it's the affordance to
   // start it again later, so down never touches the peers list.
   async function down() {
@@ -1295,12 +1442,28 @@ function createSandbox(deps = {}) {
     return waitHealthy({ id, url, timeoutMs, fetch: deps.fetch, now: deps.now, sleep: deps.sleep });
   }
 
+  function readJsonOrNull(file) {
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  }
+
+  function bootstrapStatus(config) {
+    const b = normalizeBootstrap(config.bootstrap);
+    const data = path.join(stateDir(), 'data');
+    return {
+      configured: { packages: b.packages.length, setup: !!b.setup, start: !!b.start },
+      setup: readJsonOrNull(path.join(data, '.clodex-setup', 'last.json')),
+      start: readJsonOrNull(path.join(data, '.clodex-start', 'last.json')),
+      degraded: fs.existsSync(path.join(data, '.clodex-setup', 'failed')),
+    };
+  }
+
   function advancedStatus(config, live) {
     const configured = { ...DEFAULT_CONFIG.limits, ...(config.limits || {}) };
     return {
       limits: { configured, applied: live ? live.limits : null },
       platform: { configured: config.platform || null, applied: live ? live.platform : null },
       usage: live ? live.usage : null,
+      bootstrap: bootstrapStatus(config),
     };
   }
 
@@ -1392,7 +1555,7 @@ function createSandbox(deps = {}) {
   return {
     id, label: boxLabel,
     detect, getConfig, setConfig, validatePortsForSave, applyPorts, portsState, writeComposeFile, translateHostPath,
-    up, rebuild, down, status, logsTail, registerPeer, unregisterPeer, containerStartedAt,
+    up, rebuild, restart, down, status, logsTail, bootstrapApplyTarget, registerPeer, unregisterPeer, containerStartedAt,
     waitHealthy: boxWaitHealthy,
     hasAuthToken, authToken, setAuthToken, clearAuthToken,
     remoteToken, webToken,
@@ -1546,6 +1709,7 @@ module.exports = {
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseComposePlatform, parseStatsLine, parseAppliedLimits,
   validateLimitsForSave, normalizePlatform, sizeToBytes, OPERATOR_ONLY_MSG,
+  validateBootstrapForSave, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, writeBootstrapScripts,
   resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parsePortOwners, parseOwnPortMap, normalizePorts, gatewayServiceName, probeDockerLocal, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,

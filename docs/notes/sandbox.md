@@ -60,3 +60,10 @@ the Docker VM's MemTotal) and are skipped when those are unknown; the lower
 bounds always hold. The gateway service's cap (`GATEWAY_LIMITS`) is fixed and
 not configurable. `platform` applies only on Rebuild, because the image must be
 pulled or built for that architecture.
+
+## BOOTSTRAP_CONTAINER_DIR
+The host writes `setup.sh`/`start.sh` into `<stateDir>/bootstrap` and binds it here read-only, so nothing in the box can change the host-kept scripts; a box user with sudo can still edit the overlay copy of `docker/web/clodex-hooks.sh` until the next rebuild. The entrypoint runs them before each of its `exec`s: on a Linux host as root, on macOS (the box starts as the image user) with setup through `sudo -n` and start as that user; the image owns `/var/lib/clodex-setup` to that user so the marker needs no sudo.
+The setup marker lives in the overlay (`/var/lib/clodex-setup/<sha>`), not on `/data`: a recreate wipes it exactly when it wipes the apt packages, so setup reruns then and only then; a restart keeps both. The start hook is process launch only, after `/healthz` answers — never a "service ready" signal.
+
+## validateBootstrapForSave
+A line matching `BOOTSTRAP_SECRET_RE` (an assignment to a `*PASSWORD*`/`*SECRET*`/`*TOKEN*`/`*API_KEY*`/`*PRIVATE_KEY*` name, optionally `export`ed) or containing `-----BEGIN ` is refused for every writer: scripts are stored in ui-settings and shown in `sandbox bootstrap show`, so secrets belong in the box's env_file. Each script is capped at 16384 bytes and the package list at 64 Debian names.

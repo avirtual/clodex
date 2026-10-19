@@ -210,6 +210,11 @@ function parseIntentLegacy(rawLine) {
         const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
         return { type: 'team', sub, action, ref: refM ? refM[1] : null, op: words[1] || null, spec: words[2] || null, proto: protoM ? protoM[1] : null, label: words.slice(3).join(' ') || null, body: '' };
       }
+      if (action === 'bootstrap') {
+        const words = argStr.trim().split(/\s+/).filter((t) => t && !/^[a-z]\w*:/i.test(t));
+        const op = words[1] || null;
+        return { type: 'team', sub, action, ref: refM ? refM[1] : null, op, field: words[2] || null, packages: op === 'packages' ? words.slice(2) : [], body };
+      }
       return { type: 'team', sub, action, ref: refM ? refM[1] : null, body: '' };
     }
     const ms = positional[0] != null ? Number(positional[0]) : null;
@@ -438,6 +443,8 @@ const ADVERSARIAL = [
   '[agent:team sandbox]', '[agent:team sandbox rebuild ref:t9-x]', '[agent:team sandbox down]',
   '[agent:team sandbox status]', '[agent:team sandbox ref:release/1.2]', '[agent:team sandboxx]',
   '[agent:team sandbox port add 3000:3100 proto:http dev server]', '[agent:team sandbox port rm 3000]', '[agent:team sandbox port list]',
+  '[agent:team sandbox bootstrap packages smbclient mariadb-server]', '[agent:team sandbox bootstrap setup] echo hi',
+  '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
@@ -769,6 +776,26 @@ test('sandbox port parses op, container:host spec, proto and a multi-word label 
     { type: 'team', sub: 'sandbox', action: 'port', ref: null, op: 'list', spec: null, proto: null, label: null, body: '' });
 });
 
+test('sandbox bootstrap parses op, field, the package words and the body as LITERALS', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox bootstrap packages smbclient mariadb-server]'),
+    { type: 'team', sub: 'sandbox', action: 'bootstrap', ref: null, op: 'packages', field: 'smbclient', packages: ['smbclient', 'mariadb-server'], body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox bootstrap setup] echo hi'),
+    { type: 'team', sub: 'sandbox', action: 'bootstrap', ref: null, op: 'setup', field: null, packages: [], body: 'echo hi' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox bootstrap show start]'),
+    { type: 'team', sub: 'sandbox', action: 'bootstrap', ref: null, op: 'show', field: 'start', packages: [], body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team sandbox restart]'),
+    { type: 'team', sub: 'sandbox', action: 'restart', ref: null, body: '' });
+});
+
+test('sandbox bootstrap setup and start capture a body; show, clear and packages do not', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox bootstrap setup] x')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox bootstrap start] x')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox bootstrap show]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox bootstrap clear setup]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox bootstrap packages a b]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team sandbox status]')), 'none');
+});
+
 test('end and escape are NOT rows — the scanner shell owns them', () => {
   assert.strictEqual(registry.rowFor('end'), null);
   assert.strictEqual(registry.rowFor('escape'), null);
@@ -949,6 +976,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   // prompts/append/team-project.md.
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
+    || (i.type === 'team' && i.sub === 'sandbox' && i.action === 'bootstrap' && (i.op === 'setup' || i.op === 'start'))
     || i.type === 'team-create'
     || i.type === 'sub'
     || (i.type === 'scratch' && i.sub === 'end')

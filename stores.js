@@ -51,6 +51,8 @@ const DEFAULT_SANDBOX_CONFIG = {
   limits: { cpus: null, memory: null, pids: null, shmSize: null },
   platform: null,
   relay: false,
+  bootstrap: { packages: [], setup: '', start: '' },
+  bootstrapHistory: [],
 };
 
 const SANDBOX_PLATFORMS = ['linux/amd64', 'linux/arm64'];
@@ -354,7 +356,27 @@ function sanitizeSandbox(raw) {
     limits: sanitizeSandboxLimits(raw.limits),
     platform: SANDBOX_PLATFORMS.includes(raw.platform) ? raw.platform : null,
     relay: raw.relay === true,
+    bootstrap: sanitizeSandboxBootstrap(raw.bootstrap),
+    bootstrapHistory: sanitizeSandboxBootstrapHistory(raw.bootstrapHistory),
   };
+}
+
+function sanitizeSandboxBootstrap(raw) {
+  const r = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  return {
+    packages: Array.isArray(r.packages) ? r.packages.filter((p) => typeof p === 'string') : [],
+    setup: typeof r.setup === 'string' ? r.setup : '',
+    start: typeof r.start === 'string' ? r.start : '',
+  };
+}
+
+function sanitizeSandboxBootstrapHistory(raw) {
+  if (!Array.isArray(raw)) return [];
+  const str = (v) => (typeof v === 'string' ? v : null);
+  return raw
+    .filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+    .map((row) => ({ at: str(row.at), writer: str(row.writer), seat: str(row.seat), field: str(row.field), sha: str(row.sha) }))
+    .slice(-20);
 }
 
 function sanitizeSandboxPorts(raw) {

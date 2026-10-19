@@ -627,6 +627,18 @@ checkbox in the Sandbox panel's Advanced fold. A repeated ref is answered with
 are never relayed, and a box built before the host label existed keeps the
 `sandboxes are not enabled on this host` refusal.
 
+A box can be provisioned declaratively with three bootstrap fields kept in its
+config, each change recorded with its writer and seat: `[agent:team sandbox
+bootstrap packages <pkg …>]` (Debian packages, apt-installed as root), `bootstrap
+setup` (a root script, run once per image overlay) and `bootstrap start` (run as
+the box user after the box answers `/healthz`), the scripts as the intent's body
+closed by `[agent:end]`. `bootstrap show [field]` prints them, `bootstrap clear
+[field]` empties them. Packages and setup apply on the next `sandbox rebuild`;
+`start` applies on `[agent:team sandbox restart]` once the box was rebuilt with
+bootstrap, which restarts the box container (every seat inside it dies and is
+restored). A failed setup boots the box degraded: no seats are restored and
+`sandbox status` says so. Desktop seats only until the relay carries it.
+
 After a successful `up` or `rebuild` the box's coordinates land in
 `~/.clodex/teams/<name>/sandbox.json`, mode 0600:
 

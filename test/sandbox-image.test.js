@@ -125,8 +125,9 @@ test('entrypoint: not root or no host ids → execs the command unchanged, befor
   const lines = ENTRYPOINT.split('\n');
   const guard = lines.indexOf('if [ "$(id -u)" != 0 ] || [ -z "$CLODEX_HOST_UID" ] || [ -z "$CLODEX_HOST_GID" ]; then');
   assert.ok(guard >= 0);
-  assert.strictEqual(lines[guard + 1].trim(), 'exec "$@"');
-  assert.match(ENTRYPOINT, /case "\$CLODEX_HOST_UID\$CLODEX_HOST_GID" in\n {2}\*\[!0-9\]\*\) exec "\$@" ;;\nesac/);
+  assert.strictEqual(lines[guard + 1].trim(), 'clodex_run_hooks');
+  assert.strictEqual(lines[guard + 2].trim(), 'exec "$@"');
+  assert.match(ENTRYPOINT, /case "\$CLODEX_HOST_UID\$CLODEX_HOST_GID" in\n {2}\*\[!0-9\]\*\) clodex_run_hooks; exec "\$@" ;;\nesac/);
   const firstMutation = Math.min(...['groupmod', 'sed -i', 'chown', 'setpriv'].map((w) => ENTRYPOINT.indexOf(w)));
   assert.ok(ENTRYPOINT.indexOf('exec "$@"') < firstMutation);
 });
@@ -153,4 +154,144 @@ test('entrypoint: drops to the remapped user with setpriv as its last step', () 
   const last = ENTRYPOINT.trimEnd().split('\n').pop();
   assert.strictEqual(last, 'exec setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups "$@"');
   assert.doesNotMatch(ENTRYPOINT, /gosu|su-exec/);
+});
+
+const { execFileSync } = require('node:child_process');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const HOOKS_PATH = path.join(__dirname, '..', 'docker', 'web', 'clodex-hooks.sh');
+const HOOKS = fs.readFileSync(HOOKS_PATH, 'utf8');
+
+test('entrypoint: every exec of the Clodex process is preceded by the hooks, on the non-root and the root path', () => {
+  const lines = ENTRYPOINT.split('\n');
+  const def = lines.indexOf('clodex_run_hooks() {');
+  assert.ok(def >= 0 && lines[def + 2].trim() === '. /usr/local/bin/clodex-hooks.sh', 'the function sources the hooks file');
+  const execs = lines.map((l, i) => [l.trim(), i]).filter(([l]) => /(^|; |\) )exec /.test(l));
+  assert.deepStrictEqual(execs.map(([l]) => l), [
+    'exec "$@"',
+    '*[!0-9]*) clodex_run_hooks; exec "$@" ;;',
+    'exec setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups "$@"',
+  ]);
+  for (const [l, i] of execs) {
+    const call = l.includes('clodex_run_hooks; exec') || lines[i - 1].trim() === 'clodex_run_hooks';
+    assert.ok(call && i > def, `hooks run before: ${l}`);
+  }
+  assert.ok(lines.indexOf('clodex_run_hooks', lines.indexOf('done')) > lines.indexOf('done'), 'the root path runs them after the re-own loop');
+});
+
+test('docker/web/Dockerfile ships the hooks beside the entrypoint, the marker and bind dirs, and wget', () => {
+  const all = instructions(DOCKERFILE);
+  assert.ok(all.includes('COPY docker/web/clodex-hooks.sh /usr/local/bin/clodex-hooks.sh'));
+  const mk = all.filter((i) => /^RUN\b/.test(i) && i.includes('mkdir -p /var/lib/clodex-setup /etc/clodex/bootstrap'));
+  assert.strictEqual(mk.length, 1);
+  const user = all.findIndex((i) => /^USER clodex\b/.test(i));
+  assert.ok(all.indexOf(mk[0]) < user, 'the dirs are made as root');
+  const apt = all.find((i) => /^RUN apt-get update && apt-get install\b/.test(i) && /\bsudo\b/.test(i));
+  assert.match(apt, /\sfindutils\s/);
+  assert.match(apt, /\swget\s/, 'the start watcher polls healthz with wget');
+  assert.match(mk[0], /&& chown clodex:clodex \/var\/lib\/clodex-setup(\s|$)/, 'a non-root box writes its own setup markers');
+  const ignore = fs.readFileSync(path.join(__dirname, '..', '.dockerignore'), 'utf8').split('\n');
+  assert.ok(ignore.indexOf('!docker/web/clodex-hooks.sh') > ignore.indexOf('docker'));
+});
+
+test('entrypoint.sh and clodex-hooks.sh pass sh -n', () => {
+  for (const f of [path.join(__dirname, '..', 'docker', 'web', 'entrypoint.sh'), HOOKS_PATH]) {
+    execFileSync('sh', ['-n', f]);
+  }
+});
+
+const FAKE_SHA = 'feedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedfacefeedface';
+
+function hooksSandbox(setupText, { sudoShell = null } = {}) {
+  const root = mkTmpRoot('clx-hooks-');
+  const dirs = { hooks: path.join(root, 'hooks'), marks: path.join(root, 'marks'), data: path.join(root, 'data'), bin: path.join(root, 'bin') };
+  for (const d of Object.values(dirs)) fs.mkdirSync(d);
+  const stub = (name, body) => fs.writeFileSync(path.join(dirs.bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  stub('setsid', 'exec perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV or die\' "$@"');
+  stub('setpriv', 'while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done\nexec "$@"');
+  stub('sha256sum', `echo "${FAKE_SHA}  $1"`);
+  stub('wget', 'exit 0');
+  stub('sudo', `printf '%s\\n' "$*" >> "${path.join(root, 'sudo-calls')}"\n[ "$1" = -n ] && shift\nexec "$@"`);
+  if (sudoShell) fs.writeFileSync(path.join(dirs.bin, 'sudo'), `#!${sudoShell}\n[ "$1" = -n ] && shift\n"$@"\n`, { mode: 0o755 });
+  if (setupText != null) fs.writeFileSync(path.join(dirs.hooks, 'setup.sh'), setupText);
+  const run = (extraEnv = {}, shell = 'sh') => execFileSync(shell, ['-c', '. "$0"; echo "FAILED=${CLODEX_SETUP_FAILED:-}"', HOOKS_PATH], {
+    env: {
+      PATH: `${dirs.bin}:${process.env.PATH}`,
+      CLODEX_HOOKS_DIR: dirs.hooks, CLODEX_SETUP_MARKS: dirs.marks, CLODEX_HOOKS_DATA: dirs.data,
+      CLODEX_SETUP_TIMEOUT: '30', OUT: path.join(root, 'ran'), ...extraEnv,
+    },
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const sudoCalls = () => { try { return fs.readFileSync(path.join(root, 'sudo-calls'), 'utf8').split('\n').filter(Boolean); } catch { return []; } };
+  return { root, dirs, run, sudoCalls, ranCount: () => { try { return fs.readFileSync(path.join(root, 'ran'), 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } } };
+}
+
+test('clodex-hooks.sh: a setup runs once, leaves the marker, and a second boot skips it', () => {
+  const box = hooksSandbox('echo ran >> "$OUT"\n');
+  try {
+    assert.strictEqual(box.run().trim(), 'FAILED=');
+    assert.strictEqual(box.ranCount(), 1);
+    assert.ok(fs.existsSync(path.join(box.dirs.marks, FAKE_SHA)), 'the marker is named by the script sha');
+    assert.deepStrictEqual(box.sudoCalls(), [`-n sh ${path.join(box.dirs.hooks, 'setup.sh')}`], 'a non-root box runs setup through sudo -n');
+    const last = JSON.parse(fs.readFileSync(path.join(box.dirs.data, '.clodex-setup', 'last.json'), 'utf8'));
+    assert.deepStrictEqual({ ...last, at: null }, { sha: FAKE_SHA, exit: 0, at: null, timedOut: false });
+    box.run();
+    assert.strictEqual(box.ranCount(), 1, 'the marker skips the second run');
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: a failing setup writes failed with its exit and exports CLODEX_SETUP_FAILED=1', () => {
+  const box = hooksSandbox('echo partial >> "$OUT"\nexit 3\n');
+  try {
+    assert.strictEqual(box.run().trim(), 'FAILED=1');
+    const failed = JSON.parse(fs.readFileSync(path.join(box.dirs.data, '.clodex-setup', 'failed'), 'utf8'));
+    assert.strictEqual(failed.exit, 3);
+    assert.strictEqual(failed.timedOut, false);
+    assert.ok(!fs.existsSync(path.join(box.dirs.marks, FAKE_SHA)), 'a failure leaves no marker, so the next boot retries');
+    box.run();
+    assert.strictEqual(box.ranCount(), 2);
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: CLODEX_NO_HOOKS=1 runs nothing', () => {
+  const box = hooksSandbox('echo ran >> "$OUT"\n');
+  try {
+    assert.strictEqual(box.run({ CLODEX_NO_HOOKS: '1' }).trim(), 'FAILED=');
+    assert.strictEqual(box.ranCount(), 0);
+    assert.ok(!fs.existsSync(path.join(box.dirs.data, '.clodex-setup')));
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: every kill names its signal with -s, so dash reads the -- before a process group', () => {
+  assert.ok(/kill -s TERM -- "-\$_ch_pid"/.test(HOOKS), 'ENTER: the group TERM is there');
+  assert.ok(/kill -s KILL -- "-\$_ch_pid"/.test(HOOKS), 'ENTER: the group KILL is there');
+  assert.deepStrictEqual(HOOKS.match(/kill -[A-Z0-9]+ --/g), null);
+});
+
+const DASH = ['/bin/dash', '/usr/bin/dash'].find((p) => fs.existsSync(p)) || null;
+
+test('clodex-hooks.sh under dash: a setup past CLODEX_SETUP_TIMEOUT is killed and recorded as exit 124, timed out', { skip: DASH ? false : 'dash is not installed' }, () => {
+  const box = hooksSandbox('sleep 30 &\necho $! > "$OUT.child"\nwait\n', { sudoShell: DASH });
+  try {
+    assert.strictEqual(box.run({ CLODEX_SETUP_TIMEOUT: '1' }, DASH).trim(), 'FAILED=1');
+    const child = fs.readFileSync(path.join(box.root, 'ran.child'), 'utf8').trim();
+    assert.match(child, /^\d+$/, 'ENTER: the setup forked a child into its process group');
+    let stat = '';
+    try { stat = execFileSync('ps', ['-o', 'stat=', '-p', child], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { stat = ''; }
+    if (stat && !stat.startsWith('Z')) process.kill(Number(child), 'SIGKILL');
+    assert.ok(stat === '' || stat.startsWith('Z'), `the group kill reached the setup's child (ps stat "${stat}")`);
+    const last = JSON.parse(fs.readFileSync(path.join(box.dirs.data, '.clodex-setup', 'last.json'), 'utf8'));
+    assert.deepStrictEqual({ exit: last.exit, timedOut: last.timedOut }, { exit: 124, timedOut: true });
+    assert.ok(fs.existsSync(path.join(box.dirs.data, '.clodex-setup', 'failed')));
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: CLODEX_NO_HOOKS=1 drops a previous failed record so status is not stuck degraded', () => {
+  const box = hooksSandbox(null);
+  try {
+    fs.mkdirSync(path.join(box.dirs.data, '.clodex-setup'));
+    fs.writeFileSync(path.join(box.dirs.data, '.clodex-setup', 'failed'), '{}\n');
+    box.run({ CLODEX_NO_HOOKS: '1' });
+    assert.ok(!fs.existsSync(path.join(box.dirs.data, '.clodex-setup', 'failed')));
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
 });

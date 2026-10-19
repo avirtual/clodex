@@ -43,7 +43,7 @@ FROM node:22-slim AS runtime
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git bash procps ca-certificates python3 python3-venv make g++ sudo \
-      curl jq vim less tree unzip zip ripgrep openssh-client util-linux findutils \
+      curl jq vim less tree unzip zip ripgrep openssh-client util-linux findutils wget \
  && rm -rf /var/lib/apt/lists/*
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
@@ -86,7 +86,11 @@ COPY --chown=clodex:clodex . .
 COPY --chown=clodex:clodex --from=builder /build/web-dist ./web-dist
 RUN ln -s /app/cli/bin/clodexctl.js /usr/local/bin/clodexctl
 COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint
-RUN chmod 0755 /usr/local/bin/clodex-entrypoint
+COPY docker/web/clodex-hooks.sh /usr/local/bin/clodex-hooks.sh
+RUN chmod 0755 /usr/local/bin/clodex-entrypoint \
+ && chmod 0644 /usr/local/bin/clodex-hooks.sh \
+ && mkdir -p /var/lib/clodex-setup /etc/clodex/bootstrap \
+ && chown clodex:clodex /var/lib/clodex-setup
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).

@@ -1,11 +1,18 @@
 #!/bin/sh
 set -e
 
+clodex_run_hooks() {
+  if [ -f /usr/local/bin/clodex-hooks.sh ]; then
+    . /usr/local/bin/clodex-hooks.sh
+  fi
+}
+
 if [ "$(id -u)" != 0 ] || [ -z "$CLODEX_HOST_UID" ] || [ -z "$CLODEX_HOST_GID" ]; then
+  clodex_run_hooks
   exec "$@"
 fi
 case "$CLODEX_HOST_UID$CLODEX_HOST_GID" in
-  *[!0-9]*) exec "$@" ;;
+  *[!0-9]*) clodex_run_hooks; exec "$@" ;;
 esac
 
 IMAGE_UID=$(stat -c %u /app)
@@ -35,4 +42,5 @@ for p in /data /home/clodex /home/clodex/work /home/clodex/.[!.]* /home/clodex/*
   fi
 done
 
+clodex_run_hooks
 exec setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups "$@"

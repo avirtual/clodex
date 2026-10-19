@@ -207,6 +207,10 @@ const engine = createEngine({
 const workspaceIds = (process.env.CLODEX_WORKSPACES || DEFAULT_WORKSPACE_ID)
   .split(',').map((s) => s.trim()).filter(Boolean);
 (async () => {
+  if (process.env.CLODEX_SETUP_FAILED === '1') {
+    log.warn('app', 'environment degraded: setup failed — fix the bootstrap script and run sandbox rebuild; seats not restored');
+    return;
+  }
   for (const wsId of workspaceIds) {
     try {
       const rows = await engine.restoreSessionsForWorkspace(wsId);
