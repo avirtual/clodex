@@ -31,8 +31,9 @@ is decimal — 1777 decimal is 0o3361, which would leave the container's non-roo
 A port change runs `up -d --no-deps <box>-ports`, never a bare `up`: Docker
 cannot add a mapping to a running container, and a general `up` would also
 recreate the box whenever its own definition drifted (image, ref), killing every
-seat. The gateway has no `depends_on` for the same reason: with one, compose
-would start or recreate the box alongside the gateway.
+seat. The gateway has no `depends_on`: one would pull the box into any plain
+`up <box>-ports`. An emptied list runs `rm -sf <box>-ports` before the compose
+file is rewritten, because `rm` refuses a service the file no longer names.
 
 ## validatePortsForSave
 

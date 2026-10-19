@@ -209,12 +209,53 @@ test('applyPorts via setConfig: a running box recreates only the gateway and rec
   ]);
 });
 
-test('applyPorts: an emptied list removes the gateway instead of a bare up', async () => {
+test('applyPorts: an emptied list removes the gateway while the compose file still names it, then rewrites the file', async () => {
   const calls = [];
-  const { sb } = portBox({ ports: [{ container: 3001 }], spawn: recordingSpawn(calls, { ps: RUNNING }) });
-  await sb.setConfig({ ports: [] }, { writer: 'panel' });
+  const fileAtRm = [];
+  let sb;
+  const record = recordingSpawn(calls, { ps: RUNNING });
+  const spawn = (cmd, args) => {
+    const f = args.indexOf('-f');
+    if (f >= 0 && args[f + 2] === 'rm') fileAtRm.push(fs.readFileSync(sb.composePath(), 'utf8'));
+    return record(cmd, args);
+  };
+  ({ sb } = portBox({ ports: [{ container: 3001 }], spawn }));
+  await sb.writeComposeFile();
+  const cfg = await sb.setConfig({ ports: [] }, { writer: 'panel' });
   assert.deepStrictEqual(composeSubcommands(calls).filter((a) => a[0] !== 'ps'), [['rm', '-sf', 'sandbox-ports']]);
+  assert.strictEqual(fileAtRm.length, 1);
+  assert.match(fileAtRm[0], /^ {2}sandbox-ports:$/m);
+  assert.doesNotMatch(fs.readFileSync(sb.composePath(), 'utf8'), /sandbox-ports:/);
+  assert.strictEqual(cfg.portsError, undefined);
   assert.deepStrictEqual(sb.portsState().applied, []);
+});
+
+test('applyPorts: a failed gateway rm keeps the file naming it and surfaces the error from setConfig', async () => {
+  const { sb } = portBox({ ports: [{ container: 3001 }], spawn: recordingSpawn([], { ps: RUNNING, rm: { code: 1, stderr: 'boom\n' } }) });
+  await sb.writeComposeFile();
+  const cfg = await sb.setConfig({ ports: [] }, { writer: 'panel' });
+  assert.strictEqual(cfg.portsError, 'boom');
+  assert.match(fs.readFileSync(sb.composePath(), 'utf8'), /^ {2}sandbox-ports:$/m);
+});
+
+test('down: removes orphans and both copies of the ports record', async () => {
+  const calls = [];
+  const { sb } = portBox({ ports: [{ container: 3001 }], spawn: recordingSpawn(calls) });
+  await sb.applyPorts();
+  const boxCopy = path.join(sb.stateDir(), 'dot', 'sandbox-ports.json');
+  assert.strictEqual(fs.existsSync(boxCopy), true);
+  assert.deepStrictEqual(await sb.down(), { ok: true });
+  assert.deepStrictEqual(composeSubcommands(calls).at(-1), ['down', '--remove-orphans']);
+  assert.strictEqual(fs.existsSync(boxCopy), false);
+  assert.deepStrictEqual(sb.portsState().applied, []);
+});
+
+test('portsState: a record forged inside the box does not reach the panel', async () => {
+  const { sb } = portBox({ ports: [{ container: 3001, proto: 'http' }] });
+  await sb.applyPorts();
+  const boxCopy = path.join(sb.stateDir(), 'dot', 'sandbox-ports.json');
+  fs.writeFileSync(boxCopy, JSON.stringify([{ container: 3001, host: 3001, proto: 'http', allInterfaces: false, applied: true, url: 'https://evil.example' }]));
+  assert.deepStrictEqual(sb.portsState().applied, [{ container: 3001, host: 3001, proto: 'http', allInterfaces: false, applied: true, url: 'http://localhost:3001' }]);
 });
 
 test('applyPorts: a stopped box writes config only, no compose call', async () => {

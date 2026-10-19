@@ -8072,12 +8072,12 @@ function updateAppPortChips() {
       cell.appendChild(a);
       return;
     }
-    const target = rec.url || `${rec.host}`;
+    const target = rec.url || `localhost:${rec.host}`;
     const copy = document.createElement('button');
     copy.type = 'button';
     copy.className = 'secondary';
     copy.textContent = `Copy ${target}`;
-    copy.title = rec.url ? 'Copy host:port' : 'Docker is not local: this port is published on the Docker host';
+    copy.title = rec.url ? 'Copy host:port' : 'Docker is not local: this port is published on the Docker host, not on localhost';
     copy.addEventListener('click', () => { navigator.clipboard.writeText(target).catch(() => {}); });
     cell.appendChild(copy);
   });
@@ -8089,8 +8089,14 @@ function renderAppPorts() {
   sbAppPorts.forEach((p, i) => {
     const row = document.createElement('div');
     row.className = 'sandbox-app-port-row';
-    const container = appPortNumberInput(p.container, 'box port', (v) => { p.container = v; });
-    const host = appPortNumberInput(p.host, 'host port', (v) => { p.host = v; });
+    const pairEdited = () => {
+      if (!p.allInterfaces) return;
+      p.allInterfaces = false;
+      wideBox.checked = false;
+      warn.classList.add('hidden');
+    };
+    const container = appPortNumberInput(p.container, 'box port', (v) => { p.container = v; pairEdited(); });
+    const host = appPortNumberInput(p.host, 'host port', (v) => { p.host = v; pairEdited(); });
     const proto = document.createElement('select');
     for (const v of ['tcp', 'http', 'https']) {
       const o = document.createElement('option');
@@ -8132,10 +8138,14 @@ function renderAppPorts() {
 }
 
 async function refreshAppPortRecord() {
+  const box = sbCurrentBox;
+  let record = [];
   try {
-    const r = await window.api.sandboxPorts(sbCurrentBox);
-    sbAppPortRecord = (r && Array.isArray(r.applied)) ? r.applied : [];
-  } catch { sbAppPortRecord = []; }
+    const r = await window.api.sandboxPorts(box);
+    record = (r && Array.isArray(r.applied)) ? r.applied : [];
+  } catch { record = []; }
+  if (box !== sbCurrentBox) return;
+  sbAppPortRecord = record;
   updateAppPortChips();
 }
 
@@ -8152,12 +8162,19 @@ sbAppPortsAdd.addEventListener('click', () => {
 
 sbAppPortsSave.addEventListener('click', async () => {
   const box = sbCurrentBox;
-  const r = await window.api.sandboxSetConfig({ ports: sbAppPorts.map((p) => ({ ...p })) }, box);
+  sbAppPortsSave.disabled = true;
+  let r;
+  try {
+    r = await window.api.sandboxSetConfig({ ports: sbAppPorts.map((p) => ({ ...p })) }, box);
+  } finally {
+    sbAppPortsSave.disabled = false;
+  }
   if (box !== sbCurrentBox) return;
   if (r && r.ok === false) {
     showToast(`Ports rejected: ${r.error || 'invalid port'}`, { kind: 'error', duration: 9000 });
     return;
   }
+  if (r && r.portsError) showToast(`Ports saved but not applied: ${r.portsError}`, { kind: 'error', duration: 9000 });
   loadAppPorts(r || {});
 });
 

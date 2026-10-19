@@ -515,7 +515,7 @@ function probeChild(spawn, args, onSpawnError, onTimeout, onError, onExit) {
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch {}
+      try { child.kill(); } catch { /* already gone */ }
       done(onTimeout());
     }, DETECT_TIMEOUT_MS);
     child.on('error', (e) => {
@@ -670,9 +670,8 @@ function createSandbox(deps = {}) {
     }
     if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
     if (portsChanged) {
-      return serialize(async () => {
-        if (await isRunning()) await applyPortsNow();
-      }).then(() => getConfig());
+      return serialize(async () => (await isRunning() ? applyPortsNow() : null))
+        .then((applied) => (applied && !applied.ok ? { ...getConfig(), portsError: applied.error } : getConfig()));
     }
     return getConfig();
   }
@@ -742,11 +741,15 @@ function createSandbox(deps = {}) {
     return { ports };
   }
 
-  function portsRecordPath() { return path.join(stateDir(), 'dot', PORTS_RECORD_FILE); }
+  function portsRecordPath() { return path.join(sandboxDir(), PORTS_RECORD_FILE); }
+  function boxPortsRecordPath() { return path.join(stateDir(), 'dot', PORTS_RECORD_FILE); }
 
   function writePortsRecord(rows) {
-    fs.mkdirSync(path.dirname(portsRecordPath()), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(portsRecordPath(), `${JSON.stringify(rows, null, 2)}\n`);
+    const text = `${JSON.stringify(rows, null, 2)}\n`;
+    for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      fs.writeFileSync(file, text);
+    }
   }
 
   function readPortsRecord() {
@@ -778,13 +781,24 @@ function createSandbox(deps = {}) {
     const owner = await foreignOwner();
     if (owner) return foreignError(owner);
     const ports = normalizePorts(getConfig().ports).ports || [];
-    try { await writeComposeFile(); } catch (e) {
-      return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
-    }
     const svc = gatewayServiceName(id);
-    const r = ports.length
-      ? await runCompose(['up', '-d', '--no-deps', svc])
-      : await runCompose(['rm', '-sf', svc]);
+    const rewrite = async () => {
+      try { await writeComposeFile(); return null; } catch (e) {
+        return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
+      }
+    };
+    let r;
+    if (ports.length) {
+      const failed = await rewrite();
+      if (failed) return failed;
+      r = await runCompose(['up', '-d', '--no-deps', svc]);
+    } else {
+      r = await runCompose(['rm', '-sf', svc]);
+      if (r.ok) {
+        const failed = await rewrite();
+        if (failed) return failed;
+      }
+    }
     const rows = await recordPorts(ports, r);
     if (!r.ok) return { ok: false, error: rows.length ? rows[0].error : (r.stderr.trim() || `docker compose exited ${r.code}`), ports: rows };
     return { ok: true, ports: rows };
@@ -1081,13 +1095,15 @@ function createSandbox(deps = {}) {
   async function down() {
     const owner = await foreignOwner();
     if (owner) return foreignError(owner);
-    const r = await runCompose(['down']);
+    const r = await runCompose(['down', '--remove-orphans']);
     if (!r.ok) {
       const gone = dockerUnavailableError(r.stderr);
       if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
     }
-    try { fs.rmSync(portsRecordPath(), { force: true }); } catch {}
+    for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
+      try { fs.rmSync(file, { force: true }); } catch {}
+    }
     return { ok: true };
   }
 
