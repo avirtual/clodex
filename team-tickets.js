@@ -30,14 +30,16 @@ const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
-const { BOX_ID_RE, sizeToBytes, runningInSandboxBox } = require('./sandbox');
+const { BOX_ID_RE, sizeToBytes, runningInSandboxBox, normalizeBootstrap, bootstrapFieldText, bootstrapSha } = require('./sandbox');
 const { SANDBOX_RELAY_VERBS } = require('./relay-protocol');
 const { parseWithRegistry } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
 
-const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status', 'port'];
+const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status', 'port', 'bootstrap', 'restart'];
+const SANDBOX_BOOTSTRAP_FIELDS = ['packages', 'setup', 'start'];
+const SANDBOX_BOOTSTRAP_USAGE = 'error: usage: [agent:team sandbox bootstrap packages <pkg …>] | bootstrap setup|start (body) | bootstrap show [packages|setup|start] | bootstrap clear [packages|setup|start]';
 const SANDBOX_PORT_PENDING = 'pending: box not running — sandbox up applies';
 const SANDBOX_PORT_COVERAGE = 'URLs are for this machine; a remote Docker host shows host:port';
 const SANDBOX_DEFAULT_REF = 'master';
@@ -114,6 +116,27 @@ function sandboxPlatformRow(st) {
     return p.applied && host && p.applied !== host ? 'platform: host (pending)' : 'platform: host';
   }
   return `platform: ${p.configured} (${p.applied === p.configured ? 'applied' : 'pending'})`;
+}
+
+function sandboxBootstrapRows(st) {
+  const b = st && st.bootstrap;
+  if (!b || typeof b !== 'object') return '';
+  const c = b.configured || {};
+  const yes = (v) => (v ? 'yes' : 'no');
+  const rows = [`bootstrap: ${Number(c.packages) || 0} packages, setup ${yes(c.setup)}, start ${yes(c.start)}`];
+  const setup = b.setup && typeof b.setup === 'object' ? b.setup : null;
+  if (!setup) rows.push('setup: none');
+  else if (setup.exit === 0) rows.push(`setup: ok ${sha8(setup.sha)} at ${setup.at}`);
+  else rows.push(`setup: FAILED exit ${setup.exit} at ${setup.at}${setup.timedOut === true ? ' (timed out)' : ''} — fix the script and sandbox rebuild`);
+  const start = b.start && typeof b.start === 'object' ? b.start : null;
+  if (!start) rows.push('start hook: none');
+  else if (start.exit == null) rows.push(`start hook: running pid ${start.pid} since ${start.at}`);
+  else rows.push(`start hook: exited ${start.exit} at ${start.at}`);
+  return `\n${rows.join('\n')}`;
+}
+
+function sandboxDegradedClause(st) {
+  return st && st.bootstrap && st.bootstrap.degraded === true ? ' — ENVIRONMENT DEGRADED (setup failed)' : '';
 }
 
 function sandboxVersionClause(peerStatus) {
@@ -2603,7 +2626,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       let box = mgr.get(boxId);
-      if (!box && (action === 'status' || action === 'down' || action === 'port')) {
+      if (!box && ['status', 'down', 'port', 'bootstrap', 'restart'].includes(action)) {
         let removed = false;
         let staleFile = null;
         if (action === 'down') {
@@ -2633,8 +2656,8 @@ function createTicketMethods(deps, shared) {
         reply(`sandbox ${boxId} down — ${file} removed, peer entry ${boxId} unregistered`);
         return;
       }
-      if (action === 'status' || action === 'port') {
-        reply((await this._sandboxVerb(team, box, action, intent)).reply);
+      if (['status', 'port', 'bootstrap', 'restart'].includes(action)) {
+        reply((await this._sandboxVerb(team, box, action, intent, { seat: session ? session.name : null })).reply);
         return;
       }
 
@@ -2644,22 +2667,75 @@ function createTicketMethods(deps, shared) {
       return this._bringUpTeamBox(team, { mgr, box, boxId, patch, action, reply });
     },
 
-    async _sandboxVerb(team, box, verb, intent, { relay = false } = {}) {
+    async _sandboxVerb(team, box, verb, intent, { relay = false, seat = null } = {}) {
       const boxId = `team-${team.name}`;
       if (verb === 'status') {
         const st = await box.status({ live: true });
         const rows = sandboxAppPortRows(box);
         if (relay) {
-          const dto = { state: st.state, ports: rows, limits: st.limits, platform: st.platform };
-          return { reply: `sandbox ${boxId} ${dto.state}\n${dto.ports.length ? dto.ports.join('\n') : 'ports: none'}\n${sandboxLimitsRow(dto)}\n${sandboxPlatformRow(dto)}` };
+          const dto = { state: st.state, ports: rows, limits: st.limits, platform: st.platform, bootstrap: st.bootstrap };
+          return { reply: `sandbox ${boxId} ${dto.state}${sandboxDegradedClause(dto)}\n${dto.ports.length ? dto.ports.join('\n') : 'ports: none'}\n${sandboxLimitsRow(dto)}\n${sandboxPlatformRow(dto)}${sandboxBootstrapRows(dto)}` };
         }
         const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
         const peer = pm ? ((pm.statuses() || []).find((p) => p && p.id === boxId) || null) : null;
-        return { reply: `sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}\n${rows.length ? rows.join('\n') : 'ports: none'}\n${sandboxLimitsRow(st)}\n${sandboxPlatformRow(st)}` };
+        return { reply: `sandbox ${boxId} ${st.state}${sandboxRefClause(st)}${sandboxPortClause(st)}${sandboxVersionClause(peer)}${sandboxDegradedClause(st)}\n${rows.length ? rows.join('\n') : 'ports: none'}\n${sandboxLimitsRow(st)}\n${sandboxPlatformRow(st)}${sandboxBootstrapRows(st)}` };
       }
+      if (verb === 'restart') {
+        const r = await box.restart();
+        if (r && r.ok === false) return { reply: `error: ${r.error}` };
+        return { reply: `restarting ${boxId} — every seat inside it dies and is restored by the box; the start hook runs after healthz` };
+      }
+      if (verb === 'bootstrap') return { reply: this._sandboxBootstrap(box, intent, seat) };
       let out = null;
       await this._handleTeamSandboxPort(box, intent, (m) => { out = m; });
       return { reply: out };
+    },
+
+    _sandboxBootstrap(box, intent, seat) {
+      const op = intent.op || null;
+      const field = intent.field || null;
+      const current = normalizeBootstrap(box.getConfig().bootstrap);
+      const target = typeof box.bootstrapApplyTarget === 'function' ? box.bootstrapApplyTarget() : 'rebuild';
+      const appliesOn = (fields) => (fields.length === 1 && fields[0] === 'start' && target === 'restart' ? 'restart' : 'rebuild');
+      const save = (patch) => {
+        const saved = box.setConfig({ bootstrap: { ...current, ...patch } }, { writer: 'intent', seat });
+        if (saved && saved.ok === false) return { error: `error: ${saved.error}` };
+        return { bootstrap: normalizeBootstrap(saved && saved.bootstrap ? saved.bootstrap : { ...current, ...patch }) };
+      };
+      if (op === 'packages') {
+        const packages = Array.isArray(intent.packages) ? intent.packages : [];
+        if (!packages.length) return 'error: bootstrap packages needs at least one package name — [agent:team sandbox bootstrap clear packages] empties the list';
+        const r = save({ packages });
+        if (r.error) return r.error;
+        return `bootstrap packages saved (${r.bootstrap.packages.length}): ${r.bootstrap.packages.join(' ')} — applies on the next sandbox rebuild`;
+      }
+      if (op === 'setup' || op === 'start') {
+        const body = String(intent.body == null ? '' : intent.body);
+        if (!body.trim()) return `error: bootstrap ${op} needs a body — [agent:team sandbox bootstrap ${op}] <script> … [agent:end]`;
+        const r = save({ [op]: body });
+        if (r.error) return r.error;
+        const text = r.bootstrap[op];
+        return `bootstrap ${op} saved (${Buffer.byteLength(text, 'utf8')} B, sha ${bootstrapSha(text).slice(0, 8)}) — applies on the next sandbox ${appliesOn([op])}`;
+      }
+      if (op === 'show' || op === 'clear') {
+        if (field && !SANDBOX_BOOTSTRAP_FIELDS.includes(field)) return SANDBOX_BOOTSTRAP_USAGE;
+        const fields = field ? [field] : SANDBOX_BOOTSTRAP_FIELDS;
+        if (op === 'clear') {
+          const patch = {};
+          for (const f of fields) patch[f] = f === 'packages' ? [] : '';
+          const r = save(patch);
+          if (r.error) return r.error;
+          return `bootstrap ${fields.join(', ')} cleared — applies on the next sandbox ${appliesOn(fields)}`;
+        }
+        const history = Array.isArray(box.getConfig().bootstrapHistory) ? box.getConfig().bootstrapHistory : [];
+        return fields.map((f) => {
+          const text = bootstrapFieldText(current, f);
+          const row = [...history].reverse().find((h) => h && h.field === f);
+          const changed = row ? `last changed ${row.at} by ${row.writer}/${row.seat || '-'}` : 'never changed';
+          return `## ${f} (${Buffer.byteLength(text, 'utf8')} B, sha ${bootstrapSha(text).slice(0, 8)}, ${changed})\n${text}`;
+        }).join('\n');
+      }
+      return SANDBOX_BOOTSTRAP_USAGE;
     },
 
     async _remoteSandboxVerb({ peerId, origin, from, verb, args }) {

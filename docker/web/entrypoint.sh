@@ -35,4 +35,8 @@ for p in /data /home/clodex /home/clodex/work /home/clodex/.[!.]* /home/clodex/*
   fi
 done
 
+if [ -f /usr/local/bin/clodex-hooks.sh ]; then
+  . /usr/local/bin/clodex-hooks.sh
+fi
+
 exec setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups "$@"
