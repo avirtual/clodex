@@ -157,7 +157,7 @@ test('parseOwnPorts / parsePortOwners: loopback and 0.0.0.0 lines, owner from th
 
 test('generateCompose: no app ports is byte-identical to the pre-ports output', () => {
   const hash = (y) => crypto.createHash('sha256').update(y).digest('hex');
-  const golden = '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495';
+  const golden = 'cd6120e59f69885356ef347d785d977d67589c138eb4f49aa80633dabf03aeda';
   assert.strictEqual(hash(generateCompose(COMPOSE_ARGS)), golden);
   assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, appPorts: [] })), golden);
 });

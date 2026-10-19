@@ -61,6 +61,13 @@ for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dock
   });
 }
 
+test('docker/web/Dockerfile pre-creates ~/.config and ~/.codex, the state-dir bind mount points', () => {
+  const mk = instructions(DOCKERFILE).filter((i) => /^RUN mkdir -p /.test(i) && i.includes('/home/clodex/.config/muse'));
+  assert.strictEqual(mk.length, 1);
+  assert.match(mk[0], /^RUN mkdir -p [^\n&]* \/home\/clodex\/\.config\s/);
+  assert.match(mk[0], /^RUN mkdir -p [^\n&]* \/home\/clodex\/\.codex\s/);
+});
+
 test('docker/web/Dockerfile links clodexctl onto PATH as root, before USER clodex', () => {
   const all = instructions(DOCKERFILE);
   const link = all.findIndex((i) => /^RUN ln -sf? \/app\/cli\/bin\/clodexctl\.js \/usr\/local\/bin\/clodexctl$/.test(i));
