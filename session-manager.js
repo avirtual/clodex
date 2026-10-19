@@ -5225,7 +5225,7 @@ function createSessionManager(deps) {
         if (session._bootNudgeTimer) this._recordBootNudgeProbe(session, bytes);
         return;
       }
-      if (session.activityState !== 'idle') return;
+      if ((session.activityState || 'idle') !== 'idle') return;
       this._clearSubmitNudge(session);
       session._bootNudgeArmed = true;
       const wroteAt = Date.now();

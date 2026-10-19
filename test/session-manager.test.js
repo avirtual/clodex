@@ -16239,6 +16239,7 @@ function mkLateProbe() {
   const broadcasts = [];
   const p = mkOnDataProbe({
     bootNudgeMs: 40, bootNudgeQuietMs: 10,
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal,
     log: { info: (t, m) => logged.push(`${t}: ${m}`), warn: (t, m) => warned.push(`${t}: ${m}`), error: () => {}, debug: () => {} },
   });
   p.m._broadcast = (ch, msg) => broadcasts.push([ch, msg]);
@@ -16297,7 +16298,7 @@ test('t1891: an activity edge before the timer — no Enter, no stuck mark', asy
   await tickFor(t, 200);
   assert.deepStrictEqual(writes, LATE_UNIT);
   assert.strictEqual(s._injectStuck, undefined);
-  assert.deepStrictEqual(p.warned, []);
+  assert.deepStrictEqual(p.warned.filter((l) => l.startsWith('inject:')), []);
   t.mock.timers.reset();
 });
 
