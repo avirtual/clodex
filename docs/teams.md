@@ -657,6 +657,42 @@ because that file is how you reach a box that is merely slow. A team copy that
 fails is reported as `team NOT shipped: <why>` and does not stop the write —
 `sandbox.json` still lands, with `teamDir` null.
 
+### App ports
+
+A box can publish ports for the app you develop in it. Each box's config carries
+a `ports` list, edited in the Sandboxes panel's Ports rows:
+
+```json
+{ "ports": [{ "container": 3000, "host": 3000, "allInterfaces": false, "proto": "http", "label": "dev server" }] }
+```
+
+- `container` is the port the app listens on inside the box (1–65535, never one
+  of Clodex's own in-box ports 8080, 7800, 7900); `host` defaults to it
+  (1024–65535). `proto` is `tcp` (the default, shown as a copyable
+  `localhost:<host>`), `http` or `https` (shown as a link).
+- The app must bind `0.0.0.0` inside the box; a server bound to `127.0.0.1`
+  there is unreachable from the gateway.
+- Saves are refused, never bumped, when a host port is listed twice, is one of
+  this box's Clodex host ports, or is published by another box (the refusal
+  names that box and suggests the next free host port).
+- The ports are published by a separate gateway service, `<box>-ports`, in the
+  box's compose file. Saving while the box runs recreates only that gateway
+  (`docker compose up -d --no-deps <box>-ports`, or `rm -sf` when the list
+  becomes empty); the box and its seats keep running. A mapping change drops
+  every connection through the gateway, websockets and database clients
+  included.
+- `allInterfaces` publishes on `0.0.0.0` instead of loopback, which reaches
+  every interface of this machine, including VPNs. Only the panel can set it,
+  and changing the container or host port of such an entry turns it off.
+- Each apply records `[{ container, host, proto, allInterfaces, applied, error?,
+  url? }]` in `~/.clodex/sandbox-ports.json` inside the box (`<stateDir>/dot`
+  on the host); the panel's published / pending / failed chip reads it.
+  `applied` means Docker bound the port, not that the app answers.
+- With a remote Docker (`DOCKER_HOST` set, or a `docker context` other than
+  `default` / `desktop-linux`) the record carries no `url`: the port is on the
+  Docker host, not this laptop, and the panel shows the port to copy.
+- UDP and host networking are out of scope.
+
 ## Scaling the team
 
 Roles are cheap. Add one in the roles popover — click your team in the sidebar —
