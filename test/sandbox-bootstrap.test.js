@@ -163,14 +163,14 @@ const COMPOSE_ARGS = {
   ports: { web: 7810, wirescope: 7811, wire: 7820 }, stateDir: '/h/.clodex/boxes/x', workDir: null, authEnvFile: null, hostname: 'team-x',
 };
 
-test('generateCompose: bootstrapDir adds exactly one :ro line after muse-data; without it the bytes are the baseline', () => {
+test('generateCompose: bootstrapDir adds exactly one :ro line after the codex bind; without it the bytes are the baseline', () => {
   const hash = (y) => crypto.createHash('sha256').update(y).digest('hex');
-  assert.strictEqual(hash(generateCompose(COMPOSE_ARGS)), '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495');
-  assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, bootstrapDir: null })), '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495');
+  assert.strictEqual(hash(generateCompose(COMPOSE_ARGS)), 'cd6120e59f69885356ef347d785d977d67589c138eb4f49aa80633dabf03aeda');
+  assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, bootstrapDir: null })), 'cd6120e59f69885356ef347d785d977d67589c138eb4f49aa80633dabf03aeda');
   const base = generateCompose(COMPOSE_ARGS).split('\n');
   const withBoot = generateCompose({ ...COMPOSE_ARGS, bootstrapDir: '/h/.clodex/boxes/x/bootstrap' }).split('\n');
-  const at = base.indexOf('      - "/h/.clodex/boxes/x/muse-data:/home/clodex/.local/share"');
-  assert.ok(at > 0, 'ENTER: the muse-data line is in the baseline');
+  const at = base.indexOf('      - "/h/.clodex/boxes/x/codex:/home/clodex/.codex"');
+  assert.ok(at > 0, 'ENTER: the codex line is in the baseline');
   assert.deepStrictEqual(withBoot, [...base.slice(0, at + 1), '      - "/h/.clodex/boxes/x/bootstrap:/etc/clodex/bootstrap:ro"', ...base.slice(at + 1)]);
 });
 
@@ -225,7 +225,7 @@ test('DEFAULT_CONFIG carries an empty bootstrap and history', () => {
 
 test('generateCompose: noHooks adds exactly one env line after the environment block; without it the bytes are the baseline', () => {
   const hash = (y) => crypto.createHash('sha256').update(y).digest('hex');
-  assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, noHooks: false })), '9ad87213936a30c8e018bcec142aee35dab3eb2804b0d7a23610aade89cfe495');
+  assert.strictEqual(hash(generateCompose({ ...COMPOSE_ARGS, noHooks: false })), 'cd6120e59f69885356ef347d785d977d67589c138eb4f49aa80633dabf03aeda');
   const base = generateCompose(COMPOSE_ARGS).split('\n');
   const withNoHooks = generateCompose({ ...COMPOSE_ARGS, noHooks: true }).split('\n');
   const at = base.indexOf('      XDG_DATA_HOME: /home/clodex/.local/share');

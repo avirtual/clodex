@@ -182,7 +182,7 @@ test('generateCompose: read-only host library binds layered on clodex-dot (M5 De
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/skills:\/home\/clodex\/\.clodex\/skills:ro"/);
   assert.match(yaml, /- "\/Users\/me\/\.clodex\/agents:\/home\/clodex\/\.clodex\/agents:ro"/);
   assert.doesNotMatch(yaml, /- "[^"]*\/library:\/home\/clodex\/\.clodex\/library:ro"/);
-  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){2} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"\n +- "\/h\/\.clodex\/boxes\/x\/muse:\/home\/clodex\/\.config\/muse"/);
+  assert.match(yaml, /- "\/h\/\.clodex\/boxes\/x\/dot:\/home\/clodex\/\.clodex"\n( +- "[^\n]*:ro"\n){2} +- "\/h\/\.clodex\/boxes\/x\/claude:\/home\/clodex\/\.claude"\n +- "\/h\/\.clodex\/boxes\/x\/config:\/home\/clodex\/\.config"\n +- "\/h\/\.clodex\/boxes\/x\/muse:\/home\/clodex\/\.config\/muse"/);
   assert.ok(yaml.includes('- "/h/.clodex/boxes/x/data:/data"'));
   assert.doesNotMatch(yaml, /^ {2}(clodex-data|clodex-dot|claude-auth):$/m);
   assert.match(yaml, /^ {2}clodex-work:$/m);
@@ -388,7 +388,7 @@ test('generateCompose: a mount shadowing a reserved path THROWS (no broken box)'
 test('generateCompose: no mount binds when the list is empty or absent', () => {
   const empty = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null, mounts: [] });
   const absent = generateCompose({ image: DEV_IMAGE, ports: PORTS, stateDir: STATE_DIR, workDir: null, authEnvFile: null });
-  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude|\.config\/muse|\.local\/share)/);
+  assert.doesNotMatch(empty, /\/home\/clodex\/(?!work|\.clodex|\.claude|\.config|\.codex|\.local\/share)/);
   assert.strictEqual(empty, absent);   // omitting mounts === passing []
 });
 
