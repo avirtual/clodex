@@ -47,7 +47,13 @@ const DEFAULT_SANDBOX_CONFIG = {
   image: null,
   ref: null,
   mounts: [],
+  ports: [],
+  limits: { cpus: null, memory: null, pids: null, shmSize: null },
+  platform: null,
 };
+
+const SANDBOX_PLATFORMS = ['linux/amd64', 'linux/arm64'];
+const SANDBOX_PORT_PROTOS = ['tcp', 'http', 'https'];
 
 const BOX_REF_RE = /^[A-Za-z0-9._/-]{1,128}$/;
 
@@ -343,6 +349,37 @@ function sanitizeSandbox(raw) {
     image: strOrNull(raw.image),
     ref: sanitizeBoxRef(raw.ref),
     mounts: sanitizeSandboxMounts(raw.mounts),
+    ports: sanitizeSandboxPorts(raw.ports),
+    limits: sanitizeSandboxLimits(raw.limits),
+    platform: SANDBOX_PLATFORMS.includes(raw.platform) ? raw.platform : null,
+  };
+}
+
+function sanitizeSandboxPorts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const isPort = (v) => Number.isInteger(v) && v >= 1 && v <= 65535;
+  const out = [];
+  for (const p of raw) {
+    if (!p || typeof p !== 'object' || !isPort(p.container)) continue;
+    out.push({
+      container: p.container,
+      host: isPort(p.host) ? p.host : p.container,
+      proto: SANDBOX_PORT_PROTOS.includes(p.proto) ? p.proto : 'tcp',
+      allInterfaces: p.allInterfaces === true,
+      label: typeof p.label === 'string' ? p.label : null,
+    });
+  }
+  return out;
+}
+
+function sanitizeSandboxLimits(raw) {
+  const ok = raw && typeof raw === 'object' && !Array.isArray(raw);
+  const r = ok ? raw : {};
+  return {
+    cpus: typeof r.cpus === 'number' && Number.isFinite(r.cpus) ? r.cpus : null,
+    memory: typeof r.memory === 'string' ? r.memory : null,
+    pids: Number.isInteger(r.pids) ? r.pids : null,
+    shmSize: typeof r.shmSize === 'string' ? r.shmSize : null,
   };
 }
 
@@ -380,7 +417,7 @@ function sanitizeBoxes(rawBoxes) {
     if (!id || seen.has(id) || RESERVED_BOX_IDS.has(id)) continue;
     seen.add(id);
     const label = typeof b.label === 'string' && b.label.trim() ? b.label.trim().slice(0, 64) : id;
-    const config = sanitizeSandbox(b.config) ?? { ...DEFAULT_SANDBOX_CONFIG, mounts: [] };
+    const config = sanitizeSandbox(b.config) ?? sanitizeSandbox({});
     out.push({ id, label, config });
   }
   return out;
@@ -2279,4 +2316,4 @@ function initStores(userDataPath, {
   };
 }
 
-module.exports = { initStores, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };
+module.exports = { initStores, sanitizeSandbox, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };

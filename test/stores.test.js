@@ -9,7 +9,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { initStores } = require('../stores');
+const { initStores, sanitizeSandbox } = require('../stores');
 const { DEFAULT_BUILTIN_DENY_FLOOR, DEFAULT_SKILL_DENY_FLOOR } = require('../catalogs');
 const { expandSkillsOff } = require('../skills-off');
 const { shellCapGranted } = require('../peer-shell');
@@ -3696,6 +3696,7 @@ test('uiSettings: boxes defaults to one seed box on a fresh install (no top-leve
     assert.deepStrictEqual(s.boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
       autoStart: false, image: null, ref: null, mounts: [],
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
     });
   } finally { cleanup(); }
 });
@@ -3743,11 +3744,13 @@ test('uiSettings: a multi-box registry round-trips each box config verbatim', ()
       workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
       wirePort: 7840, autoStart: true, image: 'my/img:tag', ref: 'feature/x',
       mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
     });
     // The shared box's blank config fills to DEFAULT_SANDBOX_CONFIG.
     assert.deepStrictEqual(boxes.sandbox.config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
       autoStart: false, image: null, ref: null, mounts: [],
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
     });
   } finally { cleanup(); }
 });
@@ -3804,6 +3807,52 @@ test('uiSettings: a box config\'s mounts survive the sanitizer round-trip (M6a w
   } finally { cleanup(); }
 });
 
+test('uiSettings: a box config\'s ports, limits and platform survive the sanitizer round-trip', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    const config = {
+      workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
+      autoStart: false, image: null, ref: null, mounts: [],
+      ports: [
+        { container: 8080, host: 18080, proto: 'http', allInterfaces: false, label: 'app' },
+        { container: 5432, host: 15432, proto: 'tcp', allInterfaces: true, label: null },
+      ],
+      limits: { cpus: 2, memory: '4g', pids: 512, shmSize: '1g' },
+      platform: 'linux/amd64',
+    };
+    uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config }] });
+    assert.deepStrictEqual(uiSettings.get().boxes[0].config, config);
+  } finally { cleanup(); }
+});
+
+test('uiSettings: garbage ports rows, limits and platform sanitize to dropped / all-null / null', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { uiSettings } = stores;
+    uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config: {
+      ports: [{ container: 'x' }, { container: 3000, host: 13000 }],
+      limits: 'no',
+      platform: 'windows/amd64',
+    } }] });
+    const got = uiSettings.get().boxes[0].config;
+    assert.deepStrictEqual(got.ports, [{ container: 3000, host: 13000, proto: 'tcp', allInterfaces: false, label: null }]);
+    assert.deepStrictEqual(got.limits, { cpus: null, memory: null, pids: null, shmSize: null });
+    assert.strictEqual(got.platform, null);
+  } finally { cleanup(); }
+});
+
+test('sanitizeSandbox keeps exactly the keys of sandbox.js DEFAULT_CONFIG', () => {
+  const { DEFAULT_CONFIG } = require('../sandbox');
+  const sample = { ...DEFAULT_CONFIG, ports: [{ container: 8080 }], platform: 'linux/arm64' };
+  assert.deepStrictEqual(
+    Object.keys(sanitizeSandbox(sample)),
+    Object.keys(DEFAULT_CONFIG),
+    'stores.js sanitizeSandbox and sandbox.js DEFAULT_CONFIG disagree on box-config keys: a key the sanitizer omits is dropped on every save',
+  );
+  assert.deepStrictEqual(sanitizeSandbox({}), DEFAULT_CONFIG);
+});
+
 test('uiSettings: a fallback box config never shares its mounts array with the module default', () => {
   const { stores, cleanup } = freshStores();
   try {
@@ -3843,6 +3892,7 @@ test('uiSettings: a box config sanitizer bounds junk fields + coerces mount rows
         { host: '/b', ro: false },
         { host: '/c', ro: true, container: '/home/clodex/c' },
       ],
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
     });
   } finally { cleanup(); }
 });

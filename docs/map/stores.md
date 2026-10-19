@@ -47,9 +47,11 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `sanitizeSandbox` | whitelist-rebuilds one box config (workDir, three ports, autoStart, image, ref, mounts) with per-field defaults | none (reads DEFAULT_SANDBOX_CONFIG) | sanitizeBoxRef, sanitizeSandboxMounts | stores.test.js |
+| `sanitizeSandbox` | whitelist-rebuilds one box config (workDir, three ports, autoStart, image, ref, mounts, ports, limits, platform) with per-field defaults | none | sanitizeBoxRef, sanitizeSandboxMounts, sanitizeSandboxPorts, sanitizeSandboxLimits | stores.test.js |
 | `sanitizeBoxRef` | a trimmed git ref matching BOX_REF_RE with no dot-dot segment, else null | none | none | unpinned |
 | `sanitizeSandboxMounts` | an array of host, ro, container mount rows with host required and ro strictly true | none | none | unpinned |
+| `sanitizeSandboxPorts` | an array of container, host, proto, allInterfaces, label rows; a row without a valid container port is dropped | none | none | stores.test.js |
+| `sanitizeSandboxLimits` | a cpus, memory, pids, shmSize object, each null unless well-typed | none | none | stores.test.js |
 | `sanitizeBoxes` | the persisted boxes list, deduped by id with malformed and reserved ids dropped; null only for non-array input | none (reads BOX_ID_RE, RESERVED_BOX_IDS) | sanitizeSandbox | unpinned |
 | `sanitizeRebootNotice` | the pending reboot notice normalised to name, at, reason, attempts, or null without a name | none | none | unpinned |
 | `sanitizeTerminalReports` | the tri-state terminalReports from the current key, the legacy boolean, or neither (absent resolves to off) | none | none | unpinned |
@@ -57,7 +59,7 @@
 
 ### Invariants
 - `sanitizeBoxes` returns null only for non-array input, so a deliberately emptied boxes list survives rather than re-seeding the default box.
-- `sanitizeBoxes` gives each fallback config its own mounts array rather than the DEFAULT_SANDBOX_CONFIG singleton.
+- `sanitizeBoxes` builds each fallback config through `sanitizeSandbox({})`, so it never shares an array or object with the DEFAULT_SANDBOX_CONFIG singleton.
 - `sanitizeTerminalReports` resolves an absent or legacy-false key to off, so an upgrade never grants the capability on its own.
 
 ### Hazards
