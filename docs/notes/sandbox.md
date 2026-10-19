@@ -39,7 +39,9 @@ file is rewritten, because `rm` refuses a service the file no longer names.
 
 All-interfaces consent is scoped to the `(container, host)` pair it was given
 for: a pair change resets it for every writer, and a non-panel writer may
-neither set it nor edit or remove an entry that carries it.
+neither set it nor edit or remove an entry that carries it. Entries are matched
+to `prior` by pair, never by index: a wide entry on a new pair is reset whenever
+a prior wide pair is gone from the same save.
 
 ## generateCompose
 
