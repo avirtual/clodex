@@ -136,6 +136,10 @@ docker compose -f docker/web/compose.yaml exec clodex \
   bash -lc 'git config --global user.name "You" && git config --global user.email "you@example.com"'
 ```
 
+The image already sets `core.checkStat=minimal` and `core.trustctime=false` in
+`/etc/gitconfig` for the virtiofs binds, so a `fatal: stash failed` on merge is
+not something to fix per repo.
+
 ## Wire telemetry
 
 The image bundles the wirescope snapshot the desktop app ships, and the

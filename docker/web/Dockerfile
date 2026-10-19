@@ -105,6 +105,7 @@ RUN chmod 0755 /usr/local/bin/clodex-entrypoint
 RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.config/muse /home/clodex/.local/share /home/clodex/work \
  && printf '{"hasCompletedOnboarding": true, "projects": {"/": {"hasTrustDialogAccepted": true}}}' > /home/clodex/.claude.json \
  && printf '[safe]\n\tdirectory = *\n' > /home/clodex/.gitconfig \
+ && printf '[core]\n\tcheckStat = minimal\n\ttrustctime = false\n' > /etc/gitconfig \
  && chown clodex:clodex /app \
  && chown -R clodex:clodex /data /home/clodex
 
