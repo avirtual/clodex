@@ -33,6 +33,18 @@ test('the image bakes /home/clodex/.gitconfig trusting every repo in the box', (
   );
 });
 
+test('the image bakes /etc/gitconfig so git trusts only mtime/size on the virtiofs binds', () => {
+  const writes = instructions(DOCKERFILE).filter((i) => i.includes('/etc/gitconfig'));
+  assert.strictEqual(writes.length, 1, 'exactly one instruction should write /etc/gitconfig');
+  const instr = writes[0];
+  assert.match(instr, /^(RUN|COPY)\b/);
+  assert.match(
+    instr,
+    /\[core\](?:\\n|\n)(?:\\t|\t| +)checkStat = minimal(?:\\n|\n)(?:\\t|\t| +)trustctime = false(?:\\n|\n|'|"|$)[^\n]*> \/etc\/gitconfig/,
+    'the baked /etc/gitconfig needs a [core] section with `checkStat = minimal` then `trustctime = false`',
+  );
+});
+
 const BOX_DOCKERFILE = fs.readFileSync(path.join(__dirname, '..', 'docker', 'Dockerfile'), 'utf8');
 
 for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dockerfile', BOX_DOCKERFILE]]) {

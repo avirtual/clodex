@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox image: git inside the box no longer fails `git merge` with `fatal: stash failed` on a clean repo under the work volume — the image sets `core.checkStat=minimal` and `core.trustctime=false` system-wide, since virtiofs stat fields never matched git's index. Takes effect on the next sandbox rebuild.
+
 ## 5.131.6 — 2026-10-19
 
 - The sandbox box no longer sends a 'shipped update is being withheld' inbox note for library files the host mounts into it read-only: the seeder skips a destination it cannot write instead of calling it stranded.

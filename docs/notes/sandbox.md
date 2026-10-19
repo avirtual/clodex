@@ -48,3 +48,6 @@ a prior wide pair is gone from the same save.
 The gateway forwards to `clodex:<container>`, the box's compose service name:
 Docker's embedded DNS resolves service names and aliases, not the `hostname:`
 a service sets.
+
+## WORK_CONTAINER_DIR
+The image's /etc/gitconfig sets `core.checkStat=minimal` and `core.trustctime=false` because virtiofs (the `/home/clodex/work` and `/data` binds) returns inode/ctime stat fields that never match git's index. With the defaults `git diff-files` reports every tracked file modified while `git status` is clean, so `git merge`'s autostash runs `git stash create`, finds nothing and dies `fatal: stash failed` (measured 2026-10-19: 10,601 phantom-dirty files to 0). On a passthrough filesystem `minimal` keeps mtime and size and drops only the unreliable fields (inode, ctime, dev, uid/gid), so real edits are still seen.
