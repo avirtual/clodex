@@ -471,7 +471,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform, hostLabel, bootstrapDir = null }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform, hostLabel, bootstrapDir = null, noHooks = false }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -515,6 +515,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     if (!workDir) L.push('      CLODEX_WORK_VOLUME: "1"');
   }
   if (hostLabel) L.push(`      CLODEX_HOST_LABEL: ${yamlQuote(hostLabel)}`);
+  if (noHooks) L.push('      CLODEX_NO_HOOKS: "1"');
   if (authEnvFile) {
     L.push('    env_file:');
     L.push(`      - ${yamlQuote(authEnvFile)}`);
@@ -661,6 +662,8 @@ function parseOwnPortMap(yamlText) {
 
 const HEALTH_POLL_MS = 2000;
 const HEALTH_TIMEOUT_MS = 180000;
+const SETUP_TIMEOUT_S = 600;
+const BOOTSTRAP_LOG_MAX = 65536;
 
 async function waitHealthy({ id, url, timeoutMs, fetch, now, sleep } = {}) {
   const boxId = id || SANDBOX_PEER_ID;
@@ -1234,7 +1237,7 @@ function createSandbox(deps = {}) {
     return text.includes(`:${BOOTSTRAP_CONTAINER_DIR}:ro`) ? 'restart' : 'rebuild';
   }
 
-  async function writeComposeFile({ keepPlatform = false, keepBootstrap = false } = {}) {
+  async function writeComposeFile({ keepPlatform = false, keepBootstrap = false, noHooks = false } = {}) {
     const config = getConfig();
     const image = await resolveImageForConfig(config);
     let ownPorts = [];
@@ -1261,7 +1264,7 @@ function createSandbox(deps = {}) {
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
       hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: keepPlatform ? writtenPlatform : config.platform,
-      hostLabel: deps.selfLabel || null, bootstrapDir: bootstrapOn ? bootstrapDirPath() : null,
+      hostLabel: deps.selfLabel || null, bootstrapDir: bootstrapOn ? bootstrapDirPath() : null, noHooks,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });
@@ -1340,7 +1343,7 @@ function createSandbox(deps = {}) {
     return { ok: false, code: 'foreign', error: `box ${id} belongs to another Clodex instance (${owner})` };
   }
 
-  function bringUp(runSteps, label) {
+  function bringUp(runSteps, label, { noHooks = false } = {}) {
     // serialize() chains this across every box the manager owns (default: inline),
     // so the port probe + compose regen can't race when two boxes come up at once.
     return serialize(async () => {
@@ -1361,7 +1364,7 @@ function createSandbox(deps = {}) {
         if (!synced.ok) return { ok: false, error: synced.error };
       }
       let gen;
-      try { gen = await writeComposeFile(); } catch (e) {
+      try { gen = await writeComposeFile({ noHooks }); } catch (e) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
       const r = await runSteps(gen);
@@ -1386,8 +1389,8 @@ function createSandbox(deps = {}) {
     });
   }
 
-  async function up() {
-    return bringUp((_gen) => runCompose(['up', '-d', '--remove-orphans']), 'up');
+  async function up(opts = {}) {
+    return bringUp((_gen) => runCompose(['up', '-d', '--remove-orphans']), 'up', { noHooks: !!(opts && opts.noHooks === true) });
   }
 
   async function rebuild() {
@@ -1454,7 +1457,20 @@ function createSandbox(deps = {}) {
       setup: readJsonOrNull(path.join(data, '.clodex-setup', 'last.json')),
       start: readJsonOrNull(path.join(data, '.clodex-start', 'last.json')),
       degraded: fs.existsSync(path.join(data, '.clodex-setup', 'failed')),
+      noHooks: composeHasNoHooks(),
     };
+  }
+
+  function composeHasNoHooks() {
+    try { return fs.readFileSync(composePath(), 'utf8').includes('      CLODEX_NO_HOOKS: "1"\n'); } catch { return false; }
+  }
+
+  function bootstrapLog() {
+    const file = path.join(stateDir(), 'data', '.clodex-setup', 'last.log');
+    let buf;
+    try { buf = fs.readFileSync(file); } catch { return { text: '', truncated: false }; }
+    if (buf.length <= BOOTSTRAP_LOG_MAX) return { text: buf.toString('utf8'), truncated: false };
+    return { text: buf.subarray(buf.length - BOOTSTRAP_LOG_MAX).toString('utf8'), truncated: true };
   }
 
   function advancedStatus(config, live) {
@@ -1555,7 +1571,7 @@ function createSandbox(deps = {}) {
   return {
     id, label: boxLabel,
     detect, getConfig, setConfig, validatePortsForSave, applyPorts, portsState, writeComposeFile, translateHostPath,
-    up, rebuild, restart, down, status, logsTail, bootstrapApplyTarget, registerPeer, unregisterPeer, containerStartedAt,
+    up, rebuild, restart, down, status, logsTail, bootstrapLog, bootstrapApplyTarget, registerPeer, unregisterPeer, containerStartedAt,
     waitHealthy: boxWaitHealthy,
     hasAuthToken, authToken, setAuthToken, clearAuthToken,
     remoteToken, webToken,
@@ -1715,6 +1731,6 @@ module.exports = {
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,
   runningInSandboxBox,
   DEFAULT_CONFIG, DEFAULT_PORTS, CONTAINER_PORTS, RESERVED_MOUNT_TARGETS, WORK_CONTAINER_DIR,
-  SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, SANDBOX_BOX_ENV, BOX_ID_RE, RESERVED_BOX_IDS,
+  SANDBOX_PEER_ID, SANDBOX_PEER_LABEL, SANDBOX_BOX_ENV, BOX_ID_RE, RESERVED_BOX_IDS, HEALTH_TIMEOUT_MS, SETUP_TIMEOUT_S,
   DOCKER_ABSENT_MSG, DOCKER_DOWN_MSG, DOCKER_NO_COMPOSE_MSG,
 };

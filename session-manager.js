@@ -14,6 +14,7 @@ const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
 const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
+const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
 const EXEC_RUN_RECORD_CAP = 20;
@@ -734,6 +735,8 @@ function createSessionManager(deps) {
   const writeMcpCatalog = deps.writeMcpCatalog
     || ((n, c) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpCatalog(n, c));
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
+  const relayTimer = deps.setTimeout || setTimeout;
+  const relayClear = deps.clearTimeout || clearTimeout;
   const streamFor = deps.streamFor || adapterStreamFor;
   const loadStreamCodec = deps.loadStreamCodec || ((id) => require(`./${id}`));
   const streamProc = deps.streamProc || {
@@ -7861,14 +7864,28 @@ function createSessionManager(deps) {
         if (m.task != null && isSandboxEnvelope(m.task)) {
           const task = m.task;
           if (refKey) this._dmRefRemember(refKey, { delivered: true, sandbox: { reply: null } });
+          let answered = false;
+          const finish = (reply) => {
+            if (answered) return;
+            answered = true;
+            if (refKey) this._dmRefRemember(refKey, { delivered: true, sandbox: { reply } });
+            this._broadcast('ipc-message', { type: 'task', from: senderTag, to: 'board', body: `WIRE←${origin} sandbox ${task.verb}: ${reply}` });
+            answerTeam(reply);
+          };
+          const timer = relayTimer(() => {
+            finish(`error: sandbox ${task.verb} timed out on the host after ${SANDBOX_RELAY_TIMEOUT_MS / 1000} s — run [agent:team sandbox status] to see what applied`);
+          }, SANDBOX_RELAY_TIMEOUT_MS);
           Promise.resolve()
-            .then(() => this._remoteSandboxVerb({ peerId, origin, from: m.from, verb: task.verb, args: task.args }))
+            .then(() => this._remoteSandboxVerb({ peerId, origin, from: m.from, verb: task.verb, args: task.args, ...(typeof task.body === 'string' ? { body: task.body } : {}) }))
             .catch((e) => ({ reply: `error: ${(e && e.message) || e}` }))
             .then((r) => {
               const reply = String((r && r.reply) || 'error: the host gave no answer');
-              if (refKey) this._dmRefRemember(refKey, { delivered: true, sandbox: { reply } });
-              this._broadcast('ipc-message', { type: 'task', from: senderTag, to: 'board', body: `WIRE←${origin} sandbox ${task.verb}: ${reply}` });
-              answerTeam(reply);
+              if (answered) {
+                log.warn('intent', `relayed sandbox ${task.verb} finished after its reply timed out: ${reply.split('\n')[0]}`);
+                return;
+              }
+              relayClear(timer);
+              finish(reply);
             });
           continue;
         }
@@ -8498,4 +8515,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, EXEC_REPLY_WAIT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
+module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };

@@ -173,19 +173,28 @@ function isDoneTaskEnvelope(task) {
     && task.kind === 'done' && typeof task.id === 'string' && /^t\d+$/.test(task.id);
 }
 
-const SANDBOX_RELAY_VERBS = ['port', 'status'];
+const SANDBOX_RELAY_VERBS = ['port', 'status', 'bootstrap'];
 const SANDBOX_RELAY_ARGS_MAX = 4096;
+const SANDBOX_RELAY_BODY_MAX = 16384;
+
+function sandboxBodyOk(task) {
+  if (task.body === undefined) return true;
+  return task.verb === 'bootstrap' && typeof task.body === 'string'
+    && Buffer.byteLength(task.body, 'utf8') <= SANDBOX_RELAY_BODY_MAX;
+}
 
 function isSandboxEnvelope(task) {
   return !!task && typeof task === 'object' && !Array.isArray(task)
     && task.kind === 'sandbox' && SANDBOX_RELAY_VERBS.includes(task.verb)
-    && typeof task.args === 'string' && task.args.length <= SANDBOX_RELAY_ARGS_MAX;
+    && typeof task.args === 'string' && task.args.length <= SANDBOX_RELAY_ARGS_MAX
+    && sandboxBodyOk(task);
 }
 
 module.exports = {
   isDoneTaskEnvelope,
   isSandboxEnvelope,
   SANDBOX_RELAY_VERBS,
+  SANDBOX_RELAY_BODY_MAX,
   RELAY_ENVELOPE_V,
   RELAY_MAX_HOPS,
   RELAY_ROSTER_TTL_MS,
