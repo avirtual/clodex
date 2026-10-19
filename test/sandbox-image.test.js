@@ -207,13 +207,13 @@ function hooksSandbox(setupText) {
   const dirs = { hooks: path.join(root, 'hooks'), marks: path.join(root, 'marks'), data: path.join(root, 'data'), bin: path.join(root, 'bin') };
   for (const d of Object.values(dirs)) fs.mkdirSync(d);
   const stub = (name, body) => fs.writeFileSync(path.join(dirs.bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  stub('setsid', 'exec "$@"');
+  stub('setsid', 'exec perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV or die\' "$@"');
   stub('setpriv', 'while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done\nexec "$@"');
   stub('sha256sum', `echo "${FAKE_SHA}  $1"`);
   stub('wget', 'exit 0');
   stub('sudo', `printf '%s\\n' "$*" >> "${path.join(root, 'sudo-calls')}"\n[ "$1" = -n ] && shift\nexec "$@"`);
   if (setupText != null) fs.writeFileSync(path.join(dirs.hooks, 'setup.sh'), setupText);
-  const run = (extraEnv = {}) => execFileSync('sh', ['-c', '. "$0"; echo "FAILED=${CLODEX_SETUP_FAILED:-}"', HOOKS_PATH], {
+  const run = (extraEnv = {}, shell = 'sh') => execFileSync(shell, ['-c', '. "$0"; echo "FAILED=${CLODEX_SETUP_FAILED:-}"', HOOKS_PATH], {
     env: {
       PATH: `${dirs.bin}:${process.env.PATH}`,
       CLODEX_HOOKS_DIR: dirs.hooks, CLODEX_SETUP_MARKS: dirs.marks, CLODEX_HOOKS_DATA: dirs.data,
@@ -258,5 +258,39 @@ test('clodex-hooks.sh: CLODEX_NO_HOOKS=1 runs nothing', () => {
     assert.strictEqual(box.run({ CLODEX_NO_HOOKS: '1' }).trim(), 'FAILED=');
     assert.strictEqual(box.ranCount(), 0);
     assert.ok(!fs.existsSync(path.join(box.dirs.data, '.clodex-setup')));
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: every kill names its signal with -s, so dash reads the -- before a process group', () => {
+  assert.ok(/kill -s TERM -- "-\$_ch_pid"/.test(HOOKS), 'ENTER: the group TERM is there');
+  assert.ok(/kill -s KILL -- "-\$_ch_pid"/.test(HOOKS), 'ENTER: the group KILL is there');
+  assert.deepStrictEqual(HOOKS.match(/kill -[A-Z0-9]+ --/g), null);
+});
+
+const DASH = ['/bin/dash', '/usr/bin/dash'].find((p) => fs.existsSync(p)) || null;
+
+test('clodex-hooks.sh under dash: a setup past CLODEX_SETUP_TIMEOUT is killed and recorded as exit 124, timed out', { skip: DASH ? false : 'dash is not installed' }, () => {
+  const box = hooksSandbox('sleep 30 &\necho $! > "$OUT.child"\nwait\n');
+  try {
+    assert.strictEqual(box.run({ CLODEX_SETUP_TIMEOUT: '1' }, DASH).trim(), 'FAILED=1');
+    const child = fs.readFileSync(path.join(box.root, 'ran.child'), 'utf8').trim();
+    assert.match(child, /^\d+$/, 'ENTER: the setup forked a child into its process group');
+    let stat = '';
+    try { stat = execFileSync('ps', ['-o', 'stat=', '-p', child], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { stat = ''; }
+    if (stat && !stat.startsWith('Z')) process.kill(Number(child), 'SIGKILL');
+    assert.ok(stat === '' || stat.startsWith('Z'), `the group kill reached the setup's child (ps stat "${stat}")`);
+    const last = JSON.parse(fs.readFileSync(path.join(box.dirs.data, '.clodex-setup', 'last.json'), 'utf8'));
+    assert.deepStrictEqual({ exit: last.exit, timedOut: last.timedOut }, { exit: 124, timedOut: true });
+    assert.ok(fs.existsSync(path.join(box.dirs.data, '.clodex-setup', 'failed')));
+  } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
+});
+
+test('clodex-hooks.sh: CLODEX_NO_HOOKS=1 drops a previous failed record so status is not stuck degraded', () => {
+  const box = hooksSandbox(null);
+  try {
+    fs.mkdirSync(path.join(box.dirs.data, '.clodex-setup'));
+    fs.writeFileSync(path.join(box.dirs.data, '.clodex-setup', 'failed'), '{}\n');
+    box.run({ CLODEX_NO_HOOKS: '1' });
+    assert.ok(!fs.existsSync(path.join(box.dirs.data, '.clodex-setup', 'failed')));
   } finally { fs.rmSync(box.root, { recursive: true, force: true }); }
 });

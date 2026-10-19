@@ -55,16 +55,19 @@ _ch_setup() {
       _ch_n=$((_ch_n + 1))
     done
     : > "$_ch_flag"
-    _ch_as_root kill -TERM -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -TERM "$_ch_pid" 2>/dev/null
+    _ch_as_root kill -s TERM -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -s TERM -- "$_ch_pid" 2>/dev/null
     _ch_n=0
     while [ "$_ch_n" -lt 10 ]; do
       sleep 1
       _ch_alive "$_ch_pid" || exit 0
       _ch_n=$((_ch_n + 1))
     done
-    _ch_as_root kill -9 -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -9 "$_ch_pid" 2>/dev/null
+    _ch_as_root kill -s KILL -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -s KILL -- "$_ch_pid" 2>/dev/null
   ) </dev/null >/dev/null 2>&1 &
+  _ch_watchdog=$!
   if wait "$_ch_pid"; then _ch_rc=0; else _ch_rc=$?; fi
+  kill -s TERM -- "$_ch_watchdog" 2>/dev/null || true
+  wait "$_ch_watchdog" 2>/dev/null || true
   _ch_timed=false
   if [ -e "$_ch_flag" ]; then _ch_timed=true; _ch_rc=124; rm -f "$_ch_flag"; fi
   _ch_size=$(wc -c < "$_ch_setup_out/last.log" | tr -d ' ')
@@ -123,6 +126,7 @@ _ch_start() {
 
 if [ "${CLODEX_NO_HOOKS:-0}" = 1 ]; then
   echo "clodex: CLODEX_NO_HOOKS=1 — bootstrap setup and start hooks skipped" >&2
+  rm -f "$_ch_setup_out/failed" 2>/dev/null || true
 else
   _ch_setup
   _ch_start

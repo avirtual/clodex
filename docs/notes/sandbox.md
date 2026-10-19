@@ -62,7 +62,7 @@ not configurable. `platform` applies only on Rebuild, because the image must be
 pulled or built for that architecture.
 
 ## BOOTSTRAP_CONTAINER_DIR
-The host writes `setup.sh`/`start.sh` into `<stateDir>/bootstrap` and binds it here read-only, so nothing in the box can change what the image's `docker/web/clodex-hooks.sh` runs as root at the next boot. The entrypoint runs them before each of its `exec`s: on a Linux host as root, on macOS (the box starts as the image user) with setup through `sudo -n` and start as that user; the image owns `/var/lib/clodex-setup` to that user so the marker needs no sudo.
+The host writes `setup.sh`/`start.sh` into `<stateDir>/bootstrap` and binds it here read-only, so nothing in the box can change the host-kept scripts; a box user with sudo can still edit the overlay copy of `docker/web/clodex-hooks.sh` until the next rebuild. The entrypoint runs them before each of its `exec`s: on a Linux host as root, on macOS (the box starts as the image user) with setup through `sudo -n` and start as that user; the image owns `/var/lib/clodex-setup` to that user so the marker needs no sudo.
 The setup marker lives in the overlay (`/var/lib/clodex-setup/<sha>`), not on `/data`: a recreate wipes it exactly when it wipes the apt packages, so setup reruns then and only then; a restart keeps both. The start hook is process launch only, after `/healthz` answers — never a "service ready" signal.
 
 ## validateBootstrapForSave
