@@ -1841,6 +1841,7 @@ const sandboxManager = enableSandbox ? createSandboxManager({
   appVersion,
   isPackaged,
   registryDir: REGISTRY_DIR,
+  selfLabel: SELF_LABEL,
   log,
 }) : null;
 

@@ -29,8 +29,10 @@ const DEFAULT_CONFIG = {
   ports: [],
   limits: { cpus: null, memory: null, pids: null, shmSize: null },
   platform: null,
+  relay: false,
 };
 
+const RELAY_HOST_ONLY_MSG = 'relay is a host setting';
 const OPERATOR_ONLY_MSG = 'limits and platform are operator settings: change them in the Sandbox panel';
 const PLATFORMS = ['linux/amd64', 'linux/arm64'];
 const CPUS_MIN = 0.25;
@@ -366,7 +368,7 @@ function yamlQuote(value) {
   return `"${escaped}"`;
 }
 
-function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform }) {
+function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, hostname, stateDir, hostUser, appPorts, limits, platform, hostLabel }) {
   if (typeof stateDir !== 'string' || !path.isAbsolute(stateDir)) {
     throw new Error('generateCompose: stateDir must be an absolute path');
   }
@@ -409,6 +411,7 @@ function generateCompose({ image, ports, workDir, authEnvFile, libDir, mounts, h
     L.push(`      CLODEX_HOST_GID: "${hostUser.gid}"`);
     if (!workDir) L.push('      CLODEX_WORK_VOLUME: "1"');
   }
+  if (hostLabel) L.push(`      CLODEX_HOST_LABEL: ${yamlQuote(hostLabel)}`);
   if (authEnvFile) {
     L.push('    env_file:');
     L.push(`      - ${yamlQuote(authEnvFile)}`);
@@ -806,9 +809,10 @@ function createSandbox(deps = {}) {
     return { ...DEFAULT_CONFIG, ...s, hasToken: hasAuthToken() };
   }
   function setConfig(partial, opts = {}) {
-    const writer = opts.writer === 'panel' ? 'panel' : 'intent';
+    const writer = opts.writer === 'panel' || opts.writer === 'host' ? opts.writer : 'intent';
     const operatorKeys = !!partial && ('limits' in partial || 'platform' in partial);
     if (operatorKeys && writer !== 'panel') return { ok: false, error: OPERATOR_ONLY_MSG };
+    if (partial && 'relay' in partial && writer === 'intent') return { ok: false, error: RELAY_HOST_ONLY_MSG };
     const before = getConfig();
     const next = { ...before, ...(partial || {}) };
     delete next.hasToken;   // derived, file-backed — never persisted to ui-settings
@@ -839,6 +843,7 @@ function createSandbox(deps = {}) {
       if (checked.error) return { ok: false, error: checked.error };
       next.platform = checked.platform;
     }
+    if (partial && 'relay' in partial) next.relay = next.relay === true;
     if (writeBoxConfig(next) === false) return { ok: false, error: 'no such sandbox' };
     if (portsChanged) {
       return serialize(async () => (await isRunning() ? applyPortsNow() : null))
@@ -1128,6 +1133,7 @@ function createSandbox(deps = {}) {
       image, ports, workDir: config.workDir || null, authEnvFile: authFile,
       libDir: registryDir, mounts: config.mounts, hostname: id, stateDir: stateDir(),
       hostUser: hostUser(config, image), appPorts, limits: config.limits, platform: keepPlatform ? writtenPlatform : config.platform,
+      hostLabel: deps.selfLabel || null,
     });
     fs.mkdirSync(sandboxDir(), { recursive: true });
     fs.writeFileSync(composePath(), yaml, { mode: 0o600 });

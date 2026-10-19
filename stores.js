@@ -352,6 +352,7 @@ function sanitizeSandbox(raw) {
     ports: sanitizeSandboxPorts(raw.ports),
     limits: sanitizeSandboxLimits(raw.limits),
     platform: SANDBOX_PLATFORMS.includes(raw.platform) ? raw.platform : null,
+    relay: raw.relay === true,
   };
 }
 

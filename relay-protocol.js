@@ -173,8 +173,19 @@ function isDoneTaskEnvelope(task) {
     && task.kind === 'done' && typeof task.id === 'string' && /^t\d+$/.test(task.id);
 }
 
+const SANDBOX_RELAY_VERBS = ['port', 'status'];
+const SANDBOX_RELAY_ARGS_MAX = 4096;
+
+function isSandboxEnvelope(task) {
+  return !!task && typeof task === 'object' && !Array.isArray(task)
+    && task.kind === 'sandbox' && SANDBOX_RELAY_VERBS.includes(task.verb)
+    && typeof task.args === 'string' && task.args.length <= SANDBOX_RELAY_ARGS_MAX;
+}
+
 module.exports = {
   isDoneTaskEnvelope,
+  isSandboxEnvelope,
+  SANDBOX_RELAY_VERBS,
   RELAY_ENVELOPE_V,
   RELAY_MAX_HOPS,
   RELAY_ROSTER_TTL_MS,
