@@ -16,6 +16,7 @@ blocks a release.
 - Sandbox image: git inside the box no longer fails `git merge` with `fatal: stash failed` on a clean repo under the work volume — the image sets `core.checkStat=minimal` and `core.trustctime=false` system-wide, since virtiofs stat fields never matched git's index. Takes effect on the next sandbox rebuild.
 - The Sandbox panel gains an Advanced fold: per-box CPU, memory, pids and shm limits (validated against the Docker VM's figures, applied on the next Start, live usage shown while running) and a platform choice — `linux/amd64` runs a legacy x86 stack under emulation on Apple Silicon. Both are operator-only: an agent's `sandbox status` reports them but cannot change them.
 - Sandbox: app ports, limits and platform now survive a save — the settings sanitizer dropped them, so 'Ports saved but not applied: no such service' answered every port added from the panel.
+- A message injected into an idle Claude seat that sits in its composer without starting a turn now gets one Enter from Clodex after a few seconds of silence, at any time, not only in the seat's first 20 s after boot; if that still starts no turn the seat is flagged `inject-stuck` on the Requests list and in `[agent:who]`, with the stuck text, instead of waiting for the operator to notice and press Enter by hand.
 
 ## 5.131.6 — 2026-10-19
 

@@ -187,6 +187,7 @@ const TERM_ESCAPE_RE = /\x1b\[[0-9;?<>=]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|
 const BOOT_NUDGE_PROBE_CHARS = 32;
 const BOOT_NUDGE_ECHO_CAP = 65536;
 const BOOT_NUDGE_PASTE_PLACEHOLDER = '[Pastedtext#';
+const SUBMIT_NUDGE_WHO_WINDOW_MS = 60 * 60 * 1000;
 
 const TERM_ESCAPE_STICKY_RE = new RegExp(TERM_ESCAPE_RE.source, 'y');
 const ESCAPE_RESYNC_WINDOW = 4096;
@@ -3169,6 +3170,8 @@ function createSessionManager(deps) {
           s.lastUserSubmitTs = s.lastUserInputTs;
         }
         s.lastMainStop = null;
+        if (s._bootNudgeArmed || s._submitStuckTimer) this._clearSubmitNudge(s);
+        s._injectStuck = null;
         if (s.needsAttention) this._setAttention(s, null);
         this._foldDraft(s, data, wasInPaste);
       }
@@ -4685,6 +4688,7 @@ function createSessionManager(deps) {
       clearTimeout(s._bootSettleTimer);
       clearTimeout(s._bootDrainTimer);
       clearTimeout(s._bootNudgeTimer);
+      clearTimeout(s._submitStuckTimer);
       s._bootNudgeEcho = null;
       clearTimeout(s._bootReplayTimer);
       clearTimeout(s._replayFallbackTimer);
@@ -4812,11 +4816,8 @@ function createSessionManager(deps) {
         clearTimeout(s._reviewStartTimer);
         s._reviewStartTimer = null;
       }
-      if (s && state !== 'idle' && s._bootNudgeTimer) {
-        clearTimeout(s._bootNudgeTimer);
-        s._bootNudgeTimer = null;
-        s._bootNudgeEcho = null;
-      }
+      if (s && state !== 'idle' && (s._bootNudgeArmed || s._submitStuckTimer)) this._clearSubmitNudge(s);
+      if (s && state !== 'idle' && s._injectStuck) this._clearInjectStuck(s);
       if (state !== 'idle') this._touchTicketActivity(name);
       if (s && state !== 'idle' && s.needsAttention && !(s.streamPermissions && s.streamPermissions.size)) this._setAttention(s, null);
       if (s && state === 'idle') { this._maybeFlushInjectQueue(s); this._drainPendingAtIdle(s); }
@@ -5172,7 +5173,6 @@ function createSessionManager(deps) {
     }
 
     _recordBootNudgeProbe(session, bytes) {
-      if (session._bootNudgeProbe) return;
       const probe = bootNudgeProbeOf(bytes);
       if (!probe) return;
       session._bootNudgeProbe = probe;
@@ -5185,14 +5185,48 @@ function createSessionManager(deps) {
       return seen.includes(session._bootNudgeProbe) || seen.includes(BOOT_NUDGE_PASTE_PLACEHOLDER);
     }
 
-    _armBootNudge(session, bytes) {
+    _clearSubmitNudge(session) {
+      clearTimeout(session._bootNudgeTimer);
+      clearTimeout(session._submitStuckTimer);
+      session._bootNudgeTimer = null;
+      session._submitStuckTimer = null;
+      session._bootNudgeArmed = false;
+      session._bootNudgeProbe = null;
+      session._bootNudgeEcho = null;
+    }
+
+    _clearInjectStuck(session) {
+      session._injectStuck = null;
+      if (session.needsAttention && session.needsAttention.kind === 'inject-stuck') this._setAttention(session, null);
+    }
+
+    _submitNudgesRecent(session, now = Date.now()) {
+      return (session._submitNudgeTimes || []).filter((t) => now - t < SUBMIT_NUDGE_WHO_WINDOW_MS).length;
+    }
+
+    _markInjectStuck(session, probe, wroteAt, entered) {
+      session._submitStuckTimer = null;
+      if (session._dead) return;
+      const at = Date.now();
+      const counts = session._submitNudges || (session._submitNudges = { fired: 0, exhausted: 0 });
+      counts.exhausted += 1;
+      session._injectStuck = { at, probe, entered };
+      const body = `submit nudge exhausted for ${session.name}: unit "${probe}…" written ${Math.round((at - wroteAt) / 1000)}s ago, `
+        + `${entered ? 'Enter sent' : 'no Enter sent (no echo or never quiet)'}, no turn — operator action needed`;
+      log.warn('inject', body);
+      this._broadcast('ipc-message', { ts: at, from: 'clodex', to: session.name, kind: 'inject-stuck', body });
+      if (session.needsAttention && session.needsAttention.kind === 'permission') return;
+      this._setAttention(session, { kind: 'inject-stuck', ts: at, message: `unsubmitted in the composer: "${probe}…"` });
+    }
+
+    _armSubmitNudge(session, bytes) {
       if (!session || session.agentType !== 'claude' || session._dead) return;
       if (session._bootNudgeArmed) {
         if (session._bootNudgeTimer) this._recordBootNudgeProbe(session, bytes);
         return;
       }
-      const readyAt = session._bootReadyAt;
-      if (!readyAt || Date.now() - readyAt > INJECT_BOOT_MAXWAIT) return;
+      if ((session.activityState || 'idle') !== 'idle') return;
+      this._clearSubmitNudge(session);
       session._bootNudgeArmed = true;
       const wroteAt = Date.now();
       this._recordBootNudgeProbe(session, bytes);
@@ -5203,18 +5237,29 @@ function createSessionManager(deps) {
       const fire = () => {
         session._bootNudgeTimer = null;
         if (session._dead) return;
+        const probe = session._bootNudgeProbe;
         const echoed = this._bootNudgeEchoed(session);
         const painting = Date.now() - (session._lastPtyDataAt || 0) < BOOT_NUDGE_QUIET_MS;
         if (!echoed || painting || this._anyDraftOpen(session)) {
-          if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) { session._bootNudgeEcho = null; return; }
+          if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) {
+            this._clearSubmitNudge(session);
+            if (probe && !painting) this._markInjectStuck(session, probe, wroteAt, false);
+            return;
+          }
           arm(BOOT_NUDGE_QUIET_MS);
           return;
         }
-        session._bootNudgeEcho = null;
+        this._clearSubmitNudge(session);
         if (!session.pty) return;
         if (!session.firstInputAt) session.firstInputAt = Date.now();
         try { session.pty.write('\r'); } catch {}
-        log.info('inject', `boot-drain nudge for ${session.name} — no turn ${Date.now() - wroteAt}ms after a boot-window write, echo seen, last output at +${session._lastPtyDataAt - wroteAt}ms, sent Enter`);
+        const counts = session._submitNudges || (session._submitNudges = { fired: 0, exhausted: 0 });
+        counts.fired += 1;
+        const now = Date.now();
+        session._submitNudgeTimes = [...(session._submitNudgeTimes || []).filter((t) => now - t < SUBMIT_NUDGE_WHO_WINDOW_MS), now];
+        log.info('inject', `submit nudge for ${session.name} — no turn ${now - wroteAt}ms after an injected write, echo seen, last output at +${session._lastPtyDataAt - wroteAt}ms, sent Enter`);
+        session._submitStuckTimer = setTimeout(() => this._markInjectStuck(session, probe, wroteAt, true), BOOT_NUDGE_MS);
+        if (session._submitStuckTimer.unref) session._submitStuckTimer.unref();
       };
       arm(BOOT_NUDGE_MS);
     }
@@ -5714,7 +5759,7 @@ function createSessionManager(deps) {
               payload: this._proxyPoller ? this._proxyPoller.snapshot(s.name) : null,
               attention: s.needsAttention ? s.needsAttention.kind : null,
               agentType: s.agentType,
-            }) }));
+            }), nudged: this._submitNudgesRecent(s) }));
           const externalNames = (await registry.listPeers())
             .map(p => p.name)
             .filter(n => !this.sessions.has(n))
@@ -5740,7 +5785,7 @@ function createSessionManager(deps) {
           }
           const others = [...localAgents, ...externalNames, ...remoteNames, ...relayNames].filter(p => p.name !== senderName);
           const list = others.length
-            ? others.map(p => p.label ? `${p.name} (${p.label})` : p.name).join(', ')
+            ? others.map(p => `${p.label ? `${p.name} (${p.label})` : p.name}${p.nudged ? ` (nudged ${p.nudged})` : ''}`).join(', ')
             : '(none)';
           if (session) this._injectText(session, `[agent:peers] ${list}`, { parkable: true });
           break;
@@ -7557,12 +7602,14 @@ function createSessionManager(deps) {
       };
 
       const senders = [...new Set([...entries.map((e) => e.sender), ...overflow.map((r) => r.sender)])];
-      log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent`);
+      const stuckNote = !session._injectStuck ? ''
+        : ` — the seat's composer holds an unsubmitted unit; ${session._injectStuck.entered ? 'a submit nudge was sent and did not take' : 'no submit nudge could be sent'}`;
+      log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent${stuckNote}`);
       // Broadcast first and outside the per-sender loop: the notices travel by the channel whose
       // reliability is in question, so the report must not depend on it.
       this._broadcast('ipc-message', {
         ts: Date.now(), from: 'clodex', to: session.name, kind: 'dm-unconfirmed',
-        body: `${total} dm${total === 1 ? '' : 's'} to ${session.name} (from ${senders.join(', ')}) written but no turn started after ${ageS}s — nothing was re-sent`,
+        body: `${total} dm${total === 1 ? '' : 's'} to ${session.name} (from ${senders.join(', ')}) written but no turn started after ${ageS}s — nothing was re-sent${stuckNote}`,
       });
 
       for (const who of senders) {
@@ -7590,7 +7637,7 @@ function createSessionManager(deps) {
           : ` ${total} messages were outstanding at that seat and concurrent writes overwrite one another's unsubmitted text, so which of them landed cannot be told from here.`;
         this._injectText(sender,
           `[agent:dm] ${noun} to ${session.name} ${verb} written into its terminal ${when} and ${session.name} `
-          + `has not started a turn since — ${hedge}.${ambiguity} NOTHING was re-sent, and nothing will be. `
+          + `has not started a turn since — ${hedge}${stuckNote}.${ambiguity} NOTHING was re-sent, and nothing will be. `
           + `If it matters, resend it yourself: \`[agent:dm ${session.name} urgent] <message>\` lands immediately. `
           + `(A seat that displayed the message and simply stayed idle looks the same from here, so this can be a false alarm.)`,
           { parkable: true });
@@ -8231,7 +8278,7 @@ function createSessionManager(deps) {
         session._injectPtyQueue = new InjectQueue({
           reviewGate: isClaude,
           onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]\r\n]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
-          write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armBootNudge(session, bytes); },
+          write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armSubmitNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
           quietMs: INJECT_QUIET_MS,
           maxWaitMs: INJECT_QUIET_MAXWAIT,

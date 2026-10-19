@@ -126,7 +126,7 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     if (focusSeat(req.name)) { closeDrawer(); return; }
     const res = await window.api.revealSession(req.name).catch((e) => ({ ok: false, error: String(e) }));
     if (res && res.ok) { closeDrawer(); return; }
-    showToast(`${req.name} is in workspace ${wsLabel || req.workspaceId || '(unknown)'} — open it to answer the dialog`,
+    showToast(`${req.name} is in workspace ${wsLabel || req.workspaceId || '(unknown)'} — open it to ${req.kind === 'inject-stuck' ? 'submit the stuck message' : 'answer the dialog'}`,
       { kind: 'warn', duration: 5000 });
   }
 
@@ -135,7 +135,7 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     const el = document.createElement('div');
     el.className = 'inbox-item request';
     const head = rowHead({
-      kind: 'permission',
+      kind: req.kind || 'permission',
       from: String(req.name),
       wsLabel,
       ago: `since ${hhmm(req.ts)} · ${fmtAgo(req.ts)}`,

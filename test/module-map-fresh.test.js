@@ -34,7 +34,7 @@ const WHY_EMPTY_IS_NOT_VACUOUS = 'no maps ship with the gate; each giant lands i
 
 const GIANTS = [
   { file: 'team-tickets.js', floor: 240, enter: [{ name: '_spawnTicketSeat', depth: 1 }] },
-  { file: 'session-manager.js', floor: 340, enter: [{ name: '_armBootNudge', depth: 2, parent: 'SessionManager' }, { name: 'createSessionManager', depth: 0 }] },
+  { file: 'session-manager.js', floor: 340, enter: [{ name: '_armSubmitNudge', depth: 2, parent: 'SessionManager' }, { name: 'createSessionManager', depth: 0 }] },
   { file: 'renderer/renderer.js', floor: 380, enter: [{ name: 'switchSession', depth: 0 }] },
   { file: 'ipc-handlers.js', floor: 260, enter: [] },
   { file: 'engine.js', floor: 100, enter: [{ name: 'createEngine', depth: 0 }] },

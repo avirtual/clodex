@@ -122,3 +122,14 @@ test('workspaceId filter drops a foreign permission row and leaves shouts', () =
   assert.strictEqual(snap.open, 2);
   assert.deepStrictEqual(r.snapshot().requests.map((q) => q.name), ['mine', 'theirs'], 'ENTER: unscoped sees both');
 });
+
+test('t1891: an inject-stuck seat is a request row carrying its kind; a permission row carries none', () => {
+  const r = rig([
+    seat('stuck', { attn: { kind: 'inject-stuck', ts: 50, message: 'unsubmitted in the composer: "x…"' } }),
+    seat('perm', { attn: { kind: 'permission', ts: 60, message: 'Bash: ls' } }),
+  ], []);
+  assert.deepStrictEqual(r.summary().requests, [
+    { kind: 'inject-stuck', name: 'stuck', workspaceId: 'w1', ts: 50, message: 'unsubmitted in the composer: "x…"', pending: 0 },
+    { name: 'perm', workspaceId: 'w1', ts: 60, message: 'Bash: ls', pending: 0 },
+  ]);
+});

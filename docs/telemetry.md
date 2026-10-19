@@ -239,6 +239,7 @@ popovers the owner will answer.
   startup, coarse low-frequency events only (lifecycle, state-mutating
   intents, autocompact decisions, peer transitions, crashes). Logging must
   never throw into callers — it wraps the PTY and the crash net.
+- **Submit nudge** (session-manager.js `_armSubmitNudge`): `inject` log lines `submit nudge for <seat>` (Enter sent) and WARN `submit nudge exhausted for <seat>` (stuck); per-seat counters `submitNudges: { fired, exhausted }` on the session row, `(nudged N)` in `[agent:who]` for the last hour.
 
 ## 6b. In-process keep-warm holds (wire/hold.js `HoldKeeper`)
 
