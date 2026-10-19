@@ -200,3 +200,20 @@ test('buildTerminalDm: STRIPS relay fields and preserves from fully-qualified', 
   assert.strictEqual('origin' in term, false, 'origin is not caller-set — conn.dm stamps it');
   assert.strictEqual(term.from, 'agent@docker', 'from is sacred — never rewritten to the hop origin');
 });
+
+test('isSandboxEnvelope accepts port and status, refuses other verbs and oversized args', () => {
+  const { isSandboxEnvelope, isDoneTaskEnvelope } = require('../relay-protocol');
+  const rows = [
+    ['port ok', { kind: 'sandbox', verb: 'port', args: 'add 18080 proto:http' }, true],
+    ['status ok', { kind: 'sandbox', verb: 'status', args: '' }, true],
+    ['up refused', { kind: 'sandbox', verb: 'up', args: '' }, false],
+    ['rebuild refused', { kind: 'sandbox', verb: 'rebuild', args: '' }, false],
+    ['args 4096 ok', { kind: 'sandbox', verb: 'port', args: 'a'.repeat(4096) }, true],
+    ['args 4097 refused', { kind: 'sandbox', verb: 'port', args: 'a'.repeat(4097) }, false],
+    ['args not a string', { kind: 'sandbox', verb: 'port', args: ['add'] }, false],
+    ['array refused', [], false],
+    ['done is no sandbox envelope', { kind: 'done', id: 't7' }, false],
+  ];
+  for (const [name, task, want] of rows) assert.strictEqual(isSandboxEnvelope(task), want, name);
+  assert.strictEqual(isDoneTaskEnvelope({ kind: 'done', id: 't7' }), true, 'kind done still ok');
+});

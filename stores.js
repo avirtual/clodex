@@ -50,6 +50,7 @@ const DEFAULT_SANDBOX_CONFIG = {
   ports: [],
   limits: { cpus: null, memory: null, pids: null, shmSize: null },
   platform: null,
+  relay: false,
 };
 
 const SANDBOX_PLATFORMS = ['linux/amd64', 'linux/arm64'];

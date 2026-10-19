@@ -3820,6 +3820,7 @@ test('uiSettings: a box config\'s ports, limits and platform survive the sanitiz
       ],
       limits: { cpus: 2, memory: '4g', pids: 512, shmSize: '1g' },
       platform: 'linux/amd64',
+      relay: true,
     };
     uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config }] });
     assert.deepStrictEqual(uiSettings.get().boxes[0].config, config);
