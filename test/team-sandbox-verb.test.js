@@ -338,7 +338,7 @@ test('status names the clodex version the box reports on its wire', async () => 
     getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: true, version: '5.64.4' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
-  assert.match(b.last(), / · clodex 5\.64\.4\nports: none$/);
+  assert.match(b.last(), / · clodex 5\.64\.4\nports: none\nlimits: none\nplatform: host$/);
 });
 
 test('status marks the version as last seen when the box wire is offline', async () => {
@@ -705,13 +705,31 @@ test('status lists the port rows after the status line', async () => {
   await fire(b, b.lead, { action: 'status' });
   const [head, ...rest] = b.last().split('\n');
   assert.match(head, /^\[agent:team\] sandbox team-clodex running \(ref master\)/);
-  assert.strictEqual(rest.join('\n'), THREE_ROWS);
+  assert.strictEqual(rest.join('\n'), `${THREE_ROWS}\nlimits: none\nplatform: host`);
 });
 
 test('status with no ports says ports: none', async () => {
   const b = mkBox({ boxes: ['team-clodex'], config: { ref: 'master' } });
   await fire(b, b.lead, { action: 'status' });
-  assert.match(b.last(), /\nports: none$/);
+  assert.match(b.last(), /\nports: none\nlimits: none\nplatform: host$/);
+});
+
+test('status prints applied limits and platform after the ports rows', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: { state: 'running', ref: null, sha: null,
+    limits: { configured: { cpus: 2, memory: '4g', pids: 512, shmSize: null },
+      applied: { cpus: 2, memory: 4294967296, pids: 512, shmSize: 67108864 } },
+    platform: { configured: 'linux/amd64', applied: 'linux/amd64' } } });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /\nports: none\nlimits: cpus 2 \/ memory 4g \/ pids 512 \(applied\)\nplatform: linux\/amd64 \(applied\)$/);
+});
+
+test('status marks limits and platform pending when the running box differs from config', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], statusResult: { state: 'running', ref: null, sha: null,
+    limits: { configured: { cpus: 2, memory: '8g', pids: null, shmSize: null },
+      applied: { cpus: 2, memory: 4294967296, pids: null, shmSize: 67108864 } },
+    platform: { configured: 'linux/amd64', applied: 'linux/arm64' } } });
+  await fire(b, b.lead, { action: 'status' });
+  assert.match(b.last(), /\nlimits: cpus 2 \/ memory 8g \(pending\)\nplatform: linux\/amd64 \(pending\)$/);
 });
 
 test('port add from a seat that is not the lead is refused and saves nothing', async () => {
